@@ -15,7 +15,7 @@ Safely skipped (handler_not_implemented):
 from __future__ import annotations
 from typing import Any
 
-from .models import ControlIROp, FileIROp
+from .models import ControlIROp, ControlIROpSpec, FileIROp
 from .workspace import Workspace
 from .events import EventLog
 
@@ -24,6 +24,19 @@ class ControlIRExecutor:
     def __init__(self, workspace: Workspace, events: EventLog) -> None:
         self.workspace = workspace
         self.events = events
+
+    def available_ops(self) -> list[ControlIROpSpec]:
+        """Return the Control IR op kinds this executor can handle."""
+        return [
+            ControlIROpSpec(
+                kind="file",
+                description=(
+                    "Read or write a file inside the workspace. "
+                    "Use op='write' to create/overwrite a file; op='read' to retrieve its content."
+                ),
+                example={"kind": "file", "op": "write", "path": "dir/file.txt", "content": "..."},
+            ),
+        ]
 
     def execute(self, ops: list[ControlIROp]) -> list[dict[str, Any]]:
         """

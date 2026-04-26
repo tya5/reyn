@@ -138,6 +138,7 @@ class OSRuntime:
             constraints=PhaseConstraints(
                 max_phase_visits=max_phase_visits,
             ),
+            available_control_ops=self.control_ir_executor.available_ops(),
             output_language=output_language,
         )
 

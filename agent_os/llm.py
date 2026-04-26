@@ -43,6 +43,12 @@ Consistency requirements (violations are rejected):
 
 Do not rely on automatic correction. Every field must be present and valid.
 
+control_ir rules:
+- control_ir is a list of side-effect operations to execute after this phase completes.
+- Leave it empty ([]) if no file or tool operations are needed.
+- Available op kinds and their schemas are listed in available_control_ops in the context.
+- Use only the kinds listed there; unknown kinds are safely skipped but waste tokens.
+
 Artifact rules:
 - artifact MUST always have exactly this structure: {"type": "<schema_name>", "data": {...}}
   - "type" must be the schema_name of the chosen candidate_output.

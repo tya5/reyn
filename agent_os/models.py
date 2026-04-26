@@ -106,6 +106,13 @@ class LLMOutput(BaseModel):
         return self.control.effective_next_phase
 
 
+class ControlIROpSpec(BaseModel):
+    """Describes one kind of Control IR operation available to the LLM."""
+    kind: str
+    description: str
+    example: dict[str, Any]  # minimal valid example for this kind
+
+
 class ExecutionState(BaseModel):
     """Structured execution history injected into ContextFrame."""
     path: list[str] = Field(default_factory=list)  # "phase → next" transition strings, oldest first
@@ -128,6 +135,7 @@ class ContextFrame(BaseModel):
     candidate_outputs: list[CandidateOutput]
     finish_criteria: list[str] = Field(default_factory=list)
     constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
+    available_control_ops: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
 
 
