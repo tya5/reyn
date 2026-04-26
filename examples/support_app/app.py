@@ -43,7 +43,7 @@ phases = {
         },
         instructions=(
             "This is a bug report. Identify the likely root cause and list 2-3 investigation steps. "
-            "Then transition to 'respond' with your findings."
+            "Transition to 'respond' with findings (string) and category='bug'."
         ),
     ),
     "spec": Phase(
@@ -56,8 +56,8 @@ phases = {
             "required": ["user_message"],
         },
         instructions=(
-            "This is a feature request. Write a short product spec: goal, proposed behaviour, and open questions. "
-            "Then transition to 'respond' with your draft spec."
+            "This is a feature request. Write a short product spec: goal, proposed behaviour, open questions. "
+            "Transition to 'respond' with findings (string) and category='feature_request'."
         ),
     ),
     "answer": Phase(
@@ -71,7 +71,7 @@ phases = {
         },
         instructions=(
             "This is a general question. Write a clear, concise answer. "
-            "Then transition to 'respond' with your answer."
+            "Transition to 'respond' with findings (string) and category='question'."
         ),
     ),
     "respond": Phase(
@@ -79,16 +79,13 @@ phases = {
         input_schema={
             "type": "object",
             "properties": {
-                "analysis": {"type": "string"},
-                "action_items": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
+                "findings": {"type": "string"},
+                "category": {"type": "string"},
             },
-            "required": ["analysis", "action_items"],
+            "required": ["findings", "category"],
         },
         instructions=(
-            "Compose a polished customer-facing reply based on the analysis and action items. "
+            "Compose a polished customer-facing reply based on findings and category. "
             "Then finish the workflow."
         ),
     ),
@@ -98,6 +95,7 @@ app = App(
     name="support_app",
     entry_phase="triage",
     phases=phases,
+    final_output_name="support_reply",
     graph=AppGraph(
         transitions={
             "triage": ["debug", "spec", "answer"],
@@ -113,11 +111,7 @@ app = App(
         "properties": {
             "reply": {"type": "string"},
             "category": {"type": "string"},
-            "action_items": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
         },
-        "required": ["reply", "category", "action_items"],
+        "required": ["reply", "category"],
     },
 )

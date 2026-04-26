@@ -127,7 +127,11 @@ def expand_app(
         if dst not in transitions[src]:
             transitions[src].append(dst)
 
-    can_finish_phases = [name for name, pd in phase_defs.items() if pd.can_finish]
+    used_phases = {app_def.entry} | {dst for _, dst in app_def.edges}
+    can_finish_phases = [
+        name for name, pd in phase_defs.items()
+        if pd.can_finish and name in used_phases
+    ]
 
     final_art = artifact_defs.get(app_def.final_output)
     if final_art:

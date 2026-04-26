@@ -56,12 +56,18 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print()
+    if not result.ok:
+        print(f"=== Warning: workflow ended with status '{result.status}' ===",
+              file=sys.stderr)
     print("=== Final Output ===")
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(json.dumps(result.data, indent=2, ensure_ascii=False))
 
     if args.events:
         print()
         _print_events(agent)
+
+    if not result.ok:
+        sys.exit(2)
 
 
 def cmd_lint(args: argparse.Namespace) -> None:

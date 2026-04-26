@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Phase(BaseModel):
@@ -25,10 +25,19 @@ class App(BaseModel):
     phases: dict[str, Phase]
     graph: AppGraph
     final_output_schema: dict[str, Any]
-    final_output_name: str = ""
+    final_output_name: str
     final_output_description: str = ""
     # criteria the LLM must satisfy before the OS allows finish
     finish_criteria: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _require_final_output_name(self) -> "App":
+        if not self.final_output_name.strip():
+            raise ValueError(
+                "App.final_output_name must not be empty. "
+                "Set it to the artifact type name the LLM should use for the final output."
+            )
+        return self
 
 
 class FileIROp(BaseModel):
@@ -130,7 +139,6 @@ class ExecutionState(BaseModel):
 class PhaseConstraints(BaseModel):
     """Operational limits for the current phase, surfaced to the LLM."""
     max_phase_visits: int | None = None   # per-phase visit cap (None = unlimited)
-    max_total_steps: int | None = None    # global step cap across all phases (None = unlimited)
 
 
 class ContextFrame(BaseModel):

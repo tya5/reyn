@@ -205,6 +205,7 @@ app = App(
     name="writing_review_app",
     entry_phase="analyze",
     phases=phases,
+    final_output_name="final_article",
     graph=AppGraph(
         transitions={
             "analyze": ["draft"],

@@ -1,4 +1,7 @@
+from __future__ import annotations
 import json
+from dataclasses import dataclass
+from typing import Any, Literal
 import pydantic
 from .models import App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
 from .events import EventLog
@@ -16,6 +19,17 @@ class LoopLimitExceededError(Exception):
 
 class WorkflowAbortedError(Exception):
     pass
+
+
+@dataclass
+class RunResult:
+    """Typed return value of OSRuntime.run() and Agent.run()."""
+    data: dict[str, Any]
+    status: Literal["finished", "loop_limit_exceeded"]
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "finished"
 
 
 def _schema_type_name(schema: dict) -> str:
@@ -329,11 +343,13 @@ class OSRuntime:
         initial_input: dict,
         output_language: str = "ja",
         max_phase_retries: int = 2,
-    ) -> dict:
+    ) -> RunResult:
         """
         Execute the workflow from entry_phase to completion.
 
         max_phase_retries: retries per phase on validation failure (default 2 = 3 total attempts).
+        Returns RunResult with status="finished" or status="loop_limit_exceeded".
+        Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
         current_phase = self.app.entry_phase
         artifact = initial_input
@@ -386,7 +402,7 @@ class OSRuntime:
                         total_phase_count=sum(self._visit_counts.values()),
                         final_output_keys=list(data.keys()),
                     )
-                    return data
+                    return RunResult(data=data, status="finished")
 
                 self._history.append(f"{current_phase} → {output.next_phase}")
                 current_phase = output.next_phase
@@ -402,7 +418,7 @@ class OSRuntime:
                 final_output_keys=list(final_output.keys()),
             )
             print("[os] loop limit reached — returning latest artifact")
-            return final_output
+            return RunResult(data=final_output, status="loop_limit_exceeded")
 
         except WorkflowAbortedError as exc:
             self.events.emit(
