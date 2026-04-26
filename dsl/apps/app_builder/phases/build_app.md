@@ -54,4 +54,11 @@ name: {artifact_name}
 {field_name}: {type}
 ```
 
+IMPORTANT: Write ALL artifact files — including the final_output artifact.
+Checklist before finishing:
+- app.md written
+- one phase file per phase in data.phases
+- one artifact file per artifact in data.artifacts
+- one artifact file for data.final_output (using data.final_output.name as filename)
+
 Write all files using one op per file. After writing, output a decide turn reporting the files written.

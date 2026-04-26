@@ -20,7 +20,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     if args.app_dsl:
         try:
             from compiler import load_dsl_app
-            app = load_dsl_app(args.app_dsl)
+            app = load_dsl_app(args.app_dsl, dsl_root=args.dsl_root)
         except Exception as e:
             print(f"Error: failed to compile DSL '{args.app_dsl}': {e}", file=sys.stderr)
             sys.exit(1)
@@ -145,6 +145,18 @@ def build_parser() -> argparse.ArgumentParser:
         dest="app_dsl",
         metavar="PATH",
         help="Path to a Markdown App DSL file (e.g. dsl/apps/writing_review_app.md)",
+    )
+    run_p.add_argument(
+        "--dsl-root",
+        default=None,
+        dest="dsl_root",
+        metavar="DIR",
+        help=(
+            "Root of the DSL tree for shared artifact/phase resolution "
+            "(default: auto-detected as <app_dir>/../..). "
+            "Use this when running an app from outside the project dsl/ tree, "
+            "e.g. --app-dsl workspace/dsl/apps/my_app/app.md --dsl-root dsl/"
+        ),
     )
     run_p.add_argument(
         "--input",
