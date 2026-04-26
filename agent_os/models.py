@@ -78,17 +78,29 @@ class LLMOutput(BaseModel):
         return self.control.effective_next_phase
 
 
+class ExecutionState(BaseModel):
+    """Structured execution history injected into ContextFrame."""
+    path: list[str] = Field(default_factory=list)  # "phase → next" transition strings, oldest first
+    current_visit: int = 1   # how many times the current phase has been entered this run
+    total_steps: int = 0     # total LLM calls completed across all phases so far
+
+
+class PhaseConstraints(BaseModel):
+    """Operational limits for the current phase, surfaced to the LLM."""
+    max_phase_visits: int | None = None   # per-phase visit cap (None = unlimited)
+    max_total_steps: int | None = None    # global step cap across all phases (None = unlimited)
+
+
 class ContextFrame(BaseModel):
     current_phase: str
     current_phase_role: str | None = None
     instructions: str
     input_artifact: dict[str, Any]
-    history_summary: str
+    execution: ExecutionState = Field(default_factory=ExecutionState)
     candidate_outputs: list[CandidateOutput]
     finish_criteria: list[str] = Field(default_factory=list)
+    constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
     output_language: str = "ja"
-    current_phase_visit: int = 1
-    max_phase_visit: int | None = None
 
 
 class Event(BaseModel):

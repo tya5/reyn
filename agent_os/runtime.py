@@ -1,5 +1,5 @@
 import json
-from .models import App, CandidateOutput, ContextFrame, LLMOutput
+from .models import App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
 from .validation import validate_output, ValidationError
@@ -116,18 +116,32 @@ class OSRuntime:
     ) -> ContextFrame:
         phase = self.app.phases[current_phase]
         allowed_next = [c.next_phase for c in candidates]
-        return ContextFrame(
+        current_visit = self._visit_counts.get(current_phase, 1)
+        total_steps = sum(self._visit_counts.values())
+        max_phase_visits = self.app.graph.max_phase_visits.get(current_phase) or None
+
+        frame = ContextFrame(
             current_phase=current_phase,
             current_phase_role=phase.role,
             instructions=phase.instructions,
             input_artifact=artifact,
-            history_summary="\n".join(self._history) or "No history yet.",
+            execution=ExecutionState(
+                path=list(self._history),
+                current_visit=current_visit,
+                total_steps=total_steps,
+            ),
             candidate_outputs=candidates,
             finish_criteria=self.app.finish_criteria if "end" in allowed_next else [],
+            constraints=PhaseConstraints(
+                max_phase_visits=max_phase_visits,
+            ),
             output_language=output_language,
-            current_phase_visit=self._visit_counts.get(current_phase, 1),
-            max_phase_visit=self.app.graph.max_phase_visits.get(current_phase) or None,
         )
+
+        # Audit: record the exact ContextFrame passed to the LLM for replay/debug
+        self.events.emit("context_built", phase=current_phase, frame=frame.model_dump())
+
+        return frame
 
     # ── Single-attempt validation ───────────────────────────────────────────────
 
