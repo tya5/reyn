@@ -32,16 +32,6 @@ class RunResult:
         return self.status == "finished"
 
 
-def _has_ir_content(r: dict) -> bool:
-    """True when a control_ir result contains content that should be fed back to the LLM."""
-    if r.get("status") != "ok":
-        return False
-    # write ops produce only a status acknowledgement — no content to feed back
-    if r.get("kind") == "file" and r.get("op") == "write":
-        return False
-    return True
-
-
 def _schema_type_name(schema: dict) -> str:
     props = schema.get("properties", {})
     const = props.get("type", {}).get("const")
@@ -282,6 +272,8 @@ class OSRuntime:
         allowed_next = [c.next_phase for c in candidates]
         control_ir_results: list[dict] = []
         prior_attempts: list[dict[str, str]] = []
+        act_turn_count = 0
+        max_act_turns = 10  # guard against infinite act loops
 
         while True:
             frame = self._build_frame(
@@ -305,6 +297,16 @@ class OSRuntime:
             raw = call_llm(self.model, frame, prior_attempts=prior_attempts or None)
 
             if raw.get("type") == "act":
+                act_turn_count += 1
+                if act_turn_count > max_act_turns:
+                    msg = (
+                        f"Phase '{current_phase}' exceeded max act turns ({max_act_turns}). "
+                        "The LLM kept emitting act turns without making a decide turn."
+                    )
+                    self.events.emit("phase_failed", phase=current_phase,
+                                     attempts=act_turn_count, final_error=msg)
+                    raise ValueError(msg)
+
                 try:
                     act = ActOutput.model_validate(raw)
                 except pydantic.ValidationError as exc:
@@ -318,10 +320,12 @@ class OSRuntime:
                     continue
 
                 ir_results = self.control_ir_executor.execute(act.ops, phase=current_phase)
-                pending = [r for r in ir_results if _has_ir_content(r)]
-                control_ir_results = pending
+                # Surface all results (reads, writes, ask_user) so the LLM knows ops completed.
+                control_ir_results = ir_results
                 prior_attempts = []  # reset retries after a successful act turn
-                self.events.emit("act_executed", phase=current_phase, op_count=len(act.ops))
+                self.events.emit("act_executed", phase=current_phase,
+                                 op_count=len(act.ops), act_turn=act_turn_count)
+                print(f"[phase:{current_phase}] act turn #{act_turn_count} — {len(act.ops)} op(s)")
                 continue  # re-call LLM with results
 
             # decide turn
