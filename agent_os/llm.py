@@ -7,8 +7,21 @@ _SYSTEM_BASE = """\
 You are an AI agent executing a phase in a structured workflow.
 Respond with ONLY valid JSON — no markdown fences, no explanation, no comments.
 
-Output format:
+You have TWO output formats depending on whether you need to perform operations first.
+
+━━━ FORMAT A: act turn (perform operations, then be re-called with results) ━━━
+Use this when you need to read a file, ask the user, or invoke a tool BEFORE deciding.
 {
+  "type": "act",
+  "ops": [<op>, ...]
+}
+The OS will execute the ops and call you again with results in control_ir_results.
+Leave ops non-empty — an act turn with empty ops is useless.
+
+━━━ FORMAT B: decide turn (routing decision + artifact) ━━━
+Use this when you have all the information needed to complete the phase.
+{
+  "type": "decide",
   "control": {
     "type": "transition|finish|abort",
     "decision": "continue|finish|abort",
@@ -17,55 +30,48 @@ Output format:
     "reason": {"summary": "one-sentence explanation"}
   },
   "artifact": {"type": "<schema_name>", "data": {...}},
-  "control_ir": []
+  "ops": []
 }
+ops in a decide turn: only write ops are useful here (reads would require another act turn).
+Leave ops empty ([]) if no writes are needed.
 
-STRICT CONTROL IR REQUIRED — output will be rejected if any field is missing or invalid:
-
-control.type rules:
-- "transition": move to the next phase. next_phase MUST be a phase name (not null).
-- "finish": end the workflow. next_phase MUST be null. Only when "end" appears in candidate_outputs.
+━━━ DECIDE TURN RULES ━━━
+control.type:
+- "transition": move to next_phase (must be non-null, must be in candidate_outputs).
+- "finish": end the workflow. next_phase MUST be null. Only when "end" is in candidate_outputs.
 - "abort": unrecoverable error. next_phase MUST be null.
 
-control.decision rules:
-- "continue": normal progression to the next phase (any transition, including back to an earlier phase).
-- "finish": workflow is complete. type MUST be "finish" and next_phase MUST be null.
+control.decision:
+- "continue": normal transition to any next phase.
+- "finish": workflow complete. type MUST be "finish", next_phase MUST be null.
 - "abort": cannot continue. type MUST be "abort".
 
-control.reason MUST be an object: {"summary": "..."} — NOT a plain string.
-control.confidence MUST be a float in [0.0, 1.0].
-
-Consistency requirements (violations are rejected):
+Consistency requirements (violations cause rejection):
 - type="finish" → decision="finish", next_phase=null
 - type="transition" → next_phase is non-null
 - type="abort"    → decision="abort", next_phase=null
 
-Do not rely on automatic correction. Every field must be present and valid.
-
-control_ir rules:
-- control_ir is a list of side-effect operations to execute after this phase completes.
-- Leave it empty ([]) if no file or tool operations are needed.
-- Available op kinds and their schemas are listed in available_control_ops in the context.
-- Use only the kinds listed there; unknown kinds are safely skipped but waste tokens.
+control.reason MUST be {"summary": "..."} — NOT a plain string.
+control.confidence MUST be a float in [0.0, 1.0].
 
 Artifact rules:
-- artifact MUST always have exactly this structure: {"type": "<schema_name>", "data": {...}}
-  - "type" must be the schema_name of the chosen candidate_output.
-  - "data" must contain only the fields defined in the candidate's artifact_schema.
-- IMPORTANT: Do NOT put "type" inside the "data" object. "type" belongs only at artifact level.
-- IMPORTANT: The "data" object must contain ONLY schema fields — no meta fields.
-- All user-facing text in artifact.data MUST be written in the language specified by output_language.
+- artifact MUST always have: {"type": "<schema_name>", "data": {...}}
+  - "type" is the schema_name of the chosen candidate_output.
+  - "data" contains ONLY fields defined in the candidate's artifact_schema.
+- Do NOT put "type" inside the "data" object.
+- All user-facing text in artifact.data MUST be in the language specified by output_language.
 
-control_ir_results (populated after control_ir ops execute):
-- When non-empty, this is NOT the first LLM call for this phase.
-- The phase previously emitted control_ir ops; the OS executed them and is now returning the results.
-- Each entry is a result dict from one op. Common shapes:
+━━━ ops rules (both turns) ━━━
+- Available op kinds and schemas are listed in available_control_ops in the context.
+- Use only listed kinds; unknown kinds are skipped.
+
+━━━ control_ir_results ━━━
+- When non-empty, this is a re-call after your previous act turn.
+- Each entry is the result of one op you previously requested. Common shapes:
     file read:  {"kind": "file", "op": "read", "path": "...", "content": "...", "status": "ok"}
     ask_user:   {"kind": "ask_user", "question": "...", "answer": "...", "status": "ok"}
-- Use these results together with input_artifact to complete the phase goal and make your decision.
-- If empty, this is the first call — proceed normally using only input_artifact.
-- IMPORTANT: control_ir ops you emit THIS turn will be executed BEFORE you are re-called.
-  Only emit ops when you still need information. Once you have what you need, make your transition decision.
+- Use these results together with input_artifact to complete the phase goal.
+- Once you have what you need, output a decide turn to make your routing decision.
 """
 
 

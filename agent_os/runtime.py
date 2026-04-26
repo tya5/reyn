@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 import pydantic
-from .models import App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
+from .models import ActOutput, App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
@@ -58,7 +58,7 @@ def _schema_type_name(schema: dict) -> str:
 
 def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
     _META = frozenset({
-        "type", "next_phase", "status", "control_ir",
+        "type", "next_phase", "status", "ops",
         "reason", "confidence", "final_output", "control",
     })
     if isinstance(artifact.get("data"), dict):
@@ -249,10 +249,10 @@ class OSRuntime:
             output = LLMOutput(
                 control=result.control,
                 artifact={**normalized, "data": norm_data},
-                control_ir=result.control_ir,
+                ops=result.ops,
             )
         except pydantic.ValidationError as exc:
-            msg = f"Invalid control_ir structure: {exc}"
+            msg = f"Invalid ops structure: {exc}"
             self.events.emit("validation_error", phase=current_phase, error=msg)
             raise ValueError(msg) from exc
 
@@ -264,31 +264,39 @@ class OSRuntime:
 
         return result, output
 
-    # ── Phase execution with retry ──────────────────────────────────────────────
+    # ── Phase execution with act/decide loop and retry ─────────────────────────
 
-    def _run_phase(
+    def _execute_phase(
         self,
-        frame: ContextFrame,
+        current_phase: str,
+        artifact: dict,
         candidates: list[CandidateOutput],
+        output_language: str,
         max_phase_retries: int,
     ) -> tuple[NormalizationResult, LLMOutput, int]:
         """
-        Call LLM and validate, retrying on rejection up to max_phase_retries times.
+        Drive one phase to completion: handle act turns (execute ops, re-call LLM)
+        and decide turns (validate, retry on rejection).
         Returns (result, output, retry_count).
         """
-        current_phase = frame.current_phase
         allowed_next = [c.next_phase for c in candidates]
+        control_ir_results: list[dict] = []
         prior_attempts: list[dict[str, str]] = []
 
-        for attempt in range(max_phase_retries + 1):
-            if attempt > 0:
+        while True:
+            frame = self._build_frame(
+                current_phase, artifact, candidates, output_language,
+                control_ir_results=control_ir_results,
+            )
+
+            if prior_attempts:
                 last_error = prior_attempts[-1]["error"]
                 self.events.emit(
                     "phase_retry", phase=current_phase,
-                    attempt=attempt, max_retries=max_phase_retries, error=last_error,
+                    attempt=len(prior_attempts), max_retries=max_phase_retries, error=last_error,
                 )
                 print(
-                    f"[phase:{current_phase}] retry {attempt}/{max_phase_retries} "
+                    f"[phase:{current_phase}] retry {len(prior_attempts)}/{max_phase_retries} "
                     f"— {last_error[:120]}"
                 )
 
@@ -296,6 +304,27 @@ class OSRuntime:
             print(f"[phase:{current_phase}] calling LLM ({self.model})...")
             raw = call_llm(self.model, frame, prior_attempts=prior_attempts or None)
 
+            if raw.get("type") == "act":
+                try:
+                    act = ActOutput.model_validate(raw)
+                except pydantic.ValidationError as exc:
+                    prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
+                    if len(prior_attempts) > max_phase_retries:
+                        self.events.emit("phase_failed", phase=current_phase,
+                                         attempts=len(prior_attempts), final_error=str(exc))
+                        raise ValueError(
+                            f"Phase '{current_phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
+                        ) from exc
+                    continue
+
+                ir_results = self.control_ir_executor.execute(act.ops, phase=current_phase)
+                pending = [r for r in ir_results if _has_ir_content(r)]
+                control_ir_results = pending
+                prior_attempts = []  # reset retries after a successful act turn
+                self.events.emit("act_executed", phase=current_phase, op_count=len(act.ops))
+                continue  # re-call LLM with results
+
+            # decide turn
             try:
                 result, output = self._validate_phase_output(raw, current_phase, candidates, allowed_next)
                 return result, output, len(prior_attempts)
@@ -303,16 +332,14 @@ class OSRuntime:
                 raise
             except ValueError as exc:
                 prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
-                if attempt >= max_phase_retries:
+                if len(prior_attempts) > max_phase_retries:
                     self.events.emit(
                         "phase_failed", phase=current_phase,
-                        attempts=attempt + 1, final_error=str(exc),
+                        attempts=len(prior_attempts), final_error=str(exc),
                     )
                     raise ValueError(
-                        f"Phase '{current_phase}' failed after {attempt + 1} attempt(s): {exc}"
+                        f"Phase '{current_phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
                     ) from exc
-
-        raise RuntimeError("unreachable")  # satisfies type checker
 
     # ── Logging ────────────────────────────────────────────────────────────────
 
@@ -368,23 +395,12 @@ class OSRuntime:
 
             while True:  # outer: phase transitions
                 candidates = self._build_candidates(current_phase)
-                control_ir_results: list[dict] = []
+                result, output, retry_count = self._execute_phase(
+                    current_phase, artifact, candidates, output_language, max_phase_retries,
+                )
 
-                while True:  # inner: control_ir feedback loop within a phase
-                    frame = self._build_frame(
-                        current_phase, artifact, candidates, output_language,
-                        control_ir_results=control_ir_results,
-                    )
-                    result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
-
-                    ir_results = self.control_ir_executor.execute(
-                        output.control_ir, phase=current_phase
-                    )
-                    pending = [r for r in ir_results if _has_ir_content(r)]
-                    if pending:
-                        control_ir_results = pending
-                        continue  # re-call LLM in same phase with results
-                    break  # no pending results → proceed to transition
+                # Execute write ops from decide turn (reads already handled inside _execute_phase)
+                self.control_ir_executor.execute(output.ops, phase=current_phase)
 
                 self.workspace.store_artifact(current_phase, output.artifact)
 

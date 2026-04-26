@@ -7,8 +7,9 @@ App-agnostic, Phase-agnostic, DSL-agnostic.
 Input:  raw dict from LLM, list of allowed next_phase values (including "end")
 Output: NormalizationResult with a ControlDecision and artifact
 
-Preferred format (strict — validated fully):
+Preferred format — decide turn (strict — validated fully):
   {
+    "type": "decide",
     "control": {
       "type": "transition|finish|abort",
       "decision": "continue|finish|abort",
@@ -17,8 +18,11 @@ Preferred format (strict — validated fully):
       "reason": {"summary": "..."}
     },
     "artifact": {"type": "...", "data": {...}},
-    "control_ir": []
+    "ops": []
   }
+
+Act turn (handled by runtime before reaching normalizer):
+  {"type": "act", "ops": [...]}
 
 Legacy backward-compat format (synthesized — no strict validation):
   {"next_phase": "...", "artifact": {...}, "confidence": ..., "reason": "..."}
@@ -45,7 +49,7 @@ class ControlIRValidationError(Exception):
 class NormalizationResult:
     control: ControlDecision
     artifact: dict[str, Any] = field(default_factory=dict)
-    control_ir: list[Any] = field(default_factory=list)
+    ops: list[Any] = field(default_factory=list)
     # provenance
     was_normalized: bool = False    # control was recovered from non-canonical field
     original_raw_type: str | None = None  # what LLM sent if different (e.g. "end", "finish")
@@ -73,7 +77,7 @@ def _extract_artifact(raw: dict) -> dict:
     """
     if "artifact" in raw:
         return raw["artifact"]
-    excluded = {"next_phase", "status", "control_ir", "reason", "confidence",
+    excluded = {"type", "next_phase", "status", "ops", "reason", "confidence",
                 "final_output", "artifact", "control"}
     return {k: v for k, v in raw.items() if k not in excluded}
 
@@ -118,7 +122,7 @@ _VALID_TYPES = ("transition", "finish", "abort")
 _VALID_DECISIONS = ("continue", "finish", "abort")
 
 
-def _validate_control_ir_strict(control: dict) -> None:
+def _validate_control_block(control: dict) -> None:
     """
     Validate a control block against the strict spec.
     Raises ControlIRValidationError on any violation.
@@ -207,7 +211,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
             f"'control' must be a JSON object, got {type(control_raw).__name__}"
         )
 
-    _validate_control_ir_strict(control_raw)
+    _validate_control_block(control_raw)
 
     ctrl_type = control_raw["type"]
     ctrl_decision = control_raw["decision"]
@@ -221,7 +225,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
             type="abort", decision="abort", next_phase=None,
             confidence=confidence, reason=ctrl_reason,
         )
-        return NormalizationResult(control=control, artifact=artifact, control_ir=raw.get("control_ir", []))
+        return NormalizationResult(control=control, artifact=artifact, ops=raw.get("ops", []))
 
     if ctrl_type == "finish":
         if "end" not in allowed_next_phases:
@@ -235,7 +239,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
                 )
                 return NormalizationResult(
                     control=control, artifact=artifact,
-                    control_ir=raw.get("control_ir", []),
+                    ops=raw.get("ops", []),
                     was_normalized=True, original_raw_type="finish",
                 )
             raise NormalizationError(
@@ -246,7 +250,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
             type="finish", decision="finish", next_phase=None,
             confidence=confidence, reason=ctrl_reason,
         )
-        return NormalizationResult(control=control, artifact=artifact, control_ir=raw.get("control_ir", []))
+        return NormalizationResult(control=control, artifact=artifact, ops=raw.get("ops", []))
 
     # transition
     if ctrl_next in allowed_next_phases:
@@ -254,7 +258,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
             type="transition", decision=ctrl_decision,
             next_phase=ctrl_next, confidence=confidence, reason=ctrl_reason,
         )
-        return NormalizationResult(control=control, artifact=artifact, control_ir=raw.get("control_ir", []))
+        return NormalizationResult(control=control, artifact=artifact, ops=raw.get("ops", []))
 
     # next_phase not in allowed
     if len(allowed_next_phases) == 1 and allowed_next_phases[0] != "end":
@@ -266,7 +270,7 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
         )
         return NormalizationResult(
             control=control, artifact=artifact,
-            control_ir=raw.get("control_ir", []),
+            ops=raw.get("ops", []),
             was_normalized=True, original_raw_type=f"transition/{ctrl_next}",
         )
 
@@ -302,7 +306,7 @@ def _normalize_legacy(raw: dict, allowed_next_phases: list[str]) -> Normalizatio
         )
         return NormalizationResult(
             control=control, artifact=artifact,
-            control_ir=raw.get("control_ir", []),
+            ops=raw.get("ops", []),
             was_normalized=was_normalized, original_raw_type=original, was_inferred=was_inferred,
         )
 
@@ -340,7 +344,7 @@ def _normalize_legacy(raw: dict, allowed_next_phases: list[str]) -> Normalizatio
         )
         return NormalizationResult(
             control=control, artifact=artifact,
-            control_ir=raw.get("control_ir", []),
+            ops=raw.get("ops", []),
             was_normalized=True, original_raw_type="finish",
         )
 

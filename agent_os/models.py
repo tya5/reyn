@@ -111,11 +111,17 @@ class CandidateOutput(BaseModel):
     description: str = ""
 
 
+class ActOutput(BaseModel):
+    """Act-turn output: execute ops and be re-called with results."""
+    type: Literal["act"]
+    ops: list[ControlIROp] = Field(default_factory=list)
+
+
 class LLMOutput(BaseModel):
-    """Unified LLM output — control decision + artifact."""
+    """Decide-turn output: routing decision + artifact (+ optional write ops)."""
     control: ControlDecision
     artifact: dict[str, Any]
-    control_ir: list[ControlIROp] = Field(default_factory=list)
+    ops: list[ControlIROp] = Field(default_factory=list)
 
     @property
     def next_phase(self) -> str:
