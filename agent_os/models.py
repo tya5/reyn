@@ -1,6 +1,6 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, Field
 
 
@@ -31,10 +31,38 @@ class App(BaseModel):
     finish_criteria: list[str] = Field(default_factory=list)
 
 
-class ControlIROp(BaseModel):
-    op: Literal["write_file", "read_file"]
+class FileIROp(BaseModel):
+    kind: Literal["file"]
+    op: Literal["read", "write"]
     path: str
     content: str | None = None
+
+
+class ToolIROp(BaseModel):
+    kind: Literal["tool"]
+    name: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPIROp(BaseModel):
+    kind: Literal["mcp"]
+    server: str
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class SubAgentIROp(BaseModel):
+    kind: Literal["subagent"]
+    agent: str
+    input: dict[str, Any] = Field(default_factory=dict)
+
+
+# Discriminated union — Pydantic selects the variant via the "kind" field.
+# Only "file" is implemented; others are safely skipped by ControlIRExecutor.
+ControlIROp = Annotated[
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp],
+    Field(discriminator="kind"),
+]
 
 
 class ControlReason(BaseModel):

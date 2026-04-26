@@ -1,7 +1,9 @@
 import json
+import pydantic
 from .models import App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
+from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
 from .llm import call_llm
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
@@ -63,6 +65,7 @@ class OSRuntime:
         self.model = model
         self.events = EventLog()
         self.workspace = Workspace(workspace_dir, self.events)
+        self.control_ir_executor = ControlIRExecutor(self.workspace, self.events)
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
 
@@ -215,11 +218,16 @@ class OSRuntime:
                 f"Artifact data validation failed for '{normalized.get('type')}': {error_str}"
             )
 
-        output = LLMOutput(
-            control=result.control,
-            artifact={**normalized, "data": norm_data},
-            control_ir=result.control_ir,
-        )
+        try:
+            output = LLMOutput(
+                control=result.control,
+                artifact={**normalized, "data": norm_data},
+                control_ir=result.control_ir,
+            )
+        except pydantic.ValidationError as exc:
+            msg = f"Invalid control_ir structure: {exc}"
+            self.events.emit("validation_error", phase=current_phase, error=msg)
+            raise ValueError(msg) from exc
 
         try:
             validate_output(output, candidates)
@@ -336,7 +344,7 @@ class OSRuntime:
                 frame = self._build_frame(current_phase, artifact, candidates, output_language)
                 result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
 
-                self.workspace.execute_control_ir(output.control_ir)
+                self.control_ir_executor.execute(output.control_ir)
                 self.workspace.store_artifact(current_phase, output.artifact)
 
                 self.events.emit(
