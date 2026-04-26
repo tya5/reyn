@@ -71,6 +71,25 @@ User → Agent → App → OS → Phase → Workspace
 * Only App defines final output schema
 * OS validates final output against it
 
+## P7. OS is App-Agnostic (CRITICAL)
+
+* OS MUST NOT contain any phase name, artifact type name, or field name specific to any App
+* Detection rule: if a string literal that names a specific phase (`"revise"`, `"draft_article"`, etc.) or a specific field (`"title"`, `"body"`, `"quality_notes"`) appears in OS code, it is a violation
+* When a new App is added, the OS code MUST NOT change
+
+Root causes to watch for:
+
+* Fallback logic that fabricates app-specific fields → return raw artifact data instead
+* Control decision vocabulary that encodes app concepts (`decision="revise"`) → use only OS-level values: `continue | finish | abort`
+* Hardcoded artifact type names in any OS module
+
+## P8. Phase Instructions Contain Only Domain Logic
+
+* Phase instructions MUST NOT enumerate output artifact fields
+* Phase instructions MUST NOT describe Control IR format
+* These concerns are injected by the OS at runtime via `candidate_outputs` and `available_control_ops`
+* Legitimate instruction content: WHAT to analyze/generate/decide, WHEN to use which candidate, domain-specific rules
+
 ---
 
 # 3. Core Components
@@ -132,21 +151,34 @@ User → Agent → App → OS → Phase → Workspace
 
 # 5. Context Frame
 
-The OS MUST construct the context for LLM:
+The OS MUST construct the context for LLM. ContextFrame is read-only, regenerated every phase, never persisted.
 
 ```json
 {
   "current_phase": "...",
-  "input_artifact": {},
-  "history_summary": "...",
-  "available_transitions": [
+  "current_phase_role": "...",
+  "instructions": "...",
+  "input_artifact": {"type": "...", "data": {}},
+  "execution": {
+    "path": ["phase_a → phase_b"],
+    "current_visit": 1,
+    "total_steps": 3
+  },
+  "candidate_outputs": [
     {
-      "phase": "...",
-      "input_schema": {}
+      "next_phase": "phase_name or end",
+      "control_type": "transition|finish",
+      "schema_name": "artifact_type_name",
+      "artifact_schema": {},
+      "description": "..."
     }
   ],
-  "can_finish": true,
-  "final_output_schema": {}
+  "finish_criteria": [],
+  "constraints": {"max_phase_visits": null},
+  "available_control_ops": [
+    {"kind": "file", "description": "...", "example": {}}
+  ],
+  "output_language": "ja"
 }
 ```
 
@@ -154,26 +186,43 @@ The OS MUST construct the context for LLM:
 
 # 6. LLM Output Contract
 
-## Transition
+All phases use a single unified format. The OS rejects output that does not conform.
 
 ```json
 {
-  "status": "transition",
-  "next_phase": "...",
-  "artifact": {},
+  "control": {
+    "type": "transition|finish|abort",
+    "decision": "continue|finish|abort",
+    "next_phase": "<phase_name> or null",
+    "confidence": 0.0,
+    "reason": {"summary": "one-sentence explanation"}
+  },
+  "artifact": {"type": "<schema_name>", "data": {}},
   "control_ir": []
 }
 ```
 
-## Finish
+## control.decision values (OS-level only)
 
-```json
-{
-  "status": "finish",
-  "final_output": {},
-  "control_ir": []
-}
-```
+* `"continue"` — normal transition to any next phase (including revision loops)
+* `"finish"` — workflow ends. Requires `type="finish"` and `next_phase=null`
+* `"abort"` — unrecoverable error. Requires `type="abort"` and `next_phase=null`
+
+`"revise"` is NOT a valid decision value. It was removed because it encodes an app-specific concept (P7).
+Any transition to a "revise" phase uses `decision="continue"`.
+
+## Consistency rules (violations are rejected)
+
+* `type="finish"` → `decision="finish"`, `next_phase=null`
+* `type="transition"` → `next_phase` is non-null
+* `type="abort"` → `decision="abort"`, `next_phase=null`
+
+## control_ir
+
+List of side-effect operations. Available kinds are injected via `available_control_ops` in ContextFrame.
+
+* `file` — read or write a file in the workspace
+* `ask_user` — pause phase, ask user a question, re-inject response as `user_message` into the same phase
 
 ---
 
@@ -225,10 +274,43 @@ Event log MUST allow replay in the future
 * NEVER allow LLM to choose arbitrary next phase
 * ALWAYS validate LLM output
 * ALWAYS emit events
+* NEVER put app-specific phase names, artifact type names, or field names in OS code (P7)
+* NEVER enumerate output artifact fields in Phase instructions (P8)
+* NEVER describe Control IR format in Phase instructions — inject via available_control_ops (P8)
 
 ---
 
-# 11. MVP Scope
+# 11. Input Handling
+
+## CLI Input
+
+* JSON string → used as-is (structured artifact)
+* Natural language string → wrapped as `{"type": "user_message", "data": {"text": "..."}}`
+* The OS does NOT parse or structure natural language input
+
+## user_message Artifact
+
+* Shared artifact defined in `dsl/shared/artifacts/user_message.md`
+* Apps that accept natural language input declare `input: user_message | <other_artifact>` in their entry phase
+* Structuring the natural language into domain artifacts is the Phase's responsibility
+
+## ask_user (User Intervention)
+
+When a phase needs information it cannot infer:
+
+1. Phase emits `{"kind": "ask_user", "question": "...", "suggestions": [...]}` in `control_ir`
+2. OS prints the question and reads user input from stdin
+3. OS merges the original input + Q&A into a `user_message` artifact
+4. OS re-runs the **same phase** with the merged artifact (visit count does not increment)
+5. Events emitted: `user_intervention_requested`, `user_intervention_received`
+
+Responsibility boundary:
+* OS — collects input, re-injects, emits events
+* Phase — decides WHEN to ask and WHAT to ask (domain logic)
+
+---
+
+# 13. MVP Scope
 
 You are currently implementing MVP.
 
@@ -249,7 +331,7 @@ Focus ONLY on:
 
 ---
 
-# 12. Goal
+# 14. Goal
 
 The goal of MVP is NOT performance.
 
