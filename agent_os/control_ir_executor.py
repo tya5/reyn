@@ -42,7 +42,8 @@ class ControlIRExecutor:
                 kind="ask_user",
                 description=(
                     "Pause the phase and ask the user a clarifying question. "
-                    "The user's response is re-injected as user_message into the same phase. "
+                    "The user's response is injected into user_responses in the next ContextFrame "
+                    "and the same phase re-runs with the original input_artifact unchanged. "
                     "Use when required data is missing and cannot be inferred."
                 ),
                 example={
@@ -119,7 +120,7 @@ class ControlIRExecutor:
         if not text and not op.required:
             text = ""
 
-        self.events.emit("user_intervention_received", phase=phase, text=text)
-        response = {"kind": "ask_user", "question": op.question, "text": text, "status": "ok"}
+        self.events.emit("user_intervention_received", phase=phase, answer=text)
+        response = {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
         self._pending_user_responses.append(response)
         return response

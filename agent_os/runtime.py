@@ -68,6 +68,7 @@ class OSRuntime:
         self.control_ir_executor = ControlIRExecutor(self.workspace, self.events)
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
+        self._pending_user_responses: list[dict[str, str]] = []
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -116,6 +117,7 @@ class OSRuntime:
         artifact: dict,
         candidates: list[CandidateOutput],
         output_language: str,
+        user_responses: list[dict[str, str]] | None = None,
     ) -> ContextFrame:
         phase = self.app.phases[current_phase]
         allowed_next = [c.next_phase for c in candidates]
@@ -140,6 +142,7 @@ class OSRuntime:
             ),
             available_control_ops=self.control_ir_executor.available_ops(),
             output_language=output_language,
+            user_responses=user_responses or [],
         )
 
         # Audit: record the exact ContextFrame passed to the LLM for replay/debug
@@ -303,28 +306,6 @@ class OSRuntime:
         )
         return f"{norm}{retries}  (confidence={result.control.confidence})"
 
-    # ── User intervention ──────────────────────────────────────────────────────
-
-    @staticmethod
-    def _build_user_message_artifact(
-        original: dict,
-        response: dict[str, str],
-    ) -> dict:
-        """
-        Merge the original input with an ask_user response into a user_message artifact.
-        The LLM receives the full conversation history in a single text field.
-        """
-        question = response.get("question", "")
-        answer = response.get("text", "")
-
-        if original.get("type") == "user_message":
-            prior_text = original.get("data", {}).get("text", "")
-        else:
-            prior_text = f"[Context: {json.dumps(original.get('data', {}), ensure_ascii=False)}]"
-
-        merged = f"{prior_text}\n\n[Q: {question}]\n[A: {answer}]".strip()
-        return {"type": "user_message", "data": {"text": merged}}
-
     # ── Fallback ────────────────────────────────────────────────────────────────
 
     def _fallback_final_output(self) -> dict:
@@ -362,15 +343,22 @@ class OSRuntime:
 
             while True:
                 candidates = self._build_candidates(current_phase)
-                frame = self._build_frame(current_phase, artifact, candidates, output_language)
+                frame = self._build_frame(
+                    current_phase, artifact, candidates, output_language,
+                    user_responses=self._pending_user_responses,
+                )
+                self._pending_user_responses = []  # consumed by this frame
                 result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
 
                 self.control_ir_executor.execute(output.control_ir, phase=current_phase)
-                user_responses = self.control_ir_executor.pop_user_responses()
+                new_responses = self.control_ir_executor.pop_user_responses()
 
-                if user_responses:
-                    artifact = self._build_user_message_artifact(artifact, user_responses[-1])
-                    continue  # re-run same phase with user's answer
+                if new_responses:
+                    self._pending_user_responses = [
+                        {"question": r["question"], "answer": r["answer"]}
+                        for r in new_responses
+                    ]
+                    continue  # re-run same phase with user_responses in next frame
 
                 self.workspace.store_artifact(current_phase, output.artifact)
 

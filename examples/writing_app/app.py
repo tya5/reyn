@@ -157,15 +157,11 @@ phases = {
             "3. remaining issues are minor tweaks → prefer finish.\n"
             "4. Do NOT optimize indefinitely. Diminishing returns justify finishing.\n"
             "\n"
-            "If finishing: respond with status=finish, include reason and confidence at the top level, "
-            "and set final_output to {title, body, quality_notes}.\n"
-            "\n"
-            "If revising: produce "
-            '{"type":"judge_decision","data":{'
-            '"decision":"revise","reason":"...","confidence":0.0-1.0,'
-            '"article":{"title":"...","body":"..."},'
-            '"revision_notes":[...specific actionable instructions, max 3...]'
-            "}}."
+            "Choose the candidate that matches your decision:\n"
+            "- finish (end candidate): use data.article.title and data.article.body. "
+            "Summarize the review outcome concisely.\n"
+            "- revise (revise candidate): carry data.article forward unchanged. "
+            "Limit revision_notes to 3 actionable items."
         ),
     ),
 
@@ -178,9 +174,6 @@ phases = {
                 "data": {
                     "type": "object",
                     "properties": {
-                        "decision": {"type": "string", "const": "revise"},
-                        "reason": {"type": "string"},
-                        "confidence": {"type": "number"},
                         "article": {
                             "type": "object",
                             "properties": {
@@ -195,7 +188,7 @@ phases = {
                             "minItems": 1,
                         },
                     },
-                    "required": ["decision", "article", "revision_notes"],
+                    "required": ["article", "revision_notes"],
                 },
             },
             "required": ["type", "data"],

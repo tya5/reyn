@@ -144,6 +144,9 @@ class ContextFrame(BaseModel):
     constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
     available_control_ops: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
+    # Populated when the phase previously emitted ask_user and the user responded.
+    # Each entry: {"question": str, "answer": str}. Empty on first entry.
+    user_responses: list[dict[str, str]] = Field(default_factory=list)
 
 
 class Event(BaseModel):

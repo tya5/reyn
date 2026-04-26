@@ -55,6 +55,12 @@ Artifact rules:
 - IMPORTANT: Do NOT put "type" inside the "data" object. "type" belongs only at artifact level.
 - IMPORTANT: The "data" object must contain ONLY schema fields — no meta fields.
 - All user-facing text in artifact.data MUST be written in the language specified by output_language.
+
+user_responses (populated by ask_user):
+- When non-empty, the phase previously paused to ask the user a question.
+- Each entry has "question" (what was asked) and "answer" (user's response).
+- Use these answers together with input_artifact to fulfill the phase's goal.
+- If empty, proceed normally using only input_artifact.
 """
 
 

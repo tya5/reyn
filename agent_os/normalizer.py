@@ -11,7 +11,7 @@ Preferred format (strict — validated fully):
   {
     "control": {
       "type": "transition|finish|abort",
-      "decision": "continue|revise|finish|abort",
+      "decision": "continue|finish|abort",
       "next_phase": "<phase_name>|null",
       "confidence": 0.0-1.0,
       "reason": {"summary": "..."}
