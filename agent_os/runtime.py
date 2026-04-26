@@ -325,7 +325,7 @@ class OSRuntime:
                 prior_attempts = []  # reset retries after a successful act turn
                 self.events.emit("act_executed", phase=current_phase,
                                  op_count=len(act.ops), act_turn=act_turn_count)
-                print(f"[phase:{current_phase}] act turn #{act_turn_count} — {len(act.ops)} op(s)")
+                self._log_act_turn(current_phase, act_turn_count, act.ops, ir_results)
                 continue  # re-call LLM with results
 
             # decide turn
@@ -346,6 +346,31 @@ class OSRuntime:
                     ) from exc
 
     # ── Logging ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _log_act_turn(phase: str, turn: int, ops: list, results: list[dict]) -> None:
+        print(f"[phase:{phase}] act turn #{turn}")
+        for op in ops:
+            kind = getattr(op, "kind", "?")
+            if kind == "file":
+                print(f"  op: file {op.op} → {op.path}")  # type: ignore[union-attr]
+            elif kind == "ask_user":
+                print(f"  op: ask_user → {op.question[:80]}")  # type: ignore[union-attr]
+            else:
+                print(f"  op: {kind}")
+        for r in results:
+            kind = r.get("kind", "?")
+            status = r.get("status", "?")
+            if kind == "file" and r.get("op") == "read":
+                content_len = len(r.get("content") or "")
+                print(f"  result: file read {r.get('path')} [{status}] ({content_len} chars)")
+            elif kind == "file" and r.get("op") == "write":
+                print(f"  result: file write {r.get('path')} [{status}]")
+            elif kind == "ask_user":
+                answer = (r.get("answer") or "")[:60]
+                print(f"  result: ask_user [{status}] answer={answer!r}")
+            else:
+                print(f"  result: {kind} [{status}]")
 
     @staticmethod
     def _phase_log_suffix(result: NormalizationResult, retry_count: int) -> str:
