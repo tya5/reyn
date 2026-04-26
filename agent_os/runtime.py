@@ -320,8 +320,7 @@ class OSRuntime:
         if original.get("type") == "user_message":
             prior_text = original.get("data", {}).get("text", "")
         else:
-            import json as _json
-            prior_text = f"[Context: {_json.dumps(original.get('data', {}), ensure_ascii=False)}]"
+            prior_text = f"[Context: {json.dumps(original.get('data', {}), ensure_ascii=False)}]"
 
         merged = f"{prior_text}\n\n[Q: {question}]\n[A: {answer}]".strip()
         return {"type": "user_message", "data": {"text": merged}}
@@ -329,20 +328,18 @@ class OSRuntime:
     # ── Fallback ────────────────────────────────────────────────────────────────
 
     def _fallback_final_output(self) -> dict:
+        """
+        Return the best available data when the workflow terminates abnormally.
+        Prefers the last artifact matching final_output_name; falls back to the
+        last stored artifact. The OS never fabricates app-specific fields.
+        """
         for entry in reversed(self.workspace.artifacts):
             art = entry["artifact"]
-            if art.get("type") in (self.app.final_output_name, "draft_article", "revised_article"):
-                data = art.get("data", {})
-                return {
-                    "title": data.get("title", ""),
-                    "body": data.get("body", ""),
-                    "quality_notes": ["Workflow terminated: loop limit exceeded"],
-                }
-        return {
-            "title": "",
-            "body": "Workflow terminated before an article was produced.",
-            "quality_notes": ["loop_limit_exceeded"],
-        }
+            if art.get("type") == self.app.final_output_name:
+                return art.get("data", {})
+        if self.workspace.artifacts:
+            return self.workspace.artifacts[-1]["artifact"].get("data", {})
+        return {}
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 

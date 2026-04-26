@@ -11,7 +11,7 @@ Output format:
 {
   "control": {
     "type": "transition|finish|abort",
-    "decision": "continue|revise|finish|abort",
+    "decision": "continue|finish|abort",
     "next_phase": "<phase_name> or null",
     "confidence": 0.0-1.0,
     "reason": {"summary": "one-sentence explanation"}
@@ -28,8 +28,7 @@ control.type rules:
 - "abort": unrecoverable error. next_phase MUST be null.
 
 control.decision rules:
-- "continue": normal progression to the next phase.
-- "revise": revision needed. type MUST be "transition" and next_phase MUST be "revise".
+- "continue": normal progression to the next phase (any transition, including back to an earlier phase).
 - "finish": workflow is complete. type MUST be "finish" and next_phase MUST be null.
 - "abort": cannot continue. type MUST be "abort".
 
@@ -39,7 +38,7 @@ control.confidence MUST be a float in [0.0, 1.0].
 Consistency requirements (violations are rejected):
 - type="finish" → decision="finish", next_phase=null
 - type="transition" → next_phase is non-null
-- decision="revise" → type="transition", next_phase="revise"
+- type="abort"    → decision="abort", next_phase=null
 
 Do not rely on automatic correction. Every field must be present and valid.
 

@@ -108,9 +108,6 @@ def _infer_legacy_decision(
         return "abort"
     if ctrl_type == "finish":
         return "finish"
-    # transition
-    if next_phase == "revise":
-        return "revise"
     return "continue"
 
 
@@ -118,7 +115,7 @@ def _infer_legacy_decision(
 
 _REQUIRED_CONTROL_FIELDS = ("type", "decision", "next_phase", "confidence", "reason")
 _VALID_TYPES = ("transition", "finish", "abort")
-_VALID_DECISIONS = ("continue", "revise", "finish", "abort")
+_VALID_DECISIONS = ("continue", "finish", "abort")
 
 
 def _validate_control_ir_strict(control: dict) -> None:
@@ -187,18 +184,6 @@ def _validate_control_ir_strict(control: dict) -> None:
         if not control["next_phase"]:
             raise ControlIRValidationError(
                 "control.type='transition' requires a non-empty control.next_phase"
-            )
-
-    if ctrl_decision == "revise":
-        if ctrl_type != "transition":
-            raise ControlIRValidationError(
-                f"control.decision='revise' requires control.type='transition', "
-                f"got {ctrl_type!r}"
-            )
-        if control["next_phase"] != "revise":
-            raise ControlIRValidationError(
-                f"control.decision='revise' requires control.next_phase='revise', "
-                f"got {control['next_phase']!r}"
             )
 
     if ctrl_type == "abort":

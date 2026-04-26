@@ -34,11 +34,6 @@ def validate_output(
         raise ValidationError(
             f"control.type='finish' requires control.decision='finish', got {ctrl.decision!r}"
         )
-    if ctrl.decision == "revise" and ctrl.type != "transition":
-        raise ValidationError(
-            f"control.decision='revise' requires control.type='transition', got {ctrl.type!r}"
-        )
-
     # Validate effective next_phase against candidates
     effective = output.next_phase
     candidate_map = {c.next_phase: c for c in candidates}

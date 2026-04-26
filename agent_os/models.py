@@ -80,7 +80,7 @@ class ControlReason(BaseModel):
 class ControlDecision(BaseModel):
     """Routing decision returned by the LLM. Strict contract — no runtime inference."""
     type: Literal["transition", "finish", "abort"]
-    decision: Literal["continue", "revise", "finish", "abort"]
+    decision: Literal["continue", "finish", "abort"]
     next_phase: str | None = None  # phase name for transition; None for finish/abort
     confidence: float = 1.0
     reason: ControlReason
