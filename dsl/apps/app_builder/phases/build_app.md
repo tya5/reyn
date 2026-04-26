@@ -7,24 +7,51 @@ role: dsl_writer
 can_finish: true
 ---
 
-Generate DSL markdown files for the app defined in data, then write each one to the workspace using control_ir file ops.
+Generate DSL markdown files for the app defined in data, then write each one to the workspace using file ops.
 
-DSL format rules:
+CRITICAL: Every file MUST start with `---` and end the frontmatter block with `---`. Missing delimiters will break the parser.
 
 app.md (write to {app_path}/app.md):
-  Frontmatter fields: type: app, name, entry (entry_phase value), final_output, final_output_description, finish_criteria (YAML list)
-  Body: one transition per line as "phase_a -> phase_b"
+```
+---
+type: app
+name: {app_name}
+entry: {entry_phase}
+final_output: {final_output.name}
+final_output_description: {final_output.description}
+finish_criteria:
+  - {criterion1}
+  - {criterion2}
+---
 
-phase files (write to {app_path}/phases/{phase_name}.md):
-  Frontmatter fields: type: phase, name, input (input_artifact value), input_description, role, can_finish (only if true)
-  Body: the instructions text verbatim
+{phase_a} -> {phase_b}
+{phase_b} -> {phase_c}
+```
 
-artifact files (write to {app_path}/artifacts/{artifact_name}.md):
-  Frontmatter fields: type: artifact, name
-  Body: one field per line as "field_name: type"
+phase file (write to {app_path}/phases/{phase_name}.md):
+```
+---
+type: phase
+name: {phase_name}
+input: {input_artifact}
+input_description: {input_description}
+role: {role}
+can_finish: true
+---
 
-final_output artifact (write to {app_path}/artifacts/{final_output.name}.md):
-  Same format as other artifact files
+{instructions text verbatim}
+```
+Omit `can_finish` line if the phase cannot finish.
 
-Write all files in a single response using one control_ir op per file.
-After writing, report the list of file paths written.
+artifact file (write to {app_path}/artifacts/{artifact_name}.md):
+```
+---
+type: artifact
+name: {artifact_name}
+---
+
+{field_name}: {type}
+{field_name}: {type}
+```
+
+Write all files using one op per file. After writing, output a decide turn reporting the files written.
