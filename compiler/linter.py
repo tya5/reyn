@@ -60,7 +60,7 @@ def lint_artifact(path: Path, known_types: set[str]) -> list[LintIssue]:
         if not _is_snake(f.name):
             issues.append(LintIssue("warning", path, f"Field name '{f.name}' should be snake_case"))
 
-        if f.type_str not in known_types:
+        if f.schema is None and f.type_str not in known_types:
             issues.append(LintIssue(
                 "error", path,
                 f"Field '{f.name}' has unknown type '{f.type_str}'"

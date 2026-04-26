@@ -27,13 +27,17 @@ def _field_schema(
     artifact_defs: dict[str, ArtifactDef] | None = None,
 ) -> dict[str, Any]:
     """
-    Resolve a DSL type string to a JSON Schema fragment.
+    Resolve a DSL field to a JSON Schema fragment.
 
     Resolution order:
-      1. Primitive type → direct mapping
-      2. Artifact reference → inline-expand the artifact's data schema
-      3. Weak fallback ("object") → {"type": "object"} with warning
+      1. Inline JSON Schema (f.schema set) → pass through as-is
+      2. Primitive type alias → direct mapping via _TYPE_MAP
+      3. Artifact reference → inline-expand the artifact's data schema
+      4. Weak fallback ("object") → {"type": "object"} with warning
     """
+    if f.schema is not None:
+        return f.schema
+
     if f.type_str in _TYPE_MAP:
         if f.type_str in _WEAK_TYPES:
             warnings.warn(

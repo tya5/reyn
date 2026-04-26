@@ -4,8 +4,9 @@ from dataclasses import dataclass, field
 @dataclass
 class FieldDef:
     name: str
-    type_str: str      # string | number | integer | boolean | object | string[] | number[] | any
+    type_str: str      # primitive alias (string | number | integer | boolean | string[] | ...)
     optional: bool = False  # True when declared as "field?: type"
+    schema: dict | None = None  # inline JSON Schema — takes priority over type_str when set
 
 
 @dataclass

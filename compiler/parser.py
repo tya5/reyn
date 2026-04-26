@@ -18,23 +18,38 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
 
 def _parse_fields(body: str) -> list[FieldDef]:
     """
-    Parse field definitions from an artifact body.
+    Parse field definitions from an artifact body via YAML.
 
-    Syntax:
-      name: type      # required field
-      name?: type     # optional field
+    Simple primitive type (string value):
+      name: string        # required
+      name?: integer      # optional
+      tags: string[]
+
+    Inline JSON Schema (dict value — any valid JSON Schema):
+      scores:
+        type: array
+        items:
+          type: number
+
+      metadata?:
+        type: object
+        properties:
+          key: {type: string}
+          value: {type: string}
+        required: [key]
     """
+    data = yaml.safe_load(body)
+    if not data or not isinstance(data, dict):
+        return []
     fields = []
-    for line in body.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" in line:
-            name_part, type_str = line.split(":", 1)
-            name_part = name_part.strip()
-            optional = name_part.endswith("?")
-            name = name_part[:-1] if optional else name_part
-            fields.append(FieldDef(name.strip(), type_str.strip(), optional=optional))
+    for raw_key, value in data.items():
+        raw_key = str(raw_key)
+        optional = raw_key.endswith("?")
+        name = raw_key[:-1] if optional else raw_key
+        if isinstance(value, dict):
+            fields.append(FieldDef(name=name, type_str="object", optional=optional, schema=value))
+        else:
+            fields.append(FieldDef(name=name, type_str=str(value).strip(), optional=optional))
     return fields
 
 
