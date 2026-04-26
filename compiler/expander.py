@@ -13,12 +13,13 @@ _TYPE_MAP: dict[str, dict[str, Any]] = {
     "string[]":  {"type": "array", "items": {"type": "string"}},
     "number[]":  {"type": "array", "items": {"type": "number"}},
     "integer[]": {"type": "array", "items": {"type": "integer"}},
-    # "object" is a weak type — accepted but produces no sub-schema
+    # Weak types — accepted but produce no sub-schema; use sparingly
     "object":    {"type": "object"},
+    "array":     {"type": "array"},
     "any":       {},
 }
 
-_WEAK_TYPES = {"object", "any"}
+_WEAK_TYPES = {"object", "array", "any"}
 
 
 def _field_schema(

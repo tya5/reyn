@@ -1,8 +1,8 @@
 ---
 type: phase
 name: plan_app
-input: app_request
-input_description: A user's request to build an app. app_name is a snake_case identifier; description explains what the app does step by step; goal states the final output it should produce.
+input: user_message | app_request
+input_description: Either a natural language request (user_message.data.text) or a structured app_request (data.app_name, data.description, data.goal). If critical fields are missing, use ask_user to collect them before producing the plan.
 role: app_architect
 ---
 

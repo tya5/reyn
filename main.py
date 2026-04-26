@@ -4,6 +4,14 @@ import json
 import sys
 
 
+def _parse_cli_input(raw: str) -> dict:
+    """Accept JSON or natural language. Natural language → user_message artifact."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"type": "user_message", "data": {"text": raw}}
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     if not args.app and not args.app_dsl:
         print("Error: one of --app or --app-dsl is required.", file=sys.stderr)
@@ -27,19 +35,17 @@ def cmd_run(args: argparse.Namespace) -> None:
             sys.exit(1)
         app = module.app
 
-    try:
-        initial_input = json.loads(args.input)
-    except json.JSONDecodeError as e:
-        print(f"Error: --input is not valid JSON: {e}", file=sys.stderr)
-        sys.exit(1)
+    initial_input = _parse_cli_input(args.input)
 
     from agent_os.agent import Agent
 
     agent = Agent(model=args.model, workspace_dir=args.workspace)
 
+    input_type = initial_input.get("type", "unknown")
     print(f"app             : {app.name}")
     print(f"model           : {args.model}")
     print(f"output_language : {args.output_language}")
+    print(f"input type      : {input_type}")
     print(f"input           : {json.dumps(initial_input, ensure_ascii=False)}")
     print()
 
@@ -137,8 +143,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--input",
         required=True,
-        metavar="JSON",
-        help="Initial input artifact as a JSON string",
+        metavar="TEXT",
+        help=(
+            "Initial input: JSON artifact string, or natural language "
+            "(auto-wrapped as user_message artifact)"
+        ),
     )
     run_p.add_argument(
         "--model",

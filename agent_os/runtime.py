@@ -303,6 +303,29 @@ class OSRuntime:
         )
         return f"{norm}{retries}  (confidence={result.control.confidence})"
 
+    # ── User intervention ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_user_message_artifact(
+        original: dict,
+        response: dict[str, str],
+    ) -> dict:
+        """
+        Merge the original input with an ask_user response into a user_message artifact.
+        The LLM receives the full conversation history in a single text field.
+        """
+        question = response.get("question", "")
+        answer = response.get("text", "")
+
+        if original.get("type") == "user_message":
+            prior_text = original.get("data", {}).get("text", "")
+        else:
+            import json as _json
+            prior_text = f"[Context: {_json.dumps(original.get('data', {}), ensure_ascii=False)}]"
+
+        merged = f"{prior_text}\n\n[Q: {question}]\n[A: {answer}]".strip()
+        return {"type": "user_message", "data": {"text": merged}}
+
     # ── Fallback ────────────────────────────────────────────────────────────────
 
     def _fallback_final_output(self) -> dict:
@@ -345,7 +368,13 @@ class OSRuntime:
                 frame = self._build_frame(current_phase, artifact, candidates, output_language)
                 result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
 
-                self.control_ir_executor.execute(output.control_ir)
+                self.control_ir_executor.execute(output.control_ir, phase=current_phase)
+                user_responses = self.control_ir_executor.pop_user_responses()
+
+                if user_responses:
+                    artifact = self._build_user_message_artifact(artifact, user_responses[-1])
+                    continue  # re-run same phase with user's answer
+
                 self.workspace.store_artifact(current_phase, output.artifact)
 
                 self.events.emit(

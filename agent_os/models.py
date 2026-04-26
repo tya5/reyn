@@ -57,10 +57,17 @@ class SubAgentIROp(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
 
 
+class AskUserIROp(BaseModel):
+    kind: Literal["ask_user"]
+    question: str
+    suggestions: list[str] = Field(default_factory=list)
+    required: bool = True
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# Only "file" is implemented; others are safely skipped by ControlIRExecutor.
+# "file" and "ask_user" are implemented; others are safely skipped by ControlIRExecutor.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp],
     Field(discriminator="kind"),
 ]
 
