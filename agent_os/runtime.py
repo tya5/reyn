@@ -32,6 +32,16 @@ class RunResult:
         return self.status == "finished"
 
 
+def _has_ir_content(r: dict) -> bool:
+    """True when a control_ir result contains content that should be fed back to the LLM."""
+    if r.get("status") != "ok":
+        return False
+    # write ops produce only a status acknowledgement — no content to feed back
+    if r.get("kind") == "file" and r.get("op") == "write":
+        return False
+    return True
+
+
 def _schema_type_name(schema: dict) -> str:
     props = schema.get("properties", {})
     const = props.get("type", {}).get("const")
@@ -82,7 +92,6 @@ class OSRuntime:
         self.control_ir_executor = ControlIRExecutor(self.workspace, self.events)
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
-        self._pending_user_responses: list[dict[str, str]] = []
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -131,7 +140,7 @@ class OSRuntime:
         artifact: dict,
         candidates: list[CandidateOutput],
         output_language: str,
-        user_responses: list[dict[str, str]] | None = None,
+        control_ir_results: list[dict] | None = None,
     ) -> ContextFrame:
         phase = self.app.phases[current_phase]
         allowed_next = [c.next_phase for c in candidates]
@@ -156,7 +165,7 @@ class OSRuntime:
             ),
             available_control_ops=self.control_ir_executor.available_ops(),
             output_language=output_language,
-            user_responses=user_responses or [],
+            control_ir_results=control_ir_results or [],
         )
 
         # Audit: record the exact ContextFrame passed to the LLM for replay/debug
@@ -357,24 +366,25 @@ class OSRuntime:
         try:
             self._enter_phase(current_phase, artifact)
 
-            while True:
+            while True:  # outer: phase transitions
                 candidates = self._build_candidates(current_phase)
-                frame = self._build_frame(
-                    current_phase, artifact, candidates, output_language,
-                    user_responses=self._pending_user_responses,
-                )
-                self._pending_user_responses = []  # consumed by this frame
-                result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
+                control_ir_results: list[dict] = []
 
-                self.control_ir_executor.execute(output.control_ir, phase=current_phase)
-                new_responses = self.control_ir_executor.pop_user_responses()
+                while True:  # inner: control_ir feedback loop within a phase
+                    frame = self._build_frame(
+                        current_phase, artifact, candidates, output_language,
+                        control_ir_results=control_ir_results,
+                    )
+                    result, output, retry_count = self._run_phase(frame, candidates, max_phase_retries)
 
-                if new_responses:
-                    self._pending_user_responses = [
-                        {"question": r["question"], "answer": r["answer"]}
-                        for r in new_responses
-                    ]
-                    continue  # re-run same phase with user_responses in next frame
+                    ir_results = self.control_ir_executor.execute(
+                        output.control_ir, phase=current_phase
+                    )
+                    pending = [r for r in ir_results if _has_ir_content(r)]
+                    if pending:
+                        control_ir_results = pending
+                        continue  # re-call LLM in same phase with results
+                    break  # no pending results → proceed to transition
 
                 self.workspace.store_artifact(current_phase, output.artifact)
 

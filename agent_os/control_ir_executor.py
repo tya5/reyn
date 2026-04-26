@@ -25,7 +25,6 @@ class ControlIRExecutor:
     def __init__(self, workspace: Workspace, events: EventLog) -> None:
         self.workspace = workspace
         self.events = events
-        self._pending_user_responses: list[dict[str, Any]] = []
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
@@ -59,7 +58,8 @@ class ControlIRExecutor:
         """
         Execute a list of Control IR operations.
         Returns a result dict per op; never raises — errors are captured in results.
-        ask_user responses are stored and retrieved via pop_user_responses().
+        Content-bearing results (file reads, ask_user answers) are returned directly
+        so the caller can feed them back to the LLM.
         """
         results: list[dict[str, Any]] = []
         for op in ops:
@@ -81,12 +81,6 @@ class ControlIRExecutor:
                 self.events.emit("control_ir_failed", kind=kind, error=str(exc))
             results.append(result)
         return results
-
-    def pop_user_responses(self) -> list[dict[str, Any]]:
-        """Drain and return any ask_user responses collected during the last execute() call."""
-        responses = self._pending_user_responses[:]
-        self._pending_user_responses = []
-        return responses
 
     def _execute_file(self, op: FileIROp) -> dict[str, Any]:
         if op.op == "write":
@@ -121,6 +115,4 @@ class ControlIRExecutor:
             text = ""
 
         self.events.emit("user_intervention_received", phase=phase, answer=text)
-        response = {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
-        self._pending_user_responses.append(response)
-        return response
+        return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}

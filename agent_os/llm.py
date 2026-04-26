@@ -56,11 +56,16 @@ Artifact rules:
 - IMPORTANT: The "data" object must contain ONLY schema fields — no meta fields.
 - All user-facing text in artifact.data MUST be written in the language specified by output_language.
 
-user_responses (populated by ask_user):
-- When non-empty, the phase previously paused to ask the user a question.
-- Each entry has "question" (what was asked) and "answer" (user's response).
-- Use these answers together with input_artifact to fulfill the phase's goal.
-- If empty, proceed normally using only input_artifact.
+control_ir_results (populated after control_ir ops execute):
+- When non-empty, this is NOT the first LLM call for this phase.
+- The phase previously emitted control_ir ops; the OS executed them and is now returning the results.
+- Each entry is a result dict from one op. Common shapes:
+    file read:  {"kind": "file", "op": "read", "path": "...", "content": "...", "status": "ok"}
+    ask_user:   {"kind": "ask_user", "question": "...", "answer": "...", "status": "ok"}
+- Use these results together with input_artifact to complete the phase goal and make your decision.
+- If empty, this is the first call — proceed normally using only input_artifact.
+- IMPORTANT: control_ir ops you emit THIS turn will be executed BEFORE you are re-called.
+  Only emit ops when you still need information. Once you have what you need, make your transition decision.
 """
 
 
