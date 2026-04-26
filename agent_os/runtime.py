@@ -1,3 +1,4 @@
+import json
 from .models import App, CandidateOutput, ControlDecision, ContextFrame, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
@@ -52,11 +53,9 @@ def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
     })
 
     if isinstance(artifact.get("data"), dict):
-        # Proper structure — sanitize type contamination inside data
         cleaned_data = {k: v for k, v in artifact["data"].items() if k != "type"}
         return {**artifact, "data": cleaned_data}
     else:
-        # Flat artifact — wrap it into {type, data}
         t = artifact.get("type")
         if t is None and expected_type and "|" not in expected_type:
             t = expected_type
@@ -113,11 +112,7 @@ class OSRuntime:
         Build candidate_outputs for the current phase.
 
         For each allowed next phase: use that phase's input_schema and input_description.
-        schema_name is extracted from the schema's type.const so the LLM knows what
-        artifact type to produce.
-
-        If the phase can_finish or has no outgoing transitions: add "end" candidate
-        using the app's final_output_schema and final_output_description.
+        If the phase can_finish or has no outgoing transitions: add "end" candidate.
         """
         app = self.app
         allowed = app.graph.transitions.get(current_phase, [])
@@ -147,6 +142,103 @@ class OSRuntime:
 
         return candidates
 
+    def _validate_phase_output(
+        self,
+        raw: dict,
+        current_phase: str,
+        candidates: list[CandidateOutput],
+        allowed_next: list[str],
+    ) -> tuple["NormalizationResult", dict, LLMOutput]:  # type: ignore[name-defined]
+        """
+        Normalize and validate one LLM response for the current phase.
+
+        Returns (result, normalized_artifact, output) on success.
+        Raises WorkflowAbortedError for abort (non-retryable).
+        Raises ValueError for any retryable validation failure.
+        """
+        from .normalizer import NormalizationResult  # local to avoid circular at module level
+
+        candidate_map = {c.next_phase: c for c in candidates}
+
+        # Step 1: Normalize control + artifact structure
+        try:
+            result = normalize(raw, allowed_next)
+        except ControlIRValidationError as exc:
+            self.events.emit("control_ir_validation_error", phase=current_phase, error=str(exc))
+            raise ValueError(str(exc)) from exc
+        except NormalizationError as exc:
+            self.events.emit("normalization_error", phase=current_phase, error=str(exc))
+            raise ValueError(str(exc)) from exc
+
+        # Emit control decision immediately after successful normalization
+        self.events.emit(
+            "control_decided",
+            phase=current_phase,
+            control_type=result.control.type,
+            decision=result.control.decision,
+            next_phase=result.control.next_phase,
+            confidence=result.control.confidence,
+            reason=result.control.reason.model_dump(),
+            was_normalized=result.was_normalized,
+            was_inferred=result.was_inferred,
+        )
+
+        # Abort is intentional — do not retry
+        if result.control.type == "abort":
+            raise WorkflowAbortedError(
+                f"LLM aborted workflow at phase '{current_phase}': "
+                f"{result.control.reason.summary}"
+            )
+
+        effective_next = result.control.effective_next_phase
+        matched_candidate = candidate_map[effective_next]
+
+        # Step 2: Normalize {type, data} structure
+        normalized = _normalize_artifact(result.artifact, matched_candidate.schema_name)
+
+        # Step 3: Structural check
+        try:
+            _validate_artifact_structure(normalized, current_phase)
+        except ValueError as exc:
+            self.events.emit("validation_error", phase=current_phase, error=str(exc))
+            raise
+
+        # Step 4: Normalize and validate artifact.data contents
+        norm_data, corrections, errors = validate_artifact_data(
+            normalized, matched_candidate.artifact_schema
+        )
+        self.events.emit(
+            "artifact_validated",
+            phase=current_phase,
+            artifact_type=normalized.get("type"),
+            next_phase=effective_next,
+            was_corrected=bool(corrections),
+            corrections=corrections,
+            errors=errors,
+        )
+        if errors:
+            error_str = "; ".join(errors)
+            self.events.emit("validation_error", phase=current_phase, error=error_str)
+            raise ValueError(
+                f"Artifact data validation failed for '{normalized.get('type')}': {error_str}"
+            )
+        normalized = {**normalized, "data": norm_data}
+
+        output = LLMOutput(
+            control=result.control,
+            artifact=normalized,
+            control_ir=result.control_ir,
+        )
+
+        # Step 5: JSON Schema backstop
+        try:
+            validate_output(output, candidates)
+        except ValidationError as exc:
+            self.events.emit("validation_error", phase=current_phase, error=str(exc))
+            raise ValueError(str(exc)) from exc
+
+        return result, normalized, output
+
     def _fallback_final_output(self) -> dict:
         """Return best available data when loop limit is exceeded."""
         for entry in reversed(self.workspace.artifacts):
@@ -164,7 +256,19 @@ class OSRuntime:
             "quality_notes": ["loop_limit_exceeded"],
         }
 
-    def run(self, initial_input: dict, output_language: str = "ja") -> dict:
+    def run(
+        self,
+        initial_input: dict,
+        output_language: str = "ja",
+        max_phase_retries: int = 2,
+    ) -> dict:
+        """
+        Execute the workflow from entry_phase to completion.
+
+        max_phase_retries: how many times to retry a phase after a validation failure.
+          Each retry sends the rejection error back to the LLM as feedback.
+          Default 2 means up to 3 total attempts per phase (1 initial + 2 retries).
+        """
         current_phase = self.app.entry_phase
         artifact = initial_input
 
@@ -175,7 +279,6 @@ class OSRuntime:
                 phase = self.app.phases[current_phase]
                 candidates = self._build_candidates(current_phase)
                 allowed_next = [c.next_phase for c in candidates]
-                candidate_map = {c.next_phase: c for c in candidates}
                 visit = self._visit_counts.get(current_phase, 1)
                 max_visit = self.app.graph.max_phase_visits.get(current_phase) or None
 
@@ -192,98 +295,58 @@ class OSRuntime:
                     max_phase_visit=max_visit,
                 )
 
-                self.events.emit("llm_called", phase=current_phase, model=self.model)
-                print(f"[phase:{current_phase}] calling LLM ({self.model})...")
-                raw = call_llm(self.model, frame)
+                # ── Phase retry loop ───────────────────────────────────────────
+                prior_attempts: list[dict[str, str]] = []
+                result = output = normalized = None
 
-                try:
-                    result = normalize(raw, allowed_next)
-                except ControlIRValidationError as exc:
-                    self.events.emit(
-                        "control_ir_validation_error", phase=current_phase, error=str(exc)
-                    )
-                    raise ValueError(str(exc)) from exc
-                except NormalizationError as exc:
-                    self.events.emit(
-                        "normalization_error", phase=current_phase, error=str(exc)
-                    )
-                    raise ValueError(str(exc)) from exc
+                for attempt in range(max_phase_retries + 1):
+                    if attempt > 0:
+                        last_error = prior_attempts[-1]["error"]
+                        self.events.emit(
+                            "phase_retry",
+                            phase=current_phase,
+                            attempt=attempt,
+                            max_retries=max_phase_retries,
+                            error=last_error,
+                        )
+                        print(
+                            f"[phase:{current_phase}] retry {attempt}/{max_phase_retries} "
+                            f"— {last_error[:120]}"
+                        )
 
-                # Emit control_decided event immediately after normalization
-                self.events.emit(
-                    "control_decided",
-                    phase=current_phase,
-                    control_type=result.control.type,
-                    decision=result.control.decision,
-                    next_phase=result.control.next_phase,
-                    confidence=result.control.confidence,
-                    reason=result.control.reason.model_dump(),
-                    was_normalized=result.was_normalized,
-                    was_inferred=result.was_inferred,
-                )
-
-                # Handle abort before any artifact processing
-                if result.control.type == "abort":
-                    raise WorkflowAbortedError(
-                        f"LLM aborted workflow at phase '{current_phase}': {result.control.reason}"
+                    self.events.emit("llm_called", phase=current_phase, model=self.model)
+                    print(f"[phase:{current_phase}] calling LLM ({self.model})...")
+                    raw = call_llm(
+                        self.model, frame,
+                        prior_attempts=prior_attempts or None,
                     )
 
-                # Derive effective next_phase from control decision
-                effective_next = result.control.effective_next_phase
-                matched_candidate = candidate_map[effective_next]
+                    try:
+                        result, normalized, output = self._validate_phase_output(
+                            raw, current_phase, candidates, allowed_next
+                        )
+                        break  # success — exit retry loop
 
-                # Step 1: Normalize {type, data} structure
-                normalized = _normalize_artifact(result.artifact, matched_candidate.schema_name)
+                    except WorkflowAbortedError:
+                        raise  # non-retryable
 
-                # Step 2: Structural check — type and data keys must exist
-                try:
-                    _validate_artifact_structure(normalized, current_phase)
-                except ValueError as exc:
-                    self.events.emit(
-                        "validation_error", phase=current_phase, error=str(exc)
-                    )
-                    raise
+                    except ValueError as exc:
+                        raw_text = json.dumps(raw, ensure_ascii=False)
+                        prior_attempts.append({"raw": raw_text, "error": str(exc)})
+                        if attempt >= max_phase_retries:
+                            self.events.emit(
+                                "phase_failed",
+                                phase=current_phase,
+                                attempts=attempt + 1,
+                                final_error=str(exc),
+                            )
+                            raise ValueError(
+                                f"Phase '{current_phase}' failed after {attempt + 1} "
+                                f"attempt(s): {exc}"
+                            ) from exc
+                        continue
 
-                # Step 3: Normalize and validate artifact.data contents
-                norm_data, corrections, errors = validate_artifact_data(
-                    normalized, matched_candidate.artifact_schema
-                )
-                self.events.emit(
-                    "artifact_validated",
-                    phase=current_phase,
-                    artifact_type=normalized.get("type"),
-                    next_phase=effective_next,
-                    was_corrected=bool(corrections),
-                    corrections=corrections,
-                    errors=errors,
-                )
-                if errors:
-                    error_str = "; ".join(errors)
-                    self.events.emit(
-                        "validation_error", phase=current_phase, error=error_str
-                    )
-                    raise ValueError(
-                        f"Artifact data validation failed for '{normalized.get('type')}': "
-                        f"{error_str}"
-                    )
-                # Replace data with normalized (cleaned, coerced) version
-                normalized = {**normalized, "data": norm_data}
-
-                output = LLMOutput(
-                    control=result.control,
-                    artifact=normalized,
-                    control_ir=result.control_ir,
-                )
-
-                # Step 4: JSON Schema validation (structural + type backstop)
-                try:
-                    validate_output(output, candidates)
-                except ValidationError as exc:
-                    self.events.emit(
-                        "validation_error", phase=current_phase, error=str(exc)
-                    )
-                    raise ValueError(str(exc)) from exc
-
+                # ── Post-validation: store and transition ──────────────────────
                 self.workspace.execute_control_ir(output.control_ir)
                 self.workspace.store_artifact(current_phase, output.artifact)
 
@@ -292,13 +355,16 @@ class OSRuntime:
                     else f" (normalized from '{result.original_raw_type}')"
                     if result.was_normalized else ""
                 )
+                retry_str = (
+                    f" [{len(prior_attempts)} retr{'y' if len(prior_attempts) == 1 else 'ies'}]"
+                    if prior_attempts else ""
+                )
                 conf_str = f"  (confidence={result.control.confidence})"
 
                 if output.next_phase == "end":
                     self._history.append(f"{current_phase} → END")
                     total_phases = sum(self._visit_counts.values())
                     data = output.artifact.get("data", {})
-                    final_keys = list(data.keys())
 
                     self.events.emit(
                         "phase_completed",
@@ -306,19 +372,19 @@ class OSRuntime:
                         next="end",
                         was_normalized=result.was_normalized,
                         was_inferred=result.was_inferred,
-                        reason=result.control.reason,
+                        retries=len(prior_attempts),
+                        reason=result.control.reason.summary,
                         confidence=result.control.confidence,
                     )
                     self.events.emit(
                         "workflow_finished",
                         phase=current_phase,
-                        reason=result.control.reason,
+                        reason=result.control.reason.summary,
                         confidence=result.control.confidence,
                         total_phase_count=total_phases,
-                        final_output_keys=final_keys,
+                        final_output_keys=list(data.keys()),
                     )
-                    print(f"[phase:{current_phase}] → end{suffix}{conf_str}")
-                    # Return only the data payload — callers receive the clean flat dict
+                    print(f"[phase:{current_phase}] → end{suffix}{retry_str}{conf_str}")
                     return data
 
                 else:
@@ -329,10 +395,11 @@ class OSRuntime:
                         next=output.next_phase,
                         was_normalized=result.was_normalized,
                         was_inferred=result.was_inferred,
-                        reason=result.control.reason,
+                        retries=len(prior_attempts),
+                        reason=result.control.reason.summary,
                         confidence=result.control.confidence,
                     )
-                    print(f"[phase:{current_phase}] → {output.next_phase}{suffix}{conf_str}")
+                    print(f"[phase:{current_phase}] → {output.next_phase}{suffix}{retry_str}{conf_str}")
 
                     current_phase = output.next_phase
                     artifact = output.artifact

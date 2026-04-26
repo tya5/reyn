@@ -80,7 +80,17 @@ def _repair_json(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", text)
 
 
-def call_llm(model: str, frame: ContextFrame) -> dict:
+def call_llm(
+    model: str,
+    frame: ContextFrame,
+    prior_attempts: list[dict[str, str]] | None = None,
+) -> dict:
+    """
+    Call the LLM and return a parsed JSON dict.
+
+    prior_attempts: list of {"raw": str, "error": str} from previous phase retries.
+      Each entry is appended as an assistant/user turn so the LLM sees what was wrong.
+    """
     system = _system_prompt(frame.output_language)
     user_content = json.dumps(frame.model_dump(), indent=2, ensure_ascii=False)
     messages: list[dict] = [
@@ -88,11 +98,23 @@ def call_llm(model: str, frame: ContextFrame) -> dict:
         {"role": "user", "content": user_content},
     ]
 
+    # Inject semantic-rejection feedback from outer phase retry loop
+    if prior_attempts:
+        for pa in prior_attempts:
+            messages.append({"role": "assistant", "content": pa["raw"]})
+            messages.append({
+                "role": "user",
+                "content": (
+                    f"Your output was rejected: {pa['error']}\n"
+                    "Fix the issue and output a valid JSON response."
+                ),
+            })
+
     last_exc: Exception | None = None
     last_raw: str = ""
     attempt0_raw: str = ""
 
-    for attempt in range(2):  # attempt 0 = first call, attempt 1 = retry
+    for attempt in range(2):  # attempt 0 = first call, attempt 1 = JSON-repair retry
         if attempt == 1:
             # Only retry if we actually got a non-empty (but unparseable) response
             if not attempt0_raw:
