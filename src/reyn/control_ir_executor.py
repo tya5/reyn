@@ -14,6 +14,7 @@ Safely skipped (handler_not_implemented):
   tool, mcp, subagent
 """
 from __future__ import annotations
+from pathlib import Path
 from typing import Any, Callable
 
 from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, MCPIROp, RunAppIROp, ShellIROp, ToolIROp
@@ -293,7 +294,16 @@ class ControlIRExecutor:
 
         spec_full_path = self.workspace.base_dir / op.spec_path
         spec = load_eval_spec(str(spec_full_path))
-        app = load_dsl_app(spec.app_dsl_path, dsl_root=spec.dsl_root)
+
+        # Resolve app path and dsl_root relative to workspace if relative
+        app_path = Path(spec.app_dsl_path)
+        if not app_path.is_absolute():
+            app_path = self.workspace.base_dir / app_path
+        dsl_root = Path(spec.dsl_root) if spec.dsl_root else None
+        if dsl_root is not None and not dsl_root.is_absolute():
+            dsl_root = self.workspace.base_dir / dsl_root
+
+        app = load_dsl_app(app_path, dsl_root=dsl_root)
         model = self._resolver.resolve(op.model)
         judge_model = self._resolver.resolve(op.judge_model or op.model)
         eval_workspace = str(self.workspace.base_dir / "eval_runs")
