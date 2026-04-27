@@ -121,13 +121,14 @@ def lint_dsl(dsl_root: Path) -> list[LintIssue]:
     """Lint all artifacts and phases under dsl_root."""
     issues: list[LintIssue] = []
 
-    # Collect artifact search directories: shared first, then per-app
-    artifact_dirs: list[Path] = [dsl_root / "shared" / "artifacts"]
+    # Collect artifact search directories: stdlib first, then shared, then per-app
+    from .loader import _stdlib_dir
+    artifact_dirs: list[Path] = [_stdlib_dir("artifacts"), dsl_root / "shared" / "artifacts"]
     apps_root = dsl_root / "apps"
     if apps_root.exists():
         artifact_dirs += sorted(apps_root.glob("*/artifacts"))
 
-    phase_dirs: list[Path] = [dsl_root / "shared" / "phases"]
+    phase_dirs: list[Path] = [_stdlib_dir("phases"), dsl_root / "shared" / "phases"]
     if apps_root.exists():
         phase_dirs += sorted(apps_root.glob("*/phases"))
 
