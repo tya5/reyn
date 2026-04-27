@@ -3,54 +3,43 @@ type: phase
 name: run_eval
 input: eval_request | user_message
 input_description: |
-  Either a structured eval_request (spec_path: CWD-relative or workspace-relative path to eval.md,
+  Either a structured eval_request (spec_path: workspace-relative path to eval.md,
   model: LiteLLM model string, app_name: optional hint) or a user_message describing what to evaluate.
   If spec_path or model is missing, use ask_user.
 role: validator
 can_finish: true
 ---
 
-Run `agent-os eval` against the target eval spec and report results.
+Run the eval spec using the `eval` Control IR op and report results.
 
-## Step 1 — Resolve spec_path
+## Step 1 — Resolve inputs
 
-Extract `spec_path` from input (e.g. `"eval_specs/my_app/eval.md"` or `"workspace/run/eval_specs/my_app/eval.md"`).
+Extract from input:
+- `spec_path`: workspace-relative path to the eval.md file (e.g. `"eval_specs/my_app/eval.md"`)
+- `model`: LiteLLM model string to use for running the target app
+- `judge_model`: optional; defaults to `model` if omitted
 
-Try to run the eval directly first:
+## Step 2 — Run eval
+
+Emit one eval op:
+```json
+{"kind": "eval", "spec_path": "{spec_path}", "model": "{model}"}
 ```
-agent-os eval --spec {spec_path} --model {model} 2>&1; echo "EXIT:$?"
-```
 
-If the command fails with "No such file or directory" or "not found", the path is likely
-workspace-relative. Locate the actual eval.md with:
-```
-find . -name "eval.md" -path "*/eval_specs/*" -not -path "*/src/*" 2>/dev/null | head -5
-```
-If multiple matches, prefer the one whose path contains app_name (hint from eval_request).
-Re-run eval with the resolved path.
+## Step 3 — Set output fields from the eval result
 
-## Step 2 — Parse output
+The eval result contains:
+- `passed`: true if overall_score >= 0.6
+- `overall_score`: float 0.0–1.0
+- `passed_criteria` / `total_criteria`: counts
+- `weakest_phase`: name of the lowest-scoring phase, or empty string
+- `case_count`: number of test cases run
+- `cases`: per-case breakdown (name, score, passed, total)
 
-`agent-os eval` prints a summary line:
-```
- Overall: [████████████████████] 1.00  (12/12)
- Weakest phase: analyze
-```
-And exits with:
-- 0 = all cases finished and score >= 0.6
-- 2 = score < 0.6 (partial pass)
-- 1 = hard error (app failed to run)
-
-Extract from stdout:
-- `overall_score`: float from the Overall line (e.g. `1.00`)
-- `passed_criteria` / `total_criteria`: integers from `(N/M)` in the Overall line
-- `weakest_phase`: from "Weakest phase:" line, or empty string if absent
-
-## Step 3 — Set output fields
-
-- `passed`: true if exit code is 0 (score >= 0.6 and no hard errors)
-- `overall_score`: parsed from stdout; 0.0 if hard error
-- `passed_criteria` / `total_criteria`: parsed counts; 0 if hard error
-- `weakest_phase`: parsed from stdout; empty string if not present
-- `spec_path`: the resolved path actually evaluated
-- `summary`: one sentence — e.g. "All 12 criteria passed (score 1.00)." or "6/12 criteria passed (score 0.50) — weakest phase: analyze."
+Set output fields:
+- `passed`: from eval result
+- `overall_score`: from eval result
+- `passed_criteria` / `total_criteria`: from eval result
+- `weakest_phase`: from eval result
+- `spec_path`: the path that was evaluated
+- `summary`: one sentence — e.g. "All 12 criteria passed (score 1.00)." or "6/12 criteria passed (score 0.50) — weakest: analyze."

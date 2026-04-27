@@ -94,10 +94,23 @@ class ShellIROp(BaseModel):
     timeout: int = 120        # seconds
 
 
+class LintIROp(BaseModel):
+    kind: Literal["lint"]
+    dsl_root: str = "dsl/"   # workspace-relative path to dsl root directory
+
+
+class EvalIROp(BaseModel):
+    kind: Literal["eval"]
+    spec_path: str            # workspace-relative path to eval.md
+    model: str
+    judge_model: str | None = None
+    output_language: str = "ja"
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", and "shell" are implemented; others are safely skipped by ControlIRExecutor.
+# "file", "ask_user", "shell", "lint", and "eval" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, EvalIROp],
     Field(discriminator="kind"),
 ]
 

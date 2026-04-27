@@ -16,7 +16,7 @@ Safely skipped (handler_not_implemented):
 from __future__ import annotations
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, ShellIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, ShellIROp
 from .workspace import Workspace
 from .events import EventLog
 
@@ -86,10 +86,30 @@ class ControlIRExecutor:
                     "cmd: the shell command string. "
                     "timeout: max seconds to wait (default 120). "
                     "Runs in the project root directory. "
-                    "Use for running sub-processes such as 'python main.py run ...'."
+                    "Use for running sub-processes such as 'agent-os run ...'."
                 ),
-                example={"kind": "shell", "cmd": "python main.py run --app-dsl dsl/apps/foo/app.md --input 'hello'", "timeout": 120},
+                example={"kind": "shell", "cmd": "agent-os run --app-dsl dsl/apps/foo/app.md --input 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
+            ControlIROpSpec(
+                kind="lint",
+                description=(
+                    "Run the DSL linter against a directory and return issues. "
+                    "dsl_root: workspace-relative path to the DSL root directory (default: 'dsl/'). "
+                    "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
+                ),
+                example={"kind": "lint", "dsl_root": "dsl/"},
+            ),
+            ControlIROpSpec(
+                kind="eval",
+                description=(
+                    "Run an eval spec against its target app and return scores. "
+                    "spec_path: workspace-relative path to the eval.md file. "
+                    "model: LiteLLM model string for running the target app. "
+                    "judge_model: model for LLM-as-judge (defaults to model). "
+                    "Returns: passed (bool), overall_score, passed_criteria, total_criteria, weakest_phase, cases."
+                ),
+                example={"kind": "eval", "spec_path": "eval_specs/my_app/eval.md", "model": "openai/gemini-2.5-flash-lite"},
+            ),
         ]
 
     def execute(self, ops: list[ControlIROp], phase: str = "") -> list[dict[str, Any]]:
@@ -112,6 +132,10 @@ class ControlIRExecutor:
                         self.events.emit("control_ir_skipped", kind="shell", reason="shell_not_allowed")
                     else:
                         result = self._execute_shell(op)  # type: ignore[arg-type]
+                elif op.kind == "lint":
+                    result = self._execute_lint(op)  # type: ignore[arg-type]
+                elif op.kind == "eval":
+                    result = self._execute_eval(op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -176,6 +200,86 @@ class ControlIRExecutor:
 
         self.events.emit("user_intervention_received", phase=phase, answer=text)
         return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
+
+    def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
+        from .compiler.linter import lint_dsl
+        dsl_root = self.workspace.base_dir / op.dsl_root
+        issues = lint_dsl(dsl_root)
+        error_count = sum(1 for i in issues if i.severity == "error")
+        warning_count = sum(1 for i in issues if i.severity == "warning")
+        self.events.emit(
+            "lint_completed",
+            dsl_root=str(op.dsl_root),
+            error_count=error_count,
+            warning_count=warning_count,
+        )
+        return {
+            "kind": "lint",
+            "status": "ok",
+            "dsl_root": op.dsl_root,
+            "passed": error_count == 0,
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "issues": [str(i) for i in issues],
+        }
+
+    def _execute_eval(self, op: EvalIROp) -> dict[str, Any]:
+        from datetime import datetime, timezone
+        from .compiler.eval_loader import load_eval_spec
+        from .compiler import load_dsl_app
+        from .eval.runner import EvalRunner
+        from .eval.models import EvalRunResult
+
+        spec_full_path = self.workspace.base_dir / op.spec_path
+        spec = load_eval_spec(str(spec_full_path))
+        app = load_dsl_app(spec.app_dsl_path, dsl_root=spec.dsl_root)
+        judge_model = op.judge_model or op.model
+        eval_workspace = str(self.workspace.base_dir / "eval_runs")
+
+        runner = EvalRunner(
+            spec=spec,
+            app=app,
+            model=op.model,
+            judge_model=judge_model,
+            workspace_dir=eval_workspace,
+            output_language=op.output_language,
+            app_subscribers=[],
+            extra_read_roots=self.workspace.extra_read_roots,
+        )
+        case_results = [runner.run_case(case) for case in spec.cases]
+
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        run_result = EvalRunResult(
+            spec_path=str(spec_full_path),
+            app_name=app.name,
+            model=op.model,
+            judge_model=judge_model,
+            timestamp=ts,
+            case_results=case_results,
+            cost_summary=runner.build_cost_summary(),
+        )
+        self.events.emit(
+            "eval_completed",
+            spec_path=op.spec_path,
+            overall_score=run_result.overall_score,
+            passed_criteria=run_result.overall_passed,
+            total_criteria=run_result.overall_total,
+        )
+        return {
+            "kind": "eval",
+            "status": "ok",
+            "spec_path": op.spec_path,
+            "passed": run_result.overall_score >= 0.6,
+            "overall_score": run_result.overall_score,
+            "passed_criteria": run_result.overall_passed,
+            "total_criteria": run_result.overall_total,
+            "weakest_phase": run_result.weakest_phase() or "",
+            "case_count": len(case_results),
+            "cases": [
+                {"name": cr.case_name, "score": cr.score, "passed": cr.passed, "total": cr.total}
+                for cr in case_results
+            ],
+        }
 
     def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:
         import subprocess

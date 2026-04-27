@@ -178,6 +178,14 @@ class ConsoleLogger:
             elif kind == "ask_user":
                 answer = r.get("answer", "")
                 print(f"  result: ask_user [{status}] answer={answer!r}")
+            elif kind == "lint":
+                passed = "passed" if r.get("passed") else f"{r.get('error_count', 0)} errors"
+                print(f"  result: lint {r.get('dsl_root')} [{status}] {passed}, {r.get('warning_count', 0)} warnings")
+            elif kind == "eval":
+                score = r.get("overall_score", 0.0)
+                pc = r.get("passed_criteria", 0)
+                tc = r.get("total_criteria", 0)
+                print(f"  result: eval {r.get('spec_path')} [{status}] score={score:.2f} ({pc}/{tc})")
             else:
                 print(f"  result: {kind} [{status}]")
 
