@@ -15,6 +15,7 @@ app.md (write to {app_path}/app.md):
 ---
 type: app
 name: {app_name}
+description: {app_description}
 entry: {entry_phase}
 final_output: {final_output.name}
 final_output_description: {final_output.description}

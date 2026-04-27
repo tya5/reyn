@@ -6,6 +6,7 @@ name: app_plan
 # Structured plan produced by plan_app.
 
 app_name: string
+app_description: string
 app_path: string
 entry_phase: string
 finish_criteria: string[]
