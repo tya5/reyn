@@ -3,20 +3,19 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 import pydantic
-from .models import ActOutput, App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
+from .models import ActOutput, App, CandidateOutput, ContextFrame, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
-from .llm import call_llm, proxy_kwargs
+from .llm import call_llm
 from .pricing import TokenUsage
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
-
-
-ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
+from .context_builder import build_frame
+from .app_node_runner import execute_app_node
 
 
 class LoopLimitExceededError(Exception):
@@ -37,25 +36,6 @@ class RunResult:
     @property
     def ok(self) -> bool:
         return self.status == "finished"
-
-
-def _maybe_ref_artifact(artifact: dict, artifact_path: str | None) -> dict:
-    """
-    Return the artifact as-is if small, or replace it with an artifact_ref dict
-    pointing to the persisted file. The LLM can read the ref path via file op.
-    """
-    if artifact_path is None:
-        return artifact
-    serialized = json.dumps(artifact, ensure_ascii=False)
-    if len(serialized) <= ARTIFACT_REF_THRESHOLD:
-        return artifact
-    return {
-        "type": "artifact_ref",
-        "artifact_type": artifact.get("type", "unknown"),
-        "ref_path": artifact_path,
-        "size_bytes": len(serialized.encode("utf-8")),
-    }
-
 
 
 def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
@@ -101,7 +81,7 @@ class OSRuntime:
         permission_resolver: PermissionResolver | None = None,
     ) -> None:
         self.app = app
-        self.model = model  # class name or raw LiteLLM string as provided
+        self.model = model
         self._resolver = resolver or ModelResolver({})
         self.strict = strict
         self.run_id = run_id
@@ -169,9 +149,8 @@ class OSRuntime:
         return candidates
 
     def _effective_model(self, phase_name: str) -> str:
-        """Return the model class/string for a phase, falling back to runtime default."""
         phase = self.app.phases.get(phase_name)
-        return (phase.model_class if phase and phase.model_class else self.model)
+        return phase.model_class if phase and phase.model_class else self.model
 
     def _build_frame(
         self,
@@ -182,40 +161,26 @@ class OSRuntime:
         control_ir_results: list[dict] | None = None,
         artifact_path: str | None = None,
     ) -> ContextFrame:
-        phase = self.app.phases[current_phase]
-        allowed_next = [c.next_phase for c in candidates]
-        current_visit = self._visit_counts.get(current_phase, 1)
-        total_steps = sum(self._visit_counts.values())
-        max_phase_visits = self.app.graph.max_phase_visits.get(current_phase) or None
-
-        frame = ContextFrame(
-            current_phase=current_phase,
-            current_phase_role=phase.role,
-            instructions=phase.instructions,
-            input_artifact=_maybe_ref_artifact(artifact, artifact_path),
-            execution=ExecutionState(
-                path=list(self._history),
-                current_visit=current_visit,
-                total_steps=total_steps,
-            ),
-            candidate_outputs=candidates,
-            finish_criteria=self.app.finish_criteria if "end" in allowed_next else [],
-            constraints=PhaseConstraints(
-                max_phase_visits=max_phase_visits,
-            ),
-            available_control_ops=self.control_ir_executor.available_ops(),
+        effective_model = self._effective_model(current_phase)
+        return build_frame(
+            phase_name=current_phase,
+            phase=self.app.phases[current_phase],
+            artifact=artifact,
+            candidates=candidates,
             output_language=output_language,
-            model=self._effective_model(current_phase),
-            model_resolved=self._resolver.resolve(self._effective_model(current_phase)),
-            control_ir_results=control_ir_results or [],
+            history=self._history,
+            visit_counts=self._visit_counts,
+            finish_criteria=self.app.finish_criteria,
+            max_phase_visits=self.app.graph.max_phase_visits.get(current_phase) or None,
+            available_ops=self.control_ir_executor.available_ops(),
+            effective_model=effective_model,
+            model_resolved=self._resolver.resolve(effective_model),
+            events=self.events,
+            control_ir_results=control_ir_results,
+            artifact_path=artifact_path,
         )
 
-        # Audit: record the exact ContextFrame passed to the LLM for replay/debug
-        self.events.emit("context_built", phase=current_phase, frame=frame.model_dump())
-
-        return frame
-
-    # ── Single-attempt validation ───────────────────────────────────────────────
+    # ── Single-attempt validation ──────────────────────────────────────────────
 
     def _validate_phase_output(
         self,
@@ -314,7 +279,6 @@ class OSRuntime:
         frame: ContextFrame,
         prior_attempts: list[dict[str, str]] | None,
     ) -> dict:
-        """Call LLM, accumulate token usage, emit events, return raw response dict."""
         resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
         llm_result = call_llm(resolved_model, frame, prior_attempts=prior_attempts or None)
@@ -365,7 +329,7 @@ class OSRuntime:
             raw = self._call_llm_and_record(phase, frame, prior_attempts or None)
 
             if raw.get("type") != "act":
-                return raw, prior_attempts  # decide turn — hand off to retry loop
+                return raw, prior_attempts
 
             act_turn_count += 1
             if act_turn_count > max_act_turns:
@@ -392,7 +356,7 @@ class OSRuntime:
             phase_decl = self.app.phases[phase].permissions if phase in self.app.phases else None
             ir_results = self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
             control_ir_results = ir_results
-            prior_attempts = []  # reset retries after a successful act turn
+            prior_attempts = []
             self.events.emit(
                 "act_executed",
                 phase=phase,
@@ -452,10 +416,7 @@ class OSRuntime:
         max_phase_retries: int,
         artifact_path: str | None = None,
     ) -> tuple[NormalizationResult, LLMOutput, int]:
-        """
-        Drive one phase to completion.
-        Delegates act-loop management to _run_act_loop and decide-retry to _run_decide_with_retry.
-        """
+        """Drive one phase to completion via act/decide loops with retry."""
         phase_def = self.app.phases[current_phase]
         max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
@@ -467,14 +428,9 @@ class OSRuntime:
             raw, current_phase, artifact, candidates, output_language, prior_attempts, max_phase_retries,
         )
 
-    # ── Fallback ────────────────────────────────────────────────────────────────
+    # ── Fallback ───────────────────────────────────────────────────────────────
 
     def _fallback_final_output(self) -> dict:
-        """
-        Return the best available data when the workflow terminates abnormally.
-        Prefers the last artifact matching final_output_name; falls back to the
-        last stored artifact. The OS never fabricates app-specific fields.
-        """
         for entry in reversed(self.workspace.artifacts):
             art = entry["artifact"]
             if art.get("type") == self.app.final_output_name:
@@ -483,97 +439,33 @@ class OSRuntime:
             return self.workspace.artifacts[-1]["artifact"].get("data", {})
         return {}
 
-    # ── App node execution ─────────────────────────────────────────────────────
+    # ── App-node dispatch ──────────────────────────────────────────────────────
 
-    def _adapt_artifact(
-        self,
-        data: dict,
-        source_type: str,
-        target_schema: dict,
-        target_type: str,
-        node_id: str,
-        output_language: str,
-    ) -> dict:
-        """Call LLM to convert sub-app final_output to the next phase's input schema."""
-        import litellm
-        import json as _json
-
-        prompt = (
-            f"Convert the following data to the target schema.\n\n"
-            f"Source (type: {source_type}):\n"
-            f"{_json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
-            f"Target schema:\n"
-            f"{_json.dumps(target_schema, ensure_ascii=False, indent=2)}\n\n"
-            f"Produce a JSON object with \"type\" set to \"{target_type}\" and "
-            f"\"data\" populated from the source, mapped to the target schema fields.\n"
-            f"Output language: {output_language}"
-        )
-        response = litellm.completion(
-            model=self._resolver.resolve(self.model),
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"},
-            **proxy_kwargs(),
-        )
-        raw = _json.loads(response.choices[0].message.content)
-        if response.usage:
-            self._token_usage += TokenUsage(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-            )
-        self.events.emit(
-            "app_node_adapted",
-            node=node_id,
-            source_type=source_type,
-            target_type=target_type,
-        )
-        return raw
-
-    def _execute_app_node(
+    def _run_app_node(
         self,
         node_id: str,
-        node_spec,
         input_artifact: dict,
         target_schema: dict,
         target_type: str,
         output_language: str,
     ) -> dict:
-        """Run a sub-app to completion and adapt its final_output to target_schema."""
-        from pathlib import Path as _Path
-        from reyn.compiler import load_dsl_app
-
-        self.events.emit("app_node_started", node=node_id, app_path=node_spec.app_path)
-
-        sub_app = load_dsl_app(node_spec.app_path, dsl_root=node_spec.dsl_root)
-
-        if node_spec.workspace == "shared":
-            sub_workspace_dir = str(self.workspace.base_dir)
-        else:
-            sub_workspace_dir = str(
-                self.workspace.base_dir / "invoke" / node_id.lstrip("@")
-            )
-
-        sub_runtime = OSRuntime(
-            app=sub_app,
+        node_spec = self.app.graph.app_nodes[node_id]
+        adapted, usage = execute_app_node(
+            node_id=node_id,
+            node_spec=node_spec,
+            input_artifact=input_artifact,
+            target_schema=target_schema,
+            target_type=target_type,
+            output_language=output_language,
+            parent_workspace_base=self.workspace.base_dir,
             model=self.model,
-            workspace_dir=sub_workspace_dir,
             strict=self.strict,
             subscribers=self.events.subscribers,
             resolver=self._resolver,
+            events=self.events,
         )
-        run_result = sub_runtime.run(input_artifact, output_language=output_language)
-        self._token_usage += sub_runtime._token_usage
-
-        self.events.emit(
-            "app_node_completed",
-            node=node_id,
-            status=run_result.status,
-            final_output_keys=list(run_result.data.keys()),
-        )
-
-        return self._adapt_artifact(
-            run_result.data, sub_app.final_output_name,
-            target_schema, target_type, node_id, output_language,
-        )
+        self._token_usage += usage
+        return adapted
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
@@ -602,7 +494,6 @@ class OSRuntime:
             default_model=self._resolver.resolve(self.model),
         )
 
-        # Persist the initial input so it can be referenced via artifact_ref if large
         artifact_path: str | None = self.workspace.store_artifact(
             "_input", artifact, app_name=self.app.name, visit=1
         )
@@ -610,14 +501,13 @@ class OSRuntime:
         try:
             self._enter_phase(current_phase, artifact)
 
-            while True:  # outer: phase transitions
+            while True:
                 candidates = self._build_candidates(current_phase)
                 result, output, retry_count = self._execute_phase(
                     current_phase, artifact, candidates, output_language, max_phase_retries,
                     artifact_path=artifact_path,
                 )
 
-                # Execute write ops from decide turn (reads already handled inside _execute_phase)
                 current_decl = self.app.phases[current_phase].permissions if current_phase in self.app.phases else None
                 decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
                 if decide_results:
@@ -662,12 +552,10 @@ class OSRuntime:
 
                 next_node = output.next_phase
                 if next_node in self.app.graph.app_nodes:
-                    node_spec = self.app.graph.app_nodes[next_node]
                     post_nodes = self.app.graph.transitions.get(next_node, [])
                     if not post_nodes:
-                        # app node is the final step — adapt to parent's final_output_schema
-                        adapted = self._execute_app_node(
-                            next_node, node_spec, output.artifact,
+                        adapted = self._run_app_node(
+                            next_node, output.artifact,
                             self.app.final_output_schema, self.app.final_output_name,
                             output_language,
                         )
@@ -684,8 +572,8 @@ class OSRuntime:
                         return RunResult(data=data, status="finished", token_usage=self._token_usage)
                     next_after = post_nodes[0]
                     next_phase_obj = self.app.phases[next_after]
-                    adapted = self._execute_app_node(
-                        next_node, node_spec, output.artifact,
+                    adapted = self._run_app_node(
+                        next_node, output.artifact,
                         next_phase_obj.input_schema, next_phase_obj.input_schema_name,
                         output_language,
                     )
