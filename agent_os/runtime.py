@@ -657,10 +657,22 @@ class OSRuntime:
                     node_spec = self.app.graph.app_nodes[next_node]
                     post_nodes = self.app.graph.transitions.get(next_node, [])
                     if not post_nodes:
-                        raise ValueError(
-                            f"App node '{next_node}' has no outgoing transitions. "
-                            "Add a phase after it in the graph."
+                        # app node is the final step — adapt to parent's final_output_schema
+                        adapted = self._execute_app_node(
+                            next_node, node_spec, output.artifact,
+                            self.app.final_output_schema, output_language,
                         )
+                        data = adapted.get("data", {})
+                        self._history.append(f"{current_phase} → {next_node} → END")
+                        self.events.emit(
+                            "workflow_finished",
+                            phase=next_node,
+                            reason="app node produced final output",
+                            confidence=1.0,
+                            total_phase_count=sum(self._visit_counts.values()),
+                            final_output_keys=list(data.keys()),
+                        )
+                        return RunResult(data=data, status="finished", token_usage=self._token_usage)
                     next_after = post_nodes[0]
                     target_schema = self.app.phases[next_after].input_schema
                     adapted = self._execute_app_node(
