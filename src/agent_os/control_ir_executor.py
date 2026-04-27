@@ -203,25 +203,46 @@ class ControlIRExecutor:
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
         from .compiler.linter import lint_dsl
-        dsl_root = self.workspace.base_dir / op.dsl_root
-        issues = lint_dsl(dsl_root)
+        resolved = self._resolve_dsl_root(self.workspace.base_dir / op.dsl_root)
+        issues = lint_dsl(resolved)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
+        resolved_rel = str(resolved.relative_to(self.workspace.base_dir))
         self.events.emit(
             "lint_completed",
-            dsl_root=str(op.dsl_root),
+            dsl_root=resolved_rel,
             error_count=error_count,
             warning_count=warning_count,
         )
         return {
             "kind": "lint",
             "status": "ok",
-            "dsl_root": op.dsl_root,
+            "dsl_root": resolved_rel,
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
             "issues": [str(i) for i in issues],
         }
+
+    @staticmethod
+    def _resolve_dsl_root(path: "Path") -> "Path":
+        """Walk up from path until finding a directory with an 'apps' subdirectory.
+
+        Handles the case where the LLM provides an app-level path like
+        'dsl/apps/my_app' instead of the dsl root 'dsl/'.
+        """
+        from pathlib import Path
+        p = path if path.is_dir() else path.parent
+        visited: set[Path] = set()
+        while p not in visited:
+            if (p / "apps").is_dir():
+                return p
+            visited.add(p)
+            parent = p.parent
+            if parent == p:
+                break
+            p = parent
+        return path  # fall back to original if no apps/ found
 
     def _execute_eval(self, op: EvalIROp) -> dict[str, Any]:
         from datetime import datetime, timezone

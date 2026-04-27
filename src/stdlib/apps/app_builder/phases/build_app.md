@@ -83,10 +83,6 @@ Checklist before finishing:
 
 Write all files using one op per file. After writing, output a decide turn reporting the files written.
 
-When transitioning to lint, set the output fields as:
-- `dsl_root`: `"dsl/"` (the workspace DSL root — NOT the app path like "dsl/apps/foo")
-- `app_name`: the generated app name (e.g. `"article_generator"`)
-
 summary MUST describe what the app does for its users — not what you (the builder) did.
 Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
 Bad: "Generated DSL files for the review app and saved them to the workspace."
