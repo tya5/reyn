@@ -7,7 +7,6 @@ input_description: |
   judge_model, phase_order, test_cases, phase_eval_designs (each with schema[] and quality[]),
   cross_phase_assertions, final_schema, final_quality.
 role: spec_writer
-can_finish: true
 ---
 
 Generate the eval.md content and write it to the workspace.
@@ -93,6 +92,7 @@ Set in the output artifact:
 - `total_criteria`: total lines (schema assertions + quality criteria) across all cases and phases.
 - `next_steps`: tell the user:
   1. The file was written to `workspace/{eval_md_path}`.
-  2. How to run it: `python main.py eval --spec workspace/{eval_md_path} --model <model>`.
-  3. If the target app is in the project `dsl/` tree (not in workspace), also copy the file:
+  2. The eval will now run automatically via eval_runner.
+  3. To run it again manually: `agent-os eval --spec {resolved_cwd_relative_path} --model <model>`.
+  4. If the target app is in the project `dsl/` tree (not in workspace), also copy the file:
      `cp workspace/{eval_md_path} {app_dir}/eval.md`

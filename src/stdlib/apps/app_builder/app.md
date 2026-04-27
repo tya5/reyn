@@ -2,14 +2,15 @@
 type: app
 name: app_builder
 entry: plan_app
-final_output: app_builder_result
+final_output: lint_result
 final_output_description: |
-  Summary of the newly created app: its name, workspace path,
-  the list of files written, and a one-sentence description of what it does.
+  Lint results for the generated app: pass/fail status, error and warning counts,
+  and the list of any issues found in the generated DSL files.
 finish_criteria:
   - All DSL files for the app have been written to the workspace
-  - The phase graph is valid and complete
-  - Each artifact referenced by a phase exists as a file
+  - The generated DSL has been linted and lint_result has been produced
+  - passed is true only when no lint errors were found
 ---
 
 plan_app -> build_app
+build_app -> @lint_runner[shared]

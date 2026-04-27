@@ -4,7 +4,6 @@ name: build_app
 input: app_plan
 input_description: Structured app plan produced by plan_app. Contains app_name, app_path, entry_phase, finish_criteria, phases (array of phase definitions), transitions, artifacts, and final_output.
 role: dsl_writer
-can_finish: true
 ---
 
 Generate DSL markdown files for the app defined in data, then write each one to the workspace using file ops.

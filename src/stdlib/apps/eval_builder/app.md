@@ -2,14 +2,15 @@
 type: app
 name: eval_builder
 entry: analyze_app
-final_output: eval_spec_result
+final_output: eval_result
 final_output_description: |
-  Path to the generated eval.md file, plus a summary of how many cases
-  and criteria were created, and where to copy the file.
+  Evaluation results after running the generated eval spec against the target app:
+  overall score, pass/fail counts, and a summary of results.
 finish_criteria:
   - eval.md has been written to the workspace
-  - At least one test case with phase-level and final criteria exists
-  - next_steps tells the user where the file was written
+  - The eval spec has been executed against the target app
+  - eval_result captures the score and pass/fail outcome
 ---
 
 analyze_app -> write_eval
+write_eval -> @eval_runner[shared]
