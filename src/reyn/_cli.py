@@ -32,37 +32,73 @@ def _parse_cli_input(raw: str) -> dict:
         return {"type": "user_message", "data": {"text": raw}}
 
 
+def _resolve_app_name(name: str, workspace: str) -> tuple[Path, Path | None]:
+    """Resolve a short app name to (app_dir, dsl_root).
+
+    Search order: workspace → project dsl/ → ~/.reyn/apps/ → stdlib.
+    Returns (app_dir, dsl_root) where dsl_root is None when it cannot be inferred.
+    Exits with an error message if not found.
+    """
+    stdlib_root = Path(__file__).parent.parent / "stdlib"
+    candidates: list[tuple[Path, Path]] = [
+        (Path(workspace) / "dsl" / "apps" / name,        Path(workspace) / "dsl"),
+        (Path("dsl") / "apps" / name,                     Path("dsl")),
+        (Path.home() / ".reyn" / "apps" / name,           Path.home() / ".reyn" / "apps"),
+        (stdlib_root / "apps" / name,                      stdlib_root),
+    ]
+    for app_dir, dsl_root in candidates:
+        if (app_dir / "app.md").exists():
+            return app_dir, dsl_root
+    checked = "\n  ".join(str(d / "app.md") for d, _ in candidates)
+    print(f"Error: app '{name}' not found. Looked in:\n  {checked}", file=sys.stderr)
+    sys.exit(1)
+
+
 def cmd_run(args: argparse.Namespace) -> None:
-    if not args.app and not args.app_dsl:
-        print("Error: one of --app or --app-dsl is required.", file=sys.stderr)
-        sys.exit(1)
-
-    if args.app_dsl:
-        try:
-            from reyn.compiler import load_dsl_app
-            app = load_dsl_app(args.app_dsl, dsl_root=args.dsl_root)
-        except Exception as e:
-            print(f"Error: failed to compile DSL '{args.app_dsl}': {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        try:
-            module = importlib.import_module(args.app)
-        except ModuleNotFoundError as e:
-            print(f"Error: cannot import app '{args.app}': {e}", file=sys.stderr)
-            sys.exit(1)
-        if not hasattr(module, "app"):
-            print(f"Error: module '{args.app}' has no 'app' attribute.", file=sys.stderr)
-            sys.exit(1)
-        app = module.app
-
-    initial_input = _parse_cli_input(args.input)
-
     config = _load_config()
     _apply_config_env(config)
     resolver = _make_resolver(config)
 
-    model = args.model or config.model
     workspace = args.workspace or config.workspace
+
+    if args.app_path:
+        app_dir = Path(args.app_path)
+        app_md = app_dir / "app.md"
+        dsl_root = args.dsl_root
+        try:
+            from reyn.compiler import load_dsl_app
+            app = load_dsl_app(str(app_md), dsl_root=dsl_root)
+        except Exception as e:
+            print(f"Error: failed to compile DSL '{app_md}': {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.app_name:
+        app_dir, inferred_root = _resolve_app_name(args.app_name, workspace)
+        dsl_root = args.dsl_root or str(inferred_root)
+        app_md = app_dir / "app.md"
+        print(f"resolved        : {app_md}  (dsl-root: {dsl_root})")
+        try:
+            from reyn.compiler import load_dsl_app
+            app = load_dsl_app(str(app_md), dsl_root=dsl_root)
+        except Exception as e:
+            print(f"Error: failed to compile DSL '{app_md}': {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.module:
+        try:
+            module = importlib.import_module(args.module)
+        except ModuleNotFoundError as e:
+            print(f"Error: cannot import module '{args.module}': {e}", file=sys.stderr)
+            sys.exit(1)
+        if not hasattr(module, "app"):
+            print(f"Error: module '{args.module}' has no 'app' attribute.", file=sys.stderr)
+            sys.exit(1)
+        app = module.app
+    else:
+        print("Error: provide an app name (positional), --app-path DIR, or --module.", file=sys.stderr)
+        sys.exit(1)
+
+    initial_input = _parse_cli_input(args.input)
+
+    model = args.model or config.model
     output_language = args.output_language or config.output_language
     shell_allowed = args.allow_shell or config.shell_allowed
 
@@ -694,17 +730,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     run_p = sub.add_parser("run", help="Run an app")
     run_p.add_argument(
-        "--app",
+        "app_name",
+        nargs="?",
+        default=None,
+        metavar="APP",
+        help=(
+            "App name to resolve automatically. "
+            "Search order: workspace/dsl/apps/ → dsl/apps/ → ~/.reyn/apps/ → stdlib. "
+            "Example: reyn run app_builder --input '...'"
+        ),
+    )
+    run_p.add_argument(
+        "--app-path",
+        default=None,
+        dest="app_path",
+        metavar="DIR",
+        help=(
+            "Path to an app directory containing app.md "
+            "(e.g. workspace/dsl/apps/my_app or dsl/apps/my_app). "
+            "Use this to point to an explicit location instead of name resolution."
+        ),
+    )
+    run_p.add_argument(
+        "--module",
         default=None,
         metavar="MODULE",
         help="Python module path exposing an 'app' object (e.g. examples.writing_app.app)",
-    )
-    run_p.add_argument(
-        "--app-dsl",
-        default=None,
-        dest="app_dsl",
-        metavar="PATH",
-        help="Path to a Markdown App DSL file (e.g. dsl/apps/writing_review_app.md)",
     )
     run_p.add_argument(
         "--dsl-root",
@@ -712,10 +763,9 @@ def build_parser() -> argparse.ArgumentParser:
         dest="dsl_root",
         metavar="DIR",
         help=(
-            "Root of the DSL tree for shared artifact/phase resolution "
-            "(default: auto-detected as <app_dir>/../..). "
-            "Use this when running an app from outside the project dsl/ tree, "
-            "e.g. --app-dsl workspace/dsl/apps/my_app/app.md --dsl-root dsl/"
+            "Root of the DSL tree for shared artifact/phase resolution. "
+            "Inferred automatically when using app name or --app-path. "
+            "Override with this flag when the inferred root is wrong."
         ),
     )
     run_p.add_argument(
