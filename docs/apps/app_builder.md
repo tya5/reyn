@@ -104,13 +104,7 @@ workspace/dsl/apps/{app_name}/
    cp -r workspace/dsl/apps/{app_name} dsl/apps/
    ```
 
-2. Validate with the linter:
-
-   ```bash
-   reyn lint --dsl dsl/
-   ```
-
-3. Run it:
+2. Run it:
 
    ```bash
    reyn run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "test input"
@@ -133,5 +127,5 @@ workspace/dsl/apps/{app_name}/
 ## Tips
 
 - **Vague input is fine**: missing information is requested via `ask_user`
-- **Always run the linter after generation**: `reyn lint` catches undefined artifact references
+- **Linting runs automatically**: `app_builder` includes a lint step — check the final output's `lint_result` for any issues
 - **Low quality? Use app_improver**: pass the generated app to `app_improver` to auto-improve phase instructions
