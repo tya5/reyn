@@ -96,7 +96,15 @@ def cmd_run(args: argparse.Namespace) -> None:
         print("Error: provide an app name (positional), --app-path DIR, or --module.", file=sys.stderr)
         sys.exit(1)
 
-    initial_input = _parse_cli_input(args.input)
+    if args.input is not None:
+        raw_input = args.input
+    elif not sys.stdin.isatty():
+        raw_input = sys.stdin.read().strip()
+    else:
+        print("Error: provide INPUT argument or pipe input via stdin.", file=sys.stderr)
+        sys.exit(1)
+
+    initial_input = _parse_cli_input(raw_input)
 
     model = args.model or config.model
     output_language = args.output_language or config.output_language
@@ -737,7 +745,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "App name to resolve automatically. "
             "Search order: workspace/dsl/apps/ → dsl/apps/ → ~/.reyn/apps/ → stdlib. "
-            "Example: reyn run app_builder --input '...'"
+            "Example: reyn run app_builder 'describe your app'"
         ),
     )
     run_p.add_argument(
@@ -769,12 +777,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_p.add_argument(
-        "--input",
-        required=True,
-        metavar="TEXT",
+        "input",
+        nargs="?",
+        default=None,
+        metavar="INPUT",
         help=(
-            "Initial input: JSON artifact string, or natural language "
-            "(auto-wrapped as user_message artifact)"
+            "Initial input: JSON artifact string or natural language "
+            "(auto-wrapped as user_message). "
+            "Reads from stdin if omitted (pipe or redirect)."
         ),
     )
     run_p.add_argument(
