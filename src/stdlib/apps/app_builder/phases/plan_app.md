@@ -55,7 +55,7 @@ Do NOT add review phases just to add them — only when the task output is subje
 
 app_name: snake_case name of the target app
 app_description: one sentence describing what the app does (used in `reyn apps` listing)
-app_path: ".reyn/dsl/apps/{app_name}"
+app_path: "dsl/apps/{app_name}"
 entry_phase: name of the first phase
 finish_criteria: 2–4 bullet strings describing when the TARGET workflow is done
 
@@ -74,8 +74,15 @@ phases: array of phase definitions, each with:
   - can_finish: true only if this phase may end the workflow
 
 transitions: array of {from: phase_name, to: [phase_name, ...]}
-  - Review phases that loop back must list BOTH the revision target AND the next phase in `to`.
+  - `to` values MUST be phase names only — NEVER the final_output artifact name.
+  - A phase with `can_finish: true` terminates the workflow without a graph edge — do NOT add a transition to the final_output name.
+  - Review phases that loop back must list BOTH the revision target AND the next (deliver) phase in `to`.
   - The phase that delivers final output must be can_finish: true.
+
+CRITICAL — no transition to final_output:
+If review_translation can finish, its transitions include ONLY the revision loop target (e.g. translate_text).
+WRONG: {from: "review_translation", to: ["translate_text", "deliver_translation"]}   ← deliver_translation is NOT a phase
+RIGHT: {from: "review_translation", to: ["translate_text"]}  ← review_translation has can_finish: true
 
 artifacts: array of artifact definitions, each with:
   - name: snake_case artifact name (matches a phase's input_artifact)

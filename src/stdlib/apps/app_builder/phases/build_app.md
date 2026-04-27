@@ -44,6 +44,9 @@ CRITICAL — no "finish" node: Do NOT add a `finish` node to the graph.
 Workflow termination is expressed by `can_finish: true` on the phase that delivers the final output.
 The phase uses `can_finish: true` in its frontmatter — there is NO separate "finish" phase or edge.
 
+CRITICAL — skip edges to final_output: If any transition target equals data.final_output.name, OMIT that edge.
+The final_output artifact is NOT a phase. Only emit edges where the target is a phase listed in data.phases.
+
 phase file (write to {app_path}/phases/{phase_name}.md):
 ```
 ---
