@@ -88,6 +88,8 @@ quality:
 
 Set in the output artifact:
 - `eval_md_path`: the workspace-relative path where you wrote the file.
+- `app_dsl_path`: the target app DSL path from app_analysis.
+- `model`: the judge_model from app_analysis (this is passed to eval_runner to run the target app).
 - `case_count`: number of test cases.
 - `total_criteria`: total lines (schema assertions + quality criteria) across all cases and phases.
 - `next_steps`: tell the user:

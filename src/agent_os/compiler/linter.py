@@ -115,6 +115,41 @@ def lint_phase(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     return issues
 
 
+# ── App ───────────────────────────────────────────────────────────────────────
+
+def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
+    issues: list[LintIssue] = []
+    from .parser import parse_app
+    try:
+        app_def = parse_app(path)
+    except Exception as exc:
+        return [LintIssue("error", path, f"Parse error: {exc}")]
+
+    app_dir = path.parent
+    phase_files = {p.stem for p in (app_dir / "phases").glob("*.md")} if (app_dir / "phases").exists() else set()
+
+    # Check each graph node that is a regular phase (not an @app_node)
+    for src, dst in app_def.edges:
+        for node in (src, dst):
+            if node.startswith("@"):
+                continue
+            if node not in phase_files:
+                issues.append(LintIssue(
+                    "error", path,
+                    f"Graph references phase '{node}' but no phases/{node}.md found. "
+                    "Use can_finish: true on the delivering phase instead of a 'finish' node.",
+                ))
+
+    # Check final_output artifact exists
+    if app_def.final_output and app_def.final_output not in known_artifacts:
+        issues.append(LintIssue(
+            "error", path,
+            f"final_output '{app_def.final_output}' not found in known artifacts.",
+        ))
+
+    return issues
+
+
 # ── DSL root ──────────────────────────────────────────────────────────────────
 
 def lint_dsl(dsl_root: Path) -> list[LintIssue]:
@@ -163,5 +198,13 @@ def lint_dsl(dsl_root: Path) -> list[LintIssue]:
                 issues.extend(lint_phase(p, artifact_names))
             except Exception as exc:
                 issues.append(LintIssue("error", p, f"Lint error: {exc}"))
+
+    # Lint app graphs
+    if apps_root.exists():
+        for app_md in sorted(apps_root.glob("*/app.md")):
+            try:
+                issues.extend(lint_app(app_md, artifact_names))
+            except Exception as exc:
+                issues.append(LintIssue("error", app_md, f"Lint error: {exc}"))
 
     return issues

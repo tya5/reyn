@@ -39,6 +39,10 @@ review -> generate
 review -> deliver
 ```
 
+CRITICAL — no "finish" node: Do NOT add a `finish` node to the graph.
+Workflow termination is expressed by `can_finish: true` on the phase that delivers the final output.
+The phase uses `can_finish: true` in its frontmatter — there is NO separate "finish" phase or edge.
+
 phase file (write to {app_path}/phases/{phase_name}.md):
 ```
 ---
@@ -64,17 +68,24 @@ name: {artifact_name}
 {field_name}: {type}
 {field_name}: {type}
 ```
-If a field has no type, default to `string`.
+CRITICAL: Every artifact field MUST have an explicit type — never leave a type blank.
+Valid types: string | integer | number | boolean | string[] | integer[] | number[] | array | object
+Wrong: `approved:` — Right: `approved: boolean`
+If a field truly has no type specified, default to `string`.
 
 IMPORTANT: Write ALL artifact files — including the final_output artifact.
 Checklist before finishing:
 - app.md written
 - one phase file per phase in data.phases
-- one artifact file per artifact in data.artifacts
+- one artifact file per artifact in data.artifacts (all fields have explicit types)
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
 Write all files using one op per file. After writing, output a decide turn reporting the files written.
+
+When transitioning to lint, set the output fields as:
+- `dsl_root`: `"dsl/"` (the workspace DSL root — NOT the app path like "dsl/apps/foo")
+- `app_name`: the generated app name (e.g. `"article_generator"`)
 
 summary MUST describe what the app does for its users — not what you (the builder) did.
 Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
