@@ -5,7 +5,7 @@ input: user_message
 input_description: |
   Natural language request specifying the target app to build an eval spec for.
   Must include the app DSL path. Example:
-  "dsl/apps/writing_review_app/app.md の eval.md を作って"
+  "Create an eval.md for dsl/apps/writing_review_app/app.md"
   "Create an eval spec for dsl/apps/architecture_analyzer/app.md — focus on article quality"
 role: eval_designer
 max_act_turns: 20
@@ -68,7 +68,7 @@ For each phase, split criteria into two kinds:
 - 2–5 schema assertions per phase.
 
 **quality** — LLM-judged content checks. Plain Japanese/English sentence.
-- Use quality ONLY for checks that require reading and understanding content (e.g. "summary がアプリの目的を説明している").
+- Use quality ONLY for checks that require reading and understanding content (e.g. "summary describes the app's purpose").
 - Do NOT re-check what schema already covers (existence, type, range).
 - 0–3 quality criteria per phase. Prefer 0–1 when schema covers the structure well.
 

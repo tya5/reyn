@@ -1,19 +1,19 @@
-# app_improver — 既存アプリを自動改善する
+# app_improver — Automatically improve an existing app
 
-実際にアプリを動かし、実行ログとアーティファクトを分析して、DSL ファイルへの具体的な改善案を生成・適用します。
-
----
-
-## できること
-
-- フェーズの実行回数・バリデーションエラー・信頼スコアなどを分析し、品質課題を特定する
-- アーティファクトの内容を精査し、フィールドの欠落・内容の薄さを検出する
-- フェーズ指示・アーティファクトスキーマへの具体的な修正案を生成する
-- 改善ファイルをワークスペースに書き出し、適用手順を案内する
+Runs the target app, analyzes its execution log and artifacts, and generates concrete DSL improvements.
 
 ---
 
-## 実行コマンド
+## What it does
+
+- Analyzes phase visit counts, validation errors, and confidence scores to identify quality issues
+- Inspects artifact content for missing fields or thin output
+- Generates concrete patches to phase instructions and artifact schemas
+- Writes improved files to the workspace and provides copy instructions
+
+---
+
+## Usage
 
 ```bash
 reyn run \
@@ -21,106 +21,106 @@ reyn run \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \
   --allow-shell \
-  --input "改善したいアプリの情報"
+  --input "Information about the app you want to improve"
 ```
 
-> **注意**: `run_target` フェーズがサブプロセスとしてターゲットアプリを実行するため、`--allow-shell` が必須です。
+> **Note**: `--allow-shell` is required because the `run_target` phase executes the target app as a subprocess.
 
 ---
 
-## 入力の書き方
+## Input format
 
-以下の情報を自然言語で伝えます：
+Provide the following information in natural language:
 
-| 項目 | 必須 | 説明 |
-|------|------|------|
-| アプリの DSL パス | ◎ | `dsl/apps/{app_name}/app.md` の形式 |
-| テスト入力 | ◎ | ターゲットアプリに渡す入力テキスト |
-| 改善フォーカス | 任意 | レビューフェーズの品質向上など、重点箇所の指定 |
-| モデル | 任意 | デフォルトは実行中のモデルと同じ |
+| Field | Required | Description |
+|-------|----------|-------------|
+| App DSL path | yes | Path in the form `dsl/apps/{app_name}/app.md` |
+| Test input | yes | Input text to pass to the target app |
+| Improvement focus | optional | Specific area to focus on, e.g. review phase quality |
+| Model | optional | Defaults to the currently running model |
 
-**書き方の例：**
+**Example:**
 
 ```
-dsl/apps/writing_review_app/app.md を改善してほしい。
-テスト入力: "AIの未来についての記事を書いて"
-レビューフェーズのフィードバック品質を重点的に見てほしい。
-モデルは openai/gemini-2.5-flash-lite を使用。
+Please improve dsl/apps/writing_review_app/app.md.
+Test input: "Write an article about the future of AI"
+Focus on the feedback quality of the review phase.
+Model: openai/gemini-2.5-flash-lite
 ```
 
 ---
 
-## フェーズの流れ
+## Phase flow
 
 ```
 prepare → run_target → analyze_execution → plan_improvements → apply_improvements
 ```
 
-| フェーズ | 役割 | やること |
-|----------|------|----------|
-| `prepare` | meta_coordinator | 入力を解析し、ターゲットアプリの実行パラメータを準備する |
-| `run_target` | executor | ターゲットアプリをサブプロセスで実行し、ログとアーティファクトのパスを取得する |
-| `analyze_execution` | quality_analyst | イベントログ・アーティファクト・DSL ファイルを精査し、品質スコアと具体的な問題点を特定する |
-| `plan_improvements` | app_architect | 問題点ごとに具体的な DSL 修正内容を設計する |
-| `apply_improvements` | implementer | 修正ファイルをワークスペースの `dsl_patches/` に書き出す |
+| Phase | Role | Responsibility |
+|-------|------|----------------|
+| `prepare` | meta_coordinator | Parses input and prepares execution parameters for the target app |
+| `run_target` | executor | Runs the target app as a subprocess and captures log and artifact paths |
+| `analyze_execution` | quality_analyst | Inspects event log, artifacts, and DSL files; identifies quality issues with scores |
+| `plan_improvements` | app_architect | Designs concrete DSL changes for each identified issue |
+| `apply_improvements` | implementer | Writes patched files to `dsl_patches/` in the workspace |
 
 ---
 
-## 出力と改善の適用方法
+## Output and applying improvements
 
-改善されたファイルはワークスペース内に書き出されます。実際の DSL ファイルへの適用は手動で行います。
+Improved files are written inside the workspace. Applying them to your project DSL is a manual step.
 
 ```
 workspace/dsl_patches/
   apps/{app_name}/
-    phases/{phase_name}.md    ← 改善されたフェーズ定義
-    artifacts/{name}.md       ← 改善されたアーティファクト定義
+    phases/{phase_name}.md    ← improved phase definition
+    artifacts/{name}.md       ← improved artifact schema
 ```
 
-適用手順：
+To apply:
 
 ```bash
-# パッチファイルを確認する
+# Review the patch
 cat workspace/dsl_patches/apps/{app_name}/phases/{phase_name}.md
 
-# 問題なければプロジェクトの DSL に上書きコピーする
+# Copy into your project DSL
 cp workspace/dsl_patches/apps/{app_name}/phases/{phase_name}.md \
    dsl/apps/{app_name}/phases/{phase_name}.md
 ```
 
-最終出力のサマリー例：
+Final output example:
 
 ```json
 {
   "files_modified": [
     "dsl_patches/apps/writing_review_app/phases/review.md → dsl/apps/writing_review_app/phases/review.md"
   ],
-  "summary": "review フェーズの指示を具体化し、評価基準の明示と verdict フィールドの意味を追記した",
-  "next_steps": "workspace/dsl_patches/ 内のファイルをレビューし、問題なければターゲットパスにコピーしてください"
+  "summary": "Clarified review phase instructions; added explicit evaluation criteria and field semantics for the verdict field",
+  "next_steps": "Review files in workspace/dsl_patches/ and copy them to the target paths if they look good"
 }
 ```
 
 ---
 
-## analyze_execution が見ているもの
+## What analyze_execution looks at
 
-実行ログ (JSONL) から以下を分析します：
+From the execution log (JSONL):
 
-| チェック項目 | 内容 |
-|-------------|------|
-| フェーズ訪問回数 | 多いほど LLM が迷っているサイン |
-| `phase_retry` イベント | バリデーション失敗 → フェーズ指示の曖昧さが原因なことが多い |
-| 信頼スコア (confidence) | 低いほど LLM が確信を持てていない |
-| アーティファクトの内容充実度 | 必須フィールドの欠落・内容の薄さを検出 |
-| `workflow_aborted` | 致命的エラーの有無 |
+| Signal | What it means |
+|--------|---------------|
+| Phase visit count | High count → LLM is struggling with the instructions |
+| `phase_retry` events | Validation failures → usually caused by ambiguous phase instructions |
+| Confidence score | Low score → LLM is uncertain about its decision |
+| Artifact content richness | Detects missing required fields or thin output |
+| `workflow_aborted` | Presence of fatal errors |
 
-品質スコアが **8 以上** の場合は変更なし (空の `changes` 配列) を返します。
+If the quality score is **8 or above**, no changes are made (empty `changes` array is returned).
 
 ---
 
 ## Tips
 
-- **テスト入力は本番に近いものを**: 単純すぎる入力だと問題が顕在化しないことがあります
-- **改善フォーカスを指定すると精度が上がる**: 「レビューの品質」「アーティファクトのフィールド設計」など具体的に伝えましょう
-- **改善後は eval_builder で定量評価**: `eval_builder` でテストスペックを作り、改善効果を数値で確認できます
-- **ターゲットのワークスペースは自動生成される**: `workspace/target_runs/{app_name}/` に実行結果が保存されます
+- **Use realistic test input**: overly simple input may not surface real problems
+- **Specifying a focus area improves precision**: e.g. "review quality", "artifact field design"
+- **Measure improvement with eval_builder**: build a test spec with `eval_builder` and verify the improvement numerically
+- **Target workspace is created automatically**: execution results are saved to `workspace/target_runs/{app_name}/`

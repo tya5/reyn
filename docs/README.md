@@ -1,17 +1,17 @@
-# Agent OS ドキュメント
+# Reyn Documentation
 
-## Apps — 標準ライブラリアプリの使い方
+## Apps — Standard library apps
 
-| アプリ | 概要 |
-|--------|------|
-| [app_builder](apps/app_builder.md) | 自然言語からアプリを生成する |
-| [app_improver](apps/app_improver.md) | 既存アプリを実行・分析して自動改善する |
-| [eval_builder](apps/eval_builder.md) | アプリの評価スペック (eval.md) を自動生成する |
+| App | Description |
+|-----|-------------|
+| [app_builder](apps/app_builder.md) | Generate an app from a natural language description |
+| [app_improver](apps/app_improver.md) | Run, analyze, and automatically improve an existing app |
+| [eval_builder](apps/eval_builder.md) | Auto-generate an eval spec (eval.md) for an app |
 
-## Architecture — 設計・アーキテクチャ解説
+## Architecture — Design & internals
 
-*(準備中)*
+*(coming soon)*
 
-## Guides — チュートリアル・リファレンス
+## Guides — Tutorials & reference
 
-*(準備中)*
+*(coming soon)*

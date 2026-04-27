@@ -1,84 +1,84 @@
-# app_builder — アプリを自然言語から生成する
+# app_builder — Generate an app from natural language
 
-自然言語のリクエストを受け取り、Agent OS で動作する新しいアプリの DSL ファイル一式を自動生成します。
-
----
-
-## できること
-
-- アプリの目的を日本語や英語で伝えるだけで、フェーズ・アーティファクト・グラフ構造を設計してくれる
-- 生成されたファイルはそのまま `reyn run` で実行できる状態になる
-- レビューループが必要かどうかを自動判断し、適切なフェーズ構成を選択する
+Takes a natural language description and auto-generates a complete set of DSL files for a new app that runs on Reyn.
 
 ---
 
-## 実行コマンド
+## What it does
+
+- Describe your app's purpose in plain English (or any language) and get a full phase/artifact/graph design
+- Generated files are immediately runnable with `reyn run`
+- Automatically determines whether a review loop is needed and selects the appropriate phase structure
+
+---
+
+## Usage
 
 ```bash
 reyn run \
   --app-dsl src/stdlib/apps/app_builder/app.md \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \
-  --input "作りたいアプリの説明"
+  --input "Describe the app you want to build"
 ```
 
-生成されたファイルはワークスペース内の `dsl/apps/{app_name}/` に書き出されます。
+Generated files are written to `workspace/dsl/apps/{app_name}/`.
 
 ---
 
-## 入力の書き方
+## Input format
 
-自然言語でアプリの目的・機能を説明します。
+Describe the app's purpose and functionality in natural language.
 
-**最低限必要な情報：**
-- 何をするアプリか
-- 入力と出力のイメージ
+**Minimum required information:**
+- What the app does
+- What the input and output look like
 
-**書き方の例：**
-
-```
-ブログ記事を自動生成するアプリを作ってほしい。
-テーマを入力すると、記事の下書きを生成し、品質レビューを経て最終版を出力する。
-```
+**Examples:**
 
 ```
-顧客からのフィードバックテキストを受け取り、
-ポジティブ・ネガティブ・提案の3カテゴリに分類して要約するアプリ。
+Build an app that auto-generates blog articles.
+Given a topic, it drafts an article, runs a quality review, and outputs the final version.
 ```
 
-アプリ名を迷っているときは「名前の候補をいくつか出して」と書くと候補を提示してくれます。
+```
+An app that receives customer feedback text and classifies it into
+positive, negative, and suggestion categories with a summary.
+```
+
+If you are unsure about the app name, write "suggest some name options" and the builder will propose candidates.
 
 ---
 
-## フェーズの流れ
+## Phase flow
 
 ```
 plan_app  →  build_app
 ```
 
-| フェーズ | 役割 | やること |
-|----------|------|----------|
-| `plan_app` | app_architect | アプリ構造を設計。フェーズ・アーティファクト・遷移グラフを決定 |
-| `build_app` | dsl_writer | 設計に基づいて DSL ファイルを生成・書き込み |
+| Phase | Role | Responsibility |
+|-------|------|----------------|
+| `plan_app` | app_architect | Designs the app structure: phases, artifacts, and transition graph |
+| `build_app` | dsl_writer | Generates and writes DSL files based on the design |
 
 ---
 
-## 出力ファイル構成
+## Output file structure
 
-生成されるファイルはワークスペース内に以下の構成で書き出されます：
+Files are written inside the workspace:
 
 ```
 workspace/dsl/apps/{app_name}/
-  app.md                   ← アプリ定義 (エントリーフェーズ, グラフ, 最終出力)
+  app.md                   ← App definition (entry phase, graph, final output)
   phases/
-    {phase_name}.md        ← 各フェーズの定義
+    {phase_name}.md        ← Per-phase definition
   artifacts/
-    {artifact_name}.md     ← 各アーティファクトのスキーマ
+    {artifact_name}.md     ← Per-artifact schema
 ```
 
 ---
 
-## 最終出力
+## Final output
 
 ```json
 {
@@ -90,48 +90,48 @@ workspace/dsl/apps/{app_name}/
     "dsl/apps/my_app/artifacts/analysis_result.md"
   ],
   "file_count": 5,
-  "summary": "ユーザーが〜できるアプリ"
+  "summary": "An app that ..."
 }
 ```
 
 ---
 
-## 生成後の使い方
+## After generation
 
-1. 生成されたファイルをプロジェクトの `dsl/` ディレクトリにコピーする
+1. Copy the generated files into your project's `dsl/` directory:
 
    ```bash
    cp -r workspace/dsl/apps/{app_name} dsl/apps/
    ```
 
-2. リンターで整合性を確認する
+2. Validate with the linter:
 
    ```bash
    reyn lint --dsl dsl/
    ```
 
-3. 実際に動かしてみる
+3. Run it:
 
    ```bash
-   reyn run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "テスト入力"
+   reyn run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "test input"
    ```
 
 ---
 
-## フェーズ設計パターン
+## Phase design patterns
 
-`plan_app` は入力の性質に応じて以下のパターンから最適なものを選びます：
+`plan_app` selects the best pattern based on the input:
 
-| パターン | 構成 | 向いているケース |
-|----------|------|-----------------|
-| A: レビューループ | generate → review → deliver | コンテンツ生成など主観的判断が必要な場合 |
-| B: 調査→生成 | research → generate → review → deliver | 情報収集が先に必要な場合 |
-| C: シンプル線形 | process → deliver | 決定論的な変換・分類など |
+| Pattern | Structure | Best for |
+|---------|-----------|----------|
+| A: Review loop | generate → review → deliver | Content generation requiring subjective judgment |
+| B: Research first | research → generate → review → deliver | When information gathering must precede generation |
+| C: Simple linear | process → deliver | Deterministic transformations and classification |
 
 ---
 
 ## Tips
 
-- **入力が曖昧でも大丈夫**: 不足している情報は `ask_user` で確認を求めてくれます
-- **生成後は必ずリンターを回す**: `reyn lint` で未定義のアーティファクト参照などを検出できます
-- **品質が低い場合は app_improver で改善できます**: 生成されたアプリを `app_improver` に渡すとフェーズ指示を自動改善してくれます
+- **Vague input is fine**: missing information is requested via `ask_user`
+- **Always run the linter after generation**: `reyn lint` catches undefined artifact references
+- **Low quality? Use app_improver**: pass the generated app to `app_improver` to auto-improve phase instructions

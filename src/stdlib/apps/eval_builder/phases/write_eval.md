@@ -73,15 +73,15 @@ Each quality criterion line may carry an optional tag prefix:
 - `[aspirational]` — tracked but excluded from score; failure is informational only.
 
 Use `[aspirational]` for criteria that represent a model capability ceiling rather than a fixable bug:
-- Subjective judgements ("具体的である", "詳細である") that consistently score below 1.0 even on correct output
+- Subjective judgements ("is specific", "is detailed") that consistently score below 1.0 even on correct output
 - Comparative checks ("revision is better than draft") that require cross-artifact reasoning
 - "Gold standard" quality bars that go beyond what the app is required to produce
 
 Example:
 ```
 quality:
-- issues の各項目が存在する                          ← required (default, no tag)
-- [aspirational] issues の各項目が非常に具体的な改善案を含む
+- each item in issues exists                         ← required (default, no tag)
+- [aspirational] each item in issues contains a highly specific improvement suggestion
 ```
 
 ## After writing

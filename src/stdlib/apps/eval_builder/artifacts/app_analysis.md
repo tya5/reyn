@@ -71,8 +71,8 @@ phase_eval_designs:
           type: string
         # LLM-judged criteria — for semantic / content checks that cannot be expressed as type/value assertions.
         # Examples:
-        #   "summary フィールドが書き込んだメモの内容を要約している"
-        #   "body に asyncio の基本概念の説明が含まれている"
+        #   "summary field summarizes the content of the written memo"
+        #   "body contains an explanation of asyncio basics"
         # Rules:
         #   - Only include checks that genuinely require reading and understanding content.
         #   - Do NOT duplicate what schema assertions already cover (field existence, type, range).

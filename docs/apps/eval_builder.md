@@ -1,63 +1,63 @@
-# eval_builder — アプリの評価スペックを自動生成する
+# eval_builder — Auto-generate an eval spec for an app
 
-既存アプリの DSL ファイルを読み込み、各フェーズの出力を評価するための `eval.md` スペックファイルを自動生成します。生成されたスペックは `reyn eval` コマンドで繰り返し実行できます。
-
----
-
-## できること
-
-- アプリの全フェーズに対してスキーマ検証と LLM 品質評価の基準を設計する
-- テストケースを 1〜2 件自動設計する (通常ケース・レビューループ発生ケース)
-- フェーズ間の一貫性チェック (例: plan フェーズで決めた名前が build フェーズでも同じか) を記述する
-- 生成した `eval.md` をワークスペースに書き出し、実行コマンドを案内する
+Reads an existing app's DSL files and auto-generates an `eval.md` spec that evaluates each phase's output. The generated spec can be re-run repeatedly with `reyn eval`.
 
 ---
 
-## 実行コマンド
+## What it does
+
+- Designs schema validation and LLM quality criteria for every phase of the app
+- Auto-designs 1–2 test cases (typical case, and a case that triggers a review loop)
+- Writes cross-phase consistency checks (e.g. name decided in `plan` must match in `build`)
+- Writes the generated `eval.md` to the workspace and prints the run command
+
+---
+
+## Usage
 
 ```bash
 reyn run \
   --app-dsl src/stdlib/apps/eval_builder/app.md \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \
-  --input "評価スペックを作りたいアプリの DSL パス"
+  --input "DSL path of the app you want to evaluate"
 ```
 
 ---
 
-## 入力の書き方
+## Input format
 
-ターゲットアプリの `app.md` パスを含む文章を入力します。
+Provide a sentence that includes the target app's `app.md` path.
 
-**書き方の例：**
-
-```
-dsl/apps/writing_review_app/app.md の eval.md を作って
-```
+**Examples:**
 
 ```
-dsl/apps/architecture_analyzer/app.md の評価スペックを作成してください。
-記事の品質評価フェーズを重点的に見てほしい。
+Create an eval.md for dsl/apps/writing_review_app/app.md
 ```
 
-パスが不明瞭な場合は `ask_user` で確認を求めてくれます。
+```
+Generate an eval spec for dsl/apps/architecture_analyzer/app.md.
+Focus on the article quality evaluation phase.
+```
+
+If the path is unclear, `ask_user` will request it.
 
 ---
 
-## フェーズの流れ
+## Phase flow
 
 ```
 analyze_app  →  write_eval
 ```
 
-| フェーズ | 役割 | やること |
-|----------|------|----------|
-| `analyze_app` | eval_designer | DSL ファイルを全件読み込み、フェーズごとの評価基準を設計する |
-| `write_eval` | spec_writer | 設計した基準を `eval.md` 形式に整形してワークスペースに書き出す |
+| Phase | Role | Responsibility |
+|-------|------|----------------|
+| `analyze_app` | eval_designer | Reads all DSL files and designs evaluation criteria per phase |
+| `write_eval` | spec_writer | Formats the criteria into `eval.md` and writes it to the workspace |
 
 ---
 
-## 生成される eval.md の構造
+## Generated eval.md structure
 
 ```yaml
 ---
@@ -68,7 +68,7 @@ judge_model: openai/gemini-2.5-flash-lite
 ---
 
 ## case: typical_case
-input: "通常ケースのテスト入力"
+input: "Typical test input for this app"
 
 ### phase: analyze
 schema:
@@ -76,7 +76,7 @@ schema:
 - analysis_result.score: number, range 0.0-10.0
 
 quality:
-- issues の各項目が具体的な改善案を含んでいる
+- Each issue contains a concrete improvement suggestion
 
 ### cross_phase
 - plan_app.app_name == build_app.app_name
@@ -87,67 +87,67 @@ schema:
 - files_written: array, min 1
 
 quality:
-- summary がアプリの目的をユーザー視点で説明している
+- summary describes the app's purpose from the user's perspective
 ```
 
 ---
 
-## 評価基準の種類
+## Criterion types
 
-### schema (スキーマ検証)
+### schema (deterministic validation)
 
-アーティファクトのフィールド構造を決定論的にチェックします。LLM を使わないため高速・安定。
+Checks artifact field structure without an LLM — fast and stable.
 
-| 制約の例 | 意味 |
-|----------|------|
-| `field: string` | フィールドが文字列として存在する |
-| `field: array, min 1` | 配列で 1 件以上ある |
-| `field: number, range 0.0-10.0` | 数値が範囲内 |
-| `field: boolean, equals true` | 値が true である |
+| Example | Meaning |
+|---------|---------|
+| `field: string` | Field exists and is a string |
+| `field: array, min 1` | Array with at least one item |
+| `field: number, range 0.0-10.0` | Number within range |
+| `field: boolean, equals true` | Value is exactly true |
 
-### quality (品質評価)
+### quality (LLM-judged)
 
-LLM (judge_model) が内容を読んで判定します。
-
-```
-- issues の各項目が具体的な改善案を含んでいる
-- summary がアプリの目的をユーザー視点で説明している
-```
-
-**`[aspirational]` タグ**: 満点を目指す基準ではなく、傾向把握のためのチェックには `[aspirational]` を付けます。スコアへの影響はなく参考値扱いになります。
+The `judge_model` reads and evaluates the content.
 
 ```
-- [aspirational] フィードバックが非常に具体的で実行可能な提案を含んでいる
+- Each issue contains a concrete improvement suggestion
+- summary describes the app's purpose from the user's perspective
+```
+
+**`[aspirational]` tag**: for checks that track capability trends rather than pass/fail requirements. Excluded from the score; treated as informational.
+
+```
+- [aspirational] Feedback contains highly specific, actionable suggestions
 ```
 
 ---
 
-## 出力ファイルと実行方法
+## Output file and running
 
 ```
 workspace/eval_specs/{app_name}/eval.md
 ```
 
-プロジェクトの DSL ディレクトリにコピーして実行します：
+Copy to your project DSL and run:
 
 ```bash
-# ワークスペースから DSL ディレクトリにコピー
+# Copy from workspace to DSL directory
 cp workspace/eval_specs/{app_name}/eval.md dsl/apps/{app_name}/eval.md
 
-# 評価を実行
+# Run the eval
 reyn eval --spec dsl/apps/{app_name}/eval.md --model openai/gemini-2.5-flash-lite
 ```
 
 ---
 
-## 最終出力
+## Final output
 
 ```json
 {
   "eval_md_path": "eval_specs/my_app/eval.md",
   "case_count": 2,
   "total_criteria": 18,
-  "next_steps": "workspace/eval_specs/my_app/eval.md に書き出しました。..."
+  "next_steps": "Written to workspace/eval_specs/my_app/eval.md. ..."
 }
 ```
 
@@ -155,7 +155,7 @@ reyn eval --spec dsl/apps/{app_name}/eval.md --model openai/gemini-2.5-flash-lit
 
 ## Tips
 
-- **全フェーズのアーティファクト .md を読んでから設計**: `analyze_app` は DSL ファイルを全件読んでからフィールド名を確定するため、存在しないフィールドへの参照が生まれにくい設計になっています
-- **フィールド名は必ず DSL に従う**: スキーマ検証のフィールドパスが実際のアーティファクト定義と一致していないと評価エラーになります
-- **レビューループがあるアプリはケース 2 が重要**: 最初の draft で revision が必要になるような入力を case 2 に設定することで、ループが正しく動くかを検証できます
-- **app_improver と組み合わせると効果的**: `eval_builder` でスペックを作成 → `app_improver` で改善 → `eval` で効果測定、というサイクルで品質を上げていけます
+- **Reads all artifact files before designing criteria**: `analyze_app` reads every DSL file first, which prevents references to non-existent fields
+- **Field names must match the DSL exactly**: schema assertion paths that don't match the artifact definition will cause eval errors
+- **Case 2 matters for review-loop apps**: set an input that is likely to require revision in the first draft to verify the loop works correctly
+- **Combine with app_improver**: build a spec with `eval_builder` → improve with `app_improver` → measure with `eval` — a tight quality improvement cycle
