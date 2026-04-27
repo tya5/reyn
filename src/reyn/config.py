@@ -3,10 +3,10 @@ Reyn configuration loader.
 
 Priority (lowest → highest):
   built-in defaults
-  ~/.reyn/config.yaml        user global
-  <project>/reyn.yaml        project (git managed)
-  <project>/reyn.local.yaml  local overrides (gitignored)
-  CLI flags                      per-invocation
+  ~/.reyn/config.yaml         user global
+  <project>/reyn.yaml         project (git managed)
+  <project>/.reyn/config.yaml local overrides (gitignored)
+  CLI flags                   per-invocation
 
 Scalars: higher priority wins outright.
 models dict: shallow merge — each key overrides independently.
@@ -70,7 +70,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
-    merged: dict = {"model": "standard", "workspace": "./workspace",
+    merged: dict = {"model": "standard", "workspace": ".reyn",
                     "output_language": "ja", "shell_allowed": False, "models": {}}
 
     # User global
@@ -80,11 +80,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     project_root = _find_project_root(cwd)
     if project_root:
         merged = _merge(merged, _load_yaml(project_root / "reyn.yaml"))
-        merged = _merge(merged, _load_yaml(project_root / "reyn.local.yaml"))
+        merged = _merge(merged, _load_yaml(project_root / ".reyn" / "config.yaml"))
 
     return ReynConfig(
         model=str(merged.get("model", "standard")),
-        workspace=str(merged.get("workspace", "./workspace")),
+        workspace=str(merged.get("workspace", ".reyn")),
         output_language=str(merged.get("output_language", "ja")),
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},

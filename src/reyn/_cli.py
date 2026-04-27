@@ -681,9 +681,9 @@ def cmd_format(args: argparse.Namespace) -> None:
         print(f"\n{len(changed)} file(s) reformatted.")
 
 
-_AGENT_OS_YAML_TEMPLATE = """\
+_REYN_YAML_TEMPLATE = """\
 # Reyn project configuration — commit this file.
-# api_base / API keys belong in reyn.local.yaml or ~/.reyn/config.yaml — never here.
+# Local overrides belong in .reyn/config.yaml (gitignored) — never commit secrets here.
 
 # Default model class when --model is not specified.
 model: standard
@@ -695,14 +695,12 @@ models:
   standard: openai/gpt-4o
   strong:   openai/gpt-4o
 
-# workspace: ./workspace       # where artifacts and run logs are stored
-# output_language: ja          # ja | en | zh | ...
+# output_language: en          # en | ja | zh | ...
 # shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
 """
 
-_AGENT_OS_LOCAL_YAML_TEMPLATE = """\
+_REYN_LOCAL_CONFIG_TEMPLATE = """\
 # Local environment overrides — gitignored, never commit.
-# Copy and edit as needed.
 
 # LiteLLM proxy base URL (omit if calling providers directly)
 # api_base: http://localhost:4000
@@ -730,44 +728,46 @@ def cmd_init(args: argparse.Namespace) -> None:
     if project_cfg.exists():
         skipped.append("reyn.yaml")
     else:
-        project_cfg.write_text(_AGENT_OS_YAML_TEMPLATE, encoding="utf-8")
+        project_cfg.write_text(_REYN_YAML_TEMPLATE, encoding="utf-8")
         created.append("reyn.yaml")
 
-    # reyn.local.yaml
-    local_cfg = cwd / "reyn.local.yaml"
+    # .reyn/config.yaml
+    reyn_dir = cwd / ".reyn"
+    reyn_dir.mkdir(exist_ok=True)
+    local_cfg = reyn_dir / "config.yaml"
     if local_cfg.exists():
-        skipped.append("reyn.local.yaml")
+        skipped.append(".reyn/config.yaml")
     else:
-        local_cfg.write_text(_AGENT_OS_LOCAL_YAML_TEMPLATE, encoding="utf-8")
-        created.append("reyn.local.yaml")
+        local_cfg.write_text(_REYN_LOCAL_CONFIG_TEMPLATE, encoding="utf-8")
+        created.append(".reyn/config.yaml")
 
-    # .gitignore — add reyn.local.yaml if not already present
+    # .gitignore — add .reyn/ if not already present
     gitignore = cwd / ".gitignore"
     gitignore_note = ""
     if gitignore.exists():
         content = gitignore.read_text(encoding="utf-8")
-        if "reyn.local.yaml" not in content:
-            gitignore.write_text(content.rstrip() + "\nreyn.local.yaml\n", encoding="utf-8")
+        if ".reyn/" not in content:
+            gitignore.write_text(content.rstrip() + "\n.reyn/\n", encoding="utf-8")
             gitignore_note = "  (.gitignore updated)"
     else:
-        gitignore.write_text("reyn.local.yaml\n", encoding="utf-8")
+        gitignore.write_text(".reyn/\n", encoding="utf-8")
         gitignore_note = "  (.gitignore created)"
 
     for name in created:
-        suffix = gitignore_note if name == "reyn.local.yaml" else ""
+        suffix = gitignore_note if name == ".reyn/config.yaml" else ""
         print(f"  Created   {name}{suffix}")
     for name in skipped:
         print(f"  Exists    {name}  (skipped)")
 
     print()
     print("Next steps:")
-    print("  1. Edit reyn.yaml  — set model mappings for your provider")
-    print("  2. Edit reyn.local.yaml  — set api_base if using a proxy")
+    print("  1. Edit reyn.yaml         — set model mappings for your provider")
+    print("  2. Edit .reyn/config.yaml — set api_base if using a proxy")
     print("  3. Export your API key:")
     print("       export OPENAI_API_KEY=sk-...")
     print("       export ANTHROPIC_API_KEY=sk-ant-...")
     print("  4. Run an app:")
-    print('       reyn run --app-dsl dsl/apps/<name>/app.md --input "..."')
+    print('       reyn run app_builder "describe the app you want to build"')
 
 
 def _print_events(agent) -> None:
@@ -804,7 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="APP",
         help=(
             "App name to resolve automatically. "
-            "Search order: workspace/dsl/apps/ → dsl/apps/ → ~/.reyn/apps/ → stdlib. "
+            "Search order: .reyn/dsl/apps/ → dsl/apps/ → ~/.reyn/apps/ → stdlib. "
             "Example: reyn run app_builder 'describe your app'"
         ),
     )
@@ -815,7 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Path to an app directory containing app.md "
-            "(e.g. workspace/dsl/apps/my_app or dsl/apps/my_app). "
+            "(e.g. .reyn/dsl/apps/my_app or dsl/apps/my_app). "
             "Use this to point to an explicit location instead of name resolution."
         ),
     )

@@ -10,11 +10,10 @@ build/
 .coverage
 htmlcov/
 .mypy_cache/
-workspace/
+.reyn/
 .env
 .env.*
 !.env.example
-reyn.local.yaml
 .DS_Store
 .vscode/
 .idea/
