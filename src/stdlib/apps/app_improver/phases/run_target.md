@@ -12,7 +12,7 @@ Execute the target app as a subprocess and capture the results.
 
 Build and run this shell command:
 ```
-python main.py run --app-dsl {app_dsl_path} --dsl-root {dsl_root} --input '{test_input}' --workspace {target_workspace} --model {model}
+agent-os run --app-dsl {app_dsl_path} --dsl-root {dsl_root} --input '{test_input}' --workspace {target_workspace} --model {model}
 ```
 
 Use the shell Control IR op with timeout=300 (target apps may take several minutes).
