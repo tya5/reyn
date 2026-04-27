@@ -11,12 +11,12 @@ def _load_config():
 
 
 def _apply_config_env(config) -> None:
-    """Set env vars from config so all litellm calls pick them up automatically."""
+    """Set env vars from config so all litellm calls pick them up automatically.
+    API keys are intentionally excluded — set OPENAI_API_KEY / ANTHROPIC_API_KEY etc. in your shell.
+    """
     import os
     if config.api_base:
         os.environ.setdefault("LITELLM_API_BASE", config.api_base)
-    if config.api_key:
-        os.environ.setdefault("LITELLM_API_KEY", config.api_key)
 
 
 def _make_resolver(config):

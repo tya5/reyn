@@ -134,12 +134,16 @@ def _extract_usage(response) -> TokenUsage | None:
 
 
 def proxy_kwargs() -> dict:
-    """Return extra kwargs for litellm.completion() when a proxy is configured via env vars."""
+    """Return extra kwargs for litellm.completion() when a proxy is configured.
+
+    api_base is read from LITELLM_API_BASE (set by CLI from agent-os.yaml).
+    API keys are read automatically by litellm from provider env vars
+    (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never passed explicitly here.
+    """
     api_base = os.environ.get("LITELLM_API_BASE")
     if not api_base:
         return {}
-    api_key = os.environ.get("LITELLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "dummy")
-    return {"api_base": api_base, "api_key": api_key, "custom_llm_provider": "openai"}
+    return {"api_base": api_base, "custom_llm_provider": "openai"}
 
 
 def call_llm(
