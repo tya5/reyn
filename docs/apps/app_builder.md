@@ -22,7 +22,7 @@ reyn run \
   --input "Describe the app you want to build"
 ```
 
-Generated files are written to `workspace/dsl/apps/{app_name}/`.
+Generated files are written to `.reyn/dsl/apps/{app_name}/`.
 
 ---
 
@@ -65,10 +65,10 @@ plan_app  →  build_app
 
 ## Output file structure
 
-Files are written inside the workspace:
+Files are written to `.reyn/` (gitignored):
 
 ```
-workspace/dsl/apps/{app_name}/
+.reyn/dsl/apps/{app_name}/
   app.md                   ← App definition (entry phase, graph, final output)
   phases/
     {phase_name}.md        ← Per-phase definition
@@ -83,11 +83,11 @@ workspace/dsl/apps/{app_name}/
 ```json
 {
   "app_name": "my_app",
-  "app_path": "dsl/apps/my_app",
+  "app_path": ".reyn/dsl/apps/my_app",
   "files_written": [
-    "dsl/apps/my_app/app.md",
-    "dsl/apps/my_app/phases/analyze.md",
-    "dsl/apps/my_app/artifacts/analysis_result.md"
+    ".reyn/dsl/apps/my_app/app.md",
+    ".reyn/dsl/apps/my_app/phases/analyze.md",
+    ".reyn/dsl/apps/my_app/artifacts/analysis_result.md"
   ],
   "file_count": 5,
   "summary": "An app that ..."
@@ -98,20 +98,17 @@ workspace/dsl/apps/{app_name}/
 
 ## After generation
 
-Generated files are written inside the **workspace** (`workspace/dsl/apps/{app_name}/`).
-You can run the app directly from there — no copy needed:
+Generated files are written to `.reyn/dsl/apps/{app_name}/` (gitignored).
+You can run the generated app directly by name — no copy needed:
 
 ```bash
-reyn run \
-  --app-dsl workspace/dsl/apps/{app_name}/app.md \
-  --dsl-root workspace/dsl/ \
-  --input "test input"
+reyn run {app_name} "test input"
 ```
 
 To bring the app into your project's git-managed `dsl/` directory:
 
 ```bash
-cp -r workspace/dsl/apps/{app_name} dsl/apps/
+cp -r .reyn/dsl/apps/{app_name} dsl/apps/
 ```
 
 ---
