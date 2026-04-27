@@ -472,21 +472,33 @@ def cmd_eval(args: argparse.Namespace) -> None:
     from reyn.eval.runner import EvalRunner
     from reyn.eval.models import EvalRunResult
 
+    config = _load_config()
+    _apply_config_env(config)
+    resolver = _make_resolver(config)
+    workspace = config.workspace
+
     try:
         spec = load_eval_spec(args.spec)
     except Exception as e:
         print(f"Error loading eval spec: {e}", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        app = load_dsl_app(spec.app_dsl_path, dsl_root=spec.dsl_root or args.dsl_root)
-    except Exception as e:
-        print(f"Error loading app '{spec.app_dsl_path}': {e}", file=sys.stderr)
-        sys.exit(1)
+    # Resolve app: bare name → search path; path/URL → use directly
+    app_ref = spec.app_dsl_path
+    if "/" not in app_ref and not app_ref.endswith(".md"):
+        app_dir, inferred_root = _resolve_app_name(app_ref, workspace)
+        dsl_root = args.dsl_root or str(inferred_root)
+        app_md = str(app_dir / "app.md")
+        print(f"resolved        : {app_md}  (dsl-root: {dsl_root})")
+    else:
+        app_md = app_ref
+        dsl_root = spec.dsl_root or args.dsl_root
 
-    config = _load_config()
-    _apply_config_env(config)
-    resolver = _make_resolver(config)
+    try:
+        app = load_dsl_app(app_md, dsl_root=dsl_root)
+    except Exception as e:
+        print(f"Error loading app '{app_md}': {e}", file=sys.stderr)
+        sys.exit(1)
 
     raw_model = args.model or spec.model or config.model
     raw_judge = args.judge_model or spec.judge_model or raw_model
