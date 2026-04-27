@@ -16,11 +16,8 @@ Reads an existing app's DSL files and auto-generates an `eval.md` spec that eval
 ## Usage
 
 ```bash
-reyn run \
-  --app-dsl src/stdlib/apps/eval_builder/app.md \
-  --dsl-root src/stdlib \
-  --model openai/gemini-2.5-flash-lite \
-  --input "DSL path of the app you want to evaluate"
+reyn run eval_builder "DSL path of the app you want to evaluate" \
+  --model openai/gemini-2.5-flash-lite
 ```
 
 ---

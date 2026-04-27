@@ -15,11 +15,8 @@ Takes a natural language description and auto-generates a complete set of DSL fi
 ## Usage
 
 ```bash
-reyn run \
-  --app-dsl src/stdlib/apps/app_builder/app.md \
-  --dsl-root src/stdlib \
-  --model openai/gemini-2.5-flash-lite \
-  --input "Describe the app you want to build"
+reyn run app_builder "Describe the app you want to build" \
+  --model openai/gemini-2.5-flash-lite
 ```
 
 Generated files are written to `.reyn/dsl/apps/{app_name}/`.

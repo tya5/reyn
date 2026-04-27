@@ -16,12 +16,9 @@ Runs the target app, analyzes its execution log and artifacts, and generates con
 ## Usage
 
 ```bash
-reyn run \
-  --app-dsl src/stdlib/apps/app_improver/app.md \
-  --dsl-root src/stdlib \
+reyn run app_improver "Information about the app you want to improve" \
   --model openai/gemini-2.5-flash-lite \
-  --allow-shell \
-  --input "Information about the app you want to improve"
+  --allow-shell
 ```
 
 > **Note**: `--allow-shell` is required because the `run_target` phase executes the target app as a subprocess.
