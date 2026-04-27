@@ -109,84 +109,101 @@ def _coerce(value: Any, expected_type: str, path: str, corrections: list[str]) -
 
 # ── Core recursive normalizer/validator ───────────────────────────────────────
 
-def _process(
+def _field_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def _strip_unknown(
     data: dict,
-    schema: dict,
+    props: dict,
     path: str,
     corrections: list[str],
-    errors: list[str],
 ) -> dict:
-    """
-    Recursively normalize and validate a data dict against a JSON Schema object.
-
-    - Strips unknown fields (lenient)
-    - Strips 'type' contamination from data
-    - Coerces compatible scalar types
-    - Recurses into nested objects and array items
-    - Records required-field misses in errors
-    """
-    props: dict[str, dict] = schema.get("properties", {})
-    required: set[str] = set(schema.get("required", []))
+    """Pass 1: drop 'type' contamination and unknown fields, keeping known ones."""
     result: dict[str, Any] = {}
-
-    def field_path(key: str) -> str:
-        return f"{path}.{key}" if path else key
-
-    # Pass 1: drop unknown and contaminating fields
     for key, val in data.items():
         if key == "type":
             corrections.append(f"removed 'type' from '{path or 'data'}'")
             continue
         if props and key not in props:
-            corrections.append(f"removed unknown field '{field_path(key)}'")
+            corrections.append(f"removed unknown field '{_field_path(path, key)}'")
             continue
         result[key] = val
+    return result
 
-    # Pass 2: check required presence
+
+def _check_required(
+    result: dict,
+    required: set[str],
+    path: str,
+    errors: list[str],
+) -> None:
+    """Pass 2: record missing required fields as errors."""
     for req in required:
         if req not in result:
-            errors.append(f"required field '{field_path(req)}' is missing")
+            errors.append(f"required field '{_field_path(path, req)}' is missing")
 
-    # Pass 3: type-check and coerce each present field
+
+def _coerce_array(
+    value: Any,
+    field_schema: dict,
+    fp: str,
+    corrections: list[str],
+    errors: list[str],
+    strict: bool,
+    depth: int,
+) -> Any:
+    """Coerce an array field and recursively validate its items."""
+    if not isinstance(value, list):
+        try:
+            value = _coerce(value, "array", fp, corrections)
+        except TypeError as exc:
+            errors.append(str(exc))
+            return value
+
+    items_schema = field_schema.get("items", {})
+    items_type = items_schema.get("type")
+    coerced_items: list[Any] = []
+    for i, item in enumerate(value):
+        ip = f"{fp}[{i}]"
+        if items_type == "object" and isinstance(item, dict):
+            coerced_items.append(_process(item, items_schema, ip, corrections, errors, strict, depth + 1))
+        elif items_type:
+            try:
+                coerced_items.append(_coerce(item, items_type, ip, corrections))
+            except TypeError as exc:
+                errors.append(str(exc))
+                coerced_items.append(item)
+        else:
+            coerced_items.append(item)
+    return coerced_items
+
+
+def _coerce_fields(
+    result: dict,
+    props: dict,
+    path: str,
+    corrections: list[str],
+    errors: list[str],
+    strict: bool,
+    depth: int,
+) -> dict:
+    """Pass 3: type-check and coerce each present field; recurse into objects and arrays."""
     for key, field_schema in props.items():
         if key not in result:
-            continue  # missing optional fields are fine; required already recorded above
+            continue  # missing optional fields are fine; required already recorded in pass 2
 
         value = result[key]
-        fp = field_path(key)
+        fp = _field_path(path, key)
         field_type = field_schema.get("type")
 
         if field_type == "array":
-            if not isinstance(value, list):
-                try:
-                    value = _coerce(value, "array", fp, corrections)
-                except TypeError as exc:
-                    errors.append(str(exc))
-                    continue
-
-            items_schema = field_schema.get("items", {})
-            items_type = items_schema.get("type")
-            coerced_items: list[Any] = []
-            for i, item in enumerate(value):
-                ip = f"{fp}[{i}]"
-                if items_type == "object" and isinstance(item, dict):
-                    coerced_items.append(_process(item, items_schema, ip, corrections, errors))
-                elif items_type:
-                    try:
-                        coerced_items.append(_coerce(item, items_type, ip, corrections))
-                    except TypeError as exc:
-                        errors.append(str(exc))
-                        coerced_items.append(item)
-                else:
-                    coerced_items.append(item)
-            result[key] = coerced_items
-
+            result[key] = _coerce_array(value, field_schema, fp, corrections, errors, strict, depth)
         elif field_type == "object":
             if isinstance(value, dict):
-                result[key] = _process(value, field_schema, fp, corrections, errors)
+                result[key] = _process(value, field_schema, fp, corrections, errors, strict, depth + 1)
             else:
                 errors.append(f"'{fp}': expected object, got {type(value).__name__}")
-
         elif field_type:
             try:
                 result[key] = _coerce(value, field_type, fp, corrections)
@@ -196,11 +213,40 @@ def _process(
     return result
 
 
+def _process(
+    data: dict,
+    schema: dict,
+    path: str,
+    corrections: list[str],
+    errors: list[str],
+    strict: bool = False,
+    _depth: int = 0,
+) -> dict:
+    """
+    Recursively normalize and validate a data dict against a JSON Schema object.
+
+    strict=False: required is enforced only at depth 0 (top-level artifact data).
+    strict=True:  required is enforced at every depth.
+    """
+    props: dict[str, dict] = schema.get("properties", {})
+    if strict:
+        required: set[str] = set(props.keys())
+    elif _depth == 0:
+        required = set(schema.get("required", []))
+    else:
+        required = set()
+
+    result = _strip_unknown(data, props, path, corrections)
+    _check_required(result, required, path, errors)
+    return _coerce_fields(result, props, path, corrections, errors, strict, _depth)
+
+
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 def validate_artifact_data(
     artifact: dict,
     candidate_schema: dict,
+    strict: bool = False,
 ) -> tuple[dict, list[str], list[str]]:
     """
     Normalize and validate artifact.data against the candidate's schema.
@@ -225,5 +271,5 @@ def validate_artifact_data(
     corrections: list[str] = []
     errors: list[str] = []
 
-    normalized = _process(data, data_schema, "", corrections, errors)
+    normalized = _process(data, data_schema, "", corrections, errors, strict=strict)
     return normalized, corrections, errors

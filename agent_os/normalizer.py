@@ -282,59 +282,65 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
 
 # ── Legacy-format normalizer ───────────────────────────────────────────────────
 
-def _normalize_legacy(raw: dict, allowed_next_phases: list[str]) -> NormalizationResult:
-    """
-    Synthesize a ControlDecision from the old next_phase / status format.
-    Produces a full ControlDecision (including decision + ControlReason) via format translation.
-    """
+def _make_legacy_result(
+    raw: dict,
+    phase: str,
+    artifact: dict,
+    was_normalized: bool = False,
+    original: str | None = None,
+    was_inferred: bool = False,
+) -> NormalizationResult:
+    confidence, ctrl_reason = _extract_legacy_meta(raw, artifact)
+    ctrl_type = "finish" if phase == "end" else "transition"
+    ctrl_next = None if phase == "end" else phase
+    ctrl_decision = _infer_legacy_decision(ctrl_type, ctrl_next, [])
+    control = ControlDecision(
+        type=ctrl_type, decision=ctrl_decision,
+        next_phase=ctrl_next, confidence=confidence, reason=ctrl_reason,
+    )
+    return NormalizationResult(
+        control=control, artifact=artifact,
+        ops=raw.get("ops", []),
+        was_normalized=was_normalized, original_raw_type=original, was_inferred=was_inferred,
+    )
+
+
+def _try_canonical(raw: dict, allowed: list[str]) -> NormalizationResult | None:
     next_phase = raw.get("next_phase")
+    if next_phase is not None and next_phase in allowed:
+        return _make_legacy_result(raw, str(next_phase), _extract_artifact(raw))
+    return None
 
-    def _make(
-        phase: str,
-        artifact: dict,
-        was_normalized: bool = False,
-        original: str | None = None,
-        was_inferred: bool = False,
-    ) -> NormalizationResult:
-        confidence, ctrl_reason = _extract_legacy_meta(raw, artifact)
-        ctrl_type = "finish" if phase == "end" else "transition"
-        ctrl_next = None if phase == "end" else phase
-        ctrl_decision = _infer_legacy_decision(ctrl_type, ctrl_next, allowed_next_phases)
-        control = ControlDecision(
-            type=ctrl_type, decision=ctrl_decision,
-            next_phase=ctrl_next, confidence=confidence, reason=ctrl_reason,
-        )
-        return NormalizationResult(
-            control=control, artifact=artifact,
-            ops=raw.get("ops", []),
-            was_normalized=was_normalized, original_raw_type=original, was_inferred=was_inferred,
-        )
 
-    # Rule 1: canonical
-    if next_phase is not None and next_phase in allowed_next_phases:
-        return _make(str(next_phase), _extract_artifact(raw))
+def _try_end_remap(raw: dict, allowed: list[str]) -> NormalizationResult | None:
+    """next_phase == 'end' but 'end' not in allowed — remap to only candidate or raise."""
+    if raw.get("next_phase") != "end":
+        return None
+    if len(allowed) == 1:
+        return _make_legacy_result(raw, allowed[0], _extract_artifact(raw), was_normalized=True, original="end")
+    raise NormalizationError(
+        "LLM returned next_phase='end' but the current phase is not allowed to finish. "
+        f"Allowed: {allowed}."
+    )
 
-    # Rule 2: next_phase == "end" but end not allowed
-    if next_phase == "end":
-        if len(allowed_next_phases) == 1:
-            return _make(allowed_next_phases[0], _extract_artifact(raw), was_normalized=True, original="end")
-        raise NormalizationError(
-            "LLM returned next_phase='end' but the current phase is not allowed to finish. "
-            f"Allowed: {allowed_next_phases}."
-        )
 
-    # Rule 3: old status field
+def _try_status_field(raw: dict, allowed: list[str]) -> NormalizationResult | None:
+    """Handles old status field: direct match, finish+end, transition+next_phase."""
     status = raw.get("status")
-    if status is not None and status in allowed_next_phases:
+    if status is None:
+        return None
+    next_phase = raw.get("next_phase")
+    original = str(next_phase) if next_phase is not None else None
+
+    if status in allowed:
         artifact = _extract_artifact(raw)
-        if status == "finish" and "end" in allowed_next_phases:
+        if status == "finish" and "end" in allowed:
             final_out = raw.get("final_output")
             if final_out is not None:
                 artifact = final_out
-        return _make(str(status), artifact, was_normalized=True, original=str(next_phase) if next_phase is not None else None)
+        return _make_legacy_result(raw, str(status), artifact, was_normalized=True, original=original)
 
-    # Rule 3b: status == "finish" + "end" allowed
-    if status == "finish" and "end" in allowed_next_phases:
+    if status == "finish" and "end" in allowed:
         final_out = raw.get("final_output") or _extract_artifact(raw)
         artifact = final_out if isinstance(final_out, dict) else {}
         confidence, ctrl_reason = _extract_legacy_meta(raw, artifact)
@@ -348,32 +354,65 @@ def _normalize_legacy(raw: dict, allowed_next_phases: list[str]) -> Normalizatio
             was_normalized=True, original_raw_type="finish",
         )
 
-    # Rule 3c: status == "transition"
-    if status == "transition" and next_phase in allowed_next_phases:
-        return _make(str(next_phase), _extract_artifact(raw), was_normalized=True, original=None)
+    if status == "transition" and next_phase in allowed:
+        return _make_legacy_result(raw, str(next_phase), _extract_artifact(raw), was_normalized=True)
 
-    # Rule 4: data.decision
+    return None
+
+
+def _try_data_decision(raw: dict, allowed: list[str]) -> NormalizationResult | None:
     decision = _find_decision(raw)
-    if decision in allowed_next_phases:
-        return _make(decision, _extract_artifact(raw), was_normalized=True, original=str(next_phase) if next_phase is not None else None)
+    if decision not in allowed:
+        return None
+    next_phase = raw.get("next_phase")
+    original = str(next_phase) if next_phase is not None else None
+    return _make_legacy_result(raw, decision, _extract_artifact(raw), was_normalized=True, original=original)
 
-    # Rule 5 & 6: next_phase absent
-    if next_phase is None:
-        if len(allowed_next_phases) == 1:
-            return _make(allowed_next_phases[0], _extract_artifact(raw), was_inferred=True)
-        if len(allowed_next_phases) == 0:
-            raise NormalizationError(
-                "LLM returned no next_phase and current phase has no candidate outputs."
-            )
+
+def _try_no_next_phase(raw: dict, allowed: list[str]) -> NormalizationResult | None:
+    """next_phase absent: infer from single candidate or raise."""
+    if raw.get("next_phase") is not None:
+        return None
+    if len(allowed) == 1:
+        return _make_legacy_result(raw, allowed[0], _extract_artifact(raw), was_inferred=True)
+    if len(allowed) == 0:
         raise NormalizationError(
-            f"LLM returned no next_phase and {len(allowed_next_phases)} candidates are possible "
-            f"{allowed_next_phases} — cannot infer."
+            "LLM returned no next_phase and current phase has no candidate outputs."
         )
+    raise NormalizationError(
+        f"LLM returned no next_phase and {len(allowed)} candidates are possible "
+        f"{allowed} — cannot infer."
+    )
 
-    # Rule 7: next_phase present but not in allowed — single-candidate force
-    if len(allowed_next_phases) == 1:
-        return _make(allowed_next_phases[0], _extract_artifact(raw), was_normalized=True, original=str(next_phase))
 
+def _try_force_single(raw: dict, allowed: list[str]) -> NormalizationResult | None:
+    """next_phase present but not in allowed: force the only candidate if unambiguous."""
+    if len(allowed) != 1:
+        return None
+    next_phase = raw.get("next_phase")
+    return _make_legacy_result(raw, allowed[0], _extract_artifact(raw), was_normalized=True, original=str(next_phase))
+
+
+_LEGACY_RULES = [
+    _try_canonical,
+    _try_end_remap,
+    _try_status_field,
+    _try_data_decision,
+    _try_no_next_phase,
+    _try_force_single,
+]
+
+
+def _normalize_legacy(raw: dict, allowed_next_phases: list[str]) -> NormalizationResult:
+    """
+    Synthesize a ControlDecision from the old next_phase / status format.
+    Tries each rule in order; raises NormalizationError if none match.
+    """
+    for rule in _LEGACY_RULES:
+        result = rule(raw, allowed_next_phases)
+        if result is not None:
+            return result
+    next_phase = raw.get("next_phase")
     raise NormalizationError(
         f"next_phase {next_phase!r} is not a valid candidate. "
         f"Allowed: {allowed_next_phases}."

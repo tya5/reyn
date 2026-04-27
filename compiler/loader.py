@@ -56,48 +56,70 @@ def _load_dir(directory: Path, parser, registry: dict) -> None:
         registry[item.name] = item
 
 
+def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
+    """
+    Return shared/<kind> directories to search, deduplicating the project dsl/ fallback.
+
+    When a workspace-generated app lives under workspace/dsl/, its inferred dsl_root
+    is workspace/dsl/ which has no shared artifacts.  We always add the project-level
+    dsl/ (cwd/dsl/) as a fallback so shared artifacts like user_message are found
+    without requiring --dsl-root.
+    """
+    dirs: list[Path] = [dsl_root / "shared" / kind]
+    project_dsl = Path.cwd() / "dsl"
+    fallback = project_dsl / "shared" / kind
+    if fallback.resolve() != dirs[0].resolve():
+        dirs.append(fallback)
+    return dirs
+
+
 def load_dsl_app(app_md_path: str | Path, dsl_root: str | Path | None = None) -> App:
     """
     Compile a Markdown App DSL file into a runtime App object.
 
-    Directory resolution order (app local overrides shared):
-      1. <app_dir>/artifacts/   and  <app_dir>/phases/
-      2. <dsl_root>/shared/artifacts/  and  <dsl_root>/shared/phases/
+    Directory resolution order:
+      1. <app_dir>/artifacts/  and  <app_dir>/phases/       (app-local)
+      2. <dsl_root>/shared/artifacts/  and  .../phases/     (inferred shared)
+      3. <cwd>/dsl/shared/artifacts/   and  .../phases/     (project fallback)
 
-    app_md_path  : path to the app .md file
-                   new layout : dsl/apps/<name>/app.md
-    dsl_root     : root of the dsl/ tree.
-                   Defaults to <app_dir>.parent.parent  (i.e. dsl/).
+    The project fallback lets workspace-generated apps reference shared artifacts
+    (e.g. user_message) without requiring --dsl-root.
+
+    app_md_path  : path to the app .md file  (dsl/apps/<name>/app.md)
+    dsl_root     : root of the dsl/ tree. Defaults to <app_dir>.parent.parent.
     """
     app_path = Path(app_md_path)
-    app_dir = app_path.parent                 # dsl/apps/writing_review_app/
+    app_dir = app_path.parent
 
     if dsl_root is None:
-        dsl_root = app_dir.parent.parent      # dsl/
+        dsl_root = app_dir.parent.parent
     dsl_root = Path(dsl_root)
 
-    shared_artifacts_dir = dsl_root / "shared" / "artifacts"
-    shared_phases_dir    = dsl_root / "shared" / "phases"
-    local_artifacts_dir  = app_dir / "artifacts"
-    local_phases_dir     = app_dir / "phases"
+    local_artifacts_dir = app_dir / "artifacts"
+    local_phases_dir    = app_dir / "phases"
 
-    artifact_search_dirs = [local_artifacts_dir, shared_artifacts_dir]
-    phase_search_dirs    = [local_phases_dir,    shared_phases_dir]
+    shared_artifact_dirs = _collect_shared_dirs(dsl_root, "artifacts")
+    shared_phase_dirs    = _collect_shared_dirs(dsl_root, "phases")
+
+    artifact_search_dirs = [local_artifacts_dir] + shared_artifact_dirs
+    phase_search_dirs    = [local_phases_dir]    + shared_phase_dirs
 
     app_def = parse_app(app_path)
 
-    # Load artifacts: shared first, then app local (local overwrites shared)
+    # Load artifacts: shared dirs first (earlier = lower priority), then app local
     artifact_defs: dict[str, ArtifactDef] = {}
-    _load_dir(shared_artifacts_dir, parse_artifact, artifact_defs)
-    _load_dir(local_artifacts_dir,  parse_artifact, artifact_defs)
+    for d in reversed(shared_artifact_dirs):   # project fallback < inferred shared < local
+        _load_dir(d, parse_artifact, artifact_defs)
+    _load_dir(local_artifacts_dir, parse_artifact, artifact_defs)
 
     _validate_references(artifact_defs)
     _check_circular(artifact_defs)
 
-    # Load phases: shared first, then app local
+    # Load phases: shared dirs first, then app local
     phase_defs: dict[str, PhaseDef] = {}
-    _load_dir(shared_phases_dir, parse_phase, phase_defs)
-    _load_dir(local_phases_dir,  parse_phase, phase_defs)
+    for d in reversed(shared_phase_dirs):
+        _load_dir(d, parse_phase, phase_defs)
+    _load_dir(local_phases_dir, parse_phase, phase_defs)
 
     # Determine which phases the app uses
     used_phases: set[str] = {app_def.entry}

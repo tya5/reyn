@@ -1,7 +1,16 @@
 import json
+import os
 import re
+from dataclasses import dataclass
 import litellm
 from .models import ContextFrame
+from .pricing import TokenUsage
+
+
+@dataclass
+class LLMCallResult:
+    data: dict
+    usage: TokenUsage | None
 
 _SYSTEM_BASE = """\
 You are an AI agent executing a phase in a structured workflow.
@@ -72,6 +81,12 @@ Artifact rules:
     ask_user:   {"kind": "ask_user", "question": "...", "answer": "...", "status": "ok"}
 - Use these results together with input_artifact to complete the phase goal.
 - Once you have what you need, output a decide turn to make your routing decision.
+
+━━━ artifact_ref ━━━
+- When input_artifact has "type": "artifact_ref", the artifact is too large to inline.
+- Fields: {"type": "artifact_ref", "artifact_type": "...", "ref_path": "...", "size_bytes": N}
+- To read its content, emit an act turn with op=read on ref_path before deciding:
+    {"type": "act", "ops": [{"kind": "file", "op": "read", "path": "<ref_path>"}]}
 """
 
 
@@ -102,11 +117,25 @@ def _repair_json(text: str) -> str:
     return re.sub(r",(\s*[}\]])", r"\1", text)
 
 
+def _extract_usage(response) -> TokenUsage | None:
+    """Extract token usage from a litellm response object."""
+    try:
+        u = response.usage
+        if u is None:
+            return None
+        return TokenUsage(
+            prompt_tokens=int(u.prompt_tokens or 0),
+            completion_tokens=int(u.completion_tokens or 0),
+        )
+    except Exception:
+        return None
+
+
 def call_llm(
     model: str,
     frame: ContextFrame,
     prior_attempts: list[dict[str, str]] | None = None,
-) -> dict:
+) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
 
@@ -153,15 +182,21 @@ def call_llm(
             ]
 
         # response_format may not be supported by all models; pass it only when available
+        api_base = os.environ.get("LITELLM_API_BASE")
+        # When routing through a proxy, force OpenAI-compatible provider so litellm
+        # doesn't try to call the upstream provider (e.g. Gemini) directly.
+        extra = {"api_base": api_base, "custom_llm_provider": "openai"} if api_base else {}
         try:
             response = litellm.completion(
                 model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
+                **extra,
             )
         except Exception:
-            response = litellm.completion(model=model, messages=messages)
+            response = litellm.completion(model=model, messages=messages, **extra)
 
+        usage = _extract_usage(response)
         last_raw = response.choices[0].message.content or ""
         if attempt == 0:
             attempt0_raw = last_raw
@@ -173,12 +208,12 @@ def call_llm(
         text = _extract_json(last_raw)
 
         try:
-            return json.loads(text)
+            return LLMCallResult(data=json.loads(text), usage=usage)
         except json.JSONDecodeError:
             pass
 
         try:
-            return json.loads(_repair_json(text))
+            return LLMCallResult(data=json.loads(_repair_json(text)), usage=usage)
         except json.JSONDecodeError as exc:
             last_exc = exc
             continue  # retry

@@ -25,6 +25,7 @@ class PhaseDef:
     role: str | None
     can_finish: bool
     instructions: str
+    max_act_turns: int = 0      # 0 = use system default (10)
 
 
 @dataclass

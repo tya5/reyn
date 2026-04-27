@@ -55,7 +55,7 @@ artifacts:
               type: string
             type:
               type: string
-          required: [name, type]
+          required: [name]
     required: [name, fields]
 final_output:
   type: object
@@ -73,5 +73,5 @@ final_output:
             type: string
           type:
             type: string
-        required: [name, type]
+        required: [name]
   required: [name, description, fields]

@@ -84,6 +84,7 @@ def parse_phase(path: Path) -> PhaseDef:
         role=fm.get("role") or None,
         can_finish=bool(fm.get("can_finish", False)),
         instructions=body,
+        max_act_turns=int(fm.get("max_act_turns", 0)),
     )
 
 

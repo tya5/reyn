@@ -28,6 +28,18 @@ finish_criteria:
 {phase_b} -> {phase_c}
 ```
 
+Graph edges come from data.transitions. Each `{from: X, to: [Y, Z]}` entry becomes one line per target:
+```
+X -> Y
+X -> Z
+```
+Review loops look like:
+```
+generate -> review
+review -> generate
+review -> deliver
+```
+
 phase file (write to {app_path}/phases/{phase_name}.md):
 ```
 ---
@@ -53,6 +65,7 @@ name: {artifact_name}
 {field_name}: {type}
 {field_name}: {type}
 ```
+If a field has no type, default to `string`.
 
 IMPORTANT: Write ALL artifact files — including the final_output artifact.
 Checklist before finishing:
@@ -62,3 +75,7 @@ Checklist before finishing:
 - one artifact file for data.final_output (using data.final_output.name as filename)
 
 Write all files using one op per file. After writing, output a decide turn reporting the files written.
+
+summary MUST describe what the app does for its users — not what you (the builder) did.
+Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
+Bad: "Generated DSL files for the review app and saved them to the workspace."

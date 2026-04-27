@@ -10,6 +10,7 @@ class Phase(BaseModel):
     input_schema: dict[str, Any]
     input_description: str = ""
     instructions: str
+    max_act_turns: int = 10  # per-phase override; 0 = use system default
 
 
 class AppGraph(BaseModel):
@@ -42,9 +43,10 @@ class App(BaseModel):
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
-    op: Literal["read", "write"]
-    path: str
-    content: str | None = None
+    op: Literal["read", "write", "glob"]
+    path: str                        # file path for read/write; glob pattern for glob
+    content: str | None = None       # write only
+    max_results: int = 50            # glob only: cap on number of matching paths returned
 
 
 class ToolIROp(BaseModel):
@@ -73,10 +75,16 @@ class AskUserIROp(BaseModel):
     required: bool = True
 
 
+class ShellIROp(BaseModel):
+    kind: Literal["shell"]
+    cmd: str                  # shell command to execute
+    timeout: int = 120        # seconds
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file" and "ask_user" are implemented; others are safely skipped by ControlIRExecutor.
+# "file", "ask_user", and "shell" are implemented; others are safely skipped by ControlIRExecutor.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp],
     Field(discriminator="kind"),
 ]
 

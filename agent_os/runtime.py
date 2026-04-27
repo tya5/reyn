@@ -1,7 +1,7 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 import pydantic
 from .models import ActOutput, App, CandidateOutput, ContextFrame, ExecutionState, PhaseConstraints, LLMOutput
 from .events import EventLog
@@ -9,8 +9,12 @@ from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
 from .llm import call_llm
+from .pricing import TokenUsage
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
+
+
+ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
 
 
 class LoopLimitExceededError(Exception):
@@ -26,10 +30,29 @@ class RunResult:
     """Typed return value of OSRuntime.run() and Agent.run()."""
     data: dict[str, Any]
     status: Literal["finished", "loop_limit_exceeded"]
+    token_usage: TokenUsage | None = None
 
     @property
     def ok(self) -> bool:
         return self.status == "finished"
+
+
+def _maybe_ref_artifact(artifact: dict, artifact_path: str | None) -> dict:
+    """
+    Return the artifact as-is if small, or replace it with an artifact_ref dict
+    pointing to the persisted file. The LLM can read the ref path via file op.
+    """
+    if artifact_path is None:
+        return artifact
+    serialized = json.dumps(artifact, ensure_ascii=False)
+    if len(serialized) <= ARTIFACT_REF_THRESHOLD:
+        return artifact
+    return {
+        "type": "artifact_ref",
+        "artifact_type": artifact.get("type", "unknown"),
+        "ref_path": artifact_path,
+        "size_bytes": len(serialized.encode("utf-8")),
+    }
 
 
 def _schema_type_name(schema: dict) -> str:
@@ -74,14 +97,32 @@ def _validate_artifact_structure(artifact: dict, context: str) -> None:
 
 
 class OSRuntime:
-    def __init__(self, app: App, model: str, workspace_dir: str = "./workspace") -> None:
+    def __init__(
+        self,
+        app: App,
+        model: str,
+        workspace_dir: str = "./workspace",
+        strict: bool = False,
+        subscribers: list[Callable] | None = None,
+        user_input_fn: Callable[[str, list[str]], str] | None = None,
+        run_id: str | None = None,
+        extra_read_roots: list[str] | None = None,
+        shell_allowed: bool = False,
+    ) -> None:
         self.app = app
         self.model = model
-        self.events = EventLog()
-        self.workspace = Workspace(workspace_dir, self.events)
-        self.control_ir_executor = ControlIRExecutor(self.workspace, self.events)
+        self.strict = strict
+        self.run_id = run_id
+        self.events = EventLog(subscribers=subscribers)
+        self.workspace = Workspace(workspace_dir, self.events, extra_read_roots=extra_read_roots)
+        self.control_ir_executor = ControlIRExecutor(
+            self.workspace, self.events,
+            user_input_fn=user_input_fn,
+            shell_allowed=shell_allowed,
+        )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
+        self._token_usage: TokenUsage = TokenUsage()
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -98,7 +139,6 @@ class OSRuntime:
             "phase_started", phase=phase_name,
             visit_count=count + 1, input_artifact_type=artifact.get("type"),
         )
-        print(f"[phase:{phase_name}] started (visit #{count + 1})")
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
         app = self.app
@@ -131,6 +171,7 @@ class OSRuntime:
         candidates: list[CandidateOutput],
         output_language: str,
         control_ir_results: list[dict] | None = None,
+        artifact_path: str | None = None,
     ) -> ContextFrame:
         phase = self.app.phases[current_phase]
         allowed_next = [c.next_phase for c in candidates]
@@ -142,7 +183,7 @@ class OSRuntime:
             current_phase=current_phase,
             current_phase_role=phase.role,
             instructions=phase.instructions,
-            input_artifact=artifact,
+            input_artifact=_maybe_ref_artifact(artifact, artifact_path),
             execution=ExecutionState(
                 path=list(self._history),
                 current_visit=current_visit,
@@ -217,7 +258,7 @@ class OSRuntime:
             raise
 
         norm_data, corrections, errors = validate_artifact_data(
-            normalized, matched_candidate.artifact_schema
+            normalized, matched_candidate.artifact_schema, strict=self.strict
         )
         self.events.emit(
             "artifact_validated",
@@ -256,81 +297,117 @@ class OSRuntime:
 
     # ── Phase execution with act/decide loop and retry ─────────────────────────
 
-    def _execute_phase(
+    def _call_llm_and_record(
         self,
-        current_phase: str,
+        phase: str,
+        frame: ContextFrame,
+        prior_attempts: list[dict[str, str]] | None,
+    ) -> dict:
+        """Call LLM, accumulate token usage, emit events, return raw response dict."""
+        self.events.emit("llm_called", phase=phase, model=self.model)
+        llm_result = call_llm(self.model, frame, prior_attempts=prior_attempts or None)
+        raw = llm_result.data
+        if llm_result.usage:
+            self._token_usage += llm_result.usage
+        self.events.emit(
+            "llm_response_received",
+            phase=phase,
+            response_type=raw.get("type"),
+            raw=raw,
+            prompt_tokens=llm_result.usage.prompt_tokens if llm_result.usage else None,
+            completion_tokens=llm_result.usage.completion_tokens if llm_result.usage else None,
+        )
+        return raw
+
+    def _run_act_loop(
+        self,
+        phase: str,
         artifact: dict,
         candidates: list[CandidateOutput],
         output_language: str,
+        max_act_turns: int,
         max_phase_retries: int,
-    ) -> tuple[NormalizationResult, LLMOutput, int]:
+        artifact_path: str | None,
+    ) -> tuple[dict, list[dict]]:
         """
-        Drive one phase to completion: handle act turns (execute ops, re-call LLM)
-        and decide turns (validate, retry on rejection).
-        Returns (result, output, retry_count).
+        Drive act turns until the LLM emits a decide turn.
+        Returns (raw_decide_response, accumulated_prior_attempts).
         """
-        allowed_next = [c.next_phase for c in candidates]
         control_ir_results: list[dict] = []
         prior_attempts: list[dict[str, str]] = []
         act_turn_count = 0
-        max_act_turns = 10  # guard against infinite act loops
 
         while True:
+            if prior_attempts:
+                self.events.emit(
+                    "phase_retry", phase=phase,
+                    attempt=len(prior_attempts), max_retries=max_phase_retries,
+                    error=prior_attempts[-1]["error"],
+                )
+
             frame = self._build_frame(
-                current_phase, artifact, candidates, output_language,
+                phase, artifact, candidates, output_language,
                 control_ir_results=control_ir_results,
+                artifact_path=artifact_path,
+            )
+            raw = self._call_llm_and_record(phase, frame, prior_attempts or None)
+
+            if raw.get("type") != "act":
+                return raw, prior_attempts  # decide turn — hand off to retry loop
+
+            act_turn_count += 1
+            if act_turn_count > max_act_turns:
+                msg = (
+                    f"Phase '{phase}' exceeded max act turns ({max_act_turns}). "
+                    "The LLM kept emitting act turns without making a decide turn."
+                )
+                self.events.emit("phase_failed", phase=phase,
+                                 attempts=act_turn_count, final_error=msg)
+                raise ValueError(msg)
+
+            try:
+                act = ActOutput.model_validate(raw)
+            except pydantic.ValidationError as exc:
+                prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
+                if len(prior_attempts) > max_phase_retries:
+                    self.events.emit("phase_failed", phase=phase,
+                                     attempts=len(prior_attempts), final_error=str(exc))
+                    raise ValueError(
+                        f"Phase '{phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
+                    ) from exc
+                continue
+
+            ir_results = self.control_ir_executor.execute(act.ops, phase=phase)
+            control_ir_results = ir_results
+            prior_attempts = []  # reset retries after a successful act turn
+            self.events.emit(
+                "act_executed",
+                phase=phase,
+                op_count=len(act.ops),
+                act_turn=act_turn_count,
+                ops=[op.model_dump() for op in act.ops],
+                results=ir_results,
             )
 
-            if prior_attempts:
-                last_error = prior_attempts[-1]["error"]
-                self.events.emit(
-                    "phase_retry", phase=current_phase,
-                    attempt=len(prior_attempts), max_retries=max_phase_retries, error=last_error,
-                )
-                print(
-                    f"[phase:{current_phase}] retry {len(prior_attempts)}/{max_phase_retries} "
-                    f"— {last_error[:120]}"
-                )
+    def _run_decide_with_retry(
+        self,
+        raw: dict,
+        phase: str,
+        artifact: dict,
+        candidates: list[CandidateOutput],
+        output_language: str,
+        prior_attempts: list[dict[str, str]],
+        max_phase_retries: int,
+    ) -> tuple[NormalizationResult, LLMOutput, int]:
+        """
+        Validate a decide-turn response, retrying on rejection.
+        Returns (result, output, retry_count).
+        """
+        allowed_next = [c.next_phase for c in candidates]
 
-            self.events.emit("llm_called", phase=current_phase, model=self.model)
-            print(f"[phase:{current_phase}] calling LLM ({self.model})...")
-            raw = call_llm(self.model, frame, prior_attempts=prior_attempts or None)
-
-            if raw.get("type") == "act":
-                act_turn_count += 1
-                if act_turn_count > max_act_turns:
-                    msg = (
-                        f"Phase '{current_phase}' exceeded max act turns ({max_act_turns}). "
-                        "The LLM kept emitting act turns without making a decide turn."
-                    )
-                    self.events.emit("phase_failed", phase=current_phase,
-                                     attempts=act_turn_count, final_error=msg)
-                    raise ValueError(msg)
-
-                try:
-                    act = ActOutput.model_validate(raw)
-                except pydantic.ValidationError as exc:
-                    prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
-                    if len(prior_attempts) > max_phase_retries:
-                        self.events.emit("phase_failed", phase=current_phase,
-                                         attempts=len(prior_attempts), final_error=str(exc))
-                        raise ValueError(
-                            f"Phase '{current_phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
-                        ) from exc
-                    continue
-
-                ir_results = self.control_ir_executor.execute(act.ops, phase=current_phase)
-                # Surface all results (reads, writes, ask_user) so the LLM knows ops completed.
-                control_ir_results = ir_results
-                prior_attempts = []  # reset retries after a successful act turn
-                self.events.emit("act_executed", phase=current_phase,
-                                 op_count=len(act.ops), act_turn=act_turn_count)
-                self._log_act_turn(current_phase, act_turn_count, act.ops, ir_results)
-                continue  # re-call LLM with results
-
-            # decide turn
+        while True:
             try:
-                result, output = self._validate_phase_output(raw, current_phase, candidates, allowed_next)
+                result, output = self._validate_phase_output(raw, phase, candidates, allowed_next)
                 return result, output, len(prior_attempts)
             except WorkflowAbortedError:
                 raise
@@ -338,52 +415,44 @@ class OSRuntime:
                 prior_attempts.append({"raw": json.dumps(raw, ensure_ascii=False), "error": str(exc)})
                 if len(prior_attempts) > max_phase_retries:
                     self.events.emit(
-                        "phase_failed", phase=current_phase,
+                        "phase_failed", phase=phase,
                         attempts=len(prior_attempts), final_error=str(exc),
                     )
                     raise ValueError(
-                        f"Phase '{current_phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
+                        f"Phase '{phase}' failed after {len(prior_attempts)} attempt(s): {exc}"
                     ) from exc
 
-    # ── Logging ────────────────────────────────────────────────────────────────
+                self.events.emit(
+                    "phase_retry", phase=phase,
+                    attempt=len(prior_attempts), max_retries=max_phase_retries,
+                    error=prior_attempts[-1]["error"],
+                )
+                frame = self._build_frame(phase, artifact, candidates, output_language)
+                raw = self._call_llm_and_record(phase, frame, prior_attempts)
 
-    @staticmethod
-    def _log_act_turn(phase: str, turn: int, ops: list, results: list[dict]) -> None:
-        print(f"[phase:{phase}] act turn #{turn}")
-        for op in ops:
-            kind = getattr(op, "kind", "?")
-            if kind == "file":
-                print(f"  op: file {op.op} → {op.path}")  # type: ignore[union-attr]
-            elif kind == "ask_user":
-                print(f"  op: ask_user → {op.question[:80]}")  # type: ignore[union-attr]
-            else:
-                print(f"  op: {kind}")
-        for r in results:
-            kind = r.get("kind", "?")
-            status = r.get("status", "?")
-            if kind == "file" and r.get("op") == "read":
-                content_len = len(r.get("content") or "")
-                print(f"  result: file read {r.get('path')} [{status}] ({content_len} chars)")
-            elif kind == "file" and r.get("op") == "write":
-                print(f"  result: file write {r.get('path')} [{status}]")
-            elif kind == "ask_user":
-                answer = (r.get("answer") or "")[:60]
-                print(f"  result: ask_user [{status}] answer={answer!r}")
-            else:
-                print(f"  result: {kind} [{status}]")
+    def _execute_phase(
+        self,
+        current_phase: str,
+        artifact: dict,
+        candidates: list[CandidateOutput],
+        output_language: str,
+        max_phase_retries: int,
+        artifact_path: str | None = None,
+    ) -> tuple[NormalizationResult, LLMOutput, int]:
+        """
+        Drive one phase to completion.
+        Delegates act-loop management to _run_act_loop and decide-retry to _run_decide_with_retry.
+        """
+        phase_def = self.app.phases[current_phase]
+        max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
-    @staticmethod
-    def _phase_log_suffix(result: NormalizationResult, retry_count: int) -> str:
-        norm = (
-            " (inferred)" if result.was_inferred
-            else f" (normalized from '{result.original_raw_type}')" if result.was_normalized
-            else ""
+        raw, prior_attempts = self._run_act_loop(
+            current_phase, artifact, candidates, output_language,
+            max_act_turns, max_phase_retries, artifact_path,
         )
-        retries = (
-            f" [{retry_count} retr{'y' if retry_count == 1 else 'ies'}]"
-            if retry_count else ""
+        return self._run_decide_with_retry(
+            raw, current_phase, artifact, candidates, output_language, prior_attempts, max_phase_retries,
         )
-        return f"{norm}{retries}  (confidence={result.control.confidence})"
 
     # ── Fallback ────────────────────────────────────────────────────────────────
 
@@ -419,6 +488,20 @@ class OSRuntime:
         current_phase = self.app.entry_phase
         artifact = initial_input
 
+        self.events.emit(
+            "workflow_started",
+            run_id=self.run_id,
+            app=self.app.name,
+            entry_phase=self.app.entry_phase,
+            input_type=artifact.get("type"),
+            model=self.model,
+        )
+
+        # Persist the initial input so it can be referenced via artifact_ref if large
+        artifact_path: str | None = self.workspace.store_artifact(
+            "_input", artifact, app_name=self.app.name, visit=1
+        )
+
         try:
             self._enter_phase(current_phase, artifact)
 
@@ -426,12 +509,25 @@ class OSRuntime:
                 candidates = self._build_candidates(current_phase)
                 result, output, retry_count = self._execute_phase(
                     current_phase, artifact, candidates, output_language, max_phase_retries,
+                    artifact_path=artifact_path,
                 )
 
                 # Execute write ops from decide turn (reads already handled inside _execute_phase)
-                self.control_ir_executor.execute(output.ops, phase=current_phase)
+                decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase)
+                if decide_results:
+                    self.events.emit(
+                        "decide_ops_executed",
+                        phase=current_phase,
+                        op_count=len(decide_results),
+                        ops=[op.model_dump() for op in output.ops],
+                        results=decide_results,
+                    )
 
-                self.workspace.store_artifact(current_phase, output.artifact)
+                artifact_path = self.workspace.store_artifact(
+                    current_phase, output.artifact,
+                    app_name=self.app.name,
+                    visit=self._visit_counts.get(current_phase, 1),
+                )
 
                 self.events.emit(
                     "phase_completed",
@@ -442,9 +538,8 @@ class OSRuntime:
                     retries=retry_count,
                     reason=result.control.reason.summary,
                     confidence=result.control.confidence,
+                    artifact_path=artifact_path,
                 )
-                print(f"[phase:{current_phase}] → {output.next_phase}"
-                      f"{self._phase_log_suffix(result, retry_count)}")
 
                 if output.next_phase == "end":
                     data = output.artifact.get("data", {})
@@ -457,7 +552,7 @@ class OSRuntime:
                         total_phase_count=sum(self._visit_counts.values()),
                         final_output_keys=list(data.keys()),
                     )
-                    return RunResult(data=data, status="finished")
+                    return RunResult(data=data, status="finished", token_usage=self._token_usage)
 
                 self._history.append(f"{current_phase} → {output.next_phase}")
                 current_phase = output.next_phase
@@ -472,8 +567,7 @@ class OSRuntime:
                 total_phase_count=sum(self._visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
-            print("[os] loop limit reached — returning latest artifact")
-            return RunResult(data=final_output, status="loop_limit_exceeded")
+            return RunResult(data=final_output, status="loop_limit_exceeded", token_usage=self._token_usage)
 
         except WorkflowAbortedError as exc:
             self.events.emit(
@@ -481,5 +575,4 @@ class OSRuntime:
                 reason=str(exc),
                 total_phase_count=sum(self._visit_counts.values()),
             )
-            print(f"[os] workflow aborted — {exc}")
             raise
