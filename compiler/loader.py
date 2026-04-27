@@ -73,7 +73,11 @@ def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
     return dirs
 
 
-def load_dsl_app(app_md_path: str | Path, dsl_root: str | Path | None = None) -> App:
+def load_dsl_app(
+    app_md_path: str | Path,
+    dsl_root: str | Path | None = None,
+    _loading_stack: frozenset[str] | None = None,
+) -> App:
     """
     Compile a Markdown App DSL file into a runtime App object.
 
@@ -121,10 +125,35 @@ def load_dsl_app(app_md_path: str | Path, dsl_root: str | Path | None = None) ->
         _load_dir(d, parse_phase, phase_defs)
     _load_dir(local_phases_dir, parse_phase, phase_defs)
 
-    # Determine which phases the app uses
+    # Resolve app nodes: load each sub-app for its entry schema; detect cycles
+    from agent_os.models import AppNodeSpec
+    loading_stack = _loading_stack or frozenset()
+    abs_app_path = str(app_path.resolve())
+    loading_stack = loading_stack | {abs_app_path}
+
+    app_node_specs: dict[str, AppNodeSpec] = {}
+    for node_id, node_def in app_def.app_nodes.items():
+        sub_app_path = dsl_root / "apps" / node_def.app_name / "app.md"
+        abs_sub = str(sub_app_path.resolve())
+        if abs_sub in loading_stack:
+            cycle = " → ".join(list(loading_stack) + [abs_sub])
+            raise ValueError(f"Circular app dependency detected: {cycle}")
+        sub_app = load_dsl_app(sub_app_path, dsl_root=dsl_root, _loading_stack=loading_stack)
+        entry_phase = sub_app.phases[sub_app.entry_phase]
+        app_node_specs[node_id] = AppNodeSpec(
+            app_path=abs_sub,
+            dsl_root=str(dsl_root),
+            workspace=node_def.workspace,
+            entry_input_schema=entry_phase.input_schema,
+            entry_input_description=entry_phase.input_description,
+        )
+
+    # Determine which phases the app uses (exclude app node IDs)
     used_phases: set[str] = {app_def.entry}
     for src, dst in app_def.edges:
-        used_phases.update([src, dst])
+        for node in (src, dst):
+            if not node.startswith("@"):
+                used_phases.add(node)
 
     # Validate and expand each used phase
     phase_objects = {}
@@ -141,4 +170,4 @@ def load_dsl_app(app_md_path: str | Path, dsl_root: str | Path | None = None) ->
     if app_def.final_output and app_def.final_output not in artifact_defs:
         raise _not_found_error(app_def.final_output, artifact_search_dirs, "Artifact")
 
-    return expand_app(app_def, phase_defs, artifact_defs, phase_objects)
+    return expand_app(app_def, phase_defs, artifact_defs, phase_objects, app_node_specs)

@@ -144,16 +144,25 @@ class OSRuntime:
         app = self.app
         allowed = app.graph.transitions.get(current_phase, [])
         can_finish = current_phase in app.graph.can_finish_phases
-        candidates: list[CandidateOutput] = [
-            CandidateOutput(
-                next_phase=phase_name,
-                control_type="transition",
-                schema_name=_schema_type_name(app.phases[phase_name].input_schema),
-                artifact_schema=app.phases[phase_name].input_schema,
-                description=app.phases[phase_name].input_description,
-            )
-            for phase_name in allowed
-        ]
+        candidates: list[CandidateOutput] = []
+        for phase_name in allowed:
+            if phase_name in app.graph.app_nodes:
+                node_spec = app.graph.app_nodes[phase_name]
+                candidates.append(CandidateOutput(
+                    next_phase=phase_name,
+                    control_type="transition",
+                    schema_name=_schema_type_name(node_spec.entry_input_schema),
+                    artifact_schema=node_spec.entry_input_schema,
+                    description=node_spec.entry_input_description,
+                ))
+            else:
+                candidates.append(CandidateOutput(
+                    next_phase=phase_name,
+                    control_type="transition",
+                    schema_name=_schema_type_name(app.phases[phase_name].input_schema),
+                    artifact_schema=app.phases[phase_name].input_schema,
+                    description=app.phases[phase_name].input_description,
+                ))
         if can_finish or not allowed:
             candidates.append(CandidateOutput(
                 next_phase="end",
@@ -470,6 +479,95 @@ class OSRuntime:
             return self.workspace.artifacts[-1]["artifact"].get("data", {})
         return {}
 
+    # ── App node execution ─────────────────────────────────────────────────────
+
+    def _adapt_artifact(
+        self,
+        data: dict,
+        source_type: str,
+        target_schema: dict,
+        node_id: str,
+        output_language: str,
+    ) -> dict:
+        """Call LLM to convert sub-app final_output to the next phase's input schema."""
+        import litellm
+        import json as _json
+
+        target_type = _schema_type_name(target_schema)
+        prompt = (
+            f"Convert the following data to the target schema.\n\n"
+            f"Source (type: {source_type}):\n"
+            f"{_json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
+            f"Target schema:\n"
+            f"{_json.dumps(target_schema, ensure_ascii=False, indent=2)}\n\n"
+            f"Produce a JSON object with \"type\" set to \"{target_type}\" and "
+            f"\"data\" populated from the source, mapped to the target schema fields.\n"
+            f"Output language: {output_language}"
+        )
+        response = litellm.completion(
+            model=self.model,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+        )
+        raw = _json.loads(response.choices[0].message.content)
+        if response.usage:
+            self._token_usage += TokenUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
+        self.events.emit(
+            "app_node_adapted",
+            node=node_id,
+            source_type=source_type,
+            target_type=target_type,
+        )
+        return raw
+
+    def _execute_app_node(
+        self,
+        node_id: str,
+        node_spec,
+        input_artifact: dict,
+        target_schema: dict,
+        output_language: str,
+    ) -> dict:
+        """Run a sub-app to completion and adapt its final_output to target_schema."""
+        from pathlib import Path as _Path
+        from compiler import load_dsl_app
+
+        self.events.emit("app_node_started", node=node_id, app_path=node_spec.app_path)
+
+        sub_app = load_dsl_app(node_spec.app_path, dsl_root=node_spec.dsl_root)
+
+        if node_spec.workspace == "shared":
+            sub_workspace_dir = self.workspace.workspace_dir
+        else:
+            sub_workspace_dir = str(
+                _Path(self.workspace.workspace_dir) / "invoke" / node_id.lstrip("@")
+            )
+
+        sub_runtime = OSRuntime(
+            app=sub_app,
+            model=self.model,
+            workspace_dir=sub_workspace_dir,
+            strict=self.strict,
+            subscribers=self.events.subscribers,
+        )
+        run_result = sub_runtime.run(input_artifact, output_language=output_language)
+        self._token_usage += sub_runtime._token_usage
+
+        self.events.emit(
+            "app_node_completed",
+            node=node_id,
+            status=run_result.status,
+            final_output_keys=list(run_result.data.keys()),
+        )
+
+        return self._adapt_artifact(
+            run_result.data, sub_app.final_output_name,
+            target_schema, node_id, output_language,
+        )
+
     # ── Main loop ──────────────────────────────────────────────────────────────
 
     def run(
@@ -554,9 +652,27 @@ class OSRuntime:
                     )
                     return RunResult(data=data, status="finished", token_usage=self._token_usage)
 
-                self._history.append(f"{current_phase} → {output.next_phase}")
-                current_phase = output.next_phase
-                artifact = output.artifact
+                next_node = output.next_phase
+                if next_node in self.app.graph.app_nodes:
+                    node_spec = self.app.graph.app_nodes[next_node]
+                    post_nodes = self.app.graph.transitions.get(next_node, [])
+                    if not post_nodes:
+                        raise ValueError(
+                            f"App node '{next_node}' has no outgoing transitions. "
+                            "Add a phase after it in the graph."
+                        )
+                    next_after = post_nodes[0]
+                    target_schema = self.app.phases[next_after].input_schema
+                    adapted = self._execute_app_node(
+                        next_node, node_spec, output.artifact, target_schema, output_language,
+                    )
+                    self._history.append(f"{current_phase} → {next_node} → {next_after}")
+                    current_phase = next_after
+                    artifact = adapted
+                else:
+                    self._history.append(f"{current_phase} → {next_node}")
+                    current_phase = next_node
+                    artifact = output.artifact
                 self._enter_phase(current_phase, artifact)
 
         except LoopLimitExceededError as exc:

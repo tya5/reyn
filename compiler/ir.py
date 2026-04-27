@@ -29,10 +29,18 @@ class PhaseDef:
 
 
 @dataclass
+class AppNodeDef:
+    """An app referenced as a node in another app's graph."""
+    app_name: str    # e.g. "writing_review_app"
+    workspace: str   # "isolated" | "shared"
+
+
+@dataclass
 class AppDef:
     name: str
     entry: str
-    edges: list[tuple[str, str]]        # (from_phase, to_phase)
+    edges: list[tuple[str, str]]        # (from_node, to_node) — nodes may be phases or @app_names
+    app_nodes: dict[str, AppNodeDef]    # "@app_name" → AppNodeDef
     final_output: str                    # artifact name for final_output_schema
     final_output_description: str
     finish_criteria: list[str]

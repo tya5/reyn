@@ -1,7 +1,7 @@
 import warnings
 from typing import Any
 from .ir import ArtifactDef, FieldDef, PhaseDef, AppDef
-from agent_os.models import App, Phase, AppGraph
+from agent_os.models import App, Phase, AppGraph, AppNodeSpec
 
 
 # Primitive DSL type → JSON Schema
@@ -125,8 +125,12 @@ def expand_app(
     phase_defs: dict[str, PhaseDef],
     artifact_defs: dict[str, ArtifactDef],
     phase_objects: dict[str, Phase],
+    app_node_specs: dict[str, AppNodeSpec] | None = None,
 ) -> App:
     transitions: dict[str, list[str]] = {name: [] for name in phase_objects}
+    # also seed transitions for app nodes so they can have outgoing edges
+    for node_id in (app_node_specs or {}):
+        transitions.setdefault(node_id, [])
     for src, dst in app_def.edges:
         transitions.setdefault(src, [])
         if dst not in transitions[src]:
@@ -156,6 +160,7 @@ def expand_app(
             transitions=transitions,
             can_finish_phases=can_finish_phases,
             max_phase_visits=app_def.max_phase_visits,
+            app_nodes=app_node_specs or {},
         ),
         final_output_schema=final_output_schema,
         final_output_name=final_output_name,

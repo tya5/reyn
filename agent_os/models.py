@@ -13,11 +13,22 @@ class Phase(BaseModel):
     max_act_turns: int = 10  # per-phase override; 0 = use system default
 
 
+class AppNodeSpec(BaseModel):
+    """Runtime descriptor for an app node in a parent app's graph."""
+    app_path: str                # absolute path to sub-app's app.md
+    dsl_root: str                # dsl_root used to load the sub-app
+    workspace: str               # "isolated" | "shared"
+    entry_input_schema: dict     # sub-app entry phase input_schema (for candidate building)
+    entry_input_description: str = ""
+
+
 class AppGraph(BaseModel):
     transitions: dict[str, list[str]] = Field(default_factory=dict)
     can_finish_phases: list[str] = Field(default_factory=list)
     # phase_name -> max allowed visits per run (0 = unlimited)
     max_phase_visits: dict[str, int] = Field(default_factory=dict)
+    # "@app_name" → AppNodeSpec for app nodes embedded in this graph
+    app_nodes: dict[str, AppNodeSpec] = Field(default_factory=dict)
 
 
 class App(BaseModel):

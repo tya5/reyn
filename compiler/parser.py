@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from .ir import FieldDef, ArtifactDef, PhaseDef, AppDef
+from .ir import FieldDef, ArtifactDef, PhaseDef, AppDef, AppNodeDef
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -88,18 +88,39 @@ def parse_phase(path: Path) -> PhaseDef:
     )
 
 
+import re as _re
+_APP_NODE_RE = _re.compile(r'^@([\w]+)(?:\[(isolated|shared)\])?$')
+
+
+def _parse_graph_node(token: str) -> tuple[str, "AppNodeDef | None"]:
+    """Return (node_id, AppNodeDef) for @app_name tokens, or (token, None) for phases."""
+    m = _APP_NODE_RE.match(token)
+    if not m:
+        return token, None
+    app_name = m.group(1)
+    workspace = m.group(2) or "isolated"
+    return f"@{app_name}", AppNodeDef(app_name=app_name, workspace=workspace)
+
+
 def parse_app(path: Path) -> AppDef:
     fm, body = _split_frontmatter(path.read_text(encoding="utf-8"))
 
-    # Parse graph: "A -> B -> C" lines into (src, dst) edges
+    # Parse graph: "A -> B -> C" lines into (src, dst) edges; detect @app_name nodes
     edges: list[tuple[str, str]] = []
+    app_nodes: dict[str, AppNodeDef] = {}
     for line in body.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         parts = [p.strip() for p in line.split("->")]
         for i in range(len(parts) - 1):
-            edges.append((parts[i], parts[i + 1]))
+            src_id, src_node = _parse_graph_node(parts[i])
+            dst_id, dst_node = _parse_graph_node(parts[i + 1])
+            if src_node and src_id not in app_nodes:
+                app_nodes[src_id] = src_node
+            if dst_node and dst_id not in app_nodes:
+                app_nodes[dst_id] = dst_node
+            edges.append((src_id, dst_id))
 
     # finish_criteria may be a comma-separated string or a YAML list
     fc_raw = fm.get("finish_criteria", [])
@@ -112,6 +133,7 @@ def parse_app(path: Path) -> AppDef:
         name=fm["name"],
         entry=fm["entry"],
         edges=edges,
+        app_nodes=app_nodes,
         final_output=fm.get("final_output", ""),
         final_output_description=str(fm.get("final_output_description") or "").strip(),
         finish_criteria=finish_criteria,
