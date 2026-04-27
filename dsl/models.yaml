@@ -1,6 +1,0 @@
-# Model class → LiteLLM model string
-# Three standard tiers — map each to the model you want to use.
-# Add custom classes as needed (e.g. judge: ...).
-light:    openai/gemini-2.5-flash-lite
-standard: openai/gemini-2.5-flash-lite
-strong:   openai/gemini-2.5-flash-lite

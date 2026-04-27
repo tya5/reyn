@@ -1,0 +1,12 @@
+# AgentOS project configuration
+# Committed to git. For personal overrides, use agent-os.local.yaml (gitignored).
+
+# Default model class when --model is not specified
+model: standard
+
+# Model class → LiteLLM model string
+# Three standard tiers. Add custom classes as needed.
+models:
+  light:    openai/gemini-2.5-flash-lite
+  standard: openai/gemini-2.5-flash-lite
+  strong:   openai/gemini-2.5-flash-lite

@@ -5,19 +5,14 @@ import sys
 from pathlib import Path
 
 
-def _infer_dsl_root(app_dsl_path: str | None, dsl_root_arg: str | None) -> Path | None:
-    """Return the DSL root path from explicit arg or auto-detection from app_dsl path."""
-    if dsl_root_arg:
-        return Path(dsl_root_arg)
-    if app_dsl_path:
-        # app.md lives at <dsl_root>/apps/<name>/app.md — walk up 3 levels
-        return Path(app_dsl_path).parent.parent.parent
-    return None
+def _load_config():
+    from agent_os.config import load_config
+    return load_config()
 
 
-def _load_resolver(dsl_root: Path | None):
+def _make_resolver(config):
     from agent_os.model_resolver import ModelResolver
-    return ModelResolver.load(dsl_root)
+    return ModelResolver(config.models)
 
 
 def _parse_cli_input(raw: str) -> dict:
@@ -53,9 +48,15 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     initial_input = _parse_cli_input(args.input)
 
-    dsl_root = _infer_dsl_root(args.app_dsl, args.dsl_root)
-    resolver = _load_resolver(dsl_root)
-    resolved_model = resolver.resolve(args.model)
+    config = _load_config()
+    resolver = _make_resolver(config)
+
+    model = args.model or config.model
+    workspace = args.workspace or config.workspace
+    output_language = args.output_language or config.output_language
+    shell_allowed = args.allow_shell or config.shell_allowed
+
+    resolved_model = resolver.resolve(model)
 
     from agent_os.agent import Agent
     if args.rich:
@@ -66,26 +67,26 @@ def cmd_run(args: argparse.Namespace) -> None:
         logger = ConsoleLogger()
 
     agent = Agent(
-        model=args.model,
-        workspace_dir=args.workspace,
+        model=model,
+        workspace_dir=workspace,
         strict=args.strict,
         subscribers=[logger],
         extra_read_roots=args.read_allow,
-        shell_allowed=args.allow_shell,
+        shell_allowed=shell_allowed,
         resolver=resolver,
     )
 
     input_type = initial_input.get("type", "unknown")
-    model_display = f"{args.model} → {resolved_model}" if resolved_model != args.model else args.model
+    model_display = f"{model} → {resolved_model}" if resolved_model != model else model
     print(f"app             : {app.name}")
     print(f"model           : {model_display}")
-    print(f"output_language : {args.output_language}")
+    print(f"output_language : {output_language}")
     print(f"input type      : {input_type}")
     print(f"input           : {json.dumps(initial_input, ensure_ascii=False)}")
     print()
 
     try:
-        result = agent.run(app, initial_input, output_language=args.output_language)
+        result = agent.run(app, initial_input, output_language=output_language)
     except Exception as e:
         print(f"\nError during execution: {e}", file=sys.stderr)
         sys.exit(1)
@@ -364,11 +365,11 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print(f"Error loading app '{spec.app_dsl_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    raw_model = args.model or spec.model or "standard"
-    raw_judge = args.judge_model or spec.judge_model or raw_model
+    config = _load_config()
+    resolver = _make_resolver(config)
 
-    dsl_root = _infer_dsl_root(spec.app_dsl_path, args.dsl_root or spec.dsl_root)
-    resolver = _load_resolver(dsl_root)
+    raw_model = args.model or spec.model or config.model
+    raw_judge = args.judge_model or spec.judge_model or raw_model
     model = resolver.resolve(raw_model)
     judge_model = resolver.resolve(raw_judge)
     repeat = max(1, args.repeat)
@@ -625,25 +626,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument(
         "--model",
-        default="standard",
+        default=None,
         metavar="MODEL",
         help=(
             "Model class name (light/standard/strong) or LiteLLM model string. "
-            "Class names are resolved via dsl/models.yaml (default: standard)."
+            "Resolved via agent-os.yaml models map. "
+            "Default: from agent-os.yaml 'model' key, or 'standard'."
         ),
     )
     run_p.add_argument(
         "--workspace",
-        default="./workspace",
+        default=None,
         metavar="DIR",
-        help="Workspace directory (default: ./workspace)",
+        help="Workspace directory (default: from agent-os.yaml or ./workspace)",
     )
     run_p.add_argument(
         "--output-language",
-        default="ja",
+        default=None,
         dest="output_language",
         metavar="LANG",
-        help="Output language code (default: ja)",
+        help="Output language code (default: from agent-os.yaml or ja)",
     )
     run_p.add_argument(
         "--events",
