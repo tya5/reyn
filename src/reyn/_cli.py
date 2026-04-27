@@ -165,6 +165,57 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(2)
 
 
+def cmd_apps(args: argparse.Namespace) -> None:
+    import yaml
+
+    config = _load_config()
+    workspace = args.workspace or config.workspace
+    stdlib_root = Path(__file__).parent.parent / "stdlib"
+
+    search_roots: list[tuple[str, Path]] = [
+        ("workspace", Path(workspace) / "dsl"),
+        ("project",   Path("dsl")),
+        ("user",      Path.home() / ".reyn" / "apps"),
+        ("stdlib",    stdlib_root),
+    ]
+
+    def _read_description(app_md: Path) -> str:
+        try:
+            text = app_md.read_text(encoding="utf-8")
+            if text.startswith("---"):
+                end = text.index("---", 3)
+                fm = yaml.safe_load(text[3:end])
+                desc = fm.get("final_output_description") or ""
+                return desc.strip().splitlines()[0] if desc.strip() else ""
+        except Exception:
+            pass
+        return ""
+
+    found_any = False
+    seen: set[str] = set()
+
+    for label, root in search_roots:
+        apps_dir = root / "apps" if label not in ("user",) else root
+        if not apps_dir.exists():
+            continue
+        entries = sorted(p for p in apps_dir.iterdir() if (p / "app.md").exists())
+        if not entries:
+            continue
+        print(f"\n{label}  ({apps_dir})")
+        for app_dir in entries:
+            name = app_dir.name
+            desc = _read_description(app_dir / "app.md")
+            shadowed = " [shadowed]" if name in seen else ""
+            desc_str = f"  — {desc}" if desc else ""
+            print(f"  {name}{desc_str}{shadowed}")
+            seen.add(name)
+        found_any = True
+
+    if not found_any:
+        print("No apps found.")
+    print()
+
+
 def cmd_events(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
@@ -735,6 +786,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_p = sub.add_parser("init", help="Create reyn.yaml and reyn.local.yaml in the current directory")
     init_p.set_defaults(func=cmd_init)
+
+    apps_p = sub.add_parser("apps", help="List available apps across all search paths")
+    apps_p.add_argument(
+        "--workspace",
+        default=None,
+        metavar="DIR",
+        help="Workspace directory (default: from reyn.yaml or ./workspace)",
+    )
+    apps_p.set_defaults(func=cmd_apps)
 
     run_p = sub.add_parser("run", help="Run an app")
     run_p.add_argument(
