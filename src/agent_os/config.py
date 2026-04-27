@@ -23,6 +23,9 @@ class AgentOSConfig:
     output_language: str = "ja"
     shell_allowed: bool = False
     models: dict[str, str] = field(default_factory=dict)
+    # LiteLLM proxy settings — keep api_key in agent-os.local.yaml or ~/.agent-os/config.yaml
+    api_base: str = ""
+    api_key: str = ""
 
 
 def _load_yaml(path: Path) -> dict:
@@ -84,4 +87,6 @@ def load_config(cwd: Path | None = None) -> AgentOSConfig:
         output_language=str(merged.get("output_language", "ja")),
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
+        api_base=str(merged.get("api_base") or ""),
+        api_key=str(merged.get("api_key") or ""),
     )

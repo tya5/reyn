@@ -8,7 +8,7 @@ from .events import EventLog
 from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
-from .llm import call_llm
+from .llm import call_llm, proxy_kwargs
 from .pricing import TokenUsage
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
@@ -508,6 +508,7 @@ class OSRuntime:
             model=self._resolver.resolve(self.model),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
+            **proxy_kwargs(),
         )
         raw = _json.loads(response.choices[0].message.content)
         if response.usage:

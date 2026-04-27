@@ -10,6 +10,15 @@ def _load_config():
     return load_config()
 
 
+def _apply_config_env(config) -> None:
+    """Set env vars from config so all litellm calls pick them up automatically."""
+    import os
+    if config.api_base:
+        os.environ.setdefault("LITELLM_API_BASE", config.api_base)
+    if config.api_key:
+        os.environ.setdefault("LITELLM_API_KEY", config.api_key)
+
+
 def _make_resolver(config):
     from agent_os.model_resolver import ModelResolver
     return ModelResolver(config.models)
@@ -49,6 +58,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     initial_input = _parse_cli_input(args.input)
 
     config = _load_config()
+    _apply_config_env(config)
     resolver = _make_resolver(config)
 
     model = args.model or config.model
@@ -366,6 +376,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     config = _load_config()
+    _apply_config_env(config)
     resolver = _make_resolver(config)
 
     raw_model = args.model or spec.model or config.model

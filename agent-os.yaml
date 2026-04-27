@@ -1,5 +1,6 @@
 # AgentOS project configuration
 # Committed to git. For personal overrides, use agent-os.local.yaml (gitignored).
+# api_base / api_key belong in agent-os.local.yaml or ~/.agent-os/config.yaml — never here.
 
 # Default model class when --model is not specified
 model: standard

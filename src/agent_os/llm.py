@@ -133,6 +133,15 @@ def _extract_usage(response) -> TokenUsage | None:
         return None
 
 
+def proxy_kwargs() -> dict:
+    """Return extra kwargs for litellm.completion() when a proxy is configured via env vars."""
+    api_base = os.environ.get("LITELLM_API_BASE")
+    if not api_base:
+        return {}
+    api_key = os.environ.get("LITELLM_API_KEY") or os.environ.get("OPENAI_API_KEY", "dummy")
+    return {"api_base": api_base, "api_key": api_key, "custom_llm_provider": "openai"}
+
+
 def call_llm(
     model: str,
     frame: ContextFrame,
@@ -184,10 +193,7 @@ def call_llm(
             ]
 
         # response_format may not be supported by all models; pass it only when available
-        api_base = os.environ.get("LITELLM_API_BASE")
-        # When routing through a proxy, force OpenAI-compatible provider so litellm
-        # doesn't try to call the upstream provider (e.g. Gemini) directly.
-        extra = {"api_base": api_base, "custom_llm_provider": "openai"} if api_base else {}
+        extra = proxy_kwargs()
         try:
             response = litellm.completion(
                 model=model,
