@@ -98,7 +98,10 @@ workspace/dsl/apps/{app_name}/
 
 ## After generation
 
-1. Copy the generated files into your project's `dsl/` directory:
+Generated files are written inside the **workspace** (`workspace/dsl/apps/{app_name}/`).
+Reyn never writes outside the workspace, so you need to copy them into your project.
+
+1. Copy into your project's `dsl/` directory:
 
    ```bash
    cp -r workspace/dsl/apps/{app_name} dsl/apps/
