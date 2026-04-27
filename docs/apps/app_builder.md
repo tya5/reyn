@@ -99,19 +99,20 @@ workspace/dsl/apps/{app_name}/
 ## After generation
 
 Generated files are written inside the **workspace** (`workspace/dsl/apps/{app_name}/`).
-Reyn never writes outside the workspace, so you need to copy them into your project.
+You can run the app directly from there — no copy needed:
 
-1. Copy into your project's `dsl/` directory:
+```bash
+reyn run \
+  --app-dsl workspace/dsl/apps/{app_name}/app.md \
+  --dsl-root workspace/dsl/ \
+  --input "test input"
+```
 
-   ```bash
-   cp -r workspace/dsl/apps/{app_name} dsl/apps/
-   ```
+To bring the app into your project's git-managed `dsl/` directory:
 
-2. Run it:
-
-   ```bash
-   reyn run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "test input"
-   ```
+```bash
+cp -r workspace/dsl/apps/{app_name} dsl/apps/
+```
 
 ---
 
