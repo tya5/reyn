@@ -113,6 +113,19 @@ def cmd_run(args: argparse.Namespace) -> None:
     resolved_model = resolver.resolve(model)
 
     from reyn.agent import Agent
+    from reyn.permissions import PermissionResolver
+    from reyn.config import _find_project_root
+    project_root = _find_project_root(Path.cwd())
+    perm_config = getattr(config, "permissions", {}) or {}
+    # backward compat: if global shell_allowed, pre-approve shell in permissions
+    if shell_allowed and "shell" not in perm_config:
+        perm_config = dict(perm_config, shell="allow")
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=project_root,
+        interactive=sys.stdin.isatty(),
+    )
+
     if args.rich:
         from reyn.reporters.rich import RichLogger
         logger = RichLogger()
@@ -128,6 +141,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         extra_read_roots=args.read_allow,
         shell_allowed=shell_allowed,
         resolver=resolver,
+        permission_resolver=perm_resolver,
     )
 
     input_type = initial_input.get("type", "unknown")

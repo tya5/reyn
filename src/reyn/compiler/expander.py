@@ -2,6 +2,7 @@ import warnings
 from typing import Any
 from .ir import ArtifactDef, FieldDef, PhaseDef, AppDef
 from reyn.models import App, Phase, AppGraph, AppNodeSpec
+from reyn.permissions import PermissionDecl
 
 
 # Primitive DSL type → JSON Schema
@@ -125,6 +126,7 @@ def expand_phase(
         instructions=phase_def.instructions,
         max_act_turns=phase_def.max_act_turns,
         model_class=phase_def.model_class,
+        permissions=PermissionDecl.from_dict(phase_def.permissions),
     )
 
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
 from pydantic import BaseModel, Field, model_validator
+from .permissions import PermissionDecl
 
 
 class Phase(BaseModel):
@@ -13,6 +14,7 @@ class Phase(BaseModel):
     instructions: str
     max_act_turns: int = 10  # per-phase override; 0 = use system default
     model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
+    permissions: PermissionDecl = Field(default_factory=PermissionDecl)
 
 
 class AppNodeSpec(BaseModel):

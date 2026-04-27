@@ -13,6 +13,7 @@ from .pricing import TokenUsage
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
 from .model_resolver import ModelResolver
+from .permissions import PermissionResolver
 
 
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
@@ -97,6 +98,7 @@ class OSRuntime:
         extra_read_roots: list[str] | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
+        permission_resolver: PermissionResolver | None = None,
     ) -> None:
         self.app = app
         self.model = model  # class name or raw LiteLLM string as provided
@@ -110,6 +112,7 @@ class OSRuntime:
             user_input_fn=user_input_fn,
             shell_allowed=shell_allowed,
             resolver=self._resolver,
+            permission_resolver=permission_resolver,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
@@ -386,7 +389,8 @@ class OSRuntime:
                     ) from exc
                 continue
 
-            ir_results = self.control_ir_executor.execute(act.ops, phase=phase)
+            phase_decl = self.app.phases[phase].permissions if phase in self.app.phases else None
+            ir_results = self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
             control_ir_results = ir_results
             prior_attempts = []  # reset retries after a successful act turn
             self.events.emit(
@@ -614,7 +618,8 @@ class OSRuntime:
                 )
 
                 # Execute write ops from decide turn (reads already handled inside _execute_phase)
-                decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase)
+                current_decl = self.app.phases[current_phase].permissions if current_phase in self.app.phases else None
+                decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
                 if decide_results:
                     self.events.emit(
                         "decide_ops_executed",

@@ -16,10 +16,11 @@ Safely skipped (handler_not_implemented):
 from __future__ import annotations
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, ShellIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, MCPIROp, ShellIROp, ToolIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
+from .permissions import PermissionDecl, PermissionResolver
 
 
 def _default_user_input(question: str, suggestions: list[str]) -> str:
@@ -35,12 +36,14 @@ class ControlIRExecutor:
         user_input_fn: Callable[[str, list[str]], str] | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
+        permission_resolver: PermissionResolver | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
         self._user_input_fn = user_input_fn or _default_user_input
         self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
+        self._perm = permission_resolver
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
@@ -115,13 +118,19 @@ class ControlIRExecutor:
             ),
         ]
 
-    def execute(self, ops: list[ControlIROp], phase: str = "") -> list[dict[str, Any]]:
+    def execute(
+        self,
+        ops: list[ControlIROp],
+        phase: str = "",
+        decl: PermissionDecl | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Execute a list of Control IR operations.
         Returns a result dict per op; never raises — errors are captured in results.
         Content-bearing results (file reads, ask_user answers) are returned directly
         so the caller can feed them back to the LLM.
         """
+        effective_decl = decl or PermissionDecl()
         results: list[dict[str, Any]] = []
         for op in ops:
             try:
@@ -130,11 +139,24 @@ class ControlIRExecutor:
                 elif op.kind == "ask_user":
                     result = self._execute_ask_user(op, phase)  # type: ignore[arg-type]
                 elif op.kind == "shell":
-                    if not self._shell_allowed:
+                    if self._perm:
+                        self._perm.require_shell(effective_decl, getattr(op, "cmd", ""))
+                    elif not self._shell_allowed:
                         result = {"kind": "shell", "status": "skipped", "reason": "shell_not_allowed"}
                         self.events.emit("control_ir_skipped", kind="shell", reason="shell_not_allowed")
-                    else:
-                        result = self._execute_shell(op)  # type: ignore[arg-type]
+                        results.append(result)
+                        continue
+                    result = self._execute_shell(op)  # type: ignore[arg-type]
+                elif op.kind == "mcp":
+                    if self._perm:
+                        self._perm.require_mcp(effective_decl, getattr(op, "server", ""))
+                    result = {"kind": "mcp", "status": "skipped", "reason": "handler_not_implemented"}
+                    self.events.emit("control_ir_skipped", kind="mcp")
+                elif op.kind == "tool":
+                    if self._perm:
+                        self._perm.require_tool(effective_decl, getattr(op, "name", ""))
+                    result = {"kind": "tool", "status": "skipped", "reason": "handler_not_implemented"}
+                    self.events.emit("control_ir_skipped", kind="tool")
                 elif op.kind == "lint":
                     result = self._execute_lint(op)  # type: ignore[arg-type]
                 elif op.kind == "eval":

@@ -5,6 +5,7 @@ from typing import Callable
 from .models import App
 from .runtime import OSRuntime, RunResult
 from .model_resolver import ModelResolver
+from .permissions import PermissionResolver
 from reyn.reporters.persister import EventPersister
 
 
@@ -19,6 +20,7 @@ class Agent:
         extra_read_roots: list[str] | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
+        permission_resolver: PermissionResolver | None = None,
     ) -> None:
         self.model = model
         self.workspace_dir = workspace_dir
@@ -28,6 +30,7 @@ class Agent:
         self._extra_read_roots = extra_read_roots or []
         self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
+        self._permission_resolver = permission_resolver
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -46,6 +49,7 @@ class Agent:
             extra_read_roots=self._extra_read_roots,
             shell_allowed=self._shell_allowed,
             resolver=self._resolver,
+            permission_resolver=self._permission_resolver,
         )
         return self._runtime.run(initial_input, output_language=output_language)
 

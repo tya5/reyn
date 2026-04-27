@@ -27,6 +27,9 @@ class ReynConfig:
     # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # — never stored in config files.
     api_base: str = ""
+    # Pre-approved permissions (same structure as phase frontmatter, but value is "allow").
+    # Example: permissions: {shell: allow, file.delete: allow, mcp: {github: allow}}
+    permissions: dict = field(default_factory=dict)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -42,13 +45,13 @@ def _load_yaml(path: Path) -> dict:
 
 
 def _merge(base: dict, override: dict) -> dict:
-    """Merge override into base. models dict is shallow-merged; all other keys override."""
+    """Merge override into base. models and permissions dicts are shallow-merged; all other keys override."""
     result = dict(base)
     for key, val in override.items():
         if val is None:
             continue
-        if key == "models" and isinstance(val, dict):
-            result["models"] = {**result.get("models", {}), **val}
+        if key in ("models", "permissions") and isinstance(val, dict):
+            result[key] = {**result.get(key, {}), **val}
         else:
             result[key] = val
     return result
@@ -71,7 +74,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     cwd = (cwd or Path.cwd()).resolve()
 
     merged: dict = {"model": "standard", "workspace": ".reyn",
-                    "output_language": "ja", "shell_allowed": False, "models": {}}
+                    "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {}}
 
     # User global
     merged = _merge(merged, _load_yaml(Path.home() / ".reyn" / "config.yaml"))
@@ -89,4 +92,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
         api_base=str(merged.get("api_base") or ""),
+        permissions=dict(merged.get("permissions") or {}),
     )

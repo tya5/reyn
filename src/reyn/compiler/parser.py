@@ -77,6 +77,7 @@ def parse_phase(path: Path) -> PhaseDef:
     inputs = [i.strip() for i in str(inputs_raw).split("|")] if inputs_raw else []
     input_description = str(fm.get("input_description") or "").strip()
 
+    permissions_raw = fm.get("permissions") or {}
     return PhaseDef(
         name=name,
         inputs=inputs,
@@ -86,6 +87,7 @@ def parse_phase(path: Path) -> PhaseDef:
         instructions=body,
         max_act_turns=int(fm.get("max_act_turns", 0)),
         model_class=str(fm.get("model_class") or "").strip(),
+        permissions=permissions_raw if isinstance(permissions_raw, dict) else {},
     )
 
 
