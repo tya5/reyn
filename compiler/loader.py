@@ -145,6 +145,7 @@ def load_dsl_app(
             dsl_root=str(dsl_root),
             workspace=node_def.workspace,
             entry_input_schema=entry_phase.input_schema,
+            entry_input_schema_name=entry_phase.input_schema_name,
             entry_input_description=entry_phase.input_description,
         )
 

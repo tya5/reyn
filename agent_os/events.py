@@ -8,6 +8,10 @@ class EventLog:
         self._events: list[Event] = []
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
 
+    @property
+    def subscribers(self) -> list[Callable[[Event], None]]:
+        return self._subscribers
+
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 

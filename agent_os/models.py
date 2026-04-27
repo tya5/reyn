@@ -8,6 +8,7 @@ class Phase(BaseModel):
     name: str
     role: str | None = None
     input_schema: dict[str, Any]
+    input_schema_name: str = "artifact"  # artifact type name(s) for display (e.g. "user_input")
     input_description: str = ""
     instructions: str
     max_act_turns: int = 10  # per-phase override; 0 = use system default
@@ -18,7 +19,8 @@ class AppNodeSpec(BaseModel):
     app_path: str                # absolute path to sub-app's app.md
     dsl_root: str                # dsl_root used to load the sub-app
     workspace: str               # "isolated" | "shared"
-    entry_input_schema: dict     # sub-app entry phase input_schema (for candidate building)
+    entry_input_schema: dict      # sub-app entry phase input_schema (for candidate building)
+    entry_input_schema_name: str = "artifact"  # type name for display
     entry_input_description: str = ""
 
 

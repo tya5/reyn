@@ -151,17 +151,18 @@ class OSRuntime:
                 candidates.append(CandidateOutput(
                     next_phase=phase_name,
                     control_type="transition",
-                    schema_name=_schema_type_name(node_spec.entry_input_schema),
+                    schema_name=node_spec.entry_input_schema_name,
                     artifact_schema=node_spec.entry_input_schema,
                     description=node_spec.entry_input_description,
                 ))
             else:
+                p = app.phases[phase_name]
                 candidates.append(CandidateOutput(
                     next_phase=phase_name,
                     control_type="transition",
-                    schema_name=_schema_type_name(app.phases[phase_name].input_schema),
-                    artifact_schema=app.phases[phase_name].input_schema,
-                    description=app.phases[phase_name].input_description,
+                    schema_name=p.input_schema_name,
+                    artifact_schema=p.input_schema,
+                    description=p.input_description,
                 ))
         if can_finish or not allowed:
             candidates.append(CandidateOutput(
@@ -540,10 +541,10 @@ class OSRuntime:
         sub_app = load_dsl_app(node_spec.app_path, dsl_root=node_spec.dsl_root)
 
         if node_spec.workspace == "shared":
-            sub_workspace_dir = self.workspace.workspace_dir
+            sub_workspace_dir = str(self.workspace.base_dir)
         else:
             sub_workspace_dir = str(
-                _Path(self.workspace.workspace_dir) / "invoke" / node_id.lstrip("@")
+                self.workspace.base_dir / "invoke" / node_id.lstrip("@")
             )
 
         sub_runtime = OSRuntime(

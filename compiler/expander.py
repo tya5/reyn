@@ -110,10 +110,17 @@ def expand_phase(
     artifact_defs: dict[str, ArtifactDef] | None = None,
 ) -> Phase:
     input_schema = _union_schema(input_arts, artifact_defs) if input_arts else {"type": "object"}
+    if len(input_arts) == 1:
+        input_schema_name = input_arts[0].name
+    elif input_arts:
+        input_schema_name = " | ".join(a.name for a in input_arts)
+    else:
+        input_schema_name = "artifact"
     return Phase(
         name=phase_def.name,
         role=phase_def.role,
         input_schema=input_schema,
+        input_schema_name=input_schema_name,
         input_description=phase_def.input_description,
         instructions=phase_def.instructions,
         max_act_turns=phase_def.max_act_turns,

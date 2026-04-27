@@ -1,5 +1,6 @@
 import jsonschema
 from .models import LLMOutput, CandidateOutput
+from .artifact_validator import extract_data_schema
 
 
 class ValidationError(Exception):
@@ -46,9 +47,14 @@ def validate_output(
 
     candidate = candidate_map[effective]
 
-    # Validate artifact against the candidate's schema
+    # Validate artifact data against the candidate's data schema.
+    # Always validate artifact["data"] against the extracted data schema, because
+    # flat (wrapped=false) candidate schemas describe the data fields directly and
+    # must not be applied to the {type, data} wrapper.
+    artifact_type = output.artifact.get("type", "")
+    data_schema = extract_data_schema(candidate.artifact_schema, artifact_type)
     try:
-        jsonschema.validate(instance=output.artifact, schema=candidate.artifact_schema)
+        jsonschema.validate(instance=output.artifact.get("data", {}), schema=data_schema)
     except jsonschema.ValidationError as e:
         raise ValidationError(
             f"Artifact does not match schema for '{effective}' "

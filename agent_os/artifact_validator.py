@@ -182,6 +182,7 @@ def _coerce_array(
 def _coerce_fields(
     result: dict,
     props: dict,
+    required: set[str],
     path: str,
     corrections: list[str],
     errors: list[str],
@@ -194,6 +195,13 @@ def _coerce_fields(
             continue  # missing optional fields are fine; required already recorded in pass 2
 
         value = result[key]
+        if value is None:
+            # null from LLM means "not provided" — treat as absent
+            if key not in required:
+                del result[key]
+            else:
+                errors.append(f"required field '{_field_path(path, key)}' is null")
+            continue
         fp = _field_path(path, key)
         field_type = field_schema.get("type")
 
@@ -238,7 +246,7 @@ def _process(
 
     result = _strip_unknown(data, props, path, corrections)
     _check_required(result, required, path, errors)
-    return _coerce_fields(result, props, path, corrections, errors, strict, _depth)
+    return _coerce_fields(result, props, required, path, corrections, errors, strict, _depth)
 
 
 # ── Public API ─────────────────────────────────────────────────────────────────
