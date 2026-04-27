@@ -185,7 +185,7 @@ def cmd_apps(args: argparse.Namespace) -> None:
             if text.startswith("---"):
                 end = text.index("---", 3)
                 fm = yaml.safe_load(text[3:end])
-                desc = fm.get("description") or fm.get("final_output_description") or ""
+                desc = fm.get("description") or ""
                 return desc.strip().splitlines()[0] if desc.strip() else ""
         except Exception:
             pass
