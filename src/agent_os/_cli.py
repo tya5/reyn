@@ -19,7 +19,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     if args.app_dsl:
         try:
-            from compiler import load_dsl_app
+            from agent_os.compiler import load_dsl_app
             app = load_dsl_app(args.app_dsl, dsl_root=args.dsl_root)
         except Exception as e:
             print(f"Error: failed to compile DSL '{args.app_dsl}': {e}", file=sys.stderr)
@@ -39,10 +39,10 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     from agent_os.agent import Agent
     if args.rich:
-        from agent_os.rich_logger import RichLogger
+        from agent_os.reporters.rich import RichLogger
         logger = RichLogger()
     else:
-        from agent_os.console_logger import ConsoleLogger
+        from agent_os.reporters.console import ConsoleLogger
         logger = ConsoleLogger()
 
     agent = Agent(
@@ -100,10 +100,10 @@ def cmd_events(args: argparse.Namespace) -> None:
 
     conversation: bool = args.conversation
     if args.rich:
-        from agent_os.rich_logger import RichLogger
+        from agent_os.reporters.rich import RichLogger
         logger = RichLogger(conversation=conversation)
     else:
-        from agent_os.console_logger import ConsoleLogger
+        from agent_os.reporters.console import ConsoleLogger
         logger = ConsoleLogger(conversation=conversation)
 
     filter_types: set[str] = set(args.filter_types)
@@ -325,10 +325,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
     from datetime import datetime, timezone
-    from compiler.eval_loader import load_eval_spec
-    from compiler import load_dsl_app
-    from agent_os.eval_runner import EvalRunner
-    from agent_os.eval_models import EvalRunResult
+    from agent_os.compiler.eval_loader import load_eval_spec
+    from agent_os.compiler import load_dsl_app
+    from agent_os.eval.runner import EvalRunner
+    from agent_os.eval.models import EvalRunResult
 
     try:
         spec = load_eval_spec(args.spec)
@@ -348,10 +348,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
     if args.verbose:
         if args.rich:
-            from agent_os.rich_logger import RichLogger
+            from agent_os.reporters.rich import RichLogger
             app_logger = RichLogger()
         else:
-            from agent_os.console_logger import ConsoleLogger
+            from agent_os.reporters.console import ConsoleLogger
             app_logger = ConsoleLogger()
         app_subscribers = [app_logger]
     else:
@@ -499,7 +499,7 @@ def cmd_eval_compare(args: argparse.Namespace) -> None:
 
 def cmd_lint(args: argparse.Namespace) -> None:
     from pathlib import Path
-    from compiler.linter import lint_dsl
+    from agent_os.compiler.linter import lint_dsl
 
     dsl_root = Path(args.dsl)
     issues = lint_dsl(dsl_root)
@@ -523,7 +523,7 @@ def cmd_lint(args: argparse.Namespace) -> None:
 
 def cmd_format(args: argparse.Namespace) -> None:
     from pathlib import Path
-    from compiler.formatter import format_dsl
+    from agent_os.compiler.formatter import format_dsl
 
     dsl_root = Path(args.dsl)
     check_only = args.check

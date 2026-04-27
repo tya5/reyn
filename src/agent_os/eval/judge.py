@@ -6,8 +6,8 @@ import json
 import os
 import re
 import litellm
-from .eval_models import CriterionResult, PASS_THRESHOLD
-from .pricing import TokenUsage
+from agent_os.eval.models import CriterionResult, PASS_THRESHOLD
+from agent_os.pricing import TokenUsage
 
 _SYSTEM = """\
 You are a strict, objective evaluator for AI agent workflow outputs.

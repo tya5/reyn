@@ -4,7 +4,7 @@ Evaluation framework data models.
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
-from .pricing import TokenUsage
+from agent_os.pricing import TokenUsage
 
 PASS_THRESHOLD = 0.6  # criterion score >= this is considered passing
 

@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_os.eval_models import (
+from agent_os.eval.models import (
     EvalSpec, EvalCase, PhaseCriteria, SchemaAssertion, CrossPhaseAssertion,
     QualityCriterion,
 )

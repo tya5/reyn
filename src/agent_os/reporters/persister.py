@@ -7,7 +7,7 @@ File format: newline-delimited JSON, one event per line.
 from __future__ import annotations
 import json
 from pathlib import Path
-from .models import Event
+from agent_os.models import Event
 
 
 class EventPersister:

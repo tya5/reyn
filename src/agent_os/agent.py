@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Callable
 from .models import App
 from .runtime import OSRuntime, RunResult
-from .event_persister import EventPersister
+from agent_os.reporters.persister import EventPersister
 
 
 class Agent:

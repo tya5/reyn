@@ -56,20 +56,25 @@ def _load_dir(directory: Path, parser, registry: dict) -> None:
         registry[item.name] = item
 
 
+def _stdlib_dir(kind: str) -> Path:
+    """Return the installed stdlib/<kind> directory via importlib.resources."""
+    import importlib.resources
+    return Path(importlib.resources.files("stdlib") / kind)  # type: ignore[arg-type]
+
+
 def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
     """
-    Return shared/<kind> directories to search, deduplicating the project dsl/ fallback.
-
-    When a workspace-generated app lives under workspace/dsl/, its inferred dsl_root
-    is workspace/dsl/ which has no shared artifacts.  We always add the project-level
-    dsl/ (cwd/dsl/) as a fallback so shared artifacts like user_message are found
-    without requiring --dsl-root.
+    Return shared/<kind> directories to search in priority order (lowest first):
+      1. installed stdlib/<kind>
+      2. dsl_root/shared/<kind>   (user-provided dsl root)
     """
-    dirs: list[Path] = [dsl_root / "shared" / kind]
-    project_dsl = Path.cwd() / "dsl"
-    fallback = project_dsl / "shared" / kind
-    if fallback.resolve() != dirs[0].resolve():
-        dirs.append(fallback)
+    stdlib = _stdlib_dir(kind)
+    dsl_shared = dsl_root / "shared" / kind
+    dirs: list[Path] = []
+    if stdlib.exists():
+        dirs.append(stdlib)
+    if dsl_shared.resolve() != stdlib.resolve():
+        dirs.append(dsl_shared)
     return dirs
 
 

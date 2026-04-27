@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 from rich.rule import Rule
-from .models import Event
+from agent_os.models import Event
 
 _console = Console()
 

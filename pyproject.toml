@@ -39,10 +39,12 @@ dev = [
 agent-os = "agent_os._cli:main"
 
 [tool.setuptools.packages.find]
-include = ["agent_os*", "compiler*"]
+where = ["src"]
+include = ["agent_os*", "stdlib*"]
 
 [tool.setuptools.package-data]
-"*" = ["py.typed"]
+"stdlib" = ["**/*.md"]
+"agent_os" = ["py.typed"]
 
 [tool.ruff]
 target-version = "py311"
