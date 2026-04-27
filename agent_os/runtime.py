@@ -55,19 +55,6 @@ def _maybe_ref_artifact(artifact: dict, artifact_path: str | None) -> dict:
     }
 
 
-def _schema_type_name(schema: dict) -> str:
-    props = schema.get("properties", {})
-    const = props.get("type", {}).get("const")
-    if const:
-        return str(const)
-    any_of = schema.get("anyOf", [])
-    if any_of:
-        names = [s.get("properties", {}).get("type", {}).get("const") for s in any_of]
-        named = [str(n) for n in names if n]
-        if named:
-            return " | ".join(named)
-    return "artifact"
-
 
 def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
     _META = frozenset({
@@ -487,6 +474,7 @@ class OSRuntime:
         data: dict,
         source_type: str,
         target_schema: dict,
+        target_type: str,
         node_id: str,
         output_language: str,
     ) -> dict:
@@ -494,7 +482,6 @@ class OSRuntime:
         import litellm
         import json as _json
 
-        target_type = _schema_type_name(target_schema)
         prompt = (
             f"Convert the following data to the target schema.\n\n"
             f"Source (type: {source_type}):\n"
@@ -530,6 +517,7 @@ class OSRuntime:
         node_spec,
         input_artifact: dict,
         target_schema: dict,
+        target_type: str,
         output_language: str,
     ) -> dict:
         """Run a sub-app to completion and adapt its final_output to target_schema."""
@@ -566,7 +554,7 @@ class OSRuntime:
 
         return self._adapt_artifact(
             run_result.data, sub_app.final_output_name,
-            target_schema, node_id, output_language,
+            target_schema, target_type, node_id, output_language,
         )
 
     # ── Main loop ──────────────────────────────────────────────────────────────
@@ -661,7 +649,8 @@ class OSRuntime:
                         # app node is the final step — adapt to parent's final_output_schema
                         adapted = self._execute_app_node(
                             next_node, node_spec, output.artifact,
-                            self.app.final_output_schema, output_language,
+                            self.app.final_output_schema, self.app.final_output_name,
+                            output_language,
                         )
                         data = adapted.get("data", {})
                         self._history.append(f"{current_phase} → {next_node} → END")
@@ -675,9 +664,11 @@ class OSRuntime:
                         )
                         return RunResult(data=data, status="finished", token_usage=self._token_usage)
                     next_after = post_nodes[0]
-                    target_schema = self.app.phases[next_after].input_schema
+                    next_phase_obj = self.app.phases[next_after]
                     adapted = self._execute_app_node(
-                        next_node, node_spec, output.artifact, target_schema, output_language,
+                        next_node, node_spec, output.artifact,
+                        next_phase_obj.input_schema, next_phase_obj.input_schema_name,
+                        output_language,
                     )
                     self._history.append(f"{current_phase} → {next_node} → {next_after}")
                     current_phase = next_after
