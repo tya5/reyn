@@ -2,12 +2,12 @@
 ModelResolver: resolves model class names to LiteLLM model strings.
 
 Standard classes: light, standard, strong.
-Mapping is provided by AgentOSConfig.models (loaded from agent-os.yaml).
+Mapping is provided by ReynConfig.models (loaded from reyn.yaml).
 Unknown names pass through unchanged (backward compatible with raw LiteLLM strings).
 """
 from __future__ import annotations
 
-#: The three standard model tiers. Users should map these in agent-os.yaml.
+#: The three standard model tiers. Users should map these in reyn.yaml.
 STANDARD_CLASSES = ("light", "standard", "strong")
 
 

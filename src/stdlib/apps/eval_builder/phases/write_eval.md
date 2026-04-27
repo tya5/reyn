@@ -95,6 +95,6 @@ Set in the output artifact:
 - `next_steps`: tell the user:
   1. The file was written to `workspace/{eval_md_path}`.
   2. The eval will now run automatically via eval_runner.
-  3. To run it again manually: `agent-os eval --spec {resolved_cwd_relative_path} --model <model>`.
+  3. To run it again manually: `reyn eval --spec {resolved_cwd_relative_path} --model <model>`.
   4. If the target app is in the project `dsl/` tree (not in workspace), also copy the file:
      `cp workspace/{eval_md_path} {app_dir}/eval.md`

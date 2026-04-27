@@ -5,15 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from agent_os.eval.models import (
+from reyn.eval.models import (
     EvalSpec, EvalCase, EvalRunResult, CaseResult, PhaseEvalResult,
     CriterionResult, SchemaAssertion, SchemaResult,
     CrossPhaseAssertion, CrossPhaseResult, CostSummary,
 )
-from agent_os.eval.judge import judge_artifact
-from agent_os.agent import Agent
-from agent_os.models import App
-from agent_os.pricing import TokenUsage, estimate_cost
+from reyn.eval.judge import judge_artifact
+from reyn.agent import Agent
+from reyn.models import App
+from reyn.pricing import TokenUsage, estimate_cost
 
 
 # ── Schema evaluation ─────────────────────────────────────────────────────────

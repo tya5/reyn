@@ -1,7 +1,7 @@
 import warnings
 from typing import Any
 from .ir import ArtifactDef, FieldDef, PhaseDef, AppDef
-from agent_os.models import App, Phase, AppGraph, AppNodeSpec
+from reyn.models import App, Phase, AppGraph, AppNodeSpec
 
 
 # Primitive DSL type → JSON Schema

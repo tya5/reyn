@@ -41,7 +41,7 @@ from pathlib import Path
 
 import yaml
 
-from agent_os.eval.models import (
+from reyn.eval.models import (
     EvalSpec, EvalCase, PhaseCriteria, SchemaAssertion, CrossPhaseAssertion,
     QualityCriterion,
 )

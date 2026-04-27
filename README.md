@@ -1,4 +1,4 @@
-# Agent OS
+# Reyn
 
 LLM-driven workflow engine with a Markdown DSL.
 
@@ -95,7 +95,7 @@ draft
 ### 4. Run
 
 ```bash
-agent-os run \
+reyn run \
   --app-dsl dsl/apps/my_app/app.md \
   --input "topic: AI in education, audience: university students" \
   --model gpt-4o
@@ -227,10 +227,10 @@ Within a phase, the LLM can perform side effects before making a routing decisio
 
 ## CLI reference
 
-### `agent-os run`
+### `reyn run`
 
 ```
-agent-os run --app-dsl PATH --input TEXT [options]
+reyn run --app-dsl PATH --input TEXT [options]
 
   --app-dsl PATH          Markdown App DSL file
   --app MODULE            Python module exposing an 'app' object
@@ -246,12 +246,12 @@ agent-os run --app-dsl PATH --input TEXT [options]
   --events                Print full event log after execution
 ```
 
-### `agent-os eval`
+### `reyn eval`
 
 Run an eval spec and score each phase with an LLM judge:
 
 ```
-agent-os eval --spec eval.md --model gpt-4o --judge-model gpt-4o
+reyn eval --spec eval.md --model gpt-4o --judge-model gpt-4o
 ```
 
 Eval specs define cases and per-phase assertions in Markdown:
@@ -275,30 +275,30 @@ input: "Write about AI in education for university students."
 - The body is at least 500 characters
 ```
 
-### `agent-os eval-compare`
+### `reyn eval-compare`
 
 Regression check between two eval result JSON files:
 
 ```
-agent-os eval-compare baseline.json candidate.json
+reyn eval-compare baseline.json candidate.json
 ```
 
-### `agent-os events`
+### `reyn events`
 
 Replay a saved event log:
 
 ```
-agent-os events workspace/runs/20260427T…_my_app.jsonl
-agent-os events … --conversation   # show LLM context + responses only
-agent-os events … --filter phase_started --filter phase_completed
+reyn events workspace/runs/20260427T…_my_app.jsonl
+reyn events … --conversation   # show LLM context + responses only
+reyn events … --filter phase_started --filter phase_completed
 ```
 
-### `agent-os lint` / `agent-os format`
+### `reyn lint` / `reyn format`
 
 ```
-agent-os lint --dsl dsl/
-agent-os format --dsl dsl/
-agent-os format --dsl dsl/ --check   # dry-run
+reyn lint --dsl dsl/
+reyn format --dsl dsl/
+reyn format --dsl dsl/ --check   # dry-run
 ```
 
 ---
@@ -306,7 +306,7 @@ agent-os format --dsl dsl/ --check   # dry-run
 ## Architecture
 
 ```
-User → CLI (agent-os run)
+User → CLI (reyn run)
          └── Agent
                └── OSRuntime
                      ├── build ContextFrame   (phase + artifact + candidates)
@@ -318,14 +318,14 @@ User → CLI (agent-os run)
                      └── transition → next phase
 ```
 
-Every state change is recorded as a structured event. Event logs support replay and offline debugging via `agent-os events`.
+Every state change is recorded as a structured event. Event logs support replay and offline debugging via `reyn events`.
 
 ---
 
 ## Project structure
 
 ```
-agent_os/       Runtime engine (OS, models, validation, eval)
+reyn/       Runtime engine (OS, models, validation, eval)
 compiler/       DSL parser, IR, expander, linter, formatter
 dsl/
   apps/         App definitions (app.md, phases/, artifacts/)

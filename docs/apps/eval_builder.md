@@ -1,6 +1,6 @@
 # eval_builder — アプリの評価スペックを自動生成する
 
-既存アプリの DSL ファイルを読み込み、各フェーズの出力を評価するための `eval.md` スペックファイルを自動生成します。生成されたスペックは `agent-os eval` コマンドで繰り返し実行できます。
+既存アプリの DSL ファイルを読み込み、各フェーズの出力を評価するための `eval.md` スペックファイルを自動生成します。生成されたスペックは `reyn eval` コマンドで繰り返し実行できます。
 
 ---
 
@@ -16,7 +16,7 @@
 ## 実行コマンド
 
 ```bash
-agent-os run \
+reyn run \
   --app-dsl src/stdlib/apps/eval_builder/app.md \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \
@@ -135,7 +135,7 @@ workspace/eval_specs/{app_name}/eval.md
 cp workspace/eval_specs/{app_name}/eval.md dsl/apps/{app_name}/eval.md
 
 # 評価を実行
-agent-os eval --spec dsl/apps/{app_name}/eval.md --model openai/gemini-2.5-flash-lite
+reyn eval --spec dsl/apps/{app_name}/eval.md --model openai/gemini-2.5-flash-lite
 ```
 
 ---

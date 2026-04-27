@@ -89,9 +89,9 @@ class ControlIRExecutor:
                     "cmd: the shell command string. "
                     "timeout: max seconds to wait (default 120). "
                     "Runs in the project root directory. "
-                    "Use for running sub-processes such as 'agent-os run ...'."
+                    "Use for running sub-processes such as 'reyn run ...'."
                 ),
-                example={"kind": "shell", "cmd": "agent-os run --app-dsl dsl/apps/foo/app.md --input 'hello'", "timeout": 120},
+                example={"kind": "shell", "cmd": "reyn run ...pp-dsl dsl/apps/foo/app.md --input 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
             ControlIROpSpec(
                 kind="lint",

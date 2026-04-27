@@ -136,7 +136,7 @@ def _extract_usage(response) -> TokenUsage | None:
 def proxy_kwargs() -> dict:
     """Return extra kwargs for litellm.completion() when a proxy is configured.
 
-    api_base is read from LITELLM_API_BASE (set by CLI from agent-os.yaml).
+    api_base is read from LITELLM_API_BASE (set by CLI from reyn.yaml).
     API keys are read automatically by litellm from provider env vars
     (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.) — never passed explicitly here.
     """

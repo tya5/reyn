@@ -5,7 +5,7 @@ from typing import Callable
 from .models import App
 from .runtime import OSRuntime, RunResult
 from .model_resolver import ModelResolver
-from agent_os.reporters.persister import EventPersister
+from reyn.reporters.persister import EventPersister
 
 
 class Agent:

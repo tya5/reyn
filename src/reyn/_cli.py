@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def _load_config():
-    from agent_os.config import load_config
+    from reyn.config import load_config
     return load_config()
 
 
@@ -20,7 +20,7 @@ def _apply_config_env(config) -> None:
 
 
 def _make_resolver(config):
-    from agent_os.model_resolver import ModelResolver
+    from reyn.model_resolver import ModelResolver
     return ModelResolver(config.models)
 
 
@@ -39,7 +39,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     if args.app_dsl:
         try:
-            from agent_os.compiler import load_dsl_app
+            from reyn.compiler import load_dsl_app
             app = load_dsl_app(args.app_dsl, dsl_root=args.dsl_root)
         except Exception as e:
             print(f"Error: failed to compile DSL '{args.app_dsl}': {e}", file=sys.stderr)
@@ -68,12 +68,12 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     resolved_model = resolver.resolve(model)
 
-    from agent_os.agent import Agent
+    from reyn.agent import Agent
     if args.rich:
-        from agent_os.reporters.rich import RichLogger
+        from reyn.reporters.rich import RichLogger
         logger = RichLogger()
     else:
-        from agent_os.reporters.console import ConsoleLogger
+        from reyn.reporters.console import ConsoleLogger
         logger = ConsoleLogger()
 
     agent = Agent(
@@ -124,7 +124,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 def cmd_events(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
-    from agent_os.models import Event
+    from reyn.models import Event
 
     path = Path(args.path)
     if not path.exists():
@@ -133,10 +133,10 @@ def cmd_events(args: argparse.Namespace) -> None:
 
     conversation: bool = args.conversation
     if args.rich:
-        from agent_os.reporters.rich import RichLogger
+        from reyn.reporters.rich import RichLogger
         logger = RichLogger(conversation=conversation)
     else:
-        from agent_os.reporters.console import ConsoleLogger
+        from reyn.reporters.console import ConsoleLogger
         logger = ConsoleLogger(conversation=conversation)
 
     filter_types: set[str] = set(args.filter_types)
@@ -358,10 +358,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
     import json
     from pathlib import Path
     from datetime import datetime, timezone
-    from agent_os.compiler.eval_loader import load_eval_spec
-    from agent_os.compiler import load_dsl_app
-    from agent_os.eval.runner import EvalRunner
-    from agent_os.eval.models import EvalRunResult
+    from reyn.compiler.eval_loader import load_eval_spec
+    from reyn.compiler import load_dsl_app
+    from reyn.eval.runner import EvalRunner
+    from reyn.eval.models import EvalRunResult
 
     try:
         spec = load_eval_spec(args.spec)
@@ -387,10 +387,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
     if args.verbose:
         if args.rich:
-            from agent_os.reporters.rich import RichLogger
+            from reyn.reporters.rich import RichLogger
             app_logger = RichLogger()
         else:
-            from agent_os.reporters.console import ConsoleLogger
+            from reyn.reporters.console import ConsoleLogger
             app_logger = ConsoleLogger()
         app_subscribers = [app_logger]
     else:
@@ -540,7 +540,7 @@ def cmd_eval_compare(args: argparse.Namespace) -> None:
 
 def cmd_lint(args: argparse.Namespace) -> None:
     from pathlib import Path
-    from agent_os.compiler.linter import lint_dsl
+    from reyn.compiler.linter import lint_dsl
 
     dsl_root = Path(args.dsl)
     issues = lint_dsl(dsl_root)
@@ -564,7 +564,7 @@ def cmd_lint(args: argparse.Namespace) -> None:
 
 def cmd_format(args: argparse.Namespace) -> None:
     from pathlib import Path
-    from agent_os.compiler.formatter import format_dsl
+    from reyn.compiler.formatter import format_dsl
 
     dsl_root = Path(args.dsl)
     check_only = args.check
@@ -587,8 +587,8 @@ def cmd_format(args: argparse.Namespace) -> None:
 
 
 _AGENT_OS_YAML_TEMPLATE = """\
-# AgentOS project configuration — commit this file.
-# api_base / API keys belong in agent-os.local.yaml or ~/.agent-os/config.yaml — never here.
+# Reyn project configuration — commit this file.
+# api_base / API keys belong in reyn.local.yaml or ~/.reyn/config.yaml — never here.
 
 # Default model class when --model is not specified.
 model: standard
@@ -630,49 +630,49 @@ def cmd_init(args: argparse.Namespace) -> None:
     created: list[str] = []
     skipped: list[str] = []
 
-    # agent-os.yaml
-    project_cfg = cwd / "agent-os.yaml"
+    # reyn.yaml
+    project_cfg = cwd / "reyn.yaml"
     if project_cfg.exists():
-        skipped.append("agent-os.yaml")
+        skipped.append("reyn.yaml")
     else:
         project_cfg.write_text(_AGENT_OS_YAML_TEMPLATE, encoding="utf-8")
-        created.append("agent-os.yaml")
+        created.append("reyn.yaml")
 
-    # agent-os.local.yaml
-    local_cfg = cwd / "agent-os.local.yaml"
+    # reyn.local.yaml
+    local_cfg = cwd / "reyn.local.yaml"
     if local_cfg.exists():
-        skipped.append("agent-os.local.yaml")
+        skipped.append("reyn.local.yaml")
     else:
         local_cfg.write_text(_AGENT_OS_LOCAL_YAML_TEMPLATE, encoding="utf-8")
-        created.append("agent-os.local.yaml")
+        created.append("reyn.local.yaml")
 
-    # .gitignore — add agent-os.local.yaml if not already present
+    # .gitignore — add reyn.local.yaml if not already present
     gitignore = cwd / ".gitignore"
     gitignore_note = ""
     if gitignore.exists():
         content = gitignore.read_text(encoding="utf-8")
-        if "agent-os.local.yaml" not in content:
-            gitignore.write_text(content.rstrip() + "\nagent-os.local.yaml\n", encoding="utf-8")
+        if "reyn.local.yaml" not in content:
+            gitignore.write_text(content.rstrip() + "\nreyn.local.yaml\n", encoding="utf-8")
             gitignore_note = "  (.gitignore updated)"
     else:
-        gitignore.write_text("agent-os.local.yaml\n", encoding="utf-8")
+        gitignore.write_text("reyn.local.yaml\n", encoding="utf-8")
         gitignore_note = "  (.gitignore created)"
 
     for name in created:
-        suffix = gitignore_note if name == "agent-os.local.yaml" else ""
+        suffix = gitignore_note if name == "reyn.local.yaml" else ""
         print(f"  Created   {name}{suffix}")
     for name in skipped:
         print(f"  Exists    {name}  (skipped)")
 
     print()
     print("Next steps:")
-    print("  1. Edit agent-os.yaml  — set model mappings for your provider")
-    print("  2. Edit agent-os.local.yaml  — set api_base if using a proxy")
+    print("  1. Edit reyn.yaml  — set model mappings for your provider")
+    print("  2. Edit reyn.local.yaml  — set api_base if using a proxy")
     print("  3. Export your API key:")
     print("       export OPENAI_API_KEY=sk-...")
     print("       export ANTHROPIC_API_KEY=sk-ant-...")
     print("  4. Run an app:")
-    print('       agent-os run --app-dsl dsl/apps/<name>/app.md --input "..."')
+    print('       reyn run --app-dsl dsl/apps/<name>/app.md --input "..."')
 
 
 def _print_events(agent) -> None:
@@ -683,13 +683,13 @@ def _print_events(agent) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="agent_os",
+        prog="reyn",
         description="Agent OS MVP — LLM-driven phase execution",
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
-    init_p = sub.add_parser("init", help="Create agent-os.yaml and agent-os.local.yaml in the current directory")
+    init_p = sub.add_parser("init", help="Create reyn.yaml and reyn.local.yaml in the current directory")
     init_p.set_defaults(func=cmd_init)
 
     run_p = sub.add_parser("run", help="Run an app")
@@ -733,22 +733,22 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="MODEL",
         help=(
             "Model class name (light/standard/strong) or LiteLLM model string. "
-            "Resolved via agent-os.yaml models map. "
-            "Default: from agent-os.yaml 'model' key, or 'standard'."
+            "Resolved via reyn.yaml models map. "
+            "Default: from reyn.yaml 'model' key, or 'standard'."
         ),
     )
     run_p.add_argument(
         "--workspace",
         default=None,
         metavar="DIR",
-        help="Workspace directory (default: from agent-os.yaml or ./workspace)",
+        help="Workspace directory (default: from reyn.yaml or ./workspace)",
     )
     run_p.add_argument(
         "--output-language",
         default=None,
         dest="output_language",
         metavar="LANG",
-        help="Output language code (default: from agent-os.yaml or ja)",
+        help="Output language code (default: from reyn.yaml or ja)",
     )
     run_p.add_argument(
         "--events",

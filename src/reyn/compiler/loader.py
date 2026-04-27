@@ -2,7 +2,7 @@ from pathlib import Path
 from .parser import parse_artifact, parse_phase, parse_app
 from .expander import expand_phase, expand_app, _TYPE_MAP
 from .ir import ArtifactDef, PhaseDef
-from agent_os.models import App
+from reyn.models import App
 
 
 def _validate_references(artifact_defs: dict[str, ArtifactDef]) -> None:
@@ -131,7 +131,7 @@ def load_dsl_app(
     _load_dir(local_phases_dir, parse_phase, phase_defs)
 
     # Resolve app nodes: load each sub-app for its entry schema; detect cycles
-    from agent_os.models import AppNodeSpec
+    from reyn.models import AppNodeSpec
     loading_stack = _loading_stack or frozenset()
     abs_app_path = str(app_path.resolve())
     loading_stack = loading_stack | {abs_app_path}

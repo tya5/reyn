@@ -535,7 +535,7 @@ class OSRuntime:
     ) -> dict:
         """Run a sub-app to completion and adapt its final_output to target_schema."""
         from pathlib import Path as _Path
-        from agent_os.compiler import load_dsl_app
+        from reyn.compiler import load_dsl_app
 
         self.events.emit("app_node_started", node=node_id, app_path=node_spec.app_path)
 

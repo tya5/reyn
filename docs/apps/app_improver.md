@@ -16,7 +16,7 @@
 ## 実行コマンド
 
 ```bash
-agent-os run \
+reyn run \
   --app-dsl src/stdlib/apps/app_improver/app.md \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \

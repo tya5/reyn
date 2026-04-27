@@ -1,11 +1,11 @@
 """
-AgentOS configuration loader.
+Reyn configuration loader.
 
 Priority (lowest → highest):
   built-in defaults
-  ~/.agent-os/config.yaml        user global
-  <project>/agent-os.yaml        project (git managed)
-  <project>/agent-os.local.yaml  local overrides (gitignored)
+  ~/.reyn/config.yaml        user global
+  <project>/reyn.yaml        project (git managed)
+  <project>/reyn.local.yaml  local overrides (gitignored)
   CLI flags                      per-invocation
 
 Scalars: higher priority wins outright.
@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 @dataclass
-class AgentOSConfig:
+class ReynConfig:
     model: str = "standard"
     workspace: str = "./workspace"
     output_language: str = "ja"
@@ -55,10 +55,10 @@ def _merge(base: dict, override: dict) -> dict:
 
 
 def _find_project_root(start: Path) -> Path | None:
-    """Walk up from start until finding agent-os.yaml, or return None."""
+    """Walk up from start until finding reyn.yaml, or return None."""
     current = start.resolve()
     while True:
-        if (current / "agent-os.yaml").exists():
+        if (current / "reyn.yaml").exists():
             return current
         parent = current.parent
         if parent == current:
@@ -66,7 +66,7 @@ def _find_project_root(start: Path) -> Path | None:
         current = parent
 
 
-def load_config(cwd: Path | None = None) -> AgentOSConfig:
+def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
@@ -74,15 +74,15 @@ def load_config(cwd: Path | None = None) -> AgentOSConfig:
                     "output_language": "ja", "shell_allowed": False, "models": {}}
 
     # User global
-    merged = _merge(merged, _load_yaml(Path.home() / ".agent-os" / "config.yaml"))
+    merged = _merge(merged, _load_yaml(Path.home() / ".reyn" / "config.yaml"))
 
     # Project + local
     project_root = _find_project_root(cwd)
     if project_root:
-        merged = _merge(merged, _load_yaml(project_root / "agent-os.yaml"))
-        merged = _merge(merged, _load_yaml(project_root / "agent-os.local.yaml"))
+        merged = _merge(merged, _load_yaml(project_root / "reyn.yaml"))
+        merged = _merge(merged, _load_yaml(project_root / "reyn.local.yaml"))
 
-    return AgentOSConfig(
+    return ReynConfig(
         model=str(merged.get("model", "standard")),
         workspace=str(merged.get("workspace", "./workspace")),
         output_language=str(merged.get("output_language", "ja")),

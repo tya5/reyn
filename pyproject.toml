@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agent-os"
+name = "reyn"
 version = "0.1.0"
 description = "LLM-driven phase execution engine with a Markdown DSL"
 requires-python = ">=3.11"
@@ -36,15 +36,15 @@ dev = [
 ]
 
 [project.scripts]
-agent-os = "agent_os._cli:main"
+reyn = "reyn._cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["agent_os*", "stdlib*"]
+include = ["reyn*", "stdlib*"]
 
 [tool.setuptools.package-data]
 "stdlib" = ["**/*.md"]
-"agent_os" = ["py.typed"]
+"reyn" = ["py.typed"]
 
 [tool.ruff]
 target-version = "py311"

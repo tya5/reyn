@@ -7,7 +7,7 @@
 ## できること
 
 - アプリの目的を日本語や英語で伝えるだけで、フェーズ・アーティファクト・グラフ構造を設計してくれる
-- 生成されたファイルはそのまま `agent-os run` で実行できる状態になる
+- 生成されたファイルはそのまま `reyn run` で実行できる状態になる
 - レビューループが必要かどうかを自動判断し、適切なフェーズ構成を選択する
 
 ---
@@ -15,7 +15,7 @@
 ## 実行コマンド
 
 ```bash
-agent-os run \
+reyn run \
   --app-dsl src/stdlib/apps/app_builder/app.md \
   --dsl-root src/stdlib \
   --model openai/gemini-2.5-flash-lite \
@@ -107,13 +107,13 @@ workspace/dsl/apps/{app_name}/
 2. リンターで整合性を確認する
 
    ```bash
-   agent-os lint --dsl dsl/
+   reyn lint --dsl dsl/
    ```
 
 3. 実際に動かしてみる
 
    ```bash
-   agent-os run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "テスト入力"
+   reyn run --app-dsl dsl/apps/{app_name}/app.md --dsl-root dsl/ --input "テスト入力"
    ```
 
 ---
@@ -133,5 +133,5 @@ workspace/dsl/apps/{app_name}/
 ## Tips
 
 - **入力が曖昧でも大丈夫**: 不足している情報は `ask_user` で確認を求めてくれます
-- **生成後は必ずリンターを回す**: `agent-os lint` で未定義のアーティファクト参照などを検出できます
+- **生成後は必ずリンターを回す**: `reyn lint` で未定義のアーティファクト参照などを検出できます
 - **品質が低い場合は app_improver で改善できます**: 生成されたアプリを `app_improver` に渡すとフェーズ指示を自動改善してくれます

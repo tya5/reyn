@@ -14,7 +14,7 @@ workspace/
 .env
 .env.*
 !.env.example
-agent-os.local.yaml
+reyn.local.yaml
 .DS_Store
 .vscode/
 .idea/
