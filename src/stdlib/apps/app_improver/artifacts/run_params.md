@@ -14,12 +14,7 @@ dsl_root: string
   # e.g. "dsl/"
 
 test_input: string
-  # The --input value to pass to the target app run.
-
-target_workspace: string
-  # Workspace path for the target run, relative to project root.
-  # e.g. "workspace/target_runs/architecture_analyzer"
-  # Must be inside the meta app's workspace so results are readable.
+  # The input to pass to the target app run.
 
 model: string
   # LiteLLM model name to use for the target run.

@@ -16,7 +16,7 @@ Safely skipped (handler_not_implemented):
 from __future__ import annotations
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, MCPIROp, ShellIROp, ToolIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, MCPIROp, RunAppIROp, ShellIROp, ToolIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
@@ -116,6 +116,19 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "eval", "spec_path": "eval_specs/my_app/eval.md", "model": "standard"},
             ),
+            ControlIROpSpec(
+                kind="run_app",
+                description=(
+                    "Run a reyn app in-process and return its final output. "
+                    "app: app name (resolved via search path) or path to app.md. "
+                    "input: input artifact dict to pass to the sub-app. "
+                    "model: model class or LiteLLM string (default: inherit from runtime). "
+                    "workspace: 'isolated' (default) creates a sub-workspace; 'shared' uses the current workspace. "
+                    "Returns: status ('finished'|'loop_limit_exceeded'), final_output (dict), "
+                    "token_usage (prompt_tokens, completion_tokens)."
+                ),
+                example={"kind": "run_app", "app": "my_app", "input": {"type": "user_message", "data": {"text": "hello"}}},
+            ),
         ]
 
     def execute(
@@ -161,6 +174,8 @@ class ControlIRExecutor:
                     result = self._execute_lint(op)  # type: ignore[arg-type]
                 elif op.kind == "eval":
                     result = self._execute_eval(op)  # type: ignore[arg-type]
+                elif op.kind == "run_app":
+                    result = self._execute_run_app(op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -326,6 +341,74 @@ class ControlIRExecutor:
                 {"name": cr.case_name, "score": cr.score, "passed": cr.passed, "total": cr.total}
                 for cr in case_results
             ],
+        }
+
+    def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:
+        from pathlib import Path as _Path
+        from .compiler import load_dsl_app
+        from reyn.agent import Agent
+
+        # Resolve app name or path
+        app_ref = op.app
+        if "/" not in app_ref and not app_ref.endswith(".md"):
+            from reyn._cli import _resolve_app_name
+            app_dir, inferred_root = _resolve_app_name(app_ref, str(self.workspace.base_dir))
+            app_path = str(app_dir / "app.md")
+            dsl_root = str(inferred_root) if inferred_root else None
+        else:
+            app_path = app_ref
+            dsl_root = None
+
+        sub_app = load_dsl_app(app_path, dsl_root=dsl_root)
+        model = op.model or "standard"
+
+        # Sub-workspace: isolated under invoke/ or shared
+        safe_name = app_ref.replace("/", "_").replace(".", "_")
+        if op.workspace == "shared":
+            sub_workspace_dir = str(self.workspace.base_dir)
+        else:
+            sub_workspace_dir = str(self.workspace.base_dir / "invoke" / safe_name)
+
+        self.events.emit("run_app_started", app=op.app, workspace=sub_workspace_dir)
+
+        # Use Agent so events are persisted to disk (needed by downstream phases)
+        agent = Agent(
+            model=model,
+            workspace_dir=sub_workspace_dir,
+            strict=False,
+            subscribers=self.events.subscribers,
+            resolver=self._resolver,
+        )
+        run_result = agent.run(sub_app, op.input, output_language=op.output_language)
+
+        # Build workspace-relative glob paths for events and artifacts
+        sub_base = _Path(sub_workspace_dir)
+        parent_base = self.workspace.base_dir
+        try:
+            rel = sub_base.relative_to(parent_base)
+            events_glob = str(rel / "runs" / "*.jsonl")
+            artifacts_glob = str(rel / "artifacts" / "**" / "*.json")
+        except ValueError:
+            events_glob = str(sub_base / "runs" / "*.jsonl")
+            artifacts_glob = str(sub_base / "artifacts" / "**" / "*.json")
+
+        usage = run_result.token_usage
+        self.events.emit(
+            "run_app_completed",
+            app=op.app,
+            status=run_result.status,
+            prompt_tokens=usage.prompt_tokens if usage else None,
+            completion_tokens=usage.completion_tokens if usage else None,
+        )
+        return {
+            "kind": "run_app",
+            "status": run_result.status,
+            "app": op.app,
+            "success": run_result.ok,
+            "final_output": run_result.data,
+            "events_glob": events_glob,
+            "artifacts_glob": artifacts_glob,
+            "workspace": sub_workspace_dir,
         }
 
     def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:

@@ -3,8 +3,7 @@ type: phase
 name: analyze_execution
 input: execution_summary
 input_description: |
-  Execution summary: app_dsl_path, target_workspace, exit_code, success,
-  stdout, stderr, events_glob, artifacts_glob.
+  Execution summary: app_dsl_path, success, final_output, events_glob, artifacts_glob.
 role: quality_analyst
 ---
 

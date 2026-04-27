@@ -111,10 +111,19 @@ class EvalIROp(BaseModel):
     output_language: str = "ja"
 
 
+class RunAppIROp(BaseModel):
+    kind: Literal["run_app"]
+    app: str                  # app name (resolved via search path) or path to app.md
+    input: dict               # input artifact to pass to the sub-app
+    model: str = ""           # model class or LiteLLM string; "" = inherit from runtime
+    workspace: str = "isolated"  # "isolated" | "shared"
+    output_language: str = "ja"
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", and "eval" are implemented; others are safely skipped.
+# "file", "ask_user", "shell", "lint", "eval", and "run_app" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, EvalIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, EvalIROp, RunAppIROp],
     Field(discriminator="kind"),
 ]
 
