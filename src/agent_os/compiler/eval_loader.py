@@ -6,8 +6,8 @@ Format:
   type: eval
   app: dsl/apps/foo/app.md
   dsl_root: dsl/
-  model: gpt-4o
-  judge_model: gpt-4o
+  model: standard
+  judge_model: standard
   ---
 
   ## case: my_case

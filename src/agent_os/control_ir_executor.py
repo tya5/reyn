@@ -107,11 +107,11 @@ class ControlIRExecutor:
                 description=(
                     "Run an eval spec against its target app and return scores. "
                     "spec_path: workspace-relative path to the eval.md file. "
-                    "model: LiteLLM model string for running the target app. "
+                    "model: model class name (e.g. 'standard') or LiteLLM string for running the target app. "
                     "judge_model: model for LLM-as-judge (defaults to model). "
                     "Returns: passed (bool), overall_score, passed_criteria, total_criteria, weakest_phase, cases."
                 ),
-                example={"kind": "eval", "spec_path": "eval_specs/my_app/eval.md", "model": "openai/gemini-2.5-flash-lite"},
+                example={"kind": "eval", "spec_path": "eval_specs/my_app/eval.md", "model": "standard"},
             ),
         ]
 
