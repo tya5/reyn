@@ -124,6 +124,7 @@ def expand_phase(
         input_description=phase_def.input_description,
         instructions=phase_def.instructions,
         max_act_turns=phase_def.max_act_turns,
+        model_class=phase_def.model_class,
     )
 
 

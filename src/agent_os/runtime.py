@@ -165,6 +165,11 @@ class OSRuntime:
             ))
         return candidates
 
+    def _effective_model(self, phase_name: str) -> str:
+        """Return the model class/string for a phase, falling back to runtime default."""
+        phase = self.app.phases.get(phase_name)
+        return (phase.model_class if phase and phase.model_class else self.model)
+
     def _build_frame(
         self,
         current_phase: str,
@@ -197,7 +202,8 @@ class OSRuntime:
             ),
             available_control_ops=self.control_ir_executor.available_ops(),
             output_language=output_language,
-            model=self.model,
+            model=self._effective_model(current_phase),
+            model_resolved=self._resolver.resolve(self._effective_model(current_phase)),
             control_ir_results=control_ir_results or [],
         )
 
@@ -306,7 +312,7 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
     ) -> dict:
         """Call LLM, accumulate token usage, emit events, return raw response dict."""
-        resolved_model = self._resolver.resolve(self.model)
+        resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
         llm_result = call_llm(resolved_model, frame, prior_attempts=prior_attempts or None)
         raw = llm_result.data
@@ -588,7 +594,7 @@ class OSRuntime:
             app=self.app.name,
             entry_phase=self.app.entry_phase,
             input_type=artifact.get("type"),
-            model=self._resolver.resolve(self.model),
+            default_model=self._resolver.resolve(self.model),
         )
 
         # Persist the initial input so it can be referenced via artifact_ref if large

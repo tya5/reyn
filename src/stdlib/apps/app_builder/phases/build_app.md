@@ -51,12 +51,14 @@ name: {phase_name}
 input: {input_artifact}
 input_description: {input_description}
 role: {role}
+model_class: {model_class}
 can_finish: true
 ---
 
 {instructions text verbatim}
 ```
 Omit `can_finish` line if the phase cannot finish.
+Omit `model_class` line if the phase should use the runtime default (standard).
 
 artifact file (write to {app_path}/artifacts/{artifact_name}.md):
 ```

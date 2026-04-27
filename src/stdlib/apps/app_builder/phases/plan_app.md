@@ -61,6 +61,10 @@ finish_criteria: 2–4 bullet strings describing when the TARGET workflow is don
 phases: array of phase definitions, each with:
   - name: snake_case phase name
   - role: the LLM role for this phase (e.g. "analyzer", "writer", "reviewer")
+  - model_class: one of "light" | "standard" | "strong" — choose based on task complexity:
+      light    — simple structuring, formatting, deterministic extraction
+      standard — main generation, analysis, most phases (default when uncertain)
+      strong   — complex multi-criteria reasoning, nuanced review, high-stakes decisions
   - input_artifact: name of the artifact this phase receives
   - input_description: one sentence describing the input artifact's fields and purpose
   - instructions: 2–4 sentence domain-logic instructions for the TARGET app's task only.
