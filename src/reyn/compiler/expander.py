@@ -162,6 +162,7 @@ def expand_app(
 
     return App(
         name=app_def.name,
+        description=app_def.description,
         entry_phase=app_def.entry,
         phases=phase_objects,
         graph=AppGraph(

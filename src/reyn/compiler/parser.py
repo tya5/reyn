@@ -132,6 +132,7 @@ def parse_app(path: Path) -> AppDef:
 
     return AppDef(
         name=fm["name"],
+        description=str(fm.get("description") or "").strip(),
         entry=fm["entry"],
         edges=edges,
         app_nodes=app_nodes,

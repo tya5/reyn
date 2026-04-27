@@ -1,6 +1,7 @@
 ---
 type: app
 name: eval_builder
+description: Auto-generate an eval spec (eval.md) for an app
 entry: analyze_app
 final_output: eval_result
 final_output_description: |

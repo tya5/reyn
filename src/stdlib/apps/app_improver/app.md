@@ -1,6 +1,7 @@
 ---
 type: app
 name: app_improver
+description: Run, analyze, and automatically improve an existing app
 entry: prepare
 final_output: improvement_result
 final_output_description: |

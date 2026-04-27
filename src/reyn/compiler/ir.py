@@ -39,6 +39,7 @@ class AppNodeDef:
 @dataclass
 class AppDef:
     name: str
+    description: str
     entry: str
     edges: list[tuple[str, str]]        # (from_node, to_node) — nodes may be phases or @app_names
     app_nodes: dict[str, AppNodeDef]    # "@app_name" → AppNodeDef

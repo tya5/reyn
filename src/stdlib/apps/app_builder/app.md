@@ -1,6 +1,7 @@
 ---
 type: app
 name: app_builder
+description: Generate a new app from a natural language description
 entry: plan_app
 final_output: lint_result
 final_output_description: |

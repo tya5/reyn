@@ -1,6 +1,7 @@
 ---
 type: app
 name: lint_runner
+description: Lint a DSL directory and report errors and warnings
 entry: run_lint
 final_output: lint_result
 final_output_description: Lint results for the target DSL directory — pass/fail, error and warning counts, and the list of issues found.
