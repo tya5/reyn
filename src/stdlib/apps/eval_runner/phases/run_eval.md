@@ -4,7 +4,7 @@ name: run_eval
 input: eval_request | user_message
 input_description: |
   Either a structured eval_request (spec_path: workspace-relative path to eval.md,
-  model: LiteLLM model string, app_name: optional hint) or a user_message describing what to evaluate.
+  model: model class name or LiteLLM string, app_name: optional hint) or a user_message describing what to evaluate.
   If spec_path or model is missing, use ask_user.
 role: validator
 can_finish: true
@@ -16,7 +16,7 @@ Run the eval spec using the `eval` Control IR op and report results.
 
 Extract from input:
 - `spec_path`: workspace-relative path to the eval.md file (e.g. `"eval_specs/my_app/eval.md"`)
-- `model`: LiteLLM model string to use for running the target app
+- `model`: model class name (e.g. `standard`) or LiteLLM string to use for running the target app
 - `judge_model`: optional; defaults to `model` if omitted
 
 ## Step 2 — Run eval
