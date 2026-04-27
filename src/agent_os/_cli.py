@@ -586,6 +586,95 @@ def cmd_format(args: argparse.Namespace) -> None:
         print(f"\n{len(changed)} file(s) reformatted.")
 
 
+_AGENT_OS_YAML_TEMPLATE = """\
+# AgentOS project configuration — commit this file.
+# api_base / API keys belong in agent-os.local.yaml or ~/.agent-os/config.yaml — never here.
+
+# Default model class when --model is not specified.
+model: standard
+
+# Model class → LiteLLM model string.
+# Three standard tiers. Edit to match your provider.
+models:
+  light:    openai/gpt-4o-mini
+  standard: openai/gpt-4o
+  strong:   openai/gpt-4o
+
+# workspace: ./workspace       # where artifacts and run logs are stored
+# output_language: ja          # ja | en | zh | ...
+# shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
+"""
+
+_AGENT_OS_LOCAL_YAML_TEMPLATE = """\
+# Local environment overrides — gitignored, never commit.
+# Copy and edit as needed.
+
+# LiteLLM proxy base URL (omit if calling providers directly)
+# api_base: http://localhost:4000
+
+# API keys must be set as environment variables, not here:
+#   export OPENAI_API_KEY=sk-...
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#   export GEMINI_API_KEY=...
+
+# Override model mappings for your local setup (optional)
+# models:
+#   light:    openai/gemini-2.5-flash-lite
+#   standard: openai/gemini-2.5-flash-lite
+#   strong:   openai/gemini-2.5-flash-lite
+"""
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    cwd = Path.cwd()
+    created: list[str] = []
+    skipped: list[str] = []
+
+    # agent-os.yaml
+    project_cfg = cwd / "agent-os.yaml"
+    if project_cfg.exists():
+        skipped.append("agent-os.yaml")
+    else:
+        project_cfg.write_text(_AGENT_OS_YAML_TEMPLATE, encoding="utf-8")
+        created.append("agent-os.yaml")
+
+    # agent-os.local.yaml
+    local_cfg = cwd / "agent-os.local.yaml"
+    if local_cfg.exists():
+        skipped.append("agent-os.local.yaml")
+    else:
+        local_cfg.write_text(_AGENT_OS_LOCAL_YAML_TEMPLATE, encoding="utf-8")
+        created.append("agent-os.local.yaml")
+
+    # .gitignore — add agent-os.local.yaml if not already present
+    gitignore = cwd / ".gitignore"
+    gitignore_note = ""
+    if gitignore.exists():
+        content = gitignore.read_text(encoding="utf-8")
+        if "agent-os.local.yaml" not in content:
+            gitignore.write_text(content.rstrip() + "\nagent-os.local.yaml\n", encoding="utf-8")
+            gitignore_note = "  (.gitignore updated)"
+    else:
+        gitignore.write_text("agent-os.local.yaml\n", encoding="utf-8")
+        gitignore_note = "  (.gitignore created)"
+
+    for name in created:
+        suffix = gitignore_note if name == "agent-os.local.yaml" else ""
+        print(f"  Created   {name}{suffix}")
+    for name in skipped:
+        print(f"  Exists    {name}  (skipped)")
+
+    print()
+    print("Next steps:")
+    print("  1. Edit agent-os.yaml  — set model mappings for your provider")
+    print("  2. Edit agent-os.local.yaml  — set api_base if using a proxy")
+    print("  3. Export your API key:")
+    print("       export OPENAI_API_KEY=sk-...")
+    print("       export ANTHROPIC_API_KEY=sk-ant-...")
+    print("  4. Run an app:")
+    print('       agent-os run --app-dsl dsl/apps/<name>/app.md --input "..."')
+
+
 def _print_events(agent) -> None:
     print("=== Event Log ===")
     for event in agent.get_events_json():
@@ -599,6 +688,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
+
+    init_p = sub.add_parser("init", help="Create agent-os.yaml and agent-os.local.yaml in the current directory")
+    init_p.set_defaults(func=cmd_init)
 
     run_p = sub.add_parser("run", help="Run an app")
     run_p.add_argument(
