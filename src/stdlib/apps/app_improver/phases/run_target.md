@@ -6,6 +6,8 @@ input_description: |
   Run parameters for the target app: app_dsl_path, dsl_root, test_input,
   target_workspace, model, and improvement_focus.
 role: executor
+permissions:
+  shell: true
 ---
 
 Execute the target app as a subprocess and capture the results.
