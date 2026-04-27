@@ -2,6 +2,22 @@ import argparse
 import importlib
 import json
 import sys
+from pathlib import Path
+
+
+def _infer_dsl_root(app_dsl_path: str | None, dsl_root_arg: str | None) -> Path | None:
+    """Return the DSL root path from explicit arg or auto-detection from app_dsl path."""
+    if dsl_root_arg:
+        return Path(dsl_root_arg)
+    if app_dsl_path:
+        # app.md lives at <dsl_root>/apps/<name>/app.md — walk up 3 levels
+        return Path(app_dsl_path).parent.parent.parent
+    return None
+
+
+def _load_resolver(dsl_root: Path | None):
+    from agent_os.model_resolver import ModelResolver
+    return ModelResolver.load(dsl_root)
 
 
 def _parse_cli_input(raw: str) -> dict:
@@ -37,6 +53,10 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     initial_input = _parse_cli_input(args.input)
 
+    dsl_root = _infer_dsl_root(args.app_dsl, args.dsl_root)
+    resolver = _load_resolver(dsl_root)
+    resolved_model = resolver.resolve(args.model)
+
     from agent_os.agent import Agent
     if args.rich:
         from agent_os.reporters.rich import RichLogger
@@ -52,11 +72,13 @@ def cmd_run(args: argparse.Namespace) -> None:
         subscribers=[logger],
         extra_read_roots=args.read_allow,
         shell_allowed=args.allow_shell,
+        resolver=resolver,
     )
 
     input_type = initial_input.get("type", "unknown")
+    model_display = f"{args.model} → {resolved_model}" if resolved_model != args.model else args.model
     print(f"app             : {app.name}")
-    print(f"model           : {args.model}")
+    print(f"model           : {model_display}")
     print(f"output_language : {args.output_language}")
     print(f"input type      : {input_type}")
     print(f"input           : {json.dumps(initial_input, ensure_ascii=False)}")
@@ -342,8 +364,13 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print(f"Error loading app '{spec.app_dsl_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
-    model = args.model or spec.model or "gpt-4o"
-    judge_model = args.judge_model or spec.judge_model or model
+    raw_model = args.model or spec.model or "standard"
+    raw_judge = args.judge_model or spec.judge_model or raw_model
+
+    dsl_root = _infer_dsl_root(spec.app_dsl_path, args.dsl_root or spec.dsl_root)
+    resolver = _load_resolver(dsl_root)
+    model = resolver.resolve(raw_model)
+    judge_model = resolver.resolve(raw_judge)
     repeat = max(1, args.repeat)
 
     if args.verbose:
@@ -358,8 +385,10 @@ def cmd_eval(args: argparse.Namespace) -> None:
         app_subscribers = []
 
     repeat_label = f"  ×{repeat}" if repeat > 1 else ""
+    model_display = f"{raw_model} → {model}" if model != raw_model else model
+    judge_display = f"{raw_judge} → {judge_model}" if judge_model != raw_judge else judge_model
     print(f"=== Eval: {app.name}  [{len(spec.cases)} case(s){repeat_label}] ===")
-    print(f"    model={model}  judge={judge_model}")
+    print(f"    model={model_display}  judge={judge_display}")
     print()
 
     runner = EvalRunner(
@@ -596,9 +625,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_p.add_argument(
         "--model",
-        default="gpt-4o",
+        default="standard",
         metavar="MODEL",
-        help="LiteLLM model name (default: gpt-4o)",
+        help=(
+            "Model class name (light/standard/strong) or LiteLLM model string. "
+            "Class names are resolved via dsl/models.yaml (default: standard)."
+        ),
     )
     run_p.add_argument(
         "--workspace",
@@ -660,9 +692,9 @@ def build_parser() -> argparse.ArgumentParser:
     eval_p.add_argument("--spec", required=True, metavar="FILE",
                         help="Path to the eval.md spec file")
     eval_p.add_argument("--model", default=None, metavar="MODEL",
-                        help="Override model for running the app (default: from spec or gpt-4o)")
+                        help="Model class name or LiteLLM string for running the app (default: from spec or 'standard')")
     eval_p.add_argument("--judge-model", dest="judge_model", default=None, metavar="MODEL",
-                        help="Override model for LLM-as-judge (default: same as --model)")
+                        help="Model class name or LiteLLM string for LLM-as-judge (default: same as --model)")
     eval_p.add_argument("--dsl-root", dest="dsl_root", default=None, metavar="DIR",
                         help="DSL root override (default: from spec frontmatter)")
     eval_p.add_argument("--workspace", default="./workspace", metavar="DIR",

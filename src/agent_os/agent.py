@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable
 from .models import App
 from .runtime import OSRuntime, RunResult
+from .model_resolver import ModelResolver
 from agent_os.reporters.persister import EventPersister
 
 
@@ -17,6 +18,7 @@ class Agent:
         user_input_fn: Callable[[str, list[str]], str] | None = None,
         extra_read_roots: list[str] | None = None,
         shell_allowed: bool = False,
+        resolver: ModelResolver | None = None,
     ) -> None:
         self.model = model
         self.workspace_dir = workspace_dir
@@ -25,6 +27,7 @@ class Agent:
         self._user_input_fn = user_input_fn
         self._extra_read_roots = extra_read_roots or []
         self._shell_allowed = shell_allowed
+        self._resolver = resolver or ModelResolver({})
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -42,6 +45,7 @@ class Agent:
             run_id=self.run_id,
             extra_read_roots=self._extra_read_roots,
             shell_allowed=self._shell_allowed,
+            resolver=self._resolver,
         )
         return self._runtime.run(initial_input, output_language=output_language)
 

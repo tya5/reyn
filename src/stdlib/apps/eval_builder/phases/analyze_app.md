@@ -13,6 +13,12 @@ max_act_turns: 20
 
 Read the target app's DSL files and design evaluation criteria for each phase.
 
+## Step 0 — Note the running model
+
+The ContextFrame `model` field contains the model class name (e.g. `standard`, `light`, `strong`)
+or LiteLLM string currently running this phase.
+Set `judge_model` in your output to that exact value — do NOT invent a model name.
+
 ## Step 1 — Extract app path from user_message
 
 - `app_dsl_path`: the path to the target app's app.md (e.g. "dsl/apps/writing_review_app/app.md")

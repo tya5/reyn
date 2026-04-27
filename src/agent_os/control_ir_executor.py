@@ -19,6 +19,7 @@ from typing import Any, Callable
 from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, ShellIROp
 from .workspace import Workspace
 from .events import EventLog
+from .model_resolver import ModelResolver
 
 
 def _default_user_input(question: str, suggestions: list[str]) -> str:
@@ -33,11 +34,13 @@ class ControlIRExecutor:
         events: EventLog,
         user_input_fn: Callable[[str, list[str]], str] | None = None,
         shell_allowed: bool = False,
+        resolver: ModelResolver | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
         self._user_input_fn = user_input_fn or _default_user_input
         self._shell_allowed = shell_allowed
+        self._resolver = resolver or ModelResolver({})
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
@@ -254,13 +257,14 @@ class ControlIRExecutor:
         spec_full_path = self.workspace.base_dir / op.spec_path
         spec = load_eval_spec(str(spec_full_path))
         app = load_dsl_app(spec.app_dsl_path, dsl_root=spec.dsl_root)
-        judge_model = op.judge_model or op.model
+        model = self._resolver.resolve(op.model)
+        judge_model = self._resolver.resolve(op.judge_model or op.model)
         eval_workspace = str(self.workspace.base_dir / "eval_runs")
 
         runner = EvalRunner(
             spec=spec,
             app=app,
-            model=op.model,
+            model=model,
             judge_model=judge_model,
             workspace_dir=eval_workspace,
             output_language=op.output_language,

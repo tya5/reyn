@@ -12,6 +12,7 @@ from .llm import call_llm
 from .pricing import TokenUsage
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
+from .model_resolver import ModelResolver
 
 
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
@@ -95,9 +96,11 @@ class OSRuntime:
         run_id: str | None = None,
         extra_read_roots: list[str] | None = None,
         shell_allowed: bool = False,
+        resolver: ModelResolver | None = None,
     ) -> None:
         self.app = app
-        self.model = model
+        self.model = model  # class name or raw LiteLLM string as provided
+        self._resolver = resolver or ModelResolver({})
         self.strict = strict
         self.run_id = run_id
         self.events = EventLog(subscribers=subscribers)
@@ -106,6 +109,7 @@ class OSRuntime:
             self.workspace, self.events,
             user_input_fn=user_input_fn,
             shell_allowed=shell_allowed,
+            resolver=self._resolver,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
@@ -193,6 +197,7 @@ class OSRuntime:
             ),
             available_control_ops=self.control_ir_executor.available_ops(),
             output_language=output_language,
+            model=self.model,
             control_ir_results=control_ir_results or [],
         )
 
@@ -301,8 +306,9 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
     ) -> dict:
         """Call LLM, accumulate token usage, emit events, return raw response dict."""
-        self.events.emit("llm_called", phase=phase, model=self.model)
-        llm_result = call_llm(self.model, frame, prior_attempts=prior_attempts or None)
+        resolved_model = self._resolver.resolve(self.model)
+        self.events.emit("llm_called", phase=phase, model=resolved_model)
+        llm_result = call_llm(resolved_model, frame, prior_attempts=prior_attempts or None)
         raw = llm_result.data
         if llm_result.usage:
             self._token_usage += llm_result.usage
@@ -493,7 +499,7 @@ class OSRuntime:
             f"Output language: {output_language}"
         )
         response = litellm.completion(
-            model=self.model,
+            model=self._resolver.resolve(self.model),
             messages=[{"role": "user", "content": prompt}],
             response_format={"type": "json_object"},
         )
@@ -541,6 +547,7 @@ class OSRuntime:
             workspace_dir=sub_workspace_dir,
             strict=self.strict,
             subscribers=self.events.subscribers,
+            resolver=self._resolver,
         )
         run_result = sub_runtime.run(input_artifact, output_language=output_language)
         self._token_usage += sub_runtime._token_usage
@@ -581,7 +588,7 @@ class OSRuntime:
             app=self.app.name,
             entry_phase=self.app.entry_phase,
             input_type=artifact.get("type"),
-            model=self.model,
+            model=self._resolver.resolve(self.model),
         )
 
         # Persist the initial input so it can be referenced via artifact_ref if large

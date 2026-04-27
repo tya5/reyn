@@ -192,6 +192,7 @@ class ContextFrame(BaseModel):
     constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
     available_control_ops: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
+    model: str = ""  # LiteLLM model string currently running this phase
     # Populated when a previous control_ir op in this phase produced a result
     # (file read content, ask_user answer, etc.). Empty on first LLM call for the phase.
     # Each entry is the raw result dict returned by ControlIRExecutor.execute().

@@ -15,7 +15,9 @@ app_name: string
   # The app's name from its app.md frontmatter.
 
 judge_model: string
-  # Suggested LLM model for judging (e.g. "gpt-4o").
+  # The model to use for LLM-as-judge. Copy verbatim from the ContextFrame `model` field
+  # (a class name such as "standard", or a LiteLLM model string).
+  # Do NOT invent a model name.
 
 phase_order: string[]
   # Phases in execution order (entry → ... → can_finish phases).
