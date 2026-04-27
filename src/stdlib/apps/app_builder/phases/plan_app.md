@@ -81,6 +81,13 @@ artifacts: array of artifact definitions, each with:
     Review artifacts should include verdict fields such as:
       {"name": "approved", "type": "boolean"}, {"name": "feedback", "type": "string"}
 
+CRITICAL — artifact coverage rule:
+Every artifact referenced as input_artifact in ANY phase MUST appear in this artifacts array,
+INCLUDING the entry phase's input artifact.
+The only exception is `user_message` — it is a stdlib artifact and must NOT be redefined here.
+If the entry phase accepts natural language input, its input_artifact MUST be `user_message`
+(handled by stdlib) — do NOT invent a custom artifact for raw user text.
+
 final_output:
   - name: snake_case name for the final output artifact
   - description: one sentence describing it

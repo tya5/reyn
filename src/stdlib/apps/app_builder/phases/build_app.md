@@ -73,6 +73,7 @@ Checklist before finishing:
 - one phase file per phase in data.phases
 - one artifact file per artifact in data.artifacts
 - one artifact file for data.final_output (using data.final_output.name as filename)
+- every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
 Write all files using one op per file. After writing, output a decide turn reporting the files written.
 
