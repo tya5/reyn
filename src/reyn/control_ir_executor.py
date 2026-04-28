@@ -241,9 +241,9 @@ class ControlIRExecutor:
         return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
-        from .compiler.linter import lint_dsl
+        from .compiler.linter import lint_app_dir
         app_dir = self._resolve_app_name_for_lint(op.app)
-        issues = lint_dsl(app_dir)
+        issues = lint_app_dir(app_dir)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
         self.events.emit(

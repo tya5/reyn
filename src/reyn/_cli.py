@@ -677,10 +677,10 @@ def cmd_eval_compare(args: argparse.Namespace) -> None:
 
 
 def cmd_lint(args: argparse.Namespace) -> None:
-    from reyn.compiler.linter import lint_dsl
+    from reyn.compiler.linter import lint_app_dir
 
     app_dir, _ = _resolve_app_name(args.app)
-    issues = lint_dsl(app_dir)
+    issues = lint_app_dir(app_dir)
 
     if not issues:
         print("No issues found.")

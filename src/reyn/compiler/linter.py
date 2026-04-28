@@ -163,12 +163,36 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     from .parser import parse_app
     try:
         app_def = parse_app(path)
+    except KeyError as exc:
+        return [LintIssue("error", path, f"Missing required field {exc}")]
     except Exception as exc:
         return [LintIssue("error", path, f"Parse error: {exc}")]
 
     app_dir = path.parent
     phase_files = {p.stem for p in (app_dir / "phases").glob("*.md")} if (app_dir / "phases").exists() else set()
 
+    # name
+    if not app_def.name:
+        issues.append(LintIssue("error", path, "Missing required field 'name'"))
+    elif not _is_snake(app_def.name):
+        issues.append(LintIssue("warning", path, f"Name '{app_def.name}' should be snake_case"))
+
+    # entry
+    if not app_def.entry:
+        issues.append(LintIssue("error", path, "Missing required field 'entry'"))
+    elif app_def.entry not in phase_files:
+        issues.append(LintIssue("error", path, f"entry '{app_def.entry}' not found in phases/"))
+
+    # final_output
+    if not app_def.final_output:
+        issues.append(LintIssue("error", path, "Missing required field 'final_output'"))
+    elif app_def.final_output not in known_artifacts:
+        issues.append(LintIssue(
+            "error", path,
+            f"final_output '{app_def.final_output}' not found in known artifacts.",
+        ))
+
+    # graph: all referenced phases must exist
     for src, dst in app_def.edges:
         for node in (src, dst):
             if node.startswith("@"):
@@ -176,17 +200,19 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
             if node not in phase_files:
                 issues.append(LintIssue(
                     "error", path,
-                    f"Graph references phase '{node}' but no phases/{node}.md found. "
-                    "Use can_finish: true on the delivering phase instead of a 'finish' node.",
+                    f"Graph references phase '{node}' but no phases/{node}.md found.",
                 ))
 
-    if app_def.final_output and app_def.final_output not in known_artifacts:
-        issues.append(LintIssue(
-            "error", path,
-            f"final_output '{app_def.final_output}' not found in known artifacts.",
-        ))
+    # graph: entry must appear in the graph (skip for single-phase apps with no edges)
+    if app_def.edges:
+        all_graph_nodes = {n for edge in app_def.edges for n in edge if not n.startswith("@")}
+        if app_def.entry and app_def.entry not in all_graph_nodes:
+            issues.append(LintIssue(
+                "warning", path,
+                f"entry '{app_def.entry}' does not appear in graph — is it connected?",
+            ))
 
-    # Graph must be a DAG — cycles are expressed via OS rollback, not graph edges
+    # graph: DAG check
     cycle = _find_cycle(app_def.edges)
     if cycle is not None:
         cycle_str = " → ".join(cycle)
@@ -201,7 +227,7 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
 
 # ── DSL root ──────────────────────────────────────────────────────────────────
 
-def lint_dsl(app_dir: Path) -> list[LintIssue]:
+def lint_app_dir(app_dir: Path) -> list[LintIssue]:
     """Lint the app at app_dir (must contain app.md).
 
     Stdlib artifacts/phases are loaded as known names for reference resolution
