@@ -1,0 +1,324 @@
+{
+  "spec_path": "workspace/eval_specs/app_builder/eval.md",
+  "app_name": "app_builder",
+  "model": "openai/gemini-2.5-flash-lite",
+  "judge_model": "openai/gemini-2.5-flash-lite",
+  "timestamp": "20260426T234654Z",
+  "overall_score": 0.863157894736842,
+  "overall_passed": 33,
+  "overall_total": 38,
+  "cases": [
+    {
+      "name": "simple_review_app",
+      "input": "レビューアプリを作ってください。ユーザーが文章を提出し、レビュアーが承認または差し戻しできるアプリです。差し戻しの場合は理由を記載します。",
+      "run_status": "finished",
+      "score": 0.74,
+      "passed": 15,
+      "total": 20,
+      "error": null,
+      "run_events_path": "workspace/evals/app_builder/simple_review_app/runs/20260426T234631Z_app_builder.jsonl",
+      "phases": [
+        {
+          "phase": "plan_app",
+          "visit": 1,
+          "artifact_type": "app_plan",
+          "score": 1.0,
+          "passed": 9,
+          "total": 9,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、snake_case 形式の文字列である",
+              "score": 1.0,
+              "reason": "app_name フィールドは \"review_app\" であり、snake_case 形式です。",
+              "passed": true
+            },
+            {
+              "criterion": "app_path フィールドが存在し、\"dsl/apps/{app_name}\" の形式である",
+              "score": 1.0,
+              "reason": "app_path フィールドは \"dsl/apps/review_app\" であり、指定された形式に一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "entry_phase フィールドが存在し、phases 配列のいずれかの name と一致する",
+              "score": 1.0,
+              "reason": "entry_phase は \"submit_document\" であり、phases 配列内のフェーズ名と一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "phases 配列が存在し、2 個以上のフェーズが含まれる",
+              "score": 1.0,
+              "reason": "phases 配列には 4 つのフェーズが含まれています。",
+              "passed": true
+            },
+            {
+              "criterion": "transitions 配列が存在し、entry_phase から始まるグラフが定義されている",
+              "score": 1.0,
+              "reason": "transitions 配列は \"submit_document\" から始まるワークフローを定義しています。",
+              "passed": true
+            },
+            {
+              "criterion": "artifacts 配列が存在し、各フェーズが参照する artifact が含まれる",
+              "score": 1.0,
+              "reason": "artifacts 配列には、フェーズ間でやり取りされる \"submitted_document\", \"document_for_review\", \"review_decision\" が定義されています。",
+              "passed": true
+            },
+            {
+              "criterion": "final_output オブジェクトが存在し、name と fields を持つ",
+              "score": 1.0,
+              "reason": "final_output オブジェクトは \"name\" と \"fields\" を持ちます。",
+              "passed": true
+            },
+            {
+              "criterion": "phases 内の各フェーズに name, role, input_artifact, instructions が含まれる",
+              "score": 1.0,
+              "reason": "各フェーズには name, role, input_artifact, instructions がすべて含まれています。",
+              "passed": true
+            },
+            {
+              "criterion": "フェーズの設計がユーザー要件（提出 → レビュー → 承認/差し戻し）を反映している",
+              "score": 1.0,
+              "reason": "フェーズの順序と内容は、文書の提出、レビュー、そして決定の伝達という要件を正確に反映しています。",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "build_app",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.9666666666666667,
+          "passed": 6,
+          "total": 6,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、plan_app で設計したアプリ名と一致する",
+              "score": 1.0,
+              "reason": "The 'app_name' field exists and is set to 'review_app', which is consistent with the expected app name.",
+              "passed": true
+            },
+            {
+              "criterion": "app_path フィールドが存在し、workspace 内のパスを指している",
+              "score": 1.0,
+              "reason": "The 'app_path' field exists and correctly points to 'dsl/apps/review_app' within the workspace.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列が存在し、app.md を含む",
+              "score": 1.0,
+              "reason": "The 'files_written' array exists and includes 'dsl/apps/review_app/app.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列が各フェーズの .md ファイルを含む",
+              "score": 1.0,
+              "reason": "The 'files_written' array contains all the expected '.md' files for each phase: 'submit_document.md', 'assign_reviewer.md', 'review_document.md', and 'deliver_decision.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "file_count フィールドが存在し、files_written の要素数と一致する整数である",
+              "score": 1.0,
+              "reason": "The 'file_count' field exists, is an integer, and matches the number of elements in the 'files_written' array (9).",
+              "passed": true
+            },
+            {
+              "criterion": "summary フィールドが存在し、アプリの目的を一文で説明している",
+              "score": 0.8,
+              "reason": "The 'summary' field exists and provides a concise description, but it states the app was 'built' rather than explaining its purpose.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.0,
+          "passed": 0,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、文字列型である",
+              "score": 0.0,
+              "reason": "judge error: Invalid \\escape: line 26 column 77 (char 922)",
+              "passed": false
+            },
+            {
+              "criterion": "app_path フィールドが存在する",
+              "score": 0.0,
+              "reason": "judge error: Invalid \\escape: line 26 column 77 (char 922)",
+              "passed": false
+            },
+            {
+              "criterion": "files_written 配列が存在し、3 個以上のファイルパスを含む",
+              "score": 0.0,
+              "reason": "judge error: Invalid \\escape: line 26 column 77 (char 922)",
+              "passed": false
+            },
+            {
+              "criterion": "file_count フィールドが存在し、1 以上の整数である",
+              "score": 0.0,
+              "reason": "judge error: Invalid \\escape: line 26 column 77 (char 922)",
+              "passed": false
+            },
+            {
+              "criterion": "summary フィールドが存在し、空でない文字列である",
+              "score": 0.0,
+              "reason": "judge error: Invalid \\escape: line 26 column 77 (char 922)",
+              "passed": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "feedback_analysis_app",
+      "input": "ユーザーフィードバックを収集し、改善提案を行うアプリを作ってください。フィードバック収集フェーズと分析・提案フェーズの 2 フェーズ構成にしてください。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 18,
+      "total": 18,
+      "error": null,
+      "run_events_path": "workspace/evals/app_builder/feedback_analysis_app/runs/20260426T234643Z_app_builder.jsonl",
+      "phases": [
+        {
+          "phase": "plan_app",
+          "visit": 1,
+          "artifact_type": "app_plan",
+          "score": 1.0,
+          "passed": 8,
+          "total": 8,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、snake_case 形式の文字列である",
+              "score": 1.0,
+              "reason": "app_name フィールドは \"feedback_analyzer\" であり、snake_case 形式の文字列です。",
+              "passed": true
+            },
+            {
+              "criterion": "app_path フィールドが存在し、\"dsl/apps/{app_name}\" の形式である",
+              "score": 1.0,
+              "reason": "app_path フィールドは \"dsl/apps/feedback_analyzer\" であり、指定された形式に一致しています。",
+              "passed": true
+            },
+            {
+              "criterion": "entry_phase フィールドが存在し、phases 配列のいずれかの name と一致する",
+              "score": 1.0,
+              "reason": "entry_phase フィールドは \"collect_feedback\" であり、phases 配列内の \"collect_feedback\" という name と一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "phases 配列が存在し、収集フェーズと分析フェーズの 2 個以上が含まれる",
+              "score": 1.0,
+              "reason": "phases 配列には \"collect_feedback\" と \"analyze_and_propose\" の 2 つのフェーズが含まれています。",
+              "passed": true
+            },
+            {
+              "criterion": "transitions 配列が存在し、フェーズ間の遷移が定義されている",
+              "score": 1.0,
+              "reason": "transitions 配列は \"collect_feedback\" から \"analyze_and_propose\" への遷移を定義しています。",
+              "passed": true
+            },
+            {
+              "criterion": "artifacts 配列が存在し、各フェーズの入出力 artifact が含まれる",
+              "score": 1.0,
+              "reason": "artifacts 配列には \"collected_feedback\" と \"analysis_and_proposals\" が定義されており、それぞれがフェーズの入出力 artifact として機能します。",
+              "passed": true
+            },
+            {
+              "criterion": "final_output オブジェクトが存在し、name と description と fields を持つ",
+              "score": 1.0,
+              "reason": "final_output オブジェクトは \"name\", \"description\", \"fields\" をすべて持っています。",
+              "passed": true
+            },
+            {
+              "criterion": "フェーズの設計が 2 フェーズ構成（収集 → 分析）という要件を満たしている",
+              "score": 1.0,
+              "reason": "phases 配列は \"collect_feedback\" と \"analyze_and_propose\" の 2 つのフェーズで構成されており、transitions 配列によって \"collect_feedback\" から \"analyze_and_propose\" への順序が定義されています。",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "build_app",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、plan_app で設計したアプリ名と一致する",
+              "score": 1.0,
+              "reason": "The app_name field 'feedback_analyzer' is present and matches the expected app name.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列が存在し、app.md を含む",
+              "score": 1.0,
+              "reason": "The files_written array is present and correctly includes 'app.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列が phases 配列の各フェーズに対応する .md ファイルを含む",
+              "score": 1.0,
+              "reason": "The files_written array contains .md files corresponding to the phases 'collect_feedback' and 'analyze_and_propose'.",
+              "passed": true
+            },
+            {
+              "criterion": "file_count フィールドが存在し、files_written の要素数と一致する整数である",
+              "score": 1.0,
+              "reason": "The file_count field is present and accurately reflects the number of files written (6).",
+              "passed": true
+            },
+            {
+              "criterion": "summary フィールドが存在し、フィードバック収集と改善提案という 2 つの機能に言及している",
+              "score": 1.0,
+              "reason": "The summary field mentions user feedback collection and analysis, implying the two core functions.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "app_name フィールドが存在し、文字列型である",
+              "score": 1.0,
+              "reason": "The 'app_name' field exists and is a string.",
+              "passed": true
+            },
+            {
+              "criterion": "app_path フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'app_path' field exists.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列が存在し、3 個以上のファイルパスを含む",
+              "score": 1.0,
+              "reason": "The 'files_written' field exists and contains 6 file paths, which is more than 3.",
+              "passed": true
+            },
+            {
+              "criterion": "file_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'file_count' field exists and is an integer with a value of 6, which is greater than or equal to 1.",
+              "passed": true
+            },
+            {
+              "criterion": "summary フィールドが存在し、空でない文字列である",
+              "score": 1.0,
+              "reason": "The 'summary' field exists and is a non-empty string.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

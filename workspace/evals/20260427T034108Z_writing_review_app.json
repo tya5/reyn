@@ -1,0 +1,435 @@
+{
+  "spec_path": "workspace/eval_specs/writing_review_app/eval.md",
+  "app_name": "writing_review_app",
+  "model": "gemini/gemini-2.5-flash-lite",
+  "judge_model": "gemini/gemini-2.5-flash-lite",
+  "timestamp": "20260427T034108Z",
+  "overall_score": 0.994736842105263,
+  "overall_passed": 38,
+  "overall_total": 38,
+  "cost_summary": {
+    "app_tokens": {
+      "prompt_tokens": 20853,
+      "completion_tokens": 7605,
+      "total_tokens": 28458
+    },
+    "judge_tokens": {
+      "prompt_tokens": 8929,
+      "completion_tokens": 1161,
+      "total_tokens": 10090
+    },
+    "total_tokens": {
+      "prompt_tokens": 29782,
+      "completion_tokens": 8766,
+      "total_tokens": 38548
+    },
+    "estimated_cost_usd": 0.006484599999999999,
+    "pricing_snapshot": {
+      "model": "gemini/gemini-2.5-flash-lite",
+      "prompt_per_1m_usd": 0.1,
+      "completion_per_1m_usd": 0.4,
+      "source": "litellm",
+      "litellm_version": "1.82.6"
+    }
+  },
+  "cases": [
+    {
+      "name": "short_tech_article",
+      "input": "Pythonの非同期処理（asyncio）について、初心者向けの技術解説記事を書いてください。具体的なコード例を含めること。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 19,
+      "total": 19,
+      "aspirational_passed": 1,
+      "aspirational_total": 1,
+      "error": null,
+      "run_events_path": "workspace/evals/writing_review_app/short_tech_article/runs/20260427T034031Z_writing_review_app.jsonl",
+      "phases": [
+        {
+          "phase": "analyze",
+          "visit": 1,
+          "artifact_type": "analysis_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "key_points",
+              "raw": "key_points: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "angle",
+              "raw": "angle: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "tone",
+              "raw": "tone: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "angle フィールドが記事の方向性や切り口を明確に説明している",
+              "score": 1.0,
+              "reason": "The 'angle' field clearly describes the article's direction as an introduction to asyncio for Python beginners, covering basics to practical applications.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "key_points の各項目が asyncio に関連した具体的なトピックである",
+              "score": 1.0,
+              "reason": "All items in 'key_points' are specific topics directly related to asyncio, such as coroutines, event loops, async/await syntax, benefits, code examples, and beginner pitfalls.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        },
+        {
+          "phase": "draft",
+          "visit": 1,
+          "artifact_type": "draft_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "title",
+              "raw": "title: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "body",
+              "raw": "body: string, min_length 100",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "self_assessment",
+              "raw": "self_assessment: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "body に asyncio の基本概念の説明が含まれている",
+              "score": 1.0,
+              "reason": "The body clearly explains the basic concepts of asyncio, including coroutines and the event loop.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "body に少なくとも1つの Python コード例が含まれている",
+              "score": 1.0,
+              "reason": "The body includes a complete and functional Python code example demonstrating asyncio usage.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        },
+        {
+          "phase": "review",
+          "visit": 1,
+          "artifact_type": "review_package",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "aspirational_passed": 1,
+          "aspirational_total": 1,
+          "schema": [
+            {
+              "path": "review_result.score",
+              "raw": "review_result.score: number, range 0.0-1.0",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "review_result.strengths",
+              "raw": "review_result.strengths: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "review_result.issues",
+              "raw": "review_result.issues: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "review_result.strengths の各項目が記事の具体的な強みを説明している",
+              "score": 1.0,
+              "reason": "Each strength listed directly corresponds to a clear and understandable positive aspect of the article's content and structure.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "review_result.issues の各項目が改善すべき具体的な問題を指摘している",
+              "score": 0.8,
+              "reason": "The issues identified are relevant and specific, though they suggest potential enhancements rather than critical flaws, and could be slightly more detailed with examples.",
+              "passed": true,
+              "tag": "aspirational"
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "final_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "title",
+              "raw": "title: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "body",
+              "raw": "body: string, min_length 100",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "quality_notes",
+              "raw": "quality_notes: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "最終記事は日本語で書かれている",
+              "score": 1.0,
+              "reason": "The article body and title are written entirely in Japanese.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "body に asyncio の技術的内容が含まれている",
+              "score": 1.0,
+              "reason": "The article body explains core asyncio concepts like coroutines, event loops, async/await keywords, and provides a code example.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        }
+      ],
+      "cross_phase": []
+    },
+    {
+      "name": "opinion_piece",
+      "input": "AIが人間の仕事を奪うという議論について、バランスのとれた意見記事を書いてください。",
+      "run_status": "finished",
+      "score": 0.9894736842105264,
+      "passed": 19,
+      "total": 19,
+      "aspirational_passed": 1,
+      "aspirational_total": 1,
+      "error": null,
+      "run_events_path": "workspace/evals/writing_review_app/opinion_piece/runs/20260427T034050Z_writing_review_app.jsonl",
+      "phases": [
+        {
+          "phase": "analyze",
+          "visit": 1,
+          "artifact_type": "analysis_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "key_points",
+              "raw": "key_points: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "angle",
+              "raw": "angle: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "tone",
+              "raw": "tone: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "angle フィールドがバランスのとれた意見記事としての方向性を説明している",
+              "score": 1.0,
+              "reason": "The angle clearly describes a balanced perspective, acknowledging both threats and opportunities of AI while emphasizing adaptation and collaboration.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "key_points にAIと仕事に関する複数の視点が含まれている",
+              "score": 1.0,
+              "reason": "The key points cover various facets of AI's impact on employment, including job displacement, creation, skill changes, collaboration, reskilling, and long-term societal effects.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        },
+        {
+          "phase": "draft",
+          "visit": 1,
+          "artifact_type": "draft_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "title",
+              "raw": "title: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "body",
+              "raw": "body: string, min_length 100",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "self_assessment",
+              "raw": "self_assessment: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "body にAIと仕事に関する複数の視点（賛否両論）が含まれている",
+              "score": 1.0,
+              "reason": "The body discusses both the potential job displacement by AI and the creation of new job opportunities, covering both negative and positive aspects.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "body に著者の結論または立場が明示されている",
+              "score": 1.0,
+              "reason": "The author concludes that AI should be viewed as a powerful tool to enhance human capabilities and that embracing collaboration with AI can lead to a better future.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        },
+        {
+          "phase": "review",
+          "visit": 1,
+          "artifact_type": "review_package",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "aspirational_passed": 1,
+          "aspirational_total": 1,
+          "schema": [
+            {
+              "path": "review_result.score",
+              "raw": "review_result.score: number, range 0.0-1.0",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "review_result.strengths",
+              "raw": "review_result.strengths: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "review_result.issues",
+              "raw": "review_result.issues: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "review_result.strengths の各項目が記事の具体的な強みを説明している",
+              "score": 1.0,
+              "reason": "The strengths listed clearly articulate specific positive aspects of the article, such as its coverage of key themes and balanced tone.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "review_result.issues の各項目が改善すべき具体的な問題を指摘している",
+              "score": 1.0,
+              "reason": "The issues identified are specific and actionable, pointing out the use of English words and suggesting a clearer contrast between threats and opportunities.",
+              "passed": true,
+              "tag": "aspirational"
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "final_article",
+          "score": 0.96,
+          "passed": 5,
+          "total": 5,
+          "aspirational_passed": 0,
+          "aspirational_total": 0,
+          "schema": [
+            {
+              "path": "title",
+              "raw": "title: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "body",
+              "raw": "body: string, min_length 100",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "quality_notes",
+              "raw": "quality_notes: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "最終記事は日本語で書かれている",
+              "score": 0.8,
+              "reason": "The article is primarily in Japanese, but contains a few English words like \"profound\", \"potent\", and \"powerful\" within the body text.",
+              "passed": true,
+              "tag": "required"
+            },
+            {
+              "criterion": "body にAIと仕事の関係に関する議論が含まれている",
+              "score": 1.0,
+              "reason": "The body of the article extensively discusses the relationship between AI and work, covering automation, job creation, skill changes, and human-AI collaboration.",
+              "passed": true,
+              "tag": "required"
+            }
+          ]
+        }
+      ],
+      "cross_phase": []
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "type": "eval_request",
+  "data": {
+    "spec_path": "eval_specs/article_generator/eval.md",
+    "model": "claude-3-opus-20240229",
+    "app_name": "article_generator"
+  }
+}

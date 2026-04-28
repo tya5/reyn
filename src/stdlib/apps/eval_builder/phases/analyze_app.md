@@ -5,8 +5,8 @@ input: user_message
 input_description: |
   Natural language request specifying the target app to build an eval spec for.
   Must include the app DSL path. Example:
-  "Create an eval.md for dsl/apps/writing_review_app/app.md"
-  "Create an eval spec for dsl/apps/architecture_analyzer/app.md — focus on article quality"
+  "Create an eval.md for reyn/project/writing_review_app/app.md"
+  "Create an eval spec for reyn/project/architecture_analyzer/app.md — focus on article quality"
 role: eval_designer
 max_act_turns: 20
 ---
@@ -21,8 +21,8 @@ Set `judge_model` in your output to that exact value — do NOT invent a model n
 
 ## Step 1 — Extract app path from user_message
 
-- `app_dsl_path`: the path to the target app's app.md (e.g. "dsl/apps/writing_review_app/app.md")
-- `dsl_root`: infer from the path (e.g. "dsl/" if path starts with "dsl/apps/")
+- `app_dsl_path`: the path to the target app's app.md (e.g. "reyn/project/writing_review_app/app.md")
+- `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/")
 - If the path is missing, use ask_user to request it.
 
 ## Step 2 — Read DSL files

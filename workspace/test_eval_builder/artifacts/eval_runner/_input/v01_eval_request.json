@@ -1,0 +1,8 @@
+{
+  "type": "eval_request",
+  "data": {
+    "spec_path": "eval_specs/article_generator/eval.md",
+    "model": "gpt-4o-mini",
+    "app_name": "article_generator"
+  }
+}

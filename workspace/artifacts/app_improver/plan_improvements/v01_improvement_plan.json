@@ -1,0 +1,8 @@
+{
+  "type": "improvement_plan",
+  "data": {
+    "app_dsl_path": "dsl/apps/writing_review_app/app.md",
+    "summary": "実行レポートによると、アプリケーションは正常に完了し、生成されたアーティファクトはすべて良好な品質でした。品質スコアも高く、DSL に明らかな改善点は見つかりませんでした。したがって、適用すべき変更はありません。",
+    "changes": []
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "type": "app_builder_result",
+  "data": {
+    "app_name": "review_app",
+    "app_path": "dsl/apps/review_app",
+    "files_written": [
+      "dsl/apps/review_app/app.md",
+      "dsl/apps/review_app/phases/submit_document.md",
+      "dsl/apps/review_app/phases/review_document.md",
+      "dsl/apps/review_app/phases/deliver_result.md",
+      "dsl/apps/review_app/artifacts/submitted_document.md",
+      "dsl/apps/review_app/artifacts/review_result.md",
+      "dsl/apps/review_app/artifacts/app_completion_report.md"
+    ],
+    "file_count": 7,
+    "summary": "ユーザーがドキュメントを提出し、レビュー担当者が承認または却下し、最終結果を配信するアプリ。"
+  }
+}

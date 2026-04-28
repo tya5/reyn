@@ -1,0 +1,6 @@
+{
+  "type": "user_message",
+  "data": {
+    "text": "meeting_notes.txt というファイルに、今日のミーティングの議事録メモを書いてください。"
+  }
+}

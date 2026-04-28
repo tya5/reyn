@@ -1,0 +1,414 @@
+{
+  "spec_path": "workspace/eval_specs/app_builder/eval.md",
+  "app_name": "app_builder",
+  "model": "gemini/gemini-2.5-flash-lite",
+  "judge_model": "gemini/gemini-2.5-flash-lite",
+  "timestamp": "20260427T001235Z",
+  "overall_score": 0.9529411764705883,
+  "overall_passed": 48,
+  "overall_total": 51,
+  "cases": [
+    {
+      "name": "simple_review_app",
+      "input": "レビューアプリを作ってください。ユーザーが文章を提出し、レビュアーが承認または差し戻しできるアプリです。差し戻しの場合は理由を記載します。",
+      "run_status": "finished",
+      "score": 0.9555555555555556,
+      "passed": 25,
+      "total": 27,
+      "error": null,
+      "run_events_path": "workspace/evals/app_builder/simple_review_app/runs/20260427T001210Z_app_builder.jsonl",
+      "phases": [
+        {
+          "phase": "plan_app",
+          "visit": 1,
+          "artifact_type": "app_plan",
+          "score": 1.0,
+          "passed": 12,
+          "total": 12,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_path",
+              "raw": "app_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "entry_phase",
+              "raw": "entry_phase: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phases",
+              "raw": "phases: array, min 2",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "transitions",
+              "raw": "transitions: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "artifacts",
+              "raw": "artifacts: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "app_name が snake_case 形式の文字列である",
+              "score": 1.0,
+              "reason": "app_name 'review_app' は snake_case 形式です。",
+              "passed": true
+            },
+            {
+              "criterion": "app_path が \"dsl/apps/{app_name}\" の形式である",
+              "score": 1.0,
+              "reason": "app_path 'dsl/apps/review_app' は \"dsl/apps/{app_name}\" の形式に従っています。",
+              "passed": true
+            },
+            {
+              "criterion": "entry_phase が phases 配列のいずれかの name と一致する",
+              "score": 1.0,
+              "reason": "entry_phase 'submit_document' は phases 配列内のフェーズ名と一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "final_output オブジェクトが存在し、name と fields を持つ",
+              "score": 1.0,
+              "reason": "final_output オブジェクトは存在し、name と fields を含んでいます。",
+              "passed": true
+            },
+            {
+              "criterion": "phases 内の各フェーズに name, role, input_artifact, instructions が含まれている",
+              "score": 1.0,
+              "reason": "すべてのフェーズに name, role, input_artifact, instructions が含まれています。",
+              "passed": true
+            },
+            {
+              "criterion": "フェーズの設計がユーザー要件（提出 → レビュー → 承認/差し戻し）を反映している",
+              "score": 1.0,
+              "reason": "フェーズは提出、レビュー、結果通知というユーザー要件の流れを正確に反映しています。",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "build_app",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.9333333333333333,
+          "passed": 8,
+          "total": 9,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_path",
+              "raw": "app_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "files_written",
+              "raw": "files_written: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "file_count",
+              "raw": "file_count: integer, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "summary",
+              "raw": "summary: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "files_written 配列に app.md が含まれている",
+              "score": 1.0,
+              "reason": "The 'files_written' array contains 'dsl/apps/review_app/app.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列に各フェーズの .md ファイルが含まれている",
+              "score": 1.0,
+              "reason": "The 'files_written' array includes 'phases/submit_document.md', 'phases/review_document.md', and 'phases/deliver_review_result.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "file_count が files_written の要素数と一致している",
+              "score": 1.0,
+              "reason": "The 'file_count' is 7 and the 'files_written' array has 7 elements.",
+              "passed": true
+            },
+            {
+              "criterion": "summary がアプリの目的を一文で説明している",
+              "score": 0.4,
+              "reason": "The 'summary' is in Japanese and states that the DSL files for the review app were generated and written to the workspace, but it does not explain the app's purpose.",
+              "passed": false
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.9,
+          "passed": 5,
+          "total": 6,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_path",
+              "raw": "app_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "files_written",
+              "raw": "files_written: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "file_count",
+              "raw": "file_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "summary",
+              "raw": "summary: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "summary がアプリの目的を説明している",
+              "score": 0.4,
+              "reason": "The summary states that the DSL files for the review app were generated successfully but does not explain the app's actual purpose.",
+              "passed": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "feedback_analysis_app",
+      "input": "ユーザーフィードバックを収集し、改善提案を行うアプリを作ってください。フィードバック収集フェーズと分析・提案フェーズの 2 フェーズ構成にしてください。",
+      "run_status": "finished",
+      "score": 0.9500000000000001,
+      "passed": 23,
+      "total": 24,
+      "error": null,
+      "run_events_path": "workspace/evals/app_builder/feedback_analysis_app/runs/20260427T001225Z_app_builder.jsonl",
+      "phases": [
+        {
+          "phase": "plan_app",
+          "visit": 1,
+          "artifact_type": "app_plan",
+          "score": 1.0,
+          "passed": 10,
+          "total": 10,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_path",
+              "raw": "app_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "entry_phase",
+              "raw": "entry_phase: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phases",
+              "raw": "phases: array, min 2",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "transitions",
+              "raw": "transitions: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "artifacts",
+              "raw": "artifacts: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "app_name が snake_case 形式の文字列である",
+              "score": 1.0,
+              "reason": "app_name 'feedback_analyzer_app' は snake_case 形式の文字列です。",
+              "passed": true
+            },
+            {
+              "criterion": "entry_phase が phases 配列のいずれかの name と一致する",
+              "score": 1.0,
+              "reason": "entry_phase 'collect_feedback' は phases 配列の最初のフェーズの name と一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "final_output オブジェクトが存在し、name と description と fields を持つ",
+              "score": 1.0,
+              "reason": "final_output オブジェクトは name, description, fields をすべて含んでいます。",
+              "passed": true
+            },
+            {
+              "criterion": "フェーズの設計が 2 フェーズ構成（収集 → 分析）という要件を満たしている",
+              "score": 1.0,
+              "reason": "app_plan は feedback の収集と、その分析・提案の 2 つのフェーズで構成されています。",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "build_app",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.875,
+          "passed": 7,
+          "total": 8,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "files_written",
+              "raw": "files_written: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "file_count",
+              "raw": "file_count: integer, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "summary",
+              "raw": "summary: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "files_written 配列に app.md が含まれている",
+              "score": 1.0,
+              "reason": "The app.md file is present in the files_written array.",
+              "passed": true
+            },
+            {
+              "criterion": "files_written 配列に phases 配列の各フェーズに対応する .md ファイルが含まれている",
+              "score": 1.0,
+              "reason": "The files_written array includes md files for both 'collect_feedback' and 'analyze_and_propose' phases.",
+              "passed": true
+            },
+            {
+              "criterion": "file_count が files_written の要素数と一致している",
+              "score": 1.0,
+              "reason": "The file_count of 6 matches the 6 files listed in the files_written array.",
+              "passed": true
+            },
+            {
+              "criterion": "summary がフィードバック収集と改善提案という 2 つの機能に言及している",
+              "score": 0.0,
+              "reason": "The summary is in Japanese and mentions 'user feedback analysis app' but does not explicitly mention the two distinct functions of feedback collection and improvement proposals.",
+              "passed": false
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "app_builder_result",
+          "score": 0.9666666666666667,
+          "passed": 6,
+          "total": 6,
+          "schema": [
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_path",
+              "raw": "app_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "files_written",
+              "raw": "files_written: array, min 3",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "file_count",
+              "raw": "file_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "summary",
+              "raw": "summary: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "summary がアプリの目的を説明している",
+              "score": 0.8,
+              "reason": "The summary states that the DSL files for a user feedback analysis app were generated and saved, which indirectly explains the app's purpose.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

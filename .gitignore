@@ -11,7 +11,7 @@ build/
 htmlcov/
 .mypy_cache/
 .reyn/
-dsl/local/
+reyn/local/
 .env
 .env.*
 !.env.example

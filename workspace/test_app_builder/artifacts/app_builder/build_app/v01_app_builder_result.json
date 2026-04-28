@@ -1,0 +1,22 @@
+{
+  "type": "app_builder_result",
+  "data": {
+    "app_name": "simple_todo_list",
+    "app_path": "dsl/apps/simple_todo_list",
+    "files_written": [
+      "dsl/apps/simple_todo_list/app.md",
+      "dsl/apps/simple_todo_list/phases/create_task.md",
+      "dsl/apps/simple_todo_list/phases/list_tasks.md",
+      "dsl/apps/simple_todo_list/phases/update_task.md",
+      "dsl/apps/simple_todo_list/phases/delete_task.md",
+      "dsl/apps/simple_todo_list/phases/persist_tasks.md",
+      "dsl/apps/simple_todo_list/artifacts/user_message.md",
+      "dsl/apps/simple_todo_list/artifacts/task_list.md",
+      "dsl/apps/simple_todo_list/artifacts/task_update_request.md",
+      "dsl/apps/simple_todo_list/artifacts/task_delete_request.md",
+      "dsl/apps/simple_todo_list/artifacts/app_implementation.md"
+    ],
+    "file_count": 11,
+    "summary": "ユーザーがタスクの追加、表示、更新、削除、永続化を行えるTODOリスト管理アプリ。"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "type": "user_message",
+  "data": {
+    "text": "dsl/apps/article_generator/app.md の eval.md を作って。dsl_root は dsl/ で。"
+  }
+}

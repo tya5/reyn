@@ -1,0 +1,6 @@
+{
+  "type": "user_message",
+  "data": {
+    "text": "daily_report.txt というファイルに、日本語で今日の業務報告を書いてください。"
+  }
+}

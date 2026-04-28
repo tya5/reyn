@@ -1,0 +1,6 @@
+{
+  "type": "user_message",
+  "data": {
+    "text": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/main.pyコードを調査して。必要なら glob でファイル探索もしてね。"
+  }
+}

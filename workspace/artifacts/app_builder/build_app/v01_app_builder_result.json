@@ -1,0 +1,18 @@
+{
+  "type": "app_builder_result",
+  "data": {
+    "app_name": "task_manager",
+    "app_path": "dsl/apps/task_manager",
+    "files_written": [
+      "dsl/apps/task_manager/app.md",
+      "dsl/apps/task_manager/phases/input_task.md",
+      "dsl/apps/task_manager/phases/prioritize_and_summarize_task.md",
+      "dsl/apps/task_manager/phases/deliver_task_details.md",
+      "dsl/apps/task_manager/artifacts/task_input.md",
+      "dsl/apps/task_manager/artifacts/processed_task.md",
+      "dsl/apps/task_manager/artifacts/delivered_task_output.md"
+    ],
+    "file_count": 7,
+    "summary": "ユーザーがタスクを入力し、そのタスクを処理して、結果を提示するタスク管理アプリケーション。"
+  }
+}

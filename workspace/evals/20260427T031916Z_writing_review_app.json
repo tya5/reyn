@@ -1,0 +1,40 @@
+{
+  "spec_path": "workspace/eval_specs/writing_review_app/eval.md",
+  "app_name": "writing_review_app",
+  "model": "gpt-4o",
+  "judge_model": "gpt-4o",
+  "timestamp": "20260427T031916Z",
+  "overall_score": 1.0,
+  "overall_passed": 0,
+  "overall_total": 0,
+  "cases": [
+    {
+      "name": "short_tech_article",
+      "input": "Pythonの非同期処理（asyncio）について、初心者向けの技術解説記事を書いてください。具体的なコード例を含めること。",
+      "run_status": "error",
+      "score": 1.0,
+      "passed": 0,
+      "total": 0,
+      "aspirational_passed": 0,
+      "aspirational_total": 0,
+      "error": "litellm.AuthenticationError: AuthenticationError: OpenAIException - The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable",
+      "run_events_path": null,
+      "phases": [],
+      "cross_phase": []
+    },
+    {
+      "name": "opinion_piece",
+      "input": "AIが人間の仕事を奪うという議論について、バランスのとれた意見記事を書いてください。",
+      "run_status": "error",
+      "score": 1.0,
+      "passed": 0,
+      "total": 0,
+      "aspirational_passed": 0,
+      "aspirational_total": 0,
+      "error": "litellm.AuthenticationError: AuthenticationError: OpenAIException - The api_key client option must be set either by passing api_key to the client or by setting the OPENAI_API_KEY environment variable",
+      "run_events_path": null,
+      "phases": [],
+      "cross_phase": []
+    }
+  ]
+}

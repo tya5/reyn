@@ -100,7 +100,7 @@ class ShellIROp(BaseModel):
 
 class LintIROp(BaseModel):
     kind: Literal["lint"]
-    dsl_root: str = "dsl/"   # workspace-relative path to dsl root directory
+    dsl_root: str = "reyn/"   # project-relative path to dsl root directory
 
 
 class EvalIROp(BaseModel):

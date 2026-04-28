@@ -1,0 +1,228 @@
+{
+  "spec_path": "workspace/eval_specs/file_io_test_app/eval.md",
+  "app_name": "file_io_test_app",
+  "model": "openai/gemini-2.5-flash-lite",
+  "judge_model": "openai/gemini-2.5-flash-lite",
+  "timestamp": "20260426T234859Z",
+  "overall_score": 1.0,
+  "overall_passed": 22,
+  "overall_total": 22,
+  "cases": [
+    {
+      "name": "basic_memo_write",
+      "input": "meeting_notes.txt というファイルに、今日のミーティングの議事録メモを書いてください。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 11,
+      "total": 11,
+      "error": null,
+      "run_events_path": "workspace/evals/file_io_test_app/basic_memo_write/runs/20260426T234842Z_file_io_test_app.jsonl",
+      "phases": [
+        {
+          "phase": "write_memo",
+          "visit": 1,
+          "artifact_type": "file_written",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在し、文字列型である",
+              "score": 1.0,
+              "reason": "The 'filename' field exists and is a string.",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、0 より大きい整数である",
+              "score": 1.0,
+              "reason": "The 'char_count' field exists and is an integer greater than 0.",
+              "passed": true
+            },
+            {
+              "criterion": "summary フィールドが存在し、書き込んだメモの内容を要約している",
+              "score": 1.0,
+              "reason": "The 'summary' field exists and accurately summarizes the content of the memo.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "read_verify",
+          "visit": 1,
+          "artifact_type": "file_io_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在し、write_memo で書いたファイル名と一致する",
+              "score": 1.0,
+              "reason": "filename フィールドは存在し、'meeting_notes.txt' と write_memo で指定されたファイル名と一致します。",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、0 より大きい整数である",
+              "score": 1.0,
+              "reason": "char_count フィールドは存在し、53 という 0 より大きい整数です。",
+              "passed": true
+            },
+            {
+              "criterion": "content_preview フィールドが存在し、空でない文字列である",
+              "score": 1.0,
+              "reason": "content_preview フィールドは存在し、日本語の議事録のプレビューが含まれています。",
+              "passed": true
+            },
+            {
+              "criterion": "verified フィールドが存在し、true である",
+              "score": 1.0,
+              "reason": "verified フィールドは存在し、true という値が設定されています。",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "file_io_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'filename' field exists and has a value of 'meeting_notes.txt'.",
+              "passed": true
+            },
+            {
+              "criterion": "verified フィールドが存在し、true である",
+              "score": 1.0,
+              "reason": "The 'verified' field exists and its value is true.",
+              "passed": true
+            },
+            {
+              "criterion": "content_preview フィールドが存在し、空でない文字列である",
+              "score": 1.0,
+              "reason": "The 'content_preview' field exists and contains a non-empty string.",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、0 より大きい整数である",
+              "score": 1.0,
+              "reason": "The 'char_count' field exists and its value is 53, which is greater than 0.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "japanese_content_memo",
+      "input": "daily_report.txt というファイルに、日本語で今日の業務報告を書いてください。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 11,
+      "total": 11,
+      "error": null,
+      "run_events_path": "workspace/evals/file_io_test_app/japanese_content_memo/runs/20260426T234852Z_file_io_test_app.jsonl",
+      "phases": [
+        {
+          "phase": "write_memo",
+          "visit": 1,
+          "artifact_type": "file_written",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在し、\"daily_report.txt\" と一致する",
+              "score": 1.0,
+              "reason": "The 'filename' field exists and its value is 'daily_report.txt'.",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、0 より大きい整数である",
+              "score": 1.0,
+              "reason": "The 'char_count' field exists and its value, 124, is a positive integer.",
+              "passed": true
+            },
+            {
+              "criterion": "summary フィールドが存在し、日本語の内容を要約している",
+              "score": 1.0,
+              "reason": "The 'summary' field exists and its value is a Japanese sentence that summarizes the memo's content.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "read_verify",
+          "visit": 1,
+          "artifact_type": "file_io_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在し、\"daily_report.txt\" と一致する",
+              "score": 1.0,
+              "reason": "The 'filename' field exists and its value is 'daily_report.txt'.",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、0 より大きい整数である",
+              "score": 1.0,
+              "reason": "The 'char_count' field exists and its value, 247, is a positive integer.",
+              "passed": true
+            },
+            {
+              "criterion": "content_preview フィールドが存在し、日本語の文字列を含む",
+              "score": 1.0,
+              "reason": "The 'content_preview' field exists and contains Japanese characters as part of its string value.",
+              "passed": true
+            },
+            {
+              "criterion": "verified フィールドが存在し、true である",
+              "score": 1.0,
+              "reason": "The 'verified' field exists and its value is true.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "file_io_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "filename フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'filename' field exists and has a value.",
+              "passed": true
+            },
+            {
+              "criterion": "verified フィールドが存在し、true である",
+              "score": 1.0,
+              "reason": "The 'verified' field exists and is set to true.",
+              "passed": true
+            },
+            {
+              "criterion": "content_preview フィールドが存在し、空でない文字列である",
+              "score": 1.0,
+              "reason": "The 'content_preview' field exists and contains a non-empty string.",
+              "passed": true
+            },
+            {
+              "criterion": "char_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'char_count' field exists and is an integer greater than or equal to 1.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

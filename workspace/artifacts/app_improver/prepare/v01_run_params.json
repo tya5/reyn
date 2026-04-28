@@ -1,0 +1,11 @@
+{
+  "type": "run_params",
+  "data": {
+    "app_dsl_path": "dsl/apps/writing_review_app/app.md",
+    "dsl_root": "dsl/",
+    "test_input": "Pythonの非同期処理について初心者向けに書いて",
+    "target_workspace": "workspace/target_runs/writing_review_app",
+    "model": "openai/gemini-2.5-flash-lite",
+    "improvement_focus": "review フェーズの品質"
+  }
+}

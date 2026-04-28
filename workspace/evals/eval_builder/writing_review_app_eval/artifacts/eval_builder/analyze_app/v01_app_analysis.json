@@ -1,0 +1,120 @@
+{
+  "type": "app_analysis",
+  "data": {
+    "app_dsl_path": "dsl/apps/writing_review_app/app.md",
+    "dsl_root": "dsl/",
+    "app_name": "writing_review_app",
+    "judge_model": "gpt-4o",
+    "phase_order": [
+      "analyze",
+      "draft",
+      "review",
+      "judge",
+      "revise"
+    ],
+    "test_cases": [
+      {
+        "name": "short_tech_article",
+        "input": "Pythonの非同期処理（asyncio）について、初心者向けの技術解説記事を書いてください。具体的なコード例を含めること。",
+        "rationale": "初心者を対象とした技術記事の典型的なユースケース。コード例の正確性と初心者向けの分かりやすさが重要。"
+      },
+      {
+        "name": "opinion_piece",
+        "input": "AIが人間の仕事を奪うという議論について、バランスのとれた意見記事を書いてください。",
+        "rationale": "意見記事の典型的なユースケース。バランスの取れた視点と著者の明確な立場が求められる。レビューとリビジョンが必要になる可能性が高い。"
+      }
+    ],
+    "phase_eval_designs": [
+      {
+        "phase": "analyze",
+        "artifact_type": "analysis_result",
+        "schema": [
+          "key_points: string[]",
+          "angle: string",
+          "tone: string"
+        ],
+        "quality": [
+          "ターゲット読者（初心者）が正しく識別されていること。",
+          "記事で扱うべき主要トピック（asyncio の基本、使い方、コード例）が列挙されていること。"
+        ]
+      },
+      {
+        "phase": "draft",
+        "artifact_type": "draft_article",
+        "schema": [
+          "title: string",
+          "body: string",
+          "self_assessment: string"
+        ],
+        "quality": [
+          "asyncio の基本的な説明が含まれていること。",
+          "少なくとも1つのコード例が含まれていること。",
+          "初心者向けの言葉遣いになっていること。"
+        ]
+      },
+      {
+        "phase": "review",
+        "artifact_type": "review_package",
+        "schema": [
+          "article.title: string",
+          "article.body: string",
+          "review_result.approved: boolean",
+          "review_result.score: number, range 0.0-1.0",
+          "review_result.feedback: string",
+          "review_result.issues: string, min_length 1"
+        ],
+        "quality": [
+          "review_result.feedback に具体的な改善点または承認理由が記述されていること。",
+          "review_result.issues に最低1つの改善点が記述されていること。"
+        ]
+      },
+      {
+        "phase": "judge",
+        "artifact_type": "judge_decision",
+        "schema": [
+          "decision: string, equals \"finish\" or \"revise\"",
+          "reason: string",
+          "confidence: number, range 0.0-1.0",
+          "article.title: string",
+          "article.body: string",
+          "revision_notes: string[], max 3"
+        ],
+        "quality": [
+          "decision が \"finish\" または \"revise\" のいずれかであること。",
+          "decision が \"finish\" の場合、article.title と article.body が出力記事のタイトルと本文であること。",
+          "decision が \"revise\" の場合、revision_notes に最大3つの具体的な修正指示が含まれていること。"
+        ]
+      },
+      {
+        "phase": "revise",
+        "artifact_type": "revised_article",
+        "schema": [
+          "title: string",
+          "body: string",
+          "self_assessment: string"
+        ],
+        "quality": [
+          "data.revision_notes に記載されたすべての修正指示が反映されていること。",
+          "self_assessment が修正指示への対応状況を具体的に記述していること。"
+        ]
+      }
+    ],
+    "cross_phase_assertions": [
+      "judge.article.title == revise.title",
+      "judge.article.body == revise.body",
+      "judge.article.title == final_article.title",
+      "judge.article.body == final_article.body"
+    ],
+    "final_schema": [
+      "title: string",
+      "body: string",
+      "quality_notes: string[]"
+    ],
+    "final_quality": [
+      "final_article.quality_notes にレビュー結果のサマリーが簡潔に記述されていること。",
+      "opinion_piece のテストケースでは、最終記事の body が 800 文字以上であること。",
+      "short_tech_article のテストケースでは、最終記事の body が 500 文字以上であること。",
+      "最終記事が指定された言語（例: 日本語）で書かれていること。"
+    ]
+  }
+}

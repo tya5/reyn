@@ -1,0 +1,142 @@
+{
+  "type": "app_plan",
+  "data": {
+    "app_name": "simple_todo_list",
+    "app_path": "dsl/apps/simple_todo_list",
+    "entry_phase": "create_task",
+    "finish_criteria": [
+      "タスクの追加、編集、削除、優先度変更の機能が実装されていること。",
+      "ユーザーインターフェースが直感的で使いやすいこと。",
+      "TODOリストが永続化され、アプリ再起動後も保持されること。"
+    ],
+    "phases": [
+      {
+        "name": "create_task",
+        "role": "task_creator",
+        "input_artifact": "user_message",
+        "input_description": "ユーザーからのタスク追加や管理に関する指示。",
+        "instructions": "ユーザーの指示に基づき、新しいTODOタスクを作成または既存タスクを更新します。タスク名、詳細、優先度（高・中・低など）を設定できるようにします。ユーザーからの入力を解析し、必要な情報を抽出してタスクオブジェクトを生成してください。",
+        "can_finish": false
+      },
+      {
+        "name": "list_tasks",
+        "role": "task_lister",
+        "input_artifact": "task_list",
+        "input_description": "現在登録されているTODOタスクのリスト。",
+        "instructions": "与えられたタスクリストを、優先度順（高→中→低）に並べ替えて表示します。各タスクには、名前、詳細、優先度が表示されるようにしてください。ユーザーがタスクを一覧で確認できるUIを想定しています。",
+        "can_finish": false
+      },
+      {
+        "name": "update_task",
+        "role": "task_updater",
+        "input_artifact": "task_update_request",
+        "input_description": "ユーザーからのタスク更新（編集、優先度変更、完了）のリクエスト。",
+        "instructions": "ユーザーからのリクエストを受け取り、指定されたタスクの情報を更新します。タスク名、詳細、優先度、または完了ステータスを変更できます。変更内容をタスクリストに反映させてください。",
+        "can_finish": false
+      },
+      {
+        "name": "delete_task",
+        "role": "task_deleter",
+        "input_artifact": "task_delete_request",
+        "input_description": "ユーザーからのタスク削除のリクエスト。",
+        "instructions": "ユーザーからのリクエストに基づき、指定されたタスクをタスクリストから削除します。削除対象のタスクを特定し、リストから安全に削除してください。",
+        "can_finish": false
+      },
+      {
+        "name": "persist_tasks",
+        "role": "data_persister",
+        "input_artifact": "task_list",
+        "input_description": "現在のTODOタスクのリスト。",
+        "instructions": "現在のタスクリストを永続化します。アプリが再起動されてもタスクが失われないように、ローカルストレージやデータベースなどに保存する処理を実装してください。保存されたデータは、アプリ起動時に読み込めるようにします。",
+        "can_finish": true
+      }
+    ],
+    "transitions": [
+      {
+        "from": "create_task",
+        "to": [
+          "list_tasks",
+          "persist_tasks"
+        ]
+      },
+      {
+        "from": "list_tasks",
+        "to": [
+          "create_task",
+          "update_task",
+          "delete_task",
+          "persist_tasks"
+        ]
+      },
+      {
+        "from": "update_task",
+        "to": [
+          "list_tasks",
+          "persist_tasks"
+        ]
+      },
+      {
+        "from": "delete_task",
+        "to": [
+          "list_tasks",
+          "persist_tasks"
+        ]
+      },
+      {
+        "from": "persist_tasks",
+        "to": [
+          "finish"
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "name": "user_message",
+        "fields": [
+          {
+            "name": "text"
+          }
+        ]
+      },
+      {
+        "name": "task_list",
+        "fields": [
+          {
+            "name": "tasks"
+          }
+        ]
+      },
+      {
+        "name": "task_update_request",
+        "fields": [
+          {
+            "name": "task_id"
+          },
+          {
+            "name": "field"
+          },
+          {
+            "name": "new_value"
+          }
+        ]
+      },
+      {
+        "name": "task_delete_request",
+        "fields": [
+          {
+            "name": "task_id"
+          }
+        ]
+      }
+    ],
+    "final_output": {
+      "name": "app_implementation",
+      "description": "構築されたTODOリスト管理アプリのコード。",
+      "fields": [
+        {
+          "name": "code"
+        }
+      ]
+    }
+  }
+}

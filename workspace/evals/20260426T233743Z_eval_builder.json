@@ -1,0 +1,276 @@
+{
+  "spec_path": "workspace/eval_specs/eval_builder/eval.md",
+  "app_name": "eval_builder",
+  "model": "openai/gemini-2.5-flash-lite",
+  "judge_model": "openai/gemini-2.5-flash-lite",
+  "timestamp": "20260426T233743Z",
+  "overall_score": 0.9600000000000001,
+  "overall_passed": 29,
+  "overall_total": 30,
+  "cases": [
+    {
+      "name": "eval_builder_self",
+      "input": "dsl/apps/eval_builder/app.md の eval.md を作って",
+      "run_status": "finished",
+      "score": 0.925,
+      "passed": 15,
+      "total": 16,
+      "error": null,
+      "run_events_path": "workspace/evals/eval_builder/eval_builder_self/runs/20260426T233705Z_eval_builder.jsonl",
+      "phases": [
+        {
+          "phase": "analyze_app",
+          "visit": 1,
+          "artifact_type": "app_analysis",
+          "score": 0.85,
+          "passed": 7,
+          "total": 8,
+          "criteria": [
+            {
+              "criterion": "app_dsl_path フィールドが存在し、\"dsl/apps/eval_builder/app.md\" を指している",
+              "score": 1.0,
+              "reason": "The app_dsl_path field exists and has the correct value 'dsl/apps/eval_builder/app.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "dsl_root フィールドが存在し、\"dsl/\" である",
+              "score": 1.0,
+              "reason": "The dsl_root field exists and has the correct value 'dsl/'.",
+              "passed": true
+            },
+            {
+              "criterion": "app_name フィールドが存在し、\"eval_builder\" である",
+              "score": 1.0,
+              "reason": "The app_name field exists and has the correct value 'eval_builder'.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_order 配列が存在し、\"analyze_app\" と \"write_eval\" を含む",
+              "score": 1.0,
+              "reason": "The phase_order field is an array and contains both 'analyze_app' and 'write_eval'.",
+              "passed": true
+            },
+            {
+              "criterion": "test_cases 配列が存在し、1 件以上の項目があり、各項目に name, input, rationale が含まれる",
+              "score": 1.0,
+              "reason": "The test_cases array exists, contains one item, and each item has the required name, input, and rationale fields.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_eval_designs 配列が存在し、analyze_app と write_eval の両フェーズを含む",
+              "score": 0.0,
+              "reason": "The phase_eval_designs array only contains a design for 'analyze_app' and is missing the design for 'write_eval'.",
+              "passed": false
+            },
+            {
+              "criterion": "phase_eval_designs の各 criteria 項目が、具体的な artifact フィールド名を参照している（\"適切である\" などの曖昧な表現でない）",
+              "score": 0.8,
+              "reason": "Most criteria are specific artifact field names, but one refers to 'app_dsl_path フィールドが存在し、文字列型である' which is slightly less specific than desired but still clear.",
+              "passed": true
+            },
+            {
+              "criterion": "final_criteria 配列が存在し、2 件以上の基準が含まれる",
+              "score": 1.0,
+              "reason": "The final_criteria array exists and contains four criteria.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "write_eval",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "eval_md_path フィールドが存在し、\"eval_specs/eval_builder/eval.md\" の形式である",
+              "score": 1.0,
+              "reason": "The eval_md_path field exists and is correctly formatted as 'eval_specs/eval_builder/eval.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "case_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The case_count field exists and is an integer with a value of 1.",
+              "passed": true
+            },
+            {
+              "criterion": "total_criteria フィールドが存在し、4 以上の整数である",
+              "score": 1.0,
+              "reason": "The total_criteria field exists and is an integer with a value of 8, which is greater than or equal to 4.",
+              "passed": true
+            },
+            {
+              "criterion": "next_steps フィールドが存在し、eval の実行コマンドが含まれている",
+              "score": 1.0,
+              "reason": "The next_steps field exists and contains an execution command for the eval: 'python main.py eval --spec workspace/eval_specs/eval_builder/eval.md --model <model>'.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "eval_md_path フィールドが存在し、文字列型である",
+              "score": 1.0,
+              "reason": "The 'eval_md_path' field exists and is a string.",
+              "passed": true
+            },
+            {
+              "criterion": "case_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'case_count' field exists and is an integer greater than or equal to 1.",
+              "passed": true
+            },
+            {
+              "criterion": "total_criteria フィールドが存在し、4 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'total_criteria' field exists and is an integer greater than or equal to 4.",
+              "passed": true
+            },
+            {
+              "criterion": "next_steps フィールドが存在し、ファイルの場所と実行方法が含まれている",
+              "score": 1.0,
+              "reason": "The 'next_steps' field exists and contains the file location and execution method.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "writing_review_app_eval",
+      "input": "dsl/apps/writing_review_app/app.md の eval.md を作って",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 14,
+      "total": 14,
+      "error": null,
+      "run_events_path": "workspace/evals/eval_builder/writing_review_app_eval/runs/20260426T233725Z_eval_builder.jsonl",
+      "phases": [
+        {
+          "phase": "analyze_app",
+          "visit": 1,
+          "artifact_type": "app_analysis",
+          "score": 1.0,
+          "passed": 6,
+          "total": 6,
+          "criteria": [
+            {
+              "criterion": "app_dsl_path フィールドが存在し、\"dsl/apps/writing_review_app/app.md\" を指している",
+              "score": 1.0,
+              "reason": "The app_dsl_path field exists and correctly points to the specified path.",
+              "passed": true
+            },
+            {
+              "criterion": "app_name フィールドが存在し、\"writing_review_app\" である",
+              "score": 1.0,
+              "reason": "The app_name field exists and its value is \"writing_review_app\".",
+              "passed": true
+            },
+            {
+              "criterion": "phase_order 配列が writing_review_app の実際のフェーズ（analyze, draft, review 等）を含む",
+              "score": 1.0,
+              "reason": "The phase_order array correctly lists the expected phases: analyze, draft, review, judge, revise.",
+              "passed": true
+            },
+            {
+              "criterion": "test_cases 配列が存在し、1 件以上の項目があり、各項目に name, input, rationale が含まれる",
+              "score": 1.0,
+              "reason": "The test_cases array exists, contains two items, and each item has name, input, and rationale fields.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_eval_designs 配列の criteria が、analysis_result や draft_article など実際の artifact 名を参照している",
+              "score": 1.0,
+              "reason": "The criteria within phase_eval_designs correctly reference artifact types like analysis_result and draft_article.",
+              "passed": true
+            },
+            {
+              "criterion": "final_criteria 配列が存在し、2 件以上の基準が含まれる",
+              "score": 1.0,
+              "reason": "The final_criteria array exists and contains four criteria, exceeding the minimum requirement of two.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "write_eval",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "eval_md_path フィールドが存在し、\"eval_specs/writing_review_app/eval.md\" の形式である",
+              "score": 1.0,
+              "reason": "The eval_md_path field exists and has the correct format.",
+              "passed": true
+            },
+            {
+              "criterion": "case_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The case_count field exists and is an integer greater than or equal to 1.",
+              "passed": true
+            },
+            {
+              "criterion": "total_criteria フィールドが存在し、4 以上の整数である",
+              "score": 1.0,
+              "reason": "The total_criteria field exists and is an integer greater than or equal to 4.",
+              "passed": true
+            },
+            {
+              "criterion": "next_steps フィールドが存在し、eval の実行コマンドが含まれている",
+              "score": 1.0,
+              "reason": "The next_steps field exists and includes the eval execution command.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 4,
+          "total": 4,
+          "criteria": [
+            {
+              "criterion": "eval_md_path フィールドが存在し、文字列型である",
+              "score": 1.0,
+              "reason": "The 'eval_md_path' field exists and is a string.",
+              "passed": true
+            },
+            {
+              "criterion": "case_count フィールドが存在し、1 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'case_count' field exists and is an integer greater than or equal to 1.",
+              "passed": true
+            },
+            {
+              "criterion": "total_criteria フィールドが存在し、4 以上の整数である",
+              "score": 1.0,
+              "reason": "The 'total_criteria' field exists and is an integer greater than or equal to 4.",
+              "passed": true
+            },
+            {
+              "criterion": "next_steps フィールドが存在し、ファイルの場所と実行方法が含まれている",
+              "score": 1.0,
+              "reason": "The 'next_steps' field exists and includes instructions for file location and execution.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

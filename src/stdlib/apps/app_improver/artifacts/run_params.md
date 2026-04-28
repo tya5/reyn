@@ -7,11 +7,11 @@ name: run_params
 
 app_dsl_path: string
   # Workspace-relative or project-relative path to the target app's app.md.
-  # e.g. "dsl/apps/architecture_analyzer/app.md"
+  # e.g. "reyn/project/architecture_analyzer/app.md"
 
 dsl_root: string
   # DSL root directory for the target app.
-  # e.g. "dsl/"
+  # e.g. "reyn/"
 
 test_input: string
   # The input to pass to the target app run.

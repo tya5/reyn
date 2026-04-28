@@ -55,7 +55,7 @@ Do NOT add review phases just to add them — only when the task output is subje
 
 app_name: snake_case name of the target app
 app_description: one sentence describing what the app does (used in `reyn apps` listing)
-app_path: "dsl/local/{app_name}"
+app_path: "reyn/local/{app_name}"
 entry_phase: name of the first phase
 finish_criteria: 2–4 bullet strings describing when the TARGET workflow is done
 

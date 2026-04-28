@@ -1,0 +1,101 @@
+{
+  "type": "app_analysis",
+  "data": {
+    "app_dsl_path": "dsl/apps/writing_review_app/app.md",
+    "dsl_root": "dsl/",
+    "app_name": "writing_review_app",
+    "judge_model": "gpt-4o",
+    "phase_order": [
+      "analyze",
+      "draft",
+      "review",
+      "judge"
+    ],
+    "test_cases": [
+      {
+        "name": "short_tech_article",
+        "input": "Pythonの非同期処理（asyncio）について、初心者向けの技術解説記事を書いてください。具体的なコード例を含めること。",
+        "rationale": "This is a typical use case for a technical writing app, focusing on a specific programming concept for a beginner audience."
+      },
+      {
+        "name": "opinion_piece",
+        "input": "AIが人間の仕事を奪うという議論について、バランスのとれた意見記事を書いてください。",
+        "rationale": "This test case focuses on a more nuanced and opinion-based topic, which may require more revision and careful consideration of different viewpoints."
+      }
+    ],
+    "phase_eval_designs": [
+      {
+        "phase": "analyze",
+        "artifact_type": "analysis_result",
+        "schema": [
+          "key_points: string[], min 3, max 5",
+          "angle: string, min_length 10",
+          "tone: string, min_length 5"
+        ],
+        "quality": [
+          "ユーザーのリクエストからターゲット読者（初心者）が正しく識別されている",
+          "記事で扱うべき主要トピック（asyncio の基本、使い方、コード例）が列挙されている"
+        ]
+      },
+      {
+        "phase": "draft",
+        "artifact_type": "draft_article",
+        "schema": [
+          "title: string, min_length 5",
+          "body: string, min_length 100",
+          "self_assessment: string, min_length 20"
+        ],
+        "quality": [
+          "asyncio の基本的な説明がある",
+          "少なくとも1つのコード例が含まれている",
+          "初心者向けの言葉遣いになっている"
+        ]
+      },
+      {
+        "phase": "review",
+        "artifact_type": "review_package",
+        "schema": [
+          "review_result.score: number, range 0.0-1.0",
+          "review_result.issues: string[], min 1",
+          "review_result.feedback: string, min_length 10",
+          "review_result.approved: boolean"
+        ],
+        "quality": []
+      },
+      {
+        "phase": "judge",
+        "artifact_type": "judge_decision",
+        "schema": [
+          "decision: string, equals \"finish\" | equals \"revise\"",
+          "reason: string, min_length 10",
+          "confidence: number, range 0.5-1.0",
+          "revision_notes: string[], max 3"
+        ],
+        "quality": [
+          "決定は review_result.score と finish_criteria に基づいている"
+        ]
+      },
+      {
+        "phase": "revise",
+        "artifact_type": "revised_article",
+        "schema": [
+          "title: string, min_length 5",
+          "body: string, min_length 100",
+          "self_assessment: string, min_length 20"
+        ],
+        "quality": [
+          "提供された revision_notes に具体的に対応している"
+        ]
+      }
+    ],
+    "cross_phase_assertions": [],
+    "final_schema": [
+      "title: string, min_length 5",
+      "body: string, min_length 500",
+      "quality_notes: string[], min 1"
+    ],
+    "final_quality": [
+      "最終記事がオーディエンスの適合性、明確さ、具体性、構造、言語の一貫性を満たしている"
+    ]
+  }
+}

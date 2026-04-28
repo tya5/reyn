@@ -1,0 +1,308 @@
+{
+  "spec_path": "workspace/eval_specs/writing_review_app/eval.md",
+  "app_name": "writing_review_app",
+  "model": "openai/gemini-2.5-flash-lite",
+  "judge_model": "openai/gemini-2.5-flash-lite",
+  "timestamp": "20260426T235018Z",
+  "overall_score": 1.0,
+  "overall_passed": 32,
+  "overall_total": 32,
+  "cases": [
+    {
+      "name": "short_tech_article",
+      "input": "Pythonの非同期処理（asyncio）について、初心者向けの技術解説記事を書いてください。具体的なコード例を含めること。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 16,
+      "total": 16,
+      "error": null,
+      "run_events_path": "workspace/evals/writing_review_app/short_tech_article/runs/20260426T234931Z_writing_review_app.jsonl",
+      "phases": [
+        {
+          "phase": "analyze",
+          "visit": 1,
+          "artifact_type": "analysis_result",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "key_points 配列が存在し、3 個以上のトピックが列挙されている",
+              "score": 1.0,
+              "reason": "The key_points array exists and contains 5 topics.",
+              "passed": true
+            },
+            {
+              "criterion": "angle フィールドが存在し、記事の方向性や切り口が説明されている",
+              "score": 1.0,
+              "reason": "The angle field exists and clearly describes the article's direction as beginner-friendly asyncio usage.",
+              "passed": true
+            },
+            {
+              "criterion": "tone フィールドが存在する",
+              "score": 1.0,
+              "reason": "The tone field exists and specifies the desired tone as polite, easy-to-understand, and example-rich.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "draft",
+          "visit": 1,
+          "artifact_type": "draft_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "title フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'title' field exists and contains a relevant title.",
+              "passed": true
+            },
+            {
+              "criterion": "body フィールドが存在し、意味のあるコンテンツが含まれている",
+              "score": 1.0,
+              "reason": "The 'body' field exists and provides a comprehensive explanation of asyncio for beginners.",
+              "passed": true
+            },
+            {
+              "criterion": "body に asyncio の基本概念の説明が含まれている",
+              "score": 1.0,
+              "reason": "The body clearly explains fundamental concepts of asyncio, including async/await, event loops, coroutines, and tasks.",
+              "passed": true
+            },
+            {
+              "criterion": "body に少なくとも1つの Python コード例が含まれている",
+              "score": 1.0,
+              "reason": "The body includes a well-explained Python code example demonstrating concurrent execution of asynchronous tasks.",
+              "passed": true
+            },
+            {
+              "criterion": "self_assessment フィールドが存在し、ドラフトの品質についての評価が含まれている",
+              "score": 1.0,
+              "reason": "The 'self_assessment' field is present and offers a thoughtful evaluation of the draft's quality and adherence to the target audience and objectives.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "review",
+          "visit": 1,
+          "artifact_type": "review_package",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "review_result.score フィールドが存在し、0.0 から 1.0 の間の数値である",
+              "score": 1.0,
+              "reason": "The review_result.score field is present and contains a valid number (0.9) within the specified range.",
+              "passed": true
+            },
+            {
+              "criterion": "review_result.strengths 配列が存在する",
+              "score": 1.0,
+              "reason": "The review_result.strengths field is present and is a non-empty array.",
+              "passed": true
+            },
+            {
+              "criterion": "review_result.issues 配列が存在する",
+              "score": 1.0,
+              "reason": "The review_result.issues field is present and is an empty array.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "final_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "title フィールドが存在する",
+              "score": 1.0,
+              "reason": "The title field is present in the artifact.",
+              "passed": true
+            },
+            {
+              "criterion": "body フィールドが存在し、意味のあるコンテンツが含まれている",
+              "score": 1.0,
+              "reason": "The body field exists and contains meaningful content explaining asyncio.",
+              "passed": true
+            },
+            {
+              "criterion": "quality_notes 配列が存在し、レビュー結果のサマリーが含まれている",
+              "score": 1.0,
+              "reason": "The quality_notes array is present and includes a summary of review results.",
+              "passed": true
+            },
+            {
+              "criterion": "最終記事は日本語で書かれている",
+              "score": 1.0,
+              "reason": "The final article is written in Japanese.",
+              "passed": true
+            },
+            {
+              "criterion": "body に asyncio の技術的内容が含まれている",
+              "score": 1.0,
+              "reason": "The body contains technical content related to asyncio, including explanations of async/await, event loops, coroutines, tasks, and an example code.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "opinion_piece",
+      "input": "AIが人間の仕事を奪うという議論について、バランスのとれた意見記事を書いてください。",
+      "run_status": "finished",
+      "score": 1.0,
+      "passed": 16,
+      "total": 16,
+      "error": null,
+      "run_events_path": "workspace/evals/writing_review_app/opinion_piece/runs/20260426T234956Z_writing_review_app.jsonl",
+      "phases": [
+        {
+          "phase": "analyze",
+          "visit": 1,
+          "artifact_type": "analysis_result",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "key_points 配列が存在し、3 個以上のトピックが列挙されている",
+              "score": 1.0,
+              "reason": "The 'key_points' array exists and contains 5 distinct topics.",
+              "passed": true
+            },
+            {
+              "criterion": "angle フィールドが存在し、記事の方向性や切り口が説明されている",
+              "score": 1.0,
+              "reason": "The 'angle' field clearly describes the article's perspective on AI changing rather than replacing jobs.",
+              "passed": true
+            },
+            {
+              "criterion": "tone フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'tone' field is present and describes the intended tone as objective, constructive, and forward-looking.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "draft",
+          "visit": 1,
+          "artifact_type": "draft_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "title フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'title' field is present in the artifact.",
+              "passed": true
+            },
+            {
+              "criterion": "body フィールドが存在し、意味のあるコンテンツが含まれている",
+              "score": 1.0,
+              "reason": "The 'body' field exists and contains substantial, meaningful content discussing AI and the future of work.",
+              "passed": true
+            },
+            {
+              "criterion": "body にAIと仕事に関する複数の視点（賛否両論）が含まれている",
+              "score": 1.0,
+              "reason": "The 'body' field includes multiple perspectives, such as AI taking jobs, creating new opportunities, and enhancing productivity, as well as ethical concerns.",
+              "passed": true
+            },
+            {
+              "criterion": "body に著者の結論または立場が明示されている",
+              "score": 1.0,
+              "reason": "The author's conclusion is explicitly stated, framing AI as both a threat and an opportunity, and emphasizing adaptation and coexistence.",
+              "passed": true
+            },
+            {
+              "criterion": "self_assessment フィールドが存在し、ドラフトの品質についての評価が含まれている",
+              "score": 1.0,
+              "reason": "The 'self_assessment' field is present and provides an evaluation of the draft's quality, including its strengths and areas for improvement.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "review",
+          "visit": 1,
+          "artifact_type": "review_package",
+          "score": 1.0,
+          "passed": 3,
+          "total": 3,
+          "criteria": [
+            {
+              "criterion": "review_result.score フィールドが存在し、0.0 から 1.0 の間の数値である",
+              "score": 1.0,
+              "reason": "The review_result.score field exists and contains a numerical value of 0.85, which is within the specified range.",
+              "passed": true
+            },
+            {
+              "criterion": "review_result.strengths 配列が存在する",
+              "score": 1.0,
+              "reason": "The review_result.strengths array is present and contains multiple string elements.",
+              "passed": true
+            },
+            {
+              "criterion": "review_result.issues 配列が存在する",
+              "score": 1.0,
+              "reason": "The review_result.issues array is present and contains multiple string elements.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "final_article",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "criteria": [
+            {
+              "criterion": "title フィールドが存在する",
+              "score": 1.0,
+              "reason": "The 'title' field exists and contains a valid string.",
+              "passed": true
+            },
+            {
+              "criterion": "body フィールドが存在し、意味のあるコンテンツが含まれている",
+              "score": 1.0,
+              "reason": "The 'body' field exists and contains a substantial amount of meaningful text.",
+              "passed": true
+            },
+            {
+              "criterion": "quality_notes 配列が存在し、レビュー結果のサマリーが含まれている",
+              "score": 1.0,
+              "reason": "The 'quality_notes' field is an array and contains summary points.",
+              "passed": true
+            },
+            {
+              "criterion": "最終記事は日本語で書かれている",
+              "score": 1.0,
+              "reason": "The 'title', 'body', and 'quality_notes' are all written in Japanese.",
+              "passed": true
+            },
+            {
+              "criterion": "body にAIと仕事の関係に関する議論が含まれている",
+              "score": 1.0,
+              "reason": "The 'body' field thoroughly discusses the relationship between AI and work, covering potential job displacement, new opportunities, and productivity gains.",
+              "passed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

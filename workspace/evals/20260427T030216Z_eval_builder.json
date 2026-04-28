@@ -1,0 +1,398 @@
+{
+  "spec_path": "workspace/eval_specs/eval_builder/eval.md",
+  "app_name": "eval_builder",
+  "model": "gemini/gemini-2.5-flash-lite",
+  "judge_model": "gemini/gemini-2.5-flash-lite",
+  "timestamp": "20260427T030216Z",
+  "overall_score": 0.9625,
+  "overall_passed": 47,
+  "overall_total": 48,
+  "cases": [
+    {
+      "name": "eval_builder_self",
+      "input": "dsl/apps/eval_builder/app.md の eval.md を作って",
+      "run_status": "finished",
+      "score": 0.9461538461538462,
+      "passed": 25,
+      "total": 26,
+      "error": null,
+      "run_events_path": "workspace/evals/eval_builder/eval_builder_self/runs/20260427T030133Z_eval_builder.jsonl",
+      "phases": [
+        {
+          "phase": "analyze_app",
+          "visit": 1,
+          "artifact_type": "app_analysis",
+          "score": 0.9714285714285714,
+          "passed": 14,
+          "total": 14,
+          "schema": [
+            {
+              "path": "app_dsl_path",
+              "raw": "app_dsl_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "dsl_root",
+              "raw": "dsl_root: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phase_order",
+              "raw": "phase_order: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "test_cases",
+              "raw": "test_cases: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phase_eval_designs",
+              "raw": "phase_eval_designs: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "final_schema",
+              "raw": "final_schema: array",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "final_quality",
+              "raw": "final_quality: array",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "app_dsl_path が \"dsl/apps/eval_builder/app.md\" を指している",
+              "score": 1.0,
+              "reason": "The app_dsl_path in the artifact data is exactly 'dsl/apps/eval_builder/app.md'.",
+              "passed": true
+            },
+            {
+              "criterion": "app_name が \"eval_builder\" である",
+              "score": 1.0,
+              "reason": "The app_name in the artifact data is correctly identified as 'eval_builder'.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_order に \"analyze_app\" と \"write_eval\" の両方が含まれている",
+              "score": 1.0,
+              "reason": "The phase_order list explicitly contains both 'analyze_app' and 'write_eval'.",
+              "passed": true
+            },
+            {
+              "criterion": "test_cases の各項目に name, input, rationale が含まれている",
+              "score": 1.0,
+              "reason": "The single test case provided includes all required fields: name, input, and rationale.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_eval_designs に analyze_app と write_eval の両フェーズが含まれている",
+              "score": 1.0,
+              "reason": "The phase_eval_designs array contains design objects for both 'analyze_app' and 'write_eval' phases.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_eval_designs の schema/quality が具体的な artifact フィールド名を参照している",
+              "score": 0.6,
+              "reason": "While the quality criteria for 'analyze_app' reference fields like 'app_dsl_path' and 'dsl_root', the schema fields are listed as generic types without directly mapping to artifact fields, and the 'write_eval' quality criteria are more abstract.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "write_eval",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 0.8333333333333334,
+          "passed": 5,
+          "total": 6,
+          "schema": [
+            {
+              "path": "eval_md_path",
+              "raw": "eval_md_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "case_count",
+              "raw": "case_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "total_criteria",
+              "raw": "total_criteria: integer, min 4",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "next_steps",
+              "raw": "next_steps: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "eval_md_path が \"eval_specs/eval_builder/eval.md\" の形式である",
+              "score": 1.0,
+              "reason": "The eval_md_path key in the artifact correctly matches the specified format.",
+              "passed": true
+            },
+            {
+              "criterion": "生成された eval.md に schema: セクションが含まれている",
+              "score": 0.0,
+              "reason": "The artifact does not contain the content of the generated eval.md, only its path, so it's impossible to verify the presence of a schema section.",
+              "passed": false
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "schema": [
+            {
+              "path": "eval_md_path",
+              "raw": "eval_md_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "case_count",
+              "raw": "case_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "total_criteria",
+              "raw": "total_criteria: integer, min 4",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "next_steps",
+              "raw": "next_steps: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "next_steps にファイルの場所と実行方法が含まれている",
+              "score": 1.0,
+              "reason": "next_steps には、eval.md ファイルの場所と、それを実行するためのコマンドが含まれています。",
+              "passed": true
+            }
+          ]
+        }
+      ],
+      "cross_phase": [
+        {
+          "raw": "analyze_app.app_dsl_path == write_eval.app_dsl_path",
+          "passed": true,
+          "reason": "ok"
+        }
+      ]
+    },
+    {
+      "name": "writing_review_app_eval",
+      "input": "dsl/apps/writing_review_app/app.md の eval.md を作って",
+      "run_status": "finished",
+      "score": 0.9818181818181819,
+      "passed": 22,
+      "total": 22,
+      "error": null,
+      "run_events_path": "workspace/evals/eval_builder/writing_review_app_eval/runs/20260427T030152Z_eval_builder.jsonl",
+      "phases": [
+        {
+          "phase": "analyze_app",
+          "visit": 1,
+          "artifact_type": "app_analysis",
+          "score": 0.9636363636363636,
+          "passed": 11,
+          "total": 11,
+          "schema": [
+            {
+              "path": "app_dsl_path",
+              "raw": "app_dsl_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "app_name",
+              "raw": "app_name: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phase_order",
+              "raw": "phase_order: array, min 2",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "test_cases",
+              "raw": "test_cases: array, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "phase_eval_designs",
+              "raw": "phase_eval_designs: array, min 2",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "final_schema",
+              "raw": "final_schema: array",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "final_quality",
+              "raw": "final_quality: array",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "app_dsl_path が \"dsl/apps/writing_review_app/app.md\" を指している",
+              "score": 1.0,
+              "reason": "The app_dsl_path field correctly matches the specified path.",
+              "passed": true
+            },
+            {
+              "criterion": "app_name が \"writing_review_app\" である",
+              "score": 1.0,
+              "reason": "The app_name field is correctly set to \"writing_review_app\".",
+              "passed": true
+            },
+            {
+              "criterion": "phase_order に writing_review_app の実際のフェーズ（analyze, draft, review 等）が含まれている",
+              "score": 1.0,
+              "reason": "The phase_order list correctly includes all the expected phases: analyze, draft, review, judge, revise.",
+              "passed": true
+            },
+            {
+              "criterion": "phase_eval_designs の schema が analysis_result や draft_article など実際の artifact フィールドを参照している",
+              "score": 0.6,
+              "reason": "While the schema fields are listed, they are described as strings rather than directly referencing artifact fields or types.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "write_eval",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 6,
+          "total": 6,
+          "schema": [
+            {
+              "path": "eval_md_path",
+              "raw": "eval_md_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "case_count",
+              "raw": "case_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "total_criteria",
+              "raw": "total_criteria: integer, min 4",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "next_steps",
+              "raw": "next_steps: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "eval_md_path が \"eval_specs/writing_review_app/eval.md\" の形式である",
+              "score": 1.0,
+              "reason": "The eval_md_path is exactly \"eval_specs/writing_review_app/eval.md\".",
+              "passed": true
+            },
+            {
+              "criterion": "next_steps に eval の実行コマンドが含まれている",
+              "score": 1.0,
+              "reason": "The next_steps clearly includes the execution command: `python main.py eval --spec workspace/eval_specs/writing_review_app/eval.md --model <model>`.",
+              "passed": true
+            }
+          ]
+        },
+        {
+          "phase": "final",
+          "visit": 1,
+          "artifact_type": "eval_spec_result",
+          "score": 1.0,
+          "passed": 5,
+          "total": 5,
+          "schema": [
+            {
+              "path": "eval_md_path",
+              "raw": "eval_md_path: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "case_count",
+              "raw": "case_count: integer, min 1",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "total_criteria",
+              "raw": "total_criteria: integer, min 4",
+              "passed": true,
+              "reason": "ok"
+            },
+            {
+              "path": "next_steps",
+              "raw": "next_steps: string, min_length 1",
+              "passed": true,
+              "reason": "ok"
+            }
+          ],
+          "criteria": [
+            {
+              "criterion": "next_steps にファイルの場所と実行方法が含まれている",
+              "score": 1.0,
+              "reason": "The 'next_steps' field clearly indicates the file location and provides the execution command.",
+              "passed": true
+            }
+          ]
+        }
+      ],
+      "cross_phase": []
+    }
+  ]
+}

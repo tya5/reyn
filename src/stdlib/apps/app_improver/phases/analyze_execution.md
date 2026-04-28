@@ -25,7 +25,7 @@ Step 2 — Read artifact files:
 
 Step 3 — Read target app DSL files to understand the design:
   Read app.md, and each phase .md and artifact .md under app_dsl_path's parent directory.
-  Use glob: e.g. "dsl/apps/{app_name}/**/*.md"
+  Use glob: e.g. "reyn/project/{app_name}/**/*.md"
 
 Step 4 — Synthesize findings:
 For each phase:

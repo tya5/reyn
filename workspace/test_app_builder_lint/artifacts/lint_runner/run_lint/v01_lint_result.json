@@ -1,0 +1,11 @@
+{
+  "type": "lint_result",
+  "data": {
+    "passed": true,
+    "error_count": 0,
+    "warning_count": 0,
+    "issues": [],
+    "dsl_root": "dsl/apps/article_generator",
+    "summary": "問題は見つかりませんでした。"
+  }
+}

@@ -35,15 +35,15 @@ def _parse_cli_input(raw: str) -> dict:
 def _resolve_app_name(name: str) -> tuple[Path, Path | None]:
     """Resolve a short app name to (app_dir, dsl_root).
 
-    Search order: dsl/project/ → dsl/local/ → stdlib.
+    Search order: reyn/project/ → reyn/local/ → stdlib.
     Returns (app_dir, dsl_root) where dsl_root is None when it cannot be inferred.
     Exits with an error message if not found.
     """
     stdlib_root = Path(__file__).parent.parent / "stdlib"
     candidates: list[tuple[Path, Path]] = [
-        (Path("dsl") / "project" / name, Path("dsl")),
-        (Path("dsl") / "local" / name,   Path("dsl")),
-        (stdlib_root / "apps" / name,     stdlib_root),
+        (Path("reyn") / "project" / name, Path("reyn")),
+        (Path("reyn") / "local" / name,   Path("reyn")),
+        (stdlib_root / "apps" / name,      stdlib_root),
     ]
     for app_dir, dsl_root in candidates:
         if (app_dir / "app.md").exists():
@@ -182,8 +182,8 @@ def cmd_apps(args: argparse.Namespace) -> None:
     stdlib_root = Path(__file__).parent.parent / "stdlib"
 
     search_roots: list[tuple[str, Path]] = [
-        ("project", Path("dsl") / "project"),
-        ("local",   Path("dsl") / "local"),
+        ("project", Path("reyn") / "project"),
+        ("local",   Path("reyn") / "local"),
         ("stdlib",  stdlib_root / "apps"),
     ]
 
@@ -817,7 +817,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="APP",
         help=(
             "App name to resolve automatically. "
-            "Search order: .reyn/dsl/apps/ → dsl/apps/ → ~/.reyn/apps/ → stdlib. "
+            "Search order: reyn/project/ → reyn/local/ → stdlib. "
             "Example: reyn run app_builder 'describe your app'"
         ),
     )
@@ -828,7 +828,7 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="DIR",
         help=(
             "Path to an app directory containing app.md "
-            "(e.g. .reyn/dsl/apps/my_app or dsl/apps/my_app). "
+            "(e.g. reyn/project/my_app or reyn/local/my_app). "
             "Use this to point to an explicit location instead of name resolution."
         ),
     )

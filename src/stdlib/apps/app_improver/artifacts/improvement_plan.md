@@ -18,7 +18,7 @@ changes:
       file:
         type: string
         # Project-relative path to the DSL file to modify.
-        # e.g. "dsl/apps/architecture_analyzer/phases/analyze_code.md"
+        # e.g. "reyn/project/architecture_analyzer/phases/analyze_code.md"
       change_type:
         type: string
         # "update_instructions" | "update_artifact_schema" | "restructure_phase" | "add_file"

@@ -1,0 +1,17 @@
+{
+  "type": "app_builder_result",
+  "data": {
+    "app_name": "feedback_analyzer",
+    "app_path": "dsl/apps/feedback_analyzer",
+    "files_written": [
+      "dsl/apps/feedback_analyzer/app.md",
+      "dsl/apps/feedback_analyzer/phases/collect_feedback.md",
+      "dsl/apps/feedback_analyzer/phases/analyze_and_propose.md",
+      "dsl/apps/feedback_analyzer/artifacts/collected_feedback.md",
+      "dsl/apps/feedback_analyzer/artifacts/improvement_proposals.md",
+      "dsl/apps/feedback_analyzer/artifacts/app_output.md"
+    ],
+    "file_count": 6,
+    "summary": "ユーザーからのフィードバックを収集・分析し、具体的な改善提案を生成するアプリ。"
+  }
+}

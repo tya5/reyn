@@ -1,0 +1,94 @@
+{
+  "type": "app_plan",
+  "data": {
+    "app_name": "review_app",
+    "app_path": "dsl/apps/review_app",
+    "entry_phase": "submit_document",
+    "finish_criteria": [
+      "ドキュメントが承認された場合",
+      "ドキュメントが最終的に差し戻された場合"
+    ],
+    "phases": [
+      {
+        "name": "submit_document",
+        "role": "user",
+        "input_artifact": "user_message",
+        "input_description": "ユーザーからのドキュメント提出リクエスト。",
+        "instructions": "ユーザーからのドキュメント提出を受け付け、レビュー対象として記録します。提出されたドキュメントは `submitted_document` アーティファクトに保存されます。",
+        "can_finish": false
+      },
+      {
+        "name": "review_document",
+        "role": "reviewer",
+        "input_artifact": "submitted_document",
+        "input_description": "提出されたドキュメント。",
+        "instructions": "提出されたドキュメントをレビューします。承認する場合は `approved` を `true` に設定し、差し戻しの場合は `approved` を `false` に設定して `feedback` に理由を記述します。レビュー結果は `review_result` アーティファクトに保存されます。",
+        "can_finish": false
+      },
+      {
+        "name": "deliver_result",
+        "role": "deliverer",
+        "input_artifact": "review_result",
+        "input_description": "レビュー結果。",
+        "instructions": "レビュー結果を最終的な成果物として返します。承認されたか、差し戻されたか、および差し戻し理由を含みます。",
+        "can_finish": true
+      }
+    ],
+    "transitions": [
+      {
+        "from": "submit_document",
+        "to": [
+          "review_document"
+        ]
+      },
+      {
+        "from": "review_document",
+        "to": [
+          "deliver_result"
+        ]
+      }
+    ],
+    "artifacts": [
+      {
+        "name": "submitted_document",
+        "fields": [
+          {
+            "name": "content"
+          },
+          {
+            "name": "submitter_id"
+          },
+          {
+            "name": "timestamp"
+          }
+        ]
+      },
+      {
+        "name": "review_result",
+        "fields": [
+          {
+            "name": "approved"
+          },
+          {
+            "name": "feedback"
+          },
+          {
+            "name": "document_id"
+          }
+        ]
+      }
+    ],
+    "final_output": {
+      "name": "app_completion_report",
+      "description": "アプリのビルド完了レポート。",
+      "fields": [
+        {
+          "name": "status"
+        },
+        {
+          "name": "message"
+        }
+      ]
+    }
+  }
+}

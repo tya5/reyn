@@ -92,10 +92,10 @@ class ControlIRExecutor:
                 kind="lint",
                 description=(
                     "Run the DSL linter against a directory and return issues. "
-                    "dsl_root: project-relative path to the DSL root directory (default: 'dsl/'). "
+                    "dsl_root: project-relative path to the DSL root directory (default: 'reyn/'). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
-                example={"kind": "lint", "dsl_root": "dsl/"},
+                example={"kind": "lint", "dsl_root": "reyn/"},
             ),
             ControlIROpSpec(
                 kind="eval",
