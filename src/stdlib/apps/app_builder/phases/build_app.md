@@ -102,13 +102,7 @@ Checklist before finishing:
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
-Write all files using one op per file. After writing, run the linter using the app_path from input data:
-
-```json
-{"kind": "lint", "app_path": "<data.app_path>"}
-```
-
-Example: if data.app_path is "reyn/local/article_generator", emit `{"kind": "lint", "app_path": "reyn/local/article_generator"}`.
+Write all files using one op per file. After writing, run the lint op against data.app_path to verify the generated files.
 
 If lint returns `passed: false`:
 - Examine the `issues` list carefully
