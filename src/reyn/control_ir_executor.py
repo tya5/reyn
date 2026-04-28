@@ -92,11 +92,12 @@ class ControlIRExecutor:
             ControlIROpSpec(
                 kind="lint",
                 description=(
-                    "Run the DSL linter against a directory and return issues. "
-                    "dsl_root: project-relative path to the DSL root directory (default: 'reyn/'). "
+                    "Run the DSL linter against an app and return issues. "
+                    "app: app name to lint — resolved the same way as `reyn run <app>` "
+                    "(searches reyn/project/, reyn/local/, stdlib in order). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
-                example={"kind": "lint", "dsl_root": "reyn/"},
+                example={"kind": "lint", "app": "my_app"},
             ),
             ControlIROpSpec(
                 kind="eval",
@@ -241,20 +242,20 @@ class ControlIRExecutor:
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
         from .compiler.linter import lint_dsl
-        resolved = self._resolve_dsl_root(Path(op.dsl_root))
-        issues = lint_dsl(resolved)
+        app_dir = self._resolve_app_name_for_lint(op.app)
+        issues = lint_dsl(app_dir)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
         self.events.emit(
             "lint_completed",
-            dsl_root=op.dsl_root,
+            app=op.app,
             error_count=error_count,
             warning_count=warning_count,
         )
         return {
             "kind": "lint",
             "status": "ok",
-            "dsl_root": op.dsl_root,
+            "app": op.app,
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
@@ -262,24 +263,19 @@ class ControlIRExecutor:
         }
 
     @staticmethod
-    def _resolve_dsl_root(path: "Path") -> "Path":
-        """Walk up from path until finding a directory with an 'apps' subdirectory.
-
-        Handles the case where the LLM provides an app-level path like
-        'dsl/apps/my_app' instead of the dsl root 'dsl/'.
-        """
-        from pathlib import Path
-        p = path if path.is_dir() else path.parent
-        visited: set[Path] = set()
-        while p not in visited:
-            if (p / "apps").is_dir():
-                return p
-            visited.add(p)
-            parent = p.parent
-            if parent == p:
-                break
-            p = parent
-        return path  # fall back to original if no apps/ found
+    def _resolve_app_name_for_lint(name: str) -> "Path":
+        """Resolve app name to its app directory, same search order as `reyn run`."""
+        stdlib_root = Path(__file__).parent.parent / "stdlib"
+        candidates = [
+            Path("reyn") / "project" / name,
+            Path("reyn") / "local" / name,
+            stdlib_root / "apps" / name,
+        ]
+        for app_dir in candidates:
+            if (app_dir / "app.md").exists():
+                return app_dir
+        checked = "\n  ".join(str(d / "app.md") for d in candidates)
+        raise FileNotFoundError(f"App '{name}' not found. Looked in:\n  {checked}")
 
     def _execute_eval(self, op: EvalIROp) -> dict[str, Any]:
         from datetime import datetime, timezone

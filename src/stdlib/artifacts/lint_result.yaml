@@ -19,10 +19,10 @@ schema:
       items:
         type: string
       description: Human-readable list of all issues found, each prefixed with [ERROR] or [WARNING].
-    dsl_root:
+    app:
       type: string
-      description: The DSL root directory that was linted, e.g. "reyn/project/my_app".
+      description: The app name that was linted.
     summary:
       type: string
       description: One-paragraph prose summary of the lint outcome.
-  required: [passed, error_count, warning_count, issues, dsl_root, summary]
+  required: [passed, error_count, warning_count, issues, app, summary]

@@ -1,12 +1,9 @@
 name: lint_request
-description: Structured request to lint a DSL directory, with an optional app name filter.
+description: Request to lint a specific app by name.
 schema:
   type: object
   properties:
-    dsl_root:
+    app:
       type: string
-      description: Path to the DSL directory to lint, e.g. "reyn/project/my_app" or "reyn/".
-    app_name:
-      type: string
-      description: Optional. If set, lint only this app's subdirectory within dsl_root.
-  required: [dsl_root]
+      description: App name to lint — resolved the same way as `reyn run <app>` (searches reyn/project/, reyn/local/, stdlib).
+  required: [app]

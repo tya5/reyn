@@ -99,7 +99,7 @@ class ShellIROp(BaseModel):
 
 class LintIROp(BaseModel):
     kind: Literal["lint"]
-    dsl_root: str = "reyn/"   # project-relative path to dsl root directory
+    app: str                   # app name to lint (same resolution as `reyn run <app>`)
 
 
 class EvalIROp(BaseModel):
