@@ -9,10 +9,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .parser import _split_frontmatter, _parse_fields, parse_artifact
-from .expander import _TYPE_MAP
+import jsonschema
 
-PHASE_FRONTMATTER_ORDER = ["type", "name", "input", "input_description", "role", "can_finish"]
+from .parser import _split_frontmatter, parse_artifact
+
+PHASE_FRONTMATTER_ORDER = ["type", "name", "input", "role", "can_finish"]
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -33,38 +34,42 @@ def _is_snake(name: str) -> bool:
 
 # ── Artifact ──────────────────────────────────────────────────────────────────
 
-def lint_artifact(path: Path, known_types: set[str]) -> list[LintIssue]:
+def lint_artifact(path: Path, known_artifact_names: set[str]) -> list[LintIssue]:
     issues: list[LintIssue] = []
-    text = path.read_text(encoding="utf-8")
-    fm, body = _split_frontmatter(text)
+    import yaml
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        issues.append(LintIssue("error", path, f"Not valid YAML: {exc}"))
+        return issues
 
-    name = fm.get("name", "")
+    if not isinstance(data, dict):
+        issues.append(LintIssue("error", path, "Artifact file must be a YAML object"))
+        return issues
+
+    name = data.get("name", "")
     if not name:
-        issues.append(LintIssue("error", path, "Missing 'name' in frontmatter"))
+        issues.append(LintIssue("error", path, "Missing 'name' key"))
     elif not _is_snake(name):
         issues.append(LintIssue("warning", path, f"Name '{name}' should be snake_case"))
 
-    fields = _parse_fields(body)
-    passed_optional = False
-    for f in fields:
-        if not f.optional:
-            if passed_optional:
-                issues.append(LintIssue(
-                    "warning", path,
-                    f"Required field '{f.name}' appears after an optional field — "
-                    "required fields should come first",
-                ))
-        else:
-            passed_optional = True
+    schema = data.get("schema")
+    if not schema:
+        issues.append(LintIssue("error", path, "Missing 'schema' key — must be a JSON Schema object"))
+        return issues
 
-        if not _is_snake(f.name):
-            issues.append(LintIssue("warning", path, f"Field name '{f.name}' should be snake_case"))
+    if not isinstance(schema, dict):
+        issues.append(LintIssue("error", path, "'schema' must be a YAML/JSON object"))
+        return issues
 
-        if f.schema is None and f.type_str not in known_types:
-            issues.append(LintIssue(
-                "error", path,
-                f"Field '{f.name}' has unknown type '{f.type_str}'"
-            ))
+    try:
+        jsonschema.Draft7Validator.check_schema(schema)
+    except jsonschema.SchemaError as exc:
+        issues.append(LintIssue("error", path, f"Invalid JSON Schema: {exc.message}"))
+        return issues
+
+    if schema.get("type") != "object":
+        issues.append(LintIssue("warning", path, "Artifact schema should have 'type: object' at top level"))
 
     return issues
 
@@ -106,7 +111,7 @@ def lint_phase(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     inputs_raw = str(fm.get("input") or "")
     inputs = [i.strip() for i in inputs_raw.split("|") if i.strip()]
     for inp in inputs:
-        if inp not in known_artifacts and inp not in _TYPE_MAP:
+        if inp not in known_artifacts:
             issues.append(LintIssue("error", path, f"Input artifact '{inp}' not found"))
 
     if not body.strip():
@@ -128,7 +133,6 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     app_dir = path.parent
     phase_files = {p.stem for p in (app_dir / "phases").glob("*.md")} if (app_dir / "phases").exists() else set()
 
-    # Check each graph node that is a regular phase (not an @app_node)
     for src, dst in app_def.edges:
         for node in (src, dst):
             if node.startswith("@"):
@@ -140,7 +144,6 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
                     "Use can_finish: true on the delivering phase instead of a 'finish' node.",
                 ))
 
-    # Check final_output artifact exists
     if app_def.final_output and app_def.final_output not in known_artifacts:
         issues.append(LintIssue(
             "error", path,
@@ -156,7 +159,6 @@ def lint_dsl(dsl_root: Path) -> list[LintIssue]:
     """Lint all artifacts and phases under dsl_root."""
     issues: list[LintIssue] = []
 
-    # Collect artifact search directories: stdlib first, then shared, then per-app
     from .loader import _stdlib_dir
     artifact_dirs: list[Path] = [_stdlib_dir("artifacts"), dsl_root / "shared" / "artifacts"]
     apps_root = dsl_root / "apps"
@@ -172,7 +174,7 @@ def lint_dsl(dsl_root: Path) -> list[LintIssue]:
     artifact_paths: list[Path] = []
     for d in artifact_dirs:
         if d.exists():
-            for p in sorted(d.glob("*.md")):
+            for p in sorted(d.glob("*.yaml")):
                 try:
                     art = parse_artifact(p)
                     artifact_names.add(art.name)
@@ -180,12 +182,10 @@ def lint_dsl(dsl_root: Path) -> list[LintIssue]:
                 except Exception as exc:
                     issues.append(LintIssue("error", p, f"Parse error: {exc}"))
 
-    known_types = set(_TYPE_MAP.keys()) | artifact_names
-
     # Lint artifacts
     for p in artifact_paths:
         try:
-            issues.extend(lint_artifact(p, known_types))
+            issues.extend(lint_artifact(p, artifact_names))
         except Exception as exc:
             issues.append(LintIssue("error", p, f"Lint error: {exc}"))
 

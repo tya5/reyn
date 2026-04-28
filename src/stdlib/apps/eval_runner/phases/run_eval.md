@@ -2,10 +2,6 @@
 type: phase
 name: run_eval
 input: eval_request | user_message
-input_description: |
-  Either a structured eval_request (spec_path: workspace-relative path to eval.md,
-  model: model class name or LiteLLM string, app_name: optional hint) or a user_message describing what to evaluate.
-  If spec_path or model is missing, use ask_user.
 role: validator
 can_finish: true
 ---

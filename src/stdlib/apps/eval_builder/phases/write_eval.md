@@ -2,10 +2,6 @@
 type: phase
 name: write_eval
 input: app_analysis
-input_description: |
-  Structured analysis of the target app: app_dsl_path, dsl_root, app_name,
-  judge_model, phase_order, test_cases, phase_eval_designs (each with schema[] and quality[]),
-  cross_phase_assertions, final_schema, final_quality.
 role: spec_writer
 ---
 

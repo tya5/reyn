@@ -1,0 +1,21 @@
+name: run_params
+description: "Parameters for running a target app during an improvement session: app path, DSL root, test input, model, and improvement focus."
+schema:
+  type: object
+  properties:
+    app_dsl_path:
+      type: string
+      description: Path to the target app's app.md, e.g. "reyn/project/my_app/app.md".
+    dsl_root:
+      type: string
+      description: DSL root for the target app, e.g. "reyn/project/my_app" or "reyn/".
+    test_input:
+      type: string
+      description: Natural language input to pass to the target app for the test run.
+    model:
+      type: string
+      description: LiteLLM model name or class (standard/light/strong) to use for the test run.
+    improvement_focus:
+      type: string
+      description: Area to focus improvements on, e.g. "instruction clarity" or "artifact schema completeness".
+  required: [app_dsl_path, dsl_root, test_input, model, improvement_focus]

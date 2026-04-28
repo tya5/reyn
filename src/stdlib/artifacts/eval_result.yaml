@@ -1,0 +1,31 @@
+name: eval_result
+description: Outcome of running an eval spec against a target app, including pass/fail verdict and score.
+schema:
+  type: object
+  properties:
+    passed:
+      type: boolean
+      description: True when overall_score >= 0.6 and all required criteria pass.
+    overall_score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: Fraction of required criteria that passed across all test cases and phases.
+    passed_criteria:
+      type: integer
+      minimum: 0
+      description: Number of required criteria that passed.
+    total_criteria:
+      type: integer
+      minimum: 0
+      description: Total number of required criteria evaluated.
+    weakest_phase:
+      type: string
+      description: Name of the phase with the lowest pass rate.
+    spec_path:
+      type: string
+      description: Path to the eval spec that was run.
+    summary:
+      type: string
+      description: Prose summary of results highlighting key failures or successes.
+  required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, spec_path, summary]

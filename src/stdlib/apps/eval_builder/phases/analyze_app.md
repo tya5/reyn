@@ -2,11 +2,6 @@
 type: phase
 name: analyze_app
 input: user_message
-input_description: |
-  Natural language request specifying the target app to build an eval spec for.
-  Must include the app DSL path. Example:
-  "Create an eval.md for reyn/project/writing_review_app/app.md"
-  "Create an eval spec for reyn/project/architecture_analyzer/app.md — focus on article quality"
 role: eval_designer
 max_act_turns: 20
 ---

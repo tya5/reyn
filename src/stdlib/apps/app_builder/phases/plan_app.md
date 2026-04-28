@@ -2,7 +2,6 @@
 type: phase
 name: plan_app
 input: user_message | app_request
-input_description: Either a natural language request (user_message.data.text) or a structured app_request (data.app_name, data.description, data.goal). If critical fields are missing, use ask_user to collect them before producing the plan.
 role: app_architect
 ---
 
@@ -67,7 +66,6 @@ phases: array of phase definitions, each with:
       standard — main generation, analysis, most phases (default when uncertain)
       strong   — complex multi-criteria reasoning, nuanced review, high-stakes decisions
   - input_artifact: name of the artifact this phase receives
-  - input_description: one sentence describing the input artifact's fields and purpose
   - instructions: 2–4 sentence domain-logic instructions for the TARGET app's task only.
       For review phases: specify concrete quality criteria the reviewer must apply and
       what verdict fields to populate (e.g. approved, score, feedback).
@@ -86,12 +84,24 @@ RIGHT: {from: "review_translation", to: ["translate_text"]}  ← review_translat
 
 artifacts: array of artifact definitions, each with:
   - name: snake_case artifact name (matches a phase's input_artifact)
-  - fields: array of field objects — EACH field object MUST have BOTH "name" AND "type" keys:
-      [{"name": "title", "type": "string"}, {"name": "score", "type": "integer"}]
-    Valid types: string | integer | number | boolean | string[] | integer[] | number[] | array | object
-    DO NOT use the old {field_name: type} shorthand — always use {"name": "...", "type": "..."}.
-    Review artifacts should include verdict fields such as:
-      {"name": "approved", "type": "boolean"}, {"name": "feedback", "type": "string"}
+  - description: one sentence describing what this artifact contains and its purpose
+  - schema: a JSON Schema object describing the artifact's data fields.
+    Always use `type: object` at the top level with `properties` and `required`.
+    Example for a review artifact:
+    ```
+    {
+      "type": "object",
+      "properties": {
+        "approved": {"type": "boolean"},
+        "feedback": {"type": "string"},
+        "score": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "required": ["approved", "feedback", "score"]
+    }
+    ```
+    Use `"type": "array", "items": {"type": "string"}` for string arrays.
+    For arrays of objects, use `"items": {"type": "object", "properties": {...}, "required": [...]}`.
+    Add `"enum": [...]` when a field has a fixed set of valid values.
 
 CRITICAL — artifact coverage rule:
 Every artifact referenced as input_artifact in ANY phase MUST appear in this artifacts array,
@@ -103,7 +113,7 @@ If the entry phase accepts natural language input, its input_artifact MUST be `u
 final_output:
   - name: snake_case name for the final output artifact
   - description: one sentence describing it
-  - fields: SAME format as artifact fields — array of {"name": "...", "type": "..."} objects
+  - schema: JSON Schema object (same format as artifact schemas above)
 
 ---
 

@@ -1,0 +1,95 @@
+name: app_plan
+description: Structured plan produced by plan_app, consumed by build_app to generate DSL files.
+schema:
+  type: object
+  description: Structured plan produced by plan_app, consumed by build_app to generate DSL files.
+  properties:
+    app_name:
+      type: string
+      description: snake_case name for the new app.
+    app_description:
+      type: string
+      description: One sentence describing what the app does for its users.
+    app_path:
+      type: string
+      description: Workspace-relative directory where DSL files will be written, e.g. "reyn/local/my_app".
+    entry_phase:
+      type: string
+      description: Name of the first phase to execute when the app is run.
+    finish_criteria:
+      type: array
+      items:
+        type: string
+      description: 2-4 conditions that must be true for the workflow to be considered complete.
+    phases:
+      type: array
+      description: All phases in the app, including entry and can_finish phases.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: snake_case phase name.
+          role:
+            type: string
+            description: LLM role persona, e.g. "writer", "reviewer", "analyst".
+          model_class:
+            type: string
+            enum: [light, standard, strong]
+            description: "light: simple/deterministic tasks; standard: most phases; strong: complex reasoning."
+          input_artifact:
+            type: string
+            description: Name of the artifact this phase receives as input.
+          instructions:
+            type: string
+            description: 2-4 sentence domain-logic instructions for this phase's task.
+          can_finish:
+            type: boolean
+            description: True if this phase may end the workflow by choosing decision=finish.
+        required: [name, role, input_artifact, instructions]
+    transitions:
+      type: array
+      description: Graph edges defining which phases can follow each phase.
+      items:
+        type: object
+        properties:
+          from:
+            type: string
+            description: Source phase name.
+          to:
+            type: array
+            items:
+              type: string
+            description: Target phase names. Must contain only phase names, never artifact names.
+        required: [from, to]
+    artifacts:
+      type: array
+      description: All artifact definitions needed by the app's phases.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: snake_case artifact name matching a phase's input_artifact.
+          description:
+            type: string
+            description: One sentence describing what this artifact contains and its purpose.
+          schema:
+            type: object
+            description: JSON Schema object for the artifact's data fields. Must have type=object with properties and required.
+        required: [name, description, schema]
+    final_output:
+      type: object
+      description: The artifact delivered to the user when the workflow finishes.
+      properties:
+        name:
+          type: string
+          description: snake_case name for the final output artifact.
+        description:
+          type: string
+          description: One sentence describing what the final output contains.
+        schema:
+          type: object
+          description: JSON Schema object for the final output's data fields.
+      required: [name, description, schema]
+  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output]

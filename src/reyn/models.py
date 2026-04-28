@@ -39,6 +39,7 @@ class AppGraph(BaseModel):
 class App(BaseModel):
     name: str
     description: str = ""
+    doc: str = ""
     entry_phase: str
     phases: dict[str, Phase]
     graph: AppGraph

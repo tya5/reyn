@@ -1,0 +1,15 @@
+name: eval_request
+description: Structured request to run an eval spec against a target app, with spec path and model selection.
+schema:
+  type: object
+  properties:
+    spec_path:
+      type: string
+      description: Path to the eval spec file, e.g. "eval_specs/my_app/eval.md".
+    model:
+      type: string
+      description: LiteLLM model name or class (standard/light/strong) to run the target app with.
+    app_name:
+      type: string
+      description: Optional override for the app name used in result reporting.
+  required: [spec_path, model]

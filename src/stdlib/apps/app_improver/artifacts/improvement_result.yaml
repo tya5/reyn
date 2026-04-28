@@ -1,0 +1,20 @@
+name: improvement_result
+description: Summary of improvements applied to a target app's DSL files, with paths of modified files and next steps.
+schema:
+  type: object
+  properties:
+    app_dsl_path:
+      type: string
+      description: Path to the target app that was improved.
+    files_modified:
+      type: array
+      items:
+        type: string
+      description: Project-relative paths of all DSL files written.
+    summary:
+      type: string
+      description: Prose summary of what was changed and why.
+    next_steps:
+      type: string
+      description: Concrete suggestion for what to run or verify to confirm the improvements work.
+  required: [app_dsl_path, files_modified, summary, next_steps]

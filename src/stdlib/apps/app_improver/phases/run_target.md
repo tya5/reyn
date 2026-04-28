@@ -2,9 +2,6 @@
 type: phase
 name: run_target
 input: run_params
-input_description: |
-  Run parameters for the target app: app_dsl_path, dsl_root, test_input,
-  model, and improvement_focus.
 role: executor
 ---
 

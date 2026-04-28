@@ -2,10 +2,6 @@
 type: phase
 name: run_lint
 input: lint_request | user_message
-input_description: |
-  Either a structured lint_request (dsl_root: workspace-relative path to the DSL root directory,
-  default "reyn/"; app_name: optional hint) or a user_message describing what to lint.
-  If dsl_root is missing, use ask_user.
 role: validator
 can_finish: true
 ---

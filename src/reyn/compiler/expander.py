@@ -1,128 +1,52 @@
-import warnings
 from typing import Any
-from .ir import ArtifactDef, FieldDef, PhaseDef, AppDef
+from .ir import ArtifactDef, PhaseDef, AppDef
 from reyn.models import App, Phase, AppGraph, AppNodeSpec
 from reyn.permissions import PermissionDecl
 
 
-# Primitive DSL type → JSON Schema
-_TYPE_MAP: dict[str, dict[str, Any]] = {
-    "string":    {"type": "string"},
-    "number":    {"type": "number"},
-    "integer":   {"type": "integer"},
-    "boolean":   {"type": "boolean"},
-    "string[]":  {"type": "array", "items": {"type": "string"}},
-    "number[]":  {"type": "array", "items": {"type": "number"}},
-    "integer[]": {"type": "array", "items": {"type": "integer"}},
-    # Weak types — accepted but produce no sub-schema; use sparingly
-    "object":    {"type": "object"},
-    "array":     {"type": "array"},
-    "any":       {},
-}
-
-_WEAK_TYPES = {"object", "array", "any"}
-
-
-def _field_schema(
-    f: FieldDef,
-    artifact_defs: dict[str, ArtifactDef] | None = None,
-) -> dict[str, Any]:
-    """
-    Resolve a DSL field to a JSON Schema fragment.
-
-    Resolution order:
-      1. Inline JSON Schema (f.schema set) → pass through as-is
-      2. Primitive type alias → direct mapping via _TYPE_MAP
-      3. Artifact reference → inline-expand the artifact's data schema
-      4. Weak fallback ("object") → {"type": "object"} with warning
-    """
-    if f.schema is not None:
-        return f.schema
-
-    if f.type_str in _TYPE_MAP:
-        if f.type_str in _WEAK_TYPES:
-            warnings.warn(
-                f"Field '{f.name}' uses weak type '{f.type_str}'. "
-                "Consider referencing a concrete artifact instead.",
-                stacklevel=4,
-            )
-        return _TYPE_MAP[f.type_str]
-
-    if artifact_defs and f.type_str in artifact_defs:
-        # Inline-expand: embed the artifact's data schema directly.
-        # No {type, data} wrapper — the field is a sub-object, not a root artifact.
-        return _data_schema(artifact_defs[f.type_str], artifact_defs)
-
-    warnings.warn(
-        f"Field '{f.name}' has unknown type '{f.type_str}', falling back to object.",
-        stacklevel=4,
-    )
-    return {"type": "object"}
-
-
-def _data_schema(
-    art: ArtifactDef,
-    artifact_defs: dict[str, ArtifactDef] | None = None,
-) -> dict[str, Any]:
-    """Return the inner data-object JSON Schema (no {type,data} wrapper)."""
-    props = {f.name: _field_schema(f, artifact_defs) for f in art.fields}
-    required = [f.name for f in art.fields if not f.optional]
-    schema: dict[str, Any] = {"type": "object", "properties": props}
-    if required:
-        schema["required"] = required
-    return schema
-
-
-def artifact_to_json_schema(
-    art: ArtifactDef,
-    artifact_defs: dict[str, ArtifactDef] | None = None,
-) -> dict[str, Any]:
-    """
-    Convert an ArtifactDef to a JSON Schema.
-
-    wrapped=True  → {type: const, data: <data_schema>}   (phase input)
-    wrapped=False → flat data_schema                       (entry / final output)
-    """
-    data_schema = _data_schema(art, artifact_defs)
+def artifact_to_json_schema(art: ArtifactDef) -> dict[str, Any]:
+    """Wrap data schema with {type, data} if wrapped=True, else return as-is."""
     if not art.wrapped:
-        return data_schema
+        return art.schema
     return {
         "type": "object",
         "properties": {
             "type": {"type": "string", "const": art.name},
-            "data": data_schema,
+            "data": art.schema,
         },
         "required": ["type", "data"],
     }
 
 
-def _union_schema(
-    arts: list[ArtifactDef],
-    artifact_defs: dict[str, ArtifactDef] | None = None,
-) -> dict[str, Any]:
+def _union_schema(arts: list[ArtifactDef]) -> dict[str, Any]:
     if len(arts) == 1:
-        return artifact_to_json_schema(arts[0], artifact_defs)
-    return {"anyOf": [artifact_to_json_schema(a, artifact_defs) for a in arts]}
+        return artifact_to_json_schema(arts[0])
+    return {"anyOf": [artifact_to_json_schema(a) for a in arts]}
 
 
 def expand_phase(
     phase_def: PhaseDef,
     input_arts: list[ArtifactDef],
-    artifact_defs: dict[str, ArtifactDef] | None = None,
 ) -> Phase:
-    input_schema = _union_schema(input_arts, artifact_defs) if input_arts else {"type": "object"}
+    input_schema = _union_schema(input_arts) if input_arts else {"type": "object"}
     if len(input_arts) == 1:
         input_schema_name = input_arts[0].name
+        input_description = input_arts[0].description
     elif input_arts:
         input_schema_name = " | ".join(a.name for a in input_arts)
+        input_description = " | ".join(
+            f"{a.name}: {a.description}" if a.description else a.name
+            for a in input_arts
+        )
     else:
         input_schema_name = "artifact"
+        input_description = ""
     return Phase(
         name=phase_def.name,
         role=phase_def.role,
         input_schema=input_schema,
         input_schema_name=input_schema_name,
-        input_description=phase_def.input_description,
+        input_description=input_description,
         instructions=phase_def.instructions,
         max_act_turns=phase_def.max_act_turns,
         model_class=phase_def.model_class,
@@ -138,7 +62,6 @@ def expand_app(
     app_node_specs: dict[str, AppNodeSpec] | None = None,
 ) -> App:
     transitions: dict[str, list[str]] = {name: [] for name in phase_objects}
-    # also seed transitions for app nodes so they can have outgoing edges
     for node_id in (app_node_specs or {}):
         transitions.setdefault(node_id, [])
     for src, dst in app_def.edges:
@@ -154,9 +77,7 @@ def expand_app(
 
     final_art = artifact_defs.get(app_def.final_output)
     if final_art:
-        # Use wrapped schema — final output follows the same {type, data} convention
-        # as all other artifacts so LLM output is uniform.
-        final_output_schema = artifact_to_json_schema(final_art, artifact_defs)
+        final_output_schema = artifact_to_json_schema(final_art)
         final_output_name = final_art.name
     else:
         final_output_schema = {"type": "object"}
@@ -165,6 +86,7 @@ def expand_app(
     return App(
         name=app_def.name,
         description=app_def.description,
+        doc=app_def.doc,
         entry_phase=app_def.entry,
         phases=phase_objects,
         graph=AppGraph(

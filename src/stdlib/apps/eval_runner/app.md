@@ -10,3 +10,22 @@ finish_criteria:
   - Overall score and pass/fail counts are recorded
   - passed is true only when overall_score >= 0.6
 ---
+
+## Overview
+
+Runs an `eval.md` specification against a target app across multiple test cases
+and reports per-phase pass rates and an overall score.
+
+## Input
+
+```
+reyn run eval_runner '{"spec_path": "eval_specs/my_app/eval.md", "model": "standard"}'
+```
+
+`spec_path` is relative to the workspace root.
+`model` accepts a LiteLLM model name or a class alias (`standard`, `light`, `strong`).
+
+## Output
+
+`passed: true` when `overall_score >= 0.6`. The `weakest_phase` field identifies
+where the app most needs improvement.

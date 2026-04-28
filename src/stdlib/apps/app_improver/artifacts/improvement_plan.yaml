@@ -1,0 +1,32 @@
+name: improvement_plan
+description: Ordered list of DSL file changes to apply to a target app, with rationale for each change.
+schema:
+  type: object
+  properties:
+    app_dsl_path:
+      type: string
+      description: Path to the target app being improved.
+    summary:
+      type: string
+      description: One paragraph summarizing the overall improvement strategy and rationale.
+    changes:
+      type: array
+      description: Ordered list of DSL file changes to apply.
+      items:
+        type: object
+        properties:
+          file:
+            type: string
+            description: Project-relative path to the DSL file to modify, e.g. "reyn/project/my_app/phases/review.md".
+          change_type:
+            type: string
+            enum: [update_instructions, update_artifact_schema, restructure_phase, add_file]
+            description: Kind of change being made.
+          rationale:
+            type: string
+            description: Why this change improves the app, referencing specific evidence from the execution report.
+          new_content:
+            type: string
+            description: Complete new file content to write. Must include frontmatter delimiters for DSL files.
+        required: [file, change_type, rationale, new_content]
+  required: [app_dsl_path, summary, changes]

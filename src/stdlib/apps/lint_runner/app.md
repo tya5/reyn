@@ -10,3 +10,19 @@ finish_criteria:
   - Issues have been classified as errors or warnings
   - passed is true only when error_count is 0
 ---
+
+## Overview
+
+Statically analyzes a DSL directory for structural errors and style warnings
+without executing any LLM calls.
+
+## Input
+
+```
+reyn run lint_runner '{"dsl_root": "reyn/project/my_app"}'
+```
+
+## Output
+
+`passed: true` means no errors were found (warnings are informational only).
+The `issues` list contains every problem with `[ERROR]` or `[WARNING]` prefix.

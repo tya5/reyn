@@ -1,0 +1,77 @@
+name: app_analysis
+description: Structured analysis of a target app's phases, test cases, and evaluation criteria — consumed by write_eval to generate an eval spec.
+schema:
+  type: object
+  properties:
+    app_dsl_path:
+      type: string
+      description: Path to the target app's app.md as given by the user.
+    dsl_root:
+      type: string
+      description: DSL root inferred from app_dsl_path, e.g. "reyn/project/my_app".
+    app_name:
+      type: string
+      description: The app's name from its app.md frontmatter.
+    judge_model:
+      type: string
+      description: Model class or name to use as LLM judge. Copy verbatim from the ContextFrame model field — do NOT invent a value.
+    phase_order:
+      type: array
+      items:
+        type: string
+      description: Phase names in execution order, from entry to final can_finish phase.
+    test_cases:
+      type: array
+      description: Representative test cases that cover different input scenarios.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: snake_case identifier for the test case.
+          input:
+            type: string
+            description: Realistic user input text to pass to the app.
+          rationale:
+            type: string
+            description: Why this case is a good test — what scenario or edge case it covers.
+        required: [name, input, rationale]
+    phase_eval_designs:
+      type: array
+      description: Evaluation criteria per phase.
+      items:
+        type: object
+        properties:
+          phase:
+            type: string
+            description: Phase name.
+          artifact_type:
+            type: string
+            description: The artifact type this phase produces.
+          schema:
+            type: array
+            items:
+              type: string
+            description: "Deterministic field assertions evaluated without LLM. Format: \"field_path: type[, constraint]\". E.g. \"score: number, range 0.0-1.0\"."
+          quality:
+            type: array
+            items:
+              type: string
+            description: LLM-judged criteria for semantic content checks that cannot be expressed as type/value assertions.
+        required: [phase, artifact_type, schema, quality]
+    cross_phase_assertions:
+      type: array
+      items:
+        type: string
+      description: "Equality checks between fields from two phases. Format: \"phase_a.field == phase_b.field\"."
+    final_schema:
+      type: array
+      items:
+        type: string
+      description: Schema assertions for the app's final_output artifact, same format as phase schema.
+    final_quality:
+      type: array
+      items:
+        type: string
+      description: Quality criteria for the app's final_output artifact.
+  required: [app_dsl_path, dsl_root, app_name, judge_model, phase_order, test_cases, phase_eval_designs, cross_phase_assertions, final_schema, final_quality]

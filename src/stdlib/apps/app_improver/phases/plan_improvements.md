@@ -2,9 +2,6 @@
 type: phase
 name: plan_improvements
 input: execution_report
-input_description: |
-  Execution analysis report: phase_reports, artifact_reports, issues, strengths,
-  quality_score, improvement_areas, and app_dsl_path.
 role: app_architect
 ---
 

@@ -11,7 +11,27 @@ finish_criteria:
   - eval.md has been written to the workspace
   - The eval spec has been executed against the target app
   - eval_result captures the score and pass/fail outcome
+graph:
+  analyze_app: [write_eval]
+  write_eval: ["@eval_runner[shared]"]
 ---
 
-analyze_app -> write_eval
-write_eval -> @eval_runner[shared]
+## Overview
+
+Analyzes a target app's DSL, generates a comprehensive `eval.md` spec with
+test cases and quality criteria, then immediately runs it.
+
+## Input
+
+```
+reyn run eval_builder '{"app_dsl_path": "reyn/project/my_app/app.md", "model": "standard"}'
+```
+
+## Output
+
+Evaluation results from running the generated spec. The eval file is written to
+`eval_specs/<app_name>/eval.md` and can be re-run manually:
+
+```
+reyn eval --spec eval_specs/my_app/eval.md --model standard
+```

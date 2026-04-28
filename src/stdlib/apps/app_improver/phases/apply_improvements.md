@@ -2,9 +2,6 @@
 type: phase
 name: apply_improvements
 input: improvement_plan
-input_description: |
-  Improvement plan: app_dsl_path, summary, and changes array. Each change has
-  file (project-relative path), change_type, rationale, and new_content.
 role: implementer
 can_finish: true
 ---

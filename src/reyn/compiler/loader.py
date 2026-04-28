@@ -1,58 +1,24 @@
 from pathlib import Path
 from .parser import parse_artifact, parse_phase, parse_app
-from .expander import expand_phase, expand_app, _TYPE_MAP
+from .expander import expand_phase, expand_app
 from .ir import ArtifactDef, PhaseDef
 from reyn.models import App
 
 
-def _validate_references(artifact_defs: dict[str, ArtifactDef]) -> None:
-    known_primitives = set(_TYPE_MAP.keys())
-    errors: list[str] = []
-    for art in artifact_defs.values():
-        for f in art.fields:
-            if f.type_str not in known_primitives and f.type_str not in artifact_defs:
-                errors.append(
-                    f"  artifact '{art.name}' → field '{f.name}': unknown type '{f.type_str}'"
-                )
-    if errors:
-        raise ValueError("Unknown artifact references:\n" + "\n".join(errors))
-
-
-def _check_circular(artifact_defs: dict[str, ArtifactDef]) -> None:
-    def dfs(name: str, visited: set[str], stack: list[str]) -> None:
-        if name not in artifact_defs:
-            return
-        stack.append(name)
-        for f in artifact_defs[name].fields:
-            if f.type_str in artifact_defs:
-                if f.type_str in stack:
-                    cycle = " → ".join(stack + [f.type_str])
-                    raise ValueError(f"Circular artifact reference: {cycle}")
-                if f.type_str not in visited:
-                    dfs(f.type_str, visited, stack)
-        stack.pop()
-        visited.add(name)
-
-    visited: set[str] = set()
-    for name in artifact_defs:
-        if name not in visited:
-            dfs(name, visited, [])
-
-
-def _not_found_error(name: str, search_dirs: list[Path], kind: str) -> ValueError:
+def _not_found_error(name: str, search_dirs: list[Path], kind: str, ext: str = ".md") -> ValueError:
     """Produce a clear error that lists every location that was searched."""
     lines = [f"{kind} '{name}' not found.", "Searched:"]
     for d in search_dirs:
-        lines.append(f"  - {d / (name + '.md')}")
+        lines.append(f"  - {d / (name + ext)}")
     return ValueError("\n".join(lines))
 
 
-def _load_dir(directory: Path, parser, registry: dict) -> None:
-    """Parse every .md file in directory and add to registry (overwrites on conflict)."""
+def _load_dir(directory: Path, parser, registry: dict, glob: str = "*.md") -> None:
+    """Parse every matching file in directory and add to registry (overwrites on conflict)."""
     if not directory.exists():
         return
-    for md in sorted(directory.glob("*.md")):
-        item = parser(md)
+    for f in sorted(directory.glob(glob)):
+        item = parser(f)
         registry[item.name] = item
 
 
@@ -118,11 +84,8 @@ def load_dsl_app(
     # Load artifacts: shared dirs first (earlier = lower priority), then app local
     artifact_defs: dict[str, ArtifactDef] = {}
     for d in reversed(shared_artifact_dirs):   # project fallback < inferred shared < local
-        _load_dir(d, parse_artifact, artifact_defs)
-    _load_dir(local_artifacts_dir, parse_artifact, artifact_defs)
-
-    _validate_references(artifact_defs)
-    _check_circular(artifact_defs)
+        _load_dir(d, parse_artifact, artifact_defs, glob="*.yaml")
+    _load_dir(local_artifacts_dir, parse_artifact, artifact_defs, glob="*.yaml")
 
     # Load phases: shared dirs first, then app local
     phase_defs: dict[str, PhaseDef] = {}
@@ -169,11 +132,11 @@ def load_dsl_app(
         pd = phase_defs[name]
         missing = [n for n in pd.inputs if n not in artifact_defs]
         if missing:
-            raise _not_found_error(missing[0], artifact_search_dirs, "Artifact")
+            raise _not_found_error(missing[0], artifact_search_dirs, "Artifact", ext=".yaml")
         input_arts = [artifact_defs[n] for n in pd.inputs]
-        phase_objects[name] = expand_phase(pd, input_arts, artifact_defs)
+        phase_objects[name] = expand_phase(pd, input_arts)
 
     if app_def.final_output and app_def.final_output not in artifact_defs:
-        raise _not_found_error(app_def.final_output, artifact_search_dirs, "Artifact")
+        raise _not_found_error(app_def.final_output, artifact_search_dirs, "Artifact", ext=".yaml")
 
     return expand_app(app_def, phase_defs, artifact_defs, phase_objects, app_node_specs)

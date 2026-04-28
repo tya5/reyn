@@ -2,8 +2,6 @@
 type: phase
 name: analyze_execution
 input: execution_summary
-input_description: |
-  Execution summary: app_dsl_path, success, final_output, events_glob, artifacts_glob.
 role: quality_analyst
 ---
 

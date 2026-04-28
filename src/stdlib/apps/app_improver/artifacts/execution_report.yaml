@@ -1,0 +1,81 @@
+name: execution_report
+description: "Deep quality analysis of a target app's execution: per-phase and per-artifact reports, issues, strengths, and a quality score."
+schema:
+  type: object
+  properties:
+    app_dsl_path:
+      type: string
+      description: Path to the target app that was analyzed.
+    total_phase_steps:
+      type: integer
+      minimum: 0
+      description: Total number of LLM calls across all phases in the run.
+    retry_count:
+      type: integer
+      minimum: 0
+      description: Number of phase retries due to validation failures.
+    aborted:
+      type: boolean
+      description: True if the workflow ended with an abort decision.
+    phase_reports:
+      type: array
+      description: Per-phase quality analysis.
+      items:
+        type: object
+        properties:
+          phase:
+            type: string
+            description: Phase name.
+          visit_count:
+            type: integer
+            description: Number of times this phase was visited.
+          issues:
+            type: array
+            items:
+              type: string
+            description: Concrete problems observed in this phase's output or instructions.
+          assessment:
+            type: string
+            enum: [good, acceptable, needs_improvement]
+            description: Overall quality rating for this phase.
+        required: [phase, visit_count, issues, assessment]
+    artifact_reports:
+      type: array
+      description: Per-artifact quality analysis.
+      items:
+        type: object
+        properties:
+          path:
+            type: string
+            description: Path to the artifact JSON file.
+          artifact_type:
+            type: string
+            description: The artifact type name.
+          quality:
+            type: string
+            enum: [good, acceptable, needs_improvement]
+          notes:
+            type: string
+            description: Specific observations about the artifact's content quality.
+        required: [path, artifact_type, quality, notes]
+    issues:
+      type: array
+      items:
+        type: string
+      description: Concrete list of problems found across phases and artifacts.
+    strengths:
+      type: array
+      items:
+        type: string
+      description: What is working well in the current app design.
+    quality_score:
+      type: number
+      minimum: 0
+      maximum: 10
+      description: Overall quality score from 0 (unusable) to 10 (excellent).
+    improvement_areas:
+      type: array
+      items:
+        type: string
+      description: High-level areas that most need improvement, in priority order.
+  required: [app_dsl_path, total_phase_steps, retry_count, aborted, phase_reports, artifact_reports, issues, strengths, quality_score, improvement_areas]

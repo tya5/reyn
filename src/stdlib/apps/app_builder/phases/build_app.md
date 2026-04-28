@@ -2,7 +2,6 @@
 type: phase
 name: build_app
 input: app_plan
-input_description: Structured app plan produced by plan_app. Contains app_name, app_path, entry_phase, finish_criteria, phases (array of phase definitions), transitions, artifacts, and final_output.
 role: dsl_writer
 ---
 
@@ -22,27 +21,31 @@ final_output_description: {final_output.description}
 finish_criteria:
   - {criterion1}
   - {criterion2}
+graph:
+  {phase_a}: [{phase_b}]
+  {phase_b}: [{phase_c}, {phase_d}]
 ---
 
-{phase_a} -> {phase_b}
-{phase_b} -> {phase_c}
+## 概要
+{app_descriptionの散文説明}
+
+## 入力
+{入力に期待する内容と例}
 ```
 
-Graph edges come from data.transitions. Each `{from: X, to: [Y, Z]}` entry becomes one line per target:
-```
-X -> Y
-X -> Z
+graph comes from data.transitions. Each `{from: X, to: [Y, Z]}` entry becomes:
+```yaml
+X: [Y, Z]
 ```
 Review loops look like:
-```
-generate -> review
-review -> generate
-review -> deliver
+```yaml
+graph:
+  generate: [review]
+  review: [generate, deliver]
 ```
 
 CRITICAL — no "finish" node: Do NOT add a `finish` node to the graph.
 Workflow termination is expressed by `can_finish: true` on the phase that delivers the final output.
-The phase uses `can_finish: true` in its frontmatter — there is NO separate "finish" phase or edge.
 
 CRITICAL — skip edges to final_output: If any transition target equals data.final_output.name, OMIT that edge.
 The final_output artifact is NOT a phase. Only emit edges where the target is a phase listed in data.phases.
@@ -53,7 +56,6 @@ phase file (write to {app_path}/phases/{phase_name}.md):
 type: phase
 name: {phase_name}
 input: {input_artifact}
-input_description: {input_description}
 role: {role}
 model_class: {model_class}
 can_finish: true
@@ -64,26 +66,32 @@ can_finish: true
 Omit `can_finish` line if the phase cannot finish.
 Omit `model_class` line if the phase should use the runtime default (standard).
 
-artifact file (write to {app_path}/artifacts/{artifact_name}.md):
+artifact file (write to {app_path}/artifacts/{artifact_name}.yaml):
 ```
----
-type: artifact
 name: {artifact_name}
----
-
-{field_name}: {type}
-{field_name}: {type}
+description: {artifact_description}
+schema:
+  type: object
+  properties:
+    {field_name}:
+      type: {json_schema_type}
+      description: {field_description}
+    {field_name}:
+      type: array
+      items:
+        type: string
+      description: {field_description}
+  required: [{required_field1}, {required_field2}]
 ```
-CRITICAL: Every artifact field MUST have an explicit type — never leave a type blank.
-Valid types: string | integer | number | boolean | string[] | integer[] | number[] | array | object
-Wrong: `approved:` — Right: `approved: boolean`
-If a field truly has no type specified, default to `string`.
+Always include `type: object`, `properties`, `required`, and a `description` on every field.
+Use the schema exactly as defined in data.artifacts[].schema and data.final_output.schema.
+Artifact files are plain YAML — no frontmatter delimiters.
 
 IMPORTANT: Write ALL artifact files — including the final_output artifact.
 Checklist before finishing:
 - app.md written
 - one phase file per phase in data.phases
-- one artifact file per artifact in data.artifacts (all fields have explicit types)
+- one artifact file per artifact in data.artifacts (all fields have descriptions and explicit types)
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 

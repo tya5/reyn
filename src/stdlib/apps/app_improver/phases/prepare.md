@@ -2,10 +2,6 @@
 type: phase
 name: prepare
 input: user_message
-input_description: |
-  Natural language request specifying the target app to improve. Should include:
-  the target app DSL path, a test input string, and optionally a focus area.
-  Example: "Improve reyn/project/architecture_analyzer with input 'Analyze this project' — focus on review phase quality."
 role: meta_coordinator
 ---
 

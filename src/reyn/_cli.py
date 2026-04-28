@@ -177,8 +177,8 @@ def cmd_run(args: argparse.Namespace) -> None:
 
 def cmd_apps(args: argparse.Namespace) -> None:
     import yaml
+    from .compiler.parser import _split_frontmatter
 
-    config = _load_config()
     stdlib_root = Path(__file__).parent.parent / "stdlib"
 
     search_roots: list[tuple[str, Path]] = [
@@ -187,18 +187,38 @@ def cmd_apps(args: argparse.Namespace) -> None:
         ("stdlib",  stdlib_root / "apps"),
     ]
 
-    def _read_description(app_md: Path) -> str:
+    def _read_app_md(app_md: Path) -> tuple[dict, str]:
         try:
-            text = app_md.read_text(encoding="utf-8")
-            if text.startswith("---"):
-                end = text.index("---", 3)
-                fm = yaml.safe_load(text[3:end])
-                desc = fm.get("description") or ""
-                return desc.strip().splitlines()[0] if desc.strip() else ""
+            fm, body = _split_frontmatter(app_md.read_text(encoding="utf-8"))
+            return fm, body
         except Exception:
-            pass
-        return ""
+            return {}, ""
 
+    def _find_app(name: str) -> Path | None:
+        for _, apps_dir in search_roots:
+            candidate = apps_dir / name / "app.md"
+            if candidate.exists():
+                return candidate
+        return None
+
+    # Detail view: reyn apps <name>
+    if getattr(args, "app_name", None):
+        app_md = _find_app(args.app_name)
+        if app_md is None:
+            print(f"App '{args.app_name}' not found.")
+            return
+        fm, body = _read_app_md(app_md)
+        print(f"\n{fm.get('name', args.app_name)}")
+        if fm.get("description"):
+            print(f"{fm['description']}\n")
+        if body.strip():
+            print(body.strip())
+        else:
+            print("(no documentation)")
+        print()
+        return
+
+    # List view: reyn apps
     found_any = False
     seen: set[str] = set()
 
@@ -211,7 +231,8 @@ def cmd_apps(args: argparse.Namespace) -> None:
         print(f"\n{label}  ({apps_dir})")
         for app_dir in entries:
             name = app_dir.name
-            desc = _read_description(app_dir / "app.md")
+            fm, _ = _read_app_md(app_dir / "app.md")
+            desc = (fm.get("description") or "").strip().splitlines()[0] if fm.get("description") else ""
             shadowed = " [shadowed]" if name in seen else ""
             desc_str = f"  — {desc}" if desc else ""
             print(f"  {name}{desc_str}{shadowed}")
@@ -221,6 +242,7 @@ def cmd_apps(args: argparse.Namespace) -> None:
     if not found_any:
         print("No apps found.")
     print()
+    print("Run 'reyn apps <name>' for usage details.")
 
 
 def cmd_events(args: argparse.Namespace) -> None:
@@ -972,7 +994,9 @@ def build_parser() -> argparse.ArgumentParser:
                               help="Config key (e.g. api_base, models.standard). Run 'reyn config fields' for the full list.")
     config_set_p.add_argument("value", metavar="VALUE", help="Value to set (YAML syntax accepted)")
 
-    apps_p = sub.add_parser("apps", help="List available apps across all search paths")
+    apps_p = sub.add_parser("apps", help="List available apps, or show usage details for one app")
+    apps_p.add_argument("app_name", nargs="?", default=None, metavar="APP",
+                        help="App name to show details for (omit to list all)")
     apps_p.set_defaults(func=cmd_apps)
 
     run_p = sub.add_parser("run", help="Run an app")
