@@ -677,11 +677,10 @@ def cmd_eval_compare(args: argparse.Namespace) -> None:
 
 
 def cmd_lint(args: argparse.Namespace) -> None:
-    from pathlib import Path
     from reyn.compiler.linter import lint_dsl
 
-    dsl_root = Path(args.dsl)
-    issues = lint_dsl(dsl_root)
+    app_dir, _ = _resolve_app_name(args.app)
+    issues = lint_dsl(app_dir)
 
     if not issues:
         print("No issues found.")
@@ -1142,12 +1141,12 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Candidate eval result JSON to compare against baseline")
     eval_cmp_p.set_defaults(func=cmd_eval_compare)
 
-    lint_p = sub.add_parser("lint", help="Lint DSL files for issues")
+    lint_p = sub.add_parser("lint", help="Lint a DSL app for issues")
     lint_p.add_argument(
-        "--dsl",
+        "--app",
         required=True,
-        metavar="DIR",
-        help="Root directory of the DSL tree (e.g. dsl/)",
+        metavar="APP",
+        help="App name to lint (same resolution as `reyn run <app>`)",
     )
     lint_p.set_defaults(func=cmd_lint)
 
