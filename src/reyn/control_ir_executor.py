@@ -92,12 +92,11 @@ class ControlIRExecutor:
             ControlIROpSpec(
                 kind="lint",
                 description=(
-                    "Run the DSL linter against an app and return issues. "
-                    "app: app name to lint — resolved the same way as `reyn run <app>` "
-                    "(searches reyn/project/, reyn/local/, stdlib in order). "
+                    "Run the DSL linter against an app directory and return issues. "
+                    "app_path: workspace-relative path to the app directory (e.g. 'reyn/local/my_app'). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
-                example={"kind": "lint", "app": "my_app"},
+                example={"kind": "lint", "app_path": "reyn/local/my_app"},
             ),
             ControlIROpSpec(
                 kind="eval",
@@ -242,40 +241,35 @@ class ControlIRExecutor:
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
         from .compiler.linter import lint_app_dir
-        app_dir = self._resolve_app_name_for_lint(op.app)
+        app_dir = Path(op.app_path)
+        if not (app_dir / "app.md").exists():
+            return {
+                "kind": "lint",
+                "status": "error",
+                "app_path": op.app_path,
+                "passed": False,
+                "error_count": 1,
+                "warning_count": 0,
+                "issues": [f"[ERROR] app.md not found at '{op.app_path}'"],
+            }
         issues = lint_app_dir(app_dir)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
         self.events.emit(
             "lint_completed",
-            app=op.app,
+            app_path=op.app_path,
             error_count=error_count,
             warning_count=warning_count,
         )
         return {
             "kind": "lint",
             "status": "ok",
-            "app": op.app,
+            "app_path": op.app_path,
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
             "issues": [str(i) for i in issues],
         }
-
-    @staticmethod
-    def _resolve_app_name_for_lint(name: str) -> "Path":
-        """Resolve app name to its app directory, same search order as `reyn run`."""
-        stdlib_root = Path(__file__).parent.parent / "stdlib"
-        candidates = [
-            Path("reyn") / "project" / name,
-            Path("reyn") / "local" / name,
-            stdlib_root / "apps" / name,
-        ]
-        for app_dir in candidates:
-            if (app_dir / "app.md").exists():
-                return app_dir
-        checked = "\n  ".join(str(d / "app.md") for d in candidates)
-        raise FileNotFoundError(f"App '{name}' not found. Looked in:\n  {checked}")
 
     def _execute_eval(self, op: EvalIROp) -> dict[str, Any]:
         from datetime import datetime, timezone

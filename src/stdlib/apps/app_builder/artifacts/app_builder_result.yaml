@@ -1,5 +1,5 @@
 name: app_builder_result
-description: "Result of a successful app build: the app name, path, and list of files written."
+description: "Result of a successful app build: the app name, path, files written, and lint outcome."
 schema:
   type: object
   properties:
@@ -18,7 +18,15 @@ schema:
       type: integer
       minimum: 0
       description: Total number of files written.
+    lint_passed:
+      type: boolean
+      description: True if the linter found no errors in the generated DSL files.
+    lint_issues:
+      type: array
+      items:
+        type: string
+      description: List of lint issue strings. Empty when lint_passed is true.
     summary:
       type: string
       description: One sentence describing what the generated app does for its users.
-  required: [app_name, app_path, files_written, file_count, summary]
+  required: [app_name, app_path, files_written, file_count, lint_passed, lint_issues, summary]

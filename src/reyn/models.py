@@ -99,7 +99,7 @@ class ShellIROp(BaseModel):
 
 class LintIROp(BaseModel):
     kind: Literal["lint"]
-    app: str                   # app name to lint (same resolution as `reyn run <app>`)
+    app_path: str              # workspace-relative path to the app directory (e.g. "reyn/local/my_app")
 
 
 class EvalIROp(BaseModel):

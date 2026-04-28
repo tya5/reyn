@@ -3,25 +3,22 @@ type: app
 name: app_builder
 description: Generate a new app from a natural language description
 entry: plan_app
-final_output: lint_result
+final_output: app_builder_result
 final_output_description: |
-  Lint results for the generated app: pass/fail status, error and warning counts,
-  and the list of any issues found in the generated DSL files.
+  Build result for the generated app: name, path, files written, and lint outcome.
 finish_criteria:
   - All DSL files for the app have been written to the workspace
-  - The generated DSL has been linted and lint_result has been produced
-  - passed is true only when no lint errors were found
+  - The generated DSL has been linted with no errors
 graph:
   plan_app: [design_artifacts]
   design_artifacts: [review_plan]
   review_plan: [build_app]
-  build_app: ["@lint_runner[shared]"]
 ---
 
 ## Overview
 
 Describe an app in natural language and app_builder will generate the full DSL file set
-(app.md, phases, artifacts) and run the linter to verify the output.
+(app.md, phases, artifacts) and verify the output with the linter.
 
 ## Input
 
@@ -35,7 +32,7 @@ Alternatively, pass a structured `app_request` artifact with `app_name`, `descri
 
 ## Output
 
-Lint results for the generated app. When `passed: true`, the app is ready to run:
+Build result for the generated app. When `lint_passed: true`, the app is ready to run:
 
 ```
 reyn run <app_name> "<your input>"

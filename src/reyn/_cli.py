@@ -35,14 +35,14 @@ def _parse_cli_input(raw: str) -> dict:
 def _resolve_app_name(name: str) -> tuple[Path, Path | None]:
     """Resolve a short app name to (app_dir, dsl_root).
 
-    Search order: reyn/project/ → reyn/local/ → stdlib.
+    Search order: reyn/local/ → reyn/project/ → stdlib.
     Returns (app_dir, dsl_root) where dsl_root is None when it cannot be inferred.
     Exits with an error message if not found.
     """
     stdlib_root = Path(__file__).parent.parent / "stdlib"
     candidates: list[tuple[Path, Path]] = [
-        (Path("reyn") / "project" / name, Path("reyn")),
         (Path("reyn") / "local" / name,   Path("reyn")),
+        (Path("reyn") / "project" / name, Path("reyn")),
         (stdlib_root / "apps" / name,      stdlib_root),
     ]
     for app_dir, dsl_root in candidates:

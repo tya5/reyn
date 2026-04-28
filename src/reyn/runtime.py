@@ -101,6 +101,7 @@ class OSRuntime:
         self._prev_phase: str | None = None          # phase that transitioned to current
         self._phase_inputs: dict[str, dict] = {}     # phase -> last input artifact
         self._phase_outputs: dict[str, dict] = {}    # phase -> last output artifact
+        self._phase_prev: dict[str, str | None] = {} # phase -> its predecessor at entry time
         self._pending_rollback_ctx: dict | None = None  # set when rollback is triggered
 
     # ── Phase setup ────────────────────────────────────────────────────────────
@@ -575,7 +576,7 @@ class OSRuntime:
                     current_phase = target_phase
                     artifact = self._phase_inputs[target_phase]
                     artifact_path = None
-                    self._prev_phase = None
+                    self._prev_phase = self._phase_prev.get(target_phase)
                     self._enter_phase(current_phase, artifact)
                     continue
 
@@ -641,11 +642,13 @@ class OSRuntime:
                     )
                     self._history.append(f"{current_phase} → {next_node} → {next_after}")
                     self._prev_phase = current_phase
+                    self._phase_prev[next_after] = current_phase
                     current_phase = next_after
                     artifact = adapted
                 else:
                     self._history.append(f"{current_phase} → {next_node}")
                     self._prev_phase = current_phase
+                    self._phase_prev[next_node] = current_phase
                     current_phase = next_node
                     artifact = output.artifact
                 self._enter_phase(current_phase, artifact)

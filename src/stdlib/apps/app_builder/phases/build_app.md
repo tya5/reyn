@@ -102,11 +102,13 @@ Checklist before finishing:
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
-Write all files using one op per file. After writing, run the linter:
+Write all files using one op per file. After writing, run the linter using the app_path from input data:
 
 ```json
-{"kind": "lint", "app": "{data.app_name}"}
+{"kind": "lint", "app_path": "<data.app_path>"}
 ```
+
+Example: if data.app_path is "reyn/local/article_generator", emit `{"kind": "lint", "app_path": "reyn/local/article_generator"}`.
 
 If lint returns `passed: false`:
 - Examine the `issues` list carefully
@@ -114,7 +116,14 @@ If lint returns `passed: false`:
 - If the root cause is in the input `app_plan` (e.g. the plan itself defines a cycle in transitions): emit `control.type="rollback"` with `reason` explaining which part of the plan is invalid — the OS will re-run the planning phase with your feedback
 - Do NOT finish if lint has errors
 
-If lint passes, output a decide turn reporting the files written.
+If lint passes, finish with an `app_builder_result` artifact:
+- `app_name`: the generated app name
+- `app_path`: workspace-relative path (e.g. "reyn/local/my_app")
+- `files_written`: list of all file paths written
+- `file_count`: total number of files
+- `lint_passed`: true
+- `lint_issues`: []
+- `summary`: one sentence describing what the app does for its users
 
 summary MUST describe what the app does for its users — not what you (the builder) did.
 Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."

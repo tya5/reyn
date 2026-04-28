@@ -19,10 +19,10 @@ schema:
       items:
         type: string
       description: Human-readable list of all issues found, each prefixed with [ERROR] or [WARNING].
-    app:
+    app_path:
       type: string
-      description: The app name that was linted.
+      description: The workspace-relative path to the app directory that was linted.
     summary:
       type: string
       description: One-paragraph prose summary of the lint outcome.
-  required: [passed, error_count, warning_count, issues, app, summary]
+  required: [passed, error_count, warning_count, issues, app_path, summary]
