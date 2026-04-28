@@ -122,6 +122,42 @@ def lint_phase(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
+def _find_cycle(edges: list[tuple[str, str]]) -> list[str] | None:
+    """Return the cycle path as a list of node names, or None if the graph is acyclic."""
+    adjacency: dict[str, list[str]] = {}
+    for src, dst in edges:
+        adjacency.setdefault(src, []).append(dst)
+        adjacency.setdefault(dst, [])  # ensure every node appears
+
+    visited: set[str] = set()
+    path: list[str] = []
+    on_path: set[str] = set()
+
+    def dfs(node: str) -> list[str] | None:
+        visited.add(node)
+        path.append(node)
+        on_path.add(node)
+        for neighbour in adjacency.get(node, []):
+            if neighbour not in visited:
+                result = dfs(neighbour)
+                if result is not None:
+                    return result
+            elif neighbour in on_path:
+                # Found cycle — extract the cycle portion from path
+                cycle_start = path.index(neighbour)
+                return path[cycle_start:] + [neighbour]
+        path.pop()
+        on_path.discard(node)
+        return None
+
+    for node in list(adjacency):
+        if node not in visited:
+            result = dfs(node)
+            if result is not None:
+                return result
+    return None
+
+
 def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     issues: list[LintIssue] = []
     from .parser import parse_app
@@ -148,6 +184,16 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
         issues.append(LintIssue(
             "error", path,
             f"final_output '{app_def.final_output}' not found in known artifacts.",
+        ))
+
+    # Graph must be a DAG — cycles are expressed via OS rollback, not graph edges
+    cycle = _find_cycle(app_def.edges)
+    if cycle is not None:
+        cycle_str = " → ".join(cycle)
+        issues.append(LintIssue(
+            "error", path,
+            f"Graph contains a cycle: {cycle_str}. "
+            "Use control.type='rollback' for revision loops instead of back-edges.",
         ))
 
     return issues
