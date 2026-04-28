@@ -789,6 +789,157 @@ def cmd_init(args: argparse.Namespace) -> None:
     print('       reyn run app_builder "describe the app you want to build"')
 
 
+_CONFIG_FIELDS = [
+    {
+        "key":     "model",
+        "default": "standard",
+        "scope":   "reyn.yaml / .reyn/config.yaml",
+        "desc":    "Default model class used when a phase has no model_class.",
+        "values":  "light | standard | strong  (resolved via models map)",
+        "example": "model: standard",
+    },
+    {
+        "key":     "models",
+        "default": "{}",
+        "scope":   "reyn.yaml / .reyn/config.yaml",
+        "desc":    "Map of model class names to LiteLLM model strings.",
+        "values":  "dict: class_name → litellm_model_string",
+        "example": "models:\n  light:    openai/gpt-4o-mini\n  standard: openai/gpt-4o\n  strong:   openai/o3",
+    },
+    {
+        "key":     "api_base",
+        "default": "(none)",
+        "scope":   ".reyn/config.yaml  (keep out of git)",
+        "desc":    "LiteLLM proxy base URL. Set this if you route requests through a local proxy.",
+        "values":  "URL string",
+        "example": "api_base: http://localhost:4000",
+    },
+    {
+        "key":     "output_language",
+        "default": "ja",
+        "scope":   "reyn.yaml / .reyn/config.yaml",
+        "desc":    "Language code injected into the context frame for all LLM outputs.",
+        "values":  "BCP-47 language tag (e.g. en, ja, zh)",
+        "example": "output_language: en",
+    },
+    {
+        "key":     "state_dir",
+        "default": ".reyn",
+        "scope":   "reyn.yaml",
+        "desc":    "Directory for internal state: artifacts, event logs, eval runs.",
+        "values":  "relative or absolute path",
+        "example": "state_dir: .reyn",
+    },
+    {
+        "key":     "shell_allowed",
+        "default": "false",
+        "scope":   "reyn.yaml / .reyn/config.yaml",
+        "desc":    "Allow the shell Control IR op globally. Equivalent to --allow-shell on every run.",
+        "values":  "true | false",
+        "example": "shell_allowed: false",
+    },
+    {
+        "key":     "permissions",
+        "default": "{}",
+        "scope":   "reyn.yaml / .reyn/config.yaml",
+        "desc":    "Pre-approve specific Control IR ops without interactive prompts.",
+        "values":  "dict: op_kind → 'allow'",
+        "example": "permissions:\n  shell: allow",
+    },
+]
+
+
+def cmd_config(args: argparse.Namespace) -> None:
+    sub = getattr(args, "config_cmd", None)
+    if sub == "fields":
+        _cmd_config_fields()
+    elif sub == "show":
+        _cmd_config_show()
+    elif sub == "get":
+        _cmd_config_get(args.key)
+    elif sub == "set":
+        _cmd_config_set(args.key, args.value)
+    else:
+        # Default: show
+        _cmd_config_show()
+
+
+def _cmd_config_fields() -> None:
+    W_KEY, W_DEF, W_SCOPE = 18, 10, 34
+    header = f"{'Field':<{W_KEY}}  {'Default':<{W_DEF}}  {'Scope':<{W_SCOPE}}  Description"
+    print(header)
+    print("─" * len(header))
+    for f in _CONFIG_FIELDS:
+        print(f"{f['key']:<{W_KEY}}  {f['default']:<{W_DEF}}  {f['scope']:<{W_SCOPE}}  {f['desc']}")
+        print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}  Values:  {f['values']}")
+        print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}  Example: {f['example'].splitlines()[0]}")
+        for extra_line in f['example'].splitlines()[1:]:
+            print(f"{'':>{W_KEY}}  {'':>{W_DEF}}  {'':>{W_SCOPE}}           {extra_line}")
+        print()
+
+
+def _cmd_config_show() -> None:
+    import yaml
+    config = _load_config()
+    effective = {
+        "model":           config.model,
+        "models":          config.models,
+        "api_base":        config.api_base or "(not set)",
+        "output_language": config.output_language,
+        "state_dir":       config.state_dir,
+        "shell_allowed":   config.shell_allowed,
+        "permissions":     config.permissions,
+    }
+    print("# Effective config (merged from all sources)")
+    print(yaml.dump(effective, allow_unicode=True, default_flow_style=False), end="")
+
+
+def _cmd_config_get(key: str) -> None:
+    import yaml
+    config = _load_config()
+    value = getattr(config, key, None)
+    if value is None:
+        print(f"Error: unknown config key '{key}'", file=sys.stderr)
+        print(f"Run 'reyn config fields' to see available keys.", file=sys.stderr)
+        sys.exit(1)
+    if isinstance(value, (dict, list)):
+        print(yaml.dump(value, allow_unicode=True, default_flow_style=False), end="")
+    else:
+        print(value)
+
+
+def _cmd_config_set(key: str, value: str) -> None:
+    import yaml
+    valid_keys = {f["key"] for f in _CONFIG_FIELDS}
+    check_key = key.split(".")[0] if "." in key else key
+    if check_key not in valid_keys:
+        print(f"Error: unknown config key '{key}'", file=sys.stderr)
+        print(f"Run 'reyn config fields' to see available keys.", file=sys.stderr)
+        sys.exit(1)
+
+    local_cfg = Path(".reyn") / "config.yaml"
+    local_cfg.parent.mkdir(exist_ok=True)
+    current: dict = {}
+    if local_cfg.exists():
+        current = yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}
+
+    # Parse value: try YAML first so booleans/numbers work
+    try:
+        parsed = yaml.safe_load(value)
+    except Exception:
+        parsed = value
+
+    # Nested key support: models.standard → models: {standard: ...}
+    if "." in key:
+        parent, child = key.split(".", 1)
+        current.setdefault(parent, {})[child] = parsed
+    else:
+        current[key] = parsed
+
+    local_cfg.write_text(yaml.dump(current, allow_unicode=True, default_flow_style=False), encoding="utf-8")
+    print(f"Set {key} = {parsed!r}  →  {local_cfg}")
+
+
 def _print_events(agent) -> None:
     print("=== Event Log ===")
     for event in agent.get_events_json():
@@ -803,8 +954,23 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<command>")
     sub.required = True
 
-    init_p = sub.add_parser("init", help="Create reyn.yaml and reyn.local.yaml in the current directory")
+    init_p = sub.add_parser("init", help="Create reyn.yaml and .reyn/config.yaml in the current directory")
     init_p.set_defaults(func=cmd_init)
+
+    config_p = sub.add_parser("config", help="View and edit reyn configuration")
+    config_sub = config_p.add_subparsers(dest="config_cmd", metavar="<subcommand>")
+    config_p.set_defaults(func=cmd_config)
+
+    config_sub.add_parser("show", help="Show current effective config (merged from all sources)")
+    config_sub.add_parser("fields", help="List all config fields with descriptions and examples")
+
+    config_get_p = config_sub.add_parser("get", help="Get a single config value")
+    config_get_p.add_argument("key", metavar="KEY", help="Config key (e.g. model, api_base)")
+
+    config_set_p = config_sub.add_parser("set", help="Set a config value in .reyn/config.yaml")
+    config_set_p.add_argument("key", metavar="KEY",
+                              help="Config key (e.g. api_base, models.standard). Run 'reyn config fields' for the full list.")
+    config_set_p.add_argument("value", metavar="VALUE", help="Value to set (YAML syntax accepted)")
 
     apps_p = sub.add_parser("apps", help="List available apps across all search paths")
     apps_p.set_defaults(func=cmd_apps)
