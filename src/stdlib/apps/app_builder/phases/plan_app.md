@@ -72,15 +72,16 @@ phases: array of phase definitions, each with:
   - can_finish: true only if this phase may end the workflow
 
 transitions: array of {from: phase_name, to: [phase_name, ...]}
-  - `to` values MUST be phase names only — NEVER the final_output artifact name.
+  - `to` values MUST be phase names only — NEVER artifact names or the final_output name.
   - A phase with `can_finish: true` terminates the workflow without a graph edge — do NOT add a transition to the final_output name.
-  - Review phases that loop back must list BOTH the revision target AND the next (deliver) phase in `to`.
+  - Review phases that loop back list BOTH the revision target AND the next phase in `to`.
   - The phase that delivers final output must be can_finish: true.
+  - Every phase defined in `phases` (except the entry phase) MUST appear as a destination in at least one transition edge. A phase with no incoming edge is unreachable and will never execute.
 
 CRITICAL — no transition to final_output:
-If review_translation can finish, its transitions include ONLY the revision loop target (e.g. translate_text).
-WRONG: {from: "review_translation", to: ["translate_text", "deliver_translation"]}   ← deliver_translation is NOT a phase
-RIGHT: {from: "review_translation", to: ["translate_text"]}  ← review_translation has can_finish: true
+If a review phase can finish, its transitions include ONLY the revision loop target.
+WRONG: {from: "review", to: ["generate", "deliver"]}   ← deliver is not a phase name, it's an artifact
+RIGHT: {from: "review", to: ["generate"]}  ← review has can_finish: true
 
 artifacts: array of artifact definitions, each with:
   - name: snake_case artifact name (matches a phase's input_artifact)
