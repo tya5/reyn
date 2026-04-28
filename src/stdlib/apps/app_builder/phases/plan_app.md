@@ -76,6 +76,7 @@ transitions: array of {from: phase_name, to: [phase_name, ...]}
   - A phase with `can_finish: true` terminates the workflow without a graph edge — do NOT add a transition to the final_output name.
   - Review phases that loop back must list BOTH the revision target AND the next (deliver) phase in `to`.
   - The phase that delivers final output must be can_finish: true.
+  - Every phase defined in `phases` (except the entry phase) MUST appear as a destination in at least one transition edge. A phase with no incoming edge is unreachable and will never execute.
 
 CRITICAL — no transition to final_output:
 If review_translation can finish, its transitions include ONLY the revision loop target (e.g. translate_text).
