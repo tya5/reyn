@@ -50,6 +50,13 @@ Workflow termination is expressed by `can_finish: true` on the phase that delive
 CRITICAL — skip edges to final_output: If any transition target equals data.final_output.name, OMIT that edge.
 The final_output artifact is NOT a phase. Only emit edges where the target is a phase listed in data.phases.
 
+CRITICAL — graph must be a DAG (no cycles): Do NOT write back-edges (e.g. review → generate).
+Review/revise loops are handled by OS rollback — the review phase emits control.type="rollback" at runtime.
+The graph only expresses forward flow. Any cycle will fail the linter.
+
+CRITICAL — do NOT write a user_message artifact file: `user_message` is a stdlib artifact.
+If the entry phase accepts `user_message` as input, simply reference it in the phase frontmatter — do not create an artifact file for it.
+
 phase file (write to {app_path}/phases/{phase_name}.md):
 ```
 ---

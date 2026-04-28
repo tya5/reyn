@@ -12,6 +12,8 @@ Check each of the following. If ANY issue is found, emit a rollback with `reason
 
 ## Structural checks
 
+**Graph is a DAG**: the graph must have no cycles. For each phase, trace every outgoing edge and check that no path leads back to the same phase. Example of a forbidden cycle: `write: [review], review: [write]`. Revision loops are expressed via OS rollback at runtime, not graph edges.
+
 **Graph reachability**: every phase except `entry_phase` must appear as a destination in at least one transition edge. A phase with no incoming edge is unreachable.
 
 **Artifact coverage**: every phase's `input_artifact` must appear in `artifacts[]` by name, OR be `user_message` (stdlib). No phase may reference an undefined artifact.
