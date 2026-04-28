@@ -61,7 +61,7 @@ class App(BaseModel):
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
-    op: Literal["read", "write", "glob"]
+    op: Literal["read", "write", "glob", "delete"]
     path: str                        # file path for read/write; glob pattern for glob
     content: str | None = None       # write only
     max_results: int = 50            # glob only: cap on number of matching paths returned

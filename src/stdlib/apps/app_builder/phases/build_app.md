@@ -87,6 +87,8 @@ Always include `type: object`, `properties`, `required`, and a `description` on 
 Use the schema exactly as defined in data.artifacts[].schema and data.final_output.schema.
 Artifact files are plain YAML — no frontmatter delimiters.
 
+IMPORTANT: Before writing any files, glob `{app_path}/**/*` and delete every file in the results. This removes stale files from previous builds.
+
 IMPORTANT: Write ALL artifact files — including the final_output artifact.
 Checklist before finishing:
 - app.md written

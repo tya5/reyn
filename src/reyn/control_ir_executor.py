@@ -58,7 +58,8 @@ class ControlIRExecutor:
                     "op='read': retrieve a single file's content. "
                     "op='glob': expand a glob pattern (supports ** for recursive) and return "
                     "matching file paths; use this to discover files before reading them. "
-                    "max_results (default 50) caps glob output."
+                    "max_results (default 50) caps glob output. "
+                    "op='delete': delete a single file (no-op if not found)."
                 ),
                 example={"kind": "file", "op": "glob", "path": "src/**/*.py"},
             ),
@@ -215,6 +216,11 @@ class ControlIRExecutor:
                 "matches": matches,
                 "count": len(matches),
             }
+
+        if op.op == "delete":
+            deleted = self.workspace.delete_file(op.path)
+            self.events.emit("tool_executed", op="delete_file", path=op.path, deleted=deleted)
+            return {"kind": "file", "op": "delete", "path": op.path, "status": "ok", "deleted": deleted}
 
         raise ValueError(f"unsupported file op: {op.op!r}")
 

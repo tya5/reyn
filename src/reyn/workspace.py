@@ -63,6 +63,15 @@ class Workspace:
         path.write_text(content, encoding="utf-8")
         self._events.emit("workspace_updated", path=str(path))
 
+    def delete_file(self, path_str: str) -> bool:
+        """Delete a file from the project. Returns True if deleted, False if not found."""
+        path = self._resolve_write(path_str)
+        if path.exists() and path.is_file():
+            path.unlink()
+            self._events.emit("workspace_updated", path=str(path))
+            return True
+        return False
+
     def glob_files(self, pattern: str, max_results: int = 50) -> list[str]:
         """
         Expand a glob pattern. Relative patterns resolve under base_dir (CWD).
