@@ -92,7 +92,6 @@ def expand_app(
         graph=AppGraph(
             transitions=transitions,
             can_finish_phases=can_finish_phases,
-            max_phase_visits=app_def.max_phase_visits,
             app_nodes=app_node_specs or {},
         ),
         final_output_schema=final_output_schema,

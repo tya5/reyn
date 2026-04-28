@@ -20,6 +20,7 @@ class Agent:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
+        max_phase_visits: int = 25,
     ) -> None:
         self.model = model
         self.state_dir = state_dir
@@ -27,6 +28,7 @@ class Agent:
         self._subscribers = list(subscribers or [])
         self._user_input_fn = user_input_fn
         self._shell_allowed = shell_allowed
+        self._max_phase_visits = max_phase_visits
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
         self._runtime: OSRuntime | None = None
@@ -47,6 +49,7 @@ class Agent:
             shell_allowed=self._shell_allowed,
             resolver=self._resolver,
             permission_resolver=self._permission_resolver,
+            max_phase_visits=self._max_phase_visits,
         )
         return self._runtime.run(initial_input, output_language=output_language)
 

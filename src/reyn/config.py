@@ -30,6 +30,9 @@ class ReynConfig:
     # Pre-approved permissions (same structure as phase frontmatter, but value is "allow").
     # Example: permissions: {shell: allow, file.delete: allow, mcp: {github: allow}}
     permissions: dict = field(default_factory=dict)
+    # Maximum times any single phase may be visited in one run (0 = unlimited).
+    # Prevents infinite rollback/revision loops. Override per-invocation with --max-phase-visits.
+    max_phase_visits: int = 25
 
 
 def _load_yaml(path: Path) -> dict:
@@ -74,7 +77,8 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     cwd = (cwd or Path.cwd()).resolve()
 
     merged: dict = {"model": "standard", "state_dir": ".reyn",
-                    "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {}}
+                    "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {},
+                    "max_phase_visits": 25}
 
     # User global
     merged = _merge(merged, _load_yaml(Path.home() / ".reyn" / "config.yaml"))
@@ -93,4 +97,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
+        max_phase_visits=int(merged.get("max_phase_visits", 25)),
     )

@@ -102,5 +102,4 @@ def parse_app(path: Path) -> AppDef:
         final_output=fm.get("final_output", ""),
         final_output_description=str(fm.get("final_output_description") or "").strip(),
         finish_criteria=finish_criteria,
-        max_phase_visits={k: int(v) for k, v in (fm.get("max_phase_visits") or {}).items()},
     )

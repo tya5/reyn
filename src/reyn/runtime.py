@@ -78,6 +78,7 @@ class OSRuntime:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
+        max_phase_visits: int = 25,
     ) -> None:
         self.app = app
         self.model = model
@@ -93,6 +94,7 @@ class OSRuntime:
             resolver=self._resolver,
             permission_resolver=permission_resolver,
         )
+        self._max_phase_visits = max_phase_visits  # 0 = unlimited
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
         self._token_usage: TokenUsage = TokenUsage()
@@ -104,7 +106,7 @@ class OSRuntime:
     # ── Phase setup ────────────────────────────────────────────────────────────
 
     def _enter_phase(self, phase_name: str, artifact: dict) -> None:
-        max_visits = self.app.graph.max_phase_visits.get(phase_name, 0)
+        max_visits = self._max_phase_visits
         count = self._visit_counts.get(phase_name, 0)
         if max_visits and count >= max_visits:
             self.events.emit("loop_limit_exceeded", phase=phase_name, visit_count=count, max=max_visits)
@@ -174,7 +176,7 @@ class OSRuntime:
             history=self._history,
             visit_counts=self._visit_counts,
             finish_criteria=self.app.finish_criteria,
-            max_phase_visits=self.app.graph.max_phase_visits.get(current_phase) or None,
+            max_phase_visits=self._max_phase_visits or None,
             available_ops=self.control_ir_executor.available_ops(),
             effective_model=effective_model,
             model_resolved=self._resolver.resolve(effective_model),

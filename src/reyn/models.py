@@ -30,8 +30,6 @@ class AppNodeSpec(BaseModel):
 class AppGraph(BaseModel):
     transitions: dict[str, list[str]] = Field(default_factory=dict)
     can_finish_phases: list[str] = Field(default_factory=list)
-    # phase_name -> max allowed visits per run (0 = unlimited)
-    max_phase_visits: dict[str, int] = Field(default_factory=dict)
     # "@app_name" → AppNodeSpec for app nodes embedded in this graph
     app_nodes: dict[str, AppNodeSpec] = Field(default_factory=dict)
 
@@ -192,7 +190,7 @@ class ExecutionState(BaseModel):
 
 class PhaseConstraints(BaseModel):
     """Operational limits for the current phase, surfaced to the LLM."""
-    max_phase_visits: int | None = None   # per-phase visit cap (None = unlimited)
+    max_phase_visits: int | None = None   # global visit cap per phase (None = unlimited)
 
 
 class ContextFrame(BaseModel):

@@ -39,4 +39,3 @@ class AppDef:
     final_output: str                    # artifact name for final_output_schema
     final_output_description: str
     finish_criteria: list[str]
-    max_phase_visits: dict[str, int]

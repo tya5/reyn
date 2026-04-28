@@ -106,6 +106,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     model = args.model or config.model
     output_language = args.output_language or config.output_language
     shell_allowed = args.allow_shell or config.shell_allowed
+    max_phase_visits = args.max_phase_visits if args.max_phase_visits is not None else config.max_phase_visits
 
     resolved_model = resolver.resolve(model)
 
@@ -138,6 +139,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         shell_allowed=shell_allowed,
         resolver=resolver,
         permission_resolver=perm_resolver,
+        max_phase_visits=max_phase_visits,
     )
 
     input_type = initial_input.get("type", "unknown")
@@ -1093,6 +1095,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Enable the 'shell' Control IR op, which allows the LLM to execute shell commands. "
             "Required for meta-apps that invoke sub-processes (e.g. app_improver). "
             "Off by default for safety."
+        ),
+    )
+    run_p.add_argument(
+        "--max-phase-visits",
+        dest="max_phase_visits",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Maximum times any single phase may be visited per run (0 = unlimited). "
+            "Prevents infinite rollback/revision loops. Default: from reyn.yaml or 25."
         ),
     )
     run_p.set_defaults(func=cmd_run)
