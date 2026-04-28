@@ -1111,7 +1111,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── eval ──────────────────────────────────────────────────────────────────
     eval_p = sub.add_parser("eval", help="Run an eval spec against an app")
-    eval_p.add_argument("--spec", required=True, metavar="FILE",
+    eval_p.add_argument("spec", metavar="FILE",
                         help="Path to the eval.md spec file (e.g. reyn/local/my_app/eval.md)")
     eval_p.add_argument("--model", default=None, metavar="MODEL",
                         help="Model class name or LiteLLM string for running the app (default: from spec or 'standard')")
@@ -1143,8 +1143,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     lint_p = sub.add_parser("lint", help="Lint a DSL app for issues")
     lint_p.add_argument(
-        "--app",
-        required=True,
+        "app",
         metavar="APP",
         help="App name to lint (same resolution as `reyn run <app>`)",
     )
