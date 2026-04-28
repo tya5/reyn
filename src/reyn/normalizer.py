@@ -118,7 +118,7 @@ def _infer_legacy_decision(
 # ── Strict new-format validation ───────────────────────────────────────────────
 
 _REQUIRED_CONTROL_FIELDS = ("type", "decision", "next_phase", "confidence", "reason")
-_VALID_TYPES = ("transition", "finish", "abort")
+_VALID_TYPES = ("transition", "finish", "abort", "rollback")
 _VALID_DECISIONS = ("continue", "finish", "abort")
 
 
@@ -173,6 +173,14 @@ def _validate_control_block(control: dict) -> None:
         )
 
     # 3. Consistency checks
+    if ctrl_type == "rollback":
+        if control["next_phase"] is not None:
+            raise ControlIRValidationError(
+                "control.type='rollback' requires control.next_phase=null — "
+                "the OS determines the rollback target from execution history"
+            )
+        return  # no further checks for rollback
+
     if ctrl_type == "finish":
         if ctrl_decision != "finish":
             raise ControlIRValidationError(
@@ -226,6 +234,13 @@ def _normalize_new_format(raw: dict, allowed_next_phases: list[str]) -> Normaliz
             confidence=confidence, reason=ctrl_reason,
         )
         return NormalizationResult(control=control, artifact=artifact, ops=raw.get("ops", []))
+
+    if ctrl_type == "rollback":
+        control = ControlDecision(
+            type="rollback", decision="continue", next_phase=None,
+            confidence=confidence, reason=ctrl_reason,
+        )
+        return NormalizationResult(control=control, artifact={}, ops=raw.get("ops", []))
 
     if ctrl_type == "finish":
         if "end" not in allowed_next_phases:

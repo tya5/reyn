@@ -1,5 +1,5 @@
 name: app_plan
-description: Complete app plan with artifact schemas, produced by design_artifacts and reviewed by review_plan before build_app generates DSL files.
+description: App plan with artifact schemas, produced by design_artifacts and validated by review_plan before build_app generates DSL files.
 schema:
   type: object
   description: Structured plan produced by plan_app, consumed by build_app to generate DSL files.
@@ -92,7 +92,4 @@ schema:
           type: object
           description: JSON Schema object for the final output's data fields.
       required: [name, description, schema]
-    review_notes:
-      type: string
-      description: Feedback from review_plan describing what to fix. Empty string when approved.
   required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output]

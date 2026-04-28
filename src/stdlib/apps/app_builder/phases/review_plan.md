@@ -8,7 +8,7 @@ model_class: strong
 
 Review the app plan for structural consistency and schema quality before DSL files are written.
 
-Check each of the following. If ANY issue is found, transition to `design_artifacts` with `review_notes` listing all problems. If all checks pass, transition to `build_app` with `review_notes` set to empty string.
+Check each of the following. If ANY issue is found, emit a rollback with `reason` listing all problems — the OS will re-run `design_artifacts` with your feedback. If all checks pass, transition to `build_app` with the `app_plan` artifact unchanged.
 
 ## Structural checks
 
@@ -32,6 +32,5 @@ Check each of the following. If ANY issue is found, transition to `design_artifa
 
 ## Output
 
-Output the `app_plan` unchanged except for setting `review_notes`:
-- If issues found: set `review_notes` to a numbered list of all problems found, then transition to `design_artifacts`
-- If all clear: set `review_notes` to `""`, then transition to `build_app`
+- If issues found: emit `control.type="rollback"` with `control.reason.summary` listing all problems as a numbered list. artifact may be empty.
+- If all clear: transition to `build_app` with `control.type="transition"` and the `app_plan` artifact unchanged.

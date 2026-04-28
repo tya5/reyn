@@ -96,6 +96,10 @@ class OSRuntime:
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
         self._token_usage: TokenUsage = TokenUsage()
+        self._prev_phase: str | None = None          # phase that transitioned to current
+        self._phase_inputs: dict[str, dict] = {}     # phase -> last input artifact
+        self._phase_outputs: dict[str, dict] = {}    # phase -> last output artifact
+        self._pending_rollback_ctx: dict | None = None  # set when rollback is triggered
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -223,6 +227,14 @@ class OSRuntime:
                 f"{result.control.reason.summary}"
             )
 
+        if result.control.type == "rollback":
+            output = LLMOutput(
+                control=result.control,
+                artifact={"type": "rollback", "data": {}},
+                ops=result.ops,
+            )
+            return result, output
+
         matched_candidate = candidate_map[result.control.effective_next_phase]
         normalized = _normalize_artifact(result.artifact, matched_candidate.schema_name)
 
@@ -277,10 +289,15 @@ class OSRuntime:
         phase: str,
         frame: ContextFrame,
         prior_attempts: list[dict[str, str]] | None,
+        rollback_context: dict | None = None,
     ) -> dict:
         resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
-        llm_result = call_llm(resolved_model, frame, prior_attempts=prior_attempts or None)
+        llm_result = call_llm(
+            resolved_model, frame,
+            prior_attempts=prior_attempts or None,
+            rollback_context=rollback_context,
+        )
         raw = llm_result.data
         if llm_result.usage:
             self._token_usage += llm_result.usage
@@ -303,6 +320,7 @@ class OSRuntime:
         max_act_turns: int,
         max_phase_retries: int,
         artifact_path: str | None,
+        rollback_context: dict | None = None,
     ) -> tuple[dict, list[dict]]:
         """
         Drive act turns until the LLM emits a decide turn.
@@ -311,6 +329,7 @@ class OSRuntime:
         control_ir_results: list[dict] = []
         prior_attempts: list[dict[str, str]] = []
         act_turn_count = 0
+        first_call = True
 
         while True:
             if prior_attempts:
@@ -325,7 +344,12 @@ class OSRuntime:
                 control_ir_results=control_ir_results,
                 artifact_path=artifact_path,
             )
-            raw = self._call_llm_and_record(phase, frame, prior_attempts or None)
+            # Pass rollback_context only on the first LLM call; subsequent calls already have context
+            raw = self._call_llm_and_record(
+                phase, frame, prior_attempts or None,
+                rollback_context=rollback_context if first_call else None,
+            )
+            first_call = False
 
             if raw.get("type") != "act":
                 return raw, prior_attempts
@@ -404,6 +428,7 @@ class OSRuntime:
                     error=prior_attempts[-1]["error"],
                 )
                 frame = self._build_frame(phase, artifact, candidates, output_language)
+                # rollback_context already injected in act loop's first call; retries don't repeat it
                 raw = self._call_llm_and_record(phase, frame, prior_attempts)
 
     def _execute_phase(
@@ -414,6 +439,7 @@ class OSRuntime:
         output_language: str,
         max_phase_retries: int,
         artifact_path: str | None = None,
+        rollback_context: dict | None = None,
     ) -> tuple[NormalizationResult, LLMOutput, int]:
         """Drive one phase to completion via act/decide loops with retry."""
         phase_def = self.app.phases[current_phase]
@@ -422,6 +448,7 @@ class OSRuntime:
         raw, prior_attempts = self._run_act_loop(
             current_phase, artifact, candidates, output_language,
             max_act_turns, max_phase_retries, artifact_path,
+            rollback_context=rollback_context,
         )
         return self._run_decide_with_retry(
             raw, current_phase, artifact, candidates, output_language, prior_attempts, max_phase_retries,
@@ -501,10 +528,16 @@ class OSRuntime:
             self._enter_phase(current_phase, artifact)
 
             while True:
+                rollback_context = self._pending_rollback_ctx
+                self._pending_rollback_ctx = None
+
+                self._phase_inputs[current_phase] = artifact
+
                 candidates = self._build_candidates(current_phase)
                 result, output, retry_count = self._execute_phase(
                     current_phase, artifact, candidates, output_language, max_phase_retries,
                     artifact_path=artifact_path,
+                    rollback_context=rollback_context,
                 )
 
                 current_decl = self.app.phases[current_phase].permissions if current_phase in self.app.phases else None
@@ -517,6 +550,34 @@ class OSRuntime:
                         ops=[op.model_dump() for op in output.ops],
                         results=decide_results,
                     )
+
+                # Handle rollback before storing artifact or emitting phase_completed
+                if result.control.type == "rollback":
+                    if self._prev_phase is None:
+                        raise WorkflowAbortedError(
+                            f"Phase '{current_phase}' emitted rollback but there is no previous phase."
+                        )
+                    target_phase = self._prev_phase
+                    self.events.emit(
+                        "phase_rollback",
+                        rollback_from=current_phase,
+                        rollback_to=target_phase,
+                        reason=result.control.reason.summary,
+                    )
+                    self._pending_rollback_ctx = {
+                        "rejected_artifact": self._phase_outputs.get(target_phase, {}),
+                        "reason": result.control.reason.summary,
+                        "rollback_from": current_phase,
+                    }
+                    self._history.append(f"{current_phase} → rollback → {target_phase}")
+                    current_phase = target_phase
+                    artifact = self._phase_inputs[target_phase]
+                    artifact_path = None
+                    self._prev_phase = None
+                    self._enter_phase(current_phase, artifact)
+                    continue
+
+                self._phase_outputs[current_phase] = output.artifact
 
                 artifact_path = self.workspace.store_artifact(
                     current_phase, output.artifact,
@@ -577,10 +638,12 @@ class OSRuntime:
                         output_language,
                     )
                     self._history.append(f"{current_phase} → {next_node} → {next_after}")
+                    self._prev_phase = current_phase
                     current_phase = next_after
                     artifact = adapted
                 else:
                     self._history.append(f"{current_phase} → {next_node}")
+                    self._prev_phase = current_phase
                     current_phase = next_node
                     artifact = output.artifact
                 self._enter_phase(current_phase, artifact)

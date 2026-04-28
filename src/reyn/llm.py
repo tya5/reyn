@@ -49,16 +49,21 @@ control.type:
 - "transition": move to next_phase (must be non-null, must be in candidate_outputs).
 - "finish": end the workflow. next_phase MUST be null. Only when "end" is in candidate_outputs.
 - "abort": unrecoverable error. next_phase MUST be null.
+- "rollback": send the immediately preceding phase back for revision. next_phase MUST be null.
+  Use when the current phase rejects the preceding phase's output and needs it revised.
+  The OS determines the rollback target automatically — do NOT specify next_phase.
+  artifact may be empty ({}) for rollback; put the rejection reason in control.reason.summary.
 
 control.decision:
-- "continue": normal transition to any next phase.
+- "continue": normal transition to any next phase (also used for rollback).
 - "finish": workflow complete. type MUST be "finish", next_phase MUST be null.
 - "abort": cannot continue. type MUST be "abort".
 
 Consistency requirements (violations cause rejection):
-- type="finish" → decision="finish", next_phase=null
+- type="finish"   → decision="finish", next_phase=null
 - type="transition" → next_phase is non-null
 - type="abort"    → decision="abort", next_phase=null
+- type="rollback" → decision="continue", next_phase=null
 
 control.reason MUST be {"summary": "..."} — NOT a plain string.
 control.confidence MUST be a float in [0.0, 1.0].
@@ -148,12 +153,15 @@ def call_llm(
     model: str,
     frame: ContextFrame,
     prior_attempts: list[dict[str, str]] | None = None,
+    rollback_context: dict | None = None,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
 
     prior_attempts: list of {"raw": str, "error": str} from previous phase retries.
       Each entry is appended as an assistant/user turn so the LLM sees what was wrong.
+    rollback_context: {"rejected_artifact": dict, "reason": str, "rollback_from": str}
+      Injected as the first prior-attempt entry when this phase is being re-run after rollback.
     """
     system = _system_prompt()
     user_content = json.dumps(frame.model_dump(), indent=2, ensure_ascii=False)
@@ -162,9 +170,23 @@ def call_llm(
         {"role": "user", "content": user_content},
     ]
 
-    # Inject semantic-rejection feedback from outer phase retry loop
+    # Build combined injection list: rollback context first, then same-phase retries
+    all_injections: list[dict[str, str]] = []
+    if rollback_context:
+        all_injections.append({
+            "raw": json.dumps(rollback_context["rejected_artifact"], ensure_ascii=False),
+            "error": (
+                f"Your previous output was rolled back by "
+                f"[{rollback_context['rollback_from']}]: {rollback_context['reason']}\n"
+                "Please revise your output to address the feedback."
+            ),
+        })
     if prior_attempts:
-        for pa in prior_attempts:
+        all_injections.extend(prior_attempts)
+
+    # Inject semantic-rejection feedback from outer phase retry loop
+    if all_injections:
+        for pa in all_injections:
             messages.append({"role": "assistant", "content": pa["raw"]})
             messages.append({
                 "role": "user",

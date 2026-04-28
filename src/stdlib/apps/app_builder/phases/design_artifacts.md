@@ -1,14 +1,14 @@
 ---
 type: phase
 name: design_artifacts
-input: app_structure | app_plan
+input: app_structure
 role: schema_designer
 model_class: standard
 ---
 
 Design JSON Schema definitions for every artifact in the app plan.
 
-If the input is `app_plan` (revision from review_plan), read `review_notes` first and address every issue listed before redesigning schemas.
+If rollback context is present in the conversation history, read the rejection feedback carefully and address every issue before redesigning schemas.
 
 For each artifact in `artifacts` and for `final_output`, produce a JSON Schema object:
 - Always use `type: object` at the top level with `properties` and `required`

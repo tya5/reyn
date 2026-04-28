@@ -14,7 +14,7 @@ finish_criteria:
 graph:
   plan_app: [design_artifacts]
   design_artifacts: [review_plan]
-  review_plan: [design_artifacts, build_app]
+  review_plan: [build_app]
   build_app: ["@lint_runner[shared]"]
 ---
 
