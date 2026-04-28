@@ -398,7 +398,7 @@ class ControlIRExecutor:
             "final_output": run_result.data,
             "events_glob": events_glob,
             "artifacts_glob": artifacts_glob,
-            "workspace": sub_workspace_dir,
+            "workspace": sub_state_dir,
         }
 
     def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:

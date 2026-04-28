@@ -1,7 +1,7 @@
 ---
 type: app
 name: eval_builder
-description: Auto-generate an eval spec (eval.md) for an app
+description: Auto-generate an eval spec (eval.md) for an app and run it
 entry: analyze_app
 final_output: eval_result
 final_output_description: |
@@ -13,7 +13,6 @@ finish_criteria:
   - eval_result captures the score and pass/fail outcome
 graph:
   analyze_app: [write_eval]
-  write_eval: ["@eval_runner[shared]"]
 ---
 
 ## Overview
@@ -24,7 +23,7 @@ test cases and quality criteria, then immediately runs it.
 ## Input
 
 ```
-reyn run eval_builder '{"app_dsl_path": "reyn/project/my_app/app.md", "model": "standard"}'
+reyn run eval_builder '{"app_dsl_path": "reyn/local/my_app/app.md", "model": "standard"}'
 ```
 
 ## Output

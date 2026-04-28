@@ -3,9 +3,10 @@ type: phase
 name: write_eval
 input: app_analysis
 role: spec_writer
+can_finish: true
 ---
 
-Generate the eval.md content and write it to the workspace.
+Generate the eval.md content and write it to the workspace, then run it.
 
 ## Output path
 
@@ -73,24 +74,15 @@ Use `[aspirational]` for criteria that represent a model capability ceiling rath
 - Comparative checks ("revision is better than draft") that require cross-artifact reasoning
 - "Gold standard" quality bars that go beyond what the app is required to produce
 
-Example:
-```
-quality:
-- each item in issues exists                         ← required (default, no tag)
-- [aspirational] each item in issues contains a highly specific improvement suggestion
+## After writing the file
+
+Run the eval op against the written spec using the model from app_analysis:
+
+```json
+{"kind": "eval", "spec_path": "<eval_md_path>", "model": "<app_analysis.model>"}
 ```
 
-## After writing
+If eval passes, finish with an `eval_result` artifact populated from the eval op result.
+If eval fails (passed: false), still finish — report the scores and weakest_phase so the user knows what needs improvement.
 
-Set in the output artifact:
-- `eval_md_path`: the workspace-relative path where you wrote the file.
-- `app_dsl_path`: the target app DSL path from app_analysis.
-- `model`: the judge_model from app_analysis (this is passed to eval_runner to run the target app).
-- `case_count`: number of test cases.
-- `total_criteria`: total lines (schema assertions + quality criteria) across all cases and phases.
-- `next_steps`: tell the user:
-  1. The file was written to `workspace/{eval_md_path}`.
-  2. The eval will now run automatically via eval_runner.
-  3. To run it again manually: `reyn eval --spec {resolved_cwd_relative_path} --model <model>`.
-  4. If the target app is in the project `dsl/` tree (not in workspace), also copy the file:
-     `cp workspace/{eval_md_path} {app_dir}/eval.md`
+summary should describe results: e.g. "All 12 criteria passed (score 1.00)." or "6/12 criteria passed (score 0.50) — weakest: analyze."
