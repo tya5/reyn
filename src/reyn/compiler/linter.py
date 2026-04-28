@@ -201,78 +201,65 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
 
 # ── DSL root ──────────────────────────────────────────────────────────────────
 
-def lint_dsl(dsl_root: Path) -> list[LintIssue]:
-    """Lint all artifacts and phases under dsl_root."""
+def lint_dsl(app_dir: Path) -> list[LintIssue]:
+    """Lint the app at app_dir (must contain app.md).
+
+    Stdlib artifacts/phases are loaded as known names for reference resolution
+    but are NOT themselves linted — only the target app's own files are checked.
+    """
     issues: list[LintIssue] = []
 
     from .loader import _stdlib_dir
-    artifact_dirs: list[Path] = [_stdlib_dir("artifacts"), dsl_root / "shared" / "artifacts"]
 
-    # When dsl_root is an app directory itself, include its artifacts/ directly
-    if (dsl_root / "app.md").exists():
-        artifact_dirs.append(dsl_root / "artifacts")
-
-    # Collect app roots: dsl_root/apps/ and dsl_root/local/ (user-generated apps)
-    app_search_roots = [dsl_root / "apps", dsl_root / "local"]
-    for apps_root in app_search_roots:
-        if apps_root.exists():
-            artifact_dirs += sorted(apps_root.glob("*/artifacts"))
-
-    phase_dirs: list[Path] = [_stdlib_dir("phases"), dsl_root / "shared" / "phases"]
-
-    # When dsl_root is an app directory itself, include its phases/ directly
-    if (dsl_root / "app.md").exists():
-        phase_dirs.append(dsl_root / "phases")
-
-    for apps_root in app_search_roots:
-        if apps_root.exists():
-            phase_dirs += sorted(apps_root.glob("*/phases"))
-
-    # Build known artifact names
+    # ── known names (for reference resolution only, not linted) ──────────────
+    reference_dirs: list[Path] = [
+        _stdlib_dir("artifacts"),
+        app_dir.parent.parent / "shared" / "artifacts",  # reyn/shared/artifacts if exists
+    ]
     artifact_names: set[str] = set()
-    artifact_paths: list[Path] = []
-    for d in artifact_dirs:
+    for d in reference_dirs:
         if d.exists():
             for p in sorted(d.glob("*.yaml")):
                 try:
                     art = parse_artifact(p)
                     artifact_names.add(art.name)
-                    artifact_paths.append(p)
-                except Exception as exc:
-                    issues.append(LintIssue("error", p, f"Parse error: {exc}"))
+                except Exception:
+                    pass  # broken stdlib files are not this app's problem
 
-    # Lint artifacts
-    for p in artifact_paths:
+    # ── app-owned artifacts (collected first so names are known before lint) ──
+    app_artifact_dir = app_dir / "artifacts"
+    app_artifact_paths: list[Path] = []
+    if app_artifact_dir.exists():
+        for p in sorted(app_artifact_dir.glob("*.yaml")):
+            try:
+                art = parse_artifact(p)
+                artifact_names.add(art.name)
+                app_artifact_paths.append(p)
+            except Exception as exc:
+                issues.append(LintIssue("error", p, f"Parse error: {exc}"))
+
+    # ── lint app-owned artifacts ──────────────────────────────────────────────
+    for p in app_artifact_paths:
         try:
             issues.extend(lint_artifact(p, artifact_names))
         except Exception as exc:
             issues.append(LintIssue("error", p, f"Lint error: {exc}"))
 
-    # Lint phases
-    for d in phase_dirs:
-        if not d.exists():
-            continue
-        for p in sorted(d.glob("*.md")):
+    # ── lint app-owned phases ─────────────────────────────────────────────────
+    app_phase_dir = app_dir / "phases"
+    if app_phase_dir.exists():
+        for p in sorted(app_phase_dir.glob("*.md")):
             try:
                 issues.extend(lint_phase(p, artifact_names))
             except Exception as exc:
                 issues.append(LintIssue("error", p, f"Lint error: {exc}"))
 
-    # Lint app graphs
-    for apps_root in app_search_roots:
-        if apps_root.exists():
-            for app_md in sorted(apps_root.glob("*/app.md")):
-                try:
-                    issues.extend(lint_app(app_md, artifact_names))
-                except Exception as exc:
-                    issues.append(LintIssue("error", app_md, f"Lint error: {exc}"))
-
-    # Also lint app.md directly at dsl_root (e.g. reyn lint --dsl reyn/local/my_app)
-    direct_app_md = dsl_root / "app.md"
-    if direct_app_md.exists():
+    # ── lint app graph ────────────────────────────────────────────────────────
+    app_md = app_dir / "app.md"
+    if app_md.exists():
         try:
-            issues.extend(lint_app(direct_app_md, artifact_names))
+            issues.extend(lint_app(app_md, artifact_names))
         except Exception as exc:
-            issues.append(LintIssue("error", direct_app_md, f"Lint error: {exc}"))
+            issues.append(LintIssue("error", app_md, f"Lint error: {exc}"))
 
     return issues
