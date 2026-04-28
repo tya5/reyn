@@ -92,10 +92,8 @@ Artifact rules:
 """
 
 
-def _system_prompt(output_language: str) -> str:
-    lang_map = {"ja": "Japanese", "en": "English", "zh": "Chinese"}
-    lang_label = lang_map.get(output_language, output_language)
-    return _SYSTEM_BASE + f"\noutput_language is '{output_language}' — write all content in {lang_label}.\n"
+def _system_prompt() -> str:
+    return _SYSTEM_BASE
 
 
 def _extract_json(text: str) -> str:
@@ -157,7 +155,7 @@ def call_llm(
     prior_attempts: list of {"raw": str, "error": str} from previous phase retries.
       Each entry is appended as an assistant/user turn so the LLM sees what was wrong.
     """
-    system = _system_prompt(frame.output_language)
+    system = _system_prompt()
     user_content = json.dumps(frame.model_dump(), indent=2, ensure_ascii=False)
     messages: list[dict] = [
         {"role": "system", "content": system},

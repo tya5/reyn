@@ -59,7 +59,7 @@ def build_frame(
         instructions=phase.instructions,
         input_artifact=maybe_ref_artifact(artifact, artifact_path),
         execution=ExecutionState(
-            path=list(history),
+            path=list(history)[-10:],
             current_visit=current_visit,
             total_steps=total_steps,
         ),
