@@ -102,7 +102,19 @@ Checklist before finishing:
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
-Write all files using one op per file. After writing, output a decide turn reporting the files written.
+Write all files using one op per file. After writing, run the linter:
+
+```json
+{"kind": "lint", "app": "{data.app_name}"}
+```
+
+If lint returns `passed: false`:
+- Examine the `issues` list carefully
+- If the root cause is a mistake in the generated files (e.g. back-edge in graph, missing artifact): fix the files and re-run lint
+- If the root cause is in the input `app_plan` (e.g. the plan itself defines a cycle in transitions): emit `control.type="rollback"` with `reason` explaining which part of the plan is invalid — the OS will re-run the planning phase with your feedback
+- Do NOT finish if lint has errors
+
+If lint passes, output a decide turn reporting the files written.
 
 summary MUST describe what the app does for its users — not what you (the builder) did.
 Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
