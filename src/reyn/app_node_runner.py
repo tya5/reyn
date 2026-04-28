@@ -74,7 +74,7 @@ def execute_app_node(
     target_type: str,
     output_language: str,
     *,
-    parent_workspace_base: Path,
+    parent_state_dir: Path,
     model: str,
     strict: bool,
     subscribers: list[Callable],
@@ -93,14 +93,14 @@ def execute_app_node(
     sub_app = load_dsl_app(node_spec.app_path, dsl_root=node_spec.dsl_root)
 
     if node_spec.workspace == "shared":
-        sub_workspace_dir = str(parent_workspace_base)
+        sub_state_dir = str(parent_state_dir)
     else:
-        sub_workspace_dir = str(parent_workspace_base / "invoke" / node_id.lstrip("@"))
+        sub_state_dir = str(parent_state_dir / "invoke" / node_id.lstrip("@"))
 
     sub_runtime = OSRuntime(
         app=sub_app,
         model=model,
-        workspace_dir=sub_workspace_dir,
+        state_dir=sub_state_dir,
         strict=strict,
         subscribers=subscribers,
         resolver=resolver,

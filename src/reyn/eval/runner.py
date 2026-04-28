@@ -188,23 +188,21 @@ class EvalRunner:
         app: App,
         model: str,
         judge_model: str,
-        workspace_dir: str = "./workspace",
+        state_dir: str = ".reyn/eval_runs",
         output_language: str = "ja",
         app_subscribers: list[Callable] | None = None,
         on_case_start: Callable[[str], None] | None = None,
         on_phase_judged: Callable[[str, PhaseEvalResult], None] | None = None,
-        extra_read_roots: list[str] | None = None,
     ) -> None:
         self.spec = spec
         self.app = app
         self.model = model
         self.judge_model = judge_model
-        self.workspace_dir = workspace_dir
+        self.state_dir = state_dir
         self.output_language = output_language
         self.app_subscribers = app_subscribers or []
         self.on_case_start = on_case_start
         self.on_phase_judged = on_phase_judged
-        self.extra_read_roots = extra_read_roots or []
         # Accumulated token usage across all run_case() calls
         self._app_tokens: TokenUsage = TokenUsage()
         self._judge_tokens: TokenUsage = TokenUsage()
@@ -237,14 +235,13 @@ class EvalRunner:
         if self.on_case_start:
             self.on_case_start(case.name)
 
-        case_workspace = str(
-            Path(self.workspace_dir) / "evals" / self.app.name / case.name
+        case_state_dir = str(
+            Path(self.state_dir) / self.app.name / case.name
         )
         agent = Agent(
             model=self.model,
-            workspace_dir=case_workspace,
+            state_dir=case_state_dir,
             subscribers=self.app_subscribers,
-            extra_read_roots=self.extra_read_roots,
         )
 
         try:

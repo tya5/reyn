@@ -19,7 +19,7 @@ from pathlib import Path
 @dataclass
 class ReynConfig:
     model: str = "standard"
-    workspace: str = "./workspace"
+    state_dir: str = ".reyn"
     output_language: str = "ja"
     shell_allowed: bool = False
     models: dict[str, str] = field(default_factory=dict)
@@ -73,7 +73,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
-    merged: dict = {"model": "standard", "workspace": ".reyn",
+    merged: dict = {"model": "standard", "state_dir": ".reyn",
                     "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {}}
 
     # User global
@@ -87,7 +87,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
     return ReynConfig(
         model=str(merged.get("model", "standard")),
-        workspace=str(merged.get("workspace", ".reyn")),
+        state_dir=str(merged.get("state_dir", ".reyn")),
         output_language=str(merged.get("output_language", "ja")),
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},

@@ -70,12 +70,11 @@ class OSRuntime:
         self,
         app: App,
         model: str,
-        workspace_dir: str = "./workspace",
+        state_dir: str = ".reyn",
         strict: bool = False,
         subscribers: list[Callable] | None = None,
         user_input_fn: Callable[[str, list[str]], str] | None = None,
         run_id: str | None = None,
-        extra_read_roots: list[str] | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
@@ -86,7 +85,7 @@ class OSRuntime:
         self.strict = strict
         self.run_id = run_id
         self.events = EventLog(subscribers=subscribers)
-        self.workspace = Workspace(workspace_dir, self.events, extra_read_roots=extra_read_roots)
+        self.workspace = Workspace(self.events, state_dir=state_dir)
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             user_input_fn=user_input_fn,
@@ -457,7 +456,7 @@ class OSRuntime:
             target_schema=target_schema,
             target_type=target_type,
             output_language=output_language,
-            parent_workspace_base=self.workspace.base_dir,
+            parent_state_dir=self.workspace.state_dir,
             model=self.model,
             strict=self.strict,
             subscribers=self.events.subscribers,

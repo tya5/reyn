@@ -32,19 +32,18 @@ def _parse_cli_input(raw: str) -> dict:
         return {"type": "user_message", "data": {"text": raw}}
 
 
-def _resolve_app_name(name: str, workspace: str) -> tuple[Path, Path | None]:
+def _resolve_app_name(name: str) -> tuple[Path, Path | None]:
     """Resolve a short app name to (app_dir, dsl_root).
 
-    Search order: workspace → project dsl/ → ~/.reyn/apps/ → stdlib.
+    Search order: dsl/project/ → dsl/local/ → stdlib.
     Returns (app_dir, dsl_root) where dsl_root is None when it cannot be inferred.
     Exits with an error message if not found.
     """
     stdlib_root = Path(__file__).parent.parent / "stdlib"
     candidates: list[tuple[Path, Path]] = [
-        (Path(workspace) / "dsl" / "apps" / name,        Path(workspace) / "dsl"),
-        (Path("dsl") / "apps" / name,                     Path("dsl")),
-        (Path.home() / ".reyn" / "apps" / name,           Path.home() / ".reyn" / "apps"),
-        (stdlib_root / "apps" / name,                      stdlib_root),
+        (Path("dsl") / "project" / name, Path("dsl")),
+        (Path("dsl") / "local" / name,   Path("dsl")),
+        (stdlib_root / "apps" / name,     stdlib_root),
     ]
     for app_dir, dsl_root in candidates:
         if (app_dir / "app.md").exists():
@@ -59,8 +58,6 @@ def cmd_run(args: argparse.Namespace) -> None:
     _apply_config_env(config)
     resolver = _make_resolver(config)
 
-    workspace = args.workspace or config.workspace
-
     if args.app_path:
         app_dir = Path(args.app_path)
         app_md = app_dir / "app.md"
@@ -72,7 +69,7 @@ def cmd_run(args: argparse.Namespace) -> None:
             print(f"Error: failed to compile DSL '{app_md}': {e}", file=sys.stderr)
             sys.exit(1)
     elif args.app_name:
-        app_dir, inferred_root = _resolve_app_name(args.app_name, workspace)
+        app_dir, inferred_root = _resolve_app_name(args.app_name)
         dsl_root = args.dsl_root or str(inferred_root)
         app_md = app_dir / "app.md"
         print(f"resolved        : {app_md}  (dsl-root: {dsl_root})")
@@ -135,10 +132,9 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     agent = Agent(
         model=model,
-        workspace_dir=workspace,
+        state_dir=config.state_dir,
         strict=args.strict,
         subscribers=[logger],
-        extra_read_roots=args.read_allow,
         shell_allowed=shell_allowed,
         resolver=resolver,
         permission_resolver=perm_resolver,
@@ -183,14 +179,12 @@ def cmd_apps(args: argparse.Namespace) -> None:
     import yaml
 
     config = _load_config()
-    workspace = args.workspace or config.workspace
     stdlib_root = Path(__file__).parent.parent / "stdlib"
 
     search_roots: list[tuple[str, Path]] = [
-        ("workspace", Path(workspace) / "dsl"),
-        ("project",   Path("dsl")),
-        ("user",      Path.home() / ".reyn" / "apps"),
-        ("stdlib",    stdlib_root),
+        ("project", Path("dsl") / "project"),
+        ("local",   Path("dsl") / "local"),
+        ("stdlib",  stdlib_root / "apps"),
     ]
 
     def _read_description(app_md: Path) -> str:
@@ -208,11 +202,10 @@ def cmd_apps(args: argparse.Namespace) -> None:
     found_any = False
     seen: set[str] = set()
 
-    for label, root in search_roots:
-        apps_dir = root / "apps" if label not in ("user",) else root
+    for label, apps_dir in search_roots:
         if not apps_dir.exists():
             continue
-        entries = sorted(p for p in apps_dir.iterdir() if (p / "app.md").exists())
+        entries = sorted(p for p in apps_dir.iterdir() if p.is_dir() and (p / "app.md").exists())
         if not entries:
             continue
         print(f"\n{label}  ({apps_dir})")
@@ -475,7 +468,6 @@ def cmd_eval(args: argparse.Namespace) -> None:
     config = _load_config()
     _apply_config_env(config)
     resolver = _make_resolver(config)
-    workspace = config.workspace
 
     try:
         spec = load_eval_spec(args.spec)
@@ -486,7 +478,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
     # Resolve app: bare name → search path; path/URL → use directly
     app_ref = spec.app_dsl_path
     if "/" not in app_ref and not app_ref.endswith(".md"):
-        app_dir, inferred_root = _resolve_app_name(app_ref, workspace)
+        app_dir, inferred_root = _resolve_app_name(app_ref)
         dsl_root = args.dsl_root or str(inferred_root)
         app_md = str(app_dir / "app.md")
         print(f"resolved        : {app_md}  (dsl-root: {dsl_root})")
@@ -526,8 +518,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
     runner = EvalRunner(
         spec=spec, app=app, model=model, judge_model=judge_model,
-        workspace_dir=args.workspace, output_language=args.output_language,
-        app_subscribers=app_subscribers, extra_read_roots=args.read_allow,
+        state_dir=str(Path(config.state_dir) / "eval_runs"),
+        output_language=args.output_language,
+        app_subscribers=app_subscribers,
     )
 
     runs_per_case = _run_eval(runner, spec, repeat)
@@ -554,7 +547,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print(f" Weakest phase: {weak}")
     _print_cost_summary(cost_summary)
 
-    eval_dir = Path(args.workspace) / "evals"
+    eval_dir = Path(config.state_dir) / "evals"
     eval_dir.mkdir(parents=True, exist_ok=True)
     result_path = eval_dir / f"{ts}_{app.name}.json"
     result_path.write_text(
@@ -814,12 +807,6 @@ def build_parser() -> argparse.ArgumentParser:
     init_p.set_defaults(func=cmd_init)
 
     apps_p = sub.add_parser("apps", help="List available apps across all search paths")
-    apps_p.add_argument(
-        "--workspace",
-        default=None,
-        metavar="DIR",
-        help="Workspace directory (default: from reyn.yaml or ./workspace)",
-    )
     apps_p.set_defaults(func=cmd_apps)
 
     run_p = sub.add_parser("run", help="Run an app")
@@ -884,12 +871,6 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     run_p.add_argument(
-        "--workspace",
-        default=None,
-        metavar="DIR",
-        help="Workspace directory (default: from reyn.yaml or ./workspace)",
-    )
-    run_p.add_argument(
         "--output-language",
         default=None,
         dest="output_language",
@@ -915,18 +896,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use Rich-styled console output instead of plain text logging.",
     )
     run_p.add_argument(
-        "--read-allow",
-        dest="read_allow",
-        metavar="DIR",
-        action="append",
-        default=[],
-        help=(
-            "Allow reading files from DIR (absolute path). "
-            "Can be specified multiple times. "
-            "Writes always remain restricted to the workspace."
-        ),
-    )
-    run_p.add_argument(
         "--allow-shell",
         dest="allow_shell",
         action="store_true",
@@ -948,17 +917,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Model class name or LiteLLM string for LLM-as-judge (default: same as --model)")
     eval_p.add_argument("--dsl-root", dest="dsl_root", default=None, metavar="DIR",
                         help="DSL root override (default: from spec frontmatter)")
-    eval_p.add_argument("--workspace", default="./workspace", metavar="DIR",
-                        help="Workspace directory (default: ./workspace)")
     eval_p.add_argument("--output-language", default="ja", dest="output_language", metavar="LANG")
-    eval_p.add_argument(
-        "--read-allow",
-        dest="read_allow",
-        action="append",
-        default=[],
-        metavar="DIR",
-        help="Allow reading files from DIR (absolute path). Can be specified multiple times.",
-    )
     eval_p.add_argument(
         "--repeat", type=int, default=1, metavar="N",
         help=(

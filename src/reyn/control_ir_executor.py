@@ -48,26 +48,17 @@ class ControlIRExecutor:
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
-        extra_roots = self.workspace.extra_read_roots
-        if extra_roots:
-            roots_str = ", ".join(str(r) for r in extra_roots)
-            read_note = (
-                f"Readable locations: workspace (relative paths) and {roots_str} (absolute paths). "
-            )
-        else:
-            read_note = "Readable location: workspace (relative paths only). "
         return [
             ControlIROpSpec(
                 kind="file",
                 description=(
-                    "Read, write, or glob files. "
-                    "op='write': relative path only — creates/overwrites inside the workspace. "
+                    "Read, write, or glob files in the project. "
+                    "All paths are relative to the project root (CWD). "
+                    "op='write': create or overwrite a file. "
                     "op='read': retrieve a single file's content. "
                     "op='glob': expand a glob pattern (supports ** for recursive) and return "
                     "matching file paths; use this to discover files before reading them. "
-                    "max_results (default 50) caps glob output. "
-                    + read_note
-                    + "Writes are always workspace-relative; absolute paths are read-only."
+                    "max_results (default 50) caps glob output."
                 ),
                 example={"kind": "file", "op": "glob", "path": "src/**/*.py"},
             ),
@@ -101,7 +92,7 @@ class ControlIRExecutor:
                 kind="lint",
                 description=(
                     "Run the DSL linter against a directory and return issues. "
-                    "dsl_root: workspace-relative path to the DSL root directory (default: 'dsl/'). "
+                    "dsl_root: project-relative path to the DSL root directory (default: 'dsl/'). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
                 example={"kind": "lint", "dsl_root": "dsl/"},
@@ -110,7 +101,7 @@ class ControlIRExecutor:
                 kind="eval",
                 description=(
                     "Run an eval spec against its target app and return scores. "
-                    "spec_path: workspace-relative path to the eval.md file. "
+                    "spec_path: project-relative path to the eval.md file. "
                     "model: model class name (e.g. 'standard') or LiteLLM string for running the target app. "
                     "judge_model: model for LLM-as-judge (defaults to model). "
                     "Returns: passed (bool), overall_score, passed_criteria, total_criteria, weakest_phase, cases."
@@ -244,21 +235,20 @@ class ControlIRExecutor:
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
         from .compiler.linter import lint_dsl
-        resolved = self._resolve_dsl_root(self.workspace.base_dir / op.dsl_root)
+        resolved = self._resolve_dsl_root(Path(op.dsl_root))
         issues = lint_dsl(resolved)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
-        resolved_rel = str(resolved.relative_to(self.workspace.base_dir))
         self.events.emit(
             "lint_completed",
-            dsl_root=resolved_rel,
+            dsl_root=op.dsl_root,
             error_count=error_count,
             warning_count=warning_count,
         )
         return {
             "kind": "lint",
             "status": "ok",
-            "dsl_root": resolved_rel,
+            "dsl_root": op.dsl_root,
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
@@ -292,31 +282,26 @@ class ControlIRExecutor:
         from .eval.runner import EvalRunner
         from .eval.models import EvalRunResult
 
-        spec_full_path = self.workspace.base_dir / op.spec_path
+        # spec_path and app: in eval.md are both CWD-relative (workspace = CWD)
+        spec_full_path = Path(op.spec_path)
         spec = load_eval_spec(str(spec_full_path))
 
-        # Resolve app path and dsl_root relative to workspace if relative
         app_path = Path(spec.app_dsl_path)
-        if not app_path.is_absolute():
-            app_path = self.workspace.base_dir / app_path
         dsl_root = Path(spec.dsl_root) if spec.dsl_root else None
-        if dsl_root is not None and not dsl_root.is_absolute():
-            dsl_root = self.workspace.base_dir / dsl_root
-
         app = load_dsl_app(app_path, dsl_root=dsl_root)
+
         model = self._resolver.resolve(op.model)
         judge_model = self._resolver.resolve(op.judge_model or op.model)
-        eval_workspace = str(self.workspace.base_dir / "eval_runs")
+        eval_state_dir = str(self.workspace.state_dir / "eval_runs")
 
         runner = EvalRunner(
             spec=spec,
             app=app,
             model=model,
             judge_model=judge_model,
-            workspace_dir=eval_workspace,
+            state_dir=eval_state_dir,
             output_language=op.output_language,
             app_subscribers=[],
-            extra_read_roots=self.workspace.extra_read_roots,
         )
         case_results = [runner.run_case(case) for case in spec.cases]
 
@@ -354,7 +339,6 @@ class ControlIRExecutor:
         }
 
     def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:
-        from pathlib import Path as _Path
         from .compiler import load_dsl_app
         from reyn.agent import Agent
 
@@ -362,7 +346,7 @@ class ControlIRExecutor:
         app_ref = op.app
         if "/" not in app_ref and not app_ref.endswith(".md"):
             from reyn._cli import _resolve_app_name
-            app_dir, inferred_root = _resolve_app_name(app_ref, str(self.workspace.base_dir))
+            app_dir, inferred_root = _resolve_app_name(app_ref)
             app_path = str(app_dir / "app.md")
             dsl_root = str(inferred_root) if inferred_root else None
         else:
@@ -372,35 +356,35 @@ class ControlIRExecutor:
         sub_app = load_dsl_app(app_path, dsl_root=dsl_root)
         model = op.model or "standard"
 
-        # Sub-workspace: isolated under invoke/ or shared
+        # Sub state_dir: isolated under parent state_dir/invoke/ or shared
         safe_name = app_ref.replace("/", "_").replace(".", "_")
+        parent_state = self.workspace.state_dir
         if op.workspace == "shared":
-            sub_workspace_dir = str(self.workspace.base_dir)
+            sub_state_dir = str(parent_state)
         else:
-            sub_workspace_dir = str(self.workspace.base_dir / "invoke" / safe_name)
+            sub_state_dir = str(parent_state / "invoke" / safe_name)
 
-        self.events.emit("run_app_started", app=op.app, workspace=sub_workspace_dir)
+        self.events.emit("run_app_started", app=op.app, state_dir=sub_state_dir)
 
-        # Use Agent so events are persisted to disk (needed by downstream phases)
         agent = Agent(
             model=model,
-            workspace_dir=sub_workspace_dir,
+            state_dir=sub_state_dir,
             strict=False,
             subscribers=self.events.subscribers,
             resolver=self._resolver,
         )
         run_result = agent.run(sub_app, op.input, output_language=op.output_language)
 
-        # Build workspace-relative glob paths for events and artifacts
-        sub_base = _Path(sub_workspace_dir)
-        parent_base = self.workspace.base_dir
+        # Glob paths for events and artifacts (state_dir-relative)
+        sub_state = Path(sub_state_dir)
+        parent_state_path = self.workspace.state_dir
         try:
-            rel = sub_base.relative_to(parent_base)
+            rel = sub_state.relative_to(parent_state_path)
             events_glob = str(rel / "runs" / "*.jsonl")
             artifacts_glob = str(rel / "artifacts" / "**" / "*.json")
         except ValueError:
-            events_glob = str(sub_base / "runs" / "*.jsonl")
-            artifacts_glob = str(sub_base / "artifacts" / "**" / "*.json")
+            events_glob = str(sub_state / "runs" / "*.jsonl")
+            artifacts_glob = str(sub_state / "artifacts" / "**" / "*.json")
 
         usage = run_result.token_usage
         self.events.emit(
