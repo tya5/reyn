@@ -10,8 +10,9 @@ Generate the eval.md content and write it to the workspace, then run it.
 
 ## Output path
 
-Write to: `eval_specs/{app_name}/eval.md`
-(workspace-relative; e.g. `eval_specs/writing_review_app/eval.md`)
+Write to the app's own directory: `{app_dir}/eval.md`
+Derive `app_dir` from `app_dsl_path` by removing the trailing `/app.md`.
+Example: if `app_dsl_path` is `"reyn/local/article_generator/app.md"`, write to `reyn/local/article_generator/eval.md`.
 
 ## eval.md format
 
@@ -86,3 +87,8 @@ If eval passes, finish with an `eval_result` artifact populated from the eval op
 If eval fails (passed: false), still finish — report the scores and weakest_phase so the user knows what needs improvement.
 
 summary should describe results: e.g. "All 12 criteria passed (score 1.00)." or "6/12 criteria passed (score 0.50) — weakest: analyze."
+
+To re-run manually:
+```
+reyn eval --spec {app_dir}/eval.md --model <model>
+```

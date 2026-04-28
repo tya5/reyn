@@ -29,8 +29,8 @@ reyn run eval_builder '{"app_dsl_path": "reyn/local/my_app/app.md", "model": "st
 ## Output
 
 Evaluation results from running the generated spec. The eval file is written to
-`eval_specs/<app_name>/eval.md` and can be re-run manually:
+`reyn/local/<app_name>/eval.md` (alongside the app's DSL files) and can be re-run manually:
 
 ```
-reyn eval --spec eval_specs/my_app/eval.md --model standard
+reyn eval --spec reyn/local/my_app/eval.md --model standard
 ```
