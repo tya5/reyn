@@ -12,7 +12,9 @@ finish_criteria:
   - The generated DSL has been linted and lint_result has been produced
   - passed is true only when no lint errors were found
 graph:
-  plan_app: [build_app]
+  plan_app: [design_artifacts]
+  design_artifacts: [review_plan]
+  review_plan: [design_artifacts, build_app]
   build_app: ["@lint_runner[shared]"]
 ---
 
