@@ -1,9 +1,0 @@
-name: lint_request
-description: Request to lint a specific app by name.
-schema:
-  type: object
-  properties:
-    app:
-      type: string
-      description: App name to lint — resolved the same way as `reyn run <app>` (searches reyn/project/, reyn/local/, stdlib).
-  required: [app]
