@@ -165,8 +165,9 @@ def cmd_run(args: argparse.Namespace) -> None:
     print(json.dumps(result.data, indent=2, ensure_ascii=False))
     if result.token_usage:
         u = result.token_usage
+        cost_str = f"  ~${result.cost_usd:.4f}" if result.cost_usd is not None else ""
         print(f"\ntokens: {u.prompt_tokens:,} prompt + {u.completion_tokens:,} completion"
-              f" = {u.total_tokens:,} total")
+              f" = {u.total_tokens:,} total{cost_str}")
     print(f"\nevents saved → {agent.events_path}")
 
     if args.events:
@@ -352,6 +353,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
 
     case_results: list[dict] = []
     total_tokens = TokenUsage()
+    total_cost_usd: float = 0.0
 
     for case in spec.cases:
         print(f"━━━ case: {case.name} ━━━")
@@ -415,6 +417,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
         data = result.data
         if result.token_usage:
             total_tokens = total_tokens + result.token_usage
+        if result.cost_usd is not None:
+            total_cost_usd += result.cost_usd
 
         passed_sym = "✓" if data.get("passed") else "✗"
         score = data.get("overall_score", 0.0)
@@ -437,8 +441,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
     print(f" {overall_sym} {passed_count}/{len(case_results)} cases passed")
     if total_tokens.total_tokens > 0:
         u = total_tokens
+        cost_str = f"  ~${total_cost_usd:.4f}" if total_cost_usd > 0 else ""
         print(f" tokens: {u.prompt_tokens:,} prompt + {u.completion_tokens:,} completion"
-              f" = {u.total_tokens:,} total")
+              f" = {u.total_tokens:,} total{cost_str}")
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     eval_dir = Path(config.state_dir) / "evals"
@@ -451,6 +456,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
             "app": app_ref,
             "model": resolved_model,
             "timestamp": ts,
+            "total_tokens": total_tokens.to_dict(),
+            "total_cost_usd": total_cost_usd if total_cost_usd > 0 else None,
             "cases": case_results,
         }, ensure_ascii=False, indent=2),
         encoding="utf-8",

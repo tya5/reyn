@@ -9,7 +9,7 @@ from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
 from .llm import call_llm
-from .pricing import TokenUsage
+from .pricing import TokenUsage, estimate_cost
 from .normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from .artifact_validator import validate_artifact_data
 from .model_resolver import ModelResolver
@@ -33,6 +33,7 @@ class RunResult:
     data: dict[str, Any]
     status: Literal["finished", "loop_limit_exceeded"]
     token_usage: TokenUsage | None = None
+    cost_usd: float | None = None
 
     @property
     def ok(self) -> bool:
@@ -109,6 +110,7 @@ class OSRuntime:
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
         self._token_usage: TokenUsage = TokenUsage()
+        self._total_cost_usd: float = 0.0
         self._prev_phase: str | None = None          # phase that transitioned to current
         self._phase_inputs: dict[str, dict] = {}     # phase -> last input artifact
         self._phase_outputs: dict[str, dict] = {}    # phase -> last output artifact
@@ -317,8 +319,13 @@ class OSRuntime:
             rollback_context=rollback_context,
         )
         raw = llm_result.data
+        cost_usd: float | None = None
+        pricing_snapshot: dict | None = None
         if llm_result.usage:
             self._token_usage += llm_result.usage
+            cost_usd, pricing_snapshot = estimate_cost(resolved_model, llm_result.usage)
+            if cost_usd is not None:
+                self._total_cost_usd += cost_usd
         self.events.emit(
             "llm_response_received",
             phase=phase,
@@ -326,6 +333,8 @@ class OSRuntime:
             raw=raw,
             prompt_tokens=llm_result.usage.prompt_tokens if llm_result.usage else None,
             completion_tokens=llm_result.usage.completion_tokens if llm_result.usage else None,
+            cost_usd=cost_usd,
+            pricing_snapshot=pricing_snapshot,
         )
         return raw
 
@@ -675,7 +684,7 @@ class OSRuntime:
                         total_phase_count=sum(self._visit_counts.values()),
                         final_output_keys=list(data.keys()),
                     )
-                    return RunResult(data=data, status="finished", token_usage=self._token_usage)
+                    return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
 
                 next_node = output.next_phase
                 if next_node in self.app.graph.app_nodes:
@@ -696,7 +705,7 @@ class OSRuntime:
                             total_phase_count=sum(self._visit_counts.values()),
                             final_output_keys=list(data.keys()),
                         )
-                        return RunResult(data=data, status="finished", token_usage=self._token_usage)
+                        return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
                     next_after = post_nodes[0]
                     next_phase_obj = self.app.phases[next_after]
                     adapted = self._run_app_node(
@@ -725,7 +734,7 @@ class OSRuntime:
                 total_phase_count=sum(self._visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
-            return RunResult(data=final_output, status="loop_limit_exceeded", token_usage=self._token_usage)
+            return RunResult(data=final_output, status="loop_limit_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
 
         except WorkflowAbortedError as exc:
             self.events.emit(
