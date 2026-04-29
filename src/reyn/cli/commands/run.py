@@ -1,6 +1,7 @@
 """`reyn run` — execute an app."""
 from __future__ import annotations
 import argparse
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -123,7 +124,9 @@ def run(args: argparse.Namespace) -> None:
     print()
 
     try:
-        result = agent.run(loaded.skill, initial_input, output_language=output_language)
+        result = asyncio.run(
+            agent.run(loaded.skill, initial_input, output_language=output_language)
+        )
     except Exception as e:
         print(f"\nError during execution: {e}", file=sys.stderr)
         sys.exit(1)

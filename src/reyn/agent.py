@@ -37,7 +37,7 @@ class Agent:
         self.run_id: str | None = None
         self.events_path: Path | None = None
 
-    def run(self, skill: Skill, initial_input: dict, output_language: str = "ja") -> RunResult:
+    async def run(self, skill: Skill, initial_input: dict, output_language: str = "ja") -> RunResult:
         self.run_id = self._make_run_id(skill.name)
         self.events_path = Path(self.state_dir) / "runs" / f"{self.run_id}.jsonl"
         persister = EventPersister(self.events_path)
@@ -54,7 +54,7 @@ class Agent:
             max_phase_visits=self._max_phase_visits,
             mcp_servers=self._mcp_servers,
         )
-        return self._runtime.run(initial_input, output_language=output_language)
+        return await self._runtime.run(initial_input, output_language=output_language)
 
     @property
     def phase_artifacts(self) -> list[dict]:

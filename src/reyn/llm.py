@@ -150,7 +150,7 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
-def call_llm(
+async def call_llm(
     model: str,
     frame: ContextFrame,
     prior_attempts: list[dict[str, str]] | None = None,
@@ -220,14 +220,14 @@ def call_llm(
         # response_format may not be supported by all models; pass it only when available
         extra = proxy_kwargs()
         try:
-            response = litellm.completion(
+            response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 **extra,
             )
         except Exception:
-            response = litellm.completion(model=model, messages=messages, **extra)
+            response = await litellm.acompletion(model=model, messages=messages, **extra)
 
         usage = _extract_usage(response)
         last_raw = response.choices[0].message.content or ""

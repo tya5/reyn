@@ -17,7 +17,7 @@ from .models import SkillNodeSpec
 from .pricing import TokenUsage
 
 
-def _adapt_artifact(
+async def _adapt_artifact(
     data: dict,
     source_type: str,
     target_schema: dict,
@@ -44,7 +44,7 @@ def _adapt_artifact(
         f'"data" populated from the source, mapped to the target schema fields.\n'
         f"Output language: {output_language}"
     )
-    response = litellm.completion(
+    response = await litellm.acompletion(
         model=resolver.resolve(model),
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
@@ -66,7 +66,7 @@ def _adapt_artifact(
     return raw, usage
 
 
-def execute_skill_node(
+async def execute_skill_node(
     node_id: str,
     node_spec: SkillNodeSpec,
     input_artifact: dict,
@@ -105,7 +105,7 @@ def execute_skill_node(
         subscribers=subscribers,
         resolver=resolver,
     )
-    run_result = sub_runtime.run(input_artifact, output_language=output_language)
+    run_result = await sub_runtime.run(input_artifact, output_language=output_language)
     token_usage = sub_runtime._token_usage
 
     events.emit(
@@ -115,7 +115,7 @@ def execute_skill_node(
         final_output_keys=list(run_result.data.keys()),
     )
 
-    adapted, adapt_usage = _adapt_artifact(
+    adapted, adapt_usage = await _adapt_artifact(
         run_result.data, sub_skill.final_output_name,
         target_schema, target_type, node_id, output_language,
         model=model, resolver=resolver, events=events,

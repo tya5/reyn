@@ -73,7 +73,7 @@ class PreprocessorExecutor:
         self._state_dir = Path(state_dir)
         self._max_phase_visits = max_phase_visits
 
-    def run(
+    async def run(
         self, phase: "Phase", artifact: dict, output_language: str,
     ) -> tuple[dict, TokenUsage]:
         """Apply all preprocessor steps; return (enriched_artifact, accumulated_token_usage)."""
@@ -89,7 +89,7 @@ class PreprocessorExecutor:
                 phase=phase.name, step_index=i, step_type=step.type,
             )
             try:
-                result, step_usage = self._apply_step(
+                result, step_usage = await self._apply_step(
                     step, result, i, phase.name, output_language
                 )
                 total_usage += step_usage
@@ -117,7 +117,7 @@ class PreprocessorExecutor:
 
     # ── Step dispatch ─────────────────────────────────────────────────────────
 
-    def _apply_step(
+    async def _apply_step(
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
@@ -125,9 +125,9 @@ class PreprocessorExecutor:
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
         if isinstance(step, RunSkillStep):
-            return self._apply_run_skill(step, artifact, index, phase_name, output_language)
+            return await self._apply_run_skill(step, artifact, index, phase_name, output_language)
         if isinstance(step, IterateStep):
-            return self._apply_iterate(step, artifact, index, phase_name, output_language)
+            return await self._apply_iterate(step, artifact, index, phase_name, output_language)
         if isinstance(step, LintPlanStep):
             return self._apply_lint_plan(step, artifact, index, phase_name)
         raise PreprocessorError(f"Unknown step type: {type(step)}")
@@ -150,7 +150,7 @@ class PreprocessorExecutor:
 
     # ── run_skill ───────────────────────────────────────────────────────────────
 
-    def _apply_run_skill(
+    async def _apply_run_skill(
         self, step: Any, artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
@@ -162,7 +162,7 @@ class PreprocessorExecutor:
             )
         state_dir = self._state_dir / "preprocessor" / phase_name / f"{index}_{step.skill}"
         self._events.emit("run_skill_started", app=step.skill, state_dir=str(state_dir))
-        result = invoke_sub_skill(
+        result = await invoke_sub_skill(
             sub_app, artifact,
             model=self._model,
             state_dir=state_dir,
@@ -187,7 +187,7 @@ class PreprocessorExecutor:
 
     # ── iterate ───────────────────────────────────────────────────────────────
 
-    def _apply_iterate(
+    async def _apply_iterate(
         self, step: Any, artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
@@ -239,7 +239,7 @@ class PreprocessorExecutor:
                 "run_skill_started", app=step.apply.skill,
                 state_dir=str(state_dir), iterate_index=j,
             )
-            result = invoke_sub_skill(
+            result = await invoke_sub_skill(
                 sub_app, item_artifact,
                 model=self._model,
                 state_dir=state_dir,

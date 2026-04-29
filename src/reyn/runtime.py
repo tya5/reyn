@@ -308,7 +308,7 @@ class OSRuntime:
 
     # ── Phase execution with act/decide loop and retry ─────────────────────────
 
-    def _call_llm_and_record(
+    async def _call_llm_and_record(
         self,
         phase: str,
         frame: ContextFrame,
@@ -317,7 +317,7 @@ class OSRuntime:
     ) -> dict:
         resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
-        llm_result = call_llm(
+        llm_result = await call_llm(
             resolved_model, frame,
             prior_attempts=prior_attempts or None,
             rollback_context=rollback_context,
@@ -342,7 +342,7 @@ class OSRuntime:
         )
         return raw
 
-    def _run_act_loop(
+    async def _run_act_loop(
         self,
         phase: str,
         artifact: dict,
@@ -376,7 +376,7 @@ class OSRuntime:
                 artifact_path=artifact_path,
             )
             # Pass rollback_context only on the first LLM call; subsequent calls already have context
-            raw = self._call_llm_and_record(
+            raw = await self._call_llm_and_record(
                 phase, frame, prior_attempts or None,
                 rollback_context=rollback_context if first_call else None,
             )
@@ -408,7 +408,7 @@ class OSRuntime:
                 continue
 
             phase_decl = self.skill.phases[phase].permissions if phase in self.skill.phases else None
-            ir_results = self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
+            ir_results = await self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
             control_ir_results = ir_results
             prior_attempts = []
             self.events.emit(
@@ -420,7 +420,7 @@ class OSRuntime:
                 results=ir_results,
             )
 
-    def _run_decide_with_retry(
+    async def _run_decide_with_retry(
         self,
         raw: dict,
         phase: str,
@@ -460,9 +460,9 @@ class OSRuntime:
                 )
                 frame = self._build_frame(phase, artifact, candidates, output_language)
                 # rollback_context already injected in act loop's first call; retries don't repeat it
-                raw = self._call_llm_and_record(phase, frame, prior_attempts)
+                raw = await self._call_llm_and_record(phase, frame, prior_attempts)
 
-    def _execute_phase(
+    async def _execute_phase(
         self,
         current_phase: str,
         artifact: dict,
@@ -476,12 +476,12 @@ class OSRuntime:
         phase_def = self.skill.phases[current_phase]
         max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
-        raw, prior_attempts = self._run_act_loop(
+        raw, prior_attempts = await self._run_act_loop(
             current_phase, artifact, candidates, output_language,
             max_act_turns, max_phase_retries, artifact_path,
             rollback_context=rollback_context,
         )
-        return self._run_decide_with_retry(
+        return await self._run_decide_with_retry(
             raw, current_phase, artifact, candidates, output_language, prior_attempts, max_phase_retries,
         )
 
@@ -498,7 +498,7 @@ class OSRuntime:
 
     # ── App-node dispatch ──────────────────────────────────────────────────────
 
-    def _run_skill_node(
+    async def _run_skill_node(
         self,
         node_id: str,
         input_artifact: dict,
@@ -507,7 +507,7 @@ class OSRuntime:
         output_language: str,
     ) -> dict:
         node_spec = self.skill.graph.skill_nodes[node_id]
-        adapted, usage = execute_skill_node(
+        adapted, usage = await execute_skill_node(
             node_id=node_id,
             node_spec=node_spec,
             input_artifact=input_artifact,
@@ -526,7 +526,7 @@ class OSRuntime:
 
     # ── Main loop ──────────────────────────────────────────────────────────────
 
-    def run(
+    async def run(
         self,
         initial_input: dict,
         output_language: str = "ja",
@@ -576,7 +576,7 @@ class OSRuntime:
                 # Run preprocessor (deterministic enrichment) before handing artifact to LLM
                 phase_def = self.skill.phases[current_phase]
                 if phase_def.preprocessor:
-                    enriched_artifact, pre_usage = self._preprocessor.run(
+                    enriched_artifact, pre_usage = await self._preprocessor.run(
                         phase_def, artifact, output_language
                     )
                     self._token_usage += pre_usage
@@ -590,14 +590,14 @@ class OSRuntime:
                 else:
                     enriched_artifact = artifact
 
-                result, output, retry_count = self._execute_phase(
+                result, output, retry_count = await self._execute_phase(
                     current_phase, enriched_artifact, candidates, output_language, max_phase_retries,
                     artifact_path=artifact_path,
                     rollback_context=rollback_context,
                 )
 
                 current_decl = self.skill.phases[current_phase].permissions if current_phase in self.skill.phases else None
-                decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
+                decide_results = await self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
                 if decide_results:
                     self.events.emit(
                         "decide_ops_executed",
@@ -697,7 +697,7 @@ class OSRuntime:
                 if next_node in self.skill.graph.skill_nodes:
                     post_nodes = self.skill.graph.transitions.get(next_node, [])
                     if not post_nodes:
-                        adapted = self._run_skill_node(
+                        adapted = await self._run_skill_node(
                             next_node, output.artifact,
                             self.skill.final_output_schema, self.skill.final_output_name,
                             output_language,
@@ -715,7 +715,7 @@ class OSRuntime:
                         return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
                     next_after = post_nodes[0]
                     next_phase_obj = self.skill.phases[next_after]
-                    adapted = self._run_skill_node(
+                    adapted = await self._run_skill_node(
                         next_node, output.artifact,
                         next_phase_obj.input_schema, next_phase_obj.input_schema_name,
                         output_language,

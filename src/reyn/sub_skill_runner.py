@@ -29,7 +29,7 @@ class SubSkillResult:
         return self.status == "finished"
 
 
-def invoke_sub_skill(
+async def invoke_sub_skill(
     sub_skill: "Skill",
     input_artifact: dict,
     *,
@@ -55,7 +55,7 @@ def invoke_sub_skill(
         resolver=resolver,
         max_phase_visits=max_phase_visits,
     )
-    run_result = agent.run(sub_skill, input_artifact, output_language=output_language)
+    run_result = await agent.run(sub_skill, input_artifact, output_language=output_language)
     return SubSkillResult(
         data=run_result.data,
         token_usage=run_result.token_usage,

@@ -1,6 +1,7 @@
 """`reyn eval` — run an eval spec against an app."""
 from __future__ import annotations
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -162,7 +163,9 @@ def _run_case(
     )
 
     try:
-        result = agent.run(eval_app, input_artifact, output_language=output_language)
+        result = asyncio.run(
+            agent.run(eval_app, input_artifact, output_language=output_language)
+        )
     except Exception as e:
         print(f"  Error: {e}", file=sys.stderr)
         return ({

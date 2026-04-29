@@ -14,8 +14,10 @@ Safely skipped (handler_not_implemented):
   tool, mcp, subagent
 """
 from __future__ import annotations
+import asyncio
+import inspect
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp, WebFetchIROp, WebSearchIROp
 from .workspace import Workspace
@@ -24,9 +26,27 @@ from .model_resolver import ModelResolver
 from .permissions import PermissionDecl, PermissionResolver
 
 
-def _default_user_input(question: str, suggestions: list[str]) -> str:
+async def _default_user_input(question: str, suggestions: list[str]) -> str:
+    """Default ask_user backend.
+
+    Uses prompt_toolkit's PromptSession for native asyncio integration when
+    a TTY is available; falls back to running blocking input() in a thread.
+    Both code paths are awaitable.
+    """
+    try:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.patch_stdout import patch_stdout
+        session: PromptSession[str] = PromptSession()
+        with patch_stdout():
+            text = await session.prompt_async("  > ")
+        return (text or "").strip()
+    except Exception:
+        return (await asyncio.to_thread(_blocking_prompt)).strip()
+
+
+def _blocking_prompt() -> str:
     print("  > ", end="", flush=True)
-    return input().strip()
+    return input()
 
 
 class ControlIRExecutor:
@@ -34,7 +54,7 @@ class ControlIRExecutor:
         self,
         workspace: Workspace,
         events: EventLog,
-        user_input_fn: Callable[[str, list[str]], str] | None = None,
+        user_input_fn: Callable[[str, list[str]], str | Awaitable[str]] | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
@@ -44,6 +64,7 @@ class ControlIRExecutor:
     ) -> None:
         self.workspace = workspace
         self.events = events
+        # user_input_fn may be sync or async; we await its result if it's a coroutine.
         self._user_input_fn = user_input_fn or _default_user_input
         self._max_phase_visits = max_phase_visits
         self._shell_allowed = shell_allowed
@@ -161,7 +182,7 @@ class ControlIRExecutor:
             ),
         ]
 
-    def execute(
+    async def execute(
         self,
         ops: list[ControlIROp],
         phase: str = "",
@@ -182,7 +203,7 @@ class ControlIRExecutor:
                         self._perm.require_file_write(effective_decl, op.path, self._skill_name)  # type: ignore[union-attr]
                     result = self._execute_file(op)  # type: ignore[arg-type]
                 elif op.kind == "ask_user":
-                    result = self._execute_ask_user(op, phase)  # type: ignore[arg-type]
+                    result = await self._execute_ask_user(op, phase)  # type: ignore[arg-type]
                 elif op.kind == "shell":
                     if self._perm:
                         self._perm.require_shell(effective_decl, getattr(op, "cmd", ""))
@@ -191,11 +212,11 @@ class ControlIRExecutor:
                         self.events.emit("control_ir_skipped", kind="shell", reason="shell_not_allowed")
                         results.append(result)
                         continue
-                    result = self._execute_shell(op)  # type: ignore[arg-type]
+                    result = await self._execute_shell(op)  # type: ignore[arg-type]
                 elif op.kind == "mcp":
                     if self._perm:
                         self._perm.require_mcp(effective_decl, getattr(op, "server", ""))
-                    result = self._execute_mcp(op)  # type: ignore[arg-type]
+                    result = await asyncio.to_thread(self._execute_mcp, op)  # type: ignore[arg-type]
                 elif op.kind == "tool":
                     if self._perm:
                         self._perm.require_tool(effective_decl, getattr(op, "name", ""))
@@ -204,11 +225,11 @@ class ControlIRExecutor:
                 elif op.kind == "lint":
                     result = self._execute_lint(op)  # type: ignore[arg-type]
                 elif op.kind == "run_skill":
-                    result = self._execute_run_skill(op)  # type: ignore[arg-type]
+                    result = await self._execute_run_skill(op)  # type: ignore[arg-type]
                 elif op.kind == "web_fetch":
-                    result = self._execute_web_fetch(op)  # type: ignore[arg-type]
+                    result = await self._execute_web_fetch(op)  # type: ignore[arg-type]
                 elif op.kind == "web_search":
-                    result = self._execute_web_search(op)  # type: ignore[arg-type]
+                    result = await asyncio.to_thread(self._execute_web_search, op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -390,7 +411,7 @@ class ControlIRExecutor:
         self.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
         return {"kind": "file", "op": "edit", "path": op.path, "status": "ok", "replacements": replacements}
 
-    def _execute_ask_user(self, op: AskUserIROp, phase: str) -> dict[str, Any]:
+    async def _execute_ask_user(self, op: AskUserIROp, phase: str) -> dict[str, Any]:
         self.events.emit(
             "user_intervention_requested",
             phase=phase,
@@ -398,7 +419,8 @@ class ControlIRExecutor:
             suggestions=op.suggestions or [],
         )
 
-        text = self._user_input_fn(op.question, op.suggestions or [])
+        result = self._user_input_fn(op.question, op.suggestions or [])
+        text = await result if inspect.isawaitable(result) else result
         if not text and not op.required:
             text = ""
 
@@ -437,7 +459,7 @@ class ControlIRExecutor:
             "issues": [str(i) for i in issues],
         }
 
-    def _execute_run_skill(self, op: RunSkillIROp) -> dict[str, Any]:
+    async def _execute_run_skill(self, op: RunSkillIROp) -> dict[str, Any]:
         from .compiler import load_dsl_skill
         from .sub_skill_runner import invoke_sub_skill
 
@@ -465,7 +487,7 @@ class ControlIRExecutor:
 
         self.events.emit("run_skill_started", skill=op.skill, state_dir=sub_state_dir)
 
-        run_result = invoke_sub_skill(
+        run_result = await invoke_sub_skill(
             sub_skill, op.input,
             model=model,
             state_dir=sub_state_dir,
@@ -558,7 +580,7 @@ class ControlIRExecutor:
             "raw": result,
         }
 
-    def _execute_web_fetch(self, op: WebFetchIROp) -> dict[str, Any]:
+    async def _execute_web_fetch(self, op: WebFetchIROp) -> dict[str, Any]:
         import html
         import html.parser
         import httpx
@@ -590,12 +612,12 @@ class ControlIRExecutor:
 
         self.events.emit("web_fetch_started", url=op.url)
         try:
-            response = httpx.get(
-                op.url,
+            async with httpx.AsyncClient(
                 timeout=op.timeout,
                 follow_redirects=True,
                 headers={"User-Agent": "reyn/1.0"},
-            )
+            ) as client:
+                response = await client.get(op.url)
         except httpx.TimeoutException:
             return {"kind": "web_fetch", "url": op.url, "status": "timeout",
                     "error": f"request timed out after {op.timeout}s"}
@@ -659,37 +681,51 @@ class ControlIRExecutor:
             "results": results,
         }
 
-    def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:
-        import subprocess
+    async def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:
         self.events.emit("shell_started", cmd=op.cmd, timeout=op.timeout)
         try:
-            proc = subprocess.run(
+            proc = await asyncio.create_subprocess_shell(
                 op.cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=op.timeout,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=op.timeout,
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                self.events.emit("shell_timeout", cmd=op.cmd, timeout=op.timeout)
+                return {
+                    "kind": "shell",
+                    "status": "timeout",
+                    "returncode": -1,
+                    "stdout": "",
+                    "stderr": f"Command timed out after {op.timeout}s",
+                }
+            stdout = stdout_b.decode("utf-8", errors="replace")
+            stderr = stderr_b.decode("utf-8", errors="replace")
+            returncode = proc.returncode if proc.returncode is not None else -1
             self.events.emit(
                 "shell_completed",
                 cmd=op.cmd,
-                returncode=proc.returncode,
-                stdout_len=len(proc.stdout),
-                stderr_len=len(proc.stderr),
+                returncode=returncode,
+                stdout_len=len(stdout),
+                stderr_len=len(stderr),
             )
             return {
                 "kind": "shell",
-                "status": "ok" if proc.returncode == 0 else "error",
-                "returncode": proc.returncode,
-                "stdout": proc.stdout,
-                "stderr": proc.stderr,
+                "status": "ok" if returncode == 0 else "error",
+                "returncode": returncode,
+                "stdout": stdout,
+                "stderr": stderr,
             }
-        except subprocess.TimeoutExpired:
-            self.events.emit("shell_timeout", cmd=op.cmd, timeout=op.timeout)
+        except OSError as exc:
             return {
                 "kind": "shell",
-                "status": "timeout",
+                "status": "error",
                 "returncode": -1,
                 "stdout": "",
-                "stderr": f"Command timed out after {op.timeout}s",
+                "stderr": str(exc),
             }
