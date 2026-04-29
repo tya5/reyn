@@ -268,8 +268,8 @@ class ControlIRExecutor:
         # Resolve app name or path
         app_ref = op.app
         if "/" not in app_ref and not app_ref.endswith(".md"):
-            from reyn._cli import _resolve_app_name
-            app_dir, inferred_root = _resolve_app_name(app_ref)
+            from reyn.app_paths import resolve_app_path
+            app_dir, inferred_root = resolve_app_path(app_ref)
             app_path = str(app_dir / "app.md")
             dsl_root = str(inferred_root) if inferred_root else None
         else:
