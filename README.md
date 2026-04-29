@@ -324,13 +324,6 @@ reyn lint <skill_name>
 
 Validates DSL structure: graph reachability, artifact references, transition targets, entry phase validity.
 
-### `reyn format`
-
-```
-reyn format --dsl dsl/             # rewrite to canonical form
-reyn format --dsl dsl/ --check     # dry-run (exit 1 if any file would change)
-```
-
 ### `reyn events`
 
 Replay a saved event log:

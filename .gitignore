@@ -15,6 +15,7 @@ reyn/local/
 .env
 .env.*
 !.env.example
+improver_state.json
 .DS_Store
 .vscode/
 .idea/
