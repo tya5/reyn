@@ -4,13 +4,16 @@ name: verify_app
 input: build_result
 role: dsl_verifier
 can_finish: true
+max_act_turns: 1
 ---
 
-Run the lint op against the app that was just written, then handle the result.
+Run the lint op EXACTLY ONCE against the app that was just written, then decide.
 
 ```
 {"kind": "lint", "app_path": "<data.app_path>"}
 ```
+
+After lint returns, you MUST move directly to a decide turn. Do NOT issue another lint op — the result you have is final. Re-running lint will produce the same result and waste turns.
 
 If lint returns `passed: false`:
 - Emit `control.type="rollback"` with a reason that lists the lint issues verbatim — the OS will re-run build_app with your feedback so it can fix the files using the original app_plan

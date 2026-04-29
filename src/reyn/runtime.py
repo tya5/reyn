@@ -88,14 +88,15 @@ class OSRuntime:
         self.run_id = run_id
         self.events = EventLog(subscribers=subscribers)
         self.workspace = Workspace(self.events, state_dir=state_dir)
+        self._max_phase_visits = max_phase_visits  # 0 = unlimited
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             user_input_fn=user_input_fn,
             shell_allowed=shell_allowed,
             resolver=self._resolver,
             permission_resolver=permission_resolver,
+            max_phase_visits=max_phase_visits,
         )
-        self._max_phase_visits = max_phase_visits  # 0 = unlimited
         self._preprocessor = PreprocessorExecutor(
             app=app,
             model=self.model,
@@ -103,6 +104,7 @@ class OSRuntime:
             subscribers=self.events.subscribers,
             resolver=self._resolver,
             state_dir=state_dir,
+            max_phase_visits=max_phase_visits,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
@@ -112,6 +114,10 @@ class OSRuntime:
         self._phase_outputs: dict[str, dict] = {}    # phase -> last output artifact
         self._phase_prev: dict[str, str | None] = {} # phase -> its predecessor at entry time
         self._pending_rollback_ctx: dict | None = None  # set when rollback is triggered
+        # No-progress detection: when a phase is rolled back into, remember the
+        # output it produced just before the rollback. If the next output is
+        # structurally identical, abort — the LLM is not making progress.
+        self._no_progress_check: dict | None = None
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -598,10 +604,15 @@ class OSRuntime:
                         rollback_to=target_phase,
                         reason=result.control.reason.summary,
                     )
+                    rejected_target_output = self._phase_outputs.get(target_phase, {})
                     self._pending_rollback_ctx = {
-                        "rejected_artifact": self._phase_outputs.get(target_phase, {}),
+                        "rejected_artifact": rejected_target_output,
                         "reason": result.control.reason.summary,
                         "rollback_from": current_phase,
+                    }
+                    self._no_progress_check = {
+                        "phase": target_phase,
+                        "prev_output_data": rejected_target_output.get("data"),
                     }
                     self._history.append(f"{current_phase} → rollback → {target_phase}")
                     current_phase = target_phase
@@ -610,6 +621,27 @@ class OSRuntime:
                     self._prev_phase = self._phase_prev.get(target_phase)
                     self._enter_phase(current_phase, artifact)
                     continue
+
+                # No-progress detection: if this phase was just re-run after a rollback
+                # and produced an output structurally identical to the rejected one, abort.
+                if (
+                    self._no_progress_check is not None
+                    and self._no_progress_check["phase"] == current_phase
+                ):
+                    new_data = output.artifact.get("data")
+                    if new_data == self._no_progress_check["prev_output_data"]:
+                        rollback_from = (self._pending_rollback_ctx or {}).get("rollback_from", "?")
+                        self.events.emit(
+                            "phase_no_progress",
+                            phase=current_phase,
+                            rollback_from=rollback_from,
+                        )
+                        raise WorkflowAbortedError(
+                            f"Phase '{current_phase}' produced an output identical to the one "
+                            f"rejected by '{rollback_from}'. The rollback feedback did not lead "
+                            f"to any change — aborting to prevent a wasteful loop."
+                        )
+                    self._no_progress_check = None
 
                 self._phase_outputs[current_phase] = output.artifact
 
