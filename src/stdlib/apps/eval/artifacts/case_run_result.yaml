@@ -14,7 +14,7 @@ schema:
       description: Status returned by the target app run ('finished', 'loop_limit_exceeded', 'aborted', etc.).
     eval_requests:
       type: array
-      description: Pre-built phase_eval_request wrapped artifacts, one per phase with criteria. Each item has {type, data} structure matching phase_eval_request.
+      description: Pre-built phase_eval_request wrapped artifacts, one per phase with criteria. Each item has {type, data} structure matching phase_eval_request. artifact_path (not artifact_data) is used to avoid large inline JSON.
       items:
         type: object
         properties:
@@ -23,6 +23,6 @@ schema:
             description: Must be 'phase_eval_request'.
           data:
             type: object
-            description: phase_eval_request data (phase_name, artifact_type, artifact_data, criteria).
+            description: phase_eval_request data (phase_name, artifact_type, artifact_path, criteria).
         required: [type, data]
   required: [case_name, spec_path, run_status, eval_requests]

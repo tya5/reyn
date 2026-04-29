@@ -36,15 +36,17 @@ def extract_data_schema(candidate_schema: dict, artifact_type: str) -> dict:
     return candidate_schema
 
 
-def _strip_data(data: dict, schema: dict, corrections: list[str]) -> dict:
+def _strip_data(data: dict, schema: dict, corrections: list[str], *, _top_level: bool = True) -> dict:
     """
-    Remove keys not declared in schema.properties, plus the injected 'type' key.
+    Remove keys not declared in schema.properties, plus the injected 'type' key at top level only.
     Recurse into nested objects that have their own properties declaration.
     """
     props = schema.get("properties", {})
     result: dict[str, Any] = {}
     for key, value in data.items():
-        if key == "type":
+        # Strip 'type' only at the top level of artifact.data — it's an LLM injection artifact.
+        # In nested objects (e.g. items inside an array), 'type' may be a legitimate data field.
+        if key == "type" and _top_level:
             corrections.append("removed 'type' from data (injected by LLM)")
             continue
         if props and key not in props:
@@ -54,13 +56,14 @@ def _strip_data(data: dict, schema: dict, corrections: list[str]) -> dict:
         if isinstance(value, dict) and key in props:
             nested_schema = props[key]
             if nested_schema.get("type") == "object" and "properties" in nested_schema:
-                value = _strip_data(value, nested_schema, corrections)
+                value = _strip_data(value, nested_schema, corrections, _top_level=False)
         # Recurse into arrays of objects
         elif isinstance(value, list) and key in props:
             items_schema = props[key].get("items", {})
             if items_schema.get("type") == "object" and "properties" in items_schema:
                 value = [
-                    _strip_data(item, items_schema, corrections) if isinstance(item, dict) else item
+                    _strip_data(item, items_schema, corrections, _top_level=False)
+                    if isinstance(item, dict) else item
                     for item in value
                 ]
         result[key] = value

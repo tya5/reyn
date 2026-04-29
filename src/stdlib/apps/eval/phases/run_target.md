@@ -39,11 +39,13 @@ For each match, build a phase_eval_request item:
   "data": {
     "phase_name": "<phase_name>",
     "artifact_type": "<entry.artifact.type>",
-    "artifact_data": "<entry.artifact.data>",
+    "artifact_path": "<entry.path>",
     "criteria": "<phase_criteria_item.criteria>"
   }
 }
 ```
+
+Use `entry.path` (the CWD-relative file path returned in `phase_artifacts`) as `artifact_path`. Do NOT inline `entry.artifact.data` — the judge reads the file directly.
 
 Skip any phase in `phase_criteria` that has no matching entry in `phase_artifacts`.
 

@@ -9,9 +9,9 @@ schema:
     artifact_type:
       type: string
       description: Type name of the artifact being evaluated.
-    artifact_data:
-      type: object
-      description: The actual data produced by the phase.
+    artifact_path:
+      type: string
+      description: CWD-relative path to the artifact JSON file (e.g. ".reyn/invoke/.../v01_app_structure.json"). Judge reads this file to get the artifact data.
     criteria:
       type: array
       description: Quality criteria to evaluate the artifact against.
@@ -25,4 +25,4 @@ schema:
             type: boolean
             description: True if failing this criterion means the judgment fails overall.
         required: [description]
-  required: [phase_name, artifact_data, criteria]
+  required: [phase_name, artifact_path, criteria]
