@@ -1,0 +1,22 @@
+name: mcp_candidate_list
+description: List of MCP server candidates from the GitHub MCP Registry matching the requested capability.
+schema:
+  type: object
+  properties:
+    candidates:
+      type: array
+      description: Relevant MCP servers found. Empty if none match.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: Registry path of the server (e.g. "github/github-mcp-server").
+          repo_url:
+            type: string
+            description: Full GitHub URL of the server repository.
+          description:
+            type: string
+            description: One-line description of what the server does.
+        required: [name, repo_url, description]
+  required: [candidates]
