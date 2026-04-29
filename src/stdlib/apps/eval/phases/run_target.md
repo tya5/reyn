@@ -28,6 +28,8 @@ Issue a `run_app` Control IR op:
 
 If the run_app op returns `status` other than `"finished"` (e.g. `"error"`, `"aborted"`, `"loop_limit_exceeded"`), do NOT retry — the failure is structural, not flaky. Skip Step 3 and produce a `case_run_result` with `run_status` set to the returned status, `eval_requests: []`, and proceed to the decide turn. The eval phase will mark the case as failed.
 
+CRITICAL: NEVER abort the eval workflow, regardless of what error the target app produced. A target app failure is an expected outcome — always proceed to `evaluate` with a `case_run_result` artifact.
+
 ## Step 3 — Build eval_requests
 
 The result includes `phase_artifacts` — a list of `{phase, artifact, path}` entries for every intermediate phase output collected during the run.
