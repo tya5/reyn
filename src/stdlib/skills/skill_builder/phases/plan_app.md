@@ -18,18 +18,16 @@ Do NOT embed app-builder concerns (naming, clarification) into the target app's 
 ## Step 0 — Discover available MCP servers (when relevant)
 
 If the user's request implies accessing **external systems** — such as GitHub, databases, web search,
-Slack, email, calendars, Git, file systems, or any 3rd-party API — search the GitHub MCP Registry
-before designing the phases:
+Slack, email, calendars, Git, file systems, or any 3rd-party API — emit a `run_skill` control_ir op
+to search the GitHub MCP Registry, then wait for the result before designing phases:
 
-```
-run_skill: mcp_search
-input: <the user's original request text>
-slot: mcp_results
+```json
+{"kind": "run_skill", "skill": "mcp_search", "input": {"type": "user_message", "data": {"text": "<user request>"}}}
 ```
 
-The `mcp_results` slot will contain an `mcp_candidate_list` with matching servers.
-From those candidates, select 0–3 that would most benefit this skill and record them in `mcp_servers`.
-If no candidates are relevant, set `mcp_servers: []`.
+The op returns a `final_output` containing a `candidates` list (`name`, `repo_url`, `description`).
+From those candidates, select 0–3 most relevant servers and include them in `mcp_servers` in your
+output artifact. If no candidates fit, set `mcp_servers: []`.
 
 Skip this step entirely if the skill is self-contained (text processing, classification,
 document generation with no external data needs).

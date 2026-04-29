@@ -85,9 +85,25 @@ schema:
           type: string
           description: One sentence describing what the final output contains.
       required: [name, description]
+    mcp_servers:
+      type: array
+      description: MCP servers recommended for this skill, discovered via mcp_search in plan_app Step 0. Empty if none needed or skill is self-contained.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: Registry path of the server (e.g. "tavily-ai/tavily-mcp").
+          purpose:
+            type: string
+            description: One sentence on how this server helps the skill.
+          url:
+            type: string
+            description: Full GitHub URL of the server repository.
+        required: [name, purpose]
     lint_issues:
       type: array
       items:
         type: string
       description: Deterministic structural-lint findings injected by the OS preprocessor when this artifact is consumed by design_artifacts. Empty list means the plan is structurally valid. Not produced by plan_app — leave undefined when emitting this artifact.
-  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output]
+  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]
