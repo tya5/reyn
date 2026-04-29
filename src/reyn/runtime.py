@@ -558,7 +558,9 @@ class OSRuntime:
                         phase_def, artifact, output_language
                     )
                     self._token_usage += pre_usage
-                    self.workspace.store_artifact(
+                    # Update artifact_path to the enriched file so maybe_ref_artifact
+                    # references the correct (post-preprocessor) artifact when it is large.
+                    artifact_path = self.workspace.store_artifact(
                         current_phase + "_preprocessed", enriched_artifact,
                         app_name=self.app.name,
                         visit=self._visit_counts.get(current_phase, 1),
