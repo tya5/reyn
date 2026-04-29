@@ -31,8 +31,13 @@ Then choose the appropriate pattern:
 ### Pattern A — Linear with review
 Use when: the task generates content or artifacts that need quality assessment.
 ```
-generate → review  (review has can_finish: true, loops back to generate if rejected)
+generate → review  (review has can_finish: true; on reject, OS rollback re-runs generate at runtime — NOT a graph edge)
 ```
+
+CRITICAL — even if the user says "revise", "loop back", "iterate until approved", do NOT create a
+separate `revise` phase. Revision is the SAME `generate` phase re-executed by the OS rollback
+mechanism with the reviewer's feedback as input. Only `generate` and `review` phases exist in
+this pattern.
 
 ### Pattern B — Research then generate
 Use when: the task benefits from gathering information before generating.
@@ -73,13 +78,16 @@ phases: array of phase definitions, each with:
 
 transitions: array of {from: phase_name, to: [phase_name, ...]}
   - `to` values MUST be phase names only — NEVER artifact names.
-  - A phase with `can_finish: true` terminates the workflow without a graph edge.
+  - A phase with `can_finish: true` terminates the workflow and MUST have an empty `to: []` (no outgoing edge).
   - Every phase except the entry phase MUST appear as a destination in at least one transition edge.
 
-CRITICAL — no transition to final_output:
-If a review phase can finish, its transitions include ONLY the revision loop target.
-WRONG: {from: "review", to: ["generate", "deliver"]}   ← deliver is not a phase name, it's an artifact
-RIGHT: {from: "review", to: ["generate"]}  ← review has can_finish: true
+CRITICAL — graph is a DAG (no cycles, no back-edges):
+The graph expresses ONLY forward flow. Revision loops are handled at runtime by the OS via
+`control.type='rollback'` — NOT by graph edges. Writing a back-edge from review to an earlier
+phase will fail the linter.
+
+WRONG: {from: "review", to: ["generate"]}   ← back-edge creates cycle generate→review→generate
+RIGHT: {from: "review", to: []}             ← review has can_finish: true; rollback handled at runtime
 
 artifacts: list of artifact names and descriptions only — NO schemas yet.
   - name: snake_case artifact name (matches a phase's input_artifact)

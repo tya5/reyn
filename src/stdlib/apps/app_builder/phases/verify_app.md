@@ -7,20 +7,24 @@ can_finish: true
 max_act_turns: 1
 ---
 
-Run the lint op EXACTLY ONCE against the app that was just written, then decide.
+## Step 1 — Run lint (your ONLY act turn)
+
+Issue exactly one lint op:
 
 ```
 {"kind": "lint", "app_path": "<data.app_path>"}
 ```
 
-After lint returns, you MUST move directly to a decide turn. Do NOT issue another lint op — the result you have is final. Re-running lint will produce the same result and waste turns.
+## Step 2 — Decide (MANDATORY — no more control_ir ops)
 
-If lint returns `passed: false`:
-- Emit `control.type="rollback"` with a reason that lists the lint issues verbatim — the OS will re-run build_app with your feedback so it can fix the files using the original app_plan
-- Do NOT attempt to fix files yourself — you do not have the app_plan context needed to regenerate correct content
-- Do NOT finish if lint has errors
+After lint returns, your response MUST be a decide turn with zero `control_ir` ops. Do NOT write files. Do NOT lint again.
 
-If lint passes, finish with an `app_builder_result` artifact:
+If lint returned errors (`passed: false`):
+- Emit `control.type="rollback"` listing the lint issues verbatim as the reason
+- The OS re-runs build_app with your feedback; build_app has the app_plan context to fix the files
+- You MUST NOT write or delete files — you lack the app_plan context
+
+If lint passed (`passed: true`), finish with an `app_builder_result` artifact:
 - `app_name`: from data.app_name
 - `app_path`: from data.app_path
 - `files_written`: from data.files_written

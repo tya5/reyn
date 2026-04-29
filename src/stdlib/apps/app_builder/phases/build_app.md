@@ -7,6 +7,27 @@ role: dsl_writer
 
 Generate DSL markdown files for the app defined in data, then write each one to the workspace using file ops.
 
+## Step 0 — If re-entered after rollback: check the feedback first
+
+If you are receiving rollback feedback (i.e., a previous build was rejected by a downstream phase), inspect the feedback BEFORE writing any files.
+
+Classify the feedback:
+
+- **Fixable by rebuilding files** — concrete file-level issues you can act on without changing the plan:
+  - Missing file, wrong filename, malformed frontmatter, missing fields in an artifact YAML, copy-paste errors in instructions
+  - → Proceed to Step 1 and rewrite the affected files (or all files) using the original `app_plan`.
+
+- **Structural defect in the plan itself** — issues that originate upstream and CANNOT be fixed by rewriting files:
+  - Graph cycle (back-edge in transitions)
+  - An artifact referenced by a phase's `input` is not declared in `data.artifacts` and is not `user_message`
+  - Schema inconsistency between phases (e.g., phase B expects field X but phase A's output schema doesn't have it)
+  - Plan structure violates the DAG/no-cycle rule
+  - → Do NOT write any files. Emit `control.type="rollback"` with a `reason.summary` that quotes the upstream feedback verbatim and identifies which part of the plan is structurally wrong. The OS will roll back further to the phase that produced the plan.
+
+Rule of thumb: if your only way to make the lint pass would be to **change `app_plan.transitions`, `app_plan.artifacts`, or any phase's `input_artifact`**, the fix is upstream — chain the rollback. You only ever transcribe the plan; you never amend it.
+
+## Step 1 — Generate the app files
+
 CRITICAL: Every file MUST start with `---` and end the frontmatter block with `---`. Missing delimiters will break the parser.
 
 app.md (write to {app_path}/app.md):
@@ -37,12 +58,13 @@ graph comes from data.transitions. Each `{from: X, to: [Y, Z]}` entry becomes:
 ```yaml
 X: [Y, Z]
 ```
-Review loops look like:
+Review loops are NOT graph edges. Example forward-only graph for a generate→review pattern:
 ```yaml
 graph:
   generate: [review]
-  review: [generate, deliver]
+  review: []        # can_finish: true, no outgoing edge
 ```
+(The "loop back to generate" happens at runtime when review emits `control.type="rollback"`.)
 
 CRITICAL — no "finish" node: Do NOT add a `finish` node to the graph.
 Workflow termination is expressed by `can_finish: true` on the phase that delivers the final output.
