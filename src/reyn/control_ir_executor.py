@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp, WebFetchIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
@@ -120,6 +120,19 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "run_skill", "skill": "my_skill", "input": {"type": "user_message", "data": {"text": "hello"}}},
             ),
+            ControlIROpSpec(
+                kind="web_fetch",
+                description=(
+                    "Fetch a URL and return its content as plain text. "
+                    "HTML pages are converted to readable text (tags stripped). "
+                    "url: the URL to fetch (http or https). "
+                    "prompt: optional hint describing what to extract — informational for the LLM, not used in fetching. "
+                    "timeout: request timeout in seconds (default 30). "
+                    "max_length: cap on returned content in characters (default 50000). "
+                    "Returns: url, status_code, content_type, content (text), truncated (bool)."
+                ),
+                example={"kind": "web_fetch", "url": "https://example.com", "prompt": "Get the main article text"},
+            ),
         ]
 
     def execute(
@@ -167,6 +180,8 @@ class ControlIRExecutor:
                     result = self._execute_lint(op)  # type: ignore[arg-type]
                 elif op.kind == "run_skill":
                     result = self._execute_run_skill(op)  # type: ignore[arg-type]
+                elif op.kind == "web_fetch":
+                    result = self._execute_web_fetch(op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -462,6 +477,81 @@ class ControlIRExecutor:
             "events_glob": events_glob,
             "artifacts_glob": artifacts_glob,
             "workspace": sub_state_dir,
+        }
+
+    def _execute_web_fetch(self, op: WebFetchIROp) -> dict[str, Any]:
+        import html
+        import html.parser
+        import httpx
+
+        class _TextExtractor(html.parser.HTMLParser):
+            _SKIP = {"script", "style", "head", "noscript", "svg", "iframe"}
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._parts: list[str] = []
+                self._skip_depth = 0
+
+            def handle_starttag(self, tag: str, attrs: object) -> None:
+                if tag in self._SKIP:
+                    self._skip_depth += 1
+
+            def handle_endtag(self, tag: str) -> None:
+                if tag in self._SKIP and self._skip_depth > 0:
+                    self._skip_depth -= 1
+
+            def handle_data(self, data: str) -> None:
+                if self._skip_depth == 0:
+                    stripped = data.strip()
+                    if stripped:
+                        self._parts.append(stripped)
+
+            def text(self) -> str:
+                return "\n".join(self._parts)
+
+        self.events.emit("web_fetch_started", url=op.url)
+        try:
+            response = httpx.get(
+                op.url,
+                timeout=op.timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "reyn/1.0"},
+            )
+        except httpx.TimeoutException:
+            return {"kind": "web_fetch", "url": op.url, "status": "timeout",
+                    "error": f"request timed out after {op.timeout}s"}
+        except httpx.RequestError as exc:
+            return {"kind": "web_fetch", "url": op.url, "status": "error", "error": str(exc)}
+
+        content_type = response.headers.get("content-type", "")
+        raw = response.text
+
+        if "text/html" in content_type:
+            extractor = _TextExtractor()
+            extractor.feed(raw)
+            content = extractor.text()
+        else:
+            content = raw
+
+        truncated = len(content) > op.max_length
+        if truncated:
+            content = content[: op.max_length]
+
+        self.events.emit(
+            "web_fetch_completed",
+            url=op.url,
+            status_code=response.status_code,
+            content_length=len(content),
+            truncated=truncated,
+        )
+        return {
+            "kind": "web_fetch",
+            "url": op.url,
+            "status": "ok",
+            "status_code": response.status_code,
+            "content_type": content_type,
+            "content": content,
+            "truncated": truncated,
         }
 
     def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:

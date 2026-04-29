@@ -179,10 +179,18 @@ class RunSkillIROp(BaseModel):
     output_language: str = "ja"
 
 
+class WebFetchIROp(BaseModel):
+    kind: Literal["web_fetch"]
+    url: str                      # URL to fetch
+    prompt: str = ""              # optional hint describing what to extract (informational for LLM)
+    timeout: int = 30             # request timeout in seconds
+    max_length: int = 50_000      # cap on returned content length (characters)
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", and "run_skill" are implemented; others are safely skipped.
+# "file", "ask_user", "shell", "lint", "run_skill", and "web_fetch" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp],
     Field(discriminator="kind"),
 ]
 
