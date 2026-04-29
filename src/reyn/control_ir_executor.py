@@ -298,6 +298,7 @@ class ControlIRExecutor:
             state_dir=eval_state_dir,
             output_language=op.output_language,
             app_subscribers=[],
+            resolver=self._resolver,
         )
         case_results = [runner.run_case(case) for case in spec.cases]
 
@@ -311,12 +312,22 @@ class ControlIRExecutor:
             case_results=case_results,
             cost_summary=runner.build_cost_summary(),
         )
+        # Save full result to .reyn/evals/ (same as CLI)
+        import json as _json
+        evals_dir = self.workspace.state_dir / "evals"
+        evals_dir.mkdir(parents=True, exist_ok=True)
+        result_path = evals_dir / f"{ts}_{app.name}.json"
+        result_path.write_text(
+            _json.dumps(run_result.to_dict(), ensure_ascii=False, indent=2)
+        )
+
         self.events.emit(
             "eval_completed",
             spec_path=op.spec_path,
             overall_score=run_result.overall_score,
             passed_criteria=run_result.overall_passed,
             total_criteria=run_result.overall_total,
+            result_path=str(result_path),
         )
         return {
             "kind": "eval",
@@ -332,6 +343,7 @@ class ControlIRExecutor:
                 {"name": cr.case_name, "score": cr.score, "passed": cr.passed, "total": cr.total}
                 for cr in case_results
             ],
+            "result_path": str(result_path),
         }
 
     def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:

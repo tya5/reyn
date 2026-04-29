@@ -19,8 +19,9 @@ For each artifact in `artifacts` and for `final_output`, produce a JSON Schema o
 - For arrays of objects: `{"type": "array", "items": {"type": "object", "properties": {...}, "required": [...]}}`
 
 Schema design principles:
-- Review artifacts should contain only verdict fields (e.g. approved, score, feedback) — not a copy of the content being reviewed
-- Each artifact captures only what is NEW in that phase — not passthrough data from previous artifacts
-- Keep schemas focused: prefer fewer, well-named fields over many redundant ones
+- **Intermediate artifacts** (passed into a review phase): must include all context the reviewer needs to make an informed judgment. Do NOT rely on the reviewer inferring context from prior phases — if information is needed, it must be in the artifact.
+- **Review verdict artifacts** (output of a review phase): contain only verdict fields (e.g. `status`, `score`, `feedback`, `rejection_reason`) — NOT a copy of the content being reviewed.
+- **Final output artifacts**: contain the deliverable the user receives. If the workflow approves content, include the approved content itself plus any required verdict fields (e.g. `status: "approved"`).
+- Keep schemas focused: prefer fewer, well-named fields over many redundant ones.
 
 Output a complete `app_plan` carrying over all fields from the input, with `schema` added to each artifact and to `final_output`. Set `review_notes` to empty string.

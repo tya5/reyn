@@ -146,7 +146,8 @@ def proxy_kwargs() -> dict:
     api_base = os.environ.get("LITELLM_API_BASE")
     if not api_base:
         return {}
-    return {"api_base": api_base, "custom_llm_provider": "openai"}
+    api_key = os.environ.get("OPENAI_API_KEY", "dummy")
+    return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
 def call_llm(

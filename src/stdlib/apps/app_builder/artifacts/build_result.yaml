@@ -1,0 +1,20 @@
+name: build_result
+description: Intermediate result after writing DSL files, before lint verification.
+schema:
+  type: object
+  properties:
+    app_name:
+      type: string
+      description: The generated app name.
+    app_path:
+      type: string
+      description: Workspace-relative path to the app directory.
+    files_written:
+      type: array
+      items:
+        type: string
+      description: List of all file paths written.
+    file_count:
+      type: integer
+      description: Total number of files written.
+  required: [app_name, app_path, files_written, file_count]

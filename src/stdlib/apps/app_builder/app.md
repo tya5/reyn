@@ -13,6 +13,7 @@ graph:
   plan_app: [design_artifacts]
   design_artifacts: [review_plan]
   review_plan: [build_app]
+  build_app: [verify_app]
 ---
 
 ## Overview

@@ -73,6 +73,11 @@ can_finish: true
 Omit `can_finish` line if the phase cannot finish.
 Omit `model_class` line if the phase should use the runtime default (standard).
 
+For review phases: instructions MUST contain both:
+1. The specific criteria to evaluate (faithfulness, completeness, quality, etc.)
+2. The explicit rejection clause: "If the content does not meet the criteria, emit `control.type='rollback'` with a reason describing what to fix."
+Without the rollback clause the review phase approves everything and the revision loop never triggers.
+
 artifact file (write to {app_path}/artifacts/{artifact_name}.yaml):
 ```
 name: {artifact_name}
@@ -102,23 +107,8 @@ Checklist before finishing:
 - one artifact file for data.final_output (using data.final_output.name as filename)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
-Write all files using one op per file. After writing, run the lint op against data.app_path to verify the generated files.
-
-If lint returns `passed: false`:
-- Examine the `issues` list carefully
-- If the root cause is a mistake in the generated files (e.g. back-edge in graph, missing artifact): fix the files and re-run lint
-- If the root cause is in the input `app_plan` (e.g. the plan itself defines a cycle in transitions): emit `control.type="rollback"` with `reason` explaining which part of the plan is invalid — the OS will re-run the planning phase with your feedback
-- Do NOT finish if lint has errors
-
-If lint passes, finish with an `app_builder_result` artifact:
+Write all files using one op per file. Once all files are written, finish with a `build_result` artifact:
 - `app_name`: the generated app name
 - `app_path`: workspace-relative path (e.g. "reyn/local/my_app")
 - `files_written`: list of all file paths written
 - `file_count`: total number of files
-- `lint_passed`: true
-- `lint_issues`: []
-- `summary`: one sentence describing what the app does for its users
-
-summary MUST describe what the app does for its users — not what you (the builder) did.
-Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
-Bad: "Generated DSL files for the review app and saved them to the workspace."

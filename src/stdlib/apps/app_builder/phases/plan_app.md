@@ -101,4 +101,6 @@ final_output:
 - Each phase does exactly one thing
 - Artifact names must be unique and consistent across phases and transitions
 - Phase instructions must describe the target app's domain logic ONLY
-- Review phase instructions MUST specify: what criteria to evaluate, what the verdict fields mean, and when to approve vs. request revision
+- Review phase instructions MUST specify: what criteria to evaluate, and when to approve vs. request revision
+- Review phase instructions MUST include: "If rejected, emit `control.type='rollback'` with a reason explaining what to fix."
+- CRITICAL — the artifact a review phase receives must contain all information needed to make an informed judgment. Design the intermediate artifact so the reviewer is self-contained — do not assume it can infer context from prior phases.
