@@ -1,6 +1,0 @@
-{
-  "type": "user_message",
-  "data": {
-    "text": "dsl/apps/simple_todo_list を lint してください"
-  }
-}

@@ -1,5 +1,0 @@
-1. The file was written to `workspace/eval_specs/article_generator/eval.md`.
-2. The eval will now run automatically via eval_runner.
-3. To run it again manually: `agent-os eval --spec workspace/eval_specs/article_generator/eval.md --model claude-3-haiku-20240307`.
-4. If the target app is in the project `dsl/` tree (not in workspace), also copy the file:
-   `cp workspace/eval_specs/article_generator/eval.md dsl/apps/article_generator/eval.md`

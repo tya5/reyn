@@ -1,8 +1,0 @@
-{
-  "type": "eval_request",
-  "data": {
-    "spec_path": "eval_specs/article_generator/eval.md",
-    "model": "claude-3-haiku-20240307",
-    "app_name": "article_generator"
-  }
-}

@@ -1,7 +1,0 @@
-{
-  "type": "lint_request",
-  "data": {
-    "dsl_root": "dsl/",
-    "app_name": "article_generator"
-  }
-}

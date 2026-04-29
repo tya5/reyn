@@ -1,8 +1,0 @@
-{
-  "type": "file_written",
-  "data": {
-    "filename": "daily_report.txt",
-    "char_count": 0,
-    "summary": "今日の業務報告を記載したメモをdaily_report.txtに書き込みました。"
-  }
-}

@@ -1,8 +1,0 @@
-{
-  "type": "file_written",
-  "data": {
-    "filename": "meeting_notes.txt",
-    "char_count": 0,
-    "summary": "会議の議事録メモを生成し、meeting_notes.txt に書き込みました。"
-  }
-}

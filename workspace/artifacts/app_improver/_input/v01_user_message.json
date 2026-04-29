@@ -1,6 +1,0 @@
-{
-  "type": "user_message",
-  "data": {
-    "text": "dsl/apps/writing_review_app/app.md を改善して。テスト入力は「Pythonの非同期処理について初心者向けに書いて」。改善フォーカスは review フェーズの品質。モデルは openai/gemini-2.5-flash-lite を使って。"
-  }
-}
