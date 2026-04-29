@@ -7,42 +7,42 @@ can_finish: true
 ---
 
 Search the GitHub MCP Registry for servers relevant to the user's capability request.
+You MUST complete this entire phase with exactly ONE web_fetch call — no more.
 
-## Step 1 — Fetch the registry
+## Step 1 — Extract search keyword
 
-Fetch the GitHub MCP Registry page to get the curated server list:
+From the user's request, extract the most concise English keyword(s) that describe the capability
+needed (1–3 words). Examples:
+- "GitHub リポジトリの操作" → `github`
+- "web 検索がしたい" → `search`
+- "PostgreSQL データベースに接続したい" → `database`
+- "Slack にメッセージを送りたい" → `slack`
+
+## Step 2 — ONE web_fetch (no more)
+
+Perform exactly one web_fetch:
 
 ```
-web_fetch: https://github.com/mcp
-prompt: Extract every MCP server entry as a list of {path, name} pairs. Each entry appears as a
-        link in the form /mcp/{owner}/{repo}. Ignore navigation links (blob, tree, graphs, issues,
-        pulls, actions, wiki, security, pulse, community, announcement, beta, dist, bridges, main).
+web_fetch: https://github.com/mcp?search={keyword}
+prompt: Find all <a> tags whose href attribute starts with "/mcp/". For each, return the exact
+        href string as it appears in the HTML (e.g. "/mcp/github/github-mcp-server").
+        Do NOT modify, abbreviate, or infer the owner or repo name — copy it verbatim.
+        Exclude hrefs where the first path segment after "/mcp/" is any of:
+        mcp-clients, servers, server, blob, tree, graphs, issues, pulls, actions,
+        wiki, security, dist, bridges, main, ga, docs, assets.
+        Return a plain newline-separated list of exact href strings only.
 ```
 
-## Step 2 — Fetch each candidate's description
+After this fetch, go directly to Step 3. Do not call web_fetch again for any reason.
 
-For each extracted server path, fetch its GitHub page to get the description:
+## Step 3 — Return result immediately
 
-```
-web_fetch: https://github.com/{owner}/{repo}
-prompt: Return the repository description (one sentence shown under the repo name) and the
-        repository's full URL.
-```
+Using only the href paths from Step 2, finish with `mcp_candidate_list`.
+Do NOT call web_fetch again. Do NOT fetch individual repository pages for descriptions.
 
-Fetch all candidates in parallel if possible. If a fetch fails, skip that candidate.
+For each href `/mcp/{owner}/{repo}` (use the exact owner and repo strings — never guess):
+- `name`: `{owner}/{repo}`
+- `repo_url`: `https://github.com/{owner}/{repo}`
+- `description`: a one-line description inferred from the repo name alone
 
-## Step 3 — Filter by relevance
-
-From the fetched candidates, select those relevant to the user's request. Relevance criteria:
-- The server's name or description directly addresses the requested capability
-- Partial matches are acceptable (e.g. "Elasticsearch" matches "full-text search")
-- Exclude servers clearly unrelated to the request
-
-Return ALL relevant candidates — do not limit to one. If no candidates match, return an empty list.
-
-## Step 4 — Return result
-
-Finish with a `mcp_candidate_list` artifact. For each candidate include:
-- `name`: the repo path as shown in the registry (e.g. `github/github-mcp-server`)
-- `repo_url`: the full GitHub URL (e.g. `https://github.com/github/github-mcp-server`)
-- `description`: the repository's one-line description
+If Step 2 returned no valid paths, set `candidates: []`.
