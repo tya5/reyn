@@ -1,0 +1,38 @@
+name: routing_decision
+description: |
+  How the chat agent should respond to a user utterance. May contain a direct
+  reply, skill invocations, or both.
+schema:
+  type: object
+  properties:
+    reply_text:
+      type: string
+      description: |
+        Direct conversational reply to show the user. Use for chitchat,
+        clarifying questions, acknowledgements, or short answers that do not
+        need a skill. Empty string when only skill invocation is appropriate.
+    skills_to_run:
+      type: array
+      description: |
+        Skills to invoke for this turn. Empty for pure chitchat. The caller
+        launches them; the router does not execute them.
+      items:
+        type: object
+        properties:
+          skill:
+            type: string
+            description: Skill name (must appear in input.available_skills).
+          input:
+            type: object
+            description: |
+              Input artifact to pass to the skill. Must follow the form
+              {"type": "<artifact_name>", "data": {...}}. For most skills that
+              accept natural language, use type "user_message" with a "text" field.
+          run_async:
+            type: boolean
+            description: |
+              If true, the caller spawns the skill in the background and the
+              user can keep chatting while it runs. If false, the caller blocks
+              the next turn until the skill completes. Default true.
+        required: [skill, input]
+  required: [reply_text, skills_to_run]
