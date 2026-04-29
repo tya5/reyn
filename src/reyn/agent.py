@@ -53,6 +53,13 @@ class Agent:
         )
         return self._runtime.run(initial_input, output_language=output_language)
 
+    @property
+    def phase_artifacts(self) -> list[dict]:
+        """Return all artifacts stored during the run, excluding the initial input."""
+        if self._runtime is None:
+            return []
+        return [a for a in self._runtime.workspace.artifacts if a["phase"] != "_input"]
+
     def get_events(self) -> list:
         return self._runtime.events.all() if self._runtime else []
 

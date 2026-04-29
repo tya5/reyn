@@ -205,10 +205,7 @@ class EvalRunner:
                 error=str(exc),
             )
 
-        stored = [
-            a for a in agent._runtime.workspace.artifacts
-            if a["phase"] != "_input"
-        ]
+        stored = agent.phase_artifacts
         events_path = str(agent.events_path) if agent.events_path else None
 
         phase_results: list[PhaseEvalResult] = []
