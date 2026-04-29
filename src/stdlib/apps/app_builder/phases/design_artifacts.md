@@ -4,9 +4,23 @@ name: design_artifacts
 input: app_structure
 role: schema_designer
 model_class: standard
+preprocessor:
+  - type: lint_plan
+    over: data
+    into: data.lint_issues
 ---
 
 Design JSON Schema definitions for every artifact in the app plan.
+
+## Step 0 — Check structural lint findings
+
+`data.lint_issues` is populated by the OS preprocessor with deterministic structural checks on the upstream `app_structure` (graph cycles, transition targets, artifact coverage, entry phase validity).
+
+If `data.lint_issues` is non-empty, the plan itself is structurally broken. You CANNOT fix these issues by adding schemas — they originate from `plan_app`. Emit `control.type="rollback"` immediately, with `control.reason.summary` quoting every entry from `lint_issues` so plan_app can correct them. Do NOT design schemas in this case.
+
+If `data.lint_issues` is empty, proceed to Step 1.
+
+## Step 1 — Design schemas
 
 If rollback context is present in the conversation history, read the rejection feedback carefully and address every issue before redesigning schemas.
 

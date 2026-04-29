@@ -85,4 +85,9 @@ schema:
           type: string
           description: One sentence describing what the final output contains.
       required: [name, description]
+    lint_issues:
+      type: array
+      items:
+        type: string
+      description: Deterministic structural-lint findings injected by the OS preprocessor when this artifact is consumed by design_artifacts. Empty list means the plan is structurally valid. Not produced by plan_app — leave undefined when emitting this artifact.
   required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output]
