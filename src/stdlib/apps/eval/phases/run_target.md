@@ -3,6 +3,7 @@ type: phase
 name: run_target
 input: eval_case_input
 role: test_runner
+max_act_turns: 2
 ---
 
 Run the target app with the test case input and build evaluation requests from the resulting phase artifacts.
@@ -24,6 +25,8 @@ Issue a `run_app` Control IR op:
   "workspace": "isolated"
 }
 ```
+
+If the run_app op returns `status` other than `"finished"` (e.g. `"error"`, `"aborted"`, `"loop_limit_exceeded"`), do NOT retry — the failure is structural, not flaky. Skip Step 3 and produce a `case_run_result` with `run_status` set to the returned status, `eval_requests: []`, and proceed to the decide turn. The eval phase will mark the case as failed.
 
 ## Step 3 — Build eval_requests
 
