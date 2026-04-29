@@ -1,0 +1,28 @@
+name: phase_eval_request
+description: A single phase artifact paired with its evaluation criteria, consumed by judge_phase to produce a structured judgment.
+schema:
+  type: object
+  properties:
+    phase_name:
+      type: string
+      description: Name of the phase whose output is being evaluated.
+    artifact_type:
+      type: string
+      description: Type name of the artifact being evaluated.
+    artifact_data:
+      type: object
+      description: The actual data produced by the phase.
+    criteria:
+      type: array
+      description: Quality criteria to evaluate the artifact against.
+      items:
+        type: object
+        properties:
+          description:
+            type: string
+            description: The criterion text.
+          required:
+            type: boolean
+            description: True if failing this criterion means the judgment fails overall.
+        required: [description]
+  required: [phase_name, artifact_data, criteria]

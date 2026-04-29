@@ -1,0 +1,28 @@
+name: case_run_result
+description: Result of running a target app for one eval case, with pre-built phase_eval_request items ready for the judge_phase preprocessor to iterate over.
+schema:
+  type: object
+  properties:
+    case_name:
+      type: string
+      description: Name of the test case that was run.
+    spec_path:
+      type: string
+      description: Path to the eval.md spec (passed through for final output).
+    run_status:
+      type: string
+      description: Status returned by the target app run ('finished', 'loop_limit_exceeded', 'aborted', etc.).
+    eval_requests:
+      type: array
+      description: Pre-built phase_eval_request wrapped artifacts, one per phase with criteria. Each item has {type, data} structure matching phase_eval_request.
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+            description: Must be 'phase_eval_request'.
+          data:
+            type: object
+            description: phase_eval_request data (phase_name, artifact_type, artifact_data, criteria).
+        required: [type, data]
+  required: [case_name, spec_path, run_status, eval_requests]

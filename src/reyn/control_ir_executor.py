@@ -118,6 +118,7 @@ class ControlIRExecutor:
                     "model: model class or LiteLLM string (default: inherit from runtime). "
                     "workspace: 'isolated' (default) creates a sub-workspace; 'shared' uses the current workspace. "
                     "Returns: status ('finished'|'loop_limit_exceeded'), final_output (dict), "
+                    "phase_artifacts (list of {phase, artifact, path} for each intermediate phase output), "
                     "token_usage (prompt_tokens, completion_tokens)."
                 ),
                 example={"kind": "run_app", "app": "my_app", "input": {"type": "user_message", "data": {"text": "hello"}}},
@@ -408,6 +409,7 @@ class ControlIRExecutor:
             "app": op.app,
             "success": run_result.ok,
             "final_output": run_result.data,
+            "phase_artifacts": run_result.phase_artifacts,
             "events_glob": events_glob,
             "artifacts_glob": artifacts_glob,
             "workspace": sub_state_dir,

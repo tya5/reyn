@@ -1,0 +1,39 @@
+name: phase_judgment
+description: Structured evaluation of a single phase artifact against quality criteria, produced by judge_phase.
+schema:
+  type: object
+  properties:
+    phase_name:
+      type: string
+      description: Name of the phase that was evaluated.
+    passed:
+      type: boolean
+      description: True if all required criteria are met.
+    score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: Fraction of all criteria met (required and optional combined).
+    criteria_results:
+      type: array
+      description: Per-criterion evaluation results.
+      items:
+        type: object
+        properties:
+          description:
+            type: string
+            description: The criterion text.
+          required:
+            type: boolean
+            description: Whether this criterion is required for overall pass.
+          met:
+            type: boolean
+            description: Whether the criterion is satisfied by the artifact.
+          reason:
+            type: string
+            description: Brief explanation of why the criterion is or is not met.
+        required: [description, met, reason]
+    summary:
+      type: string
+      description: One-sentence prose summary of the judgment outcome.
+  required: [phase_name, passed, score, criteria_results, summary]

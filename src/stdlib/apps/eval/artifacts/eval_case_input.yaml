@@ -1,0 +1,44 @@
+name: eval_case_input
+description: A single eval case specifying the target app, test input, and per-phase quality criteria to evaluate against.
+schema:
+  type: object
+  properties:
+    case_name:
+      type: string
+      description: Human-readable name for this test case.
+    case_input:
+      type: string
+      description: Input string or JSON object string to pass to the target app.
+    spec_path:
+      type: string
+      description: Path to the eval.md spec file (for reference in the output).
+    target_app_path:
+      type: string
+      description: Path to the target app's app.md file.
+    dsl_root:
+      type: string
+      description: DSL root to use when loading the target app. Defaults to the app's parent directory.
+    phase_criteria:
+      type: array
+      description: Per-phase quality criteria to evaluate. Phases not listed are skipped.
+      items:
+        type: object
+        properties:
+          phase_name:
+            type: string
+            description: Name of the phase to evaluate.
+          criteria:
+            type: array
+            description: Quality criteria for this phase.
+            items:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: The criterion text.
+                required:
+                  type: boolean
+                  description: True if failing this criterion means the phase fails overall.
+              required: [description]
+        required: [phase_name, criteria]
+  required: [case_name, case_input, spec_path, target_app_path, phase_criteria]

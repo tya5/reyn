@@ -6,7 +6,7 @@ Used by both:
   - PreprocessorExecutor (OS-triggered preprocessor run_app step)
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,6 +22,7 @@ class SubAppResult:
     data: dict
     token_usage: TokenUsage | None
     status: str
+    phase_artifacts: list[dict] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -57,4 +58,5 @@ def invoke_sub_app(
         data=run_result.data,
         token_usage=run_result.token_usage,
         status=run_result.status,
+        phase_artifacts=agent.phase_artifacts,
     )
