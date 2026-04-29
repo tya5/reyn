@@ -38,6 +38,7 @@ def invoke_sub_app(
     subscribers: list,
     resolver: "ModelResolver",
     output_language: str = "ja",
+    max_phase_visits: int = 25,
 ) -> SubAppResult:
     """Run a sub-app and return a SubAppResult.
 
@@ -52,6 +53,7 @@ def invoke_sub_app(
         strict=False,
         subscribers=subscribers,
         resolver=resolver,
+        max_phase_visits=max_phase_visits,
     )
     run_result = agent.run(sub_app, input_artifact, output_language=output_language)
     return SubAppResult(

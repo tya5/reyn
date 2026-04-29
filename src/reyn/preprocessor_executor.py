@@ -61,6 +61,7 @@ class PreprocessorExecutor:
         subscribers: list,
         resolver: "ModelResolver",
         state_dir: str | Path,
+        max_phase_visits: int = 25,
     ) -> None:
         self._app = app
         self._model = model
@@ -68,6 +69,7 @@ class PreprocessorExecutor:
         self._subscribers = subscribers
         self._resolver = resolver
         self._state_dir = Path(state_dir)
+        self._max_phase_visits = max_phase_visits
 
     def run(
         self, phase: "Phase", artifact: dict, output_language: str,
@@ -163,6 +165,7 @@ class PreprocessorExecutor:
             subscribers=self._subscribers,
             resolver=self._resolver,
             output_language=output_language,
+            max_phase_visits=self._max_phase_visits,
         )
         self._events.emit(
             "run_app_completed", app=step.app, status=result.status,
@@ -239,6 +242,7 @@ class PreprocessorExecutor:
                 subscribers=self._subscribers,
                 resolver=self._resolver,
                 output_language=output_language,
+                max_phase_visits=self._max_phase_visits,
             )
             if result.token_usage:
                 total_usage += result.token_usage

@@ -38,10 +38,12 @@ class ControlIRExecutor:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
+        max_phase_visits: int = 25,
     ) -> None:
         self.workspace = workspace
         self.events = events
         self._user_input_fn = user_input_fn or _default_user_input
+        self._max_phase_visits = max_phase_visits
         self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
@@ -294,6 +296,7 @@ class ControlIRExecutor:
             subscribers=self.events.subscribers,
             resolver=self._resolver,
             output_language=op.output_language,
+            max_phase_visits=self._max_phase_visits,
         )
 
         # Glob paths for events and artifacts (state_dir-relative)

@@ -385,10 +385,15 @@ def cmd_eval(args: argparse.Namespace) -> None:
         if target_dsl_root:
             input_artifact["data"]["dsl_root"] = target_dsl_root
 
+        max_phase_visits = (
+            args.max_phase_visits if args.max_phase_visits is not None
+            else config.max_phase_visits
+        )
         agent = Agent(
             model=model,
             state_dir=config.state_dir,
             resolver=resolver,
+            max_phase_visits=max_phase_visits,
         )
 
         try:
@@ -900,6 +905,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="DSL root override for the target app (default: inferred from path)")
     eval_p.add_argument("--output-language", default=None, dest="output_language", metavar="LANG",
                         help="Output language code (default: from config)")
+    eval_p.add_argument(
+        "--max-phase-visits", dest="max_phase_visits", type=int, default=None, metavar="N",
+        help=(
+            "Maximum times any single phase may be visited (cascades to sub-apps via run_app). "
+            "Useful for capping rollback loops in target apps. Default: from reyn.yaml or 25."
+        ),
+    )
     eval_p.set_defaults(func=cmd_eval)
 
     lint_p = sub.add_parser("lint", help="Lint a DSL app for issues")
