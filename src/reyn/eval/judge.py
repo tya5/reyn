@@ -42,6 +42,7 @@ def judge_artifact(
     artifact: dict,
     criteria: list[str],
     context: str = "",
+    file_contents: dict[str, str] | None = None,
 ) -> tuple[list[CriterionResult], TokenUsage]:
     """
     Score an artifact against a list of criteria using an LLM judge.
@@ -53,14 +54,25 @@ def judge_artifact(
 
     criteria_block = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(criteria))
     context_line = f"context: {context}\n" if context else ""
+    files_block = ""
+    if file_contents:
+        files_block = "file contents:\n" + "".join(
+            f"\n--- {path} ---\n{content}\n"
+            for path, content in file_contents.items()
+        ) + "\n"
     user = (
         f"{context_line}"
         f"artifact:\n{json.dumps(artifact, ensure_ascii=False, indent=2)}\n\n"
+        f"{files_block}"
         f"criteria:\n{criteria_block}"
     )
 
     api_base = os.environ.get("LITELLM_API_BASE")
-    extra = {"api_base": api_base, "custom_llm_provider": "openai"} if api_base else {}
+    if api_base:
+        api_key = os.environ.get("OPENAI_API_KEY", "dummy")
+        extra: dict = {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
+    else:
+        extra = {}
 
     try:
         try:

@@ -308,7 +308,7 @@ def _score_bar(score: float, width: int = 20) -> str:
 
 def _schema_line(s, indent: str = "    ") -> None:
     mark = "✓" if s.passed else "✗"
-    print(f"{indent}[S] {mark}  {s.assertion.raw}")
+    print(f"{indent}[S] {mark}  schema")
     if not s.passed:
         print(f"{indent}         → {s.reason}")
 
@@ -391,7 +391,7 @@ def _print_repeat_summary(case_name: str, results: list) -> None:
                 for pr in phase_runs
                 if s_idx < len(pr.schema_results)
             )
-            print(f"    │  [S] {marks}  {sr.assertion.raw}")
+            print(f"    │  [S] {marks}  schema")
 
         for c_idx, cr0 in enumerate(ref.criteria):
             scores = [
@@ -545,6 +545,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
         state_dir=str(Path(config.state_dir) / "eval_runs"),
         output_language=args.output_language,
         app_subscribers=app_subscribers,
+        resolver=resolver,
     )
 
     runs_per_case = _run_eval(runner, spec, repeat)

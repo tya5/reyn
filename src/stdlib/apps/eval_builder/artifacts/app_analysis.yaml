@@ -49,10 +49,8 @@ schema:
             type: string
             description: The artifact type this phase produces.
           schema:
-            type: array
-            items:
-              type: string
-            description: "Deterministic field assertions evaluated without LLM. Format: \"field_path: type[, constraint]\". E.g. \"score: number, range 0.0-1.0\"."
+            type: object
+            description: "JSON Schema object validating the phase's artifact data. Must include at minimum: type, properties. Use standard JSON Schema keywords (required, items, minItems, minimum, maximum, enum, etc.)."
           quality:
             type: array
             items:
@@ -65,10 +63,8 @@ schema:
         type: string
       description: "Equality checks between fields from two phases. Format: \"phase_a.field == phase_b.field\"."
     final_schema:
-      type: array
-      items:
-        type: string
-      description: Schema assertions for the app's final_output artifact, same format as phase schema.
+      type: object
+      description: "JSON Schema object validating the app's final_output artifact data. Same format as phase schema."
     final_quality:
       type: array
       items:

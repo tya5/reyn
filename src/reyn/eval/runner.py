@@ -2,133 +2,71 @@
 EvalRunner: orchestrates per-case app execution and per-phase LLM-as-judge evaluation.
 """
 from __future__ import annotations
+import jsonschema
 from pathlib import Path
 from typing import Any, Callable
 
+_FILE_EXTENSIONS = {".md", ".yaml", ".yml", ".txt"}
+
 from reyn.eval.models import (
     EvalSpec, EvalCase, EvalRunResult, CaseResult, PhaseEvalResult,
-    CriterionResult, SchemaAssertion, SchemaResult,
+    CriterionResult, SchemaResult,
     CrossPhaseAssertion, CrossPhaseResult, CostSummary,
 )
 from reyn.eval.judge import judge_artifact
 from reyn.agent import Agent
+from reyn.model_resolver import ModelResolver
 from reyn.models import App
 from reyn.pricing import TokenUsage, estimate_cost
 
 
 # ── Schema evaluation ─────────────────────────────────────────────────────────
 
+def _collect_file_contents(artifact: dict) -> dict[str, str]:
+    """Read files referenced by path strings inside artifact data."""
+    contents: dict[str, str] = {}
+    data = artifact.get("data", {})
+
+    def _scan(val: Any) -> None:
+        if isinstance(val, str) and Path(val).suffix in _FILE_EXTENSIONS:
+            p = Path(val)
+            if p.exists() and p.is_file() and val not in contents:
+                try:
+                    contents[val] = p.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+        elif isinstance(val, list):
+            for item in val:
+                _scan(item)
+        elif isinstance(val, dict):
+            for v in val.values():
+                _scan(v)
+
+    _scan(data)
+    return contents
+
+
 def _get_nested(data: dict, path: str) -> tuple[bool, Any]:
-    """Resolve dot-notation path into data dict. Returns (found, value)."""
-    parts = path.split(".")
+    """Resolve plain dot-notation path into data dict. Returns (found, value)."""
     cur: Any = data
-    for part in parts:
+    for part in path.split("."):
         if not isinstance(cur, dict) or part not in cur:
             return False, None
         cur = cur[part]
     return True, cur
 
 
-def _check_type(value: Any, type_str: str) -> tuple[bool, str]:
-    if type_str == "string":
-        ok = isinstance(value, str)
-        return ok, ("ok" if ok else f"expected string, got {type(value).__name__}")
-    if type_str == "number":
-        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
-        return ok, ("ok" if ok else f"expected number, got {type(value).__name__}: {value!r}")
-    if type_str == "integer":
-        ok = isinstance(value, int) and not isinstance(value, bool)
-        return ok, ("ok" if ok else f"expected integer, got {type(value).__name__}: {value!r}")
-    if type_str == "boolean":
-        ok = isinstance(value, bool)
-        return ok, ("ok" if ok else f"expected boolean, got {type(value).__name__}: {value!r}")
-    if type_str == "array":
-        ok = isinstance(value, list)
-        return ok, ("ok" if ok else f"expected array, got {type(value).__name__}")
-    if type_str == "object":
-        ok = isinstance(value, dict)
-        return ok, ("ok" if ok else f"expected object, got {type(value).__name__}")
-    return False, f"unknown type '{type_str}'"
-
-
-def _check_constraints(value: Any, type_str: str, constraints: dict) -> tuple[bool, str]:
-    if not constraints:
-        return True, "ok"
-
-    if "range" in constraints:
-        lo, hi = constraints["range"]
-        if not (lo <= value <= hi):
-            return False, f"{value} not in range [{lo}, {hi}]"
-
-    if "min" in constraints:
-        mn = constraints["min"]
-        target = len(value) if type_str == "array" else value
-        if target < mn:
-            label = f"array length {len(value)}" if type_str == "array" else str(value)
-            return False, f"{label} < min {mn}"
-
-    if "max" in constraints:
-        mx = constraints["max"]
-        target = len(value) if type_str == "array" else value
-        if target > mx:
-            label = f"array length {len(value)}" if type_str == "array" else str(value)
-            return False, f"{label} > max {mx}"
-
-    if "min_length" in constraints:
-        ml = constraints["min_length"]
-        if len(value) < ml:
-            return False, f"length {len(value)} < min_length {ml}"
-
-    if "max_length" in constraints:
-        ml = constraints["max_length"]
-        if len(value) > ml:
-            return False, f"length {len(value)} > max_length {ml}"
-
-    if "equals" in constraints:
-        expected = constraints["equals"]
-        if value != expected:
-            return False, f"{value!r} != {expected!r}"
-
-    if "contains" in constraints:
-        needle = constraints["contains"]
-        if isinstance(value, str):
-            if needle not in value:
-                return False, f"{needle!r} not found in string"
-        elif isinstance(value, list):
-            if not any(needle in str(item) for item in value):
-                return False, f"no element contains {needle!r}"
-        else:
-            return False, f"contains not applicable to {type(value).__name__}"
-
-    return True, "ok"
-
-
-def _evaluate_schema(
-    artifact: dict,
-    assertions: list[SchemaAssertion],
-) -> list[SchemaResult]:
-    """Deterministically validate artifact data against schema assertions."""
+def _evaluate_schema(artifact: dict, schema: dict | None) -> list[SchemaResult]:
+    """Validate artifact data against a JSON Schema. Returns 0 results if no schema."""
+    if not schema:
+        return []
     data = artifact.get("data", {})
-    results: list[SchemaResult] = []
-
-    for assertion in assertions:
-        found, value = _get_nested(data, assertion.path)
-        if not found:
-            results.append(SchemaResult(
-                assertion=assertion, passed=False,
-                reason=f"field '{assertion.path}' not found",
-            ))
-            continue
-
-        type_ok, type_reason = _check_type(value, assertion.type)
-        if not type_ok:
-            results.append(SchemaResult(assertion=assertion, passed=False, reason=type_reason))
-            continue
-
-        passed, reason = _check_constraints(value, assertion.type, assertion.constraints)
-        results.append(SchemaResult(assertion=assertion, passed=passed, reason=reason))
-
-    return results
+    validator = jsonschema.Draft7Validator(schema)
+    errors = sorted(validator.iter_errors(data), key=str)
+    if not errors:
+        return [SchemaResult(passed=True, reason="ok")]
+    reasons = [e.message for e in errors[:5]]
+    return [SchemaResult(passed=False, reason="; ".join(reasons))]
 
 
 # ── Cross-phase evaluation ────────────────────────────────────────────────────
@@ -193,6 +131,7 @@ class EvalRunner:
         app_subscribers: list[Callable] | None = None,
         on_case_start: Callable[[str], None] | None = None,
         on_phase_judged: Callable[[str, PhaseEvalResult], None] | None = None,
+        resolver: ModelResolver | None = None,
     ) -> None:
         self.spec = spec
         self.app = app
@@ -203,6 +142,7 @@ class EvalRunner:
         self.app_subscribers = app_subscribers or []
         self.on_case_start = on_case_start
         self.on_phase_judged = on_phase_judged
+        self._resolver = resolver or ModelResolver({})
         # Accumulated token usage across all run_case() calls
         self._app_tokens: TokenUsage = TokenUsage()
         self._judge_tokens: TokenUsage = TokenUsage()
@@ -242,6 +182,7 @@ class EvalRunner:
             model=self.model,
             state_dir=case_state_dir,
             subscribers=self.app_subscribers,
+            resolver=self._resolver,
         )
 
         try:
@@ -284,6 +225,7 @@ class EvalRunner:
                     criteria_results, judge_usage = judge_artifact(
                         self.judge_model, artifact, [c.text for c in pc.criteria],
                         context=f"final output of '{self.app.name}'",
+                        file_contents=_collect_file_contents(artifact),
                     )
                     self._judge_tokens += judge_usage
                 else:
@@ -315,6 +257,7 @@ class EvalRunner:
                     criteria_results, judge_usage = judge_artifact(
                         self.judge_model, last, [c.text for c in pc.criteria],
                         context=f"phase '{pc.phase}' of '{self.app.name}'",
+                        file_contents=_collect_file_contents(last),
                     )
                     self._judge_tokens += judge_usage
                 else:

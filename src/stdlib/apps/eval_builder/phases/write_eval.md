@@ -31,8 +31,16 @@ input: "{case.input}"
 
 ### phase: {phase}
 schema:
-- {schema_assertion}
-- {schema_assertion}
+  type: object
+  required: [field1, field2]
+  properties:
+    field1:
+      type: string
+    field2:
+      type: array
+      minItems: 1
+      items:
+        type: string
 
 quality:
 - {quality_criterion}
@@ -42,7 +50,11 @@ quality:
 
 ### final
 schema:
-- {final_schema_assertion}
+  type: object
+  required: [field1]
+  properties:
+    field1:
+      type: string
 
 quality:
 - {final_quality_criterion}
@@ -56,10 +68,11 @@ Rules:
 - Each `## case:` block has exactly one `input:` line (quoted string).
 - Phase sections use `### phase: {phase_name}` — actual phase name from phase_order.
 - Only include phases that have entries in phase_eval_designs.
-- Under each `### phase:` write a `schema:` block (even if empty — omit the block only if schema list is truly empty) followed by a `quality:` block (omit if quality list is empty).
+- Under each `### phase:` write a `schema:` block: serialize `phase_eval_designs[phase].schema` (a JSON Schema object) as YAML, indented under `schema:`. Omit the block if schema is null or empty.
+- The `schema:` block must be a valid JSON Schema object in YAML. Do NOT write `- field: type` bullet lines — use nested YAML key-value pairs.
+- Write a `quality:` block for quality criteria (omit if quality list is empty). Quality lines start with `- `.
 - Write `### cross_phase` only if cross_phase_assertions is non-empty. Place it after all `### phase:` sections and before `### final`.
-- Write `### final` using final_schema and final_quality. Omit `schema:` or `quality:` sub-block if the respective list is empty.
-- Criteria and schema assertion lines start with `- ` (hyphen space).
+- Write `### final` using final_schema (serialized as YAML under `schema:`) and final_quality. Omit `schema:` or `quality:` sub-block if the respective value is empty.
 - Repeat the full phase+cross_phase+final structure identically for each test case (same structure, same criteria text).
 - Do NOT add extra commentary or markdown outside the spec format.
 
@@ -83,12 +96,19 @@ Run the eval op against the written spec using the model from app_analysis:
 {"kind": "eval", "spec_path": "<eval_md_path>", "model": "<app_analysis.model>"}
 ```
 
-If eval passes, finish with an `eval_result` artifact populated from the eval op result.
-If eval fails (passed: false), still finish — report the scores and weakest_phase so the user knows what needs improvement.
+The eval op result appears in `control_ir_results`. Read these fields directly:
+- `overall_score` → eval_result.overall_score
+- `passed` → eval_result.passed
+- `passed_criteria` → eval_result.passed_criteria
+- `total_criteria` → eval_result.total_criteria
+- `weakest_phase` → eval_result.weakest_phase
+- `spec_path` → eval_result.spec_path
+
+Whether eval passes or fails, always finish with a populated `eval_result` artifact — never use null for any required field.
 
 summary should describe results: e.g. "All 12 criteria passed (score 1.00)." or "6/12 criteria passed (score 0.50) — weakest: analyze."
 
 To re-run manually:
 ```
-reyn eval --spec {app_dir}/eval.md --model <model>
+reyn eval {app_dir}/eval.md --model <model>
 ```

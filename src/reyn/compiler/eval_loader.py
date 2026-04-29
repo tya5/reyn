@@ -42,7 +42,7 @@ from pathlib import Path
 import yaml
 
 from reyn.eval.models import (
-    EvalSpec, EvalCase, PhaseCriteria, SchemaAssertion, CrossPhaseAssertion,
+    EvalSpec, EvalCase, PhaseCriteria, CrossPhaseAssertion,
     QualityCriterion,
 )
 
@@ -182,28 +182,31 @@ def _parse_quality_criterion(text: str) -> QualityCriterion:
     return QualityCriterion(text=text, tag="required")
 
 
-def _parse_schema_quality(text: str) -> tuple[list[SchemaAssertion], list[QualityCriterion]]:
-    """Split a phase block into schema assertions and quality criteria."""
-    schema_assertions: list[SchemaAssertion] = []
-    quality_criteria: list[str] = []
+def _parse_schema_quality(text: str) -> tuple[dict | None, list[QualityCriterion]]:
+    """Split a phase block into a JSON Schema dict and quality criteria."""
+    schema: dict | None = None
+    quality_criteria: list[QualityCriterion] = []
 
-    schema_match = re.search(r"(?m)^schema:\s*$", text)
+    schema_match = re.search(r"(?m)^schema:\s*\n", text)
     quality_match = re.search(r"(?m)^quality:\s*$", text)
 
     if schema_match or quality_match:
         schema_start = schema_match.start() if schema_match else None
         quality_start = quality_match.start() if quality_match else None
 
-        if schema_start is not None:
-            end = quality_start if (quality_start is not None and quality_start > schema_start) else len(text)
-            schema_block = text[schema_match.end():end]
-            for line in re.findall(r"(?m)^[-*]\s+(.+)$", schema_block):
-                sa = _parse_schema_assertion(line.strip())
-                if sa:
-                    schema_assertions.append(sa)
+        if schema_match:
+            end = quality_start if (quality_start is not None and quality_start > schema_match.end()) else len(text)
+            block = text[schema_match.end():end]
+            if block.strip():
+                try:
+                    parsed = yaml.safe_load(block)
+                    if isinstance(parsed, dict):
+                        schema = parsed
+                except yaml.YAMLError:
+                    pass
 
-        if quality_start is not None:
-            end2 = schema_start if (schema_start is not None and schema_start > quality_start) else len(text)
+        if quality_match:
+            end2 = schema_start if (schema_start is not None and schema_start > quality_match.end()) else len(text)
             quality_block = text[quality_match.end():end2]
             for line in re.findall(r"(?m)^[-*]\s+(.+)$", quality_block):
                 quality_criteria.append(_parse_quality_criterion(line.strip()))
@@ -212,99 +215,4 @@ def _parse_schema_quality(text: str) -> tuple[list[SchemaAssertion], list[Qualit
         for line in re.findall(r"(?m)^[-*]\s+(.+)$", text):
             quality_criteria.append(_parse_quality_criterion(line.strip()))
 
-    return schema_assertions, quality_criteria
-
-
-def _parse_schema_assertion(raw: str) -> SchemaAssertion | None:
-    """Parse a single schema assertion line.
-
-    Supported constraints:
-      range 0.0-1.0          numeric range (inclusive)
-      min <n>                 numeric minimum, or minimum array length
-      max <n>                 numeric maximum, or maximum array length
-      min_length <n>          string/array minimum length
-      max_length <n>          string/array maximum length
-      equals <value>          exact value match (string, number, boolean)
-      contains <text>         substring (string) or any-element-contains (array)
-
-    Examples:
-      filename: string, equals "daily_report.txt"
-      score: number, range 0.0-1.0
-      issues: array, min 1
-      body: string, contains "asyncio"
-      verified: boolean, equals true
-    """
-    if ":" not in raw:
-        return None
-
-    path_part, rest = raw.split(":", 1)
-    path = path_part.strip()
-    rest = rest.strip()
-
-    parts = [p.strip() for p in rest.split(",")]
-    if not parts or not parts[0]:
-        return None
-
-    type_str = parts[0].lower()
-    valid_types = {"string", "number", "integer", "boolean", "array", "object"}
-    if type_str not in valid_types:
-        return None
-
-    constraints: dict = {}
-    for part in parts[1:]:
-        part = part.strip()
-        if not part:
-            continue
-
-        # range 0.0-1.0
-        m = re.match(r"^range\s+([\d.]+)-([\d.]+)$", part)
-        if m:
-            constraints["range"] = (float(m.group(1)), float(m.group(2)))
-            continue
-
-        # min <n> / max <n>
-        m = re.match(r"^(min|max)\s+([\d.]+)$", part)
-        if m:
-            constraints[m.group(1)] = float(m.group(2))
-            continue
-
-        # min_length <n> / max_length <n>
-        m = re.match(r"^(min_length|max_length)\s+(\d+)$", part)
-        if m:
-            constraints[m.group(1)] = int(m.group(2))
-            continue
-
-        # equals "quoted string"
-        m = re.match(r'^equals\s+"([^"]*)"$', part)
-        if m:
-            constraints["equals"] = m.group(1)
-            continue
-
-        # equals unquoted value (true/false/number)
-        m = re.match(r"^equals\s+(\S+)$", part)
-        if m:
-            val = m.group(1)
-            if val == "true":
-                constraints["equals"] = True
-            elif val == "false":
-                constraints["equals"] = False
-            else:
-                try:
-                    constraints["equals"] = float(val) if "." in val else int(val)
-                except ValueError:
-                    constraints["equals"] = val
-            continue
-
-        # contains "quoted string"
-        m = re.match(r'^contains\s+"([^"]*)"$', part)
-        if m:
-            constraints["contains"] = m.group(1)
-            continue
-
-        # contains unquoted token
-        m = re.match(r"^contains\s+(\S+)$", part)
-        if m:
-            constraints["contains"] = m.group(1)
-            continue
-
-    return SchemaAssertion(path=path, type=type_str, constraints=constraints, raw=raw)
+    return schema, quality_criteria

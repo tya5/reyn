@@ -25,18 +25,20 @@ Set `judge_model` in your output to that exact value — do NOT invent a model n
 Use file read/glob ops to collect the app's full DSL:
 
 1. Read `{app_dsl_path}` → get app name, entry phase, graph, final_output.
-2. Glob `{app_dir}/**/*.md` (where app_dir is the directory containing app.md) → list all phase and artifact files.
-3. Read each phase .md and artifact .md file.
-4. For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.md`.
+2. Glob `{app_dir}/**/*.md` and `{app_dir}/**/*.yaml` → list all phase and artifact files.
+3. Read each phase `.md` and artifact `.yaml` (or `.md`) file.
+4. For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml` or `{dsl_root}shared/artifacts/{name}.md`.
 
-**CRITICAL**: You MUST read every artifact .md file before designing criteria.
-All field names in schema assertions MUST come from what you read — never invented.
+**CRITICAL**: You MUST read every artifact file (`.yaml` or `.md`) before designing criteria.
+All field names in schema assertions MUST come from the `properties` keys you read — never invented.
 
 ## Step 3 — Design test cases
 
 Design 1–2 realistic test cases:
 - Case 1: a typical, well-formed input the app is designed to handle.
-- Case 2 (if the app has review/revision loops): an input where the first draft is likely to need revision.
+- Case 2 (if the app has review/revision loops): an input where the first draft is likely to be **rejected** — causing the review phase to rollback. Make the input deliberately ambiguous, underspecified, or contradictory so the reviewer is likely to reject it.
+
+The goal is branch coverage: if the app has a rollback path, at least one test case should exercise it.
 
 Each test case `input` must be a complete user_message string.
 
@@ -48,19 +50,22 @@ One entry per phase in `phase_order`. Include ALL phases — even those with `ca
 
 For each phase, split criteria into two kinds:
 
-**schema** — deterministic assertions about field structure. Format: `"field_path: type[, constraint]"`
-- `field_path`: dot-notation path into artifact data (e.g. `review_result.score`)
-- `type`: one of `string`, `number`, `integer`, `boolean`, `array`, `object`
-- constraints (optional, comma-separated after type):
-  - `range 0.0-1.0` — numeric range (inclusive)
-  - `min N` — numeric min value, or minimum array length
-  - `max N` — numeric max value, or maximum array length
-  - `min_length N` — minimum string/array length
-  - `equals "value"` — exact string match
-  - `equals true` / `equals false` — exact boolean match
-  - `contains "text"` — substring in string, or any-element-contains in array
-- Use schema for: field existence, type correctness, numeric ranges, non-empty arrays, exact expected values, required file names in lists.
-- 2–5 schema assertions per phase.
+**schema** — a JSON Schema object (stored as a dict) that validates the artifact's `data` field.
+- Use standard JSON Schema keywords: `type`, `required`, `properties`, `items`, `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `enum`.
+- The schema must be a valid JSON Schema object with at least `type: object` and `properties`.
+- Cover: field existence (`required`), types (`type`), numeric ranges (`minimum`/`maximum`), non-empty arrays (`minItems`), exact expected values (`enum`), nested objects/arrays.
+- Example:
+  ```json
+  {
+    "type": "object",
+    "required": ["score", "label"],
+    "properties": {
+      "score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+      "label": {"type": "string", "enum": ["approved", "rejected"]},
+      "items": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+    }
+  }
+  ```
 
 **quality** — LLM-judged content checks. Plain Japanese/English sentence.
 - Use quality ONLY for checks that require reading and understanding content (e.g. "summary describes the app's purpose").
@@ -83,8 +88,10 @@ Same rules as 4a, applied to the app's declared `final_output` artifact.
 
 ## Criteria quality checklist (apply before finishing)
 
-- [ ] Every field name in schema assertions exists in the artifact .md I read.
-- [ ] No quality criterion duplicates what a schema assertion already checks.
-- [ ] `issues` / `problems` / `errors` arrays have `min 1` if the app should always produce at least one.
-- [ ] Boolean verdict fields have `equals true` or `equals false` when a specific value is expected.
+- [ ] Every field name in schema `properties` exists in the artifact `.yaml` I read — no invented fields.
+- [ ] No quality criterion duplicates what the JSON Schema already covers (type, range, enum).
+- [ ] Arrays that must be non-empty use `minItems: 1`.
+- [ ] Boolean verdict fields with an expected value use `enum: [true]` or `enum: [false]`.
+- [ ] Enum fields use `enum: [...]` with the correct allowed values.
 - [ ] cross_phase_assertions covers all "should-be-same" relationships between phases.
+- [ ] Quality criteria that are only evaluable when a specific runtime branch occurs (e.g. "if rollback is chosen...") are tagged `[aspirational]` — they cannot be reliably evaluated without guaranteeing that branch fires.

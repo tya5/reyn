@@ -12,20 +12,10 @@ PASS_THRESHOLD = 0.6  # criterion score >= this is considered passing
 # ── Schema validation ─────────────────────────────────────────────────────────
 
 @dataclass
-class SchemaAssertion:
-    """A single deterministic assertion against an artifact field."""
-    path: str         # dot-notation, e.g. "review_result.score"
-    type: str         # string | number | integer | boolean | array | object
-    constraints: dict # e.g. {"range": (0.0, 1.0)}, {"min_length": 1}, {"equals": "foo"}
-    raw: str          # original line text for display
-
-
-@dataclass
 class SchemaResult:
-    """Result of evaluating one SchemaAssertion against an artifact."""
-    assertion: SchemaAssertion
+    """Result of validating an artifact against a JSON Schema."""
     passed: bool
-    reason: str
+    reason: str   # "ok" or first N jsonschema error messages
 
     @property
     def score(self) -> float:
@@ -174,7 +164,7 @@ class CaseResult:
 class PhaseCriteria:
     """Criteria spec for one phase within a case."""
     phase: str | None                       # None = "final"
-    schema: list[SchemaAssertion]           # deterministic checks
+    schema: dict | None                     # JSON Schema object, or None if not specified
     criteria: list[QualityCriterion]        # quality criteria (with tags)
 
 
@@ -295,8 +285,7 @@ class EvalRunResult:
                             "aspirational_passed": pr.aspirational_passed,
                             "aspirational_total": pr.aspirational_total,
                             "schema": [
-                                {"path": s.assertion.path, "raw": s.assertion.raw,
-                                 "passed": s.passed, "reason": s.reason}
+                                {"passed": s.passed, "reason": s.reason}
                                 for s in pr.schema_results
                             ],
                             "criteria": [

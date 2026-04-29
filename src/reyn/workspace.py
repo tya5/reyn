@@ -125,7 +125,9 @@ class Workspace:
             json.dumps(artifact, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-        self.artifacts.append({"phase": phase, "artifact": artifact, "path": rel})
+        # Return path relative to base_dir so the LLM can read it via file ops
+        base_rel = str(abs_path.relative_to(self.base_dir))
+        self.artifacts.append({"phase": phase, "artifact": artifact, "path": base_rel})
         inner = artifact.get("data", artifact)
         keys = list(inner.keys()) if isinstance(inner, dict) else []
         self._events.emit(
@@ -133,6 +135,6 @@ class Workspace:
             phase=phase,
             artifact_type=artifact_type,
             keys=keys,
-            path=rel,
+            path=base_rel,
         )
-        return rel
+        return base_rel
