@@ -29,8 +29,19 @@ class IterateStep(BaseModel):
     on_error: Literal["fail", "skip"] = "fail"
 
 
+class LintPlanStep(BaseModel):
+    """
+    Run deterministic structural checks (cycle, artifact coverage, etc.) on a
+    plan-shaped dict embedded in the input artifact. Issues are appended at
+    `into` for the LLM to act on. Does NOT abort on issues — enrichment only.
+    """
+    type: Literal["lint_plan"]
+    over: str = "data"  # dot path to the plan dict; default: artifact["data"]
+    into: str           # dot path where the list of issue strings is placed
+
+
 PreprocessorStep = Annotated[
-    Union[RunAppStep, IterateStep, ValidateStep],
+    Union[RunAppStep, IterateStep, ValidateStep, LintPlanStep],
     Field(discriminator="type"),
 ]
 

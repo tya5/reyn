@@ -103,7 +103,7 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import RunAppStep, IterateStep, ValidateStep
+    from reyn.models import RunAppStep, IterateStep, ValidateStep, LintPlanStep
 
     schema = copy.deepcopy(input_schema)
 
@@ -155,6 +155,19 @@ def infer_llm_visible_schema(
                     f"{label}: validate.schema is not a valid JSON Schema — {exc.message}"
                 ) from exc
             # Inferred schema unchanged (pass-through; runtime enforces the assertion).
+
+        elif isinstance(step, LintPlanStep):
+            # Adds a list of issue strings at step.into. Parent path must exist;
+            # the over path is checked at runtime against actual artifact data.
+            _require_parent_exists(schema, step.into, label)
+            schema = _set_at_path(
+                schema, step.into,
+                {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Deterministic structural-lint issues found in the plan.",
+                },
+            )
 
         else:
             raise PreprocessorTypeError(f"{label}: unknown step type {type(step)}")

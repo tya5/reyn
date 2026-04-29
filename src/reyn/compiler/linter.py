@@ -225,6 +225,82 @@ def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     return issues
 
 
+# ── Plan-level lint (operates on app_structure / app_plan dicts) ─────────────
+
+def lint_plan(plan: dict) -> list[str]:
+    """
+    Run deterministic structural checks on an app_structure / app_plan dict.
+    Returns a list of human-readable issue strings (empty if clean).
+
+    Checks:
+      - graph cycles (transitions form a DAG)
+      - input_artifact coverage (every phase's input_artifact must be declared
+        in `artifacts`, or be the stdlib `user_message`, or the final_output)
+      - entry_phase exists in phases
+      - transition endpoints reference declared phases
+    """
+    issues: list[str] = []
+
+    transitions = plan.get("transitions") or []
+    edges: list[tuple[str, str]] = []
+    for t in transitions:
+        if not isinstance(t, dict):
+            continue
+        src = t.get("from")
+        for dst in t.get("to") or []:
+            if src and dst:
+                edges.append((src, dst))
+
+    cycle = _find_cycle(edges)
+    if cycle is not None:
+        cycle_str = " → ".join(cycle)
+        issues.append(
+            f"Graph contains a cycle: {cycle_str}. "
+            "Use control.type='rollback' for revision loops instead of back-edges."
+        )
+
+    phases = plan.get("phases") or []
+    phase_names = {p.get("name") for p in phases if isinstance(p, dict) and p.get("name")}
+
+    artifact_names: set[str] = set()
+    for a in plan.get("artifacts") or []:
+        if isinstance(a, dict) and a.get("name"):
+            artifact_names.add(a["name"])
+    final_output = plan.get("final_output") or {}
+    if isinstance(final_output, dict) and final_output.get("name"):
+        artifact_names.add(final_output["name"])
+    artifact_names.add("user_message")  # stdlib
+
+    for p in phases:
+        if not isinstance(p, dict):
+            continue
+        input_artifact = p.get("input_artifact")
+        if input_artifact and input_artifact not in artifact_names:
+            issues.append(
+                f"Phase '{p.get('name')}' references input_artifact "
+                f"'{input_artifact}' but it is not declared in `artifacts` "
+                f"(and is not the stdlib `user_message` or `final_output`)."
+            )
+
+    entry_phase = plan.get("entry_phase")
+    if entry_phase and entry_phase not in phase_names:
+        issues.append(
+            f"entry_phase '{entry_phase}' is not declared in `phases`."
+        )
+
+    for t in transitions:
+        if not isinstance(t, dict):
+            continue
+        src = t.get("from")
+        if src and src not in phase_names:
+            issues.append(f"Transition source '{src}' is not declared in `phases`.")
+        for dst in t.get("to") or []:
+            if dst and dst not in phase_names:
+                issues.append(f"Transition target '{dst}' is not declared in `phases`.")
+
+    return issues
+
+
 # ── DSL root ──────────────────────────────────────────────────────────────────
 
 def lint_app_dir(app_dir: Path) -> list[LintIssue]:

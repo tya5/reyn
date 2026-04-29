@@ -5,9 +5,11 @@ Runs before the Phase's primary LLM call. Enriches the input artifact in place
 (all steps use the enrich model — original data is preserved).
 
 Step semantics:
-  validate  — validates artifact["data"] against step.schema_; aborts on failure
-  run_app   — invokes a pre-loaded sub-app; places final_output at step.into
-  iterate   — maps run_app over each element of step.over; collects into step.into
+  validate   — validates artifact["data"] against step.schema_; aborts on failure
+  run_app    — invokes a pre-loaded sub-app; places final_output at step.into
+  iterate    — maps run_app over each element of step.over; collects into step.into
+  lint_plan  — runs deterministic structural checks on a plan dict at step.over;
+               places list of issue strings at step.into (does NOT abort)
 """
 from __future__ import annotations
 import copy
@@ -119,13 +121,15 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunAppStep, IterateStep, ValidateStep
+        from .models import RunAppStep, IterateStep, ValidateStep, LintPlanStep
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
         if isinstance(step, RunAppStep):
             return self._apply_run_app(step, artifact, index, phase_name, output_language)
         if isinstance(step, IterateStep):
             return self._apply_iterate(step, artifact, index, phase_name, output_language)
+        if isinstance(step, LintPlanStep):
+            return self._apply_lint_plan(step, artifact, index, phase_name)
         raise PreprocessorError(f"Unknown step type: {type(step)}")
 
     # ── validate ──────────────────────────────────────────────────────────────
@@ -272,3 +276,24 @@ class PreprocessorExecutor:
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, collected)
         return enriched, total_usage
+
+    # ── lint_plan ─────────────────────────────────────────────────────────────
+
+    def _apply_lint_plan(
+        self, step: Any, artifact: dict, index: int, phase_name: str,
+    ) -> tuple[dict, TokenUsage]:
+        from .compiler.linter import lint_plan
+        plan = _get_at_path(artifact, step.over)
+        if not isinstance(plan, dict):
+            raise PreprocessorError(
+                f"Phase '{phase_name}' preprocessor step[{index}] lint_plan: "
+                f"'over' path '{step.over}' must point to a dict (got {type(plan).__name__})"
+            )
+        issues = lint_plan(plan)
+        self._events.emit(
+            "lint_plan_completed",
+            phase=phase_name, step_index=index, issue_count=len(issues),
+        )
+        enriched = copy.deepcopy(artifact)
+        _set_at_path(enriched, step.into, issues)
+        return enriched, TokenUsage()
