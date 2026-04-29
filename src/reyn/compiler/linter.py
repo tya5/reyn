@@ -225,11 +225,11 @@ def lint_skill(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     return issues
 
 
-# ── Plan-level lint (operates on app_structure / app_plan dicts) ─────────────
+# ── Plan-level lint (operates on skill_structure / skill_plan dicts) ─────────
 
 def lint_plan(plan: dict) -> list[str]:
     """
-    Run deterministic structural checks on an app_structure / app_plan dict.
+    Run deterministic structural checks on a skill_structure / skill_plan dict.
     Returns a list of human-readable issue strings (empty if clean).
 
     Checks:

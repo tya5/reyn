@@ -15,7 +15,7 @@ graph: {}
 
 ## Overview
 
-`judge_phase` is a stdlib sub-app used by the `eval` app's preprocessor.
+`judge_phase` is a stdlib sub-skill used by the `eval` skill's preprocessor.
 It receives one `phase_eval_request` (a phase artifact + criteria list) and returns a `phase_judgment`.
 
-It is not designed to be run standalone — invoke it via `iterate × run_skill(judge_phase)` in an eval app preprocessor.
+It is not designed to be run standalone — invoke it via `iterate × run_skill(judge_phase)` in an eval skill preprocessor.

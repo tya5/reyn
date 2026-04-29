@@ -1,12 +1,12 @@
 ---
 type: phase
 name: review_plan
-input: app_plan
+input: skill_plan
 role: plan_reviewer
 model_class: strong
 ---
 
-Review the app plan for schema quality before DSL files are written.
+Review the skill plan for schema quality before DSL files are written.
 Structural checks (DAG, reachability, artifact coverage) are handled deterministically by the linter after build — focus only on what requires judgement.
 
 ## Schema checks
@@ -22,4 +22,4 @@ Structural checks (DAG, reachability, artifact coverage) are handled determinist
 ## Output
 
 - If issues found: emit `control.type="rollback"` with `control.reason.summary` listing all problems as a numbered list. artifact may be empty.
-- If all clear: transition to `build_app` with `control.type="transition"` and the `app_plan` artifact unchanged.
+- If all clear: transition to `build_skill` with `control.type="transition"` and the `skill_plan` artifact unchanged.

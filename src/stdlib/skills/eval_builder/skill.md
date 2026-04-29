@@ -2,7 +2,7 @@
 type: skill
 name: eval_builder
 description: Auto-generate an eval spec (eval.md) for a skill
-entry: analyze_app
+entry: analyze_skill
 final_output: eval_spec_result
 final_output_description: |
   Path to the generated eval.md plus case/criterion counts and a brief summary.
@@ -11,24 +11,24 @@ finish_criteria:
   - eval.md has been written next to the target skill's skill.md
   - eval_spec_result captures the path, case count, and criterion count
 graph:
-  analyze_app: [write_eval]
+  analyze_skill: [write_eval]
 ---
 
 ## Overview
 
 Reads a target skill's DSL files and generates a per-phase, LLM-judged quality-criteria `eval.md` spec. Does not run the spec — invoke `reyn eval` separately.
 
-`analyze_app` reads every phase and artifact file in the target skill, designs 1–2 representative test cases (typical input, plus a rollback case if the skill has a review loop), and writes 1–4 quality criteria per phase. `write_eval` formats the result into `eval.md` and writes it alongside the target's `skill.md`.
+`analyze_skill` reads every phase and artifact file in the target skill, designs 1–2 representative test cases (typical input, plus a rollback case if the skill has a review loop), and writes 1–4 quality criteria per phase. `write_eval` formats the result into `eval.md` and writes it alongside the target's `skill.md`.
 
 ## Phase flow
 
 ```
-analyze_app  →  write_eval
+analyze_skill  →  write_eval
 ```
 
 | Phase | Role | Responsibility |
 |-------|------|----------------|
-| `analyze_app` | eval_designer | Reads the skill's DSL files; designs test cases and per-phase quality criteria |
+| `analyze_skill` | eval_designer | Reads the skill's DSL files; designs test cases and per-phase quality criteria |
 | `write_eval`  | spec_writer   | Formats the criteria into `eval.md` and writes it next to the target skill |
 
 ## Input

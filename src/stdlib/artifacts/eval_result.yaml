@@ -1,5 +1,5 @@
 name: eval_result
-description: Outcome of running an eval spec against a target app, including pass/fail verdict and score.
+description: Outcome of running an eval spec against a target skill, including pass/fail verdict and score.
 schema:
   type: object
   properties:

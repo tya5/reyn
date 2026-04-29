@@ -12,7 +12,7 @@ This phase runs ONCE per improver invocation — never re-entered.
 ## Step 1 — Parse the input
 
 If the input artifact type is `user_message`: extract from the `text` field:
-- `target_skill_path` (required) — path to the target app's app.md
+- `target_skill_path` (required) — path to the target skill's skill.md
 - `case_name` (optional) — defaults to the FIRST case in the eval spec
 - `max_iterations` (optional) — defaults to `3`
 - `score_threshold` (optional) — defaults to `0.85`
@@ -38,12 +38,12 @@ Set `eval_spec_path`:
 Issue a file read op for `eval_spec_path`.
 If the file is found, skip to Step 4.
 
-If the file is NOT found, generate it via the `eval_builder` stdlib app. Issue this Control IR op:
+If the file is NOT found, generate it via the `eval_builder` stdlib skill skill. Issue this Control IR op:
 
 ```
 {
   "kind": "run_skill",
-  "app": "eval_builder",
+  "skill": "eval_builder",
   "input": {
     "type": "user_message",
     "data": {"text": "Generate an eval.md for <target_skill_path>."}
@@ -53,7 +53,7 @@ If the file is NOT found, generate it via the `eval_builder` stdlib app. Issue t
 }
 ```
 
-After the sub-app finishes, read `eval_spec_path` again to confirm it now exists. If it still does not, abort with `control.type="abort"` and a reason citing eval_builder failure.
+After the sub-skill finishes, read `eval_spec_path` again to confirm it now exists. If it still does not, abort with `control.type="abort"` and a reason citing eval_builder failure.
 
 ## Step 4 — Parse eval.md and pick a case
 

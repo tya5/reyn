@@ -1,17 +1,17 @@
 ---
 type: phase
-name: plan_app
-input: user_message | app_request
+name: plan_skill
+input: user_message | skill_request
 role: app_architect
 ---
 
-Design an App structure that fulfills the user's request with appropriate quality controls.
+Design an Skill structure that fulfills the user's request with appropriate quality controls.
 
 SCOPE BOUNDARY — CRITICAL:
-Your job is to design the TARGET app (the one the user wants built).
-Any meta-instructions from the user (e.g. "suggest an app name", "ask me for details") are
-addressed HERE by YOU — they are NOT requirements for the target app's phases.
-Do NOT embed app-builder concerns (naming, clarification) into the target app's phase instructions.
+Your job is to design the TARGET skill (the one the user wants built).
+Any meta-instructions from the user (e.g. "suggest a skill name", "ask me for details") are
+addressed HERE by YOU — they are NOT requirements for the target skill's phases.
+Do NOT embed skill-builder concerns (naming, clarification) into the target skill's phase instructions.
 
 ---
 
@@ -36,16 +36,16 @@ document generation with no external data needs).
 
 ## Step 1 — Check for naming conflicts
 
-Glob `reyn/local/` to list existing apps. If `reyn/local/{app_name}` already exists,
+Glob `reyn/local/` to list existing skills. If `reyn/local/{skill_name}` already exists,
 use ask_user to inform the user and ask whether to choose a different name or overwrite.
-Proceed only after confirming the app_path is safe to use.
+Proceed only after confirming the skill_path is safe to use.
 
 ---
 
 ## Step 2 — Choose a quality pattern
 
-Before laying out phases, identify what "quality" means for this app's output.
-Then choose the appropriate pattern:
+Before laying out phases, identify what "quality" means for this skill's output.
+Then choose the skillropriate pattern:
 
 ### Pattern A — Linear with review
 Use when: the task generates content or artifacts that need quality assessment.
@@ -77,9 +77,9 @@ Do NOT add review phases unless the output is subjective or hard to verify.
 
 ## Step 3 — Define structure
 
-app_name: snake_case name of the target app
-app_description: one sentence describing what the app does (used in `reyn apps` listing)
-app_path: "reyn/local/{app_name}"
+skill_name: snake_case name of the target skill
+skill_description: one sentence describing what the skill does (used in `reyn skills` listing)
+skill_path: "reyn/local/{skill_name}"
 entry_phase: name of the first phase
 finish_criteria: 2–4 bullet strings describing when the TARGET workflow is done
 
@@ -91,7 +91,7 @@ phases: array of phase definitions, each with:
       standard — main generation, analysis, most phases (default when uncertain)
       strong   — complex multi-criteria reasoning, nuanced review, high-stakes decisions
   - input_artifact: name of the artifact this phase receives
-  - instructions: 2–4 sentence domain-logic instructions for the TARGET app's task only.
+  - instructions: 2–4 sentence domain-logic instructions for the TARGET skill's task only.
       For review phases: specify concrete quality criteria, verdict fields, and when to approve vs. request revision.
   - can_finish: true only if this phase may end the workflow
 
@@ -127,7 +127,7 @@ final_output:
 
 - Each phase does exactly one thing
 - Artifact names must be unique and consistent across phases and transitions
-- Phase instructions must describe the target app's domain logic ONLY
+- Phase instructions must describe the target skill's domain logic ONLY
 - Review phase instructions MUST specify: what criteria to evaluate, and when to approve vs. request revision
 - Review phase instructions MUST include: "If rejected, emit `control.type='rollback'` with a reason explaining what to fix."
 - CRITICAL — the artifact a review phase receives must contain all information needed to make an informed judgment. Design the intermediate artifact so the reviewer is self-contained — do not assume it can infer context from prior phases.

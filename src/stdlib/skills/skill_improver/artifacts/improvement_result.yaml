@@ -5,7 +5,7 @@ schema:
   properties:
     target_skill_path:
       type: string
-      description: Path to the target app that was improved.
+      description: Path to the target skill that was improved.
     iterations_performed:
       type: integer
       minimum: 1
@@ -45,7 +45,7 @@ schema:
       description: Prose summary of what changed across iterations and the overall outcome.
     next_steps:
       type: string
-      description: Concrete suggestion for what to run/verify, e.g. "reyn eval <eval_spec_path>" or "reyn run <app> '<input>'".
+      description: Concrete suggestion for what to run/verify, e.g. "reyn eval <eval_spec_path>" or "reyn run <skill> '<input>'".
   required:
     - target_skill_path
     - iterations_performed

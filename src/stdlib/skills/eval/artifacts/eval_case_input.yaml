@@ -1,5 +1,5 @@
 name: eval_case_input
-description: A single eval case specifying the target app, test input, and per-phase quality criteria to evaluate against.
+description: A single eval case specifying the target skill, test input, and per-phase quality criteria to evaluate against.
 schema:
   type: object
   properties:
@@ -8,16 +8,16 @@ schema:
       description: Human-readable name for this test case.
     case_input:
       type: string
-      description: Input string or JSON object string to pass to the target app.
+      description: Input string or JSON object string to pass to the target skill.
     spec_path:
       type: string
       description: Path to the eval.md spec file (for reference in the output).
     target_skill_path:
       type: string
-      description: Path to the target app's app.md file.
+      description: Path to the target skill's skill.md file.
     dsl_root:
       type: string
-      description: DSL root to use when loading the target app. Defaults to the app's parent directory.
+      description: DSL root to use when loading the target skill. Defaults to the skill's parent directory.
     phase_criteria:
       type: array
       description: Per-phase quality criteria to evaluate. Phases not listed are skipped.

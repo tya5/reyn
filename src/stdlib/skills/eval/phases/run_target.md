@@ -6,14 +6,14 @@ role: test_runner
 max_act_turns: 2
 ---
 
-Run the target app with the test case input and build evaluation requests from the resulting phase artifacts.
+Run the target skill with the test case input and build evaluation requests from the resulting phase artifacts.
 
 ## Step 1 — Prepare input artifact
 
 - If `case_input` looks like a valid JSON object (starts with `{`), parse it and use as-is.
 - Otherwise wrap it: `{"type": "user_message", "data": {"text": case_input}}`
 
-## Step 2 — Run the target app
+## Step 2 — Run the target skill
 
 Issue a `run_skill` Control IR op:
 
@@ -28,7 +28,7 @@ Issue a `run_skill` Control IR op:
 
 If the run_skill op returns `status` other than `"finished"` (e.g. `"error"`, `"aborted"`, `"loop_limit_exceeded"`), do NOT retry — the failure is structural, not flaky. Skip Step 3 and produce a `case_run_result` with `run_status` set to the returned status, `eval_requests: []`, and proceed to the decide turn. The eval phase will mark the case as failed.
 
-CRITICAL: NEVER abort the eval workflow, regardless of what error the target app produced. A target app failure is an expected outcome — always proceed to `evaluate` with a `case_run_result` artifact.
+CRITICAL: NEVER abort the eval workflow, regardless of what error the target skill produced. A target skill failure is an expected outcome — always proceed to `evaluate` with a `case_run_result` artifact.
 
 ## Step 3 — Build eval_requests
 

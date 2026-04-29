@@ -5,7 +5,7 @@ schema:
   properties:
     iteration_state:
       type: object
-      description: Pass-through of the input iteration_state. Required so apply_improvements can apply termination logic (max_iterations, score_threshold, regression, stagnation) using session and history.
+      description: Pass-through of the input iteration_state. Required so apply_improvements ca skillly termination logic (max_iterations, score_threshold, regression, stagnation) using session and history.
     summary:
       type: string
       description: One paragraph describing the strategy of this iteration's changes — what root cause they target and why.

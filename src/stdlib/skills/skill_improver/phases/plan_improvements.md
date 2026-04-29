@@ -6,9 +6,9 @@ role: app_architect
 model_class: strong
 ---
 
-Design concrete, minimal DSL file changes that will improve the target app's score on the next iteration.
+Design concrete, minimal DSL file changes that will improve the target skill's score on the next iteration.
 
-## Step 1 — Read the target app's DSL
+## Step 1 — Read the target skill's DSL
 
 Read all DSL files under `iteration_state.session.target_dsl_root`. Use glob ops:
 
@@ -18,7 +18,7 @@ Read all DSL files under `iteration_state.session.target_dsl_root`. Use glob ops
 ```
 
 Read each returned file with file read ops. You need the current state of:
-- `app.md` — overall graph and finish criteria
+- `skill.md` — overall graph and finish criteria
 - `phases/*.md` — instructions and roles
 - `artifacts/*.yaml` — schemas
 

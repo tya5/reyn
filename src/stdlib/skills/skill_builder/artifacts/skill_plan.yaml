@@ -1,21 +1,21 @@
-name: app_plan
-description: App plan with artifact schemas, produced by design_artifacts and validated by review_plan before build_app generates DSL files.
+name: skill_plan
+description: Skill plan with artifact schemas, produced by design_artifacts and validated by review_plan before build_skill generates DSL files.
 schema:
   type: object
-  description: Structured plan produced by plan_app, consumed by build_app to generate DSL files.
+  description: Structured plan produced by plan_skill, consumed by build_skill to generate DSL files.
   properties:
-    app_name:
+    skill_name:
       type: string
-      description: snake_case name for the new app.
-    app_description:
+      description: snake_case name for the new skill.
+    skill_description:
       type: string
-      description: One sentence describing what the app does for its users.
-    app_path:
+      description: One sentence describing what the skill does for its users.
+    skill_path:
       type: string
       description: Workspace-relative directory where DSL files will be written, e.g. "reyn/local/my_app".
     entry_phase:
       type: string
-      description: Name of the first phase to execute when the app is run.
+      description: Name of the first phase to execute when the skill is run.
     finish_criteria:
       type: array
       items:
@@ -23,7 +23,7 @@ schema:
       description: 2-4 conditions that must be true for the workflow to be considered complete.
     phases:
       type: array
-      description: All phases in the app, including entry and can_finish phases.
+      description: All phases in the skill, including entry and can_finish phases.
       items:
         type: object
         properties:
@@ -64,7 +64,7 @@ schema:
         required: [from, to]
     artifacts:
       type: array
-      description: All artifact definitions needed by the app's phases.
+      description: All artifact definitions needed by the skill's phases.
       items:
         type: object
         properties:
@@ -108,4 +108,4 @@ schema:
             type: string
             description: Repository or homepage URL of the server.
         required: [name, purpose]
-  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]
+  required: [skill_name, skill_description, skill_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]

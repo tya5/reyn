@@ -12,7 +12,7 @@ schema:
       description: 1-based index of the iteration that was just evaluated by run_and_eval. Equals len(history) + 1 since history records iterations whose apply_improvements has finished.
     latest_eval:
       type: object
-      description: The eval_result returned by the most recent eval sub-app run.
+      description: The eval_result returned by the most recent eval sub-skill run.
       properties:
         passed:
           type: boolean

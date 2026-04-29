@@ -5,7 +5,7 @@ schema:
   properties:
     eval_md_path:
       type: string
-      description: Path to the generated eval.md file (typically next to the target app's app.md).
+      description: Path to the generated eval.md file (typically next to the target skill's skill.md).
     case_count:
       type: integer
       minimum: 1

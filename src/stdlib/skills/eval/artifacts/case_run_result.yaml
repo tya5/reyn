@@ -1,5 +1,5 @@
 name: case_run_result
-description: Result of running a target app for one eval case, with pre-built phase_eval_request items ready for the judge_phase preprocessor to iterate over.
+description: Result of running a target skill for one eval case, with pre-built phase_eval_request items ready for the judge_phase preprocessor to iterate over.
 schema:
   type: object
   properties:
@@ -11,7 +11,7 @@ schema:
       description: Path to the eval.md spec (passed through for final output).
     run_status:
       type: string
-      description: Status returned by the target app run ('finished', 'loop_limit_exceeded', 'aborted', etc.).
+      description: Status returned by the target skill run ('finished', 'loop_limit_exceeded', 'aborted', etc.).
     eval_requests:
       type: array
       description: Pre-built phase_eval_request wrapped artifacts, one per phase with criteria. Each item has {type, data} structure matching phase_eval_request. artifact_path (not artifact_data) is used to avoid large inline JSON.

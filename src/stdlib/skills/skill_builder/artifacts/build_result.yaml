@@ -3,12 +3,12 @@ description: Intermediate result after writing DSL files, before lint verificati
 schema:
   type: object
   properties:
-    app_name:
+    skill_name:
       type: string
-      description: The generated app name.
-    app_path:
+      description: The generated skill name.
+    skill_path:
       type: string
-      description: Workspace-relative path to the app directory.
+      description: Workspace-relative path to the skill directory.
     files_written:
       type: array
       items:
@@ -17,4 +17,4 @@ schema:
     file_count:
       type: integer
       description: Total number of files written.
-  required: [app_name, app_path, files_written, file_count]
+  required: [skill_name, skill_path, files_written, file_count]

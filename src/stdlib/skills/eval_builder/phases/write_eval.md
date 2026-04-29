@@ -1,7 +1,7 @@
 ---
 type: phase
 name: write_eval
-input: app_analysis
+input: skill_analysis
 role: spec_writer
 can_finish: true
 ---
@@ -10,8 +10,8 @@ Generate the eval.md content, write it to the workspace, and report the result.
 
 ## Output path
 
-Write to the app's own directory: `{app_dir}/eval.md`
-Derive `app_dir` from `skill_dsl_path` by removing the trailing `/skill.md`.
+Write to the skill's own directory: `{skill_dir}/eval.md`
+Derive `skill_dir` from `skill_dsl_path` by removing the trailing `/skill.md`.
 Example: if `skill_dsl_path` is `"reyn/local/article_generator/skill.md"`, write to `reyn/local/article_generator/eval.md`.
 
 ## eval.md format
@@ -50,12 +50,12 @@ Rules:
 - The `quality:` block is a YAML list — each item starts with `- `.
 - A criterion that begins with `[aspirational]` keeps that prefix in the output (it controls scoring semantics).
 - Repeat the full per-phase structure identically for each test case (same phases, same criteria text).
-- Do NOT add `judge_model:`, `model:`, `schema:`, `### cross_phase`, or `### final` — they are not supported by the new eval app.
+- Do NOT add `judge_model:`, `model:`, `schema:`, `### cross_phase`, or `### final` — they are not supported by the new eval skill.
 - Do NOT add commentary or markdown outside the spec format.
 
 ## After writing the file
 
-Compute the result fields directly from `app_analysis`:
+Compute the result fields directly from `skill_analysis`:
 
 - `eval_md_path`: the workspace path you wrote.
 - `case_count`: `len(test_cases)`.

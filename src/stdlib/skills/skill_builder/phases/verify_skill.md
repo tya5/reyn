@@ -1,6 +1,6 @@
 ---
 type: phase
-name: verify_app
+name: verify_skill
 input: build_result
 role: dsl_verifier
 can_finish: true
@@ -12,7 +12,7 @@ max_act_turns: 1
 Issue exactly one lint op:
 
 ```
-{"kind": "lint", "app_path": "<data.app_path>"}
+{"kind": "lint", "skill_path": "<data.skill_path>"}
 ```
 
 ## Step 2 — Decide (MANDATORY — no more control_ir ops)
@@ -21,18 +21,18 @@ After lint returns, your response MUST be a decide turn with zero `control_ir` o
 
 If lint returned errors (`passed: false`):
 - Emit `control.type="rollback"` listing the lint issues verbatim as the reason
-- The OS re-runs build_app with your feedback; build_app has the app_plan context to fix the files
-- You MUST NOT write or delete files — you lack the app_plan context
+- The OS re-runs build_skill with your feedback; build_skill has the skill_plan context to fix the files
+- You MUST NOT write or delete files — you lack the skill_plan context
 
 If lint passed (`passed: true`), finish with an `skill_builder_result` artifact:
-- `app_name`: from data.app_name
-- `app_path`: from data.app_path
+- `skill_name`: from data.skill_name
+- `skill_path`: from data.skill_path
 - `files_written`: from data.files_written
 - `file_count`: from data.file_count
 - `lint_passed`: true
 - `lint_issues`: []
-- `summary`: one sentence describing what the app does for its users
+- `summary`: one sentence describing what the skill does for its users
 
-summary MUST describe what the app does for its users — not what you (the builder) did.
-Good: "An app that lets users submit documents for reviewer approval or rejection with reasons."
-Bad: "Generated DSL files for the review app and saved them to the workspace."
+summary MUST describe what the skill does for its users — not what you (the builder) did.
+Good: "A skill that lets users submit documents for reviewer approval or rejection with reasons."
+Bad: "Generated DSL files for the review skill and saved them to the workspace."

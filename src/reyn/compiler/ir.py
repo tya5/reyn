@@ -35,7 +35,7 @@ class SkillDef:
     description: str
     doc: str                             # body — human/LLM-readable usage guide
     entry: str
-    edges: list[tuple[str, str]]        # (from_node, to_node) — nodes may be phases or @app_names
+    edges: list[tuple[str, str]]        # (from_node, to_node) — nodes may be phases or @skill_names
     skill_nodes: dict[str, SkillNodeDef]    # "@skill_name" → SkillNodeDef
     final_output: str                    # artifact name for final_output_schema
     final_output_description: str

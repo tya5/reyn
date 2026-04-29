@@ -6,7 +6,7 @@ role: evaluator
 model_class: standard
 ---
 
-Run the target app against the chosen test case via the `eval` stdlib sub-app, capture the score for this iteration, and update the workspace history file.
+Run the target skill against the chosen test case via the `eval` stdlib sub-skill, capture the score for this iteration, and update the workspace history file.
 
 This phase is re-entered each iteration of the improvement loop (via rollback chain from apply_improvements).
 
@@ -24,7 +24,7 @@ The `iterations` array represents only iterations whose `apply_improvements` has
 
 ## Step 2 — Build eval_case_input
 
-Construct the input artifact for the `eval` sub-app from the input `improvement_session`:
+Construct the input artifact for the `eval` sub-skill from the input `improvement_session`:
 
 ```json
 {
@@ -49,7 +49,7 @@ Issue a `run_skill` Control IR op:
 ```
 {
   "kind": "run_skill",
-  "app": "eval",
+  "skill": "eval",
   "input": <the eval_case_input from Step 2>,
   "model": "<session.model>",
   "workspace": "isolated"
@@ -58,7 +58,7 @@ Issue a `run_skill` Control IR op:
 
 CRITICAL: Run eval EXACTLY ONCE per visit to this phase. After the first `run_skill [finished]` result arrives, proceed to Step 4 — DO NOT issue a second `run_skill` op even if you doubt the result. Repeating the eval wastes tokens without producing different output.
 
-If the sub-app aborts (status != "finished"), do NOT abort the improver — produce an iteration_state with `latest_eval.passed = false`, `latest_eval.overall_score = 0.0`, `latest_eval.weakest_phase = "<unknown — eval aborted>"`, and `latest_eval.summary` describing the failure. The improver loop will treat this as a low score and either continue trying or terminate via the regression/stagnation rules.
+If the sub-skill aborts (status != "finished"), do NOT abort the improver — produce an iteration_state with `latest_eval.passed = false`, `latest_eval.overall_score = 0.0`, `latest_eval.weakest_phase = "<unknown — eval aborted>"`, and `latest_eval.summary` describing the failure. The improver loop will treat this as a low score and either continue trying or terminate via the regression/stagnation rules.
 
 ## Step 4 — Build iteration_state
 

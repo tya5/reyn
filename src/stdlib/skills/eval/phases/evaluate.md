@@ -9,7 +9,7 @@ preprocessor:
     over: data.eval_requests
     apply:
       type: run_skill
-      app: judge_phase
+      skill: judge_phase
     into: data.judgments
     on_error: skip
 ---
@@ -34,6 +34,6 @@ A criterion in `criteria_results` is **required** when its `required` field is `
 
 ## Edge cases
 
-**App run did not finish** (`data.run_status != "finished"`): produce `passed=false`, `overall_score=0.0`, `passed_criteria=0`, `total_criteria=0`, `weakest_phase=""`, and note in the summary that the target app run failed with the given status.
+**Skill run did not finish** (`data.run_status != "finished"`): produce `passed=false`, `overall_score=0.0`, `passed_criteria=0`, `total_criteria=0`, `weakest_phase=""`, and note in the summary that the target skill run failed with the given status.
 
-**App finished but no phases evaluated** (`run_status == "finished"` and `data.eval_requests` was empty or all items were skipped): produce `passed=true`, `overall_score=1.0`, `passed_criteria=0`, `total_criteria=0`, `weakest_phase=""`, and note in the summary that no phases were evaluated.
+**Skill finished but no phases evaluated** (`run_status == "finished"` and `data.eval_requests` was empty or all items were skipped): produce `passed=true`, `overall_score=1.0`, `passed_criteria=0`, `total_criteria=0`, `weakest_phase=""`, and note in the summary that no phases were evaluated.

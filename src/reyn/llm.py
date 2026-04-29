@@ -84,7 +84,7 @@ Artifact rules:
 - Each entry is the result of one op you previously requested. Common shapes:
     file read:  {"kind": "file", "op": "read", "path": "...", "content": "...", "status": "ok"}
     ask_user:   {"kind": "ask_user", "question": "...", "answer": "...", "status": "ok"}
-    lint:       {"kind": "lint", "app_path": "reyn/local/my_app", "passed": true, "error_count": 0, "warning_count": 1, "issues": [...], "status": "ok"}
+    lint:       {"kind": "lint", "skill_path": "reyn/local/my_skill", "passed": true, "error_count": 0, "warning_count": 1, "issues": [...], "status": "ok"}
     eval:       {"kind": "eval", "spec_path": "...", "passed": true, "overall_score": 0.95, "passed_criteria": 19, "total_criteria": 20, "weakest_phase": "...", "status": "ok"}
 - Use these results together with input_artifact to complete the phase goal.
 - Once you have what you need, output a decide turn to make your routing decision.

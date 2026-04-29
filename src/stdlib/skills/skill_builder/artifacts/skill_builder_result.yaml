@@ -1,14 +1,14 @@
 name: skill_builder_result
-description: "Result of a successful app build: the app name, path, files written, and lint outcome."
+description: "Result of a successful skill build: the skill name, path, files written, and lint outcome."
 schema:
   type: object
   properties:
-    app_name:
+    skill_name:
       type: string
-      description: snake_case name of the generated app.
-    app_path:
+      description: snake_case name of the generated skill.
+    skill_path:
       type: string
-      description: Workspace-relative path to the app directory, e.g. "reyn/local/my_app".
+      description: Workspace-relative path to the skill directory, e.g. "reyn/local/my_app".
     files_written:
       type: array
       items:
@@ -28,5 +28,5 @@ schema:
       description: List of lint issue strings. Empty when lint_passed is true.
     summary:
       type: string
-      description: One sentence describing what the generated app does for its users.
-  required: [app_name, app_path, files_written, file_count, lint_passed, lint_issues, summary]
+      description: One sentence describing what the generated skill does for its users.
+  required: [skill_name, skill_path, files_written, file_count, lint_passed, lint_issues, summary]

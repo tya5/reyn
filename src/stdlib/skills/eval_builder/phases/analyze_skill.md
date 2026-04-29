@@ -1,20 +1,20 @@
 ---
 type: phase
-name: analyze_app
+name: analyze_skill
 input: user_message
 role: eval_designer
 max_act_turns: 20
 ---
 
-Read the target app's DSL files and design per-phase quality criteria.
+Read the target skill's DSL files and design per-phase quality criteria.
 
-## Step 1 — Extract app path from user_message
+## Step 1 — Extract skill path from user_message
 
-- `skill_dsl_path`: the path to the target app's app.md (e.g. "reyn/project/writing_review_app/skill.md")
+- `skill_dsl_path`: the path to the target skill's skill.md (e.g. "reyn/project/writing_review_app/skill.md")
 - `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/" or "reyn/local/")
 - If the path is missing, use ask_user to request it.
 
-## Step 2 — Read app.md AND derive phase_order from graph
+## Step 2 — Read skill.md AND derive phase_order from graph
 
 Read `{skill_dsl_path}`. Extract `entry`, `graph`, and `final_output` from its frontmatter.
 
@@ -46,11 +46,11 @@ Even if `phases/preprocess_text.md` and `phases/summarize_text.md` exist on disk
 
 ## Step 3 — Read phase files (only those in phase_order)
 
-For each phase name in `phase_order`, read `{app_dir}/phases/{phase_name}.md`. Do NOT read or glob other `.md` files in `phases/`.
+For each phase name in `phase_order`, read `{skill_dir}/phases/{phase_name}.md`. Do NOT read or glob other `.md` files in `phases/`.
 
 ## Step 4 — Read artifact files
 
-Glob `{app_dir}/artifacts/*.yaml` and read every artifact file. Artifact files do NOT have an "orphan" problem — read them all for context.
+Glob `{skill_dir}/artifacts/*.yaml` and read every artifact file. Artifact files do NOT have an "orphan" problem — read them all for context.
 
 For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml`.
 
@@ -59,10 +59,10 @@ For artifact types referenced by phases but not found locally, check `{dsl_root}
 ## Step 5 — Design test cases
 
 Design 1–2 realistic test cases:
-- Case 1: a typical, well-formed input the app is designed to handle.
-- Case 2 (if the app has review/revision loops): an input where the first draft is likely to be **rejected** — causing the review phase to rollback. Make the input deliberately ambiguous, underspecified, or contradictory so the reviewer is likely to reject it.
+- Case 1: a typical, well-formed input the skill is designed to handle.
+- Case 2 (if the skill has review/revision loops): an input where the first draft is likely to be **rejected** — causing the review phase to rollback. Make the input deliberately ambiguous, underspecified, or contradictory so the reviewer is likely to reject it.
 
-The goal is branch coverage: if the app has a rollback path, at least one test case should exercise it.
+The goal is branch coverage: if the skill has a rollback path, at least one test case should exercise it.
 
 Each test case `input` must be a complete user_message string.
 
@@ -72,7 +72,7 @@ Each test case `input` must be a complete user_message string.
 
 For each phase, write 1–4 `quality` criteria as plain sentences. Each criterion should:
 
-- Describe a semantic property the phase's output artifact must satisfy that requires reading content (e.g. "summary describes the app's purpose", "review explicitly lists rejection conditions").
+- Describe a semantic property the phase's output artifact must satisfy that requires reading content (e.g. "summary describes the skill's purpose", "review explicitly lists rejection conditions").
 - Refer to fields that actually exist in the artifact (do not invent field names).
 - Be evaluable by reading the artifact alone — if the criterion needs cross-phase context, omit it.
 
@@ -81,12 +81,12 @@ For each phase, write 1–4 `quality` criteria as plain sentences. Each criterio
 Prefix a criterion with `[aspirational]` when it represents a model capability ceiling rather than a fixable bug:
 
 - Subjective judgments ("is specific", "is detailed") that consistently score below 1.0 even on correct output.
-- "Gold standard" quality bars that go beyond the app's contract.
+- "Gold standard" quality bars that go beyond the skill's contract.
 - Criteria that are only evaluable when a specific runtime branch fires (e.g. "if rollback is chosen ...") — these cannot be reliably tested without forcing that branch.
 
 `[aspirational]` criteria are tracked but excluded from pass/fail.
 
-## Final checklist (apply before emitting app_analysis)
+## Final checklist (apply before emitting skill_analysis)
 
 - [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of phase files in the directory.
 - [ ] `phase_order` length equals the number of phases reachable from `entry` (typically 2–6, never includes orphan phase files).

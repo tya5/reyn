@@ -1,0 +1,16 @@
+name: skill_request
+description: Structured request to build a new skill, with name, description, and goal. Preferred over free-text when the caller already has structured requirements.
+schema:
+  type: object
+  description: Structured request to build a new skill. Preferred over free-text when the caller already has structured requirements.
+  properties:
+    skill_name:
+      type: string
+      description: snake_case name for the new skill, e.g. "content_summarizer".
+    description:
+      type: string
+      description: One sentence describing what the skill does for its users.
+    goal:
+      type: string
+      description: Detailed description of the skill's purpose, input, and expected output quality.
+  required: [skill_name, description, goal]

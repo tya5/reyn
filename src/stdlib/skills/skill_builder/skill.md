@@ -2,7 +2,7 @@
 type: skill
 name: skill_builder
 description: Generate a new skill from a natural-language description
-entry: plan_app
+entry: plan_skill
 final_output: skill_builder_result
 final_output_description: |
   Build result for the generated skill: name, path, files written, and lint outcome.
@@ -10,10 +10,10 @@ finish_criteria:
   - All DSL files for the skill have been written to the workspace
   - The generated DSL has been linted with no errors
 graph:
-  plan_app: [design_artifacts]
+  plan_skill: [design_artifacts]
   design_artifacts: [review_plan]
-  review_plan: [build_app]
-  build_app: [verify_app]
+  review_plan: [build_skill]
+  build_skill: [verify_skill]
 ---
 
 ## Overview
@@ -28,27 +28,27 @@ A natural-language description of the skill you want to build. Minimum informati
 reyn run skill_builder "Build a skill that writes an article and reviews it before delivery"
 ```
 
-Alternatively, pass a structured `app_request` artifact with `app_name`, `description`, and `goal`.
+Alternatively, pass a structured `skill_request` artifact with `skill_name`, `description`, and `goal`.
 
 If you are unsure about the skill name, write "suggest some name options" and the builder proposes candidates. Anything else missing is requested via `ask_user`.
 
 ## Phase flow
 
 ```
-plan_app  →  design_artifacts  →  review_plan  →  build_app  →  verify_app
+plan_skill  →  design_artifacts  →  review_plan  →  build_skill  →  verify_skill
 ```
 
 | Phase | Role | Responsibility |
 |-------|------|----------------|
-| `plan_app` | architect | Designs phases, transitions, and overall structure |
+| `plan_skill` | architect | Designs phases, transitions, and overall structure |
 | `design_artifacts` | schema_designer | Adds JSON Schemas to each artifact and the final output |
 | `review_plan` | reviewer | Sanity-checks the plan before any files are written |
-| `build_app` | dsl_writer | Writes `skill.md`, `phases/*.md`, and `artifacts/*.yaml` |
-| `verify_app` | verifier | Runs the linter; rolls back to `build_app` if errors are found |
+| `build_skill` | dsl_writer | Writes `skill.md`, `phases/*.md`, and `artifacts/*.yaml` |
+| `verify_skill` | verifier | Runs the linter; rolls back to `build_skill` if errors are found |
 
 The OS preprocessor injects deterministic structural lint hints into `design_artifacts` (graph cycles, transition targets, artifact coverage, entry-phase validity) so issues surface before file generation.
 
-`plan_app` selects one of three patterns based on the input:
+`plan_skill` selects one of three patterns based on the input:
 
 | Pattern | Structure | Best for |
 |---------|-----------|----------|
@@ -73,4 +73,4 @@ When `lint_passed: true`, the skill is ready to run:
 reyn run <skill_name> "<your input>"
 ```
 
-`verify_app` rolls back on lint errors, so a successful result means the DSL passed lint. If the quality of a generated skill is low, pass it to `skill_improver` to auto-improve phase instructions and artifact schemas against an eval.
+`verify_skill` rolls back on lint errors, so a successful result means the DSL passed lint. If the quality of a generated skill is low, pass it to `skill_improver` to auto-improve phase instructions and artifact schemas against an eval.

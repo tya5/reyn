@@ -1,20 +1,20 @@
-name: app_structure
-description: High-level app structure produced by plan_app — phases, transitions, and artifact names. Does not include artifact schemas.
+name: skill_structure
+description: High-level skill structure produced by plan_skill — phases, transitions, and artifact names. Does not include artifact schemas.
 schema:
   type: object
   properties:
-    app_name:
+    skill_name:
       type: string
-      description: snake_case name for the new app.
-    app_description:
+      description: snake_case name for the new skill.
+    skill_description:
       type: string
-      description: One sentence describing what the app does for its users.
-    app_path:
+      description: One sentence describing what the skill does for its users.
+    skill_path:
       type: string
       description: Workspace-relative directory where DSL files will be written, e.g. "reyn/local/my_app".
     entry_phase:
       type: string
-      description: Name of the first phase to execute when the app is run.
+      description: Name of the first phase to execute when the skill is run.
     finish_criteria:
       type: array
       items:
@@ -22,7 +22,7 @@ schema:
       description: 2-4 conditions that must be true for the workflow to be considered complete.
     phases:
       type: array
-      description: All phases in the app.
+      description: All phases in the skill.
       items:
         type: object
         properties:
@@ -63,7 +63,7 @@ schema:
         required: [from, to]
     artifacts:
       type: array
-      description: Artifacts needed by the app's phases — names and descriptions only, no schemas yet.
+      description: Artifacts needed by the skill's phases — names and descriptions only, no schemas yet.
       items:
         type: object
         properties:
@@ -87,7 +87,7 @@ schema:
       required: [name, description]
     mcp_servers:
       type: array
-      description: MCP servers recommended for this skill, discovered via mcp_search in plan_app Step 0. Empty if none needed or skill is self-contained.
+      description: MCP servers recommended for this skill, discovered via mcp_search in plan_skill Step 0. Empty if none needed or skill is self-contained.
       items:
         type: object
         properties:
@@ -105,5 +105,5 @@ schema:
       type: array
       items:
         type: string
-      description: Deterministic structural-lint findings injected by the OS preprocessor when this artifact is consumed by design_artifacts. Empty list means the plan is structurally valid. Not produced by plan_app — leave undefined when emitting this artifact.
-  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]
+      description: Deterministic structural-lint findings injected by the OS preprocessor when this artifact is consumed by design_artifacts. Empty list means the plan is structurally valid. Not produced by plan_skill — leave undefined when emitting this artifact.
+  required: [skill_name, skill_description, skill_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]
