@@ -12,8 +12,8 @@ You MUST follow these rules when implementing the system.
 The system is composed of the following layers:
 
 ```
-User → Agent → App → OS → Phase → Workspace
-                 ↘ Event (record everything)
+User → Agent → Skill → OS → Phase → Workspace
+                  ↘ Event (record everything)
 ```
 
 ---
@@ -27,11 +27,11 @@ User → Agent → App → OS → Phase → Workspace
 
   * next phase
   * output schema
-  * app structure
+  * skill structure
 
-## P2. App Defines Structure
+## P2. Skill Defines Structure
 
-* App defines:
+* Skill defines:
 
   * `entry_phase`
   * `graph` (phase transitions)
@@ -64,23 +64,23 @@ User → Agent → App → OS → Phase → Workspace
 * Output is determined by:
 
   * next phase input schema OR
-  * app final_output_schema
+  * skill final_output_schema
 
-## P6. App Owns Final Output
+## P6. Skill Owns Final Output
 
-* Only App defines final output schema
+* Only Skill defines final output schema
 * OS validates final output against it
 
-## P7. OS is App-Agnostic (CRITICAL)
+## P7. OS is Skill-Agnostic (CRITICAL)
 
-* OS MUST NOT contain any phase name, artifact type name, or field name specific to any App
+* OS MUST NOT contain any phase name, artifact type name, or field name specific to any Skill
 * Detection rule: if a string literal that names a specific phase (`"revise"`, `"draft_article"`, etc.) or a specific field (`"title"`, `"body"`, `"quality_notes"`) appears in OS code, it is a violation
-* When a new App is added, the OS code MUST NOT change
+* When a new Skill is added, the OS code MUST NOT change
 
 Root causes to watch for:
 
-* Fallback logic that fabricates app-specific fields → return raw artifact data instead
-* Control decision vocabulary that encodes app concepts (`decision="revise"`) → use only OS-level values: `continue | finish | abort`
+* Fallback logic that fabricates skill-specific fields → return raw artifact data instead
+* Control decision vocabulary that encodes skill concepts (`decision="revise"`) → use only OS-level values: `continue | finish | abort`
 * Hardcoded artifact type names in any OS module
 
 ## P8. Phase Instructions Contain Only Domain Logic
@@ -97,10 +97,10 @@ Root causes to watch for:
 ## Agent
 
 * Interprets user intent
-* Selects or generates an App
+* Selects or generates a Skill
 * Does NOT execute phases
 
-## App
+## Skill
 
 * Defines phase graph
 * Defines final output schema
@@ -208,7 +208,7 @@ All phases use a single unified format. The OS rejects output that does not conf
 * `"finish"` — workflow ends. Requires `type="finish"` and `next_phase=null`
 * `"abort"` — unrecoverable error. Requires `type="abort"` and `next_phase=null`
 
-`"revise"` is NOT a valid decision value. It was removed because it encodes an app-specific concept (P7).
+`"revise"` is NOT a valid decision value. It was removed because it encodes a skill-specific concept (P7).
 Any transition to a "revise" phase uses `decision="continue"`.
 
 ## Consistency rules (violations are rejected)
@@ -221,8 +221,11 @@ Any transition to a "revise" phase uses `decision="continue"`.
 
 List of side-effect operations. Available kinds are injected via `available_control_ops` in ContextFrame.
 
-* `file` — read or write a file in the workspace
+* `file` — read, write, glob, or delete files in the workspace
 * `ask_user` — pause phase, ask user a question, re-inject response as `user_message` into the same phase
+* `run_skill` — run another skill as a sub-workflow; result is bound to a named slot in the calling phase's context
+* `lint` — run the DSL linter on a skill directory
+* `shell` — run a shell command (off by default; requires `--allow-shell`)
 
 ---
 
@@ -232,13 +235,13 @@ OS MUST validate:
 
 ### Transition
 
-* next_phase is allowed by App graph
+* next_phase is allowed by Skill graph
 * artifact matches next_phase.input_schema
 
 ### Finish
 
 * finishing is allowed
-* final_output matches app.final_output_schema
+* final_output matches skill.final_output_schema
 
 ---
 
@@ -274,7 +277,7 @@ Event log MUST allow replay in the future
 * NEVER allow LLM to choose arbitrary next phase
 * ALWAYS validate LLM output
 * ALWAYS emit events
-* NEVER put app-specific phase names, artifact type names, or field names in OS code (P7)
+* NEVER put skill-specific phase names, artifact type names, or field names in OS code (P7)
 * NEVER enumerate output artifact fields in Phase instructions (P8)
 * NEVER describe Control IR format in Phase instructions — inject via available_control_ops (P8)
 
@@ -290,8 +293,8 @@ Event log MUST allow replay in the future
 
 ## user_message Artifact
 
-* Shared artifact defined in `dsl/shared/artifacts/user_message.md`
-* Apps that accept natural language input declare `input: user_message | <other_artifact>` in their entry phase
+* Shared artifact defined in `src/stdlib/artifacts/user_message.yaml`
+* Skills that accept natural language input declare `input: user_message | <other_artifact>` in their entry phase
 * Structuring the natural language into domain artifacts is the Phase's responsibility
 
 ## ask_user (User Intervention)
@@ -310,31 +313,36 @@ Responsibility boundary:
 
 ---
 
-# 13. MVP Scope
+# 12. Phase Preprocessor
 
-You are currently implementing MVP.
+A Phase may declare a `preprocessor` chain that runs **before** the LLM is called. Preprocessor steps are deterministic and may invoke sub-skills, iterate over a list, or run validators.
 
-DO NOT implement:
+* `run_skill` — invoke a sub-skill, store its output under a named key in the LLM's input
+* `iterate × run_skill` — fan out a sub-skill over a list, collect results
+* `validate` — run a deterministic check, surface findings to the LLM
 
-* multi-agent
-* parallel execution
-* persistence DB
-* UI
-* evaluation system
+Preprocessor steps run as OS-controlled pipeline operations (not LLM-driven). The LLM sees an enriched input artifact whose schema is inferred at compile time. Phase instructions MUST NOT describe preprocessor mechanics — refer to enriched fields by name only.
 
-Focus ONLY on:
+This is how stdlib skills like `eval` (iterates `judge_phase` over per-criterion requests) and `skill_improver` (runs `eval_builder` to ensure a spec exists) compose without writing imperative orchestration in phase instructions.
 
-* phase execution loop
-* context construction
-* transition validation
-* event emission
+---
+
+# 13. Skill Resolution
+
+Skills are resolved by name in this order:
+
+1. `reyn/project/<name>/skill.md` — checked-in project skills
+2. `reyn/local/<name>/skill.md` — workspace-local skills (typically gitignored)
+3. `src/stdlib/skills/<name>/skill.md` — bundled stdlib skills
+
+Skill nodes embedded in a graph (`@sub_skill`) and `run_skill` Control IR ops use the same resolution.
 
 ---
 
 # 14. Goal
 
-The goal of MVP is NOT performance.
+The goal of the runtime is:
 
-The goal is:
+> Phase transitions driven by LLM + constrained context are stable and valid.
 
-> Verify that phase transitions driven by LLM + constrained context are stable and valid
+The OS is the constant. Skills come and go. New skills MUST NOT require OS code changes (P7).
