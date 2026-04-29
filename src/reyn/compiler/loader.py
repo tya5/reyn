@@ -95,19 +95,17 @@ def _infer_preprocessor_schemas(
     phase_objects: dict,
     preprocessor_sub_apps: dict[str, App],
 ) -> dict:
-    """Run schema inference for each phase with a preprocessor; return updated phase_objects."""
-    updated = dict(phase_objects)
+    """Validate preprocessor chains at compile time; return phase_objects unchanged."""
     for name, phase in phase_objects.items():
         if not phase.preprocessor:
             continue
         try:
-            inferred = infer_llm_visible_schema(
+            infer_llm_visible_schema(
                 phase.input_schema, phase.preprocessor, preprocessor_sub_apps
             )
         except PreprocessorTypeError as exc:
             raise ValueError(f"Phase '{name}': {exc}") from exc
-        updated[name] = phase.model_copy(update={"llm_input_schema": inferred})
-    return updated
+    return phase_objects
 
 
 def load_dsl_app(

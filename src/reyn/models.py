@@ -62,13 +62,6 @@ class Phase(BaseModel):
     model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
     permissions: PermissionDecl = Field(default_factory=PermissionDecl)
     preprocessor: list[PreprocessorStep] = Field(default_factory=list)
-    # Inferred by the compiler after the preprocessor chain is resolved.
-    # Represents the artifact schema the LLM actually receives (input_schema + preprocessor enrichments).
-    # None means no preprocessor → LLM sees input_schema unchanged.
-    # Currently not used at runtime. Candidate future uses:
-    #   1. Validate enriched artifact against this schema before the LLM call (preprocessor bug detection).
-    #   2. Inject into ContextFrame so the LLM sees its actual input contract.
-    llm_input_schema: dict[str, Any] | None = None
 
 
 class AppNodeSpec(BaseModel):
