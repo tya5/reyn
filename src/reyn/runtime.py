@@ -613,6 +613,7 @@ class OSRuntime:
                     self._no_progress_check = {
                         "phase": target_phase,
                         "prev_output_data": rejected_target_output.get("data"),
+                        "rollback_from": current_phase,
                     }
                     self._history.append(f"{current_phase} → rollback → {target_phase}")
                     current_phase = target_phase
@@ -630,7 +631,7 @@ class OSRuntime:
                 ):
                     new_data = output.artifact.get("data")
                     if new_data == self._no_progress_check["prev_output_data"]:
-                        rollback_from = (self._pending_rollback_ctx or {}).get("rollback_from", "?")
+                        rollback_from = self._no_progress_check.get("rollback_from", "?")
                         self.events.emit(
                             "phase_no_progress",
                             phase=current_phase,
