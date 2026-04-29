@@ -1,32 +1,35 @@
 name: improvement_plan
-description: Ordered list of DSL file changes to apply to a target app, with rationale for each change.
+description: Concrete DSL file changes proposed for the current iteration to address weaknesses identified in latest_eval. Output of plan_improvements, consumed by apply_improvements.
 schema:
   type: object
   properties:
-    app_dsl_path:
-      type: string
-      description: Path to the target app being improved.
+    iteration_state:
+      type: object
+      description: Pass-through of the input iteration_state. Required so apply_improvements can apply termination logic (max_iterations, score_threshold, regression, stagnation) using session and history.
     summary:
       type: string
-      description: One paragraph summarizing the overall improvement strategy and rationale.
+      description: One paragraph describing the strategy of this iteration's changes — what root cause they target and why.
+    target_phase:
+      type: string
+      description: The phase being improved this iteration. Typically equals iteration_state.latest_eval.weakest_phase.
     changes:
       type: array
-      description: Ordered list of DSL file changes to apply.
+      description: Ordered list of DSL file changes to apply. Empty array signals "no further changes will help; apply_improvements should finish".
       items:
         type: object
         properties:
           file:
             type: string
-            description: Project-relative path to the DSL file to modify, e.g. "reyn/project/my_app/phases/review.md".
-          change_type:
+            description: Project-relative path to the DSL file (e.g. "reyn/local/my_app/phases/review.md").
+          action:
             type: string
-            enum: [update_instructions, update_artifact_schema, restructure_phase, add_file]
-            description: Kind of change being made.
+            enum: [create, update, delete]
+            description: create — new file. update — overwrite existing file. delete — remove existing file.
           rationale:
             type: string
-            description: Why this change improves the app, referencing specific evidence from the execution report.
+            description: Why this change addresses the weakness diagnosed in latest_eval. Reference specific phase/criterion/summary text.
           new_content:
             type: string
-            description: Complete new file content to write. Must include frontmatter delimiters for DSL files.
-        required: [file, change_type, rationale, new_content]
-  required: [app_dsl_path, summary, changes]
+            description: Full file content for create/update. Empty string for delete.
+        required: [file, action, rationale, new_content]
+  required: [iteration_state, summary, target_phase, changes]
