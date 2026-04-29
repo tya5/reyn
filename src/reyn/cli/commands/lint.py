@@ -3,21 +3,21 @@ from __future__ import annotations
 import argparse
 import sys
 
-from ..app_loader import resolve_app_path
+from ..skill_loader import resolve_skill_path
 
 
 def register(sub) -> None:
-    p = sub.add_parser("lint", help="Lint a DSL app for issues")
-    p.add_argument("app", metavar="APP",
-                   help="App name to lint (same resolution as `reyn run <app>`)")
+    p = sub.add_parser("lint", help="Lint a DSL skill for issues")
+    p.add_argument("skill", metavar="SKILL",
+                   help="Skill name to lint (same resolution as `reyn run <skill>`)")
     p.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.compiler.linter import lint_app_dir
+    from reyn.compiler.linter import lint_skill_dir
 
-    app_dir, _ = resolve_app_path(args.app)
-    issues = lint_app_dir(app_dir)
+    app_dir, _ = resolve_skill_path(args.skill)
+    issues = lint_skill_dir(app_dir)
 
     if not issues:
         print("No issues found.")

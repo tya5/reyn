@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
-from .models import App
+from .models import Skill
 from .runtime import OSRuntime, RunResult
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
@@ -35,13 +35,13 @@ class Agent:
         self.run_id: str | None = None
         self.events_path: Path | None = None
 
-    def run(self, app: App, initial_input: dict, output_language: str = "ja") -> RunResult:
-        self.run_id = self._make_run_id(app.name)
+    def run(self, skill: Skill, initial_input: dict, output_language: str = "ja") -> RunResult:
+        self.run_id = self._make_run_id(skill.name)
         self.events_path = Path(self.state_dir) / "runs" / f"{self.run_id}.jsonl"
         persister = EventPersister(self.events_path)
 
         self._runtime = OSRuntime(
-            app, self.model, self.state_dir,
+            skill, self.model, self.state_dir,
             strict=self.strict,
             subscribers=[persister] + self._subscribers,
             user_input_fn=self._user_input_fn,
@@ -70,7 +70,7 @@ class Agent:
         return self._runtime.events.to_json() if self._runtime else []
 
     @staticmethod
-    def _make_run_id(app_name: str) -> str:
+    def _make_run_id(skill_name: str) -> str:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        safe_name = app_name.replace(" ", "_")[:40]
+        safe_name = skill_name.replace(" ", "_")[:40]
         return f"{ts}_{safe_name}"

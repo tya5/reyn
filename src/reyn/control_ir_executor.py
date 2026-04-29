@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunAppIROp, ShellIROp, ToolIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
@@ -95,13 +95,13 @@ class ControlIRExecutor:
                 kind="lint",
                 description=(
                     "Run the DSL linter against an app directory and return issues. "
-                    "app_path: workspace-relative path to the app directory (e.g. 'reyn/local/my_app'). "
+                    "skill_path: workspace-relative path to the skill directory (e.g. 'reyn/local/my_skill'). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
-                example={"kind": "lint", "app_path": "reyn/local/my_app"},
+                example={"kind": "lint", "skill_path": "reyn/local/my_skill"},
             ),
             ControlIROpSpec(
-                kind="run_app",
+                kind="run_skill",
                 description=(
                     "Run a reyn app in-process and return its final output. "
                     "app: app name (resolved via search path) or path to app.md. "
@@ -112,7 +112,7 @@ class ControlIRExecutor:
                     "phase_artifacts (list of {phase, artifact, path} for each intermediate phase output), "
                     "token_usage (prompt_tokens, completion_tokens)."
                 ),
-                example={"kind": "run_app", "app": "my_app", "input": {"type": "user_message", "data": {"text": "hello"}}},
+                example={"kind": "run_skill", "skill": "my_skill", "input": {"type": "user_message", "data": {"text": "hello"}}},
             ),
         ]
 
@@ -157,8 +157,8 @@ class ControlIRExecutor:
                     self.events.emit("control_ir_skipped", kind="tool")
                 elif op.kind == "lint":
                     result = self._execute_lint(op)  # type: ignore[arg-type]
-                elif op.kind == "run_app":
-                    result = self._execute_run_app(op)  # type: ignore[arg-type]
+                elif op.kind == "run_skill":
+                    result = self._execute_run_skill(op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -230,67 +230,67 @@ class ControlIRExecutor:
         return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
 
     def _execute_lint(self, op: LintIROp) -> dict[str, Any]:
-        from .compiler.linter import lint_app_dir
-        app_dir = Path(op.app_path)
-        if not (app_dir / "app.md").exists():
+        from .compiler.linter import lint_skill_dir
+        skill_dir = Path(op.skill_path)
+        if not (skill_dir / "skill.md").exists():
             return {
                 "kind": "lint",
                 "status": "error",
-                "app_path": op.app_path,
+                "skill_path": op.skill_path,
                 "passed": False,
                 "error_count": 1,
                 "warning_count": 0,
-                "issues": [f"[ERROR] app.md not found at '{op.app_path}'"],
+                "issues": [f"[ERROR] skill.md not found at '{op.skill_path}'"],
             }
-        issues = lint_app_dir(app_dir)
+        issues = lint_skill_dir(skill_dir)
         error_count = sum(1 for i in issues if i.severity == "error")
         warning_count = sum(1 for i in issues if i.severity == "warning")
         self.events.emit(
             "lint_completed",
-            app_path=op.app_path,
+            skill_path=op.skill_path,
             error_count=error_count,
             warning_count=warning_count,
         )
         return {
             "kind": "lint",
             "status": "ok",
-            "app_path": op.app_path,
+            "skill_path": op.skill_path,
             "passed": error_count == 0,
             "error_count": error_count,
             "warning_count": warning_count,
             "issues": [str(i) for i in issues],
         }
 
-    def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:
-        from .compiler import load_dsl_app
-        from .sub_app_runner import invoke_sub_app
+    def _execute_run_skill(self, op: RunSkillIROp) -> dict[str, Any]:
+        from .compiler import load_dsl_skill
+        from .sub_skill_runner import invoke_sub_skill
 
         # Resolve app name or path
-        app_ref = op.app
-        if "/" not in app_ref and not app_ref.endswith(".md"):
-            from reyn.app_paths import resolve_app_path
-            app_dir, inferred_root = resolve_app_path(app_ref)
-            app_path = str(app_dir / "app.md")
+        skill_ref = op.skill
+        if "/" not in skill_ref and not skill_ref.endswith(".md"):
+            from reyn.skill_paths import resolve_skill_path
+            skill_dir, inferred_root = resolve_skill_path(skill_ref)
+            skill_md_path = str(skill_dir / "skill.md")
             dsl_root = str(inferred_root) if inferred_root else None
         else:
-            app_path = app_ref
+            skill_md_path = skill_ref
             dsl_root = None
 
-        sub_app = load_dsl_app(app_path, dsl_root=dsl_root)
+        sub_skill = load_dsl_skill(skill_md_path, dsl_root=dsl_root)
         model = op.model or "standard"
 
         # Sub state_dir: isolated under parent state_dir/invoke/ or shared
-        safe_name = app_ref.replace("/", "_").replace(".", "_")
+        safe_name = skill_ref.replace("/", "_").replace(".", "_")
         parent_state = self.workspace.state_dir
         if op.workspace == "shared":
             sub_state_dir = str(parent_state)
         else:
             sub_state_dir = str(parent_state / "invoke" / safe_name)
 
-        self.events.emit("run_app_started", app=op.app, state_dir=sub_state_dir)
+        self.events.emit("run_skill_started", skill=op.skill, state_dir=sub_state_dir)
 
-        run_result = invoke_sub_app(
-            sub_app, op.input,
+        run_result = invoke_sub_skill(
+            sub_skill, op.input,
             model=model,
             state_dir=sub_state_dir,
             subscribers=self.events.subscribers,
@@ -312,16 +312,16 @@ class ControlIRExecutor:
 
         usage = run_result.token_usage
         self.events.emit(
-            "run_app_completed",
-            app=op.app,
+            "run_skill_completed",
+            skill=op.skill,
             status=run_result.status,
             prompt_tokens=usage.prompt_tokens if usage else None,
             completion_tokens=usage.completion_tokens if usage else None,
         )
         return {
-            "kind": "run_app",
+            "kind": "run_skill",
             "status": run_result.status,
-            "app": op.app,
+            "skill": op.skill,
             "success": run_result.ok,
             "final_output": run_result.data,
             "phase_artifacts": run_result.phase_artifacts,

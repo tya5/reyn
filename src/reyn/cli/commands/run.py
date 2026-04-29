@@ -5,33 +5,33 @@ import json
 import sys
 from pathlib import Path
 
-from ..app_loader import load_app_from_args
+from ..skill_loader import load_skill_from_args
 from ..logger_factory import make_logger
 from ..session import Session
 from ..summary import print_run_result
 
 
 def register(sub) -> None:
-    p = sub.add_parser("run", help="Run an app")
+    p = sub.add_parser("run", help="Run a skill")
     p.add_argument(
-        "app_name", nargs="?", default=None, metavar="APP",
+        "skill_name", nargs="?", default=None, metavar="SKILL",
         help=(
-            "App name to resolve automatically. "
+            "Skill name to resolve automatically. "
             "Search order: reyn/project/ → reyn/local/ → stdlib. "
-            "Example: reyn run app_builder 'describe your app'"
+            "Example: reyn run skill_builder 'describe your skill'"
         ),
     )
     p.add_argument(
-        "--app-path", default=None, dest="app_path", metavar="DIR",
+        "--skill-path", default=None, dest="skill_path", metavar="DIR",
         help=(
-            "Path to an app directory containing app.md "
-            "(e.g. reyn/project/my_app or reyn/local/my_app). "
+            "Path to a skill directory containing skill.md "
+            "(e.g. reyn/project/my_skill or reyn/local/my_skill). "
             "Use this to point to an explicit location instead of name resolution."
         ),
     )
     p.add_argument(
         "--module", default=None, metavar="MODULE",
-        help="Python module path exposing an 'app' object (e.g. examples.writing_app.app)",
+        help="Python module path exposing a 'skill' object (e.g. examples.writing_skill.skill)",
     )
     p.add_argument(
         "--dsl-root", default=None, dest="dsl_root", metavar="DIR",
@@ -87,7 +87,7 @@ def register(sub) -> None:
 
 def run(args: argparse.Namespace) -> None:
     session = Session.from_args(args)
-    loaded = load_app_from_args(args)
+    loaded = load_skill_from_args(args)
 
     raw_input = _read_input(args)
     initial_input = _parse_cli_input(raw_input)
@@ -114,7 +114,7 @@ def run(args: argparse.Namespace) -> None:
 
     input_type = initial_input.get("type", "unknown")
     model_display = f"{model} → {resolved_model}" if resolved_model != model else model
-    print(f"app             : {loaded.app.name}")
+    print(f"skill           : {loaded.skill.name}")
     print(f"model           : {model_display}")
     print(f"output_language : {output_language}")
     print(f"input type      : {input_type}")
@@ -122,7 +122,7 @@ def run(args: argparse.Namespace) -> None:
     print()
 
     try:
-        result = agent.run(loaded.app, initial_input, output_language=output_language)
+        result = agent.run(loaded.skill, initial_input, output_language=output_language)
     except Exception as e:
         print(f"\nError during execution: {e}", file=sys.stderr)
         sys.exit(1)

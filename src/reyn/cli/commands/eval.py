@@ -6,7 +6,7 @@ from pathlib import Path
 
 from reyn.pricing import TokenUsage
 
-from ..app_loader import resolve_app_path, stdlib_root
+from ..skill_loader import resolve_skill_path, stdlib_root
 from ..eval_report import EvalReport
 from ..session import Session
 from ..summary import print_eval_total
@@ -35,7 +35,7 @@ def register(sub) -> None:
 
 def run(args: argparse.Namespace) -> None:
     from reyn.agent import Agent
-    from reyn.compiler import load_dsl_app
+    from reyn.compiler import load_dsl_skill
     from reyn.compiler.eval_loader import load_eval_spec
 
     session = Session.from_args(args)
@@ -46,12 +46,12 @@ def run(args: argparse.Namespace) -> None:
         print(f"Error loading eval spec: {e}", file=sys.stderr)
         sys.exit(1)
 
-    target_app_path, target_dsl_root = _resolve_target(args, spec)
+    target_skill_path, target_dsl_root = _resolve_target(args, spec)
 
     sl = stdlib_root()
-    eval_app_md = sl / "apps" / "eval" / "app.md"
+    eval_app_md = sl / "skills" / "eval" / "skill.md"
     try:
-        eval_app = load_dsl_app(str(eval_app_md), dsl_root=str(sl))
+        eval_app = load_dsl_skill(str(eval_app_md), dsl_root=str(sl))
     except Exception as e:
         print(f"Error loading eval stdlib app: {e}", file=sys.stderr)
         sys.exit(1)
@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> None:
     resolved_model = session.resolver.resolve(model)
     model_display = f"{model} → {resolved_model}" if resolved_model != model else model
 
-    print(f"=== Eval: {spec.app_dsl_path}  [{len(spec.cases)} case(s)] ===")
+    print(f"=== Eval: {spec.skill_dsl_path}  [{len(spec.cases)} case(s)] ===")
     print(f"    model={model_display}")
     print()
 
@@ -72,7 +72,7 @@ def run(args: argparse.Namespace) -> None:
 
     for case in spec.cases:
         case_result, usage, cost = _run_case(
-            case, eval_app, args, spec, target_app_path, target_dsl_root,
+            case, eval_app, args, spec, target_skill_path, target_dsl_root,
             model, output_language, session,
         )
         case_results.append(case_result)
@@ -91,14 +91,14 @@ def run(args: argparse.Namespace) -> None:
 
     report = EvalReport(
         spec_path=args.spec,
-        app=spec.app_dsl_path,
+        app=spec.skill_dsl_path,
         model=resolved_model,
         cases=case_results,
         total_tokens=total_tokens,
         total_cost_usd=total_cost_usd,
     )
     result_path = report.write_to(session.config.state_dir,
-                                  Path(target_app_path).parent.name)
+                                  Path(target_skill_path).parent.name)
     print(f" Results → {result_path}")
     print(f"{'═' * 55}")
 
@@ -108,18 +108,18 @@ def run(args: argparse.Namespace) -> None:
 
 def _resolve_target(args: argparse.Namespace, spec) -> tuple[str, str | None]:
     """Resolve the target app referenced by the eval spec."""
-    app_ref = spec.app_dsl_path
+    app_ref = spec.skill_dsl_path
     if "/" not in app_ref and not app_ref.endswith(".md"):
-        app_dir, inferred_root = resolve_app_path(app_ref)
-        target_app_path = str(app_dir / "app.md")
+        app_dir, inferred_root = resolve_skill_path(app_ref)
+        target_skill_path = str(app_dir / "skill.md")
         target_dsl_root = args.dsl_root or str(inferred_root)
-        print(f"resolved        : {target_app_path}  (dsl-root: {target_dsl_root})")
-        return target_app_path, target_dsl_root
+        print(f"resolved        : {target_skill_path}  (dsl-root: {target_dsl_root})")
+        return target_skill_path, target_dsl_root
     return app_ref, spec.dsl_root or args.dsl_root
 
 
 def _run_case(
-    case, eval_app, args, spec, target_app_path, target_dsl_root,
+    case, eval_app, args, spec, target_skill_path, target_dsl_root,
     model, output_language, session,
 ) -> tuple[dict, TokenUsage | None, float | None]:
     from reyn.agent import Agent
@@ -147,7 +147,7 @@ def _run_case(
             "case_name": case.name,
             "case_input": case.input,
             "spec_path": args.spec,
-            "target_app_path": target_app_path,
+            "target_skill_path": target_skill_path,
             "phase_criteria": phase_criteria,
         },
     }

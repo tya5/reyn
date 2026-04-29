@@ -6,8 +6,8 @@ Runs before the Phase's primary LLM call. Enriches the input artifact in place
 
 Step semantics:
   validate   — validates artifact["data"] against step.schema_; aborts on failure
-  run_app    — invokes a pre-loaded sub-app; places final_output at step.into
-  iterate    — maps run_app over each element of step.over; collects into step.into
+  run_skill  — invokes a pre-loaded sub-skill; places final_output at step.into
+  iterate    — maps run_skill over each element of step.over; collects into step.into
   lint_plan  — runs deterministic structural checks on a plan dict at step.over;
                places list of issue strings at step.into (does NOT abort)
 """
@@ -18,10 +18,10 @@ from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from .pricing import TokenUsage
-from .sub_app_runner import invoke_sub_app
+from .sub_skill_runner import invoke_sub_skill
 
 if TYPE_CHECKING:
-    from .models import App, Phase, PreprocessorStep
+    from .models import Skill, Phase, PreprocessorStep
     from .events import EventLog
     from .model_resolver import ModelResolver
 
@@ -57,7 +57,7 @@ def _set_at_path(obj: dict, path: str, value: Any) -> None:
 class PreprocessorExecutor:
     def __init__(
         self,
-        app: "App",
+        skill: "Skill",
         model: str,
         events: "EventLog",
         subscribers: list,
@@ -65,7 +65,7 @@ class PreprocessorExecutor:
         state_dir: str | Path,
         max_phase_visits: int = 25,
     ) -> None:
-        self._app = app
+        self._skill = skill
         self._model = model
         self._events = events
         self._subscribers = subscribers
@@ -121,11 +121,11 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunAppStep, IterateStep, ValidateStep, LintPlanStep
+        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
-        if isinstance(step, RunAppStep):
-            return self._apply_run_app(step, artifact, index, phase_name, output_language)
+        if isinstance(step, RunSkillStep):
+            return self._apply_run_skill(step, artifact, index, phase_name, output_language)
         if isinstance(step, IterateStep):
             return self._apply_iterate(step, artifact, index, phase_name, output_language)
         if isinstance(step, LintPlanStep):
@@ -148,21 +148,21 @@ class PreprocessorExecutor:
             )
         return artifact, TokenUsage()
 
-    # ── run_app ───────────────────────────────────────────────────────────────
+    # ── run_skill ───────────────────────────────────────────────────────────────
 
-    def _apply_run_app(
+    def _apply_run_skill(
         self, step: Any, artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        sub_app = self._app.preprocessor_sub_apps.get(step.app)
+        sub_app = self._skill.preprocessor_sub_skills.get(step.skill)
         if sub_app is None:
             raise PreprocessorError(
                 f"Phase '{phase_name}' preprocessor step[{index}]: "
-                f"sub-app '{step.app}' not in preprocessor_sub_apps"
+                f"sub-skill '{step.skill}' not in preprocessor_sub_skills"
             )
-        state_dir = self._state_dir / "preprocessor" / phase_name / f"{index}_{step.app}"
-        self._events.emit("run_app_started", app=step.app, state_dir=str(state_dir))
-        result = invoke_sub_app(
+        state_dir = self._state_dir / "preprocessor" / phase_name / f"{index}_{step.skill}"
+        self._events.emit("run_skill_started", app=step.skill, state_dir=str(state_dir))
+        result = invoke_sub_skill(
             sub_app, artifact,
             model=self._model,
             state_dir=state_dir,
@@ -172,14 +172,14 @@ class PreprocessorExecutor:
             max_phase_visits=self._max_phase_visits,
         )
         self._events.emit(
-            "run_app_completed", app=step.app, status=result.status,
+            "run_skill_completed", app=step.skill, status=result.status,
             prompt_tokens=result.token_usage.prompt_tokens if result.token_usage else None,
             completion_tokens=result.token_usage.completion_tokens if result.token_usage else None,
         )
         if not result.ok:
             raise PreprocessorError(
-                f"Phase '{phase_name}' preprocessor step[{index}] run_app '{step.app}': "
-                f"sub-app finished with status '{result.status}'"
+                f"Phase '{phase_name}' preprocessor step[{index}] run_skill '{step.skill}': "
+                f"sub-skill finished with status '{result.status}'"
             )
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, result.data)
@@ -191,11 +191,11 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase_name: str, output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunAppStep
-        if not isinstance(step.apply, RunAppStep):
+        from .models import RunSkillStep
+        if not isinstance(step.apply, RunSkillStep):
             raise PreprocessorError(
                 f"Phase '{phase_name}' preprocessor step[{index}] iterate.apply: "
-                "only run_app is supported"
+                "only run_skill is supported"
             )
 
         items = _get_at_path(artifact, step.over)
@@ -205,11 +205,11 @@ class PreprocessorExecutor:
                 f"'over' path '{step.over}' is not a list (got {type(items).__name__})"
             )
 
-        sub_app = self._app.preprocessor_sub_apps.get(step.apply.app)
+        sub_app = self._skill.preprocessor_sub_skills.get(step.apply.skill)
         if sub_app is None:
             raise PreprocessorError(
                 f"Phase '{phase_name}' preprocessor step[{index}] iterate.apply: "
-                f"sub-app '{step.apply.app}' not in preprocessor_sub_apps"
+                f"sub-skill '{step.apply.skill}' not in preprocessor_sub_skills"
             )
 
         entry_type = sub_app.phases[sub_app.entry_phase].input_schema_name
@@ -218,7 +218,7 @@ class PreprocessorExecutor:
 
         for j, item in enumerate(items):
             # Heuristic: if the element already has {"type": ..., "data": ...} keys, treat it as a
-            # pre-wrapped artifact and pass it through as-is. Otherwise wrap it using the sub-app's
+            # pre-wrapped artifact and pass it through as-is. Otherwise wrap it using the sub-skill's
             # entry schema name.
             # Limitation: domain dicts that happen to have both "type" and "data" keys will be
             # misidentified as pre-wrapped artifacts. For eval's phase_artifact shape this is safe.
@@ -233,13 +233,13 @@ class PreprocessorExecutor:
 
             state_dir = (
                 self._state_dir / "preprocessor" / phase_name
-                / f"{index}_{step.apply.app}" / str(j)
+                / f"{index}_{step.apply.skill}" / str(j)
             )
             self._events.emit(
-                "run_app_started", app=step.apply.app,
+                "run_skill_started", app=step.apply.skill,
                 state_dir=str(state_dir), iterate_index=j,
             )
-            result = invoke_sub_app(
+            result = invoke_sub_skill(
                 sub_app, item_artifact,
                 model=self._model,
                 state_dir=state_dir,
@@ -251,7 +251,7 @@ class PreprocessorExecutor:
             if result.token_usage:
                 total_usage += result.token_usage
             self._events.emit(
-                "run_app_completed", app=step.apply.app, status=result.status,
+                "run_skill_completed", app=step.apply.skill, status=result.status,
                 iterate_index=j,
                 prompt_tokens=result.token_usage.prompt_tokens if result.token_usage else None,
                 completion_tokens=result.token_usage.completion_tokens if result.token_usage else None,
@@ -261,7 +261,7 @@ class PreprocessorExecutor:
                 if step.on_error == "fail":
                     raise PreprocessorError(
                         f"Phase '{phase_name}' preprocessor step[{index}] iterate "
-                        f"item[{j}]: sub-app '{step.apply.app}' failed with "
+                        f"item[{j}]: sub-skill '{step.apply.skill}' failed with "
                         f"status '{result.status}'"
                     )
                 self._events.emit(

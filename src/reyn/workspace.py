@@ -103,11 +103,11 @@ class Workspace:
         phase: str,
         artifact: dict,
         *,
-        app_name: str = "_unknown",
+        skill_name: str = "_unknown",
         visit: int = 1,
     ) -> str:
         """
-        Persist artifact to state_dir/artifacts/{app_name}/{phase}/v{visit}_{type}.json.
+        Persist artifact to state_dir/artifacts/{skill_name}/{phase}/v{visit}_{type}.json.
         Returns the state_dir-relative path.
         """
         artifact_type = artifact.get("type", "unknown")
@@ -116,7 +116,7 @@ class Workspace:
             return s.replace("/", "_").replace(" ", "_")
 
         rel = (
-            f"artifacts/{_safe(app_name)}/{_safe(phase)}"
+            f"artifacts/{_safe(skill_name)}/{_safe(phase)}"
             f"/v{visit:02d}_{_safe(artifact_type)}.json"
         )
         abs_path = self.state_dir / rel

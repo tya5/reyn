@@ -1,0 +1,70 @@
+name: improvement_session
+description: Configuration carried through every iteration of an improver run — target paths, iteration limits, termination thresholds, and the eval criteria for the chosen test case.
+schema:
+  type: object
+  properties:
+    target_skill_path:
+      type: string
+      description: Path to the target app's app.md, e.g. "reyn/local/my_app/skill.md".
+    target_dsl_root:
+      type: string
+      description: DSL root for resolving the target app's shared artifacts and phases. Inferred from target_skill_path when blank.
+    eval_spec_path:
+      type: string
+      description: Path to the eval.md spec file for the target app. Auto-generated via eval_builder during prepare if missing.
+    case_name:
+      type: string
+      description: Name of the test case from the eval spec to use for every iteration.
+    case_input:
+      type: string
+      description: Input string passed to the target app each iteration. Mirrors the case_input field in the eval spec.
+    phase_criteria:
+      type: array
+      description: Per-phase quality criteria extracted from the chosen eval case. Forwarded to the eval sub-app on every iteration.
+      items:
+        type: object
+        properties:
+          phase_name:
+            type: string
+            description: Name of a phase to evaluate.
+          criteria:
+            type: array
+            description: List of quality criteria for this phase.
+            items:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: The criterion text.
+                required:
+                  type: boolean
+                  description: True if failing this criterion means the phase fails overall.
+              required: [description, required]
+        required: [phase_name, criteria]
+    model:
+      type: string
+      description: LiteLLM model class or string used for the target app's runs (e.g. "standard").
+    max_iterations:
+      type: integer
+      minimum: 1
+      maximum: 10
+      description: Hard cap on the number of run-eval-improve iterations. Loop terminates when this count is reached.
+    score_threshold:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: Minimum eval score that signals success. Loop terminates early once latest_eval.overall_score >= this value.
+    improvement_focus:
+      type: string
+      description: Optional area to focus improvements on, e.g. "instruction clarity". Empty string when not specified.
+  required:
+    - target_skill_path
+    - target_dsl_root
+    - eval_spec_path
+    - case_name
+    - case_input
+    - phase_criteria
+    - model
+    - max_iterations
+    - score_threshold
+    - improvement_focus

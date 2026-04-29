@@ -7,10 +7,10 @@ from .permissions import PermissionDecl
 
 # ── Preprocessor step types ───────────────────────────────────────────────────
 
-class RunAppStep(BaseModel):
-    type: Literal["run_app"]
-    app: str            # sub-app name resolved at compile time
-    into: str | None = None  # dot path where sub-app's final_output is placed;
+class RunSkillStep(BaseModel):
+    type: Literal["run_skill"]
+    skill: str          # sub-skill name resolved at compile time
+    into: str | None = None  # dot path where sub-skill's final_output is placed;
                              # required at top level, None when nested inside iterate.apply
 
 
@@ -24,7 +24,7 @@ class ValidateStep(BaseModel):
 class IterateStep(BaseModel):
     type: Literal["iterate"]
     over: str                                   # dot path to an array in the input artifact
-    apply: "PreprocessorStep"                   # nested step; MVP: RunAppStep only
+    apply: "PreprocessorStep"                   # nested step; MVP: RunSkillStep only
     into: str                                   # dot path where the collected array is placed
     on_error: Literal["fail", "skip"] = "fail"
 
@@ -41,7 +41,7 @@ class LintPlanStep(BaseModel):
 
 
 PreprocessorStep = Annotated[
-    Union[RunAppStep, IterateStep, ValidateStep, LintPlanStep],
+    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep],
     Field(discriminator="type"),
 ]
 
@@ -64,49 +64,49 @@ class Phase(BaseModel):
     preprocessor: list[PreprocessorStep] = Field(default_factory=list)
 
 
-class AppNodeSpec(BaseModel):
-    """Runtime descriptor for an app node in a parent app's graph."""
-    app_path: str                # absolute path to sub-app's app.md
-    dsl_root: str                # dsl_root used to load the sub-app
+class SkillNodeSpec(BaseModel):
+    """Runtime descriptor for a skill node in a parent skill's graph."""
+    skill_path: str              # absolute path to sub-skill's skill.md
+    dsl_root: str                # dsl_root used to load the sub-skill
     workspace: str               # "isolated" | "shared"
     entry_input_schema: dict      # sub-app entry phase input_schema (for candidate building)
     entry_input_schema_name: str = "artifact"  # type name for display
     entry_input_description: str = ""
 
 
-class AppGraph(BaseModel):
+class SkillGraph(BaseModel):
     transitions: dict[str, list[str]] = Field(default_factory=dict)
     can_finish_phases: list[str] = Field(default_factory=list)
-    # "@app_name" → AppNodeSpec for app nodes embedded in this graph
-    app_nodes: dict[str, AppNodeSpec] = Field(default_factory=dict)
+    # "@skill_name" → SkillNodeSpec for app nodes embedded in this graph
+    skill_nodes: dict[str, SkillNodeSpec] = Field(default_factory=dict)
 
 
-class App(BaseModel):
+class Skill(BaseModel):
     name: str
     description: str = ""
     doc: str = ""
     entry_phase: str
     phases: dict[str, Phase]
-    graph: AppGraph
+    graph: SkillGraph
     final_output_schema: dict[str, Any]
     final_output_name: str
     final_output_description: str = ""
     # criteria the LLM must satisfy before the OS allows finish
     finish_criteria: list[str] = Field(default_factory=list)
     # Sub-apps referenced by preprocessor steps; pre-loaded at compile time.
-    preprocessor_sub_apps: dict[str, "App"] = Field(default_factory=dict)
+    preprocessor_sub_skills: dict[str, "Skill"] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _require_final_output_name(self) -> "App":
+    def _require_final_output_name(self) -> "Skill":
         if not self.final_output_name.strip():
             raise ValueError(
-                "App.final_output_name must not be empty. "
+                "Skill.final_output_name must not be empty. "
                 "Set it to the artifact type name the LLM should use for the final output."
             )
         return self
 
 
-App.model_rebuild()
+Skill.model_rebuild()
 
 
 class FileIROp(BaseModel):
@@ -151,22 +151,22 @@ class ShellIROp(BaseModel):
 
 class LintIROp(BaseModel):
     kind: Literal["lint"]
-    app_path: str              # workspace-relative path to the app directory (e.g. "reyn/local/my_app")
+    skill_path: str            # workspace-relative path to the skill directory (e.g. "reyn/local/my_skill")
 
 
-class RunAppIROp(BaseModel):
-    kind: Literal["run_app"]
-    app: str                  # app name (resolved via search path) or path to app.md
-    input: dict               # input artifact to pass to the sub-app
+class RunSkillIROp(BaseModel):
+    kind: Literal["run_skill"]
+    skill: str                # skill name (resolved via search path) or path to skill.md
+    input: dict               # input artifact to pass to the sub-skill
     model: str = ""           # model class or LiteLLM string; "" = inherit from runtime
     workspace: str = "isolated"  # "isolated" | "shared"
     output_language: str = "ja"
 
 
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", and "run_app" are implemented; others are safely skipped.
+# "file", "ask_user", "shell", "lint", and "run_skill" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunAppIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp],
     Field(discriminator="kind"),
 ]
 

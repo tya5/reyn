@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from .ir import ArtifactDef, PhaseDef, AppDef, AppNodeDef
+from .ir import ArtifactDef, PhaseDef, SkillDef, SkillNodeDef
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -63,33 +63,33 @@ import re as _re
 _APP_NODE_RE = _re.compile(r'^@([\w]+)(?:\[(isolated|shared)\])?$')
 
 
-def _parse_graph_node(token: str) -> tuple[str, "AppNodeDef | None"]:
-    """Return (node_id, AppNodeDef) for @app_name tokens, or (token, None) for phases."""
+def _parse_graph_node(token: str) -> tuple[str, "SkillNodeDef | None"]:
+    """Return (node_id, SkillNodeDef) for @skill_name tokens, or (token, None) for phases."""
     m = _APP_NODE_RE.match(token)
     if not m:
         return token, None
-    app_name = m.group(1)
+    skill_name = m.group(1)
     workspace = m.group(2) or "isolated"
-    return f"@{app_name}", AppNodeDef(app_name=app_name, workspace=workspace)
+    return f"@{skill_name}", SkillNodeDef(skill_name=skill_name, workspace=workspace)
 
 
-def parse_app(path: Path) -> AppDef:
+def parse_skill(path: Path) -> SkillDef:
     fm, body = _split_frontmatter(path.read_text(encoding="utf-8"))
 
     edges: list[tuple[str, str]] = []
-    app_nodes: dict[str, AppNodeDef] = {}
+    skill_nodes: dict[str, SkillNodeDef] = {}
 
     graph_raw = fm.get("graph") or {}
     for src_raw, targets_raw in graph_raw.items():
         src_id, src_node = _parse_graph_node(str(src_raw))
-        if src_node and src_id not in app_nodes:
-            app_nodes[src_id] = src_node
+        if src_node and src_id not in skill_nodes:
+            skill_nodes[src_id] = src_node
         if isinstance(targets_raw, str):
             targets_raw = [targets_raw]
         for dst_raw in (targets_raw or []):
             dst_id, dst_node = _parse_graph_node(str(dst_raw))
-            if dst_node and dst_id not in app_nodes:
-                app_nodes[dst_id] = dst_node
+            if dst_node and dst_id not in skill_nodes:
+                skill_nodes[dst_id] = dst_node
             edges.append((src_id, dst_id))
 
     fc_raw = fm.get("finish_criteria", [])
@@ -98,13 +98,13 @@ def parse_app(path: Path) -> AppDef:
     else:
         finish_criteria = list(fc_raw)
 
-    return AppDef(
+    return SkillDef(
         name=fm["name"],
         description=str(fm.get("description") or "").strip(),
         doc=body,
         entry=fm["entry"],
         edges=edges,
-        app_nodes=app_nodes,
+        skill_nodes=skill_nodes,
         final_output=fm.get("final_output", ""),
         final_output_description=str(fm.get("final_output_description") or "").strip(),
         finish_criteria=finish_criteria,

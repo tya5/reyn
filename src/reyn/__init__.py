@@ -1,5 +1,5 @@
-from .models import App, Phase, AppGraph
+from .models import Skill, Phase, SkillGraph
 from .agent import Agent
 from .runtime import RunResult
 
-__all__ = ["App", "Phase", "AppGraph", "Agent", "RunResult"]
+__all__ = ["Skill", "Phase", "SkillGraph", "Agent", "RunResult"]

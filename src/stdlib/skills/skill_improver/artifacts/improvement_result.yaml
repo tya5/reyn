@@ -1,0 +1,58 @@
+name: improvement_result
+description: Final outcome of an improver run — total iterations performed, score progression, files modified, and the reason the loop terminated.
+schema:
+  type: object
+  properties:
+    target_skill_path:
+      type: string
+      description: Path to the target app that was improved.
+    iterations_performed:
+      type: integer
+      minimum: 1
+      description: How many run-eval-improve iterations completed (i.e. how many entries are in the score_history).
+    initial_score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: Eval score from iteration 1 (before any improvements were applied).
+    final_score:
+      type: number
+      minimum: 0.0
+      maximum: 1.0
+      description: Eval score from the last iteration. Same as initial_score when iterations_performed == 1.
+    score_history:
+      type: array
+      items:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+      description: Eval scores in iteration order (oldest first). Length equals iterations_performed.
+    files_modified:
+      type: array
+      items: {type: string}
+      description: Union of all DSL files touched across iterations, deduplicated.
+    termination_reason:
+      type: string
+      enum:
+        - score_threshold_met
+        - max_iterations_reached
+        - regression_detected
+        - stagnation_detected
+        - no_more_changes_planned
+      description: Which condition caused the loop to terminate.
+    summary:
+      type: string
+      description: Prose summary of what changed across iterations and the overall outcome.
+    next_steps:
+      type: string
+      description: Concrete suggestion for what to run/verify, e.g. "reyn eval <eval_spec_path>" or "reyn run <app> '<input>'".
+  required:
+    - target_skill_path
+    - iterations_performed
+    - initial_score
+    - final_score
+    - score_history
+    - files_modified
+    - termination_reason
+    - summary
+    - next_steps

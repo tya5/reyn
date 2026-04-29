@@ -4,7 +4,7 @@ Compile-time type inference for Phase preprocessor chains.
 Given a Phase's input_schema and its preprocessor steps, infers the JSON Schema
 the LLM will see after the preprocessor runs (the "enriched" schema).
 
-All LLM interaction stays inside sub-apps; this module is purely deterministic.
+All LLM interaction stays inside sub-skills; this module is purely deterministic.
 """
 from __future__ import annotations
 import copy
@@ -12,7 +12,7 @@ import jsonschema
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.models import App, PreprocessorStep
+    from reyn.models import Skill, PreprocessorStep
 
 
 class PreprocessorTypeError(ValueError):
@@ -74,18 +74,18 @@ def _require_parent_exists(schema: dict, path: str, step_label: str) -> None:
 
 def _infer_step_output_schema(
     step: "PreprocessorStep",
-    sub_apps: dict[str, "App"],
+    sub_skills: dict[str, "Skill"],
     step_label: str,
 ) -> dict:
     """Return the JSON Schema that a single step produces (for use in iterate.apply)."""
-    from reyn.models import RunAppStep, IterateStep, ValidateStep
-    if isinstance(step, RunAppStep):
-        if step.app not in sub_apps:
+    from reyn.models import RunSkillStep, IterateStep, ValidateStep
+    if isinstance(step, RunSkillStep):
+        if step.skill not in sub_skills:
             raise PreprocessorTypeError(
-                f"{step_label}: sub-app '{step.app}' not found. "
-                f"Available: {list(sub_apps.keys())}"
+                f"{step_label}: sub-skill '{step.skill}' not found. "
+                f"Available: {list(sub_skills.keys())}"
             )
-        return sub_apps[step.app].final_output_schema
+        return sub_skills[step.skill].final_output_schema
     if isinstance(step, ValidateStep):
         raise PreprocessorTypeError(f"{step_label}: validate cannot be used as iterate.apply")
     if isinstance(step, IterateStep):
@@ -96,32 +96,32 @@ def _infer_step_output_schema(
 def infer_llm_visible_schema(
     input_schema: dict[str, Any],
     steps: list["PreprocessorStep"],
-    sub_apps: dict[str, "App"],
+    sub_skills: dict[str, "Skill"],
 ) -> dict[str, Any]:
     """Compute the JSON Schema the LLM sees after the preprocessor chain runs.
 
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import RunAppStep, IterateStep, ValidateStep, LintPlanStep
+    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep
 
     schema = copy.deepcopy(input_schema)
 
     for i, step in enumerate(steps):
         label = f"preprocessor step[{i}] (type={step.type!r})"
 
-        if isinstance(step, RunAppStep):
+        if isinstance(step, RunSkillStep):
             if step.into is None:
                 raise PreprocessorTypeError(
-                    f"{label}: top-level run_app must have 'into' set"
+                    f"{label}: top-level run_skill must have 'into' set"
                 )
-            if step.app not in sub_apps:
+            if step.skill not in sub_skills:
                 raise PreprocessorTypeError(
-                    f"{label}: sub-app '{step.app}' not found. "
-                    f"Available: {list(sub_apps.keys())}"
+                    f"{label}: sub-skill '{step.skill}' not found. "
+                    f"Available: {list(sub_skills.keys())}"
                 )
             _require_parent_exists(schema, step.into, label)
-            field_schema = sub_apps[step.app].final_output_schema
+            field_schema = sub_skills[step.skill].final_output_schema
             schema = _set_at_path(schema, step.into, field_schema)
 
         elif isinstance(step, IterateStep):
@@ -138,7 +138,7 @@ def infer_llm_visible_schema(
                     f"(got type={arr_schema.get('type')!r})"
                 )
             _require_parent_exists(schema, step.into, label)
-            element_schema = _infer_step_output_schema(step.apply, sub_apps, f"{label}.apply")
+            element_schema = _infer_step_output_schema(step.skillly, sub_skills, f"{label}.apply")
             schema = _set_at_path(schema, step.into, {"type": "array", "items": element_schema})
 
         elif isinstance(step, ValidateStep):

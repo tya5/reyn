@@ -1,9 +1,9 @@
 from pathlib import Path
-from .parser import parse_artifact, parse_phase, parse_app
-from .expander import expand_phase, expand_app
+from .parser import parse_artifact, parse_phase, parse_skill
+from .expander import expand_phase, expand_skill
 from .ir import ArtifactDef, PhaseDef
 from .preprocessor_typing import infer_llm_visible_schema, PreprocessorTypeError
-from reyn.models import App
+from reyn.models import Skill
 
 
 def _not_found_error(name: str, search_dirs: list[Path], kind: str, ext: str = ".md") -> ValueError:
@@ -45,14 +45,14 @@ def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
     return dirs
 
 
-def _find_preprocessor_app_names(phase_objects: dict) -> set[str]:
-    """Collect all sub-app names referenced by any phase's preprocessor."""
-    from reyn.models import RunAppStep, IterateStep
+def _find_preprocessor_skill_names(phase_objects: dict) -> set[str]:
+    """Collect all sub-skill names referenced by any phase's preprocessor."""
+    from reyn.models import RunSkillStep, IterateStep
     names: set[str] = set()
 
     def _collect(step) -> None:
-        if isinstance(step, RunAppStep):
-            names.add(step.app)
+        if isinstance(step, RunSkillStep):
+            names.add(step.skill)
         elif isinstance(step, IterateStep):
             _collect(step.apply)
 
@@ -62,38 +62,38 @@ def _find_preprocessor_app_names(phase_objects: dict) -> set[str]:
     return names
 
 
-def _resolve_preprocessor_sub_apps(
+def _resolve_preprocessor_sub_skills(
     phase_objects: dict,
     dsl_root: Path,
     loading_stack: frozenset[str],
-) -> dict[str, App]:
-    """Load every sub-app referenced in preprocessors. Returns name → App."""
-    app_names = _find_preprocessor_app_names(phase_objects)
-    sub_apps: dict[str, App] = {}
-    for name in app_names:
-        # Search order: dsl_root/apps/<name>/app.md then stdlib/apps/<name>/app.md
+) -> dict[str, Skill]:
+    """Load every sub-skill referenced in preprocessors. Returns name → Skill."""
+    skill_names = _find_preprocessor_skill_names(phase_objects)
+    sub_skills: dict[str, Skill] = {}
+    for name in skill_names:
+        # Search order: dsl_root/skills/<name>/skill.md then stdlib/skills/<name>/skill.md
         candidates = [
-            dsl_root / "apps" / name / "app.md",
-            Path(_stdlib_dir("apps")) / name / "app.md",
+            dsl_root / "skills" / name / "skill.md",
+            Path(_stdlib_dir("skills")) / name / "skill.md",
         ]
         path = next((p for p in candidates if p.exists()), None)
         if path is None:
             searched = [str(p) for p in candidates]
             raise ValueError(
-                f"Preprocessor sub-app '{name}' not found.\nSearched:\n"
+                f"Preprocessor sub-skill '{name}' not found.\nSearched:\n"
                 + "\n".join(f"  - {p}" for p in searched)
             )
         abs_path = str(path.resolve())
         if abs_path in loading_stack:
             cycle = " → ".join(list(loading_stack) + [abs_path])
             raise ValueError(f"Circular preprocessor dependency detected: {cycle}")
-        sub_apps[name] = load_dsl_app(path, dsl_root=dsl_root, _loading_stack=loading_stack)
-    return sub_apps
+        sub_skills[name] = load_dsl_skill(path, dsl_root=dsl_root, _loading_stack=loading_stack)
+    return sub_skills
 
 
 def _infer_preprocessor_schemas(
     phase_objects: dict,
-    preprocessor_sub_apps: dict[str, App],
+    preprocessor_sub_skills: dict[str, Skill],
 ) -> dict:
     """Validate preprocessor chains at compile time; return phase_objects unchanged."""
     for name, phase in phase_objects.items():
@@ -101,41 +101,41 @@ def _infer_preprocessor_schemas(
             continue
         try:
             infer_llm_visible_schema(
-                phase.input_schema, phase.preprocessor, preprocessor_sub_apps
+                phase.input_schema, phase.preprocessor, preprocessor_sub_skills
             )
         except PreprocessorTypeError as exc:
             raise ValueError(f"Phase '{name}': {exc}") from exc
     return phase_objects
 
 
-def load_dsl_app(
-    app_md_path: str | Path,
+def load_dsl_skill(
+    skill_md_path: str | Path,
     dsl_root: str | Path | None = None,
     _loading_stack: frozenset[str] | None = None,
-) -> App:
+) -> Skill:
     """
-    Compile a Markdown App DSL file into a runtime App object.
+    Compile a Markdown Skill DSL file into a runtime Skill object.
 
     Directory resolution order:
-      1. <app_dir>/artifacts/  and  <app_dir>/phases/       (app-local)
-      2. <dsl_root>/shared/artifacts/  and  .../phases/     (inferred shared)
-      3. <cwd>/dsl/shared/artifacts/   and  .../phases/     (project fallback)
+      1. <skill_dir>/artifacts/  and  <skill_dir>/phases/       (skill-local)
+      2. <dsl_root>/shared/artifacts/  and  .../phases/         (inferred shared)
+      3. <cwd>/dsl/shared/artifacts/   and  .../phases/         (project fallback)
 
-    The project fallback lets workspace-generated apps reference shared artifacts
+    The project fallback lets workspace-generated skills reference shared artifacts
     (e.g. user_message) without requiring --dsl-root.
 
-    app_md_path  : path to the app .md file  (dsl/apps/<name>/app.md)
-    dsl_root     : root of the dsl/ tree. Defaults to <app_dir>.parent.parent.
+    skill_md_path : path to the skill .md file  (dsl/skills/<name>/skill.md)
+    dsl_root      : root of the dsl/ tree. Defaults to <skill_dir>.parent.parent.
     """
-    app_path = Path(app_md_path)
-    app_dir = app_path.parent
+    skill_path = Path(skill_md_path)
+    skill_dir = skill_path.parent
 
     if dsl_root is None:
-        dsl_root = app_dir.parent.parent
+        dsl_root = skill_dir.parent.parent
     dsl_root = Path(dsl_root)
 
-    local_artifacts_dir = app_dir / "artifacts"
-    local_phases_dir    = app_dir / "phases"
+    local_artifacts_dir = skill_dir / "artifacts"
+    local_phases_dir    = skill_dir / "phases"
 
     shared_artifact_dirs = _collect_shared_dirs(dsl_root, "artifacts")
     shared_phase_dirs    = _collect_shared_dirs(dsl_root, "phases")
@@ -143,37 +143,37 @@ def load_dsl_app(
     artifact_search_dirs = [local_artifacts_dir] + shared_artifact_dirs
     phase_search_dirs    = [local_phases_dir]    + shared_phase_dirs
 
-    app_def = parse_app(app_path)
+    skill_def = parse_skill(skill_path)
 
-    # Load artifacts: shared dirs first (earlier = lower priority), then app local
+    # Load artifacts: shared dirs first (earlier = lower priority), then skill local
     artifact_defs: dict[str, ArtifactDef] = {}
     for d in reversed(shared_artifact_dirs):   # project fallback < inferred shared < local
         _load_dir(d, parse_artifact, artifact_defs, glob="*.yaml")
     _load_dir(local_artifacts_dir, parse_artifact, artifact_defs, glob="*.yaml")
 
-    # Load phases: shared dirs first, then app local
+    # Load phases: shared dirs first, then skill local
     phase_defs: dict[str, PhaseDef] = {}
     for d in reversed(shared_phase_dirs):
         _load_dir(d, parse_phase, phase_defs)
     _load_dir(local_phases_dir, parse_phase, phase_defs)
 
-    # Resolve app nodes: load each sub-app for its entry schema; detect cycles
-    from reyn.models import AppNodeSpec
+    # Resolve skill nodes: load each sub-skill for its entry schema; detect cycles
+    from reyn.models import SkillNodeSpec
     loading_stack = _loading_stack or frozenset()
-    abs_app_path = str(app_path.resolve())
-    loading_stack = loading_stack | {abs_app_path}
+    abs_skill_path = str(skill_path.resolve())
+    loading_stack = loading_stack | {abs_skill_path}
 
-    app_node_specs: dict[str, AppNodeSpec] = {}
-    for node_id, node_def in app_def.app_nodes.items():
-        sub_app_path = dsl_root / "apps" / node_def.app_name / "app.md"
-        abs_sub = str(sub_app_path.resolve())
+    skill_node_specs: dict[str, SkillNodeSpec] = {}
+    for node_id, node_def in skill_def.skill_nodes.items():
+        sub_skill_path = dsl_root / "skills" / node_def.skill_name / "skill.md"
+        abs_sub = str(sub_skill_path.resolve())
         if abs_sub in loading_stack:
             cycle = " → ".join(list(loading_stack) + [abs_sub])
-            raise ValueError(f"Circular app dependency detected: {cycle}")
-        sub_app = load_dsl_app(sub_app_path, dsl_root=dsl_root, _loading_stack=loading_stack)
-        entry_phase = sub_app.phases[sub_app.entry_phase]
-        app_node_specs[node_id] = AppNodeSpec(
-            app_path=abs_sub,
+            raise ValueError(f"Circular skill dependency detected: {cycle}")
+        sub_skill = load_dsl_skill(sub_skill_path, dsl_root=dsl_root, _loading_stack=loading_stack)
+        entry_phase = sub_skill.phases[sub_skill.entry_phase]
+        skill_node_specs[node_id] = SkillNodeSpec(
+            skill_path=abs_sub,
             dsl_root=str(dsl_root),
             workspace=node_def.workspace,
             entry_input_schema=entry_phase.input_schema,
@@ -181,9 +181,9 @@ def load_dsl_app(
             entry_input_description=entry_phase.input_description,
         )
 
-    # Determine which phases the app uses (exclude app node IDs)
-    used_phases: set[str] = {app_def.entry}
-    for src, dst in app_def.edges:
+    # Determine which phases the skill uses (exclude skill node IDs)
+    used_phases: set[str] = {skill_def.entry}
+    for src, dst in skill_def.edges:
         for node in (src, dst):
             if not node.startswith("@"):
                 used_phases.add(node)
@@ -200,16 +200,16 @@ def load_dsl_app(
         input_arts = [artifact_defs[n] for n in pd.inputs]
         phase_objects[name] = expand_phase(pd, input_arts)
 
-    if app_def.final_output and app_def.final_output not in artifact_defs:
-        raise _not_found_error(app_def.final_output, artifact_search_dirs, "Artifact", ext=".yaml")
+    if skill_def.final_output and skill_def.final_output not in artifact_defs:
+        raise _not_found_error(skill_def.final_output, artifact_search_dirs, "Artifact", ext=".yaml")
 
-    # Resolve preprocessor sub-apps and run schema inference for each phase
-    preprocessor_sub_apps = _resolve_preprocessor_sub_apps(
+    # Resolve preprocessor sub-skills and run schema inference for each phase
+    preprocessor_sub_skills = _resolve_preprocessor_sub_skills(
         phase_objects, dsl_root, loading_stack
     )
-    phase_objects = _infer_preprocessor_schemas(phase_objects, preprocessor_sub_apps)
+    phase_objects = _infer_preprocessor_schemas(phase_objects, preprocessor_sub_skills)
 
-    return expand_app(
-        app_def, phase_defs, artifact_defs, phase_objects,
-        app_node_specs, preprocessor_sub_apps,
+    return expand_skill(
+        skill_def, phase_defs, artifact_defs, phase_objects,
+        skill_node_specs, preprocessor_sub_skills,
     )

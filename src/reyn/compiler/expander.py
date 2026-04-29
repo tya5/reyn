@@ -1,7 +1,7 @@
 from typing import Any
 from pydantic import TypeAdapter
-from .ir import ArtifactDef, PhaseDef, AppDef
-from reyn.models import App, Phase, AppGraph, AppNodeSpec, PreprocessorStep
+from .ir import ArtifactDef, PhaseDef, SkillDef
+from reyn.models import Skill, Phase, SkillGraph, SkillNodeSpec, PreprocessorStep
 from reyn.permissions import PermissionDecl
 
 _PreprocessorAdapter = TypeAdapter(list[PreprocessorStep])
@@ -65,50 +65,50 @@ def expand_phase(
     )
 
 
-def expand_app(
-    app_def: AppDef,
+def expand_skill(
+    skill_def: SkillDef,
     phase_defs: dict[str, PhaseDef],
     artifact_defs: dict[str, ArtifactDef],
     phase_objects: dict[str, Phase],
-    app_node_specs: dict[str, AppNodeSpec] | None = None,
-    preprocessor_sub_apps: dict | None = None,
-) -> App:
+    skill_node_specs: dict[str, SkillNodeSpec] | None = None,
+    preprocessor_sub_skills: dict | None = None,
+) -> Skill:
     transitions: dict[str, list[str]] = {name: [] for name in phase_objects}
-    for node_id in (app_node_specs or {}):
+    for node_id in (skill_node_specs or {}):
         transitions.setdefault(node_id, [])
-    for src, dst in app_def.edges:
+    for src, dst in skill_def.edges:
         transitions.setdefault(src, [])
         if dst not in transitions[src]:
             transitions[src].append(dst)
 
-    used_phases = {app_def.entry} | {dst for _, dst in app_def.edges}
+    used_phases = {skill_def.entry} | {dst for _, dst in skill_def.edges}
     can_finish_phases = [
         name for name, pd in phase_defs.items()
         if pd.can_finish and name in used_phases
     ]
 
-    final_art = artifact_defs.get(app_def.final_output)
+    final_art = artifact_defs.get(skill_def.final_output)
     if final_art:
         final_output_schema = artifact_to_json_schema(final_art)
         final_output_name = final_art.name
     else:
         final_output_schema = {"type": "object"}
-        final_output_name = app_def.final_output
+        final_output_name = skill_def.final_output
 
-    return App(
-        name=app_def.name,
-        description=app_def.description,
-        doc=app_def.doc,
-        entry_phase=app_def.entry,
+    return Skill(
+        name=skill_def.name,
+        description=skill_def.description,
+        doc=skill_def.doc,
+        entry_phase=skill_def.entry,
         phases=phase_objects,
-        graph=AppGraph(
+        graph=SkillGraph(
             transitions=transitions,
             can_finish_phases=can_finish_phases,
-            app_nodes=app_node_specs or {},
+            skill_nodes=skill_node_specs or {},
         ),
         final_output_schema=final_output_schema,
         final_output_name=final_output_name,
-        final_output_description=app_def.final_output_description,
-        finish_criteria=app_def.finish_criteria,
-        preprocessor_sub_apps=preprocessor_sub_apps or {},
+        final_output_description=skill_def.final_output_description,
+        finish_criteria=skill_def.finish_criteria,
+        preprocessor_sub_skills=preprocessor_sub_skills or {},
     )

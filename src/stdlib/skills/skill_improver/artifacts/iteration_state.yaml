@@ -1,0 +1,63 @@
+name: iteration_state
+description: Per-iteration state — the latest eval result plus the score history of all completed iterations. Output of run_and_eval; drives plan_improvements and the termination logic in apply_improvements.
+schema:
+  type: object
+  properties:
+    session:
+      type: object
+      description: The original improvement_session, carried through every iteration unchanged. Contains target_skill_path, eval_spec_path, max_iterations, score_threshold, etc.
+    current_iteration:
+      type: integer
+      minimum: 1
+      description: 1-based index of the iteration that was just evaluated by run_and_eval. Equals len(history) + 1 since history records iterations whose apply_improvements has finished.
+    latest_eval:
+      type: object
+      description: The eval_result returned by the most recent eval sub-app run.
+      properties:
+        passed:
+          type: boolean
+          description: True when overall_score >= 0.6 and all required criteria pass.
+        overall_score:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: Fraction of required criteria that passed across all evaluated phases.
+        passed_criteria:
+          type: integer
+          minimum: 0
+          description: Number of required criteria that passed.
+        total_criteria:
+          type: integer
+          minimum: 0
+          description: Total number of required criteria evaluated.
+        weakest_phase:
+          type: string
+          description: Name of the phase with the lowest pass rate; drives plan_improvements' diagnosis.
+        summary:
+          type: string
+          description: Prose summary of the eval result — references concrete failures and successes.
+      required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, summary]
+    history:
+      type: array
+      description: Score history of completed iterations (those whose apply_improvements has finished). Empty during the first run_and_eval call. Used by apply_improvements to detect regression and stagnation.
+      items:
+        type: object
+        properties:
+          iteration:
+            type: integer
+            minimum: 1
+          eval_score:
+            type: number
+            minimum: 0.0
+            maximum: 1.0
+          weakest_phase:
+            type: string
+          files_modified:
+            type: array
+            items: {type: string}
+            description: Project-relative paths of DSL files written by this iteration's apply_improvements.
+          plan_summary:
+            type: string
+            description: One paragraph describing what this iteration's plan tried to fix.
+        required: [iteration, eval_score, weakest_phase, files_modified, plan_summary]
+  required: [session, current_iteration, latest_eval, history]

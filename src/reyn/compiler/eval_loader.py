@@ -62,7 +62,7 @@ class EvalCase:
 
 @dataclass
 class EvalSpec:
-    app_dsl_path: str
+    skill_dsl_path: str
     dsl_root: str | None
     model: str | None
     cases: list[EvalCase]
@@ -87,14 +87,14 @@ def load_eval_spec(spec_path: str | Path) -> EvalSpec:
         raise ValueError(
             f"Eval spec frontmatter must have 'type: eval', got: {fm.get('type')!r}"
         )
-    app_dsl_path = fm.get("app")
-    if not app_dsl_path:
-        raise ValueError("Eval spec missing 'app' in frontmatter")
+    skill_dsl_path = fm.get("skill")
+    if not skill_dsl_path:
+        raise ValueError("Eval spec missing 'skill' in frontmatter")
 
     cases = _parse_cases(body, path)
 
     return EvalSpec(
-        app_dsl_path=app_dsl_path,
+        skill_dsl_path=skill_dsl_path,
         dsl_root=fm.get("dsl_root"),
         model=fm.get("model"),
         cases=cases,

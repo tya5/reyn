@@ -23,20 +23,20 @@ class PhaseDef:
 
 
 @dataclass
-class AppNodeDef:
+class SkillNodeDef:
     """An app referenced as a node in another app's graph."""
-    app_name: str    # e.g. "writing_review_app"
+    skill_name: str    # e.g. "writing_review_app"
     workspace: str   # "isolated" | "shared"
 
 
 @dataclass
-class AppDef:
+class SkillDef:
     name: str
     description: str
     doc: str                             # body — human/LLM-readable usage guide
     entry: str
     edges: list[tuple[str, str]]        # (from_node, to_node) — nodes may be phases or @app_names
-    app_nodes: dict[str, AppNodeDef]    # "@app_name" → AppNodeDef
+    skill_nodes: dict[str, SkillNodeDef]    # "@skill_name" → SkillNodeDef
     final_output: str                    # artifact name for final_output_schema
     final_output_description: str
     finish_criteria: list[str]

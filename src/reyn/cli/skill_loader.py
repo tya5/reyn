@@ -1,0 +1,72 @@
+"""
+Skill resolution and loading shared by `run` and `eval` subcommands.
+
+`resolve_skill_path` — name → directory under reyn/local, reyn/project, stdlib.
+`load_skill_from_args` — handles all three CLI ways of pointing at a skill
+                       (positional name, --skill-path, --module).
+"""
+from __future__ import annotations
+import argparse
+import importlib
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+
+from reyn.skill_paths import resolve_skill_path, stdlib_root  # re-exported for convenience
+from reyn.models import Skill
+
+__all__ = ["LoadedSkill", "load_skill_from_args", "resolve_skill_path", "stdlib_root"]
+
+
+@dataclass
+class LoadedSkill:
+    skill: Skill
+    skill_md: Path | None      # None when source == "module"
+    dsl_root: str | None
+    source: str                # "name" | "path" | "module"
+
+
+def load_skill_from_args(args: argparse.Namespace) -> LoadedSkill:
+    """Resolve `args.skill_name | args.skill_path | args.module` and load the Skill."""
+    if getattr(args, "skill_path", None):
+        skill_dir = Path(args.skill_path)
+        skill_md = skill_dir / "skill.md"
+        dsl_root = args.dsl_root
+        return LoadedSkill(
+            skill=_compile(skill_md, dsl_root),
+            skill_md=skill_md, dsl_root=dsl_root, source="path",
+        )
+
+    if getattr(args, "skill_name", None):
+        skill_dir, inferred_root = resolve_skill_path(args.skill_name)
+        dsl_root = args.dsl_root or str(inferred_root)
+        skill_md = skill_dir / "skill.md"
+        print(f"resolved        : {skill_md}  (dsl-root: {dsl_root})")
+        return LoadedSkill(
+            skill=_compile(skill_md, dsl_root),
+            skill_md=skill_md, dsl_root=dsl_root, source="name",
+        )
+
+    if getattr(args, "module", None):
+        try:
+            module = importlib.import_module(args.module)
+        except ModuleNotFoundError as e:
+            print(f"Error: cannot import module '{args.module}': {e}", file=sys.stderr)
+            sys.exit(1)
+        if not hasattr(module, "skill"):
+            print(f"Error: module '{args.module}' has no 'skill' attribute.", file=sys.stderr)
+            sys.exit(1)
+        return LoadedSkill(skill=module.skill, skill_md=None, dsl_root=None, source="module")
+
+    print("Error: provide a skill name (positional), --skill-path DIR, or --module.",
+          file=sys.stderr)
+    sys.exit(1)
+
+
+def _compile(skill_md: Path, dsl_root: str | None) -> Skill:
+    from reyn.compiler import load_dsl_skill
+    try:
+        return load_dsl_skill(str(skill_md), dsl_root=dsl_root)
+    except Exception as e:
+        print(f"Error: failed to compile DSL '{skill_md}': {e}", file=sys.stderr)
+        sys.exit(1)

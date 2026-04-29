@@ -38,10 +38,10 @@ class EvalReport:
             "cases":          self.cases,
         }
 
-    def write_to(self, state_dir: Path | str, app_name: str) -> Path:
+    def write_to(self, state_dir: Path | str, skill_name: str) -> Path:
         eval_dir = Path(state_dir) / "evals"
         eval_dir.mkdir(parents=True, exist_ok=True)
-        path = eval_dir / f"{self.timestamp}_{app_name}.json"
+        path = eval_dir / f"{self.timestamp}_{skill_name}.json"
         path.write_text(json.dumps(self.to_dict(), ensure_ascii=False, indent=2),
                         encoding="utf-8")
         return path

@@ -158,11 +158,11 @@ def _find_cycle(edges: list[tuple[str, str]]) -> list[str] | None:
     return None
 
 
-def lint_app(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
+def lint_skill(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
     issues: list[LintIssue] = []
-    from .parser import parse_app
+    from .parser import parse_skill
     try:
-        app_def = parse_app(path)
+        app_def = parse_skill(path)
     except KeyError as exc:
         return [LintIssue("error", path, f"Missing required field {exc}")]
     except Exception as exc:
@@ -303,12 +303,13 @@ def lint_plan(plan: dict) -> list[str]:
 
 # ── DSL root ──────────────────────────────────────────────────────────────────
 
-def lint_app_dir(app_dir: Path) -> list[LintIssue]:
-    """Lint the app at app_dir (must contain app.md).
+def lint_skill_dir(skill_dir: Path) -> list[LintIssue]:
+    """Lint the skill at skill_dir (must contain skill.md).
 
     Stdlib artifacts/phases are loaded as known names for reference resolution
-    but are NOT themselves linted — only the target app's own files are checked.
+    but are NOT themselves linted — only the target skill's own files are checked.
     """
+    app_dir = skill_dir  # internal alias
     issues: list[LintIssue] = []
 
     from .loader import _stdlib_dir
@@ -357,10 +358,10 @@ def lint_app_dir(app_dir: Path) -> list[LintIssue]:
                 issues.append(LintIssue("error", p, f"Lint error: {exc}"))
 
     # ── lint app graph ────────────────────────────────────────────────────────
-    app_md = app_dir / "app.md"
+    app_md = app_dir / "skill.md"
     if app_md.exists():
         try:
-            issues.extend(lint_app(app_md, artifact_names))
+            issues.extend(lint_skill(app_md, artifact_names))
         except Exception as exc:
             issues.append(LintIssue("error", app_md, f"Lint error: {exc}"))
 

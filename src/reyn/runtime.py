@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 import pydantic
-from .models import ActOutput, App, CandidateOutput, ContextFrame, LLMOutput
+from .models import ActOutput, Skill, CandidateOutput, ContextFrame, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
 from .control_ir_executor import ControlIRExecutor
@@ -15,7 +15,7 @@ from .artifact_validator import validate_artifact_data
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
 from .context_builder import build_frame
-from .app_node_runner import execute_app_node
+from .skill_node_runner import execute_skill_node
 from .preprocessor_executor import PreprocessorExecutor
 
 
@@ -70,7 +70,7 @@ def _validate_artifact_structure(artifact: dict, context: str) -> None:
 class OSRuntime:
     def __init__(
         self,
-        app: App,
+        skill: Skill,
         model: str,
         state_dir: str = ".reyn",
         strict: bool = False,
@@ -82,7 +82,7 @@ class OSRuntime:
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
     ) -> None:
-        self.app = app
+        self.skill = skill
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self.strict = strict
@@ -138,13 +138,13 @@ class OSRuntime:
         )
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
-        app = self.app
-        allowed = app.graph.transitions.get(current_phase, [])
-        can_finish = current_phase in app.graph.can_finish_phases
+        skill = self.skill
+        allowed = skill.graph.transitions.get(current_phase, [])
+        can_finish = current_phase in skill.graph.can_finish_phases
         candidates: list[CandidateOutput] = []
         for phase_name in allowed:
-            if phase_name in app.graph.app_nodes:
-                node_spec = app.graph.app_nodes[phase_name]
+            if phase_name in skill.graph.skill_nodes:
+                node_spec = skill.graph.skill_nodes[phase_name]
                 candidates.append(CandidateOutput(
                     next_phase=phase_name,
                     control_type="transition",
@@ -153,7 +153,7 @@ class OSRuntime:
                     description=node_spec.entry_input_description,
                 ))
             else:
-                p = app.phases[phase_name]
+                p = skill.phases[phase_name]
                 candidates.append(CandidateOutput(
                     next_phase=phase_name,
                     control_type="transition",
@@ -165,14 +165,14 @@ class OSRuntime:
             candidates.append(CandidateOutput(
                 next_phase="end",
                 control_type="finish",
-                schema_name=app.final_output_name or "final_output",
-                artifact_schema=app.final_output_schema,
-                description=app.final_output_description,
+                schema_name=skill.final_output_name or "final_output",
+                artifact_schema=skill.final_output_schema,
+                description=skill.final_output_description,
             ))
         return candidates
 
     def _effective_model(self, phase_name: str) -> str:
-        phase = self.app.phases.get(phase_name)
+        phase = self.skill.phases.get(phase_name)
         return phase.model_class if phase and phase.model_class else self.model
 
     def _build_frame(
@@ -187,13 +187,13 @@ class OSRuntime:
         effective_model = self._effective_model(current_phase)
         return build_frame(
             phase_name=current_phase,
-            phase=self.app.phases[current_phase],
+            phase=self.skill.phases[current_phase],
             artifact=artifact,
             candidates=candidates,
             output_language=output_language,
             history=self._history,
             visit_counts=self._visit_counts,
-            finish_criteria=self.app.finish_criteria,
+            finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
             available_ops=self.control_ir_executor.available_ops(),
             effective_model=effective_model,
@@ -403,7 +403,7 @@ class OSRuntime:
                     ) from exc
                 continue
 
-            phase_decl = self.app.phases[phase].permissions if phase in self.app.phases else None
+            phase_decl = self.skill.phases[phase].permissions if phase in self.skill.phases else None
             ir_results = self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
             control_ir_results = ir_results
             prior_attempts = []
@@ -469,7 +469,7 @@ class OSRuntime:
         rollback_context: dict | None = None,
     ) -> tuple[NormalizationResult, LLMOutput, int]:
         """Drive one phase to completion via act/decide loops with retry."""
-        phase_def = self.app.phases[current_phase]
+        phase_def = self.skill.phases[current_phase]
         max_act_turns = phase_def.max_act_turns if phase_def.max_act_turns > 0 else 10
 
         raw, prior_attempts = self._run_act_loop(
@@ -486,7 +486,7 @@ class OSRuntime:
     def _fallback_final_output(self) -> dict:
         for entry in reversed(self.workspace.artifacts):
             art = entry["artifact"]
-            if art.get("type") == self.app.final_output_name:
+            if art.get("type") == self.skill.final_output_name:
                 return art.get("data", {})
         if self.workspace.artifacts:
             return self.workspace.artifacts[-1]["artifact"].get("data", {})
@@ -494,7 +494,7 @@ class OSRuntime:
 
     # ── App-node dispatch ──────────────────────────────────────────────────────
 
-    def _run_app_node(
+    def _run_skill_node(
         self,
         node_id: str,
         input_artifact: dict,
@@ -502,8 +502,8 @@ class OSRuntime:
         target_type: str,
         output_language: str,
     ) -> dict:
-        node_spec = self.app.graph.app_nodes[node_id]
-        adapted, usage = execute_app_node(
+        node_spec = self.skill.graph.skill_nodes[node_id]
+        adapted, usage = execute_skill_node(
             node_id=node_id,
             node_spec=node_spec,
             input_artifact=input_artifact,
@@ -535,20 +535,20 @@ class OSRuntime:
         Returns RunResult with status="finished" or status="loop_limit_exceeded".
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
-        current_phase = self.app.entry_phase
+        current_phase = self.skill.entry_phase
         artifact = initial_input
 
         self.events.emit(
             "workflow_started",
             run_id=self.run_id,
-            app=self.app.name,
-            entry_phase=self.app.entry_phase,
+            skill=self.skill.name,
+            entry_phase=self.skill.entry_phase,
             input_type=artifact.get("type"),
             default_model=self._resolver.resolve(self.model),
         )
 
         artifact_path: str | None = self.workspace.store_artifact(
-            "_input", artifact, app_name=self.app.name, visit=1
+            "_input", artifact, skill_name=self.skill.name, visit=1
         )
 
         try:
@@ -567,7 +567,7 @@ class OSRuntime:
                 candidates = self._build_candidates(current_phase)
 
                 # Run preprocessor (deterministic enrichment) before handing artifact to LLM
-                phase_def = self.app.phases[current_phase]
+                phase_def = self.skill.phases[current_phase]
                 if phase_def.preprocessor:
                     enriched_artifact, pre_usage = self._preprocessor.run(
                         phase_def, artifact, output_language
@@ -577,7 +577,7 @@ class OSRuntime:
                     # references the correct (post-preprocessor) artifact when it is large.
                     artifact_path = self.workspace.store_artifact(
                         current_phase + "_preprocessed", enriched_artifact,
-                        app_name=self.app.name,
+                        skill_name=self.skill.name,
                         visit=self._visit_counts.get(current_phase, 1),
                     )
                 else:
@@ -589,7 +589,7 @@ class OSRuntime:
                     rollback_context=rollback_context,
                 )
 
-                current_decl = self.app.phases[current_phase].permissions if current_phase in self.app.phases else None
+                current_decl = self.skill.phases[current_phase].permissions if current_phase in self.skill.phases else None
                 decide_results = self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
                 if decide_results:
                     self.events.emit(
@@ -657,7 +657,7 @@ class OSRuntime:
 
                 artifact_path = self.workspace.store_artifact(
                     current_phase, output.artifact,
-                    app_name=self.app.name,
+                    skill_name=self.skill.name,
                     visit=self._visit_counts.get(current_phase, 1),
                 )
 
@@ -687,12 +687,12 @@ class OSRuntime:
                     return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
 
                 next_node = output.next_phase
-                if next_node in self.app.graph.app_nodes:
-                    post_nodes = self.app.graph.transitions.get(next_node, [])
+                if next_node in self.skill.graph.skill_nodes:
+                    post_nodes = self.skill.graph.transitions.get(next_node, [])
                     if not post_nodes:
-                        adapted = self._run_app_node(
+                        adapted = self._run_skill_node(
                             next_node, output.artifact,
-                            self.app.final_output_schema, self.app.final_output_name,
+                            self.skill.final_output_schema, self.skill.final_output_name,
                             output_language,
                         )
                         data = adapted.get("data", {})
@@ -707,8 +707,8 @@ class OSRuntime:
                         )
                         return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
                     next_after = post_nodes[0]
-                    next_phase_obj = self.app.phases[next_after]
-                    adapted = self._run_app_node(
+                    next_phase_obj = self.skill.phases[next_after]
+                    adapted = self._run_skill_node(
                         next_node, output.artifact,
                         next_phase_obj.input_schema, next_phase_obj.input_schema_name,
                         output_language,
