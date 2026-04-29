@@ -1,12 +1,12 @@
 # Reyn Documentation
 
-## Apps — Standard library apps
+## Skills — Standard library skills
 
-| App | Description |
-|-----|-------------|
-| [app_builder](apps/app_builder.md) | Generate an app from a natural language description |
-| [app_improver](apps/app_improver.md) | Run, analyze, and automatically improve an existing app |
-| [eval_builder](apps/eval_builder.md) | Auto-generate an eval spec (eval.md) for an app |
+| Skill | Description |
+|-------|-------------|
+| [skill_builder](skills/skill_builder.md) | Generate a new skill from a natural-language description |
+| [skill_improver](skills/skill_improver.md) | Iteratively improve an existing skill against its eval until a score threshold is met |
+| [eval_builder](skills/eval_builder.md) | Auto-generate an eval spec (`eval.md`) for a target skill |
 
 ## Architecture — Design & internals
 
