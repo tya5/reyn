@@ -58,7 +58,10 @@ class Agent:
         """Return all artifacts stored during the run, excluding the initial input."""
         if self._runtime is None:
             return []
-        return [a for a in self._runtime.workspace.artifacts if a["phase"] != "_input"]
+        return [
+            a for a in self._runtime.workspace.artifacts
+            if a["phase"] != "_input" and not a["phase"].endswith("_preprocessed")
+        ]
 
     def get_events(self) -> list:
         return self._runtime.events.all() if self._runtime else []

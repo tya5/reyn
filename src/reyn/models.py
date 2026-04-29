@@ -5,6 +5,41 @@ from pydantic import BaseModel, Field, model_validator
 from .permissions import PermissionDecl
 
 
+# ── Preprocessor step types ───────────────────────────────────────────────────
+
+class RunAppStep(BaseModel):
+    type: Literal["run_app"]
+    app: str            # sub-app name resolved at compile time
+    into: str | None = None  # dot path where sub-app's final_output is placed;
+                             # required at top level, None when nested inside iterate.apply
+
+
+class ValidateStep(BaseModel):
+    type: Literal["validate"]
+    schema_: dict[str, Any] = Field(alias="schema")
+
+    model_config = {"populate_by_name": True}
+
+
+class IterateStep(BaseModel):
+    type: Literal["iterate"]
+    over: str                                   # dot path to an array in the input artifact
+    apply: "PreprocessorStep"                   # nested step; MVP: RunAppStep only
+    into: str                                   # dot path where the collected array is placed
+    on_error: Literal["fail", "skip"] = "fail"
+
+
+PreprocessorStep = Annotated[
+    Union[RunAppStep, IterateStep, ValidateStep],
+    Field(discriminator="type"),
+]
+
+# Resolve forward reference in IterateStep.apply
+IterateStep.model_rebuild()
+
+
+# ── Phase ─────────────────────────────────────────────────────────────────────
+
 class Phase(BaseModel):
     name: str
     role: str | None = None
@@ -15,6 +50,14 @@ class Phase(BaseModel):
     max_act_turns: int = 10  # per-phase override; 0 = use system default
     model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
     permissions: PermissionDecl = Field(default_factory=PermissionDecl)
+    preprocessor: list[PreprocessorStep] = Field(default_factory=list)
+    # Inferred by the compiler after the preprocessor chain is resolved.
+    # Represents the artifact schema the LLM actually receives (input_schema + preprocessor enrichments).
+    # None means no preprocessor → LLM sees input_schema unchanged.
+    # Currently not used at runtime. Candidate future uses:
+    #   1. Validate enriched artifact against this schema before the LLM call (preprocessor bug detection).
+    #   2. Inject into ContextFrame so the LLM sees its actual input contract.
+    llm_input_schema: dict[str, Any] | None = None
 
 
 class AppNodeSpec(BaseModel):
@@ -46,6 +89,8 @@ class App(BaseModel):
     final_output_description: str = ""
     # criteria the LLM must satisfy before the OS allows finish
     finish_criteria: list[str] = Field(default_factory=list)
+    # Sub-apps referenced by preprocessor steps; pre-loaded at compile time.
+    preprocessor_sub_apps: dict[str, "App"] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _require_final_output_name(self) -> "App":
@@ -55,6 +100,9 @@ class App(BaseModel):
                 "Set it to the artifact type name the LLM should use for the final output."
             )
         return self
+
+
+App.model_rebuild()
 
 
 class FileIROp(BaseModel):

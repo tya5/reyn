@@ -1,7 +1,10 @@
 from typing import Any
+from pydantic import TypeAdapter
 from .ir import ArtifactDef, PhaseDef, AppDef
-from reyn.models import App, Phase, AppGraph, AppNodeSpec
+from reyn.models import App, Phase, AppGraph, AppNodeSpec, PreprocessorStep
 from reyn.permissions import PermissionDecl
+
+_PreprocessorAdapter = TypeAdapter(list[PreprocessorStep])
 
 
 def artifact_to_json_schema(art: ArtifactDef) -> dict[str, Any]:
@@ -41,6 +44,13 @@ def expand_phase(
     else:
         input_schema_name = "artifact"
         input_description = ""
+    try:
+        preprocessor = _PreprocessorAdapter.validate_python(phase_def.preprocessor)
+    except Exception as exc:
+        raise ValueError(
+            f"Phase '{phase_def.name}': invalid preprocessor definition — {exc}"
+        ) from exc
+
     return Phase(
         name=phase_def.name,
         role=phase_def.role,
@@ -51,6 +61,7 @@ def expand_phase(
         max_act_turns=phase_def.max_act_turns,
         model_class=phase_def.model_class,
         permissions=PermissionDecl.from_dict(phase_def.permissions),
+        preprocessor=preprocessor,
     )
 
 
@@ -60,6 +71,7 @@ def expand_app(
     artifact_defs: dict[str, ArtifactDef],
     phase_objects: dict[str, Phase],
     app_node_specs: dict[str, AppNodeSpec] | None = None,
+    preprocessor_sub_apps: dict | None = None,
 ) -> App:
     transitions: dict[str, list[str]] = {name: [] for name in phase_objects}
     for node_id in (app_node_specs or {}):
@@ -98,4 +110,5 @@ def expand_app(
         final_output_name=final_output_name,
         final_output_description=app_def.final_output_description,
         finish_criteria=app_def.finish_criteria,
+        preprocessor_sub_apps=preprocessor_sub_apps or {},
     )

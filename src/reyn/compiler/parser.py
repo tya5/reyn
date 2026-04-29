@@ -41,6 +41,11 @@ def parse_phase(path: Path) -> PhaseDef:
     inputs = [i.strip() for i in str(inputs_raw).split("|")] if inputs_raw else []
 
     permissions_raw = fm.get("permissions") or {}
+    preprocessor_raw = fm.get("preprocessor") or []
+    if not isinstance(preprocessor_raw, list):
+        raise ValueError(
+            f"Phase '{name}': 'preprocessor' must be a YAML list, got {type(preprocessor_raw).__name__}"
+        )
     return PhaseDef(
         name=name,
         inputs=inputs,
@@ -50,6 +55,7 @@ def parse_phase(path: Path) -> PhaseDef:
         max_act_turns=int(fm.get("max_act_turns", 0)),
         model_class=str(fm.get("model_class") or "").strip(),
         permissions=permissions_raw if isinstance(permissions_raw, dict) else {},
+        preprocessor=list(preprocessor_raw),
     )
 
 

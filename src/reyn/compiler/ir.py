@@ -19,6 +19,7 @@ class PhaseDef:
     max_act_turns: int = 0      # 0 = use system default (10)
     model_class: str = ""       # "light" | "standard" | "strong" | custom | "" = inherit from runtime
     permissions: dict = field(default_factory=dict)  # raw frontmatter permissions block
+    preprocessor: list[dict] = field(default_factory=list)  # raw YAML config; typed in expander
 
 
 @dataclass

@@ -2,6 +2,7 @@ from pathlib import Path
 from .parser import parse_artifact, parse_phase, parse_app
 from .expander import expand_phase, expand_app
 from .ir import ArtifactDef, PhaseDef
+from .preprocessor_typing import infer_llm_visible_schema, PreprocessorTypeError
 from reyn.models import App
 
 
@@ -42,6 +43,71 @@ def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
     if dsl_shared.resolve() != stdlib.resolve():
         dirs.append(dsl_shared)
     return dirs
+
+
+def _find_preprocessor_app_names(phase_objects: dict) -> set[str]:
+    """Collect all sub-app names referenced by any phase's preprocessor."""
+    from reyn.models import RunAppStep, IterateStep
+    names: set[str] = set()
+
+    def _collect(step) -> None:
+        if isinstance(step, RunAppStep):
+            names.add(step.app)
+        elif isinstance(step, IterateStep):
+            _collect(step.apply)
+
+    for phase in phase_objects.values():
+        for step in phase.preprocessor:
+            _collect(step)
+    return names
+
+
+def _resolve_preprocessor_sub_apps(
+    phase_objects: dict,
+    dsl_root: Path,
+    loading_stack: frozenset[str],
+) -> dict[str, App]:
+    """Load every sub-app referenced in preprocessors. Returns name → App."""
+    app_names = _find_preprocessor_app_names(phase_objects)
+    sub_apps: dict[str, App] = {}
+    for name in app_names:
+        # Search order: dsl_root/apps/<name>/app.md then stdlib/apps/<name>/app.md
+        candidates = [
+            dsl_root / "apps" / name / "app.md",
+            Path(_stdlib_dir("apps")) / name / "app.md",
+        ]
+        path = next((p for p in candidates if p.exists()), None)
+        if path is None:
+            searched = [str(p) for p in candidates]
+            raise ValueError(
+                f"Preprocessor sub-app '{name}' not found.\nSearched:\n"
+                + "\n".join(f"  - {p}" for p in searched)
+            )
+        abs_path = str(path.resolve())
+        if abs_path in loading_stack:
+            cycle = " → ".join(list(loading_stack) + [abs_path])
+            raise ValueError(f"Circular preprocessor dependency detected: {cycle}")
+        sub_apps[name] = load_dsl_app(path, dsl_root=dsl_root, _loading_stack=loading_stack)
+    return sub_apps
+
+
+def _infer_preprocessor_schemas(
+    phase_objects: dict,
+    preprocessor_sub_apps: dict[str, App],
+) -> dict:
+    """Run schema inference for each phase with a preprocessor; return updated phase_objects."""
+    updated = dict(phase_objects)
+    for name, phase in phase_objects.items():
+        if not phase.preprocessor:
+            continue
+        try:
+            inferred = infer_llm_visible_schema(
+                phase.input_schema, phase.preprocessor, preprocessor_sub_apps
+            )
+        except PreprocessorTypeError as exc:
+            raise ValueError(f"Phase '{name}': {exc}") from exc
+        updated[name] = phase.model_copy(update={"llm_input_schema": inferred})
+    return updated
 
 
 def load_dsl_app(
@@ -139,4 +205,13 @@ def load_dsl_app(
     if app_def.final_output and app_def.final_output not in artifact_defs:
         raise _not_found_error(app_def.final_output, artifact_search_dirs, "Artifact", ext=".yaml")
 
-    return expand_app(app_def, phase_defs, artifact_defs, phase_objects, app_node_specs)
+    # Resolve preprocessor sub-apps and run schema inference for each phase
+    preprocessor_sub_apps = _resolve_preprocessor_sub_apps(
+        phase_objects, dsl_root, loading_stack
+    )
+    phase_objects = _infer_preprocessor_schemas(phase_objects, preprocessor_sub_apps)
+
+    return expand_app(
+        app_def, phase_defs, artifact_defs, phase_objects,
+        app_node_specs, preprocessor_sub_apps,
+    )

@@ -16,6 +16,7 @@ from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
 from .context_builder import build_frame
 from .app_node_runner import execute_app_node
+from .preprocessor_executor import PreprocessorExecutor
 
 
 class LoopLimitExceededError(Exception):
@@ -95,6 +96,14 @@ class OSRuntime:
             permission_resolver=permission_resolver,
         )
         self._max_phase_visits = max_phase_visits  # 0 = unlimited
+        self._preprocessor = PreprocessorExecutor(
+            app=app,
+            model=self.model,
+            events=self.events,
+            subscribers=self.events.subscribers,
+            resolver=self._resolver,
+            state_dir=state_dir,
+        )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}
         self._token_usage: TokenUsage = TokenUsage()
@@ -534,11 +543,31 @@ class OSRuntime:
                 rollback_context = self._pending_rollback_ctx
                 self._pending_rollback_ctx = None
 
+                # Store the pre-preprocessor artifact for rollback.
+                # On rollback, the preprocessor re-runs deterministically from this snapshot —
+                # semantically correct, but costly for heavy chains (iterate × run_app).
+                # If eval rollback causes N-item re-evaluation, revisit caching here (Phase 5+).
                 self._phase_inputs[current_phase] = artifact
 
                 candidates = self._build_candidates(current_phase)
+
+                # Run preprocessor (deterministic enrichment) before handing artifact to LLM
+                phase_def = self.app.phases[current_phase]
+                if phase_def.preprocessor:
+                    enriched_artifact, pre_usage = self._preprocessor.run(
+                        phase_def, artifact, output_language
+                    )
+                    self._token_usage += pre_usage
+                    self.workspace.store_artifact(
+                        current_phase + "_preprocessed", enriched_artifact,
+                        app_name=self.app.name,
+                        visit=self._visit_counts.get(current_phase, 1),
+                    )
+                else:
+                    enriched_artifact = artifact
+
                 result, output, retry_count = self._execute_phase(
-                    current_phase, artifact, candidates, output_language, max_phase_retries,
+                    current_phase, enriched_artifact, candidates, output_language, max_phase_retries,
                     artifact_path=artifact_path,
                     rollback_context=rollback_context,
                 )

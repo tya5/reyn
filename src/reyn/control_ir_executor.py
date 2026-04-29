@@ -348,7 +348,7 @@ class ControlIRExecutor:
 
     def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:
         from .compiler import load_dsl_app
-        from reyn.agent import Agent
+        from .sub_app_runner import invoke_sub_app
 
         # Resolve app name or path
         app_ref = op.app
@@ -374,14 +374,14 @@ class ControlIRExecutor:
 
         self.events.emit("run_app_started", app=op.app, state_dir=sub_state_dir)
 
-        agent = Agent(
+        run_result = invoke_sub_app(
+            sub_app, op.input,
             model=model,
             state_dir=sub_state_dir,
-            strict=False,
             subscribers=self.events.subscribers,
             resolver=self._resolver,
+            output_language=op.output_language,
         )
-        run_result = agent.run(sub_app, op.input, output_language=op.output_language)
 
         # Glob paths for events and artifacts (state_dir-relative)
         sub_state = Path(sub_state_dir)
