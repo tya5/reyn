@@ -10,12 +10,12 @@ Define multi-phase workflows as plain Markdown files. The OS handles LLM calls, 
 
 | Concept | Role |
 |---------|------|
-| **App** | Defines the phase graph and final output schema |
+| **Skill** | Defines the phase graph and final output schema |
 | **Phase** | Reusable processing unit — input schema + instructions only |
 | **Artifact** | Typed, structured data passed between phases |
 | **OS** | Runtime: builds context, calls LLM, validates output, routes transitions |
 
-Phases are stateless and reusable. They don't know what comes next — the App graph decides that. The OS is app-agnostic: adding a new App never changes OS code.
+Phases are stateless and reusable. They don't know what comes next — the Skill graph decides that. The OS is skill-agnostic: adding a new Skill never changes OS code.
 
 ---
 
@@ -33,40 +33,48 @@ Set your API key before running:
 export OPENAI_API_KEY=sk-...
 ```
 
+Initialize a project (creates `reyn.yaml` and `.reyn/config.yaml`):
+
+```bash
+reyn init
+```
+
 ---
 
 ## Quick start
 
+Skills live under `reyn/local/<skill_name>/` (or `reyn/project/<skill_name>/` for shared/checked-in skills). Each skill directory contains `skill.md`, `phases/`, and `artifacts/`.
+
 ### 1. Define artifacts
 
-```markdown
-<!-- dsl/apps/my_app/artifacts/user_input.md -->
----
-type: artifact
+```yaml
+# reyn/local/my_skill/artifacts/user_input.yaml
 name: user_input
 wrapped: false
----
-
-topic: string
-audience: string
-tone?: string
+schema:
+  type: object
+  properties:
+    topic: {type: string}
+    audience: {type: string}
+    tone: {type: string}
+  required: [topic, audience]
 ```
 
-```markdown
-<!-- dsl/apps/my_app/artifacts/report.md -->
----
-type: artifact
+```yaml
+# reyn/local/my_skill/artifacts/report.yaml
 name: report
----
-
-title: string
-body: string
+schema:
+  type: object
+  properties:
+    title: {type: string}
+    body: {type: string}
+  required: [title, body]
 ```
 
 ### 2. Define phases
 
 ```markdown
-<!-- dsl/apps/my_app/phases/draft.md -->
+<!-- reyn/local/my_skill/phases/draft.md -->
 ---
 type: phase
 name: draft
@@ -78,103 +86,112 @@ Write a report on the topic for the given audience.
 Use the specified tone if provided; otherwise default to neutral.
 ```
 
-### 3. Define the app
+### 3. Define the skill
 
 ```markdown
-<!-- dsl/apps/my_app/app.md -->
+<!-- reyn/local/my_skill/skill.md -->
 ---
-type: app
-name: my_app
+type: skill
+name: my_skill
 entry: draft
 final_output: report
+graph:
+  draft: []
 ---
 
-draft
+## Overview
+Drafts a short report from a topic and audience.
 ```
 
 ### 4. Run
 
 ```bash
-reyn run \
-  --app-dsl dsl/apps/my_app/app.md \
-  --input "topic: AI in education, audience: university students" \
-  --model gpt-4o
+reyn run my_skill '{"type":"user_input","data":{"topic":"AI in education","audience":"university students"}}'
+```
+
+Or pass natural language (auto-wrapped as a `user_message` artifact — your entry phase must accept it):
+
+```bash
+reyn run my_skill "Write about AI in education for university students."
 ```
 
 ---
 
 ## Artifacts
 
-Artifacts are the data contracts between phases. Define fields with simple type annotations:
+Artifacts are the data contracts between phases. They are defined as YAML files with a JSON Schema body:
 
-```markdown
----
-type: artifact
+```yaml
 name: article
----
-
-title: string
-body: string
-tags: string[]
-word_count?: integer
+schema:
+  type: object
+  properties:
+    title: {type: string}
+    body: {type: string}
+    tags: {type: array, items: {type: string}}
+    word_count: {type: integer}
+  required: [title, body]
 ```
-
-**Supported types:** `string`, `number`, `integer`, `boolean`, `string[]`, `number[]`, `integer[]`, `object`, `array`, `any`
-
-**Optional fields** are marked with `?`. Artifacts can reference other artifacts as nested objects.
 
 **`wrapped: false`** removes the `{type, data}` envelope — use this for entry-phase inputs where a flat schema is cleaner.
 
+Shared artifacts live under `dsl/shared/artifacts/` (or `<dsl_root>/shared/artifacts/`) and are resolved automatically.
+
 ---
 
-## Apps
+## Skills
 
-Apps define the phase graph, transition rules, and final output:
+Skills define the phase graph, transition rules, and final output:
 
 ```markdown
 ---
-type: app
-name: writing_review_app
+type: skill
+name: writing_review_skill
 entry: analyze
 final_output: final_article
 finish_criteria:
   - clarity
   - structure
-max_phase_visits:
-  review: 3
-  revise: 3
+graph:
+  analyze: [draft]
+  draft:   [review]
+  review:  [judge]
+  judge:   [revise, end]
+  revise:  [review]
 ---
 
-analyze -> draft -> review -> judge
-judge -> revise -> review
+## Overview
+Drafts an article, reviews it, and revises until quality is met.
 ```
 
-**Graph syntax:** `phase_a -> phase_b` adds a directed edge. Phases reachable from `entry` form the graph. The LLM chooses transitions at runtime.
+The `graph:` mapping declares allowed transitions per phase. The LLM picks one of the listed next-phase candidates at each turn. `end` is a sentinel meaning "this phase may finish the workflow."
 
-### App nodes
+### Skill nodes
 
-Apps can embed other apps as graph nodes using `@app_name`:
+Skills can embed other skills as graph nodes using `@skill_name`:
 
 ```markdown
 ---
-type: app
+type: skill
 name: digest_pipeline
 entry: prepare
 final_output: digest_result
+graph:
+  prepare:              [@writing_review_skill]
+  "@writing_review_skill": [digest]
+  digest:               []
 ---
-
-prepare -> @writing_review_app -> digest
 ```
 
-The OS runs the sub-app to completion, adapts its output to the next phase's input schema, and continues.
+The OS runs the sub-skill to completion, adapts its output to the next phase's input schema, and continues.
 
-**Workspace isolation:** `@writing_review_app[shared]` shares the parent workspace; default is `isolated`.
+**Workspace isolation:** `@writing_review_skill[shared]` shares the parent workspace; default is `isolated`.
 
 ---
 
 ## Phases
 
-Phases declare an input artifact and instructions. They do not define output schema — that is determined by the next phase's input, or the app's `final_output`.
+Phases declare an input artifact and instructions. They do not define output schema — that is determined by the next phase's input, or the skill's `final_output`.
 
 ```markdown
 ---
@@ -182,22 +199,22 @@ type: phase
 name: review
 input: draft_article
 role: reviewer
-can_finish: true
-max_act_turns: 5
 ---
 
 Review the draft for clarity, accuracy, and structure.
 Approve if it meets quality standards; otherwise list specific improvements needed.
 ```
 
-**`can_finish: true`** allows the LLM to end the workflow from this phase.
-
-**`max_act_turns`** caps how many tool-use (act) turns the LLM may take before emitting a decision.
-
 **Multi-input phases** accept any of several artifact types:
 
 ```markdown
 input: draft_article | revised_article
+```
+
+**Entry phases** accepting natural language input typically declare:
+
+```markdown
+input: user_message | <domain_artifact>
 ```
 
 ---
@@ -206,22 +223,31 @@ input: draft_article | revised_article
 
 Within a phase, the LLM can perform side effects before making a routing decision:
 
-```markdown
-<!-- Reading a file -->
+```jsonc
+// Reading a file
 {"kind": "file", "op": "read", "path": "notes.txt"}
 
-<!-- Writing a file -->
+// Writing a file
 {"kind": "file", "op": "write", "path": "output.md", "content": "..."}
 
-<!-- Glob search -->
+// Glob search
 {"kind": "file", "op": "glob", "path": "src/**/*.py"}
 
-<!-- Ask the user a question (phase re-runs with the answer) -->
-{"kind": "ask_user", "question": "What tone should the article use?", "suggestions": ["formal", "casual"]}
+// Ask the user a question (phase re-runs with the answer)
+{"kind": "ask_user", "question": "What tone should the article use?",
+ "suggestions": ["formal", "casual"]}
 
-<!-- Run a shell command (requires --allow-shell) -->
-{"kind": "shell", "cmd": "python main.py run --app-dsl dsl/apps/foo/app.md --input 'hello'"}
+// Lint a generated skill
+{"kind": "lint", "skill_path": "reyn/local/generated_skill"}
+
+// Run another skill as a sub-workflow
+{"kind": "run_skill", "skill": "skill_builder", "input": {...}, "into": "result"}
+
+// Run a shell command (requires --allow-shell)
+{"kind": "shell", "cmd": "echo hello"}
 ```
+
+Available ops are injected into each phase's context at runtime; phase instructions never need to enumerate them.
 
 ---
 
@@ -230,57 +256,79 @@ Within a phase, the LLM can perform side effects before making a routing decisio
 ### `reyn run`
 
 ```
-reyn run --app-dsl PATH --input TEXT [options]
+reyn run [SKILL] [INPUT] [options]
 
-  --app-dsl PATH          Markdown App DSL file
-  --app MODULE            Python module exposing an 'app' object
-  --input TEXT            JSON artifact or natural language string
-  --model MODEL           LiteLLM model name (default: gpt-4o)
-  --output-language LANG  LLM output language (default: ja)
-  --workspace DIR         Workspace directory (default: ./workspace)
-  --dsl-root DIR          DSL root for shared artifact/phase resolution
+  SKILL                   Skill name. Resolved in order:
+                          reyn/project/ → reyn/local/ → src/stdlib/skills/
+  INPUT                   JSON artifact or natural language string
+                          (omit to read from stdin)
+
+  --skill-path DIR        Path to a skill directory containing skill.md
+  --module MODULE         Python module exposing a 'skill' object
+  --model MODEL           light | standard | strong, or a LiteLLM model string
+  --output-language LANG  LLM output language (default: from reyn.yaml or ja)
+  --dsl-root DIR          Override DSL root for shared artifact/phase resolution
   --strict                Enforce required fields at every nesting depth
-  --allow-shell           Enable shell Control IR op
-  --read-allow DIR        Allow reading files from DIR (repeatable)
+  --allow-shell           Enable the 'shell' Control IR op
+  --max-phase-visits N    Cap visits per phase (0 = unlimited; default 25)
   --rich                  Rich-styled console output
   --events                Print full event log after execution
 ```
 
+### `reyn skills`
+
+```
+reyn skills              # list all available skills (project / local / stdlib)
+reyn skills <name>       # show usage details for one skill
+```
+
 ### `reyn eval`
 
-Run an eval spec and score each phase with an LLM judge:
+Run an eval spec against a target skill, scoring per-phase artifacts with an LLM judge:
 
 ```
-reyn eval --spec eval.md --model gpt-4o --judge-model gpt-4o
+reyn eval reyn/local/my_skill/eval.md
 ```
 
-Eval specs define cases and per-phase assertions in Markdown:
+Eval specs are Markdown with frontmatter and per-phase quality criteria:
 
 ```markdown
 ---
 type: eval
-app: dsl/apps/my_app/app.md
-dsl_root: dsl/
-judge_model: gpt-4o
+skill: reyn/local/my_skill/skill.md
+dsl_root: reyn/local/
+model: standard
 ---
 
 ## case: basic
 input: "Write about AI in education for university students."
 
 ### phase: draft
+quality:
 - The article has a clear title
 - The body is written for the specified audience
+- [aspirational] The tone is engaging
 
 ### final
+quality:
 - The body is at least 500 characters
 ```
 
-### `reyn eval-compare`
+Aspirational criteria don't fail the case but are reported.
 
-Regression check between two eval result JSON files:
+### `reyn lint`
 
 ```
-reyn eval-compare baseline.json candidate.json
+reyn lint <skill_name>
+```
+
+Validates DSL structure: graph reachability, artifact references, transition targets, entry phase validity.
+
+### `reyn format`
+
+```
+reyn format --dsl dsl/             # rewrite to canonical form
+reyn format --dsl dsl/ --check     # dry-run (exit 1 if any file would change)
 ```
 
 ### `reyn events`
@@ -288,17 +336,24 @@ reyn eval-compare baseline.json candidate.json
 Replay a saved event log:
 
 ```
-reyn events workspace/runs/20260427T…_my_app.jsonl
-reyn events … --conversation   # show LLM context + responses only
-reyn events … --filter phase_started --filter phase_completed
+reyn events .reyn/runs/20260427T…_my_skill.jsonl
+reyn events … --conversation                       # LLM context + responses
+reyn events … --filter phase_started --skip llm_called
 ```
 
-### `reyn lint` / `reyn format`
+### `reyn config`
 
 ```
-reyn lint --dsl dsl/
-reyn format --dsl dsl/
-reyn format --dsl dsl/ --check   # dry-run
+reyn config show                 # current effective config (merged sources)
+reyn config fields               # all keys with descriptions and examples
+reyn config get <key>
+reyn config set <key> <value>    # writes to .reyn/config.yaml
+```
+
+### `reyn init`
+
+```
+reyn init                        # scaffold reyn.yaml + .reyn/config.yaml
 ```
 
 ---
@@ -312,7 +367,7 @@ User → CLI (reyn run)
                      ├── build ContextFrame   (phase + artifact + candidates)
                      ├── call LLM             (via LiteLLM)
                      ├── normalize + validate (output schema, artifact data)
-                     ├── execute Control IR   (file / ask_user / shell)
+                     ├── execute Control IR   (file / ask_user / shell / run_skill / lint)
                      ├── store artifact       (Workspace)
                      ├── emit Event           (JSONL log)
                      └── transition → next phase
@@ -325,14 +380,38 @@ Every state change is recorded as a structured event. Event logs support replay 
 ## Project structure
 
 ```
-reyn/       Runtime engine (OS, models, validation, eval)
-compiler/       DSL parser, IR, expander, linter, formatter
+src/
+  reyn/                Runtime engine (OS, models, validation, compiler, CLI)
+  stdlib/
+    skills/            Bundled skills: skill_builder, skill_improver,
+                       eval, eval_builder, judge_phase
+    artifacts/         Shared artifacts available to every skill
+    phases/            Shared phases available to every skill
+reyn/
+  local/<name>/        Your local skills (skill.md, phases/, artifacts/)
+  project/<name>/      Skills checked into the project
 dsl/
-  apps/         App definitions (app.md, phases/, artifacts/)
-  shared/       Shared artifacts and phases across apps
-examples/       Python-defined app examples
-workspace/      Runtime output (artifacts, event logs, eval results)
+  skills/<name>/       Alternate location for skills (matched by --dsl-root)
+  shared/              Shared artifacts and phases
+.reyn/
+  config.yaml          Per-project config (model, output_language, etc.)
+  runs/                Event logs (one JSONL per run)
+  artifacts/           Artifacts stored during runs
 ```
+
+---
+
+## Bundled skills
+
+| Skill | Purpose |
+|-------|---------|
+| `skill_builder` | Generate a new skill from a natural-language description |
+| `skill_improver` | Iteratively improve a skill against its eval until a score threshold is met |
+| `eval` | Evaluate one case of a target skill using `judge_phase` |
+| `eval_builder` | Auto-generate an `eval.md` from a target skill |
+| `judge_phase` | LLM-as-judge over a single phase artifact and quality criteria |
+
+Run `reyn skills <name>` for usage details.
 
 ---
 
