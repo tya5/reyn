@@ -1,42 +1,64 @@
 """
 Phase-level permission declarations and approval resolution.
 
-Default grants (always allowed, no declaration needed):
-  file.read  — any workspace-relative path
-  file.write — any workspace-relative path (workspace enforces containment)
+Default grants (no declaration needed):
+  file read/glob/grep  — any path within the project root (CWD)
+  file write/edit/delete — under project/.reyn/ or project/reyn/ only
 
-Everything else requires a phase declaration AND approval:
+Outside the defaults → the phase must declare the path AND the user must approve:
+  file.write: [{path: <path>, scope: just_path|recursive}]
   shell      — declare permissions.shell: true
   mcp        — declare permissions.mcp: [server_name, ...]
   tool       — declare permissions.tool: [tool_name, ...]
-  file.delete  — declare permissions.file.delete: [glob, ...]
-  file.move    — declare permissions.file.move: {from: ..., to: ...}
-  file.read    — absolute-path reads require explicit declaration
 
-Approval hierarchy (first match wins):
-  1. Config pre-approval  (reyn.yaml or .reyn/config.yaml: permissions.shell: allow)
-  2. Saved approval       (.reyn/approvals.yaml — persisted "Always" choices)
-  3. Session approval     (in-memory "Always" from this run)
-  4. Interactive prompt   ([y]es / [n]o / [A]lways / [N]ever)
-  5. Deny
+Approval choices (shown once at startup before execution starts):
+  [y]es                        — allow for this run only
+  [j]ust this path always      — persist approval for this exact path + skill
+  [r]ecursive from parent      — persist approval for the parent directory + skill (covers all files under it)
+  [N]o                         — deny
+
+Approval keys are skill-scoped to prevent external skill privilege escalation:
+  "{skill_name}/file.write/{path}"   (just_path)
+  "{skill_name}/file.write/{dir}/"   (recursive, trailing slash signals recursive)
+
+Config pre-approval (reyn.yaml / .reyn/config.yaml):
+  permissions:
+    shell: allow
+    file.write: allow   # grants all write-class ops for all skills
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    pass
+    from .models import Skill
+
+
+_DEFAULT_WRITE_ZONES = (".reyn", "reyn")
 
 
 def _normalize_paths(v: object) -> list[str]:
-    """Accept str, list[str], or None; return list[str]."""
     if not v:
         return []
     if isinstance(v, str):
         return [v]
     return [str(x) for x in v]
+
+
+def _in_default_write_zone(path_str: str) -> bool:
+    """Return True if path falls within a default-granted write zone (.reyn/ or reyn/)."""
+    base = Path.cwd()
+    p = Path(path_str)
+    resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
+    for zone in _DEFAULT_WRITE_ZONES:
+        try:
+            resolved.relative_to((base / zone).resolve())
+            return True
+        except ValueError:
+            pass
+    return False
 
 
 @dataclass
@@ -46,32 +68,31 @@ class PermissionDecl:
     shell: bool = False
     mcp: list[str] = field(default_factory=list)
     tool: list[str] = field(default_factory=list)
-    file_read: list[str] = field(default_factory=list)    # extra absolute paths beyond defaults
-    file_write: list[str] = field(default_factory=list)   # reserved for future use
-    file_delete: list[str] = field(default_factory=list)
-    file_move_from: list[str] = field(default_factory=list)
-    file_move_to: list[str] = field(default_factory=list)
+    # Write-class ops (write, edit, delete) outside the default zone.
+    # Each entry: {"path": str, "scope": "just_path" | "recursive"}
+    file_write: list[dict] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         if not d:
             return cls()
-        move_raw = d.get("file.move") or {}
-        if isinstance(move_raw, dict):
-            move_from = _normalize_paths(move_raw.get("from"))
-            move_to = _normalize_paths(move_raw.get("to"))
-        else:
-            move_from = _normalize_paths(move_raw)
-            move_to = []
+        fw_raw = d.get("file.write") or []
+        if not isinstance(fw_raw, list):
+            fw_raw = [fw_raw]
+        file_write: list[dict] = []
+        for item in fw_raw:
+            if isinstance(item, str):
+                file_write.append({"path": item, "scope": "just_path"})
+            elif isinstance(item, dict):
+                file_write.append({
+                    "path": str(item.get("path", "")),
+                    "scope": str(item.get("scope", "just_path")),
+                })
         return cls(
             shell=bool(d.get("shell", False)),
             mcp=_normalize_paths(d.get("mcp")),
             tool=_normalize_paths(d.get("tool")),
-            file_read=_normalize_paths(d.get("file.read")),
-            file_write=_normalize_paths(d.get("file.write")),
-            file_delete=_normalize_paths(d.get("file.delete")),
-            file_move_from=move_from,
-            file_move_to=move_to,
+            file_write=file_write,
         )
 
 
@@ -136,21 +157,8 @@ class PermissionResolver:
     # ── Config check ─────────────────────────────────────────────────────────
 
     def _is_config_approved(self, key: str) -> bool:
-        """
-        Check if key is pre-approved in config.
-
-        Key formats: "shell", "file.delete", "mcp.github", "tool.mytool"
-        Config format:
-          permissions:
-            shell: allow
-            mcp:
-              github: allow
-            file.delete: allow
-        """
-        # Exact key match: "shell: allow", "file.delete: allow"
         if self._config.get(key) == "allow":
             return True
-        # "mcp.github" → config["mcp"]["github"] == "allow"
         dot = key.find(".")
         if dot != -1:
             top, sub = key[:dot], key[dot + 1:]
@@ -161,10 +169,9 @@ class PermissionResolver:
                 return True
         return False
 
-    # ── Core approval ─────────────────────────────────────────────────────────
+    # ── Core approval (non-file ops) ──────────────────────────────────────────
 
     def _approve(self, key: str, description: str) -> bool:
-        """Return True if the operation is approved; False to deny."""
         if self._is_config_approved(key):
             return True
         if key in self._session:
@@ -193,14 +200,122 @@ class PermissionResolver:
         if ans == "N":
             self._persist(key, False)
             return False
-        # "n" or anything else → deny for this session only
         self._session[key] = False
         return False
 
+    # ── File write approval ───────────────────────────────────────────────────
+
+    def _is_path_approved(self, path: str, skill_name: str) -> bool:
+        """Return True if path is covered by any saved or session approval for this skill."""
+        base = self._project_root
+        p = Path(path)
+        p_resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
+        prefix = f"{skill_name}/file.write/"
+        combined = {**self._saved, **self._session}
+        for key, approved in combined.items():
+            if not approved or not key.startswith(prefix):
+                continue
+            approved_str = key[len(prefix):]
+            approved_p = (base / approved_str).resolve()
+            if approved_str.endswith("/"):
+                try:
+                    p_resolved.relative_to(approved_p)
+                    return True
+                except ValueError:
+                    pass
+            else:
+                if p_resolved == approved_p:
+                    return True
+        return False
+
+    def _prompt_file_write(self, path: str, scope: str, skill_name: str) -> bool:
+        """Prompt the user to approve a write-class file access. Returns True if approved."""
+        parent = str(Path(path).parent) + "/"
+        prompt = (
+            f"  Write access: {path!r}  [{scope}]\n"
+            f"  [y]es (this run) / [j]ust this path always / "
+            f"[r]ecursive from {parent!r} always / [N]o: "
+        )
+        if not self._interactive:
+            return False
+        try:
+            ans = input(prompt).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        if ans == "y":
+            self._session[f"{skill_name}/file.write/{path}"] = True
+            return True
+        if ans == "j":
+            self._persist(f"{skill_name}/file.write/{path}", True)
+            return True
+        if ans == "r":
+            self._persist(f"{skill_name}/file.write/{parent}", True)
+            return True
+        self._session[f"{skill_name}/file.write/{path}"] = False
+        return False
+
+    def startup_guard(self, skill: "Skill", skill_name: str) -> None:
+        """
+        Pre-flight permission check: scan all phase declarations, collect paths that
+        fall outside the default write zone, and ask the user to approve them before
+        execution starts. Already-approved and config-approved paths are skipped.
+        """
+        requests: list[dict] = []
+        seen: set[tuple] = set()
+
+        for phase_name, phase in skill.phases.items():
+            for entry in phase.permissions.file_write:
+                path = entry.get("path", "")
+                scope = entry.get("scope", "just_path")
+                if not path:
+                    continue
+                if _in_default_write_zone(path):
+                    continue
+                if self._is_config_approved("file.write"):
+                    continue
+                if self._is_path_approved(path, skill_name):
+                    continue
+                key = (path, scope)
+                if key not in seen:
+                    seen.add(key)
+                    requests.append({"path": path, "scope": scope, "phase": phase_name})
+
+        if not requests:
+            return
+
+        print(f"\n  Skill '{skill_name}' requests write access outside the default zone:")
+        for req in requests:
+            print(f"    • {req['path']}  [{req['scope']}]  (phase: {req['phase']})")
+        print()
+        for req in requests:
+            self._prompt_file_write(req["path"], req["scope"], skill_name)
+
     # ── Public check methods ──────────────────────────────────────────────────
 
+    def require_file_write(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
+        """
+        Raise PermissionError if write/edit/delete access to path is not allowed.
+        Default zone (.reyn/, reyn/) is always granted.
+        Outside the default zone, the path must have been approved at startup.
+        """
+        if _in_default_write_zone(path):
+            return
+        if self._is_config_approved("file.write"):
+            return
+        if self._is_path_approved(path, skill_name):
+            return
+        raise PermissionError(
+            f"write to '{path}' was not approved. "
+            f"Declare it in the phase frontmatter:\n"
+            f"  permissions:\n"
+            f"    file.write:\n"
+            f"      - path: {path}\n"
+            f"        scope: just_path\n"
+            f"Then re-run — the startup guard will ask for approval before execution starts."
+        )
+
     def require_shell(self, decl: PermissionDecl, cmd: str = "") -> None:
-        """Raise PermissionError if shell access is not allowed."""
         if not decl.shell:
             raise PermissionError(
                 f"shell access not declared in phase permissions. "
@@ -211,7 +326,6 @@ class PermissionResolver:
             raise PermissionError(f"shell access denied (cmd: {cmd!r})")
 
     def require_mcp(self, decl: PermissionDecl, server: str) -> None:
-        """Raise PermissionError if MCP server access is not allowed."""
         if server not in decl.mcp:
             raise PermissionError(
                 f"MCP server {server!r} not declared in phase permissions. "
@@ -221,7 +335,6 @@ class PermissionResolver:
             raise PermissionError(f"MCP server {server!r} access denied")
 
     def require_tool(self, decl: PermissionDecl, tool: str) -> None:
-        """Raise PermissionError if tool access is not allowed."""
         if tool not in decl.tool:
             raise PermissionError(
                 f"tool {tool!r} not declared in phase permissions. "

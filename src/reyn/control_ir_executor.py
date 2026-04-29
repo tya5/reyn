@@ -39,6 +39,7 @@ class ControlIRExecutor:
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
+        skill_name: str = "",
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -47,6 +48,7 @@ class ControlIRExecutor:
         self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
+        self._skill_name = skill_name
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
@@ -137,6 +139,8 @@ class ControlIRExecutor:
         for op in ops:
             try:
                 if op.kind == "file":
+                    if self._perm and getattr(op, "op", None) in ("write", "edit", "delete"):
+                        self._perm.require_file_write(effective_decl, op.path, self._skill_name)  # type: ignore[union-attr]
                     result = self._execute_file(op)  # type: ignore[arg-type]
                 elif op.kind == "ask_user":
                     result = self._execute_ask_user(op, phase)  # type: ignore[arg-type]

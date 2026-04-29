@@ -90,6 +90,7 @@ class OSRuntime:
         self.events = EventLog(subscribers=subscribers)
         self.workspace = Workspace(self.events, state_dir=state_dir)
         self._max_phase_visits = max_phase_visits  # 0 = unlimited
+        self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             user_input_fn=user_input_fn,
@@ -97,9 +98,10 @@ class OSRuntime:
             resolver=self._resolver,
             permission_resolver=permission_resolver,
             max_phase_visits=max_phase_visits,
+            skill_name=skill.name,
         )
         self._preprocessor = PreprocessorExecutor(
-            app=app,
+            skill=skill,
             model=self.model,
             events=self.events,
             subscribers=self.events.subscribers,
@@ -535,6 +537,9 @@ class OSRuntime:
         Returns RunResult with status="finished" or status="loop_limit_exceeded".
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
+        if self._perm:
+            self._perm.startup_guard(self.skill, self.skill.name)
+
         current_phase = self.skill.entry_phase
         artifact = initial_input
 
