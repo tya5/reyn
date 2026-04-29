@@ -54,6 +54,18 @@ graph:
 {入力に期待する内容と例}
 ```
 
+If `data.mcp_servers` is non-empty, append a `## MCP` section after `## 入力`:
+```
+## MCP
+
+このスキルは以下の MCP サーバと連携することで機能が強化されます。
+設定方法: `.reyn/config.yaml` の `mcp.servers` に追加してください。
+
+| Server | Purpose |
+|--------|---------|
+| {name} | {purpose} |
+```
+
 graph comes from data.transitions. Each `{from: X, to: [Y, Z]}` entry becomes:
 ```yaml
 X: [Y, Z]

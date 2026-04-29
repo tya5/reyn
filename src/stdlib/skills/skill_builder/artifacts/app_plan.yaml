@@ -92,4 +92,20 @@ schema:
           type: object
           description: JSON Schema object for the final output's data fields.
       required: [name, description, schema]
-  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output]
+    mcp_servers:
+      type: array
+      description: MCP servers recommended for this skill (empty if none needed).
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: MCP server name as listed in the registry.
+          purpose:
+            type: string
+            description: One sentence on how this server helps the skill.
+          url:
+            type: string
+            description: Repository or homepage URL of the server.
+        required: [name, purpose]
+  required: [app_name, app_description, app_path, entry_phase, finish_criteria, phases, transitions, artifacts, final_output, mcp_servers]
