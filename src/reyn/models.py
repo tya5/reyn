@@ -111,10 +111,26 @@ Skill.model_rebuild()
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
-    op: Literal["read", "write", "glob", "delete"]
-    path: str                        # file path for read/write; glob pattern for glob
+    op: Literal["read", "write", "glob", "delete", "grep", "edit"]
+    path: str                        # file path for read/write/edit/delete; glob pattern for glob; dir or file for grep
     content: str | None = None       # write only
     max_results: int = 50            # glob only: cap on number of matching paths returned
+    # read-specific
+    offset: int | None = None        # line number to start reading from (0-indexed); None = beginning
+    limit: int | None = None         # number of lines to read; None = all
+    # grep-specific
+    pattern: str | None = None       # regex pattern to search for
+    glob: str | None = None          # file filter glob pattern (e.g. "**/*.py"); default searches all files
+    file_type: str | None = None     # filter by file extension without dot (e.g. "py", "md")
+    output_mode: Literal["content", "files_with_matches", "count"] = "content"
+    case_insensitive: bool = False
+    context_before: int = 0          # lines of context before each match
+    context_after: int = 0           # lines of context after each match
+    head_limit: int | None = None    # cap total number of matches returned
+    # edit-specific
+    old_string: str | None = None    # exact text to replace (must be unique unless replace_all=True)
+    new_string: str | None = None    # replacement text
+    replace_all: bool = False        # replace all occurrences instead of requiring uniqueness
 
 
 class ToolIROp(BaseModel):
