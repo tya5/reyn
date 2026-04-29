@@ -15,19 +15,21 @@ Do NOT embed app-builder concerns (naming, clarification) into the target app's 
 
 ---
 
-## Step 0 — Research available MCP servers (when relevant)
+## Step 0 — Discover available MCP servers (when relevant)
 
 If the user's request implies accessing **external systems** — such as GitHub, databases, web search,
-Slack, email, calendars, Git, file systems, or any 3rd-party API — fetch the official MCP server list
-to discover what's available before designing the phases:
+Slack, email, calendars, Git, file systems, or any 3rd-party API — search the GitHub MCP Registry
+before designing the phases:
 
 ```
-web_fetch: https://raw.githubusercontent.com/modelcontextprotocol/servers/main/README.md
-prompt: List the MCP server names, their categories, and a one-line description of each.
+run_skill: mcp_search
+input: <the user's original request text>
+slot: mcp_results
 ```
 
-From the result, identify 0–3 servers that would most benefit this skill and record them in
-`mcp_servers`. If none of the listed servers are relevant, set `mcp_servers: []`.
+The `mcp_results` slot will contain an `mcp_candidate_list` with matching servers.
+From those candidates, select 0–3 that would most benefit this skill and record them in `mcp_servers`.
+If no candidates are relevant, set `mcp_servers: []`.
 
 Skip this step entirely if the skill is self-contained (text processing, classification,
 document generation with no external data needs).
