@@ -28,6 +28,7 @@ dependencies = [
 
 [project.optional-dependencies]
 rich = ["rich>=13.0"]
+search = ["ddgs>=8.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov",

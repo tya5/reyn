@@ -187,10 +187,17 @@ class WebFetchIROp(BaseModel):
     max_length: int = 50_000      # cap on returned content length (characters)
 
 
+class WebSearchIROp(BaseModel):
+    kind: Literal["web_search"]
+    query: str                    # search query string
+    max_results: int = 10         # cap on returned results
+    backend: str = "duckduckgo"   # backend name (currently only "duckduckgo")
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", "run_skill", and "web_fetch" are implemented; others are safely skipped.
+# "file", "ask_user", "shell", "lint", "run_skill", "web_fetch", and "web_search" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp, WebSearchIROp],
     Field(discriminator="kind"),
 ]
 

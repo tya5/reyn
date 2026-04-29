@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp, WebFetchIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunSkillIROp, ShellIROp, ToolIROp, WebFetchIROp, WebSearchIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
@@ -148,6 +148,17 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "web_fetch", "url": "https://example.com", "prompt": "Get the main article text"},
             ),
+            ControlIROpSpec(
+                kind="web_search",
+                description=(
+                    "Search the web and return structured results. "
+                    "query: the search query string. "
+                    "max_results: cap on returned results (default 10). "
+                    "backend: search backend name (default 'duckduckgo'). "
+                    "Returns: query, backend, results (list of {title, url, snippet})."
+                ),
+                example={"kind": "web_search", "query": "Claude Code latest news", "max_results": 5},
+            ),
         ]
 
     def execute(
@@ -196,6 +207,8 @@ class ControlIRExecutor:
                     result = self._execute_run_skill(op)  # type: ignore[arg-type]
                 elif op.kind == "web_fetch":
                     result = self._execute_web_fetch(op)  # type: ignore[arg-type]
+                elif op.kind == "web_search":
+                    result = self._execute_web_search(op)  # type: ignore[arg-type]
                 else:
                     result = {
                         "kind": op.kind,
@@ -618,6 +631,32 @@ class ControlIRExecutor:
             "content_type": content_type,
             "content": content,
             "truncated": truncated,
+        }
+
+    def _execute_web_search(self, op: WebSearchIROp) -> dict[str, Any]:
+        from .search_backends import get_backend
+
+        self.events.emit("web_search_started", query=op.query, backend=op.backend)
+        try:
+            backend = get_backend(op.backend)
+            results = backend.search(op.query, op.max_results)
+        except Exception as exc:
+            self.events.emit("web_search_failed", query=op.query, backend=op.backend, error=str(exc))
+            return {
+                "kind": "web_search",
+                "query": op.query,
+                "backend": op.backend,
+                "status": "error",
+                "error": str(exc),
+            }
+
+        self.events.emit("web_search_completed", query=op.query, backend=op.backend, result_count=len(results))
+        return {
+            "kind": "web_search",
+            "query": op.query,
+            "backend": op.backend,
+            "status": "ok",
+            "results": results,
         }
 
     def _execute_shell(self, op: ShellIROp) -> dict[str, Any]:
