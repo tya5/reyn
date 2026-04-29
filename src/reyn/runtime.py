@@ -81,6 +81,7 @@ class OSRuntime:
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
+        mcp_servers: dict | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -99,6 +100,7 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             max_phase_visits=max_phase_visits,
             skill_name=skill.name,
+            mcp_servers=mcp_servers,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,

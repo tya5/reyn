@@ -33,6 +33,17 @@ class ReynConfig:
     # Maximum times any single phase may be visited in one run (0 = unlimited).
     # Prevents infinite rollback/revision loops. Override per-invocation with --max-phase-visits.
     max_phase_visits: int = 25
+    # MCP server definitions.  Merged across config sources (servers dict is shallow-merged;
+    # local overrides project which overrides global).
+    # Example:
+    #   mcp:
+    #     servers:
+    #       my_tool:
+    #         type: http
+    #         url: http://localhost:3000/mcp
+    #         headers:
+    #           Authorization: "Bearer ${MY_TOKEN}"
+    mcp: dict = field(default_factory=dict)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -55,6 +66,11 @@ def _merge(base: dict, override: dict) -> dict:
             continue
         if key in ("models", "permissions") and isinstance(val, dict):
             result[key] = {**result.get(key, {}), **val}
+        elif key == "mcp" and isinstance(val, dict):
+            existing = result.get("mcp", {})
+            existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
+            new_servers = val.get("servers", {}) if isinstance(val, dict) else {}
+            result["mcp"] = {**existing, "servers": {**existing_servers, **new_servers}}
         else:
             result[key] = val
     return result
@@ -78,7 +94,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
     merged: dict = {"model": "standard", "state_dir": ".reyn",
                     "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {},
-                    "max_phase_visits": 25}
+                    "max_phase_visits": 25, "mcp": {}}
 
     # User global
     merged = _merge(merged, _load_yaml(Path.home() / ".reyn" / "config.yaml"))
@@ -98,4 +114,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
         max_phase_visits=int(merged.get("max_phase_visits", 25)),
+        mcp=dict(merged.get("mcp") or {}),
     )

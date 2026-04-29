@@ -110,6 +110,7 @@ def run(args: argparse.Namespace) -> None:
         resolver=session.resolver,
         permission_resolver=perm_resolver,
         max_phase_visits=max_phase_visits,
+        mcp_servers=session.config.mcp,
     )
 
     input_type = initial_input.get("type", "unknown")

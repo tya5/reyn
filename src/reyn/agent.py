@@ -21,6 +21,7 @@ class Agent:
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
+        mcp_servers: dict | None = None,
     ) -> None:
         self.model = model
         self.state_dir = state_dir
@@ -31,6 +32,7 @@ class Agent:
         self._max_phase_visits = max_phase_visits
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
+        self._mcp_servers = mcp_servers
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -50,6 +52,7 @@ class Agent:
             resolver=self._resolver,
             permission_resolver=self._permission_resolver,
             max_phase_visits=self._max_phase_visits,
+            mcp_servers=self._mcp_servers,
         )
         return self._runtime.run(initial_input, output_language=output_language)
 

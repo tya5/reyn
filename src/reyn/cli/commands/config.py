@@ -65,6 +65,7 @@ def _show() -> None:
         "state_dir":       config.state_dir,
         "shell_allowed":   config.shell_allowed,
         "permissions":     config.permissions,
+        "mcp":             config.mcp if config.mcp else "(not configured)",
     }
     print("# Effective config (merged from all sources)")
     print(yaml.dump(effective, allow_unicode=True, default_flow_style=False), end="")

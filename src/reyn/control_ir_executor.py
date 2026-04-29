@@ -40,6 +40,7 @@ class ControlIRExecutor:
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
         skill_name: str = "",
+        mcp_servers: dict | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -49,6 +50,8 @@ class ControlIRExecutor:
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
         self._skill_name = skill_name
+        self._mcp_servers: dict = (mcp_servers or {}).get("servers", {})
+        self._mcp_clients: dict = {}  # server_name → MCPHTTPClient (cached per run)
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor can handle."""
@@ -97,6 +100,18 @@ class ControlIRExecutor:
                 ),
                 example={"kind": "shell", "cmd": "reyn run my_skill 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
+            *([ControlIROpSpec(
+                kind="mcp",
+                description=(
+                    "Call a tool on a configured MCP server (HTTP transport). "
+                    "server: the server name as defined in mcp.servers config. "
+                    "tool: the tool name exposed by that server. "
+                    "args: arguments dict to pass to the tool. "
+                    "Returns: content (text), raw (full MCP result). "
+                    "Phase must declare permissions.mcp: [server_name] to use this op."
+                ),
+                example={"kind": "mcp", "server": "my_tool", "tool": "search", "args": {"query": "hello"}},
+            )] if self._mcp_servers else []),
             ControlIROpSpec(
                 kind="lint",
                 description=(
@@ -169,8 +184,7 @@ class ControlIRExecutor:
                 elif op.kind == "mcp":
                     if self._perm:
                         self._perm.require_mcp(effective_decl, getattr(op, "server", ""))
-                    result = {"kind": "mcp", "status": "skipped", "reason": "handler_not_implemented"}
-                    self.events.emit("control_ir_skipped", kind="mcp")
+                    result = self._execute_mcp(op)  # type: ignore[arg-type]
                 elif op.kind == "tool":
                     if self._perm:
                         self._perm.require_tool(effective_decl, getattr(op, "name", ""))
@@ -477,6 +491,58 @@ class ControlIRExecutor:
             "events_glob": events_glob,
             "artifacts_glob": artifacts_glob,
             "workspace": sub_state_dir,
+        }
+
+    def _execute_mcp(self, op: MCPIROp) -> dict[str, Any]:
+        from .mcp_client import MCPHTTPClient, MCPError, expand_env
+
+        server_cfg = self._mcp_servers.get(op.server)
+        if not server_cfg:
+            return {
+                "kind": "mcp", "status": "error",
+                "error": f"MCP server '{op.server}' is not configured. "
+                         f"Add it under mcp.servers in reyn.yaml or .reyn/config.yaml.",
+            }
+
+        expanded = expand_env(server_cfg)
+        url = expanded.get("url", "")
+        if not url:
+            return {"kind": "mcp", "status": "error",
+                    "error": f"MCP server '{op.server}' has no url configured."}
+
+        headers = {str(k): str(v) for k, v in (expanded.get("headers") or {}).items()}
+
+        if op.server not in self._mcp_clients:
+            self._mcp_clients[op.server] = MCPHTTPClient(url, headers)
+        client = self._mcp_clients[op.server]
+
+        self.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
+        try:
+            result = client.call_tool(op.tool, op.args)
+        except MCPError as exc:
+            self.events.emit("mcp_failed", server=op.server, tool=op.tool, error=str(exc))
+            return {"kind": "mcp", "status": "error", "server": op.server,
+                    "tool": op.tool, "error": str(exc)}
+
+        # Flatten MCP content array to a single text string for the LLM
+        content_items = result.get("content", [])
+        if isinstance(content_items, list):
+            text = "\n".join(
+                item.get("text", "") for item in content_items
+                if isinstance(item, dict) and item.get("type") == "text"
+            )
+        else:
+            text = str(content_items)
+
+        is_error = bool(result.get("isError"))
+        self.events.emit("mcp_completed", server=op.server, tool=op.tool, is_error=is_error)
+        return {
+            "kind": "mcp",
+            "status": "error" if is_error else "ok",
+            "server": op.server,
+            "tool": op.tool,
+            "content": text,
+            "raw": result,
         }
 
     def _execute_web_fetch(self, op: WebFetchIROp) -> dict[str, Any]:
