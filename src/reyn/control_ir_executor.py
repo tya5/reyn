@@ -89,12 +89,12 @@ class ControlIRExecutor:
                     "Runs in the project root directory. "
                     "Use for running sub-processes such as 'reyn run ...'."
                 ),
-                example={"kind": "shell", "cmd": "reyn run ...pp-dsl dsl/apps/foo/app.md --input 'hello'", "timeout": 120},
+                example={"kind": "shell", "cmd": "reyn run my_skill 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
             ControlIROpSpec(
                 kind="lint",
                 description=(
-                    "Run the DSL linter against an app directory and return issues. "
+                    "Run the DSL linter against a skill directory and return issues. "
                     "skill_path: workspace-relative path to the skill directory (e.g. 'reyn/local/my_skill'). "
                     "Returns: passed (bool), error_count, warning_count, issues (list of strings)."
                 ),
@@ -103,9 +103,9 @@ class ControlIRExecutor:
             ControlIROpSpec(
                 kind="run_skill",
                 description=(
-                    "Run a reyn app in-process and return its final output. "
-                    "app: app name (resolved via search path) or path to app.md. "
-                    "input: input artifact dict to pass to the sub-app. "
+                    "Run a reyn skill in-process and return its final output. "
+                    "skill: skill name (resolved via search path) or path to skill.md. "
+                    "input: input artifact dict to pass to the sub-skill. "
                     "model: model class or LiteLLM string (default: inherit from runtime). "
                     "workspace: 'isolated' (default) creates a sub-workspace; 'shared' uses the current workspace. "
                     "Returns: status ('finished'|'loop_limit_exceeded'), final_output (dict), "
