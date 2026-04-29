@@ -2,11 +2,13 @@
 
 ## Skills — Standard library skills
 
-| Skill | Description |
-|-------|-------------|
-| [skill_builder](skills/skill_builder.md) | Generate a new skill from a natural-language description |
-| [skill_improver](skills/skill_improver.md) | Iteratively improve an existing skill against its eval until a score threshold is met |
-| [eval_builder](skills/eval_builder.md) | Auto-generate an eval spec (`eval.md`) for a target skill |
+Each stdlib skill's documentation lives in its own `skill.md` body. Run `reyn skills <name>` to view it from the CLI, or open the source directly:
+
+| Skill | Source |
+|-------|--------|
+| `skill_builder` | [src/stdlib/skills/skill_builder/skill.md](../src/stdlib/skills/skill_builder/skill.md) |
+| `skill_improver` | [src/stdlib/skills/skill_improver/skill.md](../src/stdlib/skills/skill_improver/skill.md) |
+| `eval_builder` | [src/stdlib/skills/eval_builder/skill.md](../src/stdlib/skills/eval_builder/skill.md) |
 
 ## Architecture — Design & internals
 
