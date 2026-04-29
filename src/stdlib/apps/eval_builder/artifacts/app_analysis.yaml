@@ -1,5 +1,5 @@
 name: app_analysis
-description: Structured analysis of a target app's phases, test cases, and evaluation criteria — consumed by write_eval to generate an eval spec.
+description: Structured analysis of a target app's phases, test cases, and per-phase quality criteria — consumed by write_eval to generate an eval spec.
 schema:
   type: object
   properties:
@@ -8,13 +8,10 @@ schema:
       description: Path to the target app's app.md as given by the user.
     dsl_root:
       type: string
-      description: DSL root inferred from app_dsl_path, e.g. "reyn/project/my_app".
+      description: DSL root inferred from app_dsl_path, e.g. "reyn/" or "reyn/local/".
     app_name:
       type: string
       description: The app's name from its app.md frontmatter.
-    judge_model:
-      type: string
-      description: Model class or name to use as LLM judge. Copy verbatim from the ContextFrame model field — do NOT invent a value.
     phase_order:
       type: array
       items:
@@ -38,36 +35,20 @@ schema:
         required: [name, input, rationale]
     phase_eval_designs:
       type: array
-      description: Evaluation criteria per phase.
+      description: Per-phase quality criteria. One entry per phase in phase_order.
       items:
         type: object
         properties:
           phase:
             type: string
             description: Phase name.
-          artifact_type:
-            type: string
-            description: The artifact type this phase produces.
-          schema:
-            type: object
-            description: "JSON Schema object validating the phase's artifact data. Must include at minimum: type, properties. Use standard JSON Schema keywords (required, items, minItems, minimum, maximum, enum, etc.)."
           quality:
             type: array
             items:
               type: string
-            description: LLM-judged criteria for semantic content checks that cannot be expressed as type/value assertions.
-        required: [phase, artifact_type, schema, quality]
-    cross_phase_assertions:
-      type: array
-      items:
-        type: string
-      description: "Equality checks between fields from two phases. Format: \"phase_a.field == phase_b.field\"."
-    final_schema:
-      type: object
-      description: "JSON Schema object validating the app's final_output artifact data. Same format as phase schema."
-    final_quality:
-      type: array
-      items:
-        type: string
-      description: Quality criteria for the app's final_output artifact.
-  required: [app_dsl_path, dsl_root, app_name, judge_model, phase_order, test_cases, phase_eval_designs, cross_phase_assertions, final_schema, final_quality]
+            description: |
+              LLM-judged criteria for this phase's output artifact. Each item is a plain English/Japanese
+              sentence describing what the artifact should contain. Optionally prefix with `[aspirational]`
+              to mark a criterion as informational (excluded from pass/fail).
+        required: [phase, quality]
+  required: [app_dsl_path, dsl_root, app_name, phase_order, test_cases, phase_eval_designs]

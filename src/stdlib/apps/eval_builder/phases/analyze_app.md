@@ -6,18 +6,12 @@ role: eval_designer
 max_act_turns: 20
 ---
 
-Read the target app's DSL files and design evaluation criteria for each phase.
-
-## Step 0 — Note the running model
-
-The ContextFrame `model` field contains the model class name (e.g. `standard`, `light`, `strong`)
-or LiteLLM string currently running this phase.
-Set `judge_model` in your output to that exact value — do NOT invent a model name.
+Read the target app's DSL files and design per-phase quality criteria.
 
 ## Step 1 — Extract app path from user_message
 
 - `app_dsl_path`: the path to the target app's app.md (e.g. "reyn/project/writing_review_app/app.md")
-- `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/")
+- `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/" or "reyn/local/")
 - If the path is missing, use ask_user to request it.
 
 ## Step 2 — Read DSL files
@@ -30,7 +24,7 @@ Use file read/glob ops to collect the app's full DSL:
 4. For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml` or `{dsl_root}shared/artifacts/{name}.md`.
 
 **CRITICAL**: You MUST read every artifact file (`.yaml` or `.md`) before designing criteria.
-All field names in schema assertions MUST come from the `properties` keys you read — never invented.
+Quality criteria reference artifact field semantics — they should match what the artifacts actually contain.
 
 ## Step 3 — Design test cases
 
@@ -42,56 +36,29 @@ The goal is branch coverage: if the app has a rollback path, at least one test c
 
 Each test case `input` must be a complete user_message string.
 
-## Step 4 — Design evaluation criteria
+## Step 4 — Design per-phase quality criteria
 
-### 4a. phase_eval_designs
+`phase_eval_designs` has one entry per phase in `phase_order`. Include ALL phases — even those with `can_finish: true`.
 
-One entry per phase in `phase_order`. Include ALL phases — even those with `can_finish: true`.
+For each phase, write 1–4 `quality` criteria as plain sentences. Each criterion should:
 
-For each phase, split criteria into two kinds:
+- Describe a semantic property the phase's output artifact must satisfy that requires reading content (e.g. "summary describes the app's purpose", "review explicitly lists rejection conditions").
+- Refer to fields that actually exist in the artifact (do not invent field names).
+- Be evaluable by reading the artifact alone — if the criterion needs cross-phase context, omit it.
 
-**schema** — a JSON Schema object (stored as a dict) that validates the artifact's `data` field.
-- Use standard JSON Schema keywords: `type`, `required`, `properties`, `items`, `minItems`, `maxItems`, `minLength`, `maxLength`, `minimum`, `maximum`, `enum`.
-- The schema must be a valid JSON Schema object with at least `type: object` and `properties`.
-- Cover: field existence (`required`), types (`type`), numeric ranges (`minimum`/`maximum`), non-empty arrays (`minItems`), exact expected values (`enum`), nested objects/arrays.
-- Example:
-  ```json
-  {
-    "type": "object",
-    "required": ["score", "label"],
-    "properties": {
-      "score": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-      "label": {"type": "string", "enum": ["approved", "rejected"]},
-      "items": {"type": "array", "minItems": 1, "items": {"type": "string"}}
-    }
-  }
-  ```
+### `[aspirational]` tag
 
-**quality** — LLM-judged content checks. Plain Japanese/English sentence.
-- Use quality ONLY for checks that require reading and understanding content (e.g. "summary describes the app's purpose").
-- Do NOT re-check what schema already covers (existence, type, range).
-- 0–3 quality criteria per phase. Prefer 0–1 when schema covers the structure well.
+Prefix a criterion with `[aspirational]` when it represents a model capability ceiling rather than a fixable bug:
 
-### 4b. cross_phase_assertions
+- Subjective judgments ("is specific", "is detailed") that consistently score below 1.0 even on correct output.
+- "Gold standard" quality bars that go beyond the app's contract.
+- Criteria that are only evaluable when a specific runtime branch fires (e.g. "if rollback is chosen ...") — these cannot be reliably tested without forcing that branch.
 
-List equality checks between fields across phases. Format: `"phase_a.field == phase_b.field"`
-
-Include when:
-- An ID or filename produced in phase A must appear unchanged in phase B (e.g. `write_memo.filename == read_verify.filename`).
-- A name decided in phase A must be reused in phase B (e.g. `plan_app.app_name == build_app.app_name`).
-
-Leave empty if no such relationship exists.
-
-### 4c. final_schema / final_quality
-
-Same rules as 4a, applied to the app's declared `final_output` artifact.
+`[aspirational]` criteria are tracked but excluded from pass/fail.
 
 ## Criteria quality checklist (apply before finishing)
 
-- [ ] Every field name in schema `properties` exists in the artifact `.yaml` I read — no invented fields.
-- [ ] No quality criterion duplicates what the JSON Schema already covers (type, range, enum).
-- [ ] Arrays that must be non-empty use `minItems: 1`.
-- [ ] Boolean verdict fields with an expected value use `enum: [true]` or `enum: [false]`.
-- [ ] Enum fields use `enum: [...]` with the correct allowed values.
-- [ ] cross_phase_assertions covers all "should-be-same" relationships between phases.
-- [ ] Quality criteria that are only evaluable when a specific runtime branch occurs (e.g. "if rollback is chosen...") are tagged `[aspirational]` — they cannot be reliably evaluated without guaranteeing that branch fires.
+- [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I read — no invented fields.
+- [ ] Each criterion is evaluable by reading the phase's output artifact alone.
+- [ ] Criteria that depend on a specific runtime branch firing are tagged `[aspirational]`.
+- [ ] At most 4 criteria per phase; prefer fewer, sharper criteria over many vague ones.

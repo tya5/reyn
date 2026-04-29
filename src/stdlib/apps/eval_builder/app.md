@@ -1,36 +1,34 @@
 ---
 type: app
 name: eval_builder
-description: Auto-generate an eval spec (eval.md) for an app and run it
+description: Auto-generate an eval spec (eval.md) for an app
 entry: analyze_app
-final_output: eval_result
+final_output: eval_spec_result
 final_output_description: |
-  Evaluation results after running the generated eval spec against the target app:
-  overall score, pass/fail counts, and a summary of results.
+  Path to the generated eval.md plus case/criterion counts and a brief summary.
+  The user runs the spec separately with `reyn eval <eval_md_path>`.
 finish_criteria:
-  - eval.md has been written to the workspace
-  - The eval spec has been executed against the target app
-  - eval_result captures the score and pass/fail outcome
+  - eval.md has been written next to the target app's app.md
+  - eval_spec_result captures the path, case count, and criterion count
 graph:
   analyze_app: [write_eval]
 ---
 
 ## Overview
 
-Analyzes a target app's DSL, generates a comprehensive `eval.md` spec with
-test cases and quality criteria, then immediately runs it.
+Reads a target app's DSL files and generates a per-phase quality-criteria
+eval.md spec. Does not run the spec — invoke `reyn eval` separately.
 
 ## Input
 
 ```
-reyn run eval_builder '{"app_dsl_path": "reyn/local/my_app/app.md", "model": "standard"}'
+reyn run eval_builder "Generate an eval.md for reyn/local/my_app/app.md"
 ```
 
 ## Output
 
-Evaluation results from running the generated spec. The eval file is written to
-`reyn/local/<app_name>/eval.md` (alongside the app's DSL files) and can be re-run manually:
+Path to the generated eval.md (alongside the app's DSL files). Run it with:
 
 ```
-reyn eval --spec reyn/local/my_app/eval.md --model standard
+reyn eval reyn/local/my_app/eval.md --model standard
 ```
