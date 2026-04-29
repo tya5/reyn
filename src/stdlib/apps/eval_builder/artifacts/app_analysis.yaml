@@ -16,7 +16,8 @@ schema:
       type: array
       items:
         type: string
-      description: Phase names in execution order, from entry to final can_finish phase.
+      description: |
+        Phase names in execution order. MUST be derived from the app's graph alone — start at the entry phase, follow transitions breadth-first, emit each phase once. Phase files that exist on disk but are NOT reachable via graph transitions (orphan files) MUST be excluded — they will not execute, so generating eval criteria for them produces null artifact_path errors at eval time.
     test_cases:
       type: array
       description: Representative test cases that cover different input scenarios.

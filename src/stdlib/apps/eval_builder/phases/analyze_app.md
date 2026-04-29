@@ -14,19 +14,49 @@ Read the target app's DSL files and design per-phase quality criteria.
 - `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/" or "reyn/local/")
 - If the path is missing, use ask_user to request it.
 
-## Step 2 — Read DSL files
+## Step 2 — Read app.md AND derive phase_order from graph
 
-Use file read/glob ops to collect the app's full DSL:
+Read `{app_dsl_path}`. Extract `entry`, `graph`, and `final_output` from its frontmatter.
 
-1. Read `{app_dsl_path}` → get app name, entry phase, graph, final_output.
-2. Glob `{app_dir}/**/*.md` and `{app_dir}/**/*.yaml` → list all phase and artifact files.
-3. Read each phase `.md` and artifact `.yaml` (or `.md`) file.
-4. For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml` or `{dsl_root}shared/artifacts/{name}.md`.
+**The graph is the SINGLE source of truth for which phases run.** Files on disk under `phases/` that are not referenced by the graph are dead code and MUST be ignored.
 
-**CRITICAL**: You MUST read every artifact file (`.yaml` or `.md`) before designing criteria.
-Quality criteria reference artifact field semantics — they should match what the artifacts actually contain.
+Compute `phase_order` by graph traversal:
 
-## Step 3 — Design test cases
+```
+phase_order = []
+queue = [entry]
+seen = set()
+while queue:
+  p = queue.pop(0)
+  if p in seen: continue
+  seen.add(p); phase_order.append(p)
+  for next_p in graph.get(p, []):
+    queue.append(next_p)
+```
+
+Equivalently: BFS from `entry`, follow outgoing transitions, emit each phase the first time it appears.
+
+Worked example — text_summarizer with `graph: {generate_summary: [review_summary]}` and `entry: generate_summary`:
+- Start: phase_order=[], queue=[generate_summary]
+- Pop generate_summary → seen={generate_summary}, order=[generate_summary], queue=[review_summary]
+- Pop review_summary → seen={generate_summary, review_summary}, order=[generate_summary, review_summary], queue=[]
+- Result: `phase_order = ["generate_summary", "review_summary"]`
+
+Even if `phases/preprocess_text.md` and `phases/summarize_text.md` exist on disk, they are NOT in the graph and are NOT included in phase_order.
+
+## Step 3 — Read phase files (only those in phase_order)
+
+For each phase name in `phase_order`, read `{app_dir}/phases/{phase_name}.md`. Do NOT read or glob other `.md` files in `phases/`.
+
+## Step 4 — Read artifact files
+
+Glob `{app_dir}/artifacts/*.yaml` and read every artifact file. Artifact files do NOT have an "orphan" problem — read them all for context.
+
+For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml`.
+
+**CRITICAL**: You MUST read every artifact file referenced by phases in `phase_order` before designing criteria. Quality criteria reference artifact field semantics.
+
+## Step 5 — Design test cases
 
 Design 1–2 realistic test cases:
 - Case 1: a typical, well-formed input the app is designed to handle.
@@ -36,9 +66,9 @@ The goal is branch coverage: if the app has a rollback path, at least one test c
 
 Each test case `input` must be a complete user_message string.
 
-## Step 4 — Design per-phase quality criteria
+## Step 6 — Design per-phase quality criteria
 
-`phase_eval_designs` has one entry per phase in `phase_order`. Include ALL phases — even those with `can_finish: true`.
+`phase_eval_designs` has EXACTLY one entry per phase in `phase_order` — no more, no less. Entries appear in the same order as `phase_order`.
 
 For each phase, write 1–4 `quality` criteria as plain sentences. Each criterion should:
 
@@ -56,9 +86,11 @@ Prefix a criterion with `[aspirational]` when it represents a model capability c
 
 `[aspirational]` criteria are tracked but excluded from pass/fail.
 
-## Criteria quality checklist (apply before finishing)
+## Final checklist (apply before emitting app_analysis)
 
+- [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of phase files in the directory.
+- [ ] `phase_order` length equals the number of phases reachable from `entry` (typically 2–6, never includes orphan phase files).
+- [ ] `phase_eval_designs` has exactly one entry per `phase_order` phase, in the same order.
 - [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I read — no invented fields.
-- [ ] Each criterion is evaluable by reading the phase's output artifact alone.
 - [ ] Criteria that depend on a specific runtime branch firing are tagged `[aspirational]`.
-- [ ] At most 4 criteria per phase; prefer fewer, sharper criteria over many vague ones.
+- [ ] At most 4 criteria per phase.
