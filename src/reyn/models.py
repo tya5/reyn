@@ -150,14 +150,6 @@ class LintIROp(BaseModel):
     app_path: str              # workspace-relative path to the app directory (e.g. "reyn/local/my_app")
 
 
-class EvalIROp(BaseModel):
-    kind: Literal["eval"]
-    spec_path: str            # workspace-relative path to eval.md
-    model: str
-    judge_model: str | None = None
-    output_language: str = "ja"
-
-
 class RunAppIROp(BaseModel):
     kind: Literal["run_app"]
     app: str                  # app name (resolved via search path) or path to app.md
@@ -168,9 +160,9 @@ class RunAppIROp(BaseModel):
 
 
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", "eval", and "run_app" are implemented; others are safely skipped.
+# "file", "ask_user", "shell", "lint", and "run_app" are implemented; others are safely skipped.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, EvalIROp, RunAppIROp],
+    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunAppIROp],
     Field(discriminator="kind"),
 ]
 

@@ -7,44 +7,65 @@ Format:
   app: dsl/apps/foo/app.md
   dsl_root: dsl/
   model: standard
-  judge_model: standard
   ---
 
   ## case: my_case
   input: "the test input text"
 
   ### phase: analyze_code
-  schema:
-  - field_name: string
-  - score: number, range 0.0-1.0
-  - label: string, equals "approved"
-  - body: string, contains "asyncio"
-  - items: array, min 1
-
   quality:
   - criterion one
-  - criterion two
-
-  ### cross_phase
-  - write_memo.filename == read_verify.filename
+  - [aspirational] criterion two
 
   ### final
-  schema:
-  - output_field: array
-
   quality:
   - criterion three
 """
 from __future__ import annotations
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
 
-from reyn.eval.models import (
-    EvalSpec, EvalCase, PhaseCriteria, CrossPhaseAssertion,
-    QualityCriterion,
-)
+
+@dataclass
+class QualityCriterion:
+    text: str
+    tag: str = "required"  # "required" | "aspirational"
+
+
+@dataclass
+class PhaseCriteria:
+    phase: str | None          # None = "final"
+    schema: dict | None        # kept for backward compat but not used by new eval app
+    criteria: list[QualityCriterion]
+
+
+@dataclass
+class CrossPhaseAssertion:
+    phase_a: str
+    path_a: str
+    op: str
+    phase_b: str
+    path_b: str
+    raw: str
+
+
+@dataclass
+class EvalCase:
+    name: str
+    input: str
+    phase_criteria: list[PhaseCriteria]
+    cross_phase: list[CrossPhaseAssertion] = field(default_factory=list)
+
+
+@dataclass
+class EvalSpec:
+    app_dsl_path: str
+    dsl_root: str | None
+    model: str | None
+    cases: list[EvalCase]
 
 
 def load_eval_spec(spec_path: str | Path) -> EvalSpec:
@@ -76,7 +97,6 @@ def load_eval_spec(spec_path: str | Path) -> EvalSpec:
         app_dsl_path=app_dsl_path,
         dsl_root=fm.get("dsl_root"),
         model=fm.get("model"),
-        judge_model=fm.get("judge_model"),
         cases=cases,
     )
 

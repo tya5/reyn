@@ -17,7 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from .models import AskUserIROp, ControlIROp, ControlIROpSpec, EvalIROp, FileIROp, LintIROp, MCPIROp, RunAppIROp, ShellIROp, ToolIROp
+from .models import AskUserIROp, ControlIROp, ControlIROpSpec, FileIROp, LintIROp, MCPIROp, RunAppIROp, ShellIROp, ToolIROp
 from .workspace import Workspace
 from .events import EventLog
 from .model_resolver import ModelResolver
@@ -99,17 +99,6 @@ class ControlIRExecutor:
                 example={"kind": "lint", "app_path": "reyn/local/my_app"},
             ),
             ControlIROpSpec(
-                kind="eval",
-                description=(
-                    "Run an eval spec against its target app and return scores. "
-                    "spec_path: project-relative path to the eval.md file. "
-                    "model: model class name (e.g. 'standard') or LiteLLM string for running the target app. "
-                    "judge_model: model for LLM-as-judge (defaults to model). "
-                    "Returns: passed (bool), overall_score, passed_criteria, total_criteria, weakest_phase, cases."
-                ),
-                example={"kind": "eval", "spec_path": "eval_specs/my_app/eval.md", "model": "standard"},
-            ),
-            ControlIROpSpec(
                 kind="run_app",
                 description=(
                     "Run a reyn app in-process and return its final output. "
@@ -166,8 +155,6 @@ class ControlIRExecutor:
                     self.events.emit("control_ir_skipped", kind="tool")
                 elif op.kind == "lint":
                     result = self._execute_lint(op)  # type: ignore[arg-type]
-                elif op.kind == "eval":
-                    result = self._execute_eval(op)  # type: ignore[arg-type]
                 elif op.kind == "run_app":
                     result = self._execute_run_app(op)  # type: ignore[arg-type]
                 else:
@@ -270,81 +257,6 @@ class ControlIRExecutor:
             "error_count": error_count,
             "warning_count": warning_count,
             "issues": [str(i) for i in issues],
-        }
-
-    def _execute_eval(self, op: EvalIROp) -> dict[str, Any]:
-        from datetime import datetime, timezone
-        from .compiler.eval_loader import load_eval_spec
-        from .compiler import load_dsl_app
-        from .eval.runner import EvalRunner
-        from .eval.models import EvalRunResult
-
-        # spec_path and app: in eval.md are both CWD-relative (workspace = CWD)
-        spec_full_path = Path(op.spec_path)
-        spec = load_eval_spec(str(spec_full_path))
-
-        app_path = Path(spec.app_dsl_path)
-        dsl_root = Path(spec.dsl_root) if spec.dsl_root else None
-        app = load_dsl_app(app_path, dsl_root=dsl_root)
-
-        model = self._resolver.resolve(op.model)
-        judge_model = self._resolver.resolve(op.judge_model or op.model)
-        eval_state_dir = str(self.workspace.state_dir / "eval_runs")
-
-        runner = EvalRunner(
-            spec=spec,
-            app=app,
-            model=model,
-            judge_model=judge_model,
-            state_dir=eval_state_dir,
-            output_language=op.output_language,
-            app_subscribers=[],
-            resolver=self._resolver,
-        )
-        case_results = [runner.run_case(case) for case in spec.cases]
-
-        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        run_result = EvalRunResult(
-            spec_path=str(spec_full_path),
-            app_name=app.name,
-            model=op.model,
-            judge_model=judge_model,
-            timestamp=ts,
-            case_results=case_results,
-            cost_summary=runner.build_cost_summary(),
-        )
-        # Save full result to .reyn/evals/ (same as CLI)
-        import json as _json
-        evals_dir = self.workspace.state_dir / "evals"
-        evals_dir.mkdir(parents=True, exist_ok=True)
-        result_path = evals_dir / f"{ts}_{app.name}.json"
-        result_path.write_text(
-            _json.dumps(run_result.to_dict(), ensure_ascii=False, indent=2)
-        )
-
-        self.events.emit(
-            "eval_completed",
-            spec_path=op.spec_path,
-            overall_score=run_result.overall_score,
-            passed_criteria=run_result.overall_passed,
-            total_criteria=run_result.overall_total,
-            result_path=str(result_path),
-        )
-        return {
-            "kind": "eval",
-            "status": "ok",
-            "spec_path": op.spec_path,
-            "passed": run_result.overall_score >= 0.6,
-            "overall_score": run_result.overall_score,
-            "passed_criteria": run_result.overall_passed,
-            "total_criteria": run_result.overall_total,
-            "weakest_phase": run_result.weakest_phase() or "",
-            "case_count": len(case_results),
-            "cases": [
-                {"name": cr.case_name, "score": cr.score, "passed": cr.passed, "total": cr.total}
-                for cr in case_results
-            ],
-            "result_path": str(result_path),
         }
 
     def _execute_run_app(self, op: RunAppIROp) -> dict[str, Any]:
