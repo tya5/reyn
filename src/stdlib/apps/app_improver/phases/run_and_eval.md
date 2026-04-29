@@ -42,7 +42,7 @@ Construct the input artifact for the `eval` sub-app from the input `improvement_
 
 Pass `phase_criteria` through verbatim.
 
-## Step 3 — Invoke eval
+## Step 3 — Invoke eval (ONCE)
 
 Issue a `run_app` Control IR op:
 
@@ -55,6 +55,8 @@ Issue a `run_app` Control IR op:
   "workspace": "isolated"
 }
 ```
+
+CRITICAL: Run eval EXACTLY ONCE per visit to this phase. After the first `run_app [finished]` result arrives, proceed to Step 4 — DO NOT issue a second `run_app` op even if you doubt the result. Repeating the eval wastes tokens without producing different output.
 
 If the sub-app aborts (status != "finished"), do NOT abort the improver — produce an iteration_state with `latest_eval.passed = false`, `latest_eval.overall_score = 0.0`, `latest_eval.weakest_phase = "<unknown — eval aborted>"`, and `latest_eval.summary` describing the failure. The improver loop will treat this as a low score and either continue trying or terminate via the regression/stagnation rules.
 
