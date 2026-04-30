@@ -38,6 +38,26 @@ schema:
             type: string
             description: One-line summary of what the skill does.
         required: [name, description]
+    relevant_memories:
+      type: array
+      description: |
+        Memories the recall step pulled in for this turn. Use them to ground
+        your reply (respect known preferences, refer to prior facts about the
+        user). Empty when no memory exists or none were relevant. Don't quote
+        memories verbatim; use them as background knowledge.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: The memory's name.
+          type:
+            type: string
+            description: 'user | feedback | project | reference'
+          content:
+            type: string
+            description: The memory body.
+        required: [name, type, content]
     skill_completion:
       type: object
       description: |

@@ -2,6 +2,8 @@
 from __future__ import annotations
 import argparse
 import asyncio
+import sys
+from pathlib import Path
 
 from ..session import Session
 
@@ -28,17 +30,27 @@ def register(sub) -> None:
 def run(args: argparse.Namespace) -> None:
     from reyn.chat.session import ChatSession
     from reyn.chat.repl import run_repl
+    from reyn.config import _find_project_root
+    from reyn.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
     max_phase_visits = session_cfg.max_phase_visits_for(args)
 
+    perm_config = getattr(session_cfg.config, "permissions", {}) or {}
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=_find_project_root(Path.cwd()),
+        interactive=sys.stdin.isatty(),
+    )
+
     chat = ChatSession(
         chat_id=args.chat_id,
         model=model,
         state_root=session_cfg.config.state_dir,
         resolver=session_cfg.resolver,
+        permission_resolver=perm_resolver,
         max_phase_visits=max_phase_visits,
         mcp_servers=session_cfg.config.mcp,
         output_language=output_language,
