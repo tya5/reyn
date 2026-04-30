@@ -17,6 +17,21 @@ from pathlib import Path
 
 
 @dataclass
+class ChatMemoryConfig:
+    """`chat.memory` section — controls memory recall/extraction in `reyn chat`."""
+    enabled: bool = True
+    turn_threshold: int = 8         # periodic extract: this many new turns AND
+    time_threshold: float = 600.0   # this many seconds since last extract
+    recall_top_k: int = 5           # max memories returned per recall
+
+
+@dataclass
+class ChatConfig:
+    """`chat` section — settings for `reyn chat`."""
+    memory: ChatMemoryConfig = field(default_factory=ChatMemoryConfig)
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     state_dir: str = ".reyn"
@@ -44,6 +59,8 @@ class ReynConfig:
     #         headers:
     #           Authorization: "Bearer ${MY_TOKEN}"
     mcp: dict = field(default_factory=dict)
+    # Chat agent settings (memory thresholds, etc.).
+    chat: ChatConfig = field(default_factory=ChatConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -71,9 +88,35 @@ def _merge(base: dict, override: dict) -> dict:
             existing_servers = existing.get("servers", {}) if isinstance(existing, dict) else {}
             new_servers = val.get("servers", {}) if isinstance(val, dict) else {}
             result["mcp"] = {**existing, "servers": {**existing_servers, **new_servers}}
+        elif key == "chat" and isinstance(val, dict):
+            existing = result.get("chat", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            merged_chat = dict(existing)
+            for sub_key, sub_val in val.items():
+                if sub_key == "memory" and isinstance(sub_val, dict):
+                    merged_chat["memory"] = {**existing.get("memory", {}), **sub_val}
+                else:
+                    merged_chat[sub_key] = sub_val
+            result["chat"] = merged_chat
         else:
             result[key] = val
     return result
+
+
+def _build_chat_config(raw: object) -> ChatConfig:
+    if not isinstance(raw, dict):
+        return ChatConfig()
+    mem_raw = raw.get("memory") or {}
+    if not isinstance(mem_raw, dict):
+        mem_raw = {}
+    defaults = ChatMemoryConfig()
+    return ChatConfig(memory=ChatMemoryConfig(
+        enabled=bool(mem_raw.get("enabled", defaults.enabled)),
+        turn_threshold=int(mem_raw.get("turn_threshold", defaults.turn_threshold)),
+        time_threshold=float(mem_raw.get("time_threshold", defaults.time_threshold)),
+        recall_top_k=int(mem_raw.get("recall_top_k", defaults.recall_top_k)),
+    ))
 
 
 def _find_project_root(start: Path) -> Path | None:
@@ -115,4 +158,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         permissions=dict(merged.get("permissions") or {}),
         max_phase_visits=int(merged.get("max_phase_visits", 25)),
         mcp=dict(merged.get("mcp") or {}),
+        chat=_build_chat_config(merged.get("chat")),
     )

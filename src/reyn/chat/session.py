@@ -86,6 +86,10 @@ class ChatSession:
         mcp_servers: dict | None = None,
         output_language: str = "ja",
         history_window: int = 12,
+        memory_enabled: bool = True,
+        memory_turn_threshold: int = 8,
+        memory_time_threshold: float = 600.0,
+        memory_recall_top_k: int = 5,
     ) -> None:
         self.chat_id = chat_id or _new_chat_id()
         self.model = model
@@ -95,6 +99,10 @@ class ChatSession:
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self.history_window = history_window
+        self._memory_enabled = memory_enabled
+        self._memory_turn_threshold = memory_turn_threshold
+        self._memory_time_threshold = memory_time_threshold
+        self._memory_recall_top_k = memory_recall_top_k
 
         self._state_root = Path(state_root)
         self.workspace_dir = self._state_root / "chats" / self.chat_id
@@ -160,7 +168,11 @@ class ChatSession:
         # so new triggers can fire.
         if self._journal.in_progress:
             self._journal.mark_aborted()
-        if should_extract(len(self.history), self._journal, reason="startup"):
+        if should_extract(
+            len(self.history), self._journal, reason="startup",
+            turn_threshold=self._memory_turn_threshold,
+            time_threshold=self._memory_time_threshold,
+        ):
             self._spawn_extraction(reason="startup")
 
         try:
@@ -173,7 +185,11 @@ class ChatSession:
                     continue
                 if kind == "user":
                     await self._handle_user_message(text)
-                    if should_extract(len(self.history), self._journal, reason="periodic"):
+                    if should_extract(
+                        len(self.history), self._journal, reason="periodic",
+                        turn_threshold=self._memory_turn_threshold,
+                        time_threshold=self._memory_time_threshold,
+                    ):
                         self._spawn_extraction(reason="periodic")
         finally:
             for t in self.running_skills.values():
@@ -181,7 +197,11 @@ class ChatSession:
             if self.running_skills:
                 await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
             # Block on shutdown extraction so memory is captured before exit.
-            if should_extract(len(self.history), self._journal, reason="shutdown"):
+            if should_extract(
+                len(self.history), self._journal, reason="shutdown",
+                turn_threshold=self._memory_turn_threshold,
+                time_threshold=self._memory_time_threshold,
+            ):
                 await self._extract_now(reason="shutdown")
             else:
                 # Drain any background extraction still running.
@@ -228,7 +248,7 @@ class ChatSession:
 
     async def _recall_memories(self, query: str) -> list[dict]:
         """Run recall_memory and return relevant memory dicts (or [] on failure)."""
-        if not query.strip():
+        if not self._memory_enabled or not query.strip():
             return []
         scope_dirs = self._memory_scope_dirs()
         recent = [
@@ -256,6 +276,7 @@ class ChatSession:
                     "query": query,
                     "recent_history": recent,
                     "scope_dirs": scope_dirs,
+                    "top_k": self._memory_recall_top_k,
                 },
             }, output_language=self.output_language)
         except Exception as exc:
@@ -273,6 +294,8 @@ class ChatSession:
 
     def _spawn_extraction(self, reason: str) -> None:
         """Fire a background extraction. Skips if one is already pending."""
+        if not self._memory_enabled:
+            return
         # Skip overlapping spawns: if a task is already in-flight, ignore.
         active = {k: t for k, t in self._extraction_tasks.items() if not t.done()}
         self._extraction_tasks = active
@@ -283,6 +306,8 @@ class ChatSession:
 
     async def _extract_now(self, reason: str) -> None:
         """Run write_memory over the unprocessed conversation segment."""
+        if not self._memory_enabled:
+            return
         history_count = len(self.history)
         if history_count <= self._journal.last_extracted_msg_count and reason != "manual":
             return
@@ -336,26 +361,29 @@ class ChatSession:
             return
 
         actions = result.data.get("actions") or []
-        creates = sum(1 for a in actions if a.get("op") == "create")
-        updates = sum(1 for a in actions if a.get("op") == "update")
-        deletes = sum(1 for a in actions if a.get("op") == "delete")
+        created = [a.get("name") for a in actions if a.get("op") == "create" and a.get("name")]
+        updated = [a.get("name") for a in actions if a.get("op") == "update" and a.get("name")]
+        deleted = [a.get("name") for a in actions if a.get("op") == "delete" and a.get("name")]
         self._journal.mark_finished(history_count, _time.time())
         self._chat_events.emit(
             "memory_extraction_completed",
             reason=reason,
-            creates=creates,
-            updates=updates,
-            deletes=deletes,
+            creates=len(created),
+            updates=len(updated),
+            deletes=len(deleted),
+            created_names=created,
+            updated_names=updated,
+            deleted_names=deleted,
         )
-        if creates or updates or deletes:
-            parts = []
-            if creates:
-                parts.append(f"{creates} created")
-            if updates:
-                parts.append(f"{updates} updated")
-            if deletes:
-                parts.append(f"{deletes} deleted")
-            await self.outbox.put(("status", f"memory: {', '.join(parts)}"))
+        if created or updated or deleted:
+            parts: list[str] = []
+            if created:
+                parts.append(f"created [{', '.join(created)}]")
+            if updated:
+                parts.append(f"updated [{', '.join(updated)}]")
+            if deleted:
+                parts.append(f"deleted [{', '.join(deleted)}]")
+            await self.outbox.put(("status", f"memory: {' · '.join(parts)}"))
         else:
             await self.outbox.put(("status", "memory: 新規記憶なし"))
 
