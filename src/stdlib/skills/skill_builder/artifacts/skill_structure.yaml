@@ -45,6 +45,30 @@ schema:
           can_finish:
             type: boolean
             description: True if this phase may end the workflow.
+          preprocessor:
+            type: array
+            description: |
+              Optional deterministic steps that run BEFORE the LLM call.
+              Use only `type: python` here; output_schema is filled in by
+              design_artifacts (here we only need module/function/into).
+            items:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: [python]
+                module:
+                  type: string
+                  description: Skill-dir-relative path to a .py file in `python_modules`.
+                function:
+                  type: string
+                into:
+                  type: string
+                mode:
+                  type: string
+                  enum: [pure, trusted]
+                  description: Default "pure". Use "trusted" only when justified.
+              required: [type, module, function, into]
         required: [name, role, input_artifact, instructions]
     transitions:
       type: array
@@ -101,6 +125,26 @@ schema:
             type: string
             description: Full GitHub URL of the server repository.
         required: [name, purpose]
+    python_modules:
+      type: array
+      description: |
+        Python files to write under the skill directory. Plan a module
+        whenever any phase declares a `python` preprocessor step. Each
+        module's source must define every function the phases reference.
+        Empty if the skill uses no python preprocessor.
+      items:
+        type: object
+        properties:
+          path:
+            type: string
+            description: Skill-dir-relative path, e.g. "./preprocessing.py".
+          source:
+            type: string
+            description: |
+              Full Python source. Functions must take `(artifact: dict)` and
+              return JSON-serializable values. In pure mode, only the stdlib
+              allowlist is importable.
+        required: [path, source]
     lint_issues:
       type: array
       items:

@@ -131,3 +131,60 @@ final_output:
 - Review phase instructions MUST specify: what criteria to evaluate, and when to approve vs. request revision
 - Review phase instructions MUST include: "If rejected, emit `control.type='rollback'` with a reason explaining what to fix."
 - CRITICAL — the artifact a review phase receives must contain all information needed to make an informed judgment. Design the intermediate artifact so the reviewer is self-contained — do not assume it can infer context from prior phases.
+
+---
+
+## Step 4 — Identify deterministic computations (python preprocessor)
+
+Before locking the plan, scan each phase's instructions for tasks where
+**Python is genuinely better than the LLM**:
+
+- Counting (chars, lines, tokens, items in a collection)
+- Parsing (JSON, YAML, CSV, regex extraction, URL components, datetimes)
+- Format conversion (encoding, units, timezones, hashing)
+- Numerical work (statistics, sorting, scoring)
+- Strict validation (regex match, schema check beyond JSON Schema)
+
+If a phase needs any of these as a sub-task, declare a **`python` preprocessor
+step** for that phase. The Python function runs deterministically before the
+LLM call; its output is injected into the artifact and the LLM trusts it
+verbatim — much more accurate than asking the LLM to count or parse.
+
+For each such phase, populate its `preprocessor` array:
+
+```yaml
+preprocessor:
+  - type: python
+    module: ./preprocessing.py     # all phases share one .py is fine
+    function: compute_stats
+    into: data.stats               # appears in artifact at this path
+    mode: pure                     # default; "trusted" only when justified
+```
+
+And add a corresponding entry to the top-level `python_modules` array with
+the source code of `./preprocessing.py`. One module file can host any number
+of functions.
+
+### When to NOT use python
+
+- Tasks the LLM does fine: short text generation, summarization, classification,
+  judgment calls, multi-step reasoning, anything language-shaped
+- Trivial computations the LLM rarely gets wrong (1-2 word checks, simple
+  if-then-else)
+- One-off transformations only used inside a single phase's prompt — easier to
+  let the LLM do it inline
+
+### Pure vs trusted
+
+Default to `mode: pure`. The function then can only import the stdlib
+allowlist (math, statistics, json, re, datetime, hashlib, collections, etc.;
+random and time are allowed). Choose `trusted` only when:
+- A specific 3rd-party library is essential and not on the user's
+  `python.allowed_modules` list
+- File / network I/O is required for the computation
+
+`trusted` mode requires the user to pass `--allow-untrusted-python` at
+runtime — flag this in `notes` if your design uses it, so the user knows.
+
+If you are unsure, leave `preprocessor: []` and let the LLM handle it. The
+build is correct without python; python just makes some skills better.

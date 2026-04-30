@@ -38,4 +38,37 @@ Schema design principles:
 - **Final output artifacts**: contain the deliverable the user receives. If the workflow approves content, include the skillroved content itself plus any required verdict fields (e.g. `status: "approved"`).
 - Keep schemas focused: prefer fewer, well-named fields over many redundant ones.
 
-Output a complete `skill_plan` carrying over all fields from the input, with `schema` added to each artifact and to `final_output`. Set `review_notes` to empty string.
+## Step 2 — Design preprocessor output_schemas
+
+Walk every phase that has a non-empty `preprocessor` array. For each
+`type: python` step, produce an `output_schema` describing the function's
+return value:
+
+- Always use `type: object` with explicit `properties` and `required`
+- The schema is what the LLM sees as the enriched artifact at the step's
+  `into` path; design it so the LLM can use the values without further
+  inference
+- Match the function's actual return — the runtime validates the value
+  with this schema and fails the phase if it diverges
+
+Example for a `compute_text_stats` function returning counts:
+
+```yaml
+output_schema:
+  type: object
+  properties:
+    char_count:        {type: integer, minimum: 0}
+    line_count:        {type: integer, minimum: 0}
+    estimated_tokens:  {type: integer, minimum: 1}
+  required: [char_count, line_count, estimated_tokens]
+```
+
+If a phase has no preprocessor (or no python step within it), skip — leave
+the preprocessor array as plan_skill produced it.
+
+`python_modules` is carried forward from the input unchanged; design_artifacts
+does not modify the source code, only the schemas.
+
+## Step 3 — Output
+
+Output a complete `skill_plan` carrying over all fields from the input, with `schema` added to each artifact and to `final_output`, and `output_schema` added to each python preprocessor step. Set `review_notes` to empty string.

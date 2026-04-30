@@ -100,12 +100,30 @@ input: {input_artifact}
 role: {role}
 model_class: {model_class}
 can_finish: true
+preprocessor:
+  - type: python
+    module: {step.module}
+    function: {step.function}
+    into: {step.into}
+    output_schema:
+      {step.output_schema as inline YAML}
+permissions:
+  python:
+    - module: {step.module}
+      function: {step.function}
+      mode: {step.mode}
+      timeout: {step.timeout}
 ---
 
 {instructions text verbatim}
 ```
 Omit `can_finish` line if the phase cannot finish.
 Omit `model_class` line if the phase should use the runtime default (standard).
+Omit `preprocessor` and `permissions` blocks entirely when the phase has no
+preprocessor steps. When present, **each preprocessor python step MUST have a
+matching permissions.python entry** (same module + function); without it the
+runtime will raise PermissionError on first call. Default `mode: pure` and
+`timeout: 30` if the plan didn't specify them.
 
 For review phases: instructions MUST contain both:
 1. The specific criteria to evaluate (faithfulness, completeness, quality, etc.)
@@ -133,12 +151,31 @@ Always include `type: object`, `properties`, `required`, and a `description` on 
 Use the schema exactly as defined in data.artifacts[].schema and data.final_output.schema.
 Artifact files are plain YAML — no frontmatter delimiters.
 
+python module file (write to {skill_path}/{python_module.path}):
+
+If `data.python_modules` is non-empty, write each entry as a plain Python
+file. The `path` is skill-dir-relative (e.g. `./preprocessing.py` →
+`{skill_path}/preprocessing.py`). The `source` is written verbatim with no
+frontmatter, no wrapping. Make sure trailing newline is present.
+
+```python
+{python_module.source}
+```
+
+Sanity checks before writing python modules:
+- Each `module` referenced in any phase's preprocessor MUST appear in
+  `data.python_modules`. If not, STOP and rollback — the plan is broken.
+- Each `function` referenced must exist as a top-level `def` in the module's
+  source. Skim the source to confirm before writing.
+
 IMPORTANT: Write ALL artifact files — including the final_output artifact.
 Checklist before finishing:
 - skill.md written
-- one phase file per phase in data.phases
+- one phase file per phase in data.phases (with preprocessor + permissions
+  blocks when the phase has python steps)
 - one artifact file per artifact in data.artifacts (all fields have descriptions and explicit types)
 - one artifact file for data.final_output (using data.final_output.name as filename)
+- one python file per entry in data.python_modules (when non-empty)
 - every phase's `input:` field resolves to either a written artifact file, `user_message` (stdlib), or data.final_output.name — if any phase's input is missing, STOP and write the missing artifact file before proceeding
 
 Write all files using one op per file. Once all files are written, finish with a `build_result` artifact:
