@@ -44,6 +44,27 @@ For each phase, decide:
   for the entry phase
 - `can_finish` — true only on the last phase
 
+### Optional: python preprocessor
+
+If the source explicitly describes deterministic computation that the LLM
+would otherwise have to perform unreliably — counting, parsing, regex
+extraction, format conversion, hashing, statistics — and the source's
+intent makes it clear this *should* be precise, consider adding a `python`
+preprocessor step to the relevant phase. Examples worth converting:
+
+- "count the words", "split into 3 sections", "extract email addresses"
+- "compute the SHA-256", "estimate token count", "parse the ISO timestamp"
+- "validate the input is a valid URL"
+
+Stay conservative — Anthropic skills are written for LLM-only execution,
+so the original author didn't ask for Python. **Only add a python step
+when the source clearly calls for deterministic precision** and the LLM
+would otherwise be unreliable. Default to NOT adding python; let the user
+run skill_improver later if eval reveals a need.
+
+When you do add python, also write a small `./preprocessing.py` next to
+`skill.md` with the function definitions (Step 4 covers the file write).
+
 ## Step 3 — Decide skill identity
 
 From the source's frontmatter (or the registry candidate name) derive:
@@ -116,6 +137,50 @@ can_finish: <true|false>
 
 <phase instructions, lifted/condensed from the source>
 ```
+
+If the phase has a python preprocessor (per Step 2's decision), include
+`preprocessor` and `permissions.python` blocks in the frontmatter:
+
+```yaml
+---
+type: phase
+name: <phase_name>
+input: <input_artifact_name>
+preprocessor:
+  - type: python
+    module: ./preprocessing.py
+    function: <function_name>
+    into: data.<field>
+    output_schema:
+      type: object
+      properties:
+        <field>: {type: <type>}
+      required: [<field>]
+permissions:
+  python:
+    - module: ./preprocessing.py
+      function: <function_name>
+      mode: pure
+---
+```
+
+### `reyn/local/<slug>/preprocessing.py` (only if needed)
+
+When you added python preprocessor steps in Step 2, write the function
+definitions here. Plain Python file, no frontmatter:
+
+```python
+def <function_name>(artifact: dict) -> dict:
+    # deterministic computation, stdlib only (pure mode)
+    ...
+    return {...}
+```
+
+Stick to the stdlib (math, statistics, json, re, datetime, hashlib,
+collections, etc.) — pure mode rejects other imports. If the source
+absolutely needs a 3rd-party library, declare `mode: trusted` in the
+phase frontmatter and add a note in the `## Source` section that the
+user must `reyn run --allow-untrusted-python` for this skill to work.
 
 ### `reyn/local/<slug>/artifacts/<art>.yaml` (only if needed)
 
