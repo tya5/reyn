@@ -88,6 +88,7 @@ class ChatSession:
         output_language: str = "ja",
         history_window: int = 12,
         memory_enabled: bool = True,
+        memory_global_enabled: bool = False,
         memory_turn_threshold: int = 8,
         memory_time_threshold: float = 600.0,
         memory_recall_top_k: int = 5,
@@ -101,6 +102,7 @@ class ChatSession:
         self.output_language = output_language
         self.history_window = history_window
         self._memory_enabled = memory_enabled
+        self._memory_global_enabled = memory_global_enabled
         self._memory_turn_threshold = memory_turn_threshold
         self._memory_time_threshold = memory_time_threshold
         self._memory_recall_top_k = memory_recall_top_k
@@ -300,10 +302,12 @@ class ChatSession:
     # ── memory recall ───────────────────────────────────────────────────────────
 
     def _memory_scope_dirs(self) -> list[str]:
-        """Absolute paths to global + per-project memory dirs."""
-        gm = global_memory_dir()
-        pm = project_memory_dir(self._state_root)
-        return [str(gm), str(pm)]
+        """Absolute paths to memory dirs in scope. Global is opt-in via
+        chat.memory.global_enabled; project scope is always included."""
+        dirs = [str(project_memory_dir(self._state_root))]
+        if self._memory_global_enabled:
+            dirs.insert(0, str(global_memory_dir()))
+        return dirs
 
     async def _recall_memories(self, query: str) -> list[dict]:
         """Run recall_memory and return relevant memory dicts (or [] on failure)."""
@@ -369,10 +373,13 @@ class ChatSession:
             await self.outbox.put(("status", "memory: 抽出する新しい発言はありません"))
             return
 
-        scope_dirs = [
-            {"path": str(global_memory_dir()), "scope": "global"},
+        scope_dirs: list[dict] = [
             {"path": str(project_memory_dir(self._state_root)), "scope": "project"},
         ]
+        if self._memory_global_enabled:
+            scope_dirs.insert(
+                0, {"path": str(global_memory_dir()), "scope": "global"},
+            )
 
         self._journal.mark_started()
         await self.outbox.put(("status", f"memory: 抽出中... ({reason})"))

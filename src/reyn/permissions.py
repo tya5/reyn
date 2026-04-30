@@ -307,6 +307,24 @@ class PermissionResolver:
     def _is_path_approved(self, path: str, skill_name: str) -> bool:
         return self._is_path_approved_for(path, skill_name, "file.write")
 
+    def session_approve_path(
+        self, path: str, skill_name: str, kind: str, recursive: bool = False,
+    ) -> None:
+        """Mark `path` as approved for this session only (not persisted).
+
+        Used to suppress startup_guard prompts for paths a stdlib skill declares
+        but won't actually access — e.g. recall_memory's `~/.reyn/memory` when
+        chat is configured with `global_enabled: false` and global scope is
+        excluded from scope_dirs at the call site.
+
+        kind: "file.read" or "file.write". When recursive=True the approval
+        covers the directory and everything beneath it.
+        """
+        p = str(_expand(path))
+        if recursive:
+            p = p.rstrip("/") + "/"
+        self._session[f"{skill_name}/{kind}/{p}"] = True
+
     def _prompt_file_access(self, path: str, scope: str, skill_name: str, kind: str) -> bool:
         """Prompt the user to approve a file access. Returns True if approved.
 

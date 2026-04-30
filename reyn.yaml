@@ -22,3 +22,12 @@ limits:
   phase:
     max_visits: 25         # cap per phase per run; 0 = unlimited (--max-phase-visits)
     max_wall_seconds: 0    # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
+
+# `reyn chat` settings
+chat:
+  memory:
+    enabled: true          # recall + extract memories during chat
+    # Cross-project memory under ~/.reyn/memory. Off by default — outside the
+    # project root, so enabling triggers permission prompts at chat startup.
+    # Project-scope memory under ./.reyn/memory is always available.
+    global_enabled: false

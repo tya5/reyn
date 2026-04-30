@@ -47,10 +47,22 @@ Both knobs are configured in `reyn.yaml`:
 chat:
   memory:
     enabled: true
+    global_enabled: false   # opt in to ~/.reyn/memory (cross-project)
     turn_threshold: 4
     time_threshold: 600
     recall_top_k: 5
 ```
+
+### Memory scopes
+
+Memory lives in two places:
+
+| Scope | Path | Default |
+|-------|------|---------|
+| Project | `./.reyn/memory/` | always on (under CWD, no permission prompt) |
+| Global | `~/.reyn/memory/` | **off** — set `chat.memory.global_enabled: true` to enable |
+
+Global memory persists facts across projects (e.g. `User Role`, long-running preferences). Because `~/.reyn/` is outside the project root, enabling it triggers a one-time permission prompt at chat startup; the approval is persisted to `.reyn/approvals.yaml`.
 
 ## Permission behavior
 
