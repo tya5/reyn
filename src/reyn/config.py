@@ -32,6 +32,15 @@ class ChatConfig:
 
 
 @dataclass
+class PythonConfig:
+    """`python` section — settings for the python preprocessor step."""
+    # Modules that user code may import in pure mode in addition to the
+    # stdlib allowlist. Curate carefully: libraries that internally do I/O
+    # (pandas.read_csv, requests, etc.) defeat pure-mode sandboxing.
+    allowed_modules: list[str] = field(default_factory=list)
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     state_dir: str = ".reyn"
@@ -61,6 +70,8 @@ class ReynConfig:
     mcp: dict = field(default_factory=dict)
     # Chat agent settings (memory thresholds, etc.).
     chat: ChatConfig = field(default_factory=ChatConfig)
+    # Python preprocessor step settings.
+    python: PythonConfig = field(default_factory=PythonConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -119,6 +130,15 @@ def _build_chat_config(raw: object) -> ChatConfig:
     ))
 
 
+def _build_python_config(raw: object) -> PythonConfig:
+    if not isinstance(raw, dict):
+        return PythonConfig()
+    modules = raw.get("allowed_modules") or []
+    if not isinstance(modules, list):
+        modules = []
+    return PythonConfig(allowed_modules=[str(m) for m in modules])
+
+
 def _find_project_root(start: Path) -> Path | None:
     """Walk up from start until finding reyn.yaml, or return None."""
     current = start.resolve()
@@ -159,4 +179,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         max_phase_visits=int(merged.get("max_phase_visits", 25)),
         mcp=dict(merged.get("mcp") or {}),
         chat=_build_chat_config(merged.get("chat")),
+        python=_build_python_config(merged.get("python")),
     )

@@ -180,6 +180,7 @@ class OSRuntime:
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
         mcp_servers: dict | None = None,
+        python_allowed_modules: list[str] | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -212,6 +213,8 @@ class OSRuntime:
             resolver=self._resolver,
             state_dir=state_dir,
             max_phase_visits=max_phase_visits,
+            permission_resolver=permission_resolver,
+            python_allowed_modules=python_allowed_modules,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}

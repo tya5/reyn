@@ -80,6 +80,22 @@ def _in_default_read_zone(path_str: str) -> bool:
 
 
 @dataclass
+class PythonPermission:
+    """Per-(module, function) permission for a python preprocessor step.
+
+    Declared in a phase's frontmatter `permissions.python: [{...}]` block.
+    `pure` mode is sandboxed (AST + restricted builtins, see _python_harness);
+    `trusted` requires --allow-untrusted-python at runtime AND startup-guard
+    approval. `timeout` is wall-clock seconds; the parent SIGKILLs the child
+    when it elapses.
+    """
+    module: str
+    function: str
+    mode: str = "pure"   # "pure" | "trusted"
+    timeout: int = 30
+
+
+@dataclass
 class PermissionDecl:
     """Permissions declared in a phase's frontmatter `permissions:` block."""
 
@@ -91,6 +107,8 @@ class PermissionDecl:
     # Write-class ops (write, edit, delete) outside the default zone.
     # Each entry: {"path": str, "scope": "just_path" | "recursive"}
     file_write: list[dict] = field(default_factory=list)
+    # Python preprocessor steps the phase intends to run.
+    python: list[PythonPermission] = field(default_factory=list)
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -109,6 +127,31 @@ class PermissionDecl:
                 })
         return out
 
+    @staticmethod
+    def _parse_python_list(raw: object) -> list[PythonPermission]:
+        if not raw:
+            return []
+        if not isinstance(raw, list):
+            raw = [raw]
+        out: list[PythonPermission] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            module = str(item.get("module", ""))
+            function = str(item.get("function", ""))
+            if not module or not function:
+                continue
+            mode = str(item.get("mode", "pure"))
+            if mode not in ("pure", "trusted"):
+                raise ValueError(
+                    f"permissions.python: mode must be 'pure' or 'trusted', got {mode!r}"
+                )
+            timeout = int(item.get("timeout", 30))
+            out.append(PythonPermission(
+                module=module, function=function, mode=mode, timeout=timeout,
+            ))
+        return out
+
     @classmethod
     def from_dict(cls, d: dict | None) -> "PermissionDecl":
         if not d:
@@ -119,6 +162,7 @@ class PermissionDecl:
             tool=_normalize_paths(d.get("tool")),
             file_read=cls._parse_path_list(d.get("file.read")),
             file_write=cls._parse_path_list(d.get("file.write")),
+            python=cls._parse_python_list(d.get("python")),
         )
 
 
@@ -141,6 +185,7 @@ class PermissionResolver:
         config_permissions: dict,
         project_root: Path | None = None,
         interactive: bool = True,
+        trusted_python_allowed: bool = False,
     ) -> None:
         self._config = config_permissions or {}
         self._project_root = (project_root or Path.cwd()).resolve()
@@ -148,6 +193,7 @@ class PermissionResolver:
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
         self._saved: dict[str, bool] = self._load_saved()
+        self._trusted_python_allowed = trusted_python_allowed
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -347,7 +393,39 @@ class PermissionResolver:
                     read_seen.add(key)
                     read_requests.append({"path": path, "scope": scope, "phase": phase_name})
 
-        if not (write_requests or read_requests):
+        # Python preprocessor steps — both pure and trusted require approval.
+        # Trusted additionally needs trusted_python_allowed (checked here so the
+        # user is told why their startup is being aborted before any prompts fire).
+        python_requests: list[dict] = []
+        python_seen: set[tuple] = set()
+        for phase_name, phase in skill.phases.items():
+            for entry in phase.permissions.python:
+                key = (entry.module, entry.function)
+                if key in python_seen:
+                    continue
+                python_seen.add(key)
+                kind = "python.trusted" if entry.mode == "trusted" else "python.pure"
+                if self._is_config_approved(kind):
+                    continue
+                approval_key = f"{skill_name}/{kind}/{entry.module}:{entry.function}"
+                if approval_key in self._saved or approval_key in self._session:
+                    continue
+                python_requests.append({
+                    "module": entry.module, "function": entry.function,
+                    "mode": entry.mode, "phase": phase_name,
+                })
+
+        # Hard-fail before prompting if a trusted step appears without the flag.
+        for req in python_requests:
+            if req["mode"] == "trusted" and not self._trusted_python_allowed:
+                raise PermissionError(
+                    f"Skill '{skill_name}' phase '{req['phase']}' declares a trusted "
+                    f"python step ({req['module']}:{req['function']}) but "
+                    f"--allow-untrusted-python was not provided. Re-run with the flag "
+                    f"to enable trusted-mode Python preprocessor steps."
+                )
+
+        if not (write_requests or read_requests or python_requests):
             return
 
         if read_requests:
@@ -365,6 +443,44 @@ class PermissionResolver:
             print()
             for req in write_requests:
                 self._prompt_file_access(req["path"], req["scope"], skill_name, "file.write")
+
+        if python_requests:
+            print(f"\n  Skill '{skill_name}' requests Python preprocessor steps:")
+            for req in python_requests:
+                print(
+                    f"    • {req['module']}:{req['function']}  [{req['mode']}]  "
+                    f"(phase: {req['phase']})"
+                )
+            print()
+            for req in python_requests:
+                kind = "python.trusted" if req["mode"] == "trusted" else "python.pure"
+                key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
+                self._prompt_python(key, req["module"], req["function"], req["mode"])
+
+    def _prompt_python(self, key: str, module: str, function: str, mode: str) -> bool:
+        """Approve a python step at startup; persist on yes."""
+        verb = "TRUSTED" if mode == "trusted" else "pure"
+        prompt = (
+            f"  Python step ({verb}): {module}:{function}\n"
+            f"  [y]es (this run) / [A]lways / [N]o: "
+        )
+        if not self._interactive:
+            self._session[key] = False
+            return False
+        try:
+            ans = input(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            self._session[key] = False
+            return False
+        if ans in ("y", "yes"):
+            self._session[key] = True
+            return True
+        if ans == "A":
+            self._persist(key, True)
+            return True
+        self._session[key] = False
+        return False
 
     # ── Public check methods ──────────────────────────────────────────────────
 
@@ -436,6 +552,54 @@ class PermissionResolver:
             )
         if not self._approve(f"mcp.{server}", f"MCP server: {server!r}"):
             raise PermissionError(f"MCP server {server!r} access denied")
+
+    def require_python(
+        self, decl: PermissionDecl, module: str, function: str,
+        skill_name: str = "",
+    ) -> PythonPermission:
+        """Resolve which python permission entry applies; raise if denied.
+
+        Lookup is by (module, function). Pure-mode steps need a one-time
+        startup_guard approval (saved per skill+module:function). Trusted-mode
+        steps additionally require trusted_python_allowed=True (set by the
+        --allow-untrusted-python CLI flag).
+        """
+        matching = [
+            p for p in decl.python
+            if p.module == module and p.function == function
+        ]
+        if not matching:
+            raise PermissionError(
+                f"python step {module}:{function} is not declared in phase permissions. "
+                f"Add to the phase frontmatter:\n"
+                f"  permissions:\n"
+                f"    python:\n"
+                f"      - module: {module}\n"
+                f"        function: {function}\n"
+                f"        mode: pure"
+            )
+        perm = matching[0]
+        if perm.mode == "trusted":
+            if not self._trusted_python_allowed:
+                raise PermissionError(
+                    f"python step {module}:{function} declares mode='trusted' "
+                    f"but --allow-untrusted-python was not provided. "
+                    f"Trusted python runs unrestricted user code; pass the flag "
+                    f"only when you trust the skill source."
+                )
+            key = f"{skill_name}/python.trusted/{module}:{function}"
+            if not self._approve(key, f"trusted python step: {module}:{function}"):
+                raise PermissionError(
+                    f"trusted python step {module}:{function} denied by user"
+                )
+            return perm
+        # pure mode
+        key = f"{skill_name}/python.pure/{module}:{function}"
+        if not self._approve(key, f"pure python step: {module}:{function}"):
+            raise PermissionError(
+                f"pure python step {module}:{function} denied by user"
+            )
+        return perm
 
     def require_tool(self, decl: PermissionDecl, tool: str) -> None:
         if tool not in decl.tool:

@@ -22,6 +22,7 @@ class Agent:
         permission_resolver: PermissionResolver | None = None,
         max_phase_visits: int = 25,
         mcp_servers: dict | None = None,
+        python_allowed_modules: list[str] | None = None,
     ) -> None:
         self.model = model
         self.state_dir = state_dir
@@ -33,6 +34,7 @@ class Agent:
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
         self._mcp_servers = mcp_servers
+        self._python_allowed_modules = list(python_allowed_modules or [])
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -53,6 +55,7 @@ class Agent:
             permission_resolver=self._permission_resolver,
             max_phase_visits=self._max_phase_visits,
             mcp_servers=self._mcp_servers,
+            python_allowed_modules=self._python_allowed_modules,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

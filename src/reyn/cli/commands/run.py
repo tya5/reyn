@@ -67,6 +67,12 @@ def register(sub) -> None:
                        "Required for meta-apps that invoke sub-processes (e.g. app_improver). "
                        "Off by default for safety."
                    ))
+    p.add_argument("--allow-untrusted-python", dest="allow_untrusted_python",
+                   action="store_true",
+                   help=(
+                       "Enable trusted-mode Python preprocessor steps (no AST sandboxing). "
+                       "Pure-mode python steps run without this flag. Off by default."
+                   ))
     p.set_defaults(func=run)
 
 
@@ -82,7 +88,10 @@ def run(args: argparse.Namespace) -> None:
     shell_allowed = session.shell_allowed_for(args)
     max_phase_visits = session.max_phase_visits_for(args)
 
-    perm_resolver = _build_permission_resolver(session.config, shell_allowed)
+    trusted_python = bool(getattr(args, "allow_untrusted_python", False))
+    perm_resolver = _build_permission_resolver(
+        session.config, shell_allowed, trusted_python=trusted_python,
+    )
 
     from reyn.agent import Agent
     logger = make_logger(rich=args.rich)
@@ -96,6 +105,7 @@ def run(args: argparse.Namespace) -> None:
         permission_resolver=perm_resolver,
         max_phase_visits=max_phase_visits,
         mcp_servers=session.config.mcp,
+        python_allowed_modules=list(session.config.python.allowed_modules),
     )
 
     input_type = initial_input.get("type", "unknown")
@@ -149,7 +159,7 @@ def _parse_cli_input(raw: str) -> dict:
         return {"type": "user_message", "data": {"text": raw}}
 
 
-def _build_permission_resolver(config, shell_allowed: bool):
+def _build_permission_resolver(config, shell_allowed: bool, trusted_python: bool = False):
     from reyn.permissions import PermissionResolver
     from reyn.config import _find_project_root
     project_root = _find_project_root(Path.cwd())
@@ -160,6 +170,7 @@ def _build_permission_resolver(config, shell_allowed: bool):
         config_permissions=perm_config,
         project_root=project_root,
         interactive=sys.stdin.isatty(),
+        trusted_python_allowed=trusted_python,
     )
 
 

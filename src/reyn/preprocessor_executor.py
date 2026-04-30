@@ -10,20 +10,26 @@ Step semantics:
   iterate    — maps run_skill over each element of step.over; collects into step.into
   lint_plan  — runs deterministic structural checks on a plan dict at step.over;
                places list of issue strings at step.into (does NOT abort)
+  python     — invokes a user Python function in a sandboxed subprocess
+               (pure | trusted mode); places return value at step.into and
+               validates it against the declared output_schema
 """
 from __future__ import annotations
+import asyncio
 import copy
 import jsonschema
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
 from .pricing import TokenUsage
+from .python_runner import PythonRunner, PythonStepError
 from .sub_skill_runner import invoke_sub_skill
 
 if TYPE_CHECKING:
     from .models import Skill, Phase, PreprocessorStep
     from .events import EventLog
     from .model_resolver import ModelResolver
+    from .permissions import PermissionResolver
 
 
 class PreprocessorError(RuntimeError):
@@ -64,6 +70,9 @@ class PreprocessorExecutor:
         resolver: "ModelResolver",
         state_dir: str | Path,
         max_phase_visits: int = 25,
+        permission_resolver: "PermissionResolver | None" = None,
+        python_runner: PythonRunner | None = None,
+        python_allowed_modules: list[str] | None = None,
     ) -> None:
         self._skill = skill
         self._model = model
@@ -72,6 +81,9 @@ class PreprocessorExecutor:
         self._resolver = resolver
         self._state_dir = Path(state_dir)
         self._max_phase_visits = max_phase_visits
+        self._perm = permission_resolver
+        self._python_runner = python_runner or PythonRunner()
+        self._python_allowed_modules = list(python_allowed_modules or [])
 
     async def run(
         self, phase: "Phase", artifact: dict, output_language: str,
@@ -90,7 +102,7 @@ class PreprocessorExecutor:
             )
             try:
                 result, step_usage = await self._apply_step(
-                    step, result, i, phase.name, output_language
+                    step, result, i, phase, output_language
                 )
                 total_usage += step_usage
             except PreprocessorError:
@@ -119,9 +131,10 @@ class PreprocessorExecutor:
 
     async def _apply_step(
         self, step: "PreprocessorStep", artifact: dict, index: int,
-        phase_name: str, output_language: str,
+        phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep
+        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep
+        phase_name = phase.name
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
         if isinstance(step, RunSkillStep):
@@ -130,6 +143,8 @@ class PreprocessorExecutor:
             return await self._apply_iterate(step, artifact, index, phase_name, output_language)
         if isinstance(step, LintPlanStep):
             return self._apply_lint_plan(step, artifact, index, phase_name)
+        if isinstance(step, PythonStep):
+            return await self._apply_python(step, artifact, index, phase)
         raise PreprocessorError(f"Unknown step type: {type(step)}")
 
     # ── validate ──────────────────────────────────────────────────────────────
@@ -296,4 +311,90 @@ class PreprocessorExecutor:
         )
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, issues)
+        return enriched, TokenUsage()
+
+    # ── python ────────────────────────────────────────────────────────────────
+
+    async def _apply_python(
+        self, step: Any, artifact: dict, index: int, phase: "Phase",
+    ) -> tuple[dict, TokenUsage]:
+        phase_name = phase.name
+
+        # Resolve permission for this (module, function). Without a resolver
+        # (e.g. unit tests), default to a permissive pure-mode entry.
+        if self._perm is not None:
+            try:
+                perm = self._perm.require_python(
+                    phase.permissions, step.module, step.function,
+                    skill_name=self._skill.name,
+                )
+            except PermissionError as exc:
+                raise PreprocessorError(
+                    f"Phase '{phase_name}' preprocessor step[{index}] python "
+                    f"{step.module}:{step.function}: {exc}"
+                ) from exc
+        else:
+            from .permissions import PythonPermission
+            perm = PythonPermission(module=step.module, function=step.function)
+
+        if not self._skill.skill_dir:
+            raise PreprocessorError(
+                f"Phase '{phase_name}' preprocessor step[{index}] python: "
+                f"skill_dir is unknown (skill was not loaded from disk); "
+                f"cannot resolve {step.module!r}"
+            )
+
+        self._events.emit(
+            "python_step_started",
+            phase=phase_name, step_index=index,
+            module=step.module, function=step.function, mode=perm.mode,
+        )
+
+        try:
+            result = await asyncio.to_thread(
+                self._python_runner.run,
+                skill_dir=Path(self._skill.skill_dir),
+                module=step.module,
+                function=step.function,
+                mode=perm.mode,
+                artifact=artifact,
+                timeout=perm.timeout,
+                allowed_modules=self._python_allowed_modules,
+            )
+        except PythonStepError as exc:
+            self._events.emit(
+                "python_step_failed",
+                phase=phase_name, step_index=index,
+                module=step.module, function=step.function,
+                kind=exc.kind, error=str(exc),
+            )
+            raise PreprocessorError(
+                f"Phase '{phase_name}' preprocessor step[{index}] python "
+                f"{step.module}:{step.function}: {exc}"
+            ) from exc
+
+        # Validate the function's actual return value against the declared schema.
+        try:
+            jsonschema.Draft7Validator(step.output_schema).validate(result)
+        except jsonschema.ValidationError as exc:
+            self._events.emit(
+                "python_step_failed",
+                phase=phase_name, step_index=index,
+                module=step.module, function=step.function,
+                kind="OutputSchemaViolation", error=exc.message,
+            )
+            raise PreprocessorError(
+                f"Phase '{phase_name}' preprocessor step[{index}] python "
+                f"{step.module}:{step.function} return value did not match "
+                f"output_schema: {exc.message}"
+            ) from exc
+
+        self._events.emit(
+            "python_step_completed",
+            phase=phase_name, step_index=index,
+            module=step.module, function=step.function,
+        )
+
+        enriched = copy.deepcopy(artifact)
+        _set_at_path(enriched, step.into, result)
         return enriched, TokenUsage()

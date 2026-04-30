@@ -40,8 +40,25 @@ class LintPlanStep(BaseModel):
     into: str           # dot path where the list of issue strings is placed
 
 
+class PythonStep(BaseModel):
+    """Run a user-supplied Python function as a deterministic preprocessor step.
+
+    Phase declares both the function (here) and the permission to call it
+    (in `permissions.python`). The function executes in a subprocess via
+    reyn._python_harness with the user's chosen mode (pure / trusted),
+    timeout, and 3rd-party allowlist. Its return value is placed at
+    `into` and validated against `output_schema` so the LLM sees a
+    typed enriched artifact.
+    """
+    type: Literal["python"]
+    module: str               # skill-dir-relative path, e.g. "./preprocessing.py"
+    function: str             # function name within the module
+    into: str                 # dot path in artifact where the return value is placed
+    output_schema: dict[str, Any]  # JSON Schema of the function's return value
+
+
 PreprocessorStep = Annotated[
-    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep],
+    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep],
     Field(discriminator="type"),
 ]
 
@@ -95,6 +112,10 @@ class Skill(BaseModel):
     finish_criteria: list[str] = Field(default_factory=list)
     # Sub-apps referenced by preprocessor steps; pre-loaded at compile time.
     preprocessor_sub_skills: dict[str, "Skill"] = Field(default_factory=dict)
+    # On-disk directory containing skill.md / phases/ / artifacts/. Populated by
+    # the loader; used by python preprocessor steps to resolve relative module
+    # paths. Empty string when the skill was constructed in memory.
+    skill_dir: str = ""
 
     @model_validator(mode="after")
     def _require_final_output_name(self) -> "Skill":

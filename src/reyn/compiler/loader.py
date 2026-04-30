@@ -209,7 +209,11 @@ def load_dsl_skill(
     )
     phase_objects = _infer_preprocessor_schemas(phase_objects, preprocessor_sub_skills)
 
-    return expand_skill(
+    skill = expand_skill(
         skill_def, phase_defs, artifact_defs, phase_objects,
         skill_node_specs, preprocessor_sub_skills,
     )
+    # Record where on disk this skill lives so runtime components (e.g. python
+    # preprocessor steps) can resolve relative module paths against it.
+    skill.skill_dir = str(skill_dir.resolve())
+    return skill
