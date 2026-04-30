@@ -1,0 +1,38 @@
+name: memory_extract_request
+description: |
+  A conversation segment plus the writable memory directories. The skill
+  examines the segment and decides what (if anything) should be persisted as
+  new or updated memories. Each scope_dir is annotated with its scope so the
+  skill can pick the right destination per memory.
+schema:
+  type: object
+  properties:
+    conversation_segment:
+      type: array
+      description: |
+        Ordered list of turns to extract memories from. Typically all messages
+        since the last successful extraction.
+      items:
+        type: object
+        properties:
+          role: {type: string}
+          text: {type: string}
+          ts:   {type: string}
+        required: [role, text]
+    scope_dirs:
+      type: array
+      description: |
+        Writable memory directories paired with their scope tag. The skill
+        chooses the appropriate scope per memory: facts that span projects
+        go to "global"; project-specific facts go to "project".
+      items:
+        type: object
+        properties:
+          path:
+            type: string
+            description: Absolute path to the memory directory.
+          scope:
+            type: string
+            description: '"global" or "project"'
+        required: [path, scope]
+  required: [conversation_segment, scope_dirs]

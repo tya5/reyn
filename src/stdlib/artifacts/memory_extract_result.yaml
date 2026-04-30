@@ -1,0 +1,32 @@
+name: memory_extract_result
+description: |
+  Summary of memory mutations performed by write_memory. The actions list
+  reports each create/update/delete decision (or "none" when nothing of value
+  was extracted). The actual file mutations are performed by the skill via
+  Control IR file ops; this result is just a record for the caller.
+schema:
+  type: object
+  properties:
+    actions:
+      type: array
+      description: One entry per memory the skill considered. May be empty.
+      items:
+        type: object
+        properties:
+          op:
+            type: string
+            description: 'create | update | delete | none'
+          scope:
+            type: string
+            description: '"global" or "project"'
+          name:
+            type: string
+            description: Memory name.
+          type:
+            type: string
+            description: 'Category: user | feedback | project | reference'
+          rationale:
+            type: string
+            description: Short explanation of why this action was chosen.
+        required: [op, rationale]
+  required: [actions]
