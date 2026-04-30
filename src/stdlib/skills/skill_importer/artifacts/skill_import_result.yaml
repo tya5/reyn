@@ -1,0 +1,35 @@
+name: skill_import_result
+description: |
+  Summary of an import: where the skill was installed, where it came from,
+  and what phases the converter produced. The actual files were written by
+  the convert phase via Control IR file ops.
+schema:
+  type: object
+  properties:
+    installed_path:
+      type: string
+      description: |
+        Filesystem path of the new skill's directory, e.g.
+        "reyn/local/pdf_summarizer".
+    skill_name:
+      type: string
+      description: The slug used as the directory name and skill 'name' field.
+    source_url:
+      type: string
+      description: Original source markdown URL.
+    imported_at:
+      type: string
+      description: ISO 8601 UTC timestamp of the import.
+    phases:
+      type: array
+      description: Names of the phases the converter created (entry first).
+      items: {type: string}
+    lint_passed:
+      type: boolean
+      description: Whether `reyn lint <skill>` reported zero errors.
+    notes:
+      type: string
+      description: |
+        Free-form remarks from the converter — anything the user should know
+        about manual tuning, missing artifacts, or partial conversions.
+  required: [installed_path, skill_name, source_url, imported_at, phases]

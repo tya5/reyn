@@ -1,0 +1,21 @@
+name: selected_candidate
+description: |
+  The single skill candidate the user chose (or the sole candidate when the
+  registry only matched one). Carries the original query for context the
+  converter may use to refine its decomposition.
+schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: The original query that found this skill.
+    name:
+      type: string
+      description: Human-readable skill name from the registry.
+    summary:
+      type: string
+      description: One-line description.
+    source_url:
+      type: string
+      description: Directly-fetchable URL of the skill's source markdown.
+  required: [name, source_url]

@@ -1,0 +1,33 @@
+name: candidate_list
+description: |
+  Skills found in the registry that match the user's query. Each entry has
+  enough information to display to the user for selection and to fetch the
+  source markdown afterwards.
+schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: The original query (echoed for downstream phases).
+    registry_url:
+      type: string
+      description: Where the candidates were fetched from.
+    candidates:
+      type: array
+      description: Best matches, ranked by relevance to the query.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: Human-readable skill name from the registry entry.
+          summary:
+            type: string
+            description: One-line description of what the skill does.
+          source_url:
+            type: string
+            description: |
+              URL of the skill's source markdown. Must be directly fetchable
+              via web_fetch (e.g. a GitHub raw URL, not the rendered HTML page).
+        required: [name, source_url]
+  required: [query, registry_url, candidates]
