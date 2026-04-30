@@ -1,6 +1,6 @@
 from __future__ import annotations
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 import pydantic
 from .models import ActOutput, Skill, CandidateOutput, ContextFrame, LLMOutput
@@ -53,6 +53,104 @@ def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
         t = expected_type
     data = {k: v for k, v in artifact.items() if k not in _META}
     return {"type": t, "data": data}
+
+
+@dataclass
+class RollbackState:
+    """All rollback-specific bookkeeping for a single OSRuntime run.
+
+    OSRuntime owns the run, this owns the rollback machinery — kept here so
+    the four-or-five fields that exist purely to support rollback don't
+    pollute OSRuntime's instance namespace.
+
+    Field semantics:
+      phase_inputs[phase]  — the artifact the phase was entered with
+                             (used to restore on rollback into that phase)
+      phase_outputs[phase] — the artifact the phase last produced
+                             (used as `rejected_artifact` for the next iteration)
+      phase_prev[phase]    — the phase that was the predecessor when this phase
+                             was last entered (used to walk back on rollback)
+      pending_ctx          — single-shot rollback_ctx for the next _execute_phase
+      no_progress_check    — single-shot sentinel: if the rolled-back-into phase
+                             re-produces the rejected output, abort
+    """
+    phase_inputs: dict[str, dict] = field(default_factory=dict)
+    phase_outputs: dict[str, dict] = field(default_factory=dict)
+    phase_prev: dict[str, str | None] = field(default_factory=dict)
+    pending_ctx: dict | None = None
+    no_progress_check: dict | None = None
+
+    # ── recording (called by OSRuntime as it advances) ──
+
+    def record_input(self, phase: str, artifact: dict) -> None:
+        self.phase_inputs[phase] = artifact
+
+    def record_output(self, phase: str, artifact: dict) -> None:
+        self.phase_outputs[phase] = artifact
+
+    def record_predecessor(self, phase: str, prev: str | None) -> None:
+        self.phase_prev[phase] = prev
+
+    # ── reading (used to restore on rollback) ──
+
+    def get_input(self, phase: str) -> dict:
+        return self.phase_inputs[phase]
+
+    def get_predecessor(self, phase: str) -> str | None:
+        return self.phase_prev.get(phase)
+
+    # ── rollback transition ──
+
+    def begin_rollback(self, from_phase: str, to_phase: str, reason: str) -> dict:
+        """Set up state for the upcoming re-run of `to_phase`.
+
+        Captures the rollback context (rejected output + reason + caller phase)
+        and arms the no-progress sentinel. Returns the rollback context for
+        callers that want to log or inspect it; OSRuntime normally consumes it
+        via `take_pending_ctx()` on the next iteration.
+        """
+        rejected = self.phase_outputs.get(to_phase, {})
+        ctx = {
+            "rejected_artifact": rejected,
+            "reason": reason,
+            "rollback_from": from_phase,
+        }
+        self.pending_ctx = ctx
+        self.no_progress_check = {
+            "phase": to_phase,
+            "prev_output_data": rejected.get("data"),
+            "rollback_from": from_phase,
+        }
+        return ctx
+
+    def take_pending_ctx(self) -> dict | None:
+        """One-shot read+clear of the rollback context."""
+        ctx = self.pending_ctx
+        self.pending_ctx = None
+        return ctx
+
+    def consume_no_progress(self, phase: str, output_data: Any) -> str | None:
+        """Check & clear the no-progress sentinel for `phase`.
+
+        If `phase` is the one we just rolled into and `output_data` matches the
+        previously-rejected output, returns the original rollback_from (the
+        caller should abort with a no-progress error).
+
+        If `phase` doesn't match the sentinel, leaves it alone — a different
+        phase may yet visit this check. If `phase` matches but the output
+        differs, clears the sentinel (rollback succeeded; the check has
+        served its purpose).
+        """
+        if self.no_progress_check is None:
+            return None
+        if self.no_progress_check["phase"] != phase:
+            return None
+        if output_data == self.no_progress_check["prev_output_data"]:
+            rollback_from = self.no_progress_check.get("rollback_from", "?")
+            self.no_progress_check = None
+            return rollback_from
+        self.no_progress_check = None
+        return None
 
 
 def _validate_artifact_structure(artifact: dict, context: str) -> None:
@@ -120,14 +218,7 @@ class OSRuntime:
         self._token_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
         self._prev_phase: str | None = None          # phase that transitioned to current
-        self._phase_inputs: dict[str, dict] = {}     # phase -> last input artifact
-        self._phase_outputs: dict[str, dict] = {}    # phase -> last output artifact
-        self._phase_prev: dict[str, str | None] = {} # phase -> its predecessor at entry time
-        self._pending_rollback_ctx: dict | None = None  # set when rollback is triggered
-        # No-progress detection: when a phase is rolled back into, remember the
-        # output it produced just before the rollback. If the next output is
-        # structurally identical, abort — the LLM is not making progress.
-        self._no_progress_check: dict | None = None
+        self._rollback = RollbackState()
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -528,6 +619,81 @@ class OSRuntime:
         self._token_usage += usage
         return adapted
 
+    # ── Rollback dispatch ──────────────────────────────────────────────────────
+
+    def _handle_rollback(
+        self, current_phase: str, reason_summary: str,
+    ) -> tuple[str, dict, str | None]:
+        """Process a rollback decision.
+
+        Returns (target_phase, target_input_artifact, target_predecessor).
+        Raises WorkflowAbortedError if there is no previous phase to roll
+        back to (e.g. the very first phase emitted rollback).
+        """
+        target = self._prev_phase
+        if target is None:
+            raise WorkflowAbortedError(
+                f"Phase '{current_phase}' emitted rollback but there is no previous phase."
+            )
+        self.events.emit(
+            "phase_rollback",
+            rollback_from=current_phase,
+            rollback_to=target,
+            reason=reason_summary,
+        )
+        self._rollback.begin_rollback(current_phase, target, reason_summary)
+        self._history.append(f"{current_phase} → rollback → {target}")
+        return target, self._rollback.get_input(target), self._rollback.get_predecessor(target)
+
+    # ── Skill-node dispatch (transition to a sub-skill node) ───────────────────
+
+    async def _apply_skill_node(
+        self,
+        node_id: str,
+        current_phase: str,
+        output_artifact: dict,
+        output_language: str,
+    ) -> "RunResult | tuple[str, dict]":
+        """Run a skill_node and decide whether the workflow ends here.
+
+        Returns either:
+          - a RunResult, when this node is terminal (no post-nodes); the
+            caller should propagate it as the workflow's result, or
+          - (next_after, adapted_artifact), when execution should continue
+            into `next_after` with the LLM-adapted artifact as input.
+        """
+        post_nodes = self.skill.graph.transitions.get(node_id, [])
+        if not post_nodes:
+            adapted = await self._run_skill_node(
+                node_id, output_artifact,
+                self.skill.final_output_schema, self.skill.final_output_name,
+                output_language,
+            )
+            data = adapted.get("data", {})
+            self._history.append(f"{current_phase} → {node_id} → END")
+            self.events.emit(
+                "workflow_finished",
+                phase=node_id,
+                reason="app node produced final output",
+                confidence=1.0,
+                total_phase_count=sum(self._visit_counts.values()),
+                final_output_keys=list(data.keys()),
+            )
+            return RunResult(
+                data=data, status="finished",
+                token_usage=self._token_usage,
+                cost_usd=self._total_cost_usd or None,
+            )
+        next_after = post_nodes[0]
+        next_phase_obj = self.skill.phases[next_after]
+        adapted = await self._run_skill_node(
+            node_id, output_artifact,
+            next_phase_obj.input_schema, next_phase_obj.input_schema_name,
+            output_language,
+        )
+        self._history.append(f"{current_phase} → {node_id} → {next_after}")
+        return next_after, adapted
+
     # ── Main loop ──────────────────────────────────────────────────────────────
 
     async def run(
@@ -566,14 +732,13 @@ class OSRuntime:
             self._enter_phase(current_phase, artifact)
 
             while True:
-                rollback_context = self._pending_rollback_ctx
-                self._pending_rollback_ctx = None
+                rollback_context = self._rollback.take_pending_ctx()
 
                 # Store the pre-preprocessor artifact for rollback.
                 # On rollback, the preprocessor re-runs deterministically from this snapshot —
                 # semantically correct, but costly for heavy chains (iterate × run_app).
                 # If eval rollback causes N-item re-evaluation, revisit caching here (Phase 5+).
-                self._phase_inputs[current_phase] = artifact
+                self._rollback.record_input(current_phase, artifact)
 
                 candidates = self._build_candidates(current_phase)
 
@@ -613,58 +778,31 @@ class OSRuntime:
 
                 # Handle rollback before storing artifact or emitting phase_completed
                 if result.control.type == "rollback":
-                    if self._prev_phase is None:
-                        raise WorkflowAbortedError(
-                            f"Phase '{current_phase}' emitted rollback but there is no previous phase."
-                        )
-                    target_phase = self._prev_phase
-                    self.events.emit(
-                        "phase_rollback",
-                        rollback_from=current_phase,
-                        rollback_to=target_phase,
-                        reason=result.control.reason.summary,
+                    current_phase, artifact, self._prev_phase = self._handle_rollback(
+                        current_phase, result.control.reason.summary,
                     )
-                    rejected_target_output = self._phase_outputs.get(target_phase, {})
-                    self._pending_rollback_ctx = {
-                        "rejected_artifact": rejected_target_output,
-                        "reason": result.control.reason.summary,
-                        "rollback_from": current_phase,
-                    }
-                    self._no_progress_check = {
-                        "phase": target_phase,
-                        "prev_output_data": rejected_target_output.get("data"),
-                        "rollback_from": current_phase,
-                    }
-                    self._history.append(f"{current_phase} → rollback → {target_phase}")
-                    current_phase = target_phase
-                    artifact = self._phase_inputs[target_phase]
                     artifact_path = None
-                    self._prev_phase = self._phase_prev.get(target_phase)
                     self._enter_phase(current_phase, artifact)
                     continue
 
                 # No-progress detection: if this phase was just re-run after a rollback
                 # and produced an output structurally identical to the rejected one, abort.
-                if (
-                    self._no_progress_check is not None
-                    and self._no_progress_check["phase"] == current_phase
-                ):
-                    new_data = output.artifact.get("data")
-                    if new_data == self._no_progress_check["prev_output_data"]:
-                        rollback_from = self._no_progress_check.get("rollback_from", "?")
-                        self.events.emit(
-                            "phase_no_progress",
-                            phase=current_phase,
-                            rollback_from=rollback_from,
-                        )
-                        raise WorkflowAbortedError(
-                            f"Phase '{current_phase}' produced an output identical to the one "
-                            f"rejected by '{rollback_from}'. The rollback feedback did not lead "
-                            f"to any change — aborting to prevent a wasteful loop."
-                        )
-                    self._no_progress_check = None
+                rollback_from = self._rollback.consume_no_progress(
+                    current_phase, output.artifact.get("data"),
+                )
+                if rollback_from is not None:
+                    self.events.emit(
+                        "phase_no_progress",
+                        phase=current_phase,
+                        rollback_from=rollback_from,
+                    )
+                    raise WorkflowAbortedError(
+                        f"Phase '{current_phase}' produced an output identical to the one "
+                        f"rejected by '{rollback_from}'. The rollback feedback did not lead "
+                        f"to any change — aborting to prevent a wasteful loop."
+                    )
 
-                self._phase_outputs[current_phase] = output.artifact
+                self._rollback.record_output(current_phase, output.artifact)
 
                 artifact_path = self.workspace.store_artifact(
                     current_phase, output.artifact,
@@ -699,40 +837,20 @@ class OSRuntime:
 
                 next_node = output.next_phase
                 if next_node in self.skill.graph.skill_nodes:
-                    post_nodes = self.skill.graph.transitions.get(next_node, [])
-                    if not post_nodes:
-                        adapted = await self._run_skill_node(
-                            next_node, output.artifact,
-                            self.skill.final_output_schema, self.skill.final_output_name,
-                            output_language,
-                        )
-                        data = adapted.get("data", {})
-                        self._history.append(f"{current_phase} → {next_node} → END")
-                        self.events.emit(
-                            "workflow_finished",
-                            phase=next_node,
-                            reason="app node produced final output",
-                            confidence=1.0,
-                            total_phase_count=sum(self._visit_counts.values()),
-                            final_output_keys=list(data.keys()),
-                        )
-                        return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
-                    next_after = post_nodes[0]
-                    next_phase_obj = self.skill.phases[next_after]
-                    adapted = await self._run_skill_node(
-                        next_node, output.artifact,
-                        next_phase_obj.input_schema, next_phase_obj.input_schema_name,
-                        output_language,
+                    outcome = await self._apply_skill_node(
+                        next_node, current_phase, output.artifact, output_language,
                     )
-                    self._history.append(f"{current_phase} → {next_node} → {next_after}")
+                    if isinstance(outcome, RunResult):
+                        return outcome
+                    next_after, adapted = outcome
                     self._prev_phase = current_phase
-                    self._phase_prev[next_after] = current_phase
+                    self._rollback.record_predecessor(next_after, current_phase)
                     current_phase = next_after
                     artifact = adapted
                 else:
                     self._history.append(f"{current_phase} → {next_node}")
                     self._prev_phase = current_phase
-                    self._phase_prev[next_node] = current_phase
+                    self._rollback.record_predecessor(next_node, current_phase)
                     current_phase = next_node
                     artifact = output.artifact
                 self._enter_phase(current_phase, artifact)
