@@ -7,6 +7,7 @@ from pathlib import Path
 
 from reyn.pricing import TokenUsage
 
+from ..common_args import add_model_arg, add_max_phase_visits_arg, add_output_language_arg
 from ..skill_loader import resolve_skill_path, stdlib_root
 from ..eval_report import EvalReport
 from ..session import Session
@@ -17,20 +18,11 @@ def register(sub) -> None:
     p = sub.add_parser("eval", help="Run an eval spec against an app")
     p.add_argument("spec", metavar="FILE",
                    help="Path to the eval.md spec file (e.g. reyn/local/my_app/eval.md)")
-    p.add_argument("--model", default=None, metavar="MODEL",
-                   help="Model class name or LiteLLM string (default: from spec or config)")
+    add_model_arg(p)
     p.add_argument("--dsl-root", dest="dsl_root", default=None, metavar="DIR",
                    help="DSL root override for the target app (default: inferred from path)")
-    p.add_argument("--output-language", default=None, dest="output_language",
-                   metavar="LANG",
-                   help="Output language code (default: from config)")
-    p.add_argument(
-        "--max-phase-visits", dest="max_phase_visits", type=int, default=None, metavar="N",
-        help=(
-            "Maximum times any single phase may be visited (cascades to sub-apps via run_app). "
-            "Useful for capping rollback loops in target apps. Default: from reyn.yaml or 25."
-        ),
-    )
+    add_output_language_arg(p)
+    add_max_phase_visits_arg(p)
     p.set_defaults(func=run)
 
 

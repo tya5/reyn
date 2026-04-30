@@ -6,6 +6,7 @@ import json
 import sys
 from pathlib import Path
 
+from ..common_args import add_common_args
 from ..skill_loader import load_skill_from_args
 from ..logger_factory import make_logger
 from ..session import Session
@@ -50,18 +51,7 @@ def register(sub) -> None:
             "Reads from stdin if omitted (pipe or redirect)."
         ),
     )
-    p.add_argument(
-        "--model", default=None, metavar="MODEL",
-        help=(
-            "Model class name (light/standard/strong) or LiteLLM model string. "
-            "Resolved via reyn.yaml models map. "
-            "Default: from reyn.yaml 'model' key, or 'standard'."
-        ),
-    )
-    p.add_argument(
-        "--output-language", default=None, dest="output_language", metavar="LANG",
-        help="Output language code (default: from reyn.yaml or ja)",
-    )
+    add_common_args(p)
     p.add_argument("--events", action="store_true",
                    help="Print the full event log after execution")
     p.add_argument("--strict", action="store_true",
@@ -76,12 +66,6 @@ def register(sub) -> None:
                        "Enable the 'shell' Control IR op, which allows the LLM to execute shell commands. "
                        "Required for meta-apps that invoke sub-processes (e.g. app_improver). "
                        "Off by default for safety."
-                   ))
-    p.add_argument("--max-phase-visits", dest="max_phase_visits", type=int,
-                   default=None, metavar="N",
-                   help=(
-                       "Maximum times any single phase may be visited per run (0 = unlimited). "
-                       "Prevents infinite rollback/revision loops. Default: from reyn.yaml or 25."
                    ))
     p.set_defaults(func=run)
 

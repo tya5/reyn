@@ -5,6 +5,7 @@ import asyncio
 import sys
 from pathlib import Path
 
+from ..common_args import add_common_args
 from ..session import Session
 
 
@@ -14,16 +15,7 @@ def register(sub) -> None:
         "--chat-id", dest="chat_id", default=None,
         help="Resume an existing chat by id (default: new id)",
     )
-    p.add_argument("--model", default=None,
-                   help="Model class or LiteLLM string (default: from reyn.yaml)")
-    p.add_argument(
-        "--output-language", default=None, dest="output_language",
-        help="Output language code (default: from reyn.yaml or ja)",
-    )
-    p.add_argument(
-        "--max-phase-visits", dest="max_phase_visits", type=int, default=None,
-        help="Cap per-phase visits inside spawned skill runs (default: from reyn.yaml or 25)",
-    )
+    add_common_args(p)
     p.set_defaults(func=run)
 
 
