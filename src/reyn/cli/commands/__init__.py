@@ -14,7 +14,8 @@ from . import eval as eval
 from . import init as init
 from . import lint as lint
 from . import memory as memory
+from . import permissions as permissions
 from . import run as run
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, run, chat, eval, lint, memory, events]
+ALL = [init, config, skills, run, chat, eval, lint, memory, permissions, events]
