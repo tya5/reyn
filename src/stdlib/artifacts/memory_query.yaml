@@ -29,4 +29,9 @@ schema:
     top_k:
       type: integer
       description: Maximum number of memories to return. Defaults to 5.
+    min_score:
+      type: number
+      description: |
+        Minimum relevance score (0.0–1.0). Memories scoring below this are
+        excluded from the result. Defaults to 0.3 when omitted.
   required: [query, scope_dirs]

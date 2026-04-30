@@ -98,8 +98,31 @@ type: user|feedback|project|reference
 <body text>
 ```
 
-The slug is `lowercase_underscored_name.md`. For `update`, write the full
-new body (overwrite). For `delete`, use `op: delete`.
+For `update`, write the full new body (overwrite). For `delete`, use
+`op: delete`.
+
+#### Slug naming convention (REQUIRED)
+
+The slug filename MUST follow `<type>_<topic>.md` where:
+
+- `<type>` is one of `user`, `feedback`, `project`, `reference` —
+  matching the memory's `type` field exactly.
+- `<topic>` is 1–3 lowercase underscored words capturing the subject.
+
+Examples:
+
+- ✓ `user_role.md`, `user_python_expertise.md`
+- ✓ `feedback_terse_replies.md`, `feedback_no_summaries.md`
+- ✓ `project_memory_layer.md`, `project_q2_deadline.md`
+- ✓ `reference_linear_ingest.md`, `reference_grafana_latency.md`
+- ✗ `user.md` — too generic, will collide
+- ✗ `response_style.md` — missing type prefix
+- ✗ `current_project.md` — missing type prefix
+
+Before writing a new memory, scan the existing index (from Step 1) for
+slugs with the same prefix. If your topic is the same as an existing one
+(possibly with a slightly different phrasing), use **`op: update`** with
+the existing slug rather than creating a near-duplicate.
 
 ### The MEMORY.md index file
 

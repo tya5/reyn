@@ -50,11 +50,40 @@ Decide turn. For each successfully read file, return:
 
 - `name` — from frontmatter
 - `type` — from frontmatter (`user` | `feedback` | `project` | `reference`)
-- `source` — the absolute path you read
-- `content` — the body (text after the frontmatter `---` block)
+- `source` — see "Exact source path" below
+- `content` — see "Content normalization" below
 - `score` — your relevance estimate, 0.0 to 1.0
 
-Sort by `score` descending. If nothing qualified, return `relevant: []`.
+### Score threshold
+
+Filter the list: drop any entry whose `score` is below
+`input_artifact.data.min_score` (default **0.3** if not provided). Returning
+fewer high-quality matches is better than many marginal ones — irrelevant
+memories pollute the caller's context.
+
+After filtering, sort by `score` descending, then cap at `top_k`
+(default 5). If nothing qualified, return `relevant: []`.
+
+### Exact source path
+
+`source` MUST be the **exact path string** you used in the `file` op to
+read the file — copy `result.path` from your act turn verbatim.
+
+Do NOT abbreviate, do NOT normalize tildes (`~/...` → `/home/...`), do NOT
+guess a "typical" path. If you didn't actually read the file (e.g. it was
+not_found), omit the entry entirely.
+
+### Content normalization
+
+`content` MUST be the **body text only**, with leading and trailing
+whitespace removed (`.strip()` semantics). Do NOT include:
+
+- The opening `---` line
+- The frontmatter (between the two `---` lines)
+- The closing `---` line
+- The blank line that typically follows the closing `---`
+
+Just the prose, trimmed.
 
 ## Constraints
 
