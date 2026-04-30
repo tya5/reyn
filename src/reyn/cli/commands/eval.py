@@ -7,7 +7,7 @@ from pathlib import Path
 
 from reyn.pricing import TokenUsage
 
-from ..common_args import add_model_arg, add_max_phase_visits_arg, add_output_language_arg
+from ..common_args import add_model_arg, add_limits_args, add_output_language_arg
 from ..skill_loader import resolve_skill_path, stdlib_root
 from ..eval_report import EvalReport
 from ..session import Session
@@ -46,7 +46,7 @@ def register(sub) -> None:
     p.add_argument("--dsl-root", dest="dsl_root", default=None, metavar="DIR",
                    help="DSL root override for the target app (default: inferred from path)")
     add_output_language_arg(p)
-    add_max_phase_visits_arg(p)
+    add_limits_args(p)
     p.set_defaults(func=run)
 
 
@@ -175,7 +175,7 @@ def _run_case(
         model=model,
         state_dir=session.config.state_dir,
         resolver=session.resolver,
-        max_phase_visits=session.max_phase_visits_for(args),
+        limits=session.limits_for(args),
     )
 
     try:

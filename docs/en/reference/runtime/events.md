@@ -31,7 +31,8 @@ Every event has:
 | `phase_started` | Each phase visit begins | `phase`, `visit_count` |
 | `phase_completed` | Each phase visit ends | `phase`, `next_phase`, `decision` |
 | `phase_failed` | Phase raised an unrecoverable error | `phase`, `error` |
-| `loop_limit_exceeded` | A phase exceeded `max_phase_visits` | `phase`, `visit_count`, `limit` |
+| `loop_limit_exceeded` | A phase exceeded `limits.phase.max_visits` | `phase`, `visit_count`, `max` |
+| `phase_budget_exceeded` | A phase exceeded its wall-clock budget (`limits.phase.max_wall_seconds`) | `phase`, `elapsed`, `budget` |
 
 ## LLM and context
 

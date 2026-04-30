@@ -12,6 +12,7 @@ Scalars: higher priority wins outright.
 models dict: shallow merge — each key overrides independently.
 """
 from __future__ import annotations
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,6 +42,27 @@ class PythonConfig:
 
 
 @dataclass
+class LLMLimitsConfig:
+    """`limits.llm` — bounds on each LLM HTTP call."""
+    timeout: float = 60.0    # seconds per call (passed to litellm.acompletion)
+    max_retries: int = 3     # transient-error retries (LiteLLM exponential backoff)
+
+
+@dataclass
+class PhaseLimitsConfig:
+    """`limits.phase` — bounds applied per phase visit."""
+    max_visits: int = 25         # 0 = unlimited
+    max_wall_seconds: float = 0  # 0 = unlimited; soft check at retry boundaries
+
+
+@dataclass
+class LimitsConfig:
+    """`limits:` — central place for runtime bounds (timeouts, retries, caps)."""
+    llm: LLMLimitsConfig = field(default_factory=LLMLimitsConfig)
+    phase: PhaseLimitsConfig = field(default_factory=PhaseLimitsConfig)
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     state_dir: str = ".reyn"
@@ -54,9 +76,9 @@ class ReynConfig:
     # Pre-approved permissions (same structure as phase frontmatter, but value is "allow").
     # Example: permissions: {shell: allow, file.delete: allow, mcp: {github: allow}}
     permissions: dict = field(default_factory=dict)
-    # Maximum times any single phase may be visited in one run (0 = unlimited).
-    # Prevents infinite rollback/revision loops. Override per-invocation with --max-phase-visits.
-    max_phase_visits: int = 25
+    # Runtime bounds: phase visits, wall-clock budgets, LLM timeouts/retries.
+    # Override per-invocation via --max-phase-visits / --phase-budget / --llm-timeout / --llm-max-retries.
+    limits: LimitsConfig = field(default_factory=LimitsConfig)
     # MCP server definitions.  Merged across config sources (servers dict is shallow-merged;
     # local overrides project which overrides global).
     # Example:
@@ -110,6 +132,17 @@ def _merge(base: dict, override: dict) -> dict:
                 else:
                     merged_chat[sub_key] = sub_val
             result["chat"] = merged_chat
+        elif key == "limits" and isinstance(val, dict):
+            existing = result.get("limits", {})
+            if not isinstance(existing, dict):
+                existing = {}
+            merged_limits = dict(existing)
+            for sub_key, sub_val in val.items():
+                if sub_key in ("llm", "phase") and isinstance(sub_val, dict):
+                    merged_limits[sub_key] = {**existing.get(sub_key, {}), **sub_val}
+                else:
+                    merged_limits[sub_key] = sub_val
+            result["limits"] = merged_limits
         else:
             result[key] = val
     return result
@@ -139,6 +172,29 @@ def _build_python_config(raw: object) -> PythonConfig:
     return PythonConfig(allowed_modules=[str(m) for m in modules])
 
 
+def _build_limits_config(raw: object) -> LimitsConfig:
+    if not isinstance(raw, dict):
+        return LimitsConfig()
+    llm_raw = raw.get("llm") or {}
+    if not isinstance(llm_raw, dict):
+        llm_raw = {}
+    phase_raw = raw.get("phase") or {}
+    if not isinstance(phase_raw, dict):
+        phase_raw = {}
+    llm_defaults = LLMLimitsConfig()
+    phase_defaults = PhaseLimitsConfig()
+    return LimitsConfig(
+        llm=LLMLimitsConfig(
+            timeout=float(llm_raw.get("timeout", llm_defaults.timeout)),
+            max_retries=int(llm_raw.get("max_retries", llm_defaults.max_retries)),
+        ),
+        phase=PhaseLimitsConfig(
+            max_visits=int(phase_raw.get("max_visits", phase_defaults.max_visits)),
+            max_wall_seconds=float(phase_raw.get("max_wall_seconds", phase_defaults.max_wall_seconds)),
+        ),
+    )
+
+
 def _find_project_root(start: Path) -> Path | None:
     """Walk up from start until finding reyn.yaml, or return None."""
     current = start.resolve()
@@ -151,22 +207,47 @@ def _find_project_root(start: Path) -> Path | None:
         current = parent
 
 
+def _migrate_legacy_keys(merged: dict, source: str) -> None:
+    """Migrate deprecated top-level keys into the `limits:` section in-place.
+
+    Logs a warning to stderr and lifts the legacy value into `limits.phase.max_visits`
+    only when the new key is not already set.
+    """
+    if "max_phase_visits" in merged:
+        legacy = merged.pop("max_phase_visits")
+        limits = merged.setdefault("limits", {})
+        phase = limits.setdefault("phase", {})
+        if "max_visits" not in phase:
+            phase["max_visits"] = legacy
+            print(
+                f"reyn: warning: top-level `max_phase_visits` is deprecated ({source}); "
+                "use `limits.phase.max_visits` instead.",
+                file=sys.stderr,
+            )
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
     merged: dict = {"model": "standard", "state_dir": ".reyn",
                     "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {},
-                    "max_phase_visits": 25, "mcp": {}}
+                    "limits": {}, "mcp": {}}
 
     # User global
-    merged = _merge(merged, _load_yaml(Path.home() / ".reyn" / "config.yaml"))
+    user_global = _load_yaml(Path.home() / ".reyn" / "config.yaml")
+    _migrate_legacy_keys(user_global, "~/.reyn/config.yaml")
+    merged = _merge(merged, user_global)
 
     # Project + local
     project_root = _find_project_root(cwd)
     if project_root:
-        merged = _merge(merged, _load_yaml(project_root / "reyn.yaml"))
-        merged = _merge(merged, _load_yaml(project_root / ".reyn" / "config.yaml"))
+        project = _load_yaml(project_root / "reyn.yaml")
+        _migrate_legacy_keys(project, str(project_root / "reyn.yaml"))
+        merged = _merge(merged, project)
+        local = _load_yaml(project_root / ".reyn" / "config.yaml")
+        _migrate_legacy_keys(local, str(project_root / ".reyn" / "config.yaml"))
+        merged = _merge(merged, local)
 
     return ReynConfig(
         model=str(merged.get("model", "standard")),
@@ -176,7 +257,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
-        max_phase_visits=int(merged.get("max_phase_visits", 25)),
+        limits=_build_limits_config(merged.get("limits")),
         mcp=dict(merged.get("mcp") or {}),
         chat=_build_chat_config(merged.get("chat")),
         python=_build_python_config(merged.get("python")),

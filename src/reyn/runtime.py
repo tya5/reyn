@@ -1,11 +1,13 @@
 from __future__ import annotations
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal
 import pydantic
 from .models import ActOutput, Skill, CandidateOutput, ContextFrame, LLMOutput
 from .events import EventLog
 from .workspace import Workspace
+from .config import LimitsConfig
 from .control_ir_executor import ControlIRExecutor
 from .validation import validate_output, ValidationError
 from .llm import call_llm
@@ -23,6 +25,17 @@ class LoopLimitExceededError(Exception):
     pass
 
 
+class PhaseBudgetExceededError(Exception):
+    """Raised when a phase exceeds its wall-clock budget (limits.phase.max_wall_seconds)."""
+    def __init__(self, phase: str, elapsed: float, budget: float) -> None:
+        super().__init__(
+            f"Phase '{phase}' exceeded wall-clock budget: {elapsed:.2f}s > {budget:.3g}s"
+        )
+        self.phase = phase
+        self.elapsed = elapsed
+        self.budget = budget
+
+
 class WorkflowAbortedError(Exception):
     pass
 
@@ -31,7 +44,7 @@ class WorkflowAbortedError(Exception):
 class RunResult:
     """Typed return value of OSRuntime.run() and Agent.run()."""
     data: dict[str, Any]
-    status: Literal["finished", "loop_limit_exceeded"]
+    status: Literal["finished", "loop_limit_exceeded", "phase_budget_exceeded"]
     token_usage: TokenUsage | None = None
     cost_usd: float | None = None
 
@@ -178,7 +191,7 @@ class OSRuntime:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        max_phase_visits: int = 25,
+        limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
     ) -> None:
@@ -193,7 +206,12 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             skill_name=skill.name,
         )
-        self._max_phase_visits = max_phase_visits  # 0 = unlimited
+        self._limits = limits or LimitsConfig()
+        self._max_phase_visits = self._limits.phase.max_visits  # 0 = unlimited
+        self._max_phase_wall_seconds = self._limits.phase.max_wall_seconds  # 0 = unlimited
+        self._llm_timeout = self._limits.llm.timeout
+        self._llm_max_retries = self._limits.llm.max_retries
+        self._phase_started_at: float | None = None
         self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
@@ -201,7 +219,7 @@ class OSRuntime:
             shell_allowed=shell_allowed,
             resolver=self._resolver,
             permission_resolver=permission_resolver,
-            max_phase_visits=max_phase_visits,
+            max_phase_visits=self._max_phase_visits,
             skill_name=skill.name,
             mcp_servers=mcp_servers,
         )
@@ -212,7 +230,7 @@ class OSRuntime:
             subscribers=self.events.subscribers,
             resolver=self._resolver,
             state_dir=state_dir,
-            max_phase_visits=max_phase_visits,
+            max_phase_visits=self._max_phase_visits,
             permission_resolver=permission_resolver,
             python_allowed_modules=python_allowed_modules,
         )
@@ -234,10 +252,26 @@ class OSRuntime:
                 f"Phase '{phase_name}' reached max_phase_visits={max_visits}"
             )
         self._visit_counts[phase_name] = count + 1
+        # Reset wall-clock timer for this visit. Soft budget checks at retry/turn boundaries
+        # compare elapsed against limits.phase.max_wall_seconds (0 = unlimited).
+        self._phase_started_at = time.monotonic()
         self.events.emit(
             "phase_started", phase=phase_name,
             visit_count=count + 1, input_artifact_type=artifact.get("type"),
         )
+
+    def _check_phase_budget(self, phase_name: str) -> None:
+        """Soft wall-clock check. Raises PhaseBudgetExceededError when over budget."""
+        budget = self._max_phase_wall_seconds
+        if not budget or self._phase_started_at is None:
+            return
+        elapsed = time.monotonic() - self._phase_started_at
+        if elapsed > budget:
+            self.events.emit(
+                "phase_budget_exceeded",
+                phase=phase_name, elapsed=elapsed, budget=budget,
+            )
+            raise PhaseBudgetExceededError(phase_name, elapsed, budget)
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
         skill = self.skill
@@ -413,12 +447,15 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
         rollback_context: dict | None = None,
     ) -> dict:
+        self._check_phase_budget(phase)
         resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
         llm_result = await call_llm(
             resolved_model, frame,
             prior_attempts=prior_attempts or None,
             rollback_context=rollback_context,
+            timeout=self._llm_timeout,
+            max_retries=self._llm_max_retries,
         )
         raw = llm_result.data
         cost_usd: float | None = None
@@ -618,6 +655,7 @@ class OSRuntime:
             subscribers=self.events.subscribers,
             resolver=self._resolver,
             events=self.events,
+            limits=self._limits,
         )
         self._token_usage += usage
         return adapted
@@ -882,6 +920,16 @@ class OSRuntime:
                 final_output_keys=list(final_output.keys()),
             )
             return RunResult(data=final_output, status="loop_limit_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
+
+        except PhaseBudgetExceededError as exc:
+            final_output = self._fallback_final_output()
+            self.events.emit(
+                "workflow_terminated",
+                reason=str(exc),
+                total_phase_count=sum(self._visit_counts.values()),
+                final_output_keys=list(final_output.keys()),
+            )
+            return RunResult(data=final_output, status="phase_budget_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
 
         except WorkflowAbortedError as exc:
             self.events.emit(

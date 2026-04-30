@@ -155,6 +155,9 @@ async def call_llm(
     frame: ContextFrame,
     prior_attempts: list[dict[str, str]] | None = None,
     rollback_context: dict | None = None,
+    *,
+    timeout: float = 60.0,
+    max_retries: int = 3,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -163,6 +166,8 @@ async def call_llm(
       Each entry is appended as an assistant/user turn so the LLM sees what was wrong.
     rollback_context: {"rejected_artifact": dict, "reason": str, "rollback_from": str}
       Injected as the first prior-attempt entry when this phase is being re-run after rollback.
+    timeout: per-call HTTP timeout (seconds), passed to litellm.acompletion.
+    max_retries: transient-error retries (LiteLLM exponential backoff), via num_retries.
     """
     system = _system_prompt()
     user_content = json.dumps(frame.model_dump(), indent=2, ensure_ascii=False)
@@ -219,15 +224,19 @@ async def call_llm(
 
         # response_format may not be supported by all models; pass it only when available
         extra = proxy_kwargs()
+        common_kwargs = {"timeout": timeout, "num_retries": max_retries}
         try:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
                 response_format={"type": "json_object"},
+                **common_kwargs,
                 **extra,
             )
         except Exception:
-            response = await litellm.acompletion(model=model, messages=messages, **extra)
+            response = await litellm.acompletion(
+                model=model, messages=messages, **common_kwargs, **extra,
+            )
 
         usage = _extract_usage(response)
         last_raw = response.choices[0].message.content or ""

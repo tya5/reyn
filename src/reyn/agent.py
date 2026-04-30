@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable
 from .models import Skill
 from .runtime import OSRuntime, RunResult
+from .config import LimitsConfig
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
 from reyn.reporters.persister import EventPersister
@@ -20,7 +21,7 @@ class Agent:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        max_phase_visits: int = 25,
+        limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
     ) -> None:
@@ -30,7 +31,7 @@ class Agent:
         self._subscribers = list(subscribers or [])
         self._user_input_fn = user_input_fn
         self._shell_allowed = shell_allowed
-        self._max_phase_visits = max_phase_visits
+        self._limits = limits or LimitsConfig()
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
         self._mcp_servers = mcp_servers
@@ -53,7 +54,7 @@ class Agent:
             shell_allowed=self._shell_allowed,
             resolver=self._resolver,
             permission_resolver=self._permission_resolver,
-            max_phase_visits=self._max_phase_visits,
+            limits=self._limits,
             mcp_servers=self._mcp_servers,
             python_allowed_modules=self._python_allowed_modules,
         )

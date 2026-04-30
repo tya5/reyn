@@ -21,10 +21,17 @@ class ConsoleLogger:
     # ── Workflow ───────────────────────────────────────────────────────────────
 
     def on_workflow_terminated(self, data: dict) -> None:
-        print("[os] loop limit reached — returning latest artifact")
+        reason = data.get("reason", "limit reached")
+        print(f"[os] workflow terminated — {reason} — returning latest artifact")
 
     def on_workflow_aborted(self, data: dict) -> None:
         print(f"[os] workflow aborted — {data.get('reason', '')}")
+
+    def on_phase_budget_exceeded(self, data: dict) -> None:
+        print(
+            f"[phase:{data['phase']}] wall-clock budget exceeded "
+            f"({data['elapsed']:.2f}s > {data['budget']:.3g}s)"
+        )
 
     # ── Phase lifecycle ────────────────────────────────────────────────────────
 

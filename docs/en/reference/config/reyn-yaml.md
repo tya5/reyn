@@ -26,9 +26,32 @@ models:
 | `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
 | `models` | map | Class name → LiteLLM model string. |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
-| `max_phase_visits` | int | Cap on phase revisits per run. `0` = unlimited. Default `25`. |
+| `limits` | map | Runtime bounds: phase visits, wall-clock budgets, LLM timeouts/retries. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
+
+## `limits` block
+
+Central place for runtime bounds. Each value can be overridden per-invocation by the matching CLI flag.
+
+```yaml
+limits:
+  llm:
+    timeout: 60        # seconds per LLM HTTP call (--llm-timeout)
+    max_retries: 3     # transient-error retries per call (--llm-max-retries)
+  phase:
+    max_visits: 25         # cap per phase per run; 0 = unlimited (--max-phase-visits)
+    max_wall_seconds: 0    # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
+```
+
+| Path | Type | Default | Description |
+|------|------|---------|-------------|
+| `limits.llm.timeout` | float (s) | `60` | Per-call HTTP timeout passed to LiteLLM. |
+| `limits.llm.max_retries` | int | `3` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
+| `limits.phase.max_visits` | int | `25` | Cap on revisits to any single phase per run. `0` = unlimited. |
+| `limits.phase.max_wall_seconds` | float (s) | `0` | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` = unlimited. |
+
+The legacy top-level `max_phase_visits` key is still accepted (with a deprecation warning) and is migrated to `limits.phase.max_visits`.
 
 ## `permissions` block
 

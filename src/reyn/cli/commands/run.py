@@ -86,7 +86,7 @@ def run(args: argparse.Namespace) -> None:
     model, resolved_model = session.model_for(args)
     output_language = session.output_language_for(args)
     shell_allowed = session.shell_allowed_for(args)
-    max_phase_visits = session.max_phase_visits_for(args)
+    limits = session.limits_for(args)
 
     trusted_python = bool(getattr(args, "allow_untrusted_python", False))
     perm_resolver = _build_permission_resolver(
@@ -103,7 +103,7 @@ def run(args: argparse.Namespace) -> None:
         shell_allowed=shell_allowed,
         resolver=session.resolver,
         permission_resolver=perm_resolver,
-        max_phase_visits=max_phase_visits,
+        limits=limits,
         mcp_servers=session.config.mcp,
         python_allowed_modules=list(session.config.python.allowed_modules),
     )

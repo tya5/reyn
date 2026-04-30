@@ -13,3 +13,12 @@ models:
   light:    openai/gemini-2.5-flash-lite
   standard: openai/gemini-2.5-flash-lite
   strong:   openai/gemini-2.5-flash-lite
+
+# Runtime bounds. Each value can be overridden per-invocation via the matching CLI flag.
+limits:
+  llm:
+    timeout: 60        # seconds per LLM HTTP call (--llm-timeout)
+    max_retries: 3     # transient-error retries per call (--llm-max-retries)
+  phase:
+    max_visits: 25         # cap per phase per run; 0 = unlimited (--max-phase-visits)
+    max_wall_seconds: 0    # per-phase wall-clock budget; 0 = unlimited (--phase-budget)

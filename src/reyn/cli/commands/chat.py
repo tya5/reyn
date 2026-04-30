@@ -28,7 +28,7 @@ def run(args: argparse.Namespace) -> None:
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
-    max_phase_visits = session_cfg.max_phase_visits_for(args)
+    limits = session_cfg.limits_for(args)
 
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     perm_resolver = PermissionResolver(
@@ -44,7 +44,7 @@ def run(args: argparse.Namespace) -> None:
         state_root=session_cfg.config.state_dir,
         resolver=session_cfg.resolver,
         permission_resolver=perm_resolver,
-        max_phase_visits=max_phase_visits,
+        limits=limits,
         mcp_servers=session_cfg.config.mcp,
         output_language=output_language,
         memory_enabled=mem_cfg.enabled,

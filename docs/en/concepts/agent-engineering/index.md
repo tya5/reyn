@@ -55,7 +55,7 @@ Getting the right context into the agent at the right time. reyn has `recall_mem
 
 ### 4. [Reliability Engineering](reliability-engineering.md)
 
-Recovery from failure: validation, re-prompt, loop bounds, timeout. reyn validates every LLM output against the next target's schema and re-prompts on rejection; long loops are bounded by `max_phase_visits`. Some pieces (global timeout, richer retry policy, checkpoint/resume) are still on the roadmap.
+Recovery from failure: validation, re-prompt, loop bounds, timeout. reyn validates every LLM output against the next target's schema and re-prompts on rejection; long loops are bounded by `limits.phase.max_visits` and a soft per-phase wall-clock budget. LLM HTTP calls have a configurable timeout and exponential-backoff retry. Richer retry policies and checkpoint/resume are still on the roadmap.
 
 ### 5. [Security](security.md)
 

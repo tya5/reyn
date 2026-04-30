@@ -21,11 +21,16 @@ Flags shared across `reyn run`, `reyn eval`, and `reyn chat`. Per-command flags 
 |------|---------|-------------|
 | `--output-language LANG` | `reyn.yaml` `output_language` (or `ja`) | Language code injected into the LLM context as `output_language`. Phases that produce user-facing text honor it. |
 
-## Loop safety
+## Runtime limits
+
+All limits are read from `reyn.yaml`'s `limits:` block by default and can be overridden per-invocation.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--max-phase-visits N` | `reyn.yaml` `max_phase_visits` (or `25`) | Cap on revisits to any single phase in one run. `0` disables the cap. Prevents runaway revision loops. |
+| `--max-phase-visits N` | `limits.phase.max_visits` (or `25`) | Cap on revisits to any single phase in one run. `0` disables the cap. Prevents runaway revision loops. On exceed, the run ends with status `loop_limit_exceeded`. |
+| `--phase-budget SECONDS` | `limits.phase.max_wall_seconds` (or `0`) | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` disables. On exceed, the run ends with status `phase_budget_exceeded`. |
+| `--llm-timeout SECONDS` | `limits.llm.timeout` (or `60`) | Per-call HTTP timeout passed to LiteLLM. |
+| `--llm-max-retries N` | `limits.llm.max_retries` (or `3`) | Transient-error retries per LLM call (LiteLLM exponential backoff). |
 
 ## Permission gating (`reyn run` only)
 

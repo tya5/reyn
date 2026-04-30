@@ -13,6 +13,7 @@ from reyn.agent import Agent
 from reyn.chat.extraction import ExtractionJournal, should_extract
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
+from reyn.config import LimitsConfig
 from reyn.events import EventLog
 from reyn.memory_paths import global_memory_dir, project_memory_dir
 from reyn.model_resolver import ModelResolver
@@ -82,7 +83,7 @@ class ChatSession:
         state_root: str | Path = ".reyn",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        max_phase_visits: int = 25,
+        limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         output_language: str = "ja",
         history_window: int = 12,
@@ -95,7 +96,7 @@ class ChatSession:
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
-        self._max_phase_visits = max_phase_visits
+        self._limits = limits or LimitsConfig()
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self.history_window = history_window
@@ -263,7 +264,7 @@ class ChatSession:
             state_dir=str(state_dir),
             resolver=self._resolver,
             permission_resolver=self._perm,
-            max_phase_visits=self._max_phase_visits,
+            limits=self._limits,
             mcp_servers=mcp_servers,
             user_input_fn=user_input_fn,
             subscribers=subscribers,

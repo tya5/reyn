@@ -27,6 +27,9 @@ async def _adapt_artifact(
     model: str,
     resolver: ModelResolver,
     events: EventLog,
+    *,
+    llm_timeout: float = 60.0,
+    llm_max_retries: int = 3,
 ) -> tuple[dict, TokenUsage]:
     """
     Call LLM to convert a sub-app's final_output data to the parent's target schema.
@@ -48,6 +51,8 @@ async def _adapt_artifact(
         model=resolver.resolve(model),
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
+        timeout=llm_timeout,
+        num_retries=llm_max_retries,
         **proxy_kwargs(),
     )
     raw = json.loads(response.choices[0].message.content)
@@ -80,6 +85,7 @@ async def execute_skill_node(
     subscribers: list[Callable],
     resolver: ModelResolver,
     events: EventLog,
+    limits: Any = None,
 ) -> tuple[dict, TokenUsage]:
     """
     Run a sub-app to completion and adapt its final_output to target_schema.
@@ -104,6 +110,7 @@ async def execute_skill_node(
         strict=strict,
         subscribers=subscribers,
         resolver=resolver,
+        limits=limits,
     )
     run_result = await sub_runtime.run(input_artifact, output_language=output_language)
     token_usage = sub_runtime._token_usage
@@ -115,9 +122,13 @@ async def execute_skill_node(
         final_output_keys=list(run_result.data.keys()),
     )
 
+    llm_timeout = float(getattr(getattr(limits, "llm", None), "timeout", 60.0)) if limits else 60.0
+    llm_max_retries = int(getattr(getattr(limits, "llm", None), "max_retries", 3)) if limits else 3
     adapted, adapt_usage = await _adapt_artifact(
         run_result.data, sub_skill.final_output_name,
         target_schema, target_type, node_id, output_language,
         model=model, resolver=resolver, events=events,
+        llm_timeout=llm_timeout,
+        llm_max_retries=llm_max_retries,
     )
     return adapted, token_usage + adapt_usage

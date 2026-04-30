@@ -35,7 +35,7 @@ Three levers, all surfaced as flags or config:
 
 - **Model classes (`light` / `standard` / `strong`).** A skill is written without naming a specific model; the resolver maps the class to a concrete LiteLLM model string from `reyn.yaml`. Switching cost tiers per project (or per run with `--model`) is a one-line change. Eval can run on `light` during iteration and `strong` for final grading.
 - **Per-run cost reporting.** `reyn run` and `reyn eval` print token usage and USD cost on the final line. Eval reports persist per-case cost so cost regressions show up in the same place quality regressions do.
-- **`max_phase_visits`.** Caps runaway loops, which is also a cost ceiling (each visit is at least one LLM call).
+- **`limits.phase.max_visits` and `limits.phase.max_wall_seconds`.** Cap runaway loops and per-phase time budgets — both are cost ceilings (each visit is at least one LLM call, and time-bounded phases prevent slow-LLM blowups).
 
 ### Predictable UX
 

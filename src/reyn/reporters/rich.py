@@ -34,9 +34,11 @@ class RichLogger:
         _console.print(Rule(f"[bold green]finished[/bold green]  ({total} phase steps)", style="green"))
 
     def on_workflow_terminated(self, data: dict) -> None:
+        reason = data.get("reason", "")
+        title = "phase budget exceeded" if "budget" in reason else "loop limit reached"
         _console.print(Panel(
-            data.get("reason", ""),
-            title="[bold yellow]loop limit reached[/bold yellow]",
+            reason,
+            title=f"[bold yellow]{title}[/bold yellow]",
             border_style="yellow",
         ))
 

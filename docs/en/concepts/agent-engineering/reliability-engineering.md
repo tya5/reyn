@@ -23,15 +23,25 @@ The OS never silently fixes up bad output. After a configurable number of failed
 
 Each retry emits a `phase_retry` event. The retry counter is per phase visit, so a phase that needs three tries is a normal occurrence — the reliability problem is unbounded retries, which the OS prevents.
 
-### Loop bounds
+### Loop bounds and phase budgets
 
-`max_phase_visits` (default `25`, `0` = unlimited) caps how many times any single phase can be revisited within one run. When the cap is hit, the OS emits `loop_limit_exceeded` and ends the run with status `loop_limit_exceeded` rather than spinning forever. The cap is configurable per-run via `--max-phase-visits` and at the project level via `reyn.yaml`.
+Two complementary bounds apply per phase, both configured under `limits.phase` in `reyn.yaml`:
+
+- **`max_visits`** (default `25`, `0` = unlimited) caps how many times any single phase can be revisited within one run. On exceed the OS emits `loop_limit_exceeded` and ends the run with status `loop_limit_exceeded`.
+- **`max_wall_seconds`** (default `0` = unlimited) sets a wall-clock budget per phase visit. The check is *soft*: the OS evaluates elapsed time at retry/turn boundaries rather than canceling mid-call. On exceed the OS emits `phase_budget_exceeded` and ends the run with status `phase_budget_exceeded`. Workspace state stays consistent because no in-flight work is killed.
+
+Both can be overridden per-run via `--max-phase-visits` and `--phase-budget`.
 
 This protects against:
 
 - A revision loop that the LLM can't satisfy (a criterion is unreachable).
 - A graph that lets the LLM keep choosing the same branch.
 - A subtle bug where two phases ping-pong indefinitely.
+- A phase that *does* terminate but takes too long to be useful (slow LLM, runaway preprocessor chain).
+
+### LLM call timeout and transient-error retry
+
+Each LLM HTTP call carries a per-call timeout (`limits.llm.timeout`, default `60`s) passed through to LiteLLM, plus LiteLLM's built-in exponential-backoff retry (`limits.llm.max_retries`, default `3`) for transient failures (`429`, `5xx`, network resets). Application-level rejection (validation, normalization) is handled separately by the re-prompt loop above — these are different failure modes and don't share a budget.
 
 ### Python preprocessor timeout
 
@@ -48,6 +58,7 @@ Every reliability event lands in the JSONL log:
 | `control_ir_validation_error` | OS rejected an op |
 | `phase_retry` | A retry of a rejected output |
 | `loop_limit_exceeded` | The visit cap was hit |
+| `phase_budget_exceeded` | The wall-clock budget for the current phase was hit |
 | `phase_failed` | A phase raised an unrecoverable error |
 
 `reyn events <log> --filter validation_error --filter normalization_error` jumps straight to the trouble.
@@ -56,9 +67,9 @@ Every reliability event lands in the JSONL log:
 
 A few reliability primitives are intentionally simple today and on the roadmap to deepen:
 
-**Retry policy is "re-prompt up to N times."** Each retry uses the same prompt with the validation error injected as feedback. There is no exponential backoff, no jitter, no per-failure-kind strategy. For LLM rejections this is usually adequate; for transient API errors it is not (the OS surfaces the error rather than retrying with backoff).
+**Retry policy splits cleanly but isn't deep.** Application-level rejections re-prompt up to `max_phase_retries` (default `2`) with the validation error injected as feedback — no jitter, no per-failure-kind strategy. Transient HTTP errors get LiteLLM's built-in exponential backoff via `limits.llm.max_retries`. The two paths don't share state, which is the right shape, but neither path lets the user customize backoff or per-error policy yet.
 
-**No global wall-clock timeout.** Individual `python` steps have timeouts; an LLM call that hangs at the provider layer will hang the run. In practice the LLM provider's timeout is the floor.
+**Phase budget is soft, not a hard cancel.** `limits.phase.max_wall_seconds` checks at retry/turn boundaries — a single very long LLM call or preprocessor step can overshoot the budget by one operation. This trades "hard guarantees" for "consistent workspace state," and is the right default for most workflows; mid-call cancellation is on the roadmap as an opt-in mode.
 
 **No checkpoint/resume.** Because every state change is an event (P3), the *information* needed for resume is already in the log; the *machinery* to reload at event N and continue isn't built. Adding it doesn't require new event types — just a runtime mode that replays events as state-restore rather than just rendering.
 
@@ -68,7 +79,8 @@ A few reliability primitives are intentionally simple today and on the roadmap t
 
 - [Reference: events](../../reference/runtime/events.md) — full event taxonomy
 - [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
-- [Reference: common-flags](../../reference/cli/common-flags.md) — `--max-phase-visits`
+- [Reference: common-flags](../../reference/cli/common-flags.md) — `--max-phase-visits`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`
+- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `limits` block
 - [How-to: debug with events](../../how-to/debug-with-events.md)
 - [evaluation-and-observability.md](evaluation-and-observability.md) — measuring failure rates
 - [tool-contract-design.md](tool-contract-design.md) — what gets validated
