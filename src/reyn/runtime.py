@@ -648,6 +648,31 @@ class OSRuntime:
         self._history.append(f"{current_phase} → rollback → {target}")
         return target, self._rollback.get_input(target), self._rollback.get_predecessor(target)
 
+    # ── Workflow termination ──────────────────────────────────────────────────
+
+    def _finish_workflow(
+        self, phase: str, data: dict, reason: str, confidence: float,
+    ) -> RunResult:
+        """Single source of truth for "the workflow ended cleanly".
+
+        Both the normal end-of-graph path and the skill_node terminal path
+        go through here so observers see consistent event shape and the
+        RunResult is constructed identically.
+        """
+        self.events.emit(
+            "workflow_finished",
+            phase=phase,
+            reason=reason,
+            confidence=confidence,
+            total_phase_count=sum(self._visit_counts.values()),
+            final_output_keys=list(data.keys()),
+        )
+        return RunResult(
+            data=data, status="finished",
+            token_usage=self._token_usage,
+            cost_usd=self._total_cost_usd or None,
+        )
+
     # ── Skill-node dispatch (transition to a sub-skill node) ───────────────────
 
     async def _apply_skill_node(
@@ -674,18 +699,11 @@ class OSRuntime:
             )
             data = adapted.get("data", {})
             self._history.append(f"{current_phase} → {node_id} → END")
-            self.events.emit(
-                "workflow_finished",
+            return self._finish_workflow(
                 phase=node_id,
+                data=data,
                 reason="app node produced final output",
                 confidence=1.0,
-                total_phase_count=sum(self._visit_counts.values()),
-                final_output_keys=list(data.keys()),
-            )
-            return RunResult(
-                data=data, status="finished",
-                token_usage=self._token_usage,
-                cost_usd=self._total_cost_usd or None,
             )
         next_after = post_nodes[0]
         next_phase_obj = self.skill.phases[next_after]
@@ -828,15 +846,12 @@ class OSRuntime:
                 if output.next_phase == "end":
                     data = output.artifact.get("data", {})
                     self._history.append(f"{current_phase} → END")
-                    self.events.emit(
-                        "workflow_finished",
+                    return self._finish_workflow(
                         phase=current_phase,
+                        data=data,
                         reason=result.control.reason.summary,
                         confidence=result.control.confidence,
-                        total_phase_count=sum(self._visit_counts.values()),
-                        final_output_keys=list(data.keys()),
                     )
-                    return RunResult(data=data, status="finished", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
 
                 next_node = output.next_phase
                 if next_node in self.skill.graph.skill_nodes:
