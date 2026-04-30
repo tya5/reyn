@@ -18,12 +18,3 @@ def global_memory_dir() -> Path:
 def project_memory_dir(state_dir: str | Path) -> Path:
     """The project-level memory directory under the given .reyn state dir."""
     return Path(state_dir) / "memory"
-
-
-def ensure_memory_dirs(state_dir: str | Path) -> tuple[Path, Path]:
-    """Make sure both directories exist. Return (global_dir, project_dir)."""
-    g = global_memory_dir()
-    p = project_memory_dir(state_dir)
-    g.mkdir(parents=True, exist_ok=True)
-    p.mkdir(parents=True, exist_ok=True)
-    return g, p

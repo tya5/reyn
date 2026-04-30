@@ -161,6 +161,14 @@ class ChatSession:
 
     # ── main loop ───────────────────────────────────────────────────────────────
 
+    def _should_extract(self, reason: str) -> bool:
+        """Wrapper that fills in this session's configured thresholds."""
+        return should_extract(
+            len(self.history), self._journal, reason=reason,
+            turn_threshold=self._memory_turn_threshold,
+            time_threshold=self._memory_time_threshold,
+        )
+
     async def run(self) -> None:
         self._chat_events.emit("chat_started", chat_id=self.chat_id, model=self.model)
         self._journal.load()
@@ -168,11 +176,7 @@ class ChatSession:
         # so new triggers can fire.
         if self._journal.in_progress:
             self._journal.mark_aborted()
-        if should_extract(
-            len(self.history), self._journal, reason="startup",
-            turn_threshold=self._memory_turn_threshold,
-            time_threshold=self._memory_time_threshold,
-        ):
+        if self._should_extract("startup"):
             self._spawn_extraction(reason="startup")
 
         try:
@@ -185,32 +189,37 @@ class ChatSession:
                     continue
                 if kind == "user":
                     await self._handle_user_message(text)
-                    if should_extract(
-                        len(self.history), self._journal, reason="periodic",
-                        turn_threshold=self._memory_turn_threshold,
-                        time_threshold=self._memory_time_threshold,
-                    ):
+                    if self._should_extract("periodic"):
                         self._spawn_extraction(reason="periodic")
         finally:
-            for t in self.running_skills.values():
-                t.cancel()
-            if self.running_skills:
-                await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
-            # Block on shutdown extraction so memory is captured before exit.
-            if should_extract(
-                len(self.history), self._journal, reason="shutdown",
-                turn_threshold=self._memory_turn_threshold,
-                time_threshold=self._memory_time_threshold,
-            ):
-                await self._extract_now(reason="shutdown")
-            else:
-                # Drain any background extraction still running.
-                if self._extraction_tasks:
-                    await asyncio.gather(
-                        *self._extraction_tasks.values(), return_exceptions=True,
-                    )
+            await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", chat_id=self.chat_id)
             await self.outbox.put(("__end__", ""))
+
+    async def _drain_on_shutdown(self) -> None:
+        """Wind down both background task families.
+
+        Asymmetric on purpose:
+
+        * Skill runs are user-initiated; we cancel them so the user doesn't
+          wait for in-flight LLM calls when they've signaled exit.
+        * Memory extractions are housekeeping; we await them (or run a fresh
+          one) so durable memory isn't lost on the way out.
+        """
+        for task in self.running_skills.values():
+            task.cancel()
+        if self.running_skills:
+            await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
+
+        if self._should_extract("shutdown"):
+            # Synchronous final extraction — overrides any in-flight one.
+            await self._extract_now(reason="shutdown")
+        elif self._extraction_tasks:
+            # Nothing new to extract, but a background extraction may still
+            # be running; let it finish so its results are persisted.
+            await asyncio.gather(
+                *self._extraction_tasks.values(), return_exceptions=True,
+            )
 
     async def _handle_user_message(self, text: str) -> None:
         # If a spawned skill is waiting on ask_user, route this input to that skill
