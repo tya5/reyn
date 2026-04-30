@@ -1,10 +1,10 @@
 """`reyn chat` — interactive chat with implicit skill invocation."""
 from __future__ import annotations
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
+from ...llm import run_async
 from ..common_args import add_common_args
 from ..session import Session
 
@@ -94,4 +94,4 @@ def run(args: argparse.Namespace) -> None:
     )
     chat.load_history()
 
-    asyncio.run(run_repl(chat))
+    run_async(run_repl(chat))

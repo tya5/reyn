@@ -1,10 +1,10 @@
 """`reyn eval` — run an eval spec against an app."""
 from __future__ import annotations
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
+from reyn.llm import run_async
 from reyn.pricing import TokenUsage
 
 from ..common_args import add_model_arg, add_limits_args, add_output_language_arg
@@ -179,7 +179,7 @@ def _run_case(
     )
 
     try:
-        result = asyncio.run(
+        result = run_async(
             agent.run(eval_app, input_artifact, output_language=output_language)
         )
     except Exception as e:

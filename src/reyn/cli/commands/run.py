@@ -1,11 +1,11 @@
 """`reyn run` — execute an app."""
 from __future__ import annotations
 import argparse
-import asyncio
 import json
 import sys
 from pathlib import Path
 
+from ...llm import run_async
 from ..common_args import add_common_args
 from ..skill_loader import load_skill_from_args
 from ..logger_factory import make_logger
@@ -118,7 +118,7 @@ def run(args: argparse.Namespace) -> None:
     print()
 
     try:
-        result = asyncio.run(
+        result = run_async(
             agent.run(loaded.skill, initial_input, output_language=output_language)
         )
     except Exception as e:

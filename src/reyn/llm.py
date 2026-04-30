@@ -1,10 +1,61 @@
+import asyncio
 import json
 import os
 import re
 from dataclasses import dataclass
+from typing import Coroutine, TypeVar
 import litellm
 from .models import ContextFrame
 from .pricing import TokenUsage
+
+T = TypeVar("T")
+
+
+async def shutdown_logging() -> None:
+    """Drain LiteLLM's global background logging worker.
+
+    LiteLLM enqueues async success-handler coroutines into a process-wide
+    `LoggingWorker` queue. If the event loop closes (e.g. `asyncio.run`
+    returns) while items remain in the queue, those coroutines are
+    garbage-collected unawaited and Python emits a `RuntimeWarning:
+    coroutine 'Logging.async_success_handler' was never awaited`.
+
+    Call this from the lifecycle wrapper (`run_async`) before the loop
+    closes. Best-effort: never raises, time-bounded to keep shutdown snappy.
+    """
+    try:
+        from litellm.litellm_core_utils.logging_worker import (
+            GLOBAL_LOGGING_WORKER,
+        )
+    except Exception:
+        return
+    # 1) Drain the queue so all enqueued coroutines actually run.
+    #    Wait briefly; if it hangs (e.g. worker died), fall through.
+    try:
+        await asyncio.wait_for(GLOBAL_LOGGING_WORKER.flush(), timeout=2.0)
+    except (asyncio.TimeoutError, Exception):
+        pass
+    # 2) Cancel the worker task and any in-flight callbacks.
+    try:
+        await GLOBAL_LOGGING_WORKER.stop()
+    except Exception:
+        pass
+
+
+def run_async(coro: Coroutine[object, object, T]) -> T:
+    """`asyncio.run` that also drains LiteLLM's logging worker before close.
+
+    Use at any CLI entry point that may invoke `call_llm`. Replaces
+    `asyncio.run(coro)` and gives LiteLLM a chance to clean up its
+    background queue, eliminating spurious unawaited-coroutine warnings.
+    """
+    async def _wrapped() -> T:
+        try:
+            return await coro
+        finally:
+            await shutdown_logging()
+
+    return asyncio.run(_wrapped())
 
 
 @dataclass
