@@ -1,0 +1,132 @@
+site_name: reyn
+site_description: LLM workflow OS — phase transitions as a constrained decision graph
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: folder
+      languages:
+        - locale: en
+          name: English
+          default: true
+          build: true
+        - locale: ja
+          name: 日本語
+          build: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Tutorials:
+      - tutorials/01-installation.md
+      - tutorials/02-your-first-skill.md
+      - tutorials/03-running-a-skill.md
+      - tutorials/04-writing-an-eval.md
+      - tutorials/05-chat-mode.md
+  - How-to:
+      - how-to/validate-artifacts.md
+      - how-to/compose-skills-with-run-skill.md
+      - how-to/iterate-with-fan-out.md
+      - how-to/add-a-python-preprocessor.md
+      - how-to/ask-user-mid-phase.md
+      - how-to/manage-permissions.md
+      - how-to/debug-with-events.md
+      - how-to/persist-state.md
+      - how-to/localize-output.md
+      - how-to/import-an-existing-skill.md
+  - Reference:
+      - CLI:
+          - reference/cli/run.md
+          - reference/cli/eval.md
+          - reference/cli/lint.md
+          - reference/cli/chat.md
+          - reference/cli/common-flags.md
+      - DSL:
+          - reference/dsl/skill-md.md
+          - reference/dsl/phase-md.md
+          - reference/dsl/artifact-yaml.md
+          - reference/dsl/preprocessor.md
+          - reference/dsl/graph.md
+      - Runtime:
+          - reference/runtime/context-frame.md
+          - reference/runtime/llm-output-contract.md
+          - reference/runtime/control-ir.md
+          - reference/runtime/events.md
+      - Config:
+          - reference/config/reyn-yaml.md
+          - reference/config/permissions.md
+          - reference/config/state-dir.md
+      - Stdlib:
+          - reference/stdlib/index.md
+          - reference/stdlib/skill_builder.md
+          - reference/stdlib/skill_improver.md
+          - reference/stdlib/skill_importer.md
+          - reference/stdlib/eval.md
+          - reference/stdlib/eval_builder.md
+          - reference/stdlib/skill_router.md
+          - reference/stdlib/recall_memory.md
+          - reference/stdlib/write_memory.md
+  - Concepts:
+      - concepts/principles.md
+      - concepts/architecture.md
+      - concepts/phase-vs-skill-vs-os.md
+      - concepts/llm-as-decision-engine.md
+      - concepts/workspace.md
+      - concepts/events.md
+      - concepts/permission-model.md
+      - concepts/memory.md
+      - Agent engineering:
+          - concepts/agent-engineering/index.md
+          - concepts/agent-engineering/system-design.md
+          - concepts/agent-engineering/tool-contract-design.md
+          - concepts/agent-engineering/retrieval-engineering.md
+          - concepts/agent-engineering/reliability-engineering.md
+          - concepts/agent-engineering/security.md
+          - concepts/agent-engineering/evaluation-and-observability.md
+          - concepts/agent-engineering/product-think.md
+  - Contributing: contributing/style-guide.md
+
+extra:
+  alternate:
+    - name: English
+      link: /en/
+      lang: en
+    - name: 日本語
+      link: /ja/
+      lang: ja

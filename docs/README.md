@@ -1,19 +1,27 @@
-# Reyn Documentation
+# reyn Documentation
 
-## Skills — Standard library skills
+Documentation source for the reyn LLM workflow OS. Build with [MkDocs](https://www.mkdocs.org/) + [Material](https://squidfunk.github.io/mkdocs-material/) and the `mkdocs-static-i18n` plugin.
 
-Each stdlib skill's documentation lives in its own `skill.md` body. Run `reyn skills <name>` to view it from the CLI, or open the source directly:
+## Languages
 
-| Skill | Source |
-|-------|--------|
-| `skill_builder` | [src/stdlib/skills/skill_builder/skill.md](../src/stdlib/skills/skill_builder/skill.md) |
-| `skill_improver` | [src/stdlib/skills/skill_improver/skill.md](../src/stdlib/skills/skill_improver/skill.md) |
-| `eval_builder` | [src/stdlib/skills/eval_builder/skill.md](../src/stdlib/skills/eval_builder/skill.md) |
+- English (default) — `en/index.md`
+- 日本語 — `ja/index.md`
 
-## Architecture — Design & internals
+## Build locally
 
-*(coming soon)*
+```bash
+make docs-install   # installs mkdocs + plugins into venv
+make docs-serve     # http://127.0.0.1:8000
+make docs-build     # builds static site to ./site (strict mode)
+```
 
-## Guides — Tutorials & reference
+## Layout
 
-*(coming soon)*
+```
+docs/
+├── en/              # English (Diátaxis: tutorials / how-to / reference / concepts)
+├── ja/              # Japanese translations (untranslated files fall back to en)
+└── agent/           # Agent-only documentation (English only, no i18n)
+```
+
+See [contributing/style-guide.md](en/contributing/style-guide.md) for the writing rules and translation policy.

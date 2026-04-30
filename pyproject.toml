@@ -36,6 +36,11 @@ dev = [
     "ruff",
     "mypy",
 ]
+docs = [
+    "mkdocs>=1.5",
+    "mkdocs-material>=9.5",
+    "mkdocs-static-i18n>=1.2",
+]
 
 [project.scripts]
 reyn = "reyn._cli:main"
