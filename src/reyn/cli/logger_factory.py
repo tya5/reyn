@@ -8,3 +8,11 @@ def make_logger(rich: bool = False, **opts):
         return RichLogger(**opts)
     from reyn.reporters.console import ConsoleLogger
     return ConsoleLogger(**opts)
+
+
+def make_chat_renderer(rich: bool = False):
+    if rich:
+        from reyn.chat.renderer import RichChatRenderer
+        return RichChatRenderer()
+    from reyn.chat.renderer import ConsoleChatRenderer
+    return ConsoleChatRenderer()

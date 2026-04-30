@@ -119,6 +119,10 @@ class ChatSession:
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
 
+        from reyn.pricing import TokenUsage
+        self._total_usage: TokenUsage = TokenUsage()
+        self._total_cost_usd: float = 0.0
+
         self._chat_events = EventLog(subscribers=[EventPersister(self.events_path)])
         self.running_skills: dict[str, asyncio.Task] = {}
 
@@ -130,6 +134,22 @@ class ChatSession:
         # extra questions queue. Each entry: (run_id, skill_name, question, suggestions, future)
         self._active_question: tuple[str, str, asyncio.Future] | None = None
         self._pending_questions: list[tuple[str, str, str, list[str], asyncio.Future]] = []
+
+    # ── cost accumulation ───────────────────────────────────────────────────────
+
+    def _accumulate(self, result) -> None:
+        if result.token_usage is not None:
+            self._total_usage += result.token_usage
+        if result.cost_usd is not None:
+            self._total_cost_usd += result.cost_usd
+
+    @property
+    def total_usage(self):
+        return self._total_usage
+
+    @property
+    def total_cost_usd(self) -> float:
+        return self._total_cost_usd
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -286,18 +306,31 @@ class ChatSession:
         state_subdir: str,
         user_input_fn=None,
         mcp_servers: dict | None = None,
+        forward_events: bool = False,
     ):
         """Load a stdlib skill, build an Agent under workspace/<state_subdir>, run it.
+
+        When `forward_events` is True, phase_started/phase_completed events
+        from this run are surfaced as `trace` messages on the chat outbox so
+        the user sees progress between LLM hops. Off by default to keep
+        memory/admin runs silent unless the caller opts in.
 
         Returns the RunResult. Callers handle exceptions.
         """
         skill = self._load_stdlib_skill(skill_name)
+        subscribers = None
+        if forward_events:
+            from reyn.chat.forwarder import ChatEventForwarder
+            subscribers = [ChatEventForwarder(skill_name, self.outbox)]
         agent = self._build_agent(
             self.workspace_dir / state_subdir,
             user_input_fn=user_input_fn,
             mcp_servers=mcp_servers,
+            subscribers=subscribers,
         )
-        return await agent.run(skill, input_artifact, output_language=self.output_language)
+        result = await agent.run(skill, input_artifact, output_language=self.output_language)
+        self._accumulate(result)
+        return result
 
     # ── memory recall ───────────────────────────────────────────────────────────
 
@@ -331,6 +364,7 @@ class ChatSession:
                     },
                 },
                 state_subdir="recall",
+                forward_events=True,
             )
         except Exception as exc:
             self._chat_events.emit("memory_recall_failed", error=str(exc))
@@ -483,6 +517,7 @@ class ChatSession:
 
         result = await self._run_stdlib_skill(
             ROUTER_SKILL_NAME, input_artifact, state_subdir=state_subdir,
+            forward_events=True,
         )
         return result.data
 
@@ -618,6 +653,7 @@ class ChatSession:
             await self.outbox.put(("error", f"[{skill_name}] failed: {exc}"))
             return
 
+        self._accumulate(result)
         self._chat_events.emit(
             "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
         )

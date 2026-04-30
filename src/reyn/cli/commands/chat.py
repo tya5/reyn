@@ -15,6 +15,8 @@ def register(sub) -> None:
         "--chat-id", dest="chat_id", default=None,
         help="Resume an existing chat by id (default: new id)",
     )
+    p.add_argument("--rich", action="store_true",
+                   help="Use Rich-styled console output instead of plain text.")
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -94,4 +96,6 @@ def run(args: argparse.Namespace) -> None:
     )
     chat.load_history()
 
-    run_async(run_repl(chat))
+    from ..logger_factory import make_chat_renderer
+    renderer = make_chat_renderer(rich=args.rich)
+    run_async(run_repl(chat, renderer=renderer))

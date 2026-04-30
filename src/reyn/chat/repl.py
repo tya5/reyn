@@ -1,30 +1,26 @@
 """prompt_toolkit-based REPL for ChatSession."""
 from __future__ import annotations
 import asyncio
-import sys
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.application import run_in_terminal
+from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
+from .renderer import ChatRenderer
 from .session import ChatSession
 
 
-_PREFIX = {
-    "agent": "agent>",
-    "status": "[…]",
-    "ask": "[ask]",
-    "trace": "[trace]",
-    "skill_done": "[done]",
-    "error": "[error]",
-}
-
-
-async def _input_loop(session: ChatSession, prompt_session: PromptSession) -> None:
+async def _input_loop(
+    session: ChatSession,
+    prompt_session: PromptSession,
+    renderer: ChatRenderer,
+) -> None:
     while True:
         try:
             with patch_stdout():
-                text = await prompt_session.prompt_async("you > ")
+                text = await prompt_session.prompt_async(renderer.prompt_text())
         except (EOFError, KeyboardInterrupt):
             await session.shutdown()
             return
@@ -40,30 +36,30 @@ async def _input_loop(session: ChatSession, prompt_session: PromptSession) -> No
         await session.submit_user_text(text)
 
 
-async def _output_loop(session: ChatSession) -> None:
+async def _output_loop(session: ChatSession, renderer: ChatRenderer) -> None:
     while True:
         kind, text = await session.outbox.get()
         if kind == "__end__":
             return
-        prefix = _PREFIX.get(kind, "")
-        if prefix:
-            print(f"{prefix} {text}")
+        # Wrap in run_in_terminal so the prompt is cleared before output and
+        # redrawn after — required for ANSI/Rich to render cleanly without
+        # corrupting the prompt. When no app is active (banner phase), the
+        # function runs synchronously without coordination.
+        if get_app_or_none() is not None:
+            await run_in_terminal(lambda k=kind, t=text: renderer.message(k, t))
         else:
-            print(text)
-        sys.stdout.flush()
+            renderer.message(kind, text)
 
 
-async def run_repl(session: ChatSession) -> None:
+async def run_repl(session: ChatSession, renderer: ChatRenderer) -> None:
     history_path = session.workspace_dir / ".input_history"
     prompt_session: PromptSession[str] = PromptSession(history=FileHistory(str(history_path)))
 
-    print(f"reyn chat — chat_id={session.chat_id}")
-    print("Type /quit or Ctrl-D to exit.")
-    print()
+    renderer.banner(session.chat_id)
 
     runner = asyncio.create_task(session.run())
-    inputs = asyncio.create_task(_input_loop(session, prompt_session))
-    outputs = asyncio.create_task(_output_loop(session))
+    inputs = asyncio.create_task(_input_loop(session, prompt_session, renderer))
+    outputs = asyncio.create_task(_output_loop(session, renderer))
 
     try:
         await runner
@@ -71,3 +67,5 @@ async def run_repl(session: ChatSession) -> None:
         inputs.cancel()
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)
+        cost_usd = session.total_cost_usd if session.total_cost_usd > 0 else None
+        renderer.cost_summary(session.total_usage, cost_usd)
