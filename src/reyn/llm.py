@@ -1,19 +1,8 @@
 import json
 import os
 import re
-import warnings
 from dataclasses import dataclass
 import litellm
-
-# LiteLLM creates async success-handler coroutines internally; they are not
-# awaited when the event loop tears down at process exit. This is a known
-# upstream issue (no fix in 1.82.6). Suppress the noisy RuntimeWarning so
-# users don't see an alarming traceback on clean shutdown.
-warnings.filterwarnings(
-    "ignore",
-    message=r"coroutine 'Logging\.async_success_handler' was never awaited",
-    category=RuntimeWarning,
-)
 from .models import ContextFrame
 from .pricing import TokenUsage
 
