@@ -46,6 +46,19 @@ schema:
           can_finish:
             type: boolean
             description: True if this phase may end the workflow by choosing decision=finish.
+          allowed_ops:
+            type: array
+            items:
+              type: string
+            description: |
+              Control IR op kinds this phase may emit. Pick the smallest set
+              from `op_catalog` that the phase actually needs — narrower lists
+              prevent the LLM from drifting outside the phase's intent and
+              reduce prompt tokens. Common patterns: [file] for read/write
+              phases, [file, ask_user] (the implicit default) for interactive
+              phases, [run_skill] for orchestrator phases, [] for pure
+              decision phases that emit no side effects (e.g. routing,
+              judging). Omit the field to inherit the default [file, ask_user].
           preprocessor:
             type: array
             description: |

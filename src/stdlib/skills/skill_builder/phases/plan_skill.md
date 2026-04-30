@@ -95,6 +95,18 @@ phases: array of phase definitions, each with:
   - instructions: 2–4 sentence domain-logic instructions for the TARGET skill's task only.
       For review phases: specify concrete quality criteria, verdict fields, and when to approve vs. request revision.
   - can_finish: true only if this phase may end the workflow
+  - allowed_ops: list of Control IR op kinds this phase may emit. Pick the
+      smallest subset of `op_catalog` that the phase actually needs.
+      Common patterns:
+        - generation/transformation phases that read or write files: [file]
+        - interactive phases that may need to ask the user: [file, ask_user]
+          (this is the implicit default; you can omit `allowed_ops` for these)
+        - orchestrator phases that invoke sub-skills: [run_skill] or [file, run_skill]
+        - pure decision/review phases that only produce a verdict artifact: []
+        - phases that fetch external data: [web_fetch] or [web_search, web_fetch]
+      Narrower lists are better — they prevent the LLM from drifting outside
+      the phase's intent and shrink the prompt. Look up each candidate kind
+      in `op_catalog` to confirm it fits the phase's instructions.
 
 transitions: array of {from: phase_name, to: [phase_name, ...]}
   - `to` values MUST be phase names only — NEVER artifact names.

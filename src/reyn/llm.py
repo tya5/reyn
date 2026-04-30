@@ -78,6 +78,7 @@ Artifact rules:
 ━━━ ops rules (both turns) ━━━
 - Available op kinds and schemas are listed in available_control_ops in the context.
 - Use only listed kinds; unknown kinds are skipped.
+- op_catalog (when present) is a reference list of every Control IR op kind the OS supports — meta-skills (those that author or modify other skills' phase frontmatter) consult it when choosing `allowed_ops` values for the phases they generate. Normal phases ignore it.
 
 ━━━ control_ir_results ━━━
 - When non-empty, this is a re-call after your previous act turn.

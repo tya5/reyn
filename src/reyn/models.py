@@ -306,6 +306,12 @@ class ContextFrame(BaseModel):
     finish_criteria: list[str] = Field(default_factory=list)
     constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
     available_control_ops: list[ControlIROpSpec] = Field(default_factory=list)
+    # Reference catalog of every Control IR op kind the OS can dispatch in this
+    # run, regardless of the current phase's allowed_ops. Populated for all
+    # phases but only meta-skills (skill_builder, skill_improver, skill_importer)
+    # consult it — they need to choose `allowed_ops` values for the phase
+    # frontmatter they generate. Normal phases ignore this list.
+    op_catalog: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
     model: str = ""        # model class name (or raw LiteLLM string) for this phase
     model_resolved: str = ""  # resolved LiteLLM string actually used for LLM calls

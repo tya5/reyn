@@ -46,6 +46,7 @@ def build_frame(
     effective_model: str,
     model_resolved: str,
     events: Any,
+    op_catalog: list[ControlIROpSpec] | None = None,
     control_ir_results: list[dict] | None = None,
     artifact_path: str | None = None,
 ) -> ContextFrame:
@@ -67,6 +68,7 @@ def build_frame(
         finish_criteria=finish_criteria if "end" in allowed_next else [],
         constraints=PhaseConstraints(max_phase_visits=max_phase_visits),
         available_control_ops=available_ops,
+        op_catalog=op_catalog or [],
         output_language=output_language,
         model=effective_model,
         model_resolved=model_resolved,

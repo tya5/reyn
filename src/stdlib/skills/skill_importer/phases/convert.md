@@ -134,10 +134,18 @@ name: <phase_name>
 input: <input_artifact_name>
 role: <optional_role>
 can_finish: <true|false>
+allowed_ops: [<op_kinds>]
 ---
 
 <phase instructions, lifted/condensed from the source>
 ```
+
+`allowed_ops` lists the Control IR op kinds the phase actually emits. Pick
+the smallest set from `op_catalog` — narrower lists keep the LLM on task
+and reduce prompt tokens. If the source skill calls tools (HTTP fetch,
+shell, file I/O), map them to the closest reyn ops. If the phase emits no
+side effects (pure judging/routing), use `[]`. Omit the field to inherit
+the default `[file, ask_user]`.
 
 If the phase has a python preprocessor (per Step 2's decision), include
 `preprocessor` and `permissions.python` blocks in the frontmatter:

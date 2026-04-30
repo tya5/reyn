@@ -80,6 +80,23 @@ Anti-pattern guard: do NOT add a Python step when the failure is genuinely
 about judgment, tone, or generation quality. Python helps with counting and
 parsing — it cannot make the LLM write better prose.
 
+### Step 4b — Consider tightening `allowed_ops`
+
+If the eval failure pattern looks like the phase **is using the wrong tool**
+(e.g. a memory phase calling `web_search`, a review phase running `shell`),
+the fix is often `allowed_ops` rather than instruction edits. Telltale signs:
+
+- The phase's act turns include op kinds that aren't part of its core task
+- The phase emits `web_search` / `web_fetch` when no external lookup was
+  asked for
+- The phase wastes turns on ops whose results don't shape the final artifact
+
+Cross-reference `op_catalog` with what the phase actually needs and propose
+an `update` to its frontmatter narrowing `allowed_ops`. Smallest set wins.
+Empty `[]` for pure decision phases. The runtime default `[file, ask_user]`
+is permissive — meta-skills should explicitly tighten it when the eval
+shows drift.
+
 ## Output
 
 Emit `improvement_plan` with:

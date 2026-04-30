@@ -336,6 +336,7 @@ class OSRuntime:
             finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
             available_ops=filtered_ops,
+            op_catalog=all_ops,
             effective_model=effective_model,
             model_resolved=self._resolver.resolve(effective_model),
             events=self.events,
