@@ -14,8 +14,32 @@ from ..session import Session
 from ..summary import print_eval_total
 
 
+_EVAL_EPILOG = """
+Note for skills using `python` preprocessor steps:
+  Each python step must be approved before eval — eval runs non-interactively
+  and cannot prompt. Two ways to pre-approve:
+
+    (a) Run the target once interactively first:
+          reyn run <target_skill> "<sample input>"
+        Approve at the prompt; the choice is persisted to .reyn/approvals.yaml.
+
+    (b) Set a project-wide allow in reyn.yaml:
+          permissions:
+            python.pure: allow      # for pure-mode steps
+            python.trusted: allow   # for trusted-mode steps (also requires
+                                    # --allow-untrusted-python at runtime)
+
+  Without prior approval, the target's run will fail and the case will be
+  marked as not-finished. The framing reads as a target-skill bug; it isn't.
+"""
+
+
 def register(sub) -> None:
-    p = sub.add_parser("eval", help="Run an eval spec against an app")
+    p = sub.add_parser(
+        "eval", help="Run an eval spec against an app",
+        epilog=_EVAL_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     p.add_argument("spec", metavar="FILE",
                    help="Path to the eval.md spec file (e.g. reyn/local/my_app/eval.md)")
     add_model_arg(p)

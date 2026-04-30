@@ -25,6 +25,28 @@ Each invocation handles **one eval case**. The caller (e.g. `reyn eval` CLI or a
 1. `run_target` — runs the target skill with the test input; builds a list of `phase_eval_request` items from the phase artifacts and quality criteria
 2. `evaluate` — preprocessor iterates `judge_phase` over each eval request; LLM aggregates judgments into `eval_result`
 
+## Caveats — target skills with python preprocessor steps
+
+If the target skill uses `python` preprocessor steps, **each step must be
+approved before eval**. eval invokes the target via the `run_skill` Control
+IR op under a non-interactive PermissionResolver — there is no prompt to
+answer at eval time, so an unapproved python step is silently denied and the
+target's run fails. Eval reports the case as not-finished, which can read
+like a target-skill bug.
+
+Two ways to pre-approve:
+
+- Run the target once interactively first (`reyn run <target> "<sample>"`).
+  Approve at the prompt; the choice is saved to `.reyn/approvals.yaml`.
+- Set a project-wide allow in `reyn.yaml`:
+
+  ```yaml
+  permissions:
+    python.pure: allow      # for pure-mode steps
+    python.trusted: allow   # for trusted-mode steps; still needs
+                            # --allow-untrusted-python at runtime
+  ```
+
 ## Input
 
 Pass an `eval_case_input` artifact:
