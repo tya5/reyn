@@ -53,6 +53,32 @@ Output `improvement_plan.changes` — an ordered list of file changes. Rules:
 - Use action `update` for existing files, `create` for new ones, `delete` to remove a stale file.
 - File paths are project-relative (e.g. `reyn/local/my_app/phases/review.md`).
 
+### Step 4a — Consider adding a Python preprocessor
+
+If the eval failure pattern looks **deterministic** rather than reasoning-shaped, a `python` preprocessor step is often the right fix instead of fiddling with prompts. Telltale signs:
+
+- The criterion checks an exact count / length / regex / format and the LLM keeps getting it slightly wrong
+- The phase wastes act turns reading a structured input the LLM only needs summarized numerically
+- The artifact has fields the LLM has to compute (token counts, statistics, parsed components) and the LLM gets them inconsistent across runs
+
+In those cases, plan two changes together:
+
+1. `create` a `<phase_name>_helpers.py` (or extend an existing one) under
+   the skill directory with a function `(artifact: dict) -> JSON-serializable`
+   that does the deterministic computation.
+2. `update` the relevant phase's frontmatter to add a `preprocessor` block
+   with a `type: python` step plus a matching `permissions.python` entry.
+   Default `mode: pure`. Include the `output_schema` so the LLM sees the
+   typed enriched artifact.
+
+A typical skill_improver plan that adds one Python step is **2–3 changes**:
+the new `.py` file, the phase frontmatter update, and (sometimes) a tweak to
+the phase instructions telling the LLM to use the new injected fields.
+
+Anti-pattern guard: do NOT add a Python step when the failure is genuinely
+about judgment, tone, or generation quality. Python helps with counting and
+parsing — it cannot make the LLM write better prose.
+
 ## Output
 
 Emit `improvement_plan` with:
