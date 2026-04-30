@@ -48,6 +48,15 @@ Even if `phases/preprocess_text.md` and `phases/summarize_text.md` exist on disk
 
 For each phase name in `phase_order`, read `{skill_dir}/phases/{phase_name}.md`. Do NOT read or glob other `.md` files in `phases/`.
 
+While reading each phase, **note whether it has a `preprocessor` block**, and if any step has `type: python`, record:
+
+- the python step's `into` path (e.g. `data.stats`)
+- the names of the fields it injects (read its `output_schema.properties`)
+- the function `module:function` (for the criterion to reference precisely)
+
+This information shapes the criteria you write in Step 6 — see the
+"Phases with python preprocessor" subsection.
+
 ## Step 4 — Read artifact files
 
 Glob `{skill_dir}/artifacts/*.yaml` and read every artifact file. Artifact files do NOT have an "orphan" problem — read them all for context.
@@ -61,6 +70,10 @@ For artifact types referenced by phases but not found locally, check `{dsl_root}
 Design 1–2 realistic test cases:
 - Case 1: a typical, well-formed input the skill is designed to handle.
 - Case 2 (if the skill has review/revision loops): an input where the first draft is likely to be **rejected** — causing the review phase to rollback. Make the input deliberately ambiguous, underspecified, or contradictory so the reviewer is likely to reject it.
+- Optional Case 3 (if any phase has a python preprocessor): an **edge case
+  for the python step** — empty / minimal input, or unusually large input —
+  to stress the deterministic path. Helpful when criteria check that the
+  LLM cites the python output correctly even at extremes.
 
 The goal is branch coverage: if the skill has a rollback path, at least one test case should exercise it.
 
@@ -85,6 +98,35 @@ Prefix a criterion with `[aspirational]` when it represents a model capability c
 - Criteria that are only evaluable when a specific runtime branch fires (e.g. "if rollback is chosen ...") — these cannot be reliably tested without forcing that branch.
 
 `[aspirational]` criteria are tracked but excluded from pass/fail.
+
+### Phases with a python preprocessor
+
+If a phase has a `type: python` preprocessor step (recorded in Step 3),
+the deterministic computation is performed by Python — **not** by the LLM.
+Tailor criteria accordingly:
+
+**DO write criteria like:**
+
+- "The output cites the precomputed `data.stats.char_count` value
+  verbatim rather than estimating it." — checks that the LLM actually
+  used the python output instead of ignoring it.
+- "The commentary is consistent with `data.stats` (no statements
+  contradicting the precomputed values)." — catches the LLM
+  overriding python with its own (wrong) guess.
+- "Conclusions about size/count/length reference numeric fields from
+  `data.stats` rather than vague terms like 'long' or 'short'."
+
+**DON'T write criteria like:**
+
+- ~~"`char_count` is the correct number of characters."~~ — Python
+  computed it; this is vacuously true. Useless eval signal.
+- ~~"Counts and lengths are accurate."~~ — same problem.
+- ~~"The phase computes statistics correctly."~~ — the phase doesn't
+  compute, the python step does. Mis-attribution.
+
+The point of a python preprocessor is that determinism is **assumed**,
+not tested. Criteria should test the LLM's **integration** with the
+python output, since that's the part that can fail.
 
 ## Final checklist (apply before emitting skill_analysis)
 
