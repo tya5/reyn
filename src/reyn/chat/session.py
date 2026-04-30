@@ -247,6 +247,53 @@ class ChatSession:
         for spec in skills_to_run:
             await self._spawn_skill(spec)
 
+    # ── skill invocation helpers ────────────────────────────────────────────────
+
+    def _build_agent(
+        self,
+        state_dir: str | Path,
+        *,
+        user_input_fn=None,
+        mcp_servers: dict | None = None,
+    ) -> Agent:
+        """Construct an Agent with this session's shared defaults applied."""
+        return Agent(
+            model=self.model,
+            state_dir=str(state_dir),
+            resolver=self._resolver,
+            permission_resolver=self._perm,
+            max_phase_visits=self._max_phase_visits,
+            mcp_servers=mcp_servers,
+            user_input_fn=user_input_fn,
+        )
+
+    def _load_stdlib_skill(self, skill_name: str):
+        """Load a stdlib skill by its directory name. Propagates parse errors."""
+        sl = stdlib_root()
+        skill_md = sl / "skills" / skill_name / "skill.md"
+        return load_dsl_skill(str(skill_md), dsl_root=str(sl))
+
+    async def _run_stdlib_skill(
+        self,
+        skill_name: str,
+        input_artifact: dict,
+        *,
+        state_subdir: str,
+        user_input_fn=None,
+        mcp_servers: dict | None = None,
+    ):
+        """Load a stdlib skill, build an Agent under workspace/<state_subdir>, run it.
+
+        Returns the RunResult. Callers handle exceptions.
+        """
+        skill = self._load_stdlib_skill(skill_name)
+        agent = self._build_agent(
+            self.workspace_dir / state_subdir,
+            user_input_fn=user_input_fn,
+            mcp_servers=mcp_servers,
+        )
+        return await agent.run(skill, input_artifact, output_language=self.output_language)
+
     # ── memory recall ───────────────────────────────────────────────────────────
 
     def _memory_scope_dirs(self) -> list[str]:
@@ -259,35 +306,25 @@ class ChatSession:
         """Run recall_memory and return relevant memory dicts (or [] on failure)."""
         if not self._memory_enabled or not query.strip():
             return []
-        scope_dirs = self._memory_scope_dirs()
         recent = [
             {"role": m.role, "text": m.text}
             for m in self.history[-4:]
             if m.role in ("user", "agent")
         ]
-        sl = stdlib_root()
-        skill_md = sl / "skills" / RECALL_SKILL_NAME / "skill.md"
         try:
-            skill = load_dsl_skill(str(skill_md), dsl_root=str(sl))
-        except Exception:
-            return []
-        agent = Agent(
-            model=self.model,
-            state_dir=str(self.workspace_dir / "recall"),
-            resolver=self._resolver,
-            permission_resolver=self._perm,
-            max_phase_visits=self._max_phase_visits,
-        )
-        try:
-            result = await agent.run(skill, {
-                "type": "memory_query",
-                "data": {
-                    "query": query,
-                    "recent_history": recent,
-                    "scope_dirs": scope_dirs,
-                    "top_k": self._memory_recall_top_k,
+            result = await self._run_stdlib_skill(
+                RECALL_SKILL_NAME,
+                {
+                    "type": "memory_query",
+                    "data": {
+                        "query": query,
+                        "recent_history": recent,
+                        "scope_dirs": self._memory_scope_dirs(),
+                        "top_k": self._memory_recall_top_k,
+                    },
                 },
-            }, output_language=self.output_language)
+                state_subdir="recall",
+            )
         except Exception as exc:
             self._chat_events.emit("memory_recall_failed", error=str(exc))
             return []
@@ -333,13 +370,6 @@ class ChatSession:
             {"path": str(global_memory_dir()), "scope": "global"},
             {"path": str(project_memory_dir(self._state_root)), "scope": "project"},
         ]
-        sl = stdlib_root()
-        skill_md = sl / "skills" / WRITE_SKILL_NAME / "skill.md"
-        try:
-            skill = load_dsl_skill(str(skill_md), dsl_root=str(sl))
-        except Exception as exc:
-            await self.outbox.put(("error", f"memory extraction load failed: {exc}"))
-            return
 
         self._journal.mark_started()
         await self.outbox.put(("status", f"memory: 抽出中... ({reason})"))
@@ -349,18 +379,15 @@ class ChatSession:
             segment_size=len(segment),
         )
 
-        agent = Agent(
-            model=self.model,
-            state_dir=str(self.workspace_dir / "extract"),
-            resolver=self._resolver,
-            permission_resolver=self._perm,
-            max_phase_visits=self._max_phase_visits,
-        )
         try:
-            result = await agent.run(skill, {
-                "type": "memory_extract_request",
-                "data": {"conversation_segment": segment, "scope_dirs": scope_dirs},
-            }, output_language=self.output_language)
+            result = await self._run_stdlib_skill(
+                WRITE_SKILL_NAME,
+                {
+                    "type": "memory_extract_request",
+                    "data": {"conversation_segment": segment, "scope_dirs": scope_dirs},
+                },
+                state_subdir="extract",
+            )
         except Exception as exc:
             self._journal.mark_aborted()
             self._chat_events.emit(
@@ -433,18 +460,9 @@ class ChatSession:
 
         input_artifact = {"type": "chat_routing_request", "data": data}
 
-        sl = stdlib_root()
-        skill_md = sl / "skills" / ROUTER_SKILL_NAME / "skill.md"
-        skill = load_dsl_skill(str(skill_md), dsl_root=str(sl))
-
-        agent = Agent(
-            model=self.model,
-            state_dir=str(self.workspace_dir / state_subdir),
-            resolver=self._resolver,
-            permission_resolver=self._perm,
-            max_phase_visits=self._max_phase_visits,
+        result = await self._run_stdlib_skill(
+            ROUTER_SKILL_NAME, input_artifact, state_subdir=state_subdir,
         )
-        result = await agent.run(skill, input_artifact, output_language=self.output_language)
         return result.data
 
     # ── ask_user routing ────────────────────────────────────────────────────────
@@ -562,14 +580,10 @@ class ChatSession:
             await self.outbox.put(("error", f"failed to load {skill_name}: {exc}"))
             return
 
-        agent = Agent(
-            model=self.model,
-            state_dir=str(self.runs_root / run_id),
-            resolver=self._resolver,
-            permission_resolver=self._perm,
-            max_phase_visits=self._max_phase_visits,
-            mcp_servers=self._mcp_servers,
+        agent = self._build_agent(
+            self.runs_root / run_id,
             user_input_fn=self._make_skill_user_input_fn(run_id, skill_name),
+            mcp_servers=self._mcp_servers,
         )
         try:
             result = await agent.run(skill, input_artifact, output_language=self.output_language)
