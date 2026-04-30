@@ -89,7 +89,11 @@ class OSRuntime:
         self.strict = strict
         self.run_id = run_id
         self.events = EventLog(subscribers=subscribers)
-        self.workspace = Workspace(self.events, state_dir=state_dir)
+        self.workspace = Workspace(
+            self.events, state_dir=state_dir,
+            permission_resolver=permission_resolver,
+            skill_name=skill.name,
+        )
         self._max_phase_visits = max_phase_visits  # 0 = unlimited
         self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(

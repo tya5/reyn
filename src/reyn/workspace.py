@@ -2,7 +2,12 @@ from __future__ import annotations
 import glob as _glob
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 from .events import EventLog
+
+if TYPE_CHECKING:
+    from .permissions import PermissionResolver
 
 
 class Workspace:
@@ -12,14 +17,18 @@ class Workspace:
     base_dir  : CWD — where relative file paths resolve (read + write).
     state_dir : .reyn/ — where artifacts, event logs, and invoke sub-dirs live.
 
-    Read  policy : any path under base_dir (CWD).
-    Write policy : any path under base_dir (CWD); path traversal is denied.
+    Read  policy : any path under base_dir (CWD), plus paths the PermissionResolver
+                   has approved for this skill (declared via `permissions.file.read`).
+    Write policy : any path under base_dir (CWD), plus paths the PermissionResolver
+                   has approved for this skill (declared via `permissions.file.write`).
     """
 
     def __init__(
         self,
         events: EventLog,
         state_dir: str | Path = ".reyn",
+        permission_resolver: "PermissionResolver | None" = None,
+        skill_name: str = "",
     ) -> None:
         self.base_dir = Path.cwd()
         self.state_dir = (
@@ -30,24 +39,33 @@ class Workspace:
         self.artifacts: list[dict] = []
         self.state_dir.mkdir(parents=True, exist_ok=True)
         (self.state_dir / "artifacts").mkdir(exist_ok=True)
+        self._perm = permission_resolver
+        self._skill_name = skill_name
 
     def _resolve_read(self, path_str: str) -> Path:
-        p = Path(path_str)
+        p = Path(path_str).expanduser()
         resolved = (self.base_dir / p).resolve() if not p.is_absolute() else p.resolve()
-        if not resolved.is_relative_to(self.base_dir):
-            raise PermissionError(f"read not permitted: {path_str!r} (outside project)")
-        return resolved
+        if resolved.is_relative_to(self.base_dir):
+            return resolved
+        if self._perm and self._perm.is_read_allowed(str(resolved), self._skill_name):
+            return resolved
+        raise PermissionError(f"read not permitted: {path_str!r} (outside project)")
 
     def _resolve_write(self, path_str: str) -> Path:
-        p = Path(path_str)
+        p = Path(path_str).expanduser()
         if p.is_absolute():
+            resolved = p.resolve()
+            if self._perm and self._perm.is_write_allowed(str(resolved), self._skill_name):
+                return resolved
             raise PermissionError(
                 f"write not permitted: {path_str!r} (absolute paths are read-only)"
             )
         resolved = (self.base_dir / p).resolve()
-        if not resolved.is_relative_to(self.base_dir):
-            raise PermissionError(f"path escapes project: {path_str!r}")
-        return resolved
+        if resolved.is_relative_to(self.base_dir):
+            return resolved
+        if self._perm and self._perm.is_write_allowed(str(resolved), self._skill_name):
+            return resolved
+        raise PermissionError(f"path escapes project: {path_str!r}")
 
     def read_file(self, path_str: str) -> tuple[str, bool]:
         """Read a file. Returns (content, found). Raises PermissionError if denied."""
