@@ -1,0 +1,13 @@
+name: text_review
+description: |
+  Human-readable commentary grounded in the precomputed text statistics.
+schema:
+  type: object
+  properties:
+    commentary:
+      type: string
+      description: |
+        Short prose (under 4 lines) discussing the input. Must reference
+        the exact numbers from the Python-computed stats — no rounding,
+        no eyeballing.
+  required: [commentary]
