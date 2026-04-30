@@ -14,6 +14,7 @@ _PREFIX = {
     "agent": "agent>",
     "status": "[…]",
     "ask": "[ask]",
+    "trace": "[trace]",
     "skill_done": "[done]",
     "error": "[error]",
 }

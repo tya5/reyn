@@ -255,6 +255,7 @@ class ChatSession:
         *,
         user_input_fn=None,
         mcp_servers: dict | None = None,
+        subscribers: list | None = None,
     ) -> Agent:
         """Construct an Agent with this session's shared defaults applied."""
         return Agent(
@@ -265,6 +266,7 @@ class ChatSession:
             max_phase_visits=self._max_phase_visits,
             mcp_servers=mcp_servers,
             user_input_fn=user_input_fn,
+            subscribers=subscribers,
         )
 
     def _load_stdlib_skill(self, skill_name: str):
@@ -441,7 +443,9 @@ class ChatSession:
             for m in self.history[-self.history_window:]
             if m.role in ("user", "agent")
         ]
-        avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME})
+        avail = enumerate_available_skills(exclude={
+            ROUTER_SKILL_NAME, RECALL_SKILL_NAME, WRITE_SKILL_NAME,
+        })
 
         # Recall memories on routing turns; skip during narration (the skill
         # result is already the dominant context).
@@ -580,10 +584,12 @@ class ChatSession:
             await self.outbox.put(("error", f"failed to load {skill_name}: {exc}"))
             return
 
+        from reyn.chat.forwarder import ChatEventForwarder
         agent = self._build_agent(
             self.runs_root / run_id,
             user_input_fn=self._make_skill_user_input_fn(run_id, skill_name),
             mcp_servers=self._mcp_servers,
+            subscribers=[ChatEventForwarder(skill_name, self.outbox)],
         )
         try:
             result = await agent.run(skill, input_artifact, output_language=self.output_language)
