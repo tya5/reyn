@@ -14,7 +14,15 @@ import jsonschema
 
 from .parser import _split_frontmatter, parse_artifact
 
-PHASE_FRONTMATTER_ORDER = ["type", "name", "input", "role", "can_finish"]
+PHASE_FRONTMATTER_ORDER = ["type", "name", "input", "role", "can_finish", "allowed_ops"]
+
+# Known Control IR op kinds. Kept in sync with ControlIRExecutor.available_ops().
+# Conditional ops (shell, mcp, tool) are still listed here because lint is static
+# — runtime gating happens elsewhere; lint just rejects misspellings.
+_KNOWN_OP_KINDS = frozenset({
+    "file", "ask_user", "run_skill", "lint", "shell", "mcp",
+    "web_fetch", "web_search", "tool",
+})
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
@@ -119,7 +127,53 @@ def lint_phase(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
         issues.append(LintIssue("warning", path, "Phase has no instructions"))
 
     issues.extend(_lint_python_preprocessor(path, fm))
+    issues.extend(_lint_allowed_ops(path, fm))
 
+    return issues
+
+
+# ── allowed_ops check ────────────────────────────────────────────────────────
+
+
+def _lint_allowed_ops(path: Path, fm: dict) -> list[LintIssue]:
+    """Validate the optional `allowed_ops` frontmatter list.
+
+    Catches misspelled or invented op kinds early — the runtime would
+    silently drop them with `not_allowed_in_phase`, but at lint time we
+    can flag them. Empty list (`[]`) is valid: it explicitly allows no ops.
+    """
+    if "allowed_ops" not in fm:
+        return []
+    issues: list[LintIssue] = []
+    raw = fm["allowed_ops"]
+    if not isinstance(raw, list):
+        issues.append(LintIssue(
+            "error", path,
+            f"allowed_ops must be a YAML list (e.g. [file, ask_user]), "
+            f"got {type(raw).__name__}",
+        ))
+        return issues
+    seen: set[str] = set()
+    for i, val in enumerate(raw):
+        if not isinstance(val, str):
+            issues.append(LintIssue(
+                "error", path,
+                f"allowed_ops[{i}] must be a string op kind, got {type(val).__name__}",
+            ))
+            continue
+        if val not in _KNOWN_OP_KINDS:
+            issues.append(LintIssue(
+                "warning", path,
+                f"allowed_ops[{i}]='{val}' is not a known Control IR op kind. "
+                f"Known kinds: {sorted(_KNOWN_OP_KINDS)}. "
+                f"Unknown kinds will be silently filtered out at runtime.",
+            ))
+        if val in seen:
+            issues.append(LintIssue(
+                "warning", path,
+                f"allowed_ops[{i}]='{val}' duplicates an earlier entry",
+            ))
+        seen.add(val)
     return issues
 
 
