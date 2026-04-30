@@ -5,6 +5,7 @@ Checks DSL files for consistency issues that would make Meta-App generation unre
 Does not compile; reports issues without crashing.
 """
 from __future__ import annotations
+import ast
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,6 +117,153 @@ def lint_phase(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
 
     if not body.strip():
         issues.append(LintIssue("warning", path, "Phase has no instructions"))
+
+    issues.extend(_lint_python_preprocessor(path, fm))
+
+    return issues
+
+
+# ── Python preprocessor checks ────────────────────────────────────────────────
+
+
+def _resolve_python_module(skill_dir: Path, module: str) -> Path | None:
+    """Mirror PythonRunner._resolve_module_path's safety rules.
+
+    Returns the resolved Path on success, None on any rejection
+    (absolute, escape, missing). Caller handles "what kind of error".
+    """
+    if not module:
+        return None
+    p = Path(module)
+    if p.is_absolute():
+        return None
+    candidate = (skill_dir / p).resolve()
+    skill_resolved = skill_dir.resolve()
+    try:
+        candidate.relative_to(skill_resolved)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _toplevel_function_names(source: str) -> set[str]:
+    """Names of top-level `def` / `async def` in `source`. Empty on parse error."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    return {
+        node.name for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
+    """Validate any `type: python` preprocessor steps in a phase frontmatter.
+
+    Checks:
+      1. Each python step has a matching permissions.python entry
+         (same module + function).
+      2. The declared `module` resolves to an existing file inside the
+         skill directory (no absolute paths, no .. escape).
+      3. The declared `function` is a top-level def in that file.
+      4. (warning only) For pure-mode steps, run the harness's AST
+         validator against the file and report violations.
+    """
+    issues: list[LintIssue] = []
+    skill_dir = phase_path.parent.parent  # phases/<x>.md → ../
+
+    preprocessor = fm.get("preprocessor") or []
+    permissions = fm.get("permissions") or {}
+    perm_python = permissions.get("python") or [] if isinstance(permissions, dict) else []
+    if not isinstance(preprocessor, list):
+        return issues
+    if not isinstance(perm_python, list):
+        perm_python = []
+
+    perm_index = {
+        (str(p.get("module", "")), str(p.get("function", ""))): p
+        for p in perm_python if isinstance(p, dict)
+    }
+
+    for i, step in enumerate(preprocessor):
+        if not isinstance(step, dict) or step.get("type") != "python":
+            continue
+        module = str(step.get("module", "") or "")
+        function = str(step.get("function", "") or "")
+        label = f"preprocessor[{i}] python {module}:{function}"
+
+        # Check 1 — permissions entry
+        if (module, function) not in perm_index:
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label} is not declared in permissions.python — runtime will reject it. "
+                f"Add a matching entry under `permissions.python:` with the same module and function.",
+            ))
+            mode = "pure"  # assume pure for the AST check below
+        else:
+            mode = str(perm_index[(module, function)].get("mode", "pure"))
+
+        # Check 2 — module file path
+        resolved = _resolve_python_module(skill_dir, module)
+        if resolved is None:
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label}: module path {module!r} is not valid "
+                f"(must be a relative path inside the skill directory)",
+            ))
+            continue
+        if not resolved.exists() or not resolved.is_file():
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label}: module file {module!r} does not exist at {resolved}",
+            ))
+            continue
+
+        try:
+            source = resolved.read_text(encoding="utf-8")
+        except OSError as exc:
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label}: cannot read module file {resolved}: {exc}",
+            ))
+            continue
+
+        # Catch outright syntax errors so later checks don't silently no-op.
+        try:
+            ast.parse(source, filename=str(resolved))
+        except SyntaxError as exc:
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label}: module {module!r} has a syntax error at line {exc.lineno}: {exc.msg}",
+            ))
+            continue
+
+        # Check 3 — function defined at top level
+        if function and function not in _toplevel_function_names(source):
+            issues.append(LintIssue(
+                "error", phase_path,
+                f"{label}: function {function!r} is not defined as a top-level "
+                f"`def` in {module!r}",
+            ))
+
+        # Check 4 — pure-mode AST validation (warning, since reyn.yaml's
+        # python.allowed_modules can legitimately whitelist additional imports)
+        if mode == "pure":
+            try:
+                from reyn._python_harness import _validate_pure_ast
+            except Exception:
+                # harness isn't importable in this lint context — skip silently
+                continue
+            try:
+                _validate_pure_ast(ast.parse(source), frozenset())
+            except Exception as exc:
+                issues.append(LintIssue(
+                    "warning", phase_path,
+                    f"{label}: pure-mode check flagged module {module!r}: {exc}. "
+                    f"If the module legitimately needs the flagged import, add it to "
+                    f"`python.allowed_modules` in reyn.yaml.",
+                ))
 
     return issues
 
