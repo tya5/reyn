@@ -138,7 +138,7 @@ def infer_llm_visible_schema(
                     f"(got type={arr_schema.get('type')!r})"
                 )
             _require_parent_exists(schema, step.into, label)
-            element_schema = _infer_step_output_schema(step.skillly, sub_skills, f"{label}.apply")
+            element_schema = _infer_step_output_schema(step.apply, sub_skills, f"{label}.apply")
             schema = _set_at_path(schema, step.into, {"type": "array", "items": element_schema})
 
         elif isinstance(step, ValidateStep):
