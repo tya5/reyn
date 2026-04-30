@@ -4,6 +4,7 @@ name: search
 input: user_message
 role: mcp_researcher
 can_finish: true
+allowed_ops: [web_fetch]
 ---
 
 Search the GitHub MCP Registry for servers relevant to the user's capability request.

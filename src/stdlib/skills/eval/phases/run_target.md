@@ -4,6 +4,7 @@ name: run_target
 input: eval_case_input
 role: test_runner
 max_act_turns: 2
+allowed_ops: [run_skill]
 ---
 
 Run the target skill with the test case input and build evaluation requests from the resulting phase artifacts.

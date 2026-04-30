@@ -22,7 +22,9 @@ Every side effect (file I/O, asking the user, invoking a sub-skill, running shel
 {"kind": "run_skill", "skill": "recall_memory", "input": {...}}
 ```
 
-Five kinds today (`file`, `ask_user`, `run_skill`, `lint`, `shell`). Available ops are injected into the LLM's context per phase as `available_control_ops` — phase markdown never describes the syntax (P8).
+Eight op kinds today (`file`, `ask_user`, `run_skill`, `lint`, `shell`, `mcp`, `web_search`, `web_fetch`). Available ops are injected into the LLM's context per phase as `available_control_ops` — phase markdown never describes the syntax (P8).
+
+Each phase narrows that set further with `allowed_ops` in its frontmatter (default `[file, ask_user]`). The OS shows only the listed kinds to the LLM and rejects anything else the LLM emits anyway. This is two-edged: it prevents drift (a `write_memory` extract phase can't accidentally use `web_search` because it sees flash-lite and decides to "look up" a name), and it shrinks the prompt — irrelevant op descriptions are not paid for in tokens.
 
 ### 2. Candidate outputs — the decision envelope
 

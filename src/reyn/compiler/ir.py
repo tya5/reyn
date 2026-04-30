@@ -20,6 +20,9 @@ class PhaseDef:
     model_class: str = ""       # "light" | "standard" | "strong" | custom | "" = inherit from runtime
     permissions: dict = field(default_factory=dict)  # raw frontmatter permissions block
     preprocessor: list[dict] = field(default_factory=list)  # raw YAML config; typed in expander
+    # Sentinel None = frontmatter omitted the key → expander applies the default.
+    # Empty list = explicit "no ops".
+    allowed_ops: list[str] | None = None
 
 
 @dataclass

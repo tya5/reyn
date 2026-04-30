@@ -5,6 +5,7 @@ input: memory_extract_request
 role: memory_writer
 can_finish: true
 max_act_turns: 5
+allowed_ops: [file]
 permissions:
   file.read:
     - path: ~/.reyn/memory
@@ -25,7 +26,12 @@ Do them all in **one act turn**. Treat `not_found` as "the index doesn't
 exist yet — create it on first write".
 
 **Never re-read MEMORY.md in subsequent act turns.** Once you have the
-index contents (or confirmed they're absent), move to Step 2.
+index contents (or confirmed they're absent — `not_found` counts as Step 1
+done), move to Step 2.
+
+If a `not_found` MEMORY.md returned, **do not retry**. The file genuinely
+doesn't exist yet. You will create it in Step 3 if there is anything to
+save, or skip directly to Step 4 (decide turn) with `op: none` if not.
 
 ## Step 2 — Analyze the conversation
 
@@ -62,7 +68,9 @@ missing ones do.
 - If it's a wholly new topic, emit `op: create`.
 - `delete` is rare — only when the user explicitly says "forget X" or the
   memory turned out wrong.
-- If nothing memorable, emit a single `op: none` action and skip writes.
+- If nothing memorable, **skip Step 3 entirely** and go straight to the
+  decide turn (Step 4) with `actions: [{"op": "none", "rationale": "..."}]`.
+  Do NOT emit any more act turns — empty file ops do not count as Step 3.
 
 ### Picking scope
 

@@ -5,6 +5,7 @@ input: candidate_list
 role: skill_selector
 can_finish: false
 max_act_turns: 3
+allowed_ops: [ask_user]
 ---
 
 Pick exactly one candidate, asking the user when the choice isn't obvious.

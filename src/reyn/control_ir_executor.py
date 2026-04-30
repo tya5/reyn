@@ -187,16 +187,32 @@ class ControlIRExecutor:
         ops: list[ControlIROp],
         phase: str = "",
         decl: PermissionDecl | None = None,
+        allowed_ops: set[str] | None = None,
     ) -> list[dict[str, Any]]:
         """
         Execute a list of Control IR operations.
         Returns a result dict per op; never raises — errors are captured in results.
         Content-bearing results (file reads, ask_user answers) are returned directly
         so the caller can feed them back to the LLM.
+
+        allowed_ops: when provided, ops whose `kind` is not in the set are skipped
+        with a `not_allowed_in_phase` reason. Defense-in-depth against an LLM that
+        emits an op kind that wasn't advertised in the ContextFrame.
         """
         effective_decl = decl or PermissionDecl()
         results: list[dict[str, Any]] = []
         for op in ops:
+            if allowed_ops is not None and op.kind not in allowed_ops:
+                self.events.emit(
+                    "control_ir_skipped",
+                    kind=op.kind, reason="not_allowed_in_phase",
+                )
+                results.append({
+                    "kind": op.kind,
+                    "status": "skipped",
+                    "reason": "not_allowed_in_phase",
+                })
+                continue
             try:
                 if op.kind == "file":
                     if self._perm and getattr(op, "op", None) in ("write", "edit", "delete"):

@@ -79,6 +79,13 @@ class Phase(BaseModel):
     model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
     permissions: PermissionDecl = Field(default_factory=PermissionDecl)
     preprocessor: list[PreprocessorStep] = Field(default_factory=list)
+    # Control IR op kinds the phase may use. Filters available_control_ops in the
+    # ContextFrame and is enforced at executor dispatch (defense in depth). The
+    # default reflects the common case: file I/O plus user clarification. An
+    # explicit empty list means "no ops" (e.g. pure routing phases).
+    allowed_ops: list[str] = Field(
+        default_factory=lambda: ["file", "ask_user"],
+    )
 
 
 class SkillNodeSpec(BaseModel):

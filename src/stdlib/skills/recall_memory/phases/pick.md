@@ -5,6 +5,7 @@ input: memory_query
 role: memory_picker
 can_finish: true
 max_act_turns: 4
+allowed_ops: [file]
 permissions:
   file.read:
     - path: ~/.reyn/memory

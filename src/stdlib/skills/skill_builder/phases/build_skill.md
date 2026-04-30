@@ -3,6 +3,7 @@ type: phase
 name: build_skill
 input: skill_plan
 role: dsl_writer
+allowed_ops: [file]
 ---
 
 Generate DSL markdown files for the skill defined in data, then write each one to the workspace using file ops.

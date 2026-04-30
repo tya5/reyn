@@ -321,9 +321,13 @@ class OSRuntime:
         artifact_path: str | None = None,
     ) -> ContextFrame:
         effective_model = self._effective_model(current_phase)
+        phase_def = self.skill.phases[current_phase]
+        allowed = set(phase_def.allowed_ops)
+        all_ops = self.control_ir_executor.available_ops()
+        filtered_ops = [op for op in all_ops if op.kind in allowed]
         return build_frame(
             phase_name=current_phase,
-            phase=self.skill.phases[current_phase],
+            phase=phase_def,
             artifact=artifact,
             candidates=candidates,
             output_language=output_language,
@@ -331,7 +335,7 @@ class OSRuntime:
             visit_counts=self._visit_counts,
             finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
-            available_ops=self.control_ir_executor.available_ops(),
+            available_ops=filtered_ops,
             effective_model=effective_model,
             model_resolved=self._resolver.resolve(effective_model),
             events=self.events,
@@ -542,8 +546,12 @@ class OSRuntime:
                     ) from exc
                 continue
 
-            phase_decl = self.skill.phases[phase].permissions if phase in self.skill.phases else None
-            ir_results = await self.control_ir_executor.execute(act.ops, phase=phase, decl=phase_decl)
+            phase_def = self.skill.phases.get(phase)
+            phase_decl = phase_def.permissions if phase_def is not None else None
+            allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else None
+            ir_results = await self.control_ir_executor.execute(
+                act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
+            )
             control_ir_results = ir_results
             prior_attempts = []
             self.events.emit(
@@ -824,8 +832,13 @@ class OSRuntime:
                     rollback_context=rollback_context,
                 )
 
-                current_decl = self.skill.phases[current_phase].permissions if current_phase in self.skill.phases else None
-                decide_results = await self.control_ir_executor.execute(output.ops, phase=current_phase, decl=current_decl)
+                current_def = self.skill.phases.get(current_phase)
+                current_decl = current_def.permissions if current_def is not None else None
+                current_allowed = set(current_def.allowed_ops) if current_def is not None else None
+                decide_results = await self.control_ir_executor.execute(
+                    output.ops, phase=current_phase, decl=current_decl,
+                    allowed_ops=current_allowed,
+                )
                 if decide_results:
                     self.events.emit(
                         "decide_ops_executed",

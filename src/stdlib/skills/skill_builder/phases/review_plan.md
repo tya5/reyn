@@ -4,6 +4,7 @@ name: review_plan
 input: skill_plan
 role: plan_reviewer
 model_class: strong
+allowed_ops: []
 ---
 
 Review the skill plan for schema quality before DSL files are written.

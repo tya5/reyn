@@ -5,6 +5,7 @@ input: selected_candidate
 role: skill_converter
 can_finish: true
 max_act_turns: 6
+allowed_ops: [file, lint, web_fetch]
 permissions:
   file.write:
     - path: reyn/local

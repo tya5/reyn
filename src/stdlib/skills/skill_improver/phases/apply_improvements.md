@@ -5,6 +5,7 @@ input: improvement_plan
 role: implementer
 model_class: standard
 can_finish: true
+allowed_ops: [file]
 ---
 
 Commit the iteration to history, optionally apply the planned DSL changes, then decide whether to loop or finish.

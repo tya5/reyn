@@ -46,6 +46,18 @@ def parse_phase(path: Path) -> PhaseDef:
         raise ValueError(
             f"Phase '{name}': 'preprocessor' must be a YAML list, got {type(preprocessor_raw).__name__}"
         )
+    # allowed_ops: distinguish "key absent" (None → expander applies default)
+    # from "explicit empty list" (no ops permitted).
+    if "allowed_ops" in fm:
+        ao_raw = fm.get("allowed_ops")
+        if not isinstance(ao_raw, list):
+            raise ValueError(
+                f"Phase '{name}': 'allowed_ops' must be a YAML list, "
+                f"got {type(ao_raw).__name__}"
+            )
+        allowed_ops: list[str] | None = [str(x).strip() for x in ao_raw if str(x).strip()]
+    else:
+        allowed_ops = None
     return PhaseDef(
         name=name,
         inputs=inputs,
@@ -56,6 +68,7 @@ def parse_phase(path: Path) -> PhaseDef:
         model_class=str(fm.get("model_class") or "").strip(),
         permissions=permissions_raw if isinstance(permissions_raw, dict) else {},
         preprocessor=list(preprocessor_raw),
+        allowed_ops=allowed_ops,
     )
 
 

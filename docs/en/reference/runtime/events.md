@@ -54,7 +54,7 @@ Each Control IR op kind emits its own event:
 | `run_skill_started`, `skill_run_spawned`, `skill_run_failed` | `run_skill` op |
 | `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
 | `web_search_started`, `web_search_completed`, `web_search_failed`, `web_fetch_started` | search ops |
-| `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures |
+| `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
 
 ## User interaction

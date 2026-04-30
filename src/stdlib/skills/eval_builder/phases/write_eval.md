@@ -4,6 +4,7 @@ name: write_eval
 input: skill_analysis
 role: spec_writer
 can_finish: true
+allowed_ops: [file]
 ---
 
 Generate the eval.md content, write it to the workspace, and report the result.

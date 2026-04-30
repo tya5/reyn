@@ -4,6 +4,7 @@ name: run_and_eval
 input: improvement_session
 role: evaluator
 model_class: standard
+allowed_ops: [file, run_skill]
 ---
 
 Run the target skill against the chosen test case via the `eval` stdlib sub-skill, capture the score for this iteration, and update the workspace history file.

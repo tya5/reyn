@@ -4,6 +4,7 @@ name: analyze_skill
 input: user_message
 role: eval_designer
 max_act_turns: 20
+allowed_ops: [file, ask_user]
 ---
 
 Read the target skill's DSL files and design per-phase quality criteria.

@@ -4,6 +4,7 @@ name: evaluate
 input: case_run_result
 role: evaluator
 can_finish: true
+allowed_ops: []
 preprocessor:
   - type: iterate
     over: data.eval_requests

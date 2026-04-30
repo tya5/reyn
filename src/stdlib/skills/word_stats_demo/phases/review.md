@@ -4,6 +4,7 @@ name: review
 input: user_message
 role: text_reviewer
 can_finish: true
+allowed_ops: []
 preprocessor:
   - type: python
     module: ./stats.py

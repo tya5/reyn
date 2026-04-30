@@ -51,7 +51,10 @@ def expand_phase(
             f"Phase '{phase_def.name}': invalid preprocessor definition — {exc}"
         ) from exc
 
-    return Phase(
+    # allowed_ops: PhaseDef.allowed_ops is None when frontmatter omitted the
+    # key; in that case let the Phase model default factory supply
+    # ["file", "ask_user"]. An explicit empty list means "no ops".
+    phase_kwargs: dict = dict(
         name=phase_def.name,
         role=phase_def.role,
         input_schema=input_schema,
@@ -63,6 +66,9 @@ def expand_phase(
         permissions=PermissionDecl.from_dict(phase_def.permissions),
         preprocessor=preprocessor,
     )
+    if phase_def.allowed_ops is not None:
+        phase_kwargs["allowed_ops"] = phase_def.allowed_ops
+    return Phase(**phase_kwargs)
 
 
 def expand_skill(

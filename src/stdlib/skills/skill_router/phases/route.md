@@ -4,6 +4,7 @@ name: route
 input: chat_routing_request
 role: chat_router
 can_finish: true
+allowed_ops: []
 ---
 
 Decide how the chat agent should respond to the user's latest utterance.

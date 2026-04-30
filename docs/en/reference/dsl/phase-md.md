@@ -18,6 +18,8 @@ name: <phase_name>             # must match the filename (without .md)
 input: <artifact_type>         # required; what this phase consumes
 role: <short_label>            # optional; one-word role for events
 can_finish: true               # optional; allow terminating from here (default: false)
+allowed_ops: [file, ask_user]  # optional; Control IR op kinds this phase may use
+                                # (default: ["file", "ask_user"]; [] means no ops)
 preprocessor:                  # optional; deterministic pre-LLM steps
   - run_skill:
       skill: recall_memory
@@ -42,6 +44,7 @@ preprocessor:                  # optional; deterministic pre-LLM steps
 - **`role`** — short label for event payload (e.g. `planner`, `reviewer`).
 - **`can_finish`** — when `true`, the LLM may emit `decision="finish"` from this phase. The OS validates the final artifact against the skill's `final_output_schema`.
 - **`preprocessor`** — chain of deterministic steps that run before the LLM call. See `reference/dsl/preprocessor.md` (Phase 2).
+- **`allowed_ops`** — list of Control IR op kinds this phase may emit (e.g. `[file, lint]`). The OS filters the `available_control_ops` advertised to the LLM down to this set, *and* rejects any out-of-set op the LLM emits anyway with `control_ir_skipped: not_allowed_in_phase`. Default: `["file", "ask_user"]` — file I/O plus user clarification, the common case. An explicit empty list (`[]`) means "no ops" (use this for pure routing/judging phases). The narrower the list, the less context spent on op descriptions and the less room the LLM has to drift outside the phase's intent.
 
 ## What MUST NOT appear
 

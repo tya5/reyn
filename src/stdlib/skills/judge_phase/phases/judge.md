@@ -4,6 +4,7 @@ name: judge
 input: phase_eval_request
 role: evaluator
 model_class: standard
+allowed_ops: [file]
 ---
 
 Evaluate the provided phase artifact against each criterion and produce a structured judgment.
