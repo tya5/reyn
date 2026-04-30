@@ -85,6 +85,10 @@ you to tell the user the result in natural language.
   complete cleanly. Suggest a next step if obvious.
 - Set `skills_to_run` to `[]` unless an obvious immediate follow-up is needed
   (rare). Do not auto-launch new skills as a side effect of reporting.
+- **Apply `relevant_memories` here too**: if a `feedback` memory asks for
+  terse replies, keep the narration short; if a `user` memory says the user
+  is a senior engineer, skip beginner explanations; etc. The same tone
+  guidance from Mode B applies — memories matter at completion time too.
 - Skip the rest of these rules — they apply only to Mode B.
 
 ## Mode B: skill_completion is absent (routing mode)

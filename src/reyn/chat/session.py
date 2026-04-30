@@ -447,11 +447,20 @@ class ChatSession:
             ROUTER_SKILL_NAME, RECALL_SKILL_NAME, WRITE_SKILL_NAME,
         })
 
-        # Recall memories on routing turns; skip during narration (the skill
-        # result is already the dominant context).
-        relevant_memories: list[dict] = []
+        # Recall memories for both routing and narration. In narration mode
+        # the user's preferences (terse style, output language) should still
+        # shape the report — skipping recall would let saved memory go to
+        # waste at exactly the moment the user is reading the agent's reply.
+        # The narration query falls back to the most recent user utterance,
+        # since user_text is empty in that mode.
         if skill_completion is None:
-            relevant_memories = await self._recall_memories(user_text)
+            recall_query = user_text
+        else:
+            last_user = next(
+                (m for m in reversed(self.history) if m.role == "user"), None,
+            )
+            recall_query = last_user.text if last_user is not None else ""
+        relevant_memories = await self._recall_memories(recall_query)
 
         data: dict = {
             "user_message": user_text,
