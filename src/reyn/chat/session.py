@@ -170,6 +170,7 @@ class ChatSession:
         agent_role: str = "",
         compaction_config: "CompactionConfig | None" = None,
         registry: "AgentRegistry | None" = None,
+        max_hop_depth: int = 3,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
@@ -181,9 +182,13 @@ class ChatSession:
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
         self._agent_role = agent_role
-        # Optional back-reference for slash commands like :agents / :attach.
-        # The factory in cli/commands/chat.py wires this; tests can leave it None.
+        # Optional back-reference for slash commands like :agents / :attach
+        # and for agent-to-agent message routing (PR11). The factory in
+        # cli/commands/chat.py wires this; tests can leave it None.
         self._registry = registry
+        # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
+        # each `_send_to_agent` increments. Refuse send when depth > limit.
+        self._max_hop_depth = max_hop_depth
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -272,10 +277,24 @@ class ChatSession:
     # ── inbox API ───────────────────────────────────────────────────────────────
 
     async def submit_user_text(self, text: str) -> None:
-        await self.inbox.put(("user", text))
+        await self.inbox.put(("user", {"text": text}))
+
+    async def submit_agent_request(
+        self, *, from_agent: str, request: str, depth: int,
+    ) -> None:
+        await self.inbox.put(("agent_request", {
+            "from_agent": from_agent, "request": request, "depth": depth,
+        }))
+
+    async def submit_agent_response(
+        self, *, from_agent: str, response: str, depth: int,
+    ) -> None:
+        await self.inbox.put(("agent_response", {
+            "from_agent": from_agent, "response": response, "depth": depth,
+        }))
 
     async def shutdown(self) -> None:
-        await self.inbox.put(("shutdown", ""))
+        await self.inbox.put(("shutdown", {}))
 
     # ── main loop ───────────────────────────────────────────────────────────────
 
@@ -284,11 +303,15 @@ class ChatSession:
 
         try:
             while True:
-                kind, text = await self.inbox.get()
+                kind, payload = await self.inbox.get()
                 if kind == "shutdown":
                     break
                 if kind == "user":
-                    await self._handle_user_message(text)
+                    await self._handle_user_message(payload.get("text", ""))
+                elif kind == "agent_request":
+                    await self._handle_agent_request(payload)
+                elif kind == "agent_response":
+                    await self._handle_agent_response(payload)
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
@@ -339,6 +362,7 @@ class ChatSession:
 
         reply_text = (decision.get("reply_text") or "").strip()
         skills_to_run = decision.get("skills_to_run") or []
+        messages_to_agents = decision.get("messages_to_agents") or []
 
         if reply_text:
             await self._put_outbox(OutboxMessage(kind="agent", text=reply_text))
@@ -346,6 +370,13 @@ class ChatSession:
 
         for spec in skills_to_run:
             await self._spawn_skill(spec)
+
+        for msg in messages_to_agents:
+            to = (msg.get("to") or "").strip()
+            request = (msg.get("request") or "").strip()
+            if to and request:
+                # User-originated chain starts at depth 1 (incremented from 0).
+                await self._send_to_agent(to=to, request=request, depth=1)
 
         # Fire-and-forget compaction check after the user has the reply.
         # Reuses self._compacting as a single-flight lock; no await here so
@@ -591,6 +622,12 @@ class ChatSession:
         avail = enumerate_available_skills(exclude={
             ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
         })
+        # PR11: list peer agents (excluding self) so the router can decide
+        # between local skill invocation and delegation to another agent.
+        if self._registry is not None:
+            available_agents = self._registry.iter_other_agents(self.agent_name)
+        else:
+            available_agents = []
 
         data: dict = {
             "user_message": user_text,
@@ -600,6 +637,7 @@ class ChatSession:
             # workspace dir was created relative to the cwd at session start.
             "history_path": str(self.history_path),
             "available_skills": avail,
+            "available_agents": available_agents,
             # Pass the head/tail config through so the slicer can honor it
             # without needing access to ReynConfig.
             "compaction": {
@@ -793,6 +831,200 @@ class ChatSession:
                 pass
             if iv is not None and not iv.future.done():
                 iv.future.cancel()
+
+    # ── agent-to-agent messaging (PR11) ─────────────────────────────────────────
+
+    async def _send_to_agent(self, *, to: str, request: str, depth: int) -> None:
+        """Route a delegation request from this agent to `to`.
+
+        depth is the hop count from the original user request (user → A = 1,
+        A → B = 2, ...). Refused when depth > max_hop_depth (LangGraph-style
+        guard, default 3).
+        """
+        if depth > self._max_hop_depth:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=(
+                    f"agent message depth {depth} exceeds limit "
+                    f"{self._max_hop_depth}; chain refused"
+                ),
+            ))
+            return
+        if to == self.agent_name:
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"agent {to!r}: cannot self-message",
+            ))
+            return
+        if self._registry is None or not self._registry.exists(to):
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"agent {to!r} not found",
+            ))
+            return
+
+        # Boot the target session if not yet loaded so its session.run() is
+        # ready to consume the inbox put. attach() handles task creation
+        # idempotently.
+        target = self._registry.get_or_load(to)
+        await self._registry.ensure_running(to)
+
+        # Sender-side audit: A's history records the delegation outgoing.
+        self._append_history(ChatMessage(
+            role="agent", text=request, ts=_now_iso(),
+            meta={
+                "source": "agent_request_outgoing",
+                "to_agent": to, "depth": depth,
+            },
+        ))
+        self._chat_events.emit(
+            "agent_message_sent",
+            kind="agent_request",
+            from_agent=self.agent_name, to_agent=to, depth=depth,
+        )
+        await target.submit_agent_request(
+            from_agent=self.agent_name, request=request, depth=depth,
+        )
+
+    async def _send_agent_response(
+        self, *, to: str, response: str, depth: int,
+    ) -> None:
+        """Route a reply from this agent back to the requester `to`.
+
+        depth is propagated from the original request (B replying to A's
+        depth-1 request stays at depth 1; A's next hop will increment).
+        Empty response is still sent so chains never silently stall.
+        """
+        if depth > self._max_hop_depth:
+            return  # silently drop — sender already gave up the chain
+        if self._registry is None or not self._registry.exists(to):
+            return
+        target = self._registry.get_or_load(to)
+        await self._registry.ensure_running(to)
+        self._chat_events.emit(
+            "agent_message_sent",
+            kind="agent_response",
+            from_agent=self.agent_name, to_agent=to, depth=depth,
+        )
+        await target.submit_agent_response(
+            from_agent=self.agent_name, response=response, depth=depth,
+        )
+
+    async def _handle_agent_request(self, payload: dict) -> None:
+        """Process an incoming agent_request: run router, send back reply."""
+        from_agent = payload.get("from_agent", "")
+        request = payload.get("request", "")
+        depth = int(payload.get("depth", 1))
+
+        # Receiver-side audit
+        self._append_history(ChatMessage(
+            role="user", text=request, ts=_now_iso(),
+            meta={
+                "source": "agent_request",
+                "from_agent": from_agent, "depth": depth,
+            },
+        ))
+        self._chat_events.emit(
+            "agent_request_received",
+            from_agent=from_agent, depth=depth,
+        )
+
+        try:
+            decision = await self._invoke_router(request)
+        except Exception as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"router failed (agent_request): {exc}",
+            ))
+            # Even on failure, send empty response so the requester chain
+            # doesn't stall waiting forever.
+            await self._send_agent_response(
+                to=from_agent, response="", depth=depth,
+            )
+            return
+
+        reply_text = (decision.get("reply_text") or "").strip()
+        skills_to_run = decision.get("skills_to_run") or []
+        messages_to_agents = decision.get("messages_to_agents") or []
+
+        if reply_text:
+            self._append_history(ChatMessage(
+                role="agent", text=reply_text, ts=_now_iso(),
+                meta={
+                    "source": "agent_response_outgoing",
+                    "to_agent": from_agent, "depth": depth,
+                },
+            ))
+
+        # PR11 limitation (single-hop relay): we send the reply back to the
+        # requester here. If this turn ALSO emits messages_to_agents (B trying
+        # to relay through C), B replies to A immediately with whatever
+        # reply_text it has — A's chain ends, and B's downstream chain to C
+        # becomes an independent fan-out tracked only by depth + history meta.
+        # Multi-hop relay (B waits for C, then forwards C's reply to A) needs
+        # chain_id correlation; out of scope for PR11, see PR12+ residuals.
+        # Always sending (even on empty reply_text) prevents silent stalls
+        # — the requester's chain unwinds with whatever info B had.
+        await self._send_agent_response(
+            to=from_agent, response=reply_text, depth=depth,
+        )
+
+        # Skills run locally without affecting hop depth. Further delegation
+        # is an independent chain rooted at this agent (no relay back to the
+        # original requester — see limitation above).
+        for spec in skills_to_run:
+            await self._spawn_skill(spec)
+        for msg in messages_to_agents:
+            to = (msg.get("to") or "").strip()
+            request = (msg.get("request") or "").strip()
+            if to and request:
+                await self._send_to_agent(to=to, request=request, depth=depth + 1)
+
+    async def _handle_agent_response(self, payload: dict) -> None:
+        """Process an incoming agent_response: re-invoke router with the reply.
+
+        The router runs again with `response` as the user_message; recent
+        history (including the agent_response audit entry just appended)
+        gives it context about which delegation chain this is closing.
+        """
+        from_agent = payload.get("from_agent", "")
+        response = payload.get("response", "")
+        depth = int(payload.get("depth", 1))
+
+        self._append_history(ChatMessage(
+            role="user", text=response, ts=_now_iso(),
+            meta={
+                "source": "agent_response",
+                "from_agent": from_agent, "depth": depth,
+            },
+        ))
+        self._chat_events.emit(
+            "agent_response_received",
+            from_agent=from_agent, depth=depth,
+        )
+
+        try:
+            decision = await self._invoke_router(response)
+        except Exception as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"router failed (agent_response): {exc}",
+            ))
+            return
+
+        reply_text = (decision.get("reply_text") or "").strip()
+        skills_to_run = decision.get("skills_to_run") or []
+        messages_to_agents = decision.get("messages_to_agents") or []
+
+        if reply_text:
+            await self._put_outbox(OutboxMessage(kind="agent", text=reply_text))
+            self._append_history(ChatMessage(
+                role="agent", text=reply_text, ts=_now_iso(),
+            ))
+        for spec in skills_to_run:
+            await self._spawn_skill(spec)
+        for msg in messages_to_agents:
+            to = (msg.get("to") or "").strip()
+            request = (msg.get("request") or "").strip()
+            if to and request:
+                # Continue the chain with depth+1.
+                await self._send_to_agent(to=to, request=request, depth=depth + 1)
 
     # ── slash command dispatch ──────────────────────────────────────────────────
 

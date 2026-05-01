@@ -62,6 +62,11 @@ the `match` phase for dispatch.
   `{name, description, routing?}` where `routing` (when present) lists
   `intents`, `when_to_use`, `when_not_to_use`, and `examples`. Use this
   metadata to decide whether a skill is the right fit.
+- `available_agents`: other agents this session knows about
+  (`{name, role}` per entry). When the user's request matches an agent's
+  role better than any skill, choose the **task** intent — the `match`
+  phase will pick agent delegation over skill invocation. Empty list
+  means single-agent mode (no delegation possible).
 - `memory_index` (preprocessor-injected): result of reading
   `.reyn/memory/MEMORY.md`. `memory_index.content` is the raw markdown
   when present; null/missing when no memory yet.

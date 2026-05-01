@@ -73,4 +73,24 @@ schema:
               `when_not_to_use`, and `examples` (positive/negative phrasings).
               Skills without this block fall back to description-only matching.
         required: [name, description]
+    available_agents:
+      type: array
+      description: |
+        Other agents in this reyn session that the router may delegate to
+        (PR11+). The current agent is excluded. Each entry carries a short
+        role excerpt from the agent's profile; the router uses this to decide
+        whether delegating via `messages_to_agents` is a better fit than
+        running a skill locally.
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+            description: Agent name (used as `to` in messages_to_agents).
+          role:
+            type: string
+            description: |
+              First line of the agent's `profile.role`, summarizing its
+              specialization. Empty when the agent has no role configured.
+        required: [name, role]
   required: [user_message, chat_id, available_skills]

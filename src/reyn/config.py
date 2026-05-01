@@ -79,6 +79,18 @@ class ChatConfig:
 
 
 @dataclass
+class MultiAgentConfig:
+    """`multi_agent:` — knobs for agent-to-agent messaging (PR11+).
+
+    Inspired by LangGraph's `recursion_limit` — a single hard cap that prevents
+    runaway delegation chains. depth=0 is the user-originated request; each
+    `_send_to_agent` increments. `max_hop_depth=3` allows up to user→A→B→C
+    (3 hops) before refusing further delegation.
+    """
+    max_hop_depth: int = 3
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     output_language: str = "ja"
@@ -109,6 +121,8 @@ class ReynConfig:
     python: PythonConfig = field(default_factory=PythonConfig)
     # Chat-session settings (compaction, etc.)
     chat: ChatConfig = field(default_factory=ChatConfig)
+    # Multi-agent settings (delegation hop limits, etc.)
+    multi_agent: MultiAgentConfig = field(default_factory=MultiAgentConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -339,4 +353,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         mcp=dict(merged.get("mcp") or {}),
         python=_build_python_config(merged.get("python")),
         chat=_build_chat_config(merged.get("chat")),
+        multi_agent=_build_multi_agent_config(merged.get("multi_agent")),
+    )
+
+
+def _build_multi_agent_config(raw: object) -> MultiAgentConfig:
+    if not isinstance(raw, dict):
+        return MultiAgentConfig()
+    return MultiAgentConfig(
+        max_hop_depth=int(raw.get("max_hop_depth", MultiAgentConfig().max_hop_depth)),
     )

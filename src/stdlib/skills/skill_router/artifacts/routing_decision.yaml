@@ -35,4 +35,26 @@ schema:
               user can keep chatting while it runs. If false, the caller blocks
               the next turn until the skill completes. Default true.
         required: [skill, input]
+    messages_to_agents:
+      type: array
+      description: |
+        Delegation requests to other agents (PR11+). Pick this when an agent in
+        input.available_agents is a better fit than any skill — for example
+        when a specialized researcher / editor / architect agent is available.
+        ChatSession routes each entry to the target agent's inbox; the
+        target's reply is later auto-routed back to this agent's inbox so
+        the next router turn can compose a final answer for the user.
+      items:
+        type: object
+        properties:
+          to:
+            type: string
+            description: Target agent name (must appear in input.available_agents).
+          request:
+            type: string
+            description: |
+              Free-text request describing what the target agent should do.
+              Paraphrase the user's underlying ask in a way that fits the
+              target agent's role; don't just forward the user's literal words.
+        required: [to, request]
   required: [reply_text, skills_to_run]

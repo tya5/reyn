@@ -154,6 +154,23 @@ class AgentRegistry:
         self._agents[name] = session
         return session
 
+    async def ensure_running(self, name: str) -> "object":
+        """Load + start session.run() + forwarder for `name` without
+        changing the user-attached pointer. Used for agent-to-agent
+        messaging (PR11): when A sends to B, B's task must be live to
+        consume the inbox put, but the user's display stays on whoever
+        they were attached to.
+
+        The forwarder is still started so that, should the user later
+        attach to B, B's pre-existing outbox messages route correctly.
+        """
+        session = self.get_or_load(name)
+        if name not in self._tasks or self._tasks[name].done():
+            self._tasks[name] = asyncio.create_task(session.run())
+        if name not in self._forward_tasks or self._forward_tasks[name].done():
+            self._forward_tasks[name] = asyncio.create_task(self._forwarder(name))
+        return session
+
     async def attach(self, name: str) -> "object":
         """Switch the attached agent to `name`. Loads + starts session.run()
         and the outbox forwarder for the new agent if not already running.
@@ -257,6 +274,26 @@ class AgentRegistry:
 
     def loaded_names(self) -> list[str]:
         return list(self._agents.keys())
+
+    def iter_other_agents(self, self_name: str) -> list[dict]:
+        """List `{name, role}` for every agent except `self_name`.
+
+        Used by ChatSession._invoke_router to populate `available_agents`
+        in chat_routing_request. `role` is the first non-empty line of
+        each agent's profile.role; empty when the agent has no role.
+        """
+        out: list[dict] = []
+        for name in self.list_names():
+            if name == self_name:
+                continue
+            try:
+                profile = self.load_profile(name)
+            except Exception:
+                continue
+            role_lines = (profile.role or "").strip().splitlines()
+            role_excerpt = role_lines[0].strip() if role_lines else ""
+            out.append({"name": name, "role": role_excerpt})
+        return out
 
 
 def _drain_queue(q: asyncio.Queue) -> None:
