@@ -12,7 +12,7 @@ final_output_description: |
   conversational `reply_text`, plus zero or more skills to invoke with their inputs.
 finish_criteria:
   - The user's intent has been classified into a closed-vocabulary label
-  - Easy intents (chitchat / memory_recall / stable_knowledge / narrate / clarification)
+  - Easy intents (chitchat / memory_recall / stable_knowledge / clarification)
     finish in classify with reply_text directly
   - Task intents transition to match for skill selection
   - Fresh-lookup intents transition through match to web_research
@@ -30,10 +30,10 @@ decide how to respond.
 
 ### Two-phase design (classify → match)
 
-1. **classify** — assign one of seven closed-vocabulary intents
-   (`narrate`, `task`, `fresh_lookup`, `chitchat`, `memory_recall`,
+1. **classify** — assign one of six closed-vocabulary intents
+   (`task`, `fresh_lookup`, `chitchat`, `memory_recall`,
    `stable_knowledge`, `clarification`) using specificity-first ordering.
-   Five of those intents (everything except `task` and `fresh_lookup`)
+   Four of those intents (everything except `task` and `fresh_lookup`)
    finish in classify with `reply_text` — this is the **fast path**, one
    LLM call per turn for the common case.
 2. **match** — only reached when classify chose `task` or `fresh_lookup`.

@@ -73,23 +73,4 @@ schema:
               `when_not_to_use`, and `examples` (positive/negative phrasings).
               Skills without this block fall back to description-only matching.
         required: [name, description]
-    skill_completion:
-      type: object
-      description: |
-        Set when the caller is asking the router to report a just-finished skill
-        run to the user. When present, the router's job switches from routing
-        to narrating: produce a conversational reply_text describing the result,
-        and leave skills_to_run empty unless an obvious follow-up is needed.
-        When absent (the normal case), the router routes user_message as usual.
-      properties:
-        skill:
-          type: string
-          description: Name of the skill that just finished.
-        status:
-          type: string
-          description: '"finished" | "loop_limit_exceeded" | "failed"'
-        result:
-          type: object
-          description: The skill's final_output data, as-is.
-      required: [skill, status, result]
   required: [user_message, chat_id, available_skills]

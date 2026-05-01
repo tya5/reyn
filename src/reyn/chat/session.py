@@ -28,6 +28,7 @@ from reyn.chat.outbox import OutboxMessage
 
 
 ROUTER_SKILL_NAME = "skill_router"
+NARRATOR_SKILL_NAME = "skill_narrator"
 
 
 class ChatInterventionBus:
@@ -556,28 +557,25 @@ class ChatSession:
 
     # ── router ──────────────────────────────────────────────────────────────────
 
-    async def _invoke_router(
-        self,
-        user_text: str,
-        skill_completion: dict | None = None,
-        state_subdir: str = "router",
-    ) -> dict:
-        """Run the skill_router skill.
+    async def _invoke_router(self, user_text: str, state_subdir: str = "router") -> dict:
+        """Run the skill_router skill on a user utterance.
 
-        When `skill_completion` is provided, the router switches to narration
-        mode: it produces a natural-language reply describing the result.
+        Narration of finished skill runs is handled by `_invoke_narrator` —
+        the router is now routing-only (PR9).
 
-        History is NOT inlined into the artifact — the route phase has a
+        History is NOT inlined into the artifact — the classify phase has a
         Python preprocessor step that reads `.reyn/chats/<chat_id>/history.jsonl`
         and slices the recent N turns. This eliminates the snapshot-per-turn
         duplication that previously bloated workspace artifacts.
         """
-        avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME, "chat_compactor"})
+        avail = enumerate_available_skills(exclude={
+            ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
+        })
 
         data: dict = {
             "user_message": user_text,
             "chat_id": self.chat_id,
-            # Precomputed for the route phase preprocessor: the file/read op
+            # Precomputed for the classify phase preprocessor: the file/read op
             # uses this via args_from. ChatSession owns this path because the
             # workspace dir was created relative to the cwd at session start.
             "history_path": str(self.history_path),
@@ -589,9 +587,6 @@ class ChatSession:
                 "tail_size": self._compaction.tail_size,
             },
         }
-        if skill_completion is not None:
-            data["skill_completion"] = skill_completion
-
         input_artifact = {"type": "chat_routing_request", "data": data}
 
         result = await self._run_stdlib_skill(
@@ -599,6 +594,30 @@ class ChatSession:
             forward_events=True,
         )
         return result.data
+
+    async def _invoke_narrator(
+        self, skill_name: str, status: str, result: dict, state_subdir: str,
+    ) -> str | None:
+        """Run skill_narrator on a finished skill spawn; return reply_text.
+
+        Returns None on narration failure (e.g. lint error, LLM exception);
+        the caller's fallback raw-dump path takes over.
+        """
+        input_artifact = {
+            "type": "narration_request",
+            "data": {"skill": skill_name, "status": status, "result": result},
+        }
+        try:
+            run_result = await self._run_stdlib_skill(
+                NARRATOR_SKILL_NAME, input_artifact, state_subdir=state_subdir,
+                forward_events=False,  # narrator is one phase, no need to surface
+            )
+        except Exception:
+            return None
+        if not run_result.ok:
+            return None
+        text = (run_result.data or {}).get("reply_text")
+        return (text or "").strip() or None
 
     # ── intervention routing ─────────────────────────────────────────────────────
 
@@ -978,29 +997,31 @@ class ChatSession:
             "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
         )
 
-        # Hand the result back to the router so the agent can phrase a
-        # natural-language report instead of dumping JSON to the user.
-        narrated: str | None = None
-        try:
-            decision = await self._invoke_router(
-                user_text="",
-                skill_completion={
-                    "skill": skill_name,
-                    "status": result.status,
-                    "result": result.data,
-                },
-                state_subdir=f"narrator/{run_id}",
-            )
-            narrated = (decision.get("reply_text") or "").strip() or None
-        except Exception as exc:
+        # Hand the result to skill_narrator to phrase a natural-language report
+        # instead of dumping JSON to the user. Both narrate-success and the
+        # raw-dump fallback land in history as `role="agent"` with
+        # `meta.source="narrator"` — keeping the LLM-visible role surface to
+        # `user / agent / summary` (custom roles change LLM attention).
+        narrated = await self._invoke_narrator(
+            skill_name=skill_name,
+            status=result.status,
+            result=result.data,
+            state_subdir=f"narrator/{run_id}",
+        )
+        if narrated is None:
             self._chat_events.emit(
-                "skill_narration_failed", run_id=run_id, skill=skill_name, error=str(exc),
+                "skill_narration_failed", run_id=run_id, skill=skill_name,
             )
 
         if narrated:
             self._append_history(ChatMessage(
                 role="agent", text=narrated, ts=_now_iso(),
-                meta={"narrated_skill": skill_name, "run_id": run_id, "status": result.status},
+                meta={
+                    "source": "narrator",
+                    "skill": skill_name,
+                    "run_id": run_id,
+                    "status": result.status,
+                },
             ))
             await self.outbox.put(OutboxMessage(
                 kind="agent", text=narrated, meta=meta,
@@ -1010,8 +1031,14 @@ class ChatSession:
             summary = json.dumps(result.data, ensure_ascii=False, indent=2)
             fallback = f"完了 (status={result.status})\n{summary}"
             self._append_history(ChatMessage(
-                role="skill_event", text=fallback, ts=_now_iso(),
-                meta={"skill": skill_name, "run_id": run_id, "status": result.status},
+                role="agent", text=fallback, ts=_now_iso(),
+                meta={
+                    "source": "narrator",
+                    "skill": skill_name,
+                    "run_id": run_id,
+                    "status": result.status,
+                    "narration_failed": True,
+                },
             ))
             await self.outbox.put(OutboxMessage(
                 kind="skill_done", text=fallback, meta=meta,

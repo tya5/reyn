@@ -1,0 +1,15 @@
+name: narration_result
+description: |
+  Chat-friendly natural-language summary of a finished skill run.
+  ChatSession publishes `reply_text` to the outbox as `role=agent` and
+  appends it to history with `meta.source = "narrator"`.
+schema:
+  type: object
+  properties:
+    reply_text:
+      type: string
+      description: |
+        Short natural-language description (one to a few sentences) in the
+        user's language. No JSON dumps, no markdown code blocks for raw
+        structures — extract the meaningful fields.
+  required: [reply_text]

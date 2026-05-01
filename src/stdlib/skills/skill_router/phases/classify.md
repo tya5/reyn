@@ -56,7 +56,7 @@ the `match` phase for dispatch.
 
 ## Inputs
 
-- `user_message`: the latest utterance (may be empty in narrate mode)
+- `user_message`: the latest utterance
 - `history`: recent prior turns (oldest first)
 - `available_skills`: catalogue of skills you may invoke. Each entry is
   `{name, description, routing?}` where `routing` (when present) lists
@@ -65,8 +65,6 @@ the `match` phase for dispatch.
 - `memory_index` (preprocessor-injected): result of reading
   `.reyn/memory/MEMORY.md`. `memory_index.content` is the raw markdown
   when present; null/missing when no memory yet.
-- `skill_completion` (optional): when set, a previously-launched skill
-  has finished and the caller wants narration of its result.
 
 ## Decision: pick the FIRST matching intent in this order
 
@@ -75,15 +73,7 @@ encodes specificity-first / catchall-last: more specific triggers come
 before broader fallbacks so skills and freshness routing are not
 shadowed by direct-reply paths.
 
-### P1. narrate — `skill_completion` is set
-Produce a natural-language reply describing
-`skill_completion.{skill, status, result}` in the user's language.
-Extract meaningful fields from `result`; do NOT dump JSON. If `status`
-is not "finished", briefly explain what didn't complete and suggest a
-next step if obvious.
-**Output: `routing_decision` with `reply_text` filled, `skills_to_run` empty. Finish.**
-
-### P2. task — `available_skills` has a clear semantic match
+### P1. task — `available_skills` has a clear semantic match
 A skill in `available_skills` whose `routing.when_to_use` /
 `routing.examples.positive` (or `description` if no `routing` block)
 matches what the user wants done.
@@ -102,7 +92,7 @@ If multiple skills look plausible but none is clearly best, prefer
 `task` (let `match` ask a clarifying question). If NO skill fits at
 all, fall through to later intents.
 
-### P3. fresh_lookup — the question requires fresh / time-sensitive data
+### P2. fresh_lookup — the question requires fresh / time-sensitive data
 Trigger when EITHER:
 - The user explicitly asks for current / latest / today's data
   ("今日の…", "最近の…", "最新の…", "current X", "latest X")
@@ -118,13 +108,13 @@ Trigger only when freshness is genuinely required.
 
 **Output: `routing_intent` with `intent: "fresh_lookup"`. Transition to `match`.**
 
-### P4. chitchat — pure social / meta
+### P3. chitchat — pure social / meta
 Greetings, thanks, casual banter, meta questions about you the agent
 ("君は何ができる？", "ありがとう", "こんにちは"). Reply briefly,
 matching the user's register.
 **Output: `routing_decision` with `reply_text` filled. Finish.**
 
-### P5. memory_recall — `memory_index` description answers the question
+### P4. memory_recall — `memory_index` description answers the question
 The user asks about themselves, their project, or their preferences,
 and a line in `memory_index.content` provides the answer in its
 em-dash description. Apply the description as established fact.
@@ -139,7 +129,7 @@ available; then emit a decide turn.
 
 **Output: `routing_decision` with `reply_text` filled. Finish.**
 
-### P6. stable_knowledge — confident answer from training data
+### P5. stable_knowledge — confident answer from training data
 The question is about established concepts, well-known libraries /
 tools / languages, math, code, science, or other knowledge you have
 high confidence in. Examples:
@@ -153,7 +143,7 @@ they asked for depth.
 
 **Output: `routing_decision` with `reply_text` filled. Finish.**
 
-### P7. clarification — ambiguous, cannot pick
+### P6. clarification — ambiguous, cannot pick
 Genuinely cannot tell what the user wants, or task-shaped but no
 skill fits. Ask a short clarifying question.
 
@@ -171,7 +161,7 @@ this document.
 
 | Chosen intent | Emit |
 |---|---|
-| narrate / chitchat / memory_recall / stable_knowledge / clarification | `routing_decision` + finish |
+| chitchat / memory_recall / stable_knowledge / clarification | `routing_decision` + finish |
 | task / fresh_lookup | `routing_intent` + transition to `match` |
 
 The OS injects both options as candidates. Choose whichever matches
