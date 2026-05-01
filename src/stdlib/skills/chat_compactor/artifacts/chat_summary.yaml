@@ -1,0 +1,51 @@
+name: chat_summary
+description: |
+  Structured rolling summary of the BODY region of a chat session — the
+  middle portion between HEAD (first N raw turns) and TAIL (last N raw
+  turns). Sectioned by information type so different retention rules can
+  apply per section. The compactor produces this; ChatSession appends
+  it to history.jsonl as a `role: "summary"` entry; the route phase
+  preprocessor reads the latest summary and injects it between HEAD
+  and TAIL when slicing for the LLM.
+schema:
+  type: object
+  properties:
+    topic_arc:
+      type: string
+      description: |
+        1-3 sentences describing the current topic and conversational
+        arc. Update when topic shifts; drop the previous topic if the
+        conversation has clearly moved on.
+    decisions:
+      type: array
+      items: {type: string}
+      description: |
+        Bullet points of choices made in this session. Add new
+        decisions; drop the oldest minor decisions when over budget.
+        Never drop architectural decisions or anything labeled as final.
+    pending:
+      type: array
+      items: {type: string}
+      description: |
+        Open items: questions, unfinished tasks, follow-ups. Add new
+        ones; remove items the conversation has resolved.
+    session_user_facts:
+      type: array
+      items: {type: string}
+      description: |
+        User attributes learned this session that haven't been promoted
+        to MEMORY.md yet. Drop the oldest if over budget — durable
+        attributes belong in memory anyway.
+    artifacts_referenced:
+      type: array
+      items: {type: string}
+      description: |
+        Files, PRs, commits, issues mentioned this session and worth
+        keeping in scope. Drop ones no longer in focus.
+    covers_through_seq:
+      type: integer
+      description: |
+        Highest seq among the new_turns absorbed into this summary. The
+        slicer uses this to decide which raw turns are still TAIL
+        (entries with seq > covers_through_seq).
+  required: [topic_arc, covers_through_seq]

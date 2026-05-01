@@ -23,6 +23,16 @@ schema:
         (typically `.reyn/chats/<chat_id>/history.jsonl`). Computed by
         ChatSession at session creation; pure-mode preprocessor steps
         read this verbatim via `args_from` instead of constructing it.
+    compaction:
+      type: object
+      description: |
+        Slicing parameters consumed by the route phase preprocessor's
+        `slice_chat_history` step. ChatSession populates this from
+        `chat.compaction` config; the slicer uses head_size and
+        tail_size to determine the HEAD/BODY/TAIL boundaries.
+      properties:
+        head_size: {type: integer}
+        tail_size: {type: integer}
     history:
       type: array
       description: |

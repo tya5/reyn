@@ -48,6 +48,37 @@ class LimitsConfig:
 
 
 @dataclass
+class CompactionSectionCaps:
+    """Per-section token budgets for chat_summary BODY."""
+    topic_arc: int = 200
+    decisions: int = 400
+    pending: int = 400
+    session_user_facts: int = 200
+    artifacts_referenced: int = 300
+
+
+@dataclass
+class CompactionConfig:
+    """`chat.compaction:` — Head/Body/Tail compaction policy.
+
+    See PR4 in /Users/yasudatetsuya/.claude/plans/abstract-knitting-moonbeam.md
+    for the design rationale.
+    """
+    trigger_total_tokens: int = 30000   # Compact when uncovered middle exceeds this
+    head_size: int = 12                 # First N user/agent turns kept raw
+    tail_size: int = 12                 # Last N user/agent turns kept raw
+    body_token_cap: int = 1500          # Total cap across all summary sections
+    min_compact_batch: int = 5          # Skip compact when fewer than N turns to absorb
+    section_token_caps: CompactionSectionCaps = field(default_factory=CompactionSectionCaps)
+
+
+@dataclass
+class ChatConfig:
+    """`chat:` — chat-session-specific runtime knobs."""
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     output_language: str = "ja"
@@ -76,6 +107,8 @@ class ReynConfig:
     mcp: dict = field(default_factory=dict)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
+    # Chat-session settings (compaction, etc.)
+    chat: ChatConfig = field(default_factory=ChatConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -143,6 +176,16 @@ def _merge(base: dict, override: dict) -> dict:
             for sub_key, sub_val in val.items():
                 if sub_key == "memory" and isinstance(sub_val, dict):
                     merged_chat["memory"] = {**existing.get("memory", {}), **sub_val}
+                elif sub_key == "compaction" and isinstance(sub_val, dict):
+                    existing_comp = existing.get("compaction") or {}
+                    existing_caps = existing_comp.get("section_token_caps") or {}
+                    new_caps = sub_val.get("section_token_caps") or {}
+                    if isinstance(existing_caps, dict) and isinstance(new_caps, dict):
+                        sub_val = {
+                            **sub_val,
+                            "section_token_caps": {**existing_caps, **new_caps},
+                        }
+                    merged_chat["compaction"] = {**existing_comp, **sub_val}
                 else:
                     merged_chat[sub_key] = sub_val
             result["chat"] = merged_chat
@@ -169,6 +212,43 @@ def _build_python_config(raw: object) -> PythonConfig:
     if not isinstance(modules, list):
         modules = []
     return PythonConfig(allowed_modules=[str(m) for m in modules])
+
+
+def _build_chat_config(raw: object) -> ChatConfig:
+    if not isinstance(raw, dict):
+        return ChatConfig()
+    compaction_raw = raw.get("compaction") or {}
+    if not isinstance(compaction_raw, dict):
+        return ChatConfig()
+    section_raw = compaction_raw.get("section_token_caps") or {}
+    if not isinstance(section_raw, dict):
+        section_raw = {}
+    defaults_section = CompactionSectionCaps()
+    section = CompactionSectionCaps(
+        topic_arc=int(section_raw.get("topic_arc", defaults_section.topic_arc)),
+        decisions=int(section_raw.get("decisions", defaults_section.decisions)),
+        pending=int(section_raw.get("pending", defaults_section.pending)),
+        session_user_facts=int(
+            section_raw.get("session_user_facts", defaults_section.session_user_facts)
+        ),
+        artifacts_referenced=int(
+            section_raw.get("artifacts_referenced", defaults_section.artifacts_referenced)
+        ),
+    )
+    defaults = CompactionConfig()
+    compaction = CompactionConfig(
+        trigger_total_tokens=int(
+            compaction_raw.get("trigger_total_tokens", defaults.trigger_total_tokens)
+        ),
+        head_size=int(compaction_raw.get("head_size", defaults.head_size)),
+        tail_size=int(compaction_raw.get("tail_size", defaults.tail_size)),
+        body_token_cap=int(compaction_raw.get("body_token_cap", defaults.body_token_cap)),
+        min_compact_batch=int(
+            compaction_raw.get("min_compact_batch", defaults.min_compact_batch)
+        ),
+        section_token_caps=section,
+    )
+    return ChatConfig(compaction=compaction)
 
 
 def _build_limits_config(raw: object) -> LimitsConfig:
@@ -258,4 +338,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         limits=_build_limits_config(merged.get("limits")),
         mcp=dict(merged.get("mcp") or {}),
         python=_build_python_config(merged.get("python")),
+        chat=_build_chat_config(merged.get("chat")),
     )

@@ -53,6 +53,7 @@ def run(args: argparse.Namespace) -> None:
         output_language=output_language,
         prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
         project_context=project_context,
+        compaction_config=session_cfg.config.chat.compaction,
     )
     chat.load_history()
 

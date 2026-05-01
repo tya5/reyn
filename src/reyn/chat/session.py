@@ -23,14 +23,35 @@ ROUTER_SKILL_NAME = "skill_router"
 
 @dataclass
 class ChatMessage:
-    role: str  # "user" | "agent" | "skill_event"
+    role: str  # "user" | "agent" | "skill_event" | "summary"
     text: str
     ts: str
+    seq: int = 0  # monotonic per-session sequence id; 0 for non-conversational entries
     meta: dict = field(default_factory=dict)
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _render_summary_for_storage(structured: dict) -> str:
+    """Render a chat_summary structured dict to a quick-display text blob.
+
+    Stored in ChatMessage.text so REPL traces and audit dumps don't need
+    to re-render the structured form. The slicer prefers the structured
+    form for LLM consumption — this is for human consumption only.
+    """
+    parts: list[str] = []
+    topic = (structured.get("topic_arc") or "").strip()
+    if topic:
+        parts.append(f"[topic] {topic}")
+    for key in ("decisions", "pending", "session_user_facts", "artifacts_referenced"):
+        items = structured.get(key) or []
+        if not items:
+            continue
+        parts.append(f"[{key}]")
+        parts.extend(f"  - {item}" for item in items)
+    return "\n".join(parts)
 
 
 def _new_chat_id() -> str:
@@ -81,6 +102,7 @@ class ChatSession:
         output_language: str = "ja",
         prompt_cache_enabled: bool = True,
         project_context: str = "",
+        compaction_config: "CompactionConfig | None" = None,
     ) -> None:
         self.chat_id = chat_id or _new_chat_id()
         self.model = model
@@ -91,6 +113,12 @@ class ChatSession:
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
+
+        from reyn.config import CompactionConfig
+        self._compaction = compaction_config or CompactionConfig()
+        self._next_seq = 1
+        self._compacting = False
+        self._compaction_task: asyncio.Task | None = None
 
         self.workspace_dir = Path(".reyn") / "chats" / self.chat_id
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -134,6 +162,12 @@ class ChatSession:
     # ── persistence ─────────────────────────────────────────────────────────────
 
     def _append_history(self, msg: ChatMessage) -> None:
+        # Assign monotonic seq for conversational entries (user/agent). Other
+        # roles (skill_event, summary) keep seq=0 — they aren't part of the
+        # turn ordering used by the slicer.
+        if msg.role in ("user", "agent") and msg.seq == 0:
+            msg.seq = self._next_seq
+            self._next_seq += 1
         self.history.append(msg)
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
@@ -150,6 +184,12 @@ class ChatSession:
                     self.history.append(ChatMessage(**json.loads(line)))
                 except Exception:
                     continue
+        # Initialize the seq counter past any seqs already in the file. Old
+        # entries without seq fall back to 0; the synthetic seq for them is
+        # assigned by the slicer at read time, so we only care about the
+        # max of explicitly-stored seqs here for the next-write counter.
+        max_seen = max((m.seq for m in self.history if m.seq), default=0)
+        self._next_seq = max_seen + 1
 
     # ── inbox API ───────────────────────────────────────────────────────────────
 
@@ -177,16 +217,24 @@ class ChatSession:
             await self.outbox.put(("__end__", ""))
 
     async def _drain_on_shutdown(self) -> None:
-        """Cancel any in-flight user-initiated skill runs.
+        """Cancel any in-flight user-initiated skill runs and await compaction.
 
         Memory writes happen inline during each router turn, so there is no
         background extraction to drain — shutdown is now strictly a teardown
-        of whatever the user explicitly launched.
+        of whatever the user explicitly launched, plus a final await on the
+        compaction task (if any) so the summary entry gets persisted before
+        the process exits.
         """
         for task in self.running_skills.values():
             task.cancel()
         if self.running_skills:
             await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
+
+        if self._compaction_task is not None and not self._compaction_task.done():
+            try:
+                await self._compaction_task
+            except Exception:
+                pass
 
     async def _handle_user_message(self, text: str) -> None:
         # If a spawned skill is waiting on ask_user, route this input to that skill
@@ -213,6 +261,14 @@ class ChatSession:
 
         for spec in skills_to_run:
             await self._spawn_skill(spec)
+
+        # Fire-and-forget compaction check after the user has the reply.
+        # Reuses self._compacting as a single-flight lock; no await here so
+        # the user's next prompt isn't blocked. _drain_on_shutdown awaits any
+        # in-flight compaction task so a quick /quit after a heavy turn does
+        # not lose the summary.
+        if self._compaction_task is None or self._compaction_task.done():
+            self._compaction_task = asyncio.create_task(self._maybe_compact())
 
     # ── skill invocation helpers ────────────────────────────────────────────────
 
@@ -275,6 +331,148 @@ class ChatSession:
         self._accumulate(result)
         return result
 
+    # ── compaction (Head/Body/Tail) ─────────────────────────────────────────────
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        """Cheap chars/4 token estimate. Same heuristic used by other Reyn paths."""
+        return max(1, len(text or "") // 4)
+
+    def _latest_summary(self) -> ChatMessage | None:
+        for m in reversed(self.history):
+            if m.role == "summary":
+                return m
+        return None
+
+    async def _maybe_compact(self) -> None:
+        """Fold the uncovered middle into a structured summary when token-heavy.
+
+        Trigger: estimated tokens of user/agent turns whose seq is BOTH
+          - > head_size (those are HEAD, never compacted)
+          - > latest_summary.covers_through_seq (already covered)
+          - <= max_seq - tail_size (TAIL is preserved as raw)
+        exceeds compaction.trigger_total_tokens and contains at least
+        `min_compact_batch` turns.
+        """
+        if self._compacting:
+            self._chat_events.emit("compaction_check", outcome="already_running")
+            return
+        cfg = self._compaction
+        turns = [m for m in self.history if m.role in ("user", "agent")]
+        if len(turns) <= cfg.head_size + cfg.tail_size:
+            self._chat_events.emit(
+                "compaction_check", outcome="too_few_turns",
+                turns=len(turns), head=cfg.head_size, tail=cfg.tail_size,
+            )
+            return
+
+        latest = self._latest_summary()
+        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
+        cover_floor = max(prev_cover, cfg.head_size)
+
+        max_seq = max((t.seq for t in turns), default=0)
+        tail_threshold = max_seq - cfg.tail_size
+        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
+        if len(candidates) < cfg.min_compact_batch:
+            self._chat_events.emit(
+                "compaction_check", outcome="below_min_batch",
+                candidate_count=len(candidates), min_batch=cfg.min_compact_batch,
+            )
+            return
+
+        total_tokens = sum(self._estimate_tokens(t.text) for t in candidates)
+        if total_tokens < cfg.trigger_total_tokens:
+            self._chat_events.emit(
+                "compaction_check", outcome="below_threshold",
+                total_tokens=total_tokens, threshold=cfg.trigger_total_tokens,
+                candidate_count=len(candidates),
+            )
+            return
+        self._chat_events.emit(
+            "compaction_check", outcome="triggering",
+            total_tokens=total_tokens, candidate_count=len(candidates),
+        )
+
+        self._compacting = True
+        try:
+            await self._run_compaction(candidates, latest)
+        except Exception as exc:
+            self._chat_events.emit("compaction_failed", error=str(exc))
+        finally:
+            self._compacting = False
+
+    async def _run_compaction(
+        self,
+        candidates: list[ChatMessage],
+        previous_summary: ChatMessage | None,
+    ) -> None:
+        """Invoke chat_compactor and persist the resulting summary entry."""
+        cfg = self._compaction
+        prev_structured: dict | None = None
+        if previous_summary is not None:
+            meta = previous_summary.meta or {}
+            structured = meta.get("structured")
+            if isinstance(structured, dict):
+                prev_structured = structured
+                # carry forward the prior covers_through_seq for continuity
+                if "covers_through_seq" not in prev_structured:
+                    prev_structured = {
+                        **prev_structured,
+                        "covers_through_seq": meta.get("covers_through_seq", 0),
+                    }
+
+        input_artifact = {
+            "type": "history_chunk_to_compact",
+            "data": {
+                "previous_summary": prev_structured,
+                "new_turns": [
+                    {"role": t.role, "text": t.text, "seq": t.seq} for t in candidates
+                ],
+                "section_token_caps": {
+                    "topic_arc": cfg.section_token_caps.topic_arc,
+                    "decisions": cfg.section_token_caps.decisions,
+                    "pending": cfg.section_token_caps.pending,
+                    "session_user_facts": cfg.section_token_caps.session_user_facts,
+                    "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
+                },
+            },
+        }
+
+        self._chat_events.emit(
+            "compaction_started",
+            new_turn_count=len(candidates),
+            covers_through_seq=candidates[-1].seq,
+            had_previous=previous_summary is not None,
+        )
+        result = await self._run_stdlib_skill(
+            "chat_compactor", input_artifact, state_subdir="compaction",
+        )
+        if not result.ok:
+            self._chat_events.emit(
+                "compaction_aborted", reason=f"compactor result status={result.status}",
+            )
+            return
+
+        structured = dict(result.data or {})
+        covers = int(structured.get("covers_through_seq") or candidates[-1].seq)
+        # Render once for the persisted text field; the slicer can re-render
+        # from `structured` if the stored text drifts from formatting changes.
+        rendered = _render_summary_for_storage(structured)
+
+        summary_msg = ChatMessage(
+            role="summary",
+            text=rendered,
+            ts=_now_iso(),
+            meta={"structured": structured, "covers_through_seq": covers},
+        )
+        self._append_history(summary_msg)
+        self._chat_events.emit(
+            "compaction_completed",
+            covers_through_seq=covers,
+            section_lengths={k: len(v) if isinstance(v, list) else len(str(v))
+                             for k, v in structured.items() if k != "covers_through_seq"},
+        )
+
     # ── router ──────────────────────────────────────────────────────────────────
 
     async def _invoke_router(
@@ -293,7 +491,7 @@ class ChatSession:
         and slices the recent N turns. This eliminates the snapshot-per-turn
         duplication that previously bloated workspace artifacts.
         """
-        avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME})
+        avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME, "chat_compactor"})
 
         data: dict = {
             "user_message": user_text,
@@ -303,6 +501,12 @@ class ChatSession:
             # workspace dir was created relative to the cwd at session start.
             "history_path": str(self.history_path),
             "available_skills": avail,
+            # Pass the head/tail config through so the slicer can honor it
+            # without needing access to ReynConfig.
+            "compaction": {
+                "head_size": self._compaction.head_size,
+                "tail_size": self._compaction.tail_size,
+            },
         }
         if skill_completion is not None:
             data["skill_completion"] = skill_completion
