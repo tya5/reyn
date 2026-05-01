@@ -3,7 +3,7 @@ type: phase
 name: run_target
 input: eval_case_input
 role: test_runner
-max_act_turns: 2
+max_act_turns: 1
 allowed_ops: [run_skill]
 ---
 
@@ -14,9 +14,9 @@ Run the target skill with the test case input and build evaluation requests from
 - If `case_input` looks like a valid JSON object (starts with `{`), parse it and use as-is.
 - Otherwise wrap it: `{"type": "user_message", "data": {"text": case_input}}`
 
-## Step 2 — Run the target skill
+## Step 2 — Run the target skill (your ONLY act turn)
 
-Issue a `run_skill` Control IR op:
+Issue exactly ONE `run_skill` Control IR op. After receiving the result, your next response MUST be a decide turn — do NOT call run_skill again regardless of the result.
 
 ```json
 {
