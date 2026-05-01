@@ -224,6 +224,7 @@ class OSRuntime:
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
+            workspace=self.workspace,
             model=self.model,
             events=self.events,
             subscribers=self.events.subscribers,

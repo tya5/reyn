@@ -219,13 +219,17 @@ Any transition to a "revise" phase uses `decision="continue"`.
 
 ## control_ir
 
-List of side-effect operations. Available kinds are injected via `available_control_ops` in ContextFrame.
+List of operations the LLM emits dynamically. Available kinds are injected via `available_control_ops` in ContextFrame and gated per phase by `allowed_ops` plus the permission system.
 
-* `file` — read, write, glob, or delete files in the workspace
-* `ask_user` — pause phase, ask user a question, re-inject response as `user_message` into the same phase
+The same op catalog is shared with the static (preprocessor) frontend — `control_ir` and `preprocessor.run_op` dispatch through the same `op_runtime` backend (see Section 12).
+
+* `file` — read, write, glob, grep, edit, or delete files in the workspace
+* `ask_user` — pause phase, ask user a question, re-inject response as `user_message` into the same phase. **Control IR only** — preprocessor cannot pause for user input
 * `run_skill` — run another skill as a sub-workflow; result is bound to a named slot in the calling phase's context
 * `lint` — run the DSL linter on a skill directory
 * `shell` — run a shell command (off by default; requires `--allow-shell`)
+* `web_fetch` / `web_search` — fetch a URL or run a web search
+* `mcp` — call a tool on a configured MCP HTTP server
 
 ---
 
@@ -315,15 +319,30 @@ Responsibility boundary:
 
 # 12. Phase Preprocessor
 
-A Phase may declare a `preprocessor` chain that runs **before** the LLM is called. Preprocessor steps are deterministic and may invoke sub-skills, iterate over a list, or run validators.
+A Phase may declare a `preprocessor` chain that runs **before** the LLM is called. Preprocessor steps run **once per phase entry** (and on rollback) as the static frontend to the same `op_runtime` backend that powers Control IR.
 
-* `run_skill` — invoke a sub-skill, store its output under a named key in the LLM's input
-* `iterate × run_skill` — fan out a sub-skill over a list, collect results
-* `validate` — run a deterministic check, surface findings to the LLM
+There are two layers:
 
-Preprocessor steps run as OS-controlled pipeline operations (not LLM-driven). The LLM sees an enriched input artifact whose schema is inferred at compile time. Phase instructions MUST NOT describe preprocessor mechanics — refer to enriched fields by name only.
+**Op steps** — invoke a `ControlIROp` from preprocessor. The same op catalog as Control IR (see Section 6).
 
-This is how stdlib skills like `eval` (iterates `judge_phase` over per-criterion requests) and `skill_improver` (runs `eval_builder` to ensure a spec exists) compose without writing imperative orchestration in phase instructions.
+* `run_op` — invoke any op (`file`, `run_skill`, `web_fetch`, `web_search`, `shell`, `lint`, `mcp`); place result at `into` dot-path. `args_from` lets selected fields be pulled from the input artifact at runtime
+* `run_skill` — sugar: shorthand for `run_op` wrapping a `run_skill` op that passes the calling artifact as input
+* `file_read` — sugar: shorthand for `iterate(bases) × run_op{op: file/read}` with optional JSON/YAML parsing
+
+**Enrichment steps** — pre-processor-only flow control and validation.
+
+* `iterate` — fan out an inner step (`run_skill` or `run_op`) over an array; collect results into `into`
+* `validate` — JSON-Schema check against `artifact["data"]`; aborts on failure
+* `lint_plan` — run deterministic structural checks on a plan dict; surface issues
+* `python` — run a user-supplied Python function in a sandboxed subprocess
+
+The LLM sees an enriched input artifact whose schema is inferred at compile time. Phase instructions MUST NOT describe preprocessor mechanics — refer to enriched fields by name only.
+
+`ask_user` is **forbidden** in preprocessor — static execution can't pause for user input.
+
+Side-effect ops (`file.write/edit/delete`, `shell`) are allowed in preprocessor because the existing permission system gates them call-site-agnostically. Note: a preprocessor side-effect runs once per phase visit (and once per rollback). For phases that are visited many times (revise loops), prefer idempotent operations.
+
+This is how stdlib skills like `eval` (iterates `judge_phase` over per-criterion requests), `skill_improver` (runs `eval_builder` to ensure a spec exists), and `skill_router` (reads `MEMORY.md` via `file_read` so the LLM sees the index without an extra LLM call) compose without writing imperative orchestration in phase instructions.
 
 ---
 

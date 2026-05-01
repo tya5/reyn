@@ -72,13 +72,61 @@ def _require_parent_exists(schema: dict, path: str, step_label: str) -> None:
         )
 
 
+def _op_output_schema(op_kind: str) -> dict:
+    """Return a coarse JSON schema for a ControlIROp result.
+
+    These shapes mirror what op_runtime handlers actually return. Callers
+    use this for `RunOpStep` schema inference; the schemas are deliberately
+    permissive so the LLM tolerates new fields op handlers may add later.
+    """
+    if op_kind == "file":
+        return {
+            "type": "object",
+            "description": "file op result (read/write/glob/grep/delete/edit). "
+                           "Common fields: kind, op, path, status. read adds 'content'.",
+        }
+    if op_kind == "run_skill":
+        return {
+            "type": "object",
+            "description": "run_skill op result. Fields include status, skill, "
+                           "success, final_output (sub-skill's final_output dict), "
+                           "phase_artifacts, events_glob, artifacts_glob, workspace.",
+        }
+    if op_kind == "web_fetch":
+        return {
+            "type": "object",
+            "description": "web_fetch op result: url, status_code, content_type, content, truncated.",
+        }
+    if op_kind == "web_search":
+        return {
+            "type": "object",
+            "description": "web_search op result: query, backend, results (list of {title, url, snippet}).",
+        }
+    if op_kind == "shell":
+        return {
+            "type": "object",
+            "description": "shell op result: status, returncode, stdout, stderr.",
+        }
+    if op_kind == "lint":
+        return {
+            "type": "object",
+            "description": "lint op result: passed, error_count, warning_count, issues.",
+        }
+    if op_kind == "mcp":
+        return {
+            "type": "object",
+            "description": "mcp op result: status, server, tool, content, raw.",
+        }
+    return {"type": "object"}
+
+
 def _infer_step_output_schema(
     step: "PreprocessorStep",
     sub_skills: dict[str, "Skill"],
     step_label: str,
 ) -> dict:
     """Return the JSON Schema that a single step produces (for use in iterate.apply)."""
-    from reyn.models import RunSkillStep, IterateStep, ValidateStep
+    from reyn.models import RunSkillStep, IterateStep, ValidateStep, RunOpStep
     if isinstance(step, RunSkillStep):
         if step.skill not in sub_skills:
             raise PreprocessorTypeError(
@@ -86,6 +134,8 @@ def _infer_step_output_schema(
                 f"Available: {list(sub_skills.keys())}"
             )
         return sub_skills[step.skill].final_output_schema
+    if isinstance(step, RunOpStep):
+        return _op_output_schema(step.op.kind)
     if isinstance(step, ValidateStep):
         raise PreprocessorTypeError(f"{step_label}: validate cannot be used as iterate.apply")
     if isinstance(step, IterateStep):
@@ -103,14 +153,20 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep
+    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep, RunOpStep
 
     schema = copy.deepcopy(input_schema)
 
     for i, step in enumerate(steps):
         label = f"preprocessor step[{i}] (type={step.type!r})"
 
-        if isinstance(step, RunSkillStep):
+        if isinstance(step, RunOpStep):
+            if step.into is not None:
+                _require_parent_exists(schema, step.into, label)
+                schema = _set_at_path(schema, step.into, _op_output_schema(step.op.kind))
+            # else: result is discarded; no schema change
+
+        elif isinstance(step, RunSkillStep):
             if step.into is None:
                 raise PreprocessorTypeError(
                     f"{label}: top-level run_skill must have 'into' set"

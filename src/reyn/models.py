@@ -91,13 +91,41 @@ class PythonStep(BaseModel):
     output_schema: dict[str, Any]  # JSON Schema of the function's return value
 
 
+class RunOpStep(BaseModel):
+    """Invoke any ControlIROp from the static (preprocessor) frontend.
+
+    `op` is a literal ControlIROp embedded directly. `args_from` lets
+    selected fields be replaced with values pulled from dot-paths in the
+    input artifact at execution time (useful inside `iterate`, where
+    each item's data needs to flow into the op).
+
+    `ask_user` cannot be invoked here — the op_runtime dispatcher rejects
+    it because static execution can't pause for user input.
+    """
+    type: Literal["run_op"]
+    op: "ControlIROp"
+    into: str | None = None
+    args_from: dict[str, str] = Field(default_factory=dict)
+    on_error: Literal["fail", "skip", "empty"] = "fail"
+
+    @model_validator(mode="after")
+    def _check_ask_user(self) -> "RunOpStep":
+        if getattr(self.op, "kind", None) == "ask_user":
+            raise ValueError(
+                "run_op cannot wrap an ask_user op — preprocessor steps "
+                "execute statically and cannot pause for user input."
+            )
+        return self
+
+
 PreprocessorStep = Annotated[
-    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep],
+    Union[RunOpStep, RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep],
     Field(discriminator="type"),
 ]
 
-# Resolve forward reference in IterateStep.apply
-IterateStep.model_rebuild()
+# IterateStep / RunOpStep both use forward refs that resolve only after
+# ControlIROp is defined further down. The rebuild is performed at the
+# bottom of this file once all referenced types are in scope.
 
 
 # ── Phase ─────────────────────────────────────────────────────────────────────
@@ -168,7 +196,8 @@ class Skill(BaseModel):
         return self
 
 
-Skill.model_rebuild()
+# Skill rebuild is deferred to the bottom of this file (Skill.preprocessor
+# references RunOpStep which forward-refs ControlIROp, defined further down).
 
 
 class FileIROp(BaseModel):
@@ -262,6 +291,11 @@ ControlIROp = Annotated[
     Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp, WebSearchIROp],
     Field(discriminator="kind"),
 ]
+
+# Resolve forward references now that ControlIROp is in scope.
+RunOpStep.model_rebuild()
+IterateStep.model_rebuild()
+Skill.model_rebuild()
 
 
 class ControlReason(BaseModel):

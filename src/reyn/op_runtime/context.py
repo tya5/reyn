@@ -1,0 +1,58 @@
+"""OpContext — execution environment for op handlers.
+
+Bundles the dependencies an op needs from the surrounding frontend
+(workspace, events, permissions, sub-skill resolution helpers) so the
+handler signatures stay flat. Frontends construct an OpContext once
+and reuse it for the whole phase or act loop.
+"""
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
+
+if TYPE_CHECKING:
+    from ..models import Skill
+    from ..workspace import Workspace
+    from ..events import EventLog
+    from ..model_resolver import ModelResolver
+    from ..permissions import PermissionDecl, PermissionResolver
+
+
+@dataclass
+class OpContext:
+    """Execution context passed to every op handler."""
+
+    workspace: "Workspace"
+    events: "EventLog"
+
+    # Permissions
+    permission_decl: "PermissionDecl"
+    permission_resolver: "PermissionResolver | None" = None
+    skill_name: str = ""
+
+    # Sub-skill invocation
+    skill: "Skill | None" = None  # current skill (for preloaded preprocessor sub-skills)
+    model: str = "standard"
+    resolver: "ModelResolver | None" = None
+    subscribers: list = field(default_factory=list)
+    output_language: str = "ja"
+    max_phase_visits: int = 25
+
+    # run_skill state_dir layout strategy
+    # When set, run_skill uses this path verbatim. When None, the handler
+    # computes a layout based on `state_dir_strategy`.
+    sub_state_dir_override: str | None = None
+    state_dir_strategy: str = "control_ir"  # "control_ir" or "preprocessor"
+    # Used when state_dir_strategy=="preprocessor"
+    preprocessor_phase_name: str = ""
+    preprocessor_step_index: int = 0
+
+    # Shell / MCP
+    shell_allowed: bool = False
+    mcp_servers: dict = field(default_factory=dict)
+    # Mutable cache for MCP HTTP clients keyed by server name
+    mcp_clients: dict = field(default_factory=dict)
+
+    # ask_user
+    user_input_fn: Callable[[str, list[str]], Any] | None = None
+    current_phase: str = ""
