@@ -4,7 +4,6 @@ name: apply_improvements
 input: improvement_plan
 role: implementer
 model_class: standard
-can_finish: true
 allowed_ops: [file]
 ---
 
@@ -59,11 +58,11 @@ updated_state = {
 
 The runtime returns ops results in order, so include both A and B in your first ops list. Reading and writing in the same turn is supported — it is the standard read-modify-write pattern.
 
-## Step 3 — Decide: finish or loop
+## Step 3 — Decide: hand off to finalize or loop
 
 After Step 1 and Step 2 ops have been executed (you receive their results), inspect `improvement_plan.iteration_state` (call it `state` below).
 
-**Finish** (`control.type="finish"`) when ANY of these holds — first match wins:
+**Transition to `finalize`** (`control.type="transition"`, `next_phase="finalize"`) when ANY of these holds — first match wins:
 
 | Condition | termination_reason |
 |---|---|
@@ -73,14 +72,14 @@ After Step 1 and Step 2 ops have been executed (you receive their results), insp
 | `state.current_iteration > 1` AND `state.latest_eval.overall_score < state.history[-1].eval_score` | `regression_detected` |
 | `state.current_iteration > 1` AND `abs(state.latest_eval.overall_score - state.history[-1].eval_score) < 0.02` | `stagnation_detected` |
 
-**Loop** (`control.type="rollback"`) ONLY when none of the finish conditions holds. The rollback chains back through plan_improvements → run_and_eval, starting iteration N+1 with the just-modified DSL.
+**Loop** (`control.type="rollback"`) ONLY when none of the above conditions holds. The rollback chains back through plan_improvements → run_and_eval, starting iteration N+1 with the just-modified DSL.
 
 For rollback, set `control.reason.summary` to something like:
 ```
 "iteration 2: score 0.65 < threshold 0.85; targeting weakest_phase=foo"
 ```
 
-## Output (finish path)
+## Output (finalize path)
 
 Emit `improvement_result` with:
 
@@ -93,6 +92,9 @@ Emit `improvement_result` with:
 - `termination_reason`: from the table in Step 3
 - `summary`: prose describing the score progression and what changed
 - `next_steps`: a concrete command — typically `reyn eval <eval_spec_path>`
+- `work_dsl_root`: `state.session.target_dsl_root` (the temp work directory)
+- `original_dsl_root`: `state.session.original_dsl_root` (the original skill directory)
+- `copied_back`: `false` (finalize will update this field)
 
 ## Output (rollback path)
 

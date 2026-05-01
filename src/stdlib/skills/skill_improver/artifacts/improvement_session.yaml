@@ -57,6 +57,9 @@ schema:
     improvement_focus:
       type: string
       description: Optional area to focus improvements on, e.g. "instruction clarity". Empty string when not specified.
+    original_dsl_root:
+      type: string
+      description: Original DSL root before the prepare phase copies files to the temp work directory. Empty string when no copy was made. Used by finalize to copy improved files back to the original location.
   required:
     - target_skill_path
     - target_dsl_root
@@ -68,3 +71,4 @@ schema:
     - max_iterations
     - score_threshold
     - improvement_focus
+    - original_dsl_root

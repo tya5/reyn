@@ -46,6 +46,15 @@ schema:
     next_steps:
       type: string
       description: Concrete suggestion for what to run/verify, e.g. "reyn eval <eval_spec_path>" or "reyn run <skill> '<input>'".
+    work_dsl_root:
+      type: string
+      description: Path to the temporary working directory where improvements were applied (e.g. ".reyn/skill_improver_work/my_app"). Used by finalize for copy-back path mapping. Empty string when no temp copy was made.
+    original_dsl_root:
+      type: string
+      description: Original DSL root before the temp copy, passed through from improvement_session. Used by finalize to write improved files back. Empty string when no temp copy was made.
+    copied_back:
+      type: boolean
+      description: True when the improved DSL files were successfully copied from work_dsl_root back to original_dsl_root. False when copy-back was skipped (score threshold not met, stdlib path outside write zone, or original_dsl_root is empty).
   required:
     - target_skill_path
     - iterations_performed
@@ -56,3 +65,6 @@ schema:
     - termination_reason
     - summary
     - next_steps
+    - work_dsl_root
+    - original_dsl_root
+    - copied_back
