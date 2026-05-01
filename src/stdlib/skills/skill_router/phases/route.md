@@ -355,6 +355,9 @@ Triggers that stay in `route` (do NOT transition):
 - Questions answered by `memory_index` (description grounding)
 - Math, code the LLM already knows, language tasks
 - Tasks that map to one of `available_skills`
+- **Current date / time questions** ("今日は何日？", "今何時？", "What day is it?"):
+  the Context Frame includes a `current_datetime` field (ISO-8601) stamped at
+  prompt-build time. Answer directly from that value — do NOT route to web_research.
 
 When transitioning, emit a transition turn with the `web_research_request`
 artifact:
