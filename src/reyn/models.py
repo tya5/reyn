@@ -363,6 +363,10 @@ class ContextFrame(BaseModel):
     # (file read content, ask_user answer, etc.). Empty on first LLM call for the phase.
     # Each entry is the raw result dict returned by ControlIRExecutor.execute().
     control_ir_results: list[dict] = Field(default_factory=list)
+    # How many more act turns the LLM may emit before it MUST produce a decide turn.
+    # 0 means this call is the mandatory decide turn — the LLM MUST NOT emit any ops.
+    # None means unlimited (no max_act_turns constraint on this phase).
+    remaining_act_turns: int | None = None
     current_datetime: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 
 

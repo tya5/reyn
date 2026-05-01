@@ -355,6 +355,7 @@ class OSRuntime:
         output_language: str,
         control_ir_results: list[dict] | None = None,
         artifact_path: str | None = None,
+        remaining_act_turns: int | None = None,
     ) -> ContextFrame:
         effective_model = self._effective_model(current_phase)
         phase_def = self.skill.phases[current_phase]
@@ -378,6 +379,7 @@ class OSRuntime:
             events=self.events,
             control_ir_results=control_ir_results,
             artifact_path=artifact_path,
+            remaining_act_turns=remaining_act_turns,
         )
 
     # ── Single-attempt validation ──────────────────────────────────────────────
@@ -610,10 +612,12 @@ class OSRuntime:
                     error=prior_attempts[-1]["error"],
                 )
 
+            remaining = max_act_turns - act_turn_count if max_act_turns > 0 else None
             frame = self._build_frame(
                 phase, artifact, candidates, output_language,
                 control_ir_results=control_ir_results,
                 artifact_path=artifact_path,
+                remaining_act_turns=remaining,
             )
             # Pass rollback_context only on the first LLM call; subsequent calls already have context
             raw = await self._call_llm_and_record(

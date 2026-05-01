@@ -49,6 +49,7 @@ def build_frame(
     op_catalog: list[ControlIROpSpec] | None = None,
     control_ir_results: list[dict] | None = None,
     artifact_path: str | None = None,
+    remaining_act_turns: int | None = None,
 ) -> ContextFrame:
     allowed_next = [c.next_phase for c in candidates]
     current_visit = visit_counts.get(phase_name, 1)
@@ -73,6 +74,7 @@ def build_frame(
         model=effective_model,
         model_resolved=model_resolved,
         control_ir_results=control_ir_results or [],
+        remaining_act_turns=remaining_act_turns,
     )
 
     events.emit("context_built", phase=phase_name, frame=frame.model_dump(mode="json"))
