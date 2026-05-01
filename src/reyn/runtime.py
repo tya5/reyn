@@ -640,6 +640,27 @@ class OSRuntime:
 
             act_turn_count += 1
             if act_turn_count > max_act_turns:
+                if force_decide:
+                    # LLM emitted ops despite being told no more are allowed.
+                    # Don't execute the ops — feed back an explicit error and retry.
+                    act_turn_count -= 1
+                    prior_attempts.append({
+                        "raw": json.dumps(raw, ensure_ascii=False),
+                        "error": (
+                            f"You emitted act-turn ops but your act budget is exhausted "
+                            f"({max_act_turns}/{max_act_turns} act turns used). "
+                            "Do NOT include any ops. Produce the final artifact and transition NOW."
+                        ),
+                    })
+                    if len(prior_attempts) > max_phase_retries:
+                        final_msg = (
+                            f"Phase '{phase}' failed: LLM refused to produce a decide turn "
+                            f"after {len(prior_attempts)} retries with force_decide=True."
+                        )
+                        self.events.emit("phase_failed", phase=phase,
+                                         attempts=len(prior_attempts), final_error=final_msg)
+                        raise ValueError(final_msg)
+                    continue
                 msg = (
                     f"Phase '{phase}' exceeded max act turns ({max_act_turns}). "
                     "The LLM kept emitting act turns without making a decide turn."
