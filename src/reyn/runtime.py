@@ -218,6 +218,7 @@ class OSRuntime:
         self._project_context = project_context
         self._phase_started_at: float | None = None
         self._perm = permission_resolver
+        self._intervention_bus = intervention_bus
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -237,6 +238,7 @@ class OSRuntime:
             resolver=self._resolver,
             max_phase_visits=self._max_phase_visits,
             permission_resolver=permission_resolver,
+            intervention_bus=intervention_bus,
             python_allowed_modules=python_allowed_modules,
         )
         self._history: list[str] = []
@@ -788,7 +790,14 @@ class OSRuntime:
         Raises WorkflowAbortedError on unrecoverable LLM abort.
         """
         if self._perm:
-            self._perm.startup_guard(self.skill, self.skill.name)
+            if self._intervention_bus is None:
+                raise RuntimeError(
+                    "permission_resolver requires intervention_bus on OSRuntime; "
+                    "wire one via Agent(intervention_bus=...)"
+                )
+            await self._perm.startup_guard(
+                self.skill, self.skill.name, self._intervention_bus,
+            )
 
         current_phase = self.skill.entry_phase
         artifact = initial_input

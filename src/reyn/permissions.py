@@ -33,6 +33,23 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from .user_intervention import (
+    InterventionAnswer,
+    InterventionBus,
+    UserIntervention,
+)
+from .intervention_choices import (
+    ALWAYS,
+    JUST_PATH,
+    NEVER,
+    NO,
+    RECURSIVE,
+    YES,
+    file_access_choices,
+    generic_yn_choices,
+    python_choices,
+)
+
 if TYPE_CHECKING:
     from .models import Skill
 
@@ -166,18 +183,14 @@ class PermissionDecl:
         )
 
 
-_PROMPT_TEMPLATE = (
-    "\n  Permission request — {perm}\n"
-    "  {description}\n"
-    "  Allow? [y]es / [n]o / [A]lways / [N]ever: "
-)
-
-
 class PermissionResolver:
     """
-    Resolves permission requests against config, saved approvals, and interactive prompts.
+    Resolves permission requests against config, saved approvals, and an
+    `InterventionBus` for user prompts.
 
-    Thread this through OSRuntime → ControlIRExecutor → execute().
+    The bus is supplied per-call (`require_*`, `startup_guard`, …) by the
+    caller, since the bus is tied to the Agent that's running while the
+    resolver is shared across runs in long-lived sessions (chat).
     """
 
     def __init__(
@@ -243,7 +256,7 @@ class PermissionResolver:
 
     # ── Core approval (non-file ops) ──────────────────────────────────────────
 
-    def _approve(self, key: str, description: str) -> bool:
+    async def _approve(self, key: str, description: str, bus: InterventionBus) -> bool:
         if self._is_config_approved(key):
             return True
         # Composite keys (e.g. "skill_router/python.pure/./mod.py:fn") accept
@@ -261,24 +274,27 @@ class PermissionResolver:
             return v
         if not self._interactive:
             return False
-        return self._prompt(key, description)
+        return await self._prompt(key, description, bus)
 
-    def _prompt(self, key: str, description: str) -> bool:
-        prompt = _PROMPT_TEMPLATE.format(perm=key, description=description or key)
-        try:
-            ans = input(prompt).strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return False
-        if ans in ("y", "Y", "yes"):
+    async def _prompt(self, key: str, description: str, bus: InterventionBus) -> bool:
+        iv = UserIntervention(
+            kind="permission.generic",
+            prompt=f"Permission request — {key}",
+            detail=description or key,
+            choices=generic_yn_choices(),
+        )
+        answer = await bus.request(iv)
+        choice = answer.choice_id
+        if choice == YES:
             self._session[key] = True
             return True
-        if ans == "A":
+        if choice == ALWAYS:
             self._persist(key, True)
             return True
-        if ans == "N":
+        if choice == NEVER:
             self._persist(key, False)
             return False
+        # NO or unknown → deny (session-only)
         self._session[key] = False
         return False
 
@@ -331,7 +347,9 @@ class PermissionResolver:
             p = p.rstrip("/") + "/"
         self._session[f"{skill_name}/{kind}/{p}"] = True
 
-    def _prompt_file_access(self, path: str, scope: str, skill_name: str, kind: str) -> bool:
+    async def _prompt_file_access(
+        self, path: str, scope: str, skill_name: str, kind: str, bus: InterventionBus,
+    ) -> bool:
         """Prompt the user to approve a file access. Returns True if approved.
 
         kind is "file.read" or "file.write". scope is the declared scope from
@@ -339,6 +357,8 @@ class PermissionResolver:
         access to everything under `path` itself; "just_path" (default) makes
         [r] grant the parent directory recursively.
         """
+        if not self._interactive:
+            return False
         verb = "Read" if kind == "file.read" else "Write"
         if scope == "recursive":
             recursive_target = str(Path(path).expanduser()).rstrip("/") + "/"
@@ -346,34 +366,35 @@ class PermissionResolver:
         else:
             recursive_target = str(Path(path).expanduser().parent) + "/"
             recursive_label = recursive_target
-        prompt = (
-            f"  {verb} access: {path!r}  [{scope}]\n"
-            f"  [y]es (this run) / [j]ust this path always / "
-            f"[r]ecursive under {recursive_label!r} always / [N]o: "
+        iv = UserIntervention(
+            kind=f"permission.{kind}",
+            prompt=f"{verb} access request: {path!r} [{scope}]",
+            detail=f"recursive target would be {recursive_label!r}",
+            choices=file_access_choices(recursive_label),
         )
-        if not self._interactive:
-            return False
-        try:
-            ans = input(prompt).strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return False
-        if ans == "y":
+        answer = await bus.request(iv)
+        choice = answer.choice_id
+        if choice == YES:
             self._session[f"{skill_name}/{kind}/{path}"] = True
             return True
-        if ans == "j":
+        if choice == JUST_PATH:
             self._persist(f"{skill_name}/{kind}/{path}", True)
             return True
-        if ans == "r":
+        if choice == RECURSIVE:
             self._persist(f"{skill_name}/{kind}/{recursive_target}", True)
             return True
+        # NO or unknown → deny (session-only)
         self._session[f"{skill_name}/{kind}/{path}"] = False
         return False
 
-    def _prompt_file_write(self, path: str, scope: str, skill_name: str) -> bool:
-        return self._prompt_file_access(path, scope, skill_name, "file.write")
+    async def _prompt_file_write(
+        self, path: str, scope: str, skill_name: str, bus: InterventionBus,
+    ) -> bool:
+        return await self._prompt_file_access(path, scope, skill_name, "file.write", bus)
 
-    def startup_guard(self, skill: "Skill", skill_name: str) -> None:
+    async def startup_guard(
+        self, skill: "Skill", skill_name: str, bus: InterventionBus,
+    ) -> None:
         """
         Pre-flight permission check: scan all phase declarations, collect paths that
         fall outside the default zones, and ask the user to approve them before
@@ -452,57 +473,42 @@ class PermissionResolver:
         if not (write_requests or read_requests or python_requests):
             return
 
-        if read_requests:
-            print(f"\n  Skill '{skill_name}' requests read access outside the project:")
-            for req in read_requests:
-                print(f"    • {req['path']}  [{req['scope']}]  (phase: {req['phase']})")
-            print()
-            for req in read_requests:
-                self._prompt_file_access(req["path"], req["scope"], skill_name, "file.read")
+        for req in read_requests:
+            await self._prompt_file_access(
+                req["path"], req["scope"], skill_name, "file.read", bus,
+            )
+        for req in write_requests:
+            await self._prompt_file_access(
+                req["path"], req["scope"], skill_name, "file.write", bus,
+            )
+        for req in python_requests:
+            kind = "python.trusted" if req["mode"] == "trusted" else "python.pure"
+            key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
+            await self._prompt_python(key, req["module"], req["function"], req["mode"], bus)
 
-        if write_requests:
-            print(f"\n  Skill '{skill_name}' requests write access outside the default zone:")
-            for req in write_requests:
-                print(f"    • {req['path']}  [{req['scope']}]  (phase: {req['phase']})")
-            print()
-            for req in write_requests:
-                self._prompt_file_access(req["path"], req["scope"], skill_name, "file.write")
-
-        if python_requests:
-            print(f"\n  Skill '{skill_name}' requests Python preprocessor steps:")
-            for req in python_requests:
-                print(
-                    f"    • {req['module']}:{req['function']}  [{req['mode']}]  "
-                    f"(phase: {req['phase']})"
-                )
-            print()
-            for req in python_requests:
-                kind = "python.trusted" if req["mode"] == "trusted" else "python.pure"
-                key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
-                self._prompt_python(key, req["module"], req["function"], req["mode"])
-
-    def _prompt_python(self, key: str, module: str, function: str, mode: str) -> bool:
-        """Approve a python step at startup; persist on yes."""
-        verb = "TRUSTED" if mode == "trusted" else "pure"
-        prompt = (
-            f"  Python step ({verb}): {module}:{function}\n"
-            f"  [y]es (this run) / [A]lways / [N]o: "
-        )
+    async def _prompt_python(
+        self, key: str, module: str, function: str, mode: str, bus: InterventionBus,
+    ) -> bool:
+        """Approve a python step; persist on yes."""
         if not self._interactive:
             self._session[key] = False
             return False
-        try:
-            ans = input(prompt).strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            self._session[key] = False
-            return False
-        if ans in ("y", "yes"):
+        verb = "TRUSTED" if mode == "trusted" else "pure"
+        iv = UserIntervention(
+            kind="permission.python",
+            prompt=f"Python step ({verb}): {module}:{function}",
+            detail=f"approval key: {key}",
+            choices=python_choices(),
+        )
+        answer = await bus.request(iv)
+        choice = answer.choice_id
+        if choice == YES:
             self._session[key] = True
             return True
-        if ans == "A":
+        if choice == ALWAYS:
             self._persist(key, True)
             return True
+        # NO or unknown → deny (session-only)
         self._session[key] = False
         return False
 
@@ -558,27 +564,32 @@ class PermissionResolver:
             return True
         return False
 
-    def require_shell(self, decl: PermissionDecl, cmd: str = "") -> None:
+    async def require_shell(
+        self, decl: PermissionDecl, cmd: str, bus: InterventionBus,
+    ) -> None:
         if not decl.shell:
             raise PermissionError(
                 f"shell access not declared in phase permissions. "
                 f"Add `permissions:\\n  shell: true` to the phase frontmatter."
                 f" (cmd: {cmd!r})"
             )
-        if not self._approve("shell", f"shell command: {cmd!r}"):
+        if not await self._approve("shell", f"shell command: {cmd!r}", bus):
             raise PermissionError(f"shell access denied (cmd: {cmd!r})")
 
-    def require_mcp(self, decl: PermissionDecl, server: str) -> None:
+    async def require_mcp(
+        self, decl: PermissionDecl, server: str, bus: InterventionBus,
+    ) -> None:
         if server not in decl.mcp:
             raise PermissionError(
                 f"MCP server {server!r} not declared in phase permissions. "
                 f"Add `permissions:\\n  mcp: [{server}]` to the phase frontmatter."
             )
-        if not self._approve(f"mcp.{server}", f"MCP server: {server!r}"):
+        if not await self._approve(f"mcp.{server}", f"MCP server: {server!r}", bus):
             raise PermissionError(f"MCP server {server!r} access denied")
 
-    def require_python(
+    async def require_python(
         self, decl: PermissionDecl, module: str, function: str,
+        bus: InterventionBus,
         skill_name: str = "",
     ) -> PythonPermission:
         """Resolve which python permission entry applies; raise if denied.
@@ -612,24 +623,26 @@ class PermissionResolver:
                     f"only when you trust the skill source."
                 )
             key = f"{skill_name}/python.trusted/{module}:{function}"
-            if not self._approve(key, f"trusted python step: {module}:{function}"):
+            if not await self._approve(key, f"trusted python step: {module}:{function}", bus):
                 raise PermissionError(
                     f"trusted python step {module}:{function} denied by user"
                 )
             return perm
         # pure mode
         key = f"{skill_name}/python.pure/{module}:{function}"
-        if not self._approve(key, f"pure python step: {module}:{function}"):
+        if not await self._approve(key, f"pure python step: {module}:{function}", bus):
             raise PermissionError(
                 f"pure python step {module}:{function} denied by user"
             )
         return perm
 
-    def require_tool(self, decl: PermissionDecl, tool: str) -> None:
+    async def require_tool(
+        self, decl: PermissionDecl, tool: str, bus: InterventionBus,
+    ) -> None:
         if tool not in decl.tool:
             raise PermissionError(
                 f"tool {tool!r} not declared in phase permissions. "
                 f"Add `permissions:\\n  tool: [{tool}]` to the phase frontmatter."
             )
-        if not self._approve(f"tool.{tool}", f"tool: {tool!r}"):
+        if not await self._approve(f"tool.{tool}", f"tool: {tool!r}", bus):
             raise PermissionError(f"tool {tool!r} access denied")

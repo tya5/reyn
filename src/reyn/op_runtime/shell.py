@@ -11,7 +11,11 @@ from ..models import ShellIROp
 
 async def handle(op: ShellIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     if ctx.permission_resolver is not None:
-        ctx.permission_resolver.require_shell(ctx.permission_decl, op.cmd)
+        if ctx.intervention_bus is None:
+            raise RuntimeError("shell op requires intervention_bus on OpContext")
+        await ctx.permission_resolver.require_shell(
+            ctx.permission_decl, op.cmd, ctx.intervention_bus,
+        )
     elif not ctx.shell_allowed:
         raise OpSkipped("shell_not_allowed")
 

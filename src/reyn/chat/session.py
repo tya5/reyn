@@ -340,31 +340,12 @@ class ChatSession:
         skill_md = sl / "skills" / skill_name / "skill.md"
         return load_dsl_skill(str(skill_md), dsl_root=str(sl))
 
-    def pre_guard_stdlib_skills(self, skill_names: list[str]) -> None:
-        """Call startup_guard for each named stdlib skill before the REPL starts.
-
-        startup_guard() uses blocking input(). If called inside run_repl's
-        asyncio event loop it blocks prompt_async() and deadlocks. Calling this
-        synchronously here, before run_async(), avoids the race.
-        """
-        if self._perm is None:
-            return
-        for name in skill_names:
-            try:
-                skill = self._load_stdlib_skill(name)
-                self._perm.startup_guard(skill, name)
-            except SystemExit:
-                raise
-            except Exception:
-                pass  # surface the error inside the REPL when the skill runs
-
     async def _run_stdlib_skill(
         self,
         skill_name: str,
         input_artifact: dict,
         *,
         state_subdir: str,
-        intervention_bus: InterventionBus | None = None,
         mcp_servers: dict | None = None,
         forward_events: bool = False,
     ):
@@ -382,8 +363,11 @@ class ChatSession:
         if forward_events:
             from reyn.chat.forwarder import ChatEventForwarder
             subscribers = [ChatEventForwarder(skill_name, self.outbox)]
+        # Inline stdlib runs (router/compactor) aren't tracked in running_skills,
+        # so run_id is None — _drop_interventions_for_run won't fire on them
+        # (they complete on their own, no cancellation path).
         agent = self._build_agent(
-            intervention_bus=intervention_bus,
+            intervention_bus=ChatInterventionBus(self, run_id=None, skill_name=skill_name),
             mcp_servers=mcp_servers,
             subscribers=subscribers,
         )
@@ -716,57 +700,12 @@ class ChatSession:
 
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
-    async def _preflight_permissions(self, skill, skill_name: str) -> None:
-        """Run startup_guard with the prompt_toolkit application suspended.
-
-        Inside an active REPL, blocking input() inside startup_guard contends
-        for stdin with the input loop's prompt_async() and deadlocks. Wrapping
-        the call in run_in_terminal pauses the REPL prompt, frees stdin for the
-        guard's input() prompts, then resumes the prompt cleanly. When no
-        prompt_toolkit application is active (e.g. tests, banner phase) we just
-        call startup_guard directly.
-        """
-        from prompt_toolkit.application import run_in_terminal
-        from prompt_toolkit.application.current import get_app_or_none
-
-        if get_app_or_none() is not None:
-            await run_in_terminal(
-                lambda: self._perm.startup_guard(skill, skill_name)
-            )
-        else:
-            self._perm.startup_guard(skill, skill_name)
-
     async def _spawn_skill(self, spec: dict) -> None:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
         if not skill_name or not isinstance(input_artifact, dict):
             await self.outbox.put(("error", f"invalid skill spec: {spec}"))
             return
-
-        # Pre-flight permissions: load the skill and run startup_guard while
-        # the REPL prompt is suspended. If we let startup_guard run inside the
-        # async skill task instead, its blocking input() would deadlock against
-        # _input_loop's prompt_async() — both contend for the same stdin.
-        if self._perm is not None:
-            try:
-                _skill_dir, _dsl_root = resolve_skill_path(skill_name)
-                preflight_skill = load_dsl_skill(
-                    str(_skill_dir / "skill.md"), dsl_root=str(_dsl_root),
-                )
-            except SystemExit:
-                await self.outbox.put(("error", f"skill not found: {skill_name}"))
-                return
-            except Exception as exc:
-                await self.outbox.put(("error", f"failed to load {skill_name}: {exc}"))
-                return
-            try:
-                await self._preflight_permissions(preflight_skill, skill_name)
-            except PermissionError as exc:
-                await self.outbox.put(("error", f"[{skill_name}] permission denied: {exc}"))
-                return
-            except Exception as exc:
-                await self.outbox.put(("error", f"[{skill_name}] preflight failed: {exc}"))
-                return
 
         run_id = (
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"

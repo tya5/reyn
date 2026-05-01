@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from .events import EventLog
     from .model_resolver import ModelResolver
     from .permissions import PermissionResolver
+    from .user_intervention import InterventionBus
     from .workspace import Workspace
 
 
@@ -91,6 +92,7 @@ class PreprocessorExecutor:
         resolver: "ModelResolver",
         max_phase_visits: int = 25,
         permission_resolver: "PermissionResolver | None" = None,
+        intervention_bus: "InterventionBus | None" = None,
         python_runner: PythonRunner | None = None,
         python_allowed_modules: list[str] | None = None,
     ) -> None:
@@ -102,6 +104,7 @@ class PreprocessorExecutor:
         self._resolver = resolver
         self._max_phase_visits = max_phase_visits
         self._perm = permission_resolver
+        self._intervention_bus = intervention_bus
         self._python_runner = python_runner or PythonRunner()
         self._python_allowed_modules = list(python_allowed_modules or [])
 
@@ -365,9 +368,16 @@ class PreprocessorExecutor:
         # Resolve permission for this (module, function). Without a resolver
         # (e.g. unit tests), default to a permissive pure-mode entry.
         if self._perm is not None:
+            if self._intervention_bus is None:
+                raise PreprocessorError(
+                    f"Phase '{phase_name}' preprocessor step[{index}] python: "
+                    f"intervention_bus not configured (cannot prompt for "
+                    f"python.{step.module}:{step.function})"
+                )
             try:
-                perm = self._perm.require_python(
+                perm = await self._perm.require_python(
                     phase.permissions, step.module, step.function,
+                    self._intervention_bus,
                     skill_name=self._skill.name,
                 )
             except PermissionError as exc:

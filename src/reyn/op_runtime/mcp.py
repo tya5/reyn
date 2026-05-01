@@ -62,7 +62,11 @@ def _execute(op: MCPIROp, ctx: OpContext) -> dict:
 
 async def handle(op: MCPIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     if ctx.permission_resolver is not None:
-        ctx.permission_resolver.require_mcp(ctx.permission_decl, op.server)
+        if ctx.intervention_bus is None:
+            raise RuntimeError("mcp op requires intervention_bus on OpContext")
+        await ctx.permission_resolver.require_mcp(
+            ctx.permission_decl, op.server, ctx.intervention_bus,
+        )
     return await asyncio.to_thread(_execute, op, ctx)
 
 

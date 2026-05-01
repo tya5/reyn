@@ -22,7 +22,7 @@ def register(sub) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.chat.session import ChatSession, ROUTER_SKILL_NAME
+    from reyn.chat.session import ChatSession
     from reyn.chat.repl import run_repl
     from reyn.config import _find_project_root
     from reyn.permissions import PermissionResolver
@@ -56,10 +56,6 @@ def run(args: argparse.Namespace) -> None:
         compaction_config=session_cfg.config.chat.compaction,
     )
     chat.load_history()
-    # Pre-guard stdlib skills that chat invokes automatically. startup_guard()
-    # uses blocking input(); inside run_repl's event loop that deadlocks against
-    # prompt_async(). Running it here, before run_async(), avoids the race.
-    chat.pre_guard_stdlib_skills([ROUTER_SKILL_NAME, "chat_compactor"])
 
     from ..logger_factory import make_chat_renderer
     renderer = make_chat_renderer(rich=args.rich)
