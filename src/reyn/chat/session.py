@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 import json
+import time
 import uuid
 from collections import deque
 from dataclasses import asdict, dataclass, field
@@ -23,6 +24,7 @@ from reyn.user_intervention import (
     UserIntervention,
     match_choice,
 )
+from reyn.chat.outbox import OutboxMessage
 
 
 ROUTER_SKILL_NAME = "skill_router"
@@ -62,6 +64,33 @@ class ChatMessage:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _run_short(run_id: str) -> str:
+    """Last 4 chars of a chat-side run_id, used as a display tag."""
+    return run_id[-4:] if run_id else ""
+
+
+def _run_meta(run_id: str | None, skill_name: str | None) -> dict:
+    """Standard `meta` payload for OutboxMessage produced inside a skill spawn."""
+    if run_id is None:
+        return {"skill_name": skill_name} if skill_name else {}
+    return {
+        "run_id": run_id,
+        "run_id_short": _run_short(run_id),
+        "skill_name": skill_name,
+    }
+
+
+def _iv_meta(iv: "UserIntervention") -> dict:
+    """Standard `meta` payload for OutboxMessage announcing an intervention."""
+    out = {"intervention_id": iv.id, "intervention_kind": iv.kind}
+    if iv.run_id:
+        out["run_id"] = iv.run_id
+        out["run_id_short"] = _run_short(iv.run_id)
+    if iv.skill_name:
+        out["skill_name"] = iv.skill_name
+    return out
 
 
 def _render_summary_for_storage(structured: dict) -> str:
@@ -177,6 +206,8 @@ class ChatSession:
 
         self._chat_events = EventLog(subscribers=[EventPersister(self.events_path)])
         self.running_skills: dict[str, asyncio.Task] = {}
+        # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
+        self.running_skills_started_at: dict[str, float] = {}
 
         # User-intervention routing state. The deque preserves FIFO emission order;
         # the dict gives O(1) lookup by intervention id. Untyped user lines answer
@@ -255,7 +286,7 @@ class ChatSession:
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", chat_id=self.chat_id)
-            await self.outbox.put(("__end__", ""))
+            await self.outbox.put(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
         """Cancel any in-flight user-initiated skill runs and await compaction.
@@ -278,6 +309,12 @@ class ChatSession:
                 pass
 
     async def _handle_user_message(self, text: str) -> None:
+        # Slash commands (`:list`, `:cancel <id>`, `:answer <id> <text>`) take
+        # precedence over both the active-intervention router and a fresh
+        # router turn.
+        if text.startswith(":"):
+            if await self._maybe_handle_slash(text):
+                return
         # If a spawned skill is waiting on a user intervention (ask_user or
         # permission prompt), route this input to that intervention instead of
         # starting a fresh router turn.
@@ -286,19 +323,19 @@ class ChatSession:
 
         self._append_history(ChatMessage(role="user", text=text, ts=_now_iso()))
         self._chat_events.emit("user_message_received", text=text)
-        await self.outbox.put(("status", "考え中..."))
+        await self.outbox.put(OutboxMessage(kind="status", text="考え中..."))
 
         try:
             decision = await self._invoke_router(text)
         except Exception as exc:
-            await self.outbox.put(("error", f"router failed: {exc}"))
+            await self.outbox.put(OutboxMessage(kind="error", text=f"router failed: {exc}"))
             return
 
         reply_text = (decision.get("reply_text") or "").strip()
         skills_to_run = decision.get("skills_to_run") or []
 
         if reply_text:
-            await self.outbox.put(("agent", reply_text))
+            await self.outbox.put(OutboxMessage(kind="agent", text=reply_text))
             self._append_history(ChatMessage(role="agent", text=reply_text, ts=_now_iso()))
 
         for spec in skills_to_run:
@@ -583,16 +620,29 @@ class ChatSession:
 
         head_id = self._intervention_order[0]
         iv = self._active_interventions[head_id]
+        return await self._deliver_answer_to(iv, text)
 
+    async def _deliver_answer_to(self, iv: UserIntervention, text: str) -> bool:
+        """Resolve `iv` with `text` and append a user-history entry.
+
+        Returns True when the intervention was consumed (answer set OR
+        unrecognized-choice hint emitted, both of which should suppress
+        a fresh router turn). Shared between oldest-intervention routing
+        and the targeted `:answer <id>` slash command.
+        """
+        if iv.future.done():
+            return False
         if iv.choices:
             choice = match_choice(text, iv.choices)
             if choice is None:
-                # Unrecognized choice — surface a status hint and don't consume
-                # the message. The user can re-type the correct hotkey.
+                # Unrecognized choice — surface a status hint and don't resolve.
+                # The user can re-type the correct hotkey.
                 hint = " / ".join(c.label for c in iv.choices)
-                await self.outbox.put(
-                    ("status", f"unknown choice; expected one of: {hint}")
-                )
+                await self.outbox.put(OutboxMessage(
+                    kind="status",
+                    text=f"unknown choice; expected one of: {hint}",
+                    meta=_iv_meta(iv),
+                ))
                 return True  # consumed: don't fall through to a fresh router turn
             answer = InterventionAnswer(text=text, choice_id=choice.id)
         else:
@@ -620,13 +670,16 @@ class ChatSession:
         return True
 
     async def _announce_intervention(self, iv: UserIntervention) -> None:
-        """Format and publish an intervention to the outbox for the renderer."""
-        skill_prefix = f"[{iv.skill_name}] " if iv.skill_name else ""
+        """Format and publish an intervention to the outbox for the renderer.
+
+        Skill / run_id provenance lives in `meta` — the renderer prepends a
+        `[skill#abcd]` tag, so we don't repeat it in `text`.
+        """
         lines: list[str] = []
         if iv.kind == "ask_user":
-            lines.append(f"{skill_prefix}質問: {iv.prompt}")
+            lines.append(f"質問: {iv.prompt}")
         else:
-            lines.append(f"{skill_prefix}{iv.prompt}")
+            lines.append(iv.prompt)
         if iv.detail:
             lines.append(f"  {iv.detail}")
         if iv.suggestions:
@@ -634,7 +687,11 @@ class ChatSession:
         if iv.choices:
             labels = " / ".join(c.label for c in iv.choices)
             lines.append(f"  {labels}")
-        await self.outbox.put(("intervention", "\n".join(lines)))
+        await self.outbox.put(OutboxMessage(
+            kind="intervention",
+            text="\n".join(lines),
+            meta=_iv_meta(iv),
+        ))
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
         """Register an intervention in the queue, announce it (or signal queued
@@ -648,10 +705,10 @@ class ChatSession:
                 await self._announce_intervention(iv)
             else:
                 queued = len(self._intervention_order) - 1
-                prefix = f"[{iv.skill_name}] " if iv.skill_name else ""
-                await self.outbox.put((
-                    "status",
-                    f"{prefix}質問待ち ({queued}件キュー中)",
+                await self.outbox.put(OutboxMessage(
+                    kind="status",
+                    text=f"質問待ち ({queued}件キュー中)",
+                    meta=_iv_meta(iv),
                 ))
             try:
                 return await iv.future
@@ -698,13 +755,163 @@ class ChatSession:
             if iv is not None and not iv.future.done():
                 iv.future.cancel()
 
+    # ── slash command dispatch ──────────────────────────────────────────────────
+
+    def _resolve_run_id(self, prefix: str) -> tuple[str | None, list[str]]:
+        """Find a unique run_id matching `prefix` (anywhere within the id).
+
+        Matches against the full id OR the trailing 4-char short tag, since
+        users see `[skill#abcd]` and naturally type the short tag.
+
+        Returns (run_id, candidates). `run_id` is non-None only when exactly
+        one candidate matches; otherwise inspect `candidates`.
+        """
+        prefix = prefix.strip()
+        if not prefix:
+            return None, []
+        candidates = [
+            rid for rid in self.running_skills
+            if rid.startswith(prefix) or rid.endswith(prefix)
+        ]
+        return (candidates[0] if len(candidates) == 1 else None), candidates
+
+    def _resolve_intervention_id(self, prefix: str) -> tuple[str | None, list[str]]:
+        """Same shape as `_resolve_run_id` but over `_active_interventions`."""
+        prefix = prefix.strip()
+        if not prefix:
+            return None, []
+        candidates = [
+            iid for iid in self._active_interventions
+            if iid.startswith(prefix) or iid.endswith(prefix)
+        ]
+        return (candidates[0] if len(candidates) == 1 else None), candidates
+
+    async def _maybe_handle_slash(self, text: str) -> bool:
+        """Dispatch `:command args...` lines. Returns True when consumed.
+
+        Unknown slash commands also return True (with a hint on outbox) to
+        keep the router from running on user typos like ":halp".
+        """
+        body = text[1:].lstrip()
+        if not body:
+            await self.outbox.put(OutboxMessage(
+                kind="status",
+                text="known commands: :list, :cancel <id>, :answer <id> <text>",
+            ))
+            return True
+        parts = body.split(maxsplit=1)
+        cmd = parts[0]
+        args = parts[1] if len(parts) > 1 else ""
+        handler = {
+            "list": self._slash_list,
+            "cancel": self._slash_cancel,
+            "answer": self._slash_answer,
+        }.get(cmd)
+        if handler is None:
+            await self.outbox.put(OutboxMessage(
+                kind="status",
+                text=f"unknown command :{cmd}; try :list / :cancel <id> / :answer <id> <text>",
+            ))
+            return True
+        await handler(args)
+        return True
+
+    async def _slash_list(self, args: str) -> None:
+        """`:list` — running skills + pending interventions."""
+        now = time.monotonic()
+        lines: list[str] = []
+        if self.running_skills:
+            lines.append("running skills:")
+            for rid, _task in self.running_skills.items():
+                started = self.running_skills_started_at.get(rid)
+                elapsed = f"{int(now - started)}s" if started is not None else "?s"
+                # Recover skill_name from the run_id format
+                # "TIMESTAMP_<skill>_<short>" — split between first and last underscore.
+                short = _run_short(rid)
+                # skill_name is everything between first '_' after timestamp and the trailing _short
+                trimmed = rid[: -len(short) - 1] if short else rid  # drop "_abcd"
+                # trimmed = "TIMESTAMP_skill_name"; drop the leading TIMESTAMP_
+                _, _, skill_part = trimmed.partition("_")
+                lines.append(f"  {short}  {skill_part:<24} {elapsed:>5}  (run_id={rid})")
+        else:
+            lines.append("running skills: (none)")
+        if self._active_interventions:
+            lines.append("pending interventions:")
+            for iid in self._intervention_order:
+                iv = self._active_interventions[iid]
+                short = (iv.run_id[-4:] if iv.run_id else "----")
+                lines.append(
+                    f"  {iid[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
+                )
+        await self.outbox.put(OutboxMessage(kind="status", text="\n".join(lines)))
+
+    async def _slash_cancel(self, args: str) -> None:
+        """`:cancel <id-prefix>` — cancel a running skill task."""
+        prefix = args.strip()
+        if not prefix:
+            await self.outbox.put(OutboxMessage(
+                kind="error", text="usage: :cancel <id-prefix>",
+            ))
+            return
+        rid, candidates = self._resolve_run_id(prefix)
+        if rid is None:
+            if not candidates:
+                await self.outbox.put(OutboxMessage(
+                    kind="error", text=f"no running skill matches {prefix!r}",
+                ))
+            else:
+                await self.outbox.put(OutboxMessage(
+                    kind="error",
+                    text=f"ambiguous prefix {prefix!r}; matches: {', '.join(_run_short(c) for c in candidates)}",
+                ))
+            return
+        task = self.running_skills.get(rid)
+        if task is None or task.done():
+            await self.outbox.put(OutboxMessage(
+                kind="status", text=f"skill {_run_short(rid)} already finished",
+            ))
+            return
+        task.cancel()
+        await self.outbox.put(OutboxMessage(
+            kind="status", text="cancel requested",
+            meta=_run_meta(rid, None),
+        ))
+
+    async def _slash_answer(self, args: str) -> None:
+        """`:answer <id-prefix> <text>` — deliver answer to a non-head intervention."""
+        parts = args.split(maxsplit=1)
+        if not parts:
+            await self.outbox.put(OutboxMessage(
+                kind="error", text="usage: :answer <id-prefix> <text>",
+            ))
+            return
+        prefix = parts[0]
+        text = parts[1] if len(parts) > 1 else ""
+        iid, candidates = self._resolve_intervention_id(prefix)
+        if iid is None:
+            if not candidates:
+                await self.outbox.put(OutboxMessage(
+                    kind="error",
+                    text=f"no pending intervention matches {prefix!r}",
+                ))
+            else:
+                await self.outbox.put(OutboxMessage(
+                    kind="error",
+                    text=f"ambiguous prefix {prefix!r}; matches: {', '.join(c[:8] for c in candidates)}",
+                ))
+            return
+        iv = self._active_interventions[iid]
+        await self._deliver_answer_to(iv, text)
+
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
     async def _spawn_skill(self, spec: dict) -> None:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
         if not skill_name or not isinstance(input_artifact, dict):
-            await self.outbox.put(("error", f"invalid skill spec: {spec}"))
+            await self.outbox.put(OutboxMessage(
+                kind="error", text=f"invalid skill spec: {spec}",
+            ))
             return
 
         run_id = (
@@ -712,43 +919,58 @@ class ChatSession:
             f"_{skill_name}_{uuid.uuid4().hex[:4]}"
         )
         self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
-        await self.outbox.put(("status", f"[{skill_name}] 起動..."))
+        # Track elapsed time for `:list` and provenance for outbox messages
+        self.running_skills_started_at[run_id] = time.monotonic()
+        await self.outbox.put(OutboxMessage(
+            kind="status", text="起動...",
+            meta=_run_meta(run_id, skill_name),
+        ))
 
         task = asyncio.create_task(self._run_one_skill(run_id, skill_name, input_artifact))
         self.running_skills[run_id] = task
 
         def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
             self.running_skills.pop(rid, None)
+            self.running_skills_started_at.pop(rid, None)
             self._drop_interventions_for_run(rid)
 
         task.add_done_callback(_cleanup)
 
     async def _run_one_skill(self, run_id: str, skill_name: str, input_artifact: dict) -> None:
+        meta = _run_meta(run_id, skill_name)
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
         except SystemExit:
-            await self.outbox.put(("error", f"skill not found: {skill_name}"))
+            await self.outbox.put(OutboxMessage(
+                kind="error", text=f"skill not found: {skill_name}", meta=meta,
+            ))
             return
         try:
             skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
         except Exception as exc:
-            await self.outbox.put(("error", f"failed to load {skill_name}: {exc}"))
+            await self.outbox.put(OutboxMessage(
+                kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
+            ))
             return
 
         from reyn.chat.forwarder import ChatEventForwarder
         agent = self._build_agent(
             intervention_bus=ChatInterventionBus(self, run_id, skill_name),
             mcp_servers=self._mcp_servers,
-            subscribers=[ChatEventForwarder(skill_name, self.outbox)],
+            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
         )
         try:
             result = await agent.run(skill, input_artifact, output_language=self.output_language)
         except asyncio.CancelledError:
-            await self.outbox.put(("status", f"[{skill_name}] cancelled"))
+            await self.outbox.put(OutboxMessage(
+                kind="status", text="cancelled", meta=meta,
+            ))
             raise
         except Exception as exc:
             self._chat_events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
-            await self.outbox.put(("error", f"[{skill_name}] failed: {exc}"))
+            await self.outbox.put(OutboxMessage(
+                kind="error", text=f"failed: {exc}", meta=meta,
+            ))
             return
 
         self._accumulate(result)
@@ -780,13 +1002,17 @@ class ChatSession:
                 role="agent", text=narrated, ts=_now_iso(),
                 meta={"narrated_skill": skill_name, "run_id": run_id, "status": result.status},
             ))
-            await self.outbox.put(("agent", narrated))
+            await self.outbox.put(OutboxMessage(
+                kind="agent", text=narrated, meta=meta,
+            ))
         else:
             # Fallback: raw dump so the user at least sees something.
             summary = json.dumps(result.data, ensure_ascii=False, indent=2)
-            fallback = f"[{skill_name}] 完了 (status={result.status})\n{summary}"
+            fallback = f"完了 (status={result.status})\n{summary}"
             self._append_history(ChatMessage(
                 role="skill_event", text=fallback, ts=_now_iso(),
                 meta={"skill": skill_name, "run_id": run_id, "status": result.status},
             ))
-            await self.outbox.put(("skill_done", fallback))
+            await self.outbox.put(OutboxMessage(
+                kind="skill_done", text=fallback, meta=meta,
+            ))

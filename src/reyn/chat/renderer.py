@@ -5,7 +5,25 @@ from io import StringIO
 
 from prompt_toolkit.formatted_text import AnyFormattedText, HTML
 
+from reyn.chat.outbox import OutboxMessage
 from reyn.pricing import TokenUsage
+
+
+def _meta_prefix(meta: dict) -> str:
+    """Build a `[skill_name#abcd] ` prefix from meta provenance, if present.
+
+    Returns "" when neither skill_name nor run_id_short is set, so generic
+    status / error messages stay clean.
+    """
+    skill = meta.get("skill_name")
+    short = meta.get("run_id_short")
+    if skill and short:
+        return f"[{skill}#{short}] "
+    if skill:
+        return f"[{skill}] "
+    if short:
+        return f"[#{short}] "
+    return ""
 
 
 _BANNER = """\
@@ -38,10 +56,11 @@ class ChatRenderer:
     def banner(self, chat_id: str) -> None:
         """Render the startup banner. Called once before the input loop."""
 
-    def message(self, kind: str, text: str) -> None:
+    def message(self, msg: OutboxMessage) -> None:
         """Render one outbox item.
 
-        kind ∈ {"agent","status","error","intervention","trace","skill_done"}
+        msg.kind ∈ {"agent","status","error","intervention","trace","skill_done"}
+        msg.meta carries provenance (skill_name, run_id, run_id_short, ...)
         """
 
     def prompt_text(self) -> AnyFormattedText:
@@ -85,12 +104,18 @@ class ConsoleChatRenderer(ChatRenderer):
     def banner(self, chat_id: str) -> None:
         self._write(f"{_BANNER}\n  chat_id={chat_id}\n  {_HELP}\n\n")
 
-    def message(self, kind: str, text: str) -> None:
+    def message(self, msg: OutboxMessage) -> None:
         self._clear_transient()
-        prefix = self._PREFIX.get(kind, "")
-        line = f"{prefix} {text}\n" if prefix else f"{text}\n"
+        kind_prefix = self._PREFIX.get(msg.kind, "")
+        meta_prefix = _meta_prefix(msg.meta)
+        # Inject meta prefix between kind tag and text so logs read
+        # "[trace] [skill_builder#abcd] phase started: ..."
+        if kind_prefix:
+            line = f"{kind_prefix} {meta_prefix}{msg.text}\n"
+        else:
+            line = f"{meta_prefix}{msg.text}\n"
         self._write(line)
-        self._transient_active = kind in _TRANSIENT_KINDS
+        self._transient_active = msg.kind in _TRANSIENT_KINDS
 
     def prompt_text(self) -> AnyFormattedText:
         return "you > "
@@ -148,16 +173,18 @@ class RichChatRenderer(ChatRenderer):
         self._console.print(f"  [dim]{_HELP}[/dim]\n")
         self._flush()
 
-    def message(self, kind: str, text: str) -> None:
+    def message(self, msg: OutboxMessage) -> None:
         # Always pass user text with markup=False so brackets in event payloads
-        # like "[skill_router] phase started: route" don't get interpreted as
-        # Rich style tags (which would silently drop the bracketed token).
+        # don't get interpreted as Rich style tags (which would silently drop
+        # the bracketed token).
         self._clear_transient()
         c = self._console
+        kind = msg.kind
+        text = f"{_meta_prefix(msg.meta)}{msg.text}"
         if kind == "agent":
             from rich.text import Text
-            msg = Text.assemble(("agent  ", "bold cyan"), (text, ""))
-            c.print(msg)
+            rendered = Text.assemble(("agent  ", "bold cyan"), (text, ""))
+            c.print(rendered)
         elif kind == "status":
             c.print(f"⟳ {text}", style="dim", markup=False)
         elif kind == "error":

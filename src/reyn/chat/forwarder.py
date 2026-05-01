@@ -14,15 +14,19 @@ jsonl log if the user wants the full picture.
 from __future__ import annotations
 import asyncio
 
+from reyn.chat.outbox import OutboxMessage
 from reyn.models import Event
 
 
 class ChatEventForwarder:
     """Callable subscriber that turns skill events into outbox messages."""
 
-    def __init__(self, skill_name: str, outbox: asyncio.Queue) -> None:
+    def __init__(
+        self, skill_name: str, outbox: asyncio.Queue, *, run_id: str | None = None,
+    ) -> None:
         self.skill_name = skill_name
         self.outbox = outbox
+        self.run_id = run_id
 
     def __call__(self, event: Event) -> None:
         handler = getattr(self, f"on_{event.type}", None)
@@ -31,18 +35,23 @@ class ChatEventForwarder:
 
     def on_phase_started(self, data: dict) -> None:
         phase = data.get("phase", "?")
-        self._enqueue(f"[{self.skill_name}] phase started: {phase}")
+        # No [skill_name] prefix — renderer prepends it from meta provenance.
+        self._enqueue(f"phase started: {phase}")
 
     def on_phase_completed(self, data: dict) -> None:
         phase = data.get("phase", "?")
         nxt = data.get("next", "?")
         conf = data.get("confidence")
         suffix = f"  (confidence={conf})" if conf is not None else ""
-        self._enqueue(f"[{self.skill_name}] {phase} → {nxt}{suffix}")
+        self._enqueue(f"{phase} → {nxt}{suffix}")
 
     def _enqueue(self, text: str) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.
+        meta: dict = {"skill_name": self.skill_name}
+        if self.run_id:
+            meta["run_id"] = self.run_id
+            meta["run_id_short"] = self.run_id[-4:]
         try:
-            self.outbox.put_nowait(("trace", text))
+            self.outbox.put_nowait(OutboxMessage(kind="trace", text=text, meta=meta))
         except asyncio.QueueFull:
             pass

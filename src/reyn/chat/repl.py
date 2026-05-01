@@ -35,17 +35,17 @@ async def _input_loop(
 
 async def _output_loop(session: ChatSession, renderer: ChatRenderer) -> None:
     while True:
-        kind, text = await session.outbox.get()
-        if kind == "__end__":
+        msg = await session.outbox.get()
+        if msg.kind == "__end__":
             return
         # Wrap in run_in_terminal so the prompt is cleared before output and
         # redrawn after — required for ANSI/Rich to render cleanly without
         # corrupting the prompt. When no app is active (banner phase), the
         # function runs synchronously without coordination.
         if get_app_or_none() is not None:
-            await run_in_terminal(lambda k=kind, t=text: renderer.message(k, t))
+            await run_in_terminal(lambda m=msg: renderer.message(m))
         else:
-            renderer.message(kind, text)
+            renderer.message(msg)
 
 
 async def run_repl(session: ChatSession, renderer: ChatRenderer) -> None:
