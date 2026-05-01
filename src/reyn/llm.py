@@ -219,7 +219,7 @@ async def call_llm(
     max_retries: transient-error retries (LiteLLM exponential backoff), via num_retries.
     """
     system = _system_prompt()
-    user_content = json.dumps(frame.model_dump(), indent=2, ensure_ascii=False)
+    user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
     messages: list[dict] = [
         {"role": "system", "content": system},
         {"role": "user", "content": user_content},

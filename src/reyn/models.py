@@ -340,6 +340,7 @@ class ContextFrame(BaseModel):
     # frontmatter they generate. Normal phases ignore this list.
     op_catalog: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
+    current_datetime: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     model: str = ""        # model class name (or raw LiteLLM string) for this phase
     model_resolved: str = ""  # resolved LiteLLM string actually used for LLM calls
     # Populated when a previous control_ir op in this phase produced a result
@@ -350,5 +351,5 @@ class ContextFrame(BaseModel):
 
 class Event(BaseModel):
     type: str
-    timestamp: datetime = Field(default_factory=datetime.now)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     data: dict[str, Any] = Field(default_factory=dict)

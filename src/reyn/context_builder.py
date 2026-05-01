@@ -75,5 +75,5 @@ def build_frame(
         control_ir_results=control_ir_results or [],
     )
 
-    events.emit("context_built", phase=phase_name, frame=frame.model_dump())
+    events.emit("context_built", phase=phase_name, frame=frame.model_dump(mode="json"))
     return frame
