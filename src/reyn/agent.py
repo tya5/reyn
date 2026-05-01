@@ -23,6 +23,7 @@ class Agent:
         limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
+        prompt_cache_enabled: bool = True,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -35,6 +36,7 @@ class Agent:
         self._permission_resolver = permission_resolver
         self._mcp_servers = mcp_servers
         self._python_allowed_modules = list(python_allowed_modules or [])
+        self._prompt_cache_enabled = prompt_cache_enabled
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -56,6 +58,7 @@ class Agent:
             limits=self._limits,
             mcp_servers=self._mcp_servers,
             python_allowed_modules=self._python_allowed_modules,
+            prompt_cache_enabled=self._prompt_cache_enabled,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

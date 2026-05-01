@@ -324,11 +324,16 @@ class PhaseConstraints(BaseModel):
 
 
 class ContextFrame(BaseModel):
+    # Field order is intentionally stable-first to maximize prompt-cache hit rate.
+    # When serialized via model_dump(mode="json"), pydantic v2 preserves declaration
+    # order. Fields that don't change across act-turns within a phase visit are
+    # placed before fields that do, so the JSON prefix remains stable and caches.
+    # Volatile fields (control_ir_results, current_datetime) live at the end.
+
+    # ── stable across act-turns within a phase visit ───────────────────────────
     current_phase: str
     current_phase_role: str | None = None
     instructions: str
-    input_artifact: dict[str, Any]
-    execution: ExecutionState = Field(default_factory=ExecutionState)
     candidate_outputs: list[CandidateOutput]
     finish_criteria: list[str] = Field(default_factory=list)
     constraints: PhaseConstraints = Field(default_factory=PhaseConstraints)
@@ -340,13 +345,17 @@ class ContextFrame(BaseModel):
     # frontmatter they generate. Normal phases ignore this list.
     op_catalog: list[ControlIROpSpec] = Field(default_factory=list)
     output_language: str = "ja"
-    current_datetime: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     model: str = ""        # model class name (or raw LiteLLM string) for this phase
     model_resolved: str = ""  # resolved LiteLLM string actually used for LLM calls
+    input_artifact: dict[str, Any]
+    execution: ExecutionState = Field(default_factory=ExecutionState)
+
+    # ── volatile across act-turns ──────────────────────────────────────────────
     # Populated when a previous control_ir op in this phase produced a result
     # (file read content, ask_user answer, etc.). Empty on first LLM call for the phase.
     # Each entry is the raw result dict returned by ControlIRExecutor.execute().
     control_ir_results: list[dict] = Field(default_factory=list)
+    current_datetime: datetime = Field(default_factory=lambda: datetime.now().astimezone())
 
 
 class Event(BaseModel):

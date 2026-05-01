@@ -175,6 +175,7 @@ def _run_case(
         model=model,
         resolver=session.resolver,
         limits=session.limits_for(args),
+        prompt_cache_enabled=session.config.prompt_cache_enabled,
     )
 
     try:

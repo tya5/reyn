@@ -199,6 +199,26 @@ def proxy_kwargs() -> dict:
     return {"api_base": api_base, "custom_llm_provider": "openai", "api_key": api_key}
 
 
+def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
+    """Build the system message, optionally with an Anthropic cache_control marker.
+
+    cache_control={"type": "ephemeral"} tells Anthropic models (and AWS Bedrock
+    Claude) to cache the system-prompt prefix for ~5 minutes, eliminating
+    re-encoding cost on subsequent calls. Providers that don't recognize the
+    marker (Gemini, OpenAI proxy, etc.) ignore the extra field — the multi-block
+    content array itself is part of the OpenAI chat-completions spec since the
+    multimodal extension and is accepted as plain text by all major providers.
+    """
+    if not prompt_cache_enabled:
+        return {"role": "system", "content": system_text}
+    return {
+        "role": "system",
+        "content": [
+            {"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}},
+        ],
+    }
+
+
 async def call_llm(
     model: str,
     frame: ContextFrame,
@@ -207,6 +227,7 @@ async def call_llm(
     *,
     timeout: float = 60.0,
     max_retries: int = 3,
+    prompt_cache_enabled: bool = True,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -217,11 +238,13 @@ async def call_llm(
       Injected as the first prior-attempt entry when this phase is being re-run after rollback.
     timeout: per-call HTTP timeout (seconds), passed to litellm.acompletion.
     max_retries: transient-error retries (LiteLLM exponential backoff), via num_retries.
+    prompt_cache_enabled: when True, attach Anthropic cache_control marker to
+      the system prompt. Ignored by non-Anthropic providers.
     """
     system = _system_prompt()
     user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
     messages: list[dict] = [
-        {"role": "system", "content": system},
+        _build_system_message(system, prompt_cache_enabled),
         {"role": "user", "content": user_content},
     ]
 

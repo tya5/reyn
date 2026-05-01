@@ -193,6 +193,7 @@ class OSRuntime:
         limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
+        prompt_cache_enabled: bool = True,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -210,6 +211,7 @@ class OSRuntime:
         self._max_phase_wall_seconds = self._limits.phase.max_wall_seconds  # 0 = unlimited
         self._llm_timeout = self._limits.llm.timeout
         self._llm_max_retries = self._limits.llm.max_retries
+        self._prompt_cache_enabled = prompt_cache_enabled
         self._phase_started_at: float | None = None
         self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(
@@ -460,6 +462,7 @@ class OSRuntime:
             rollback_context=rollback_context,
             timeout=self._llm_timeout,
             max_retries=self._llm_max_retries,
+            prompt_cache_enabled=self._prompt_cache_enabled,
         )
         raw = llm_result.data
         cost_usd: float | None = None

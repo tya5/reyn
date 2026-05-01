@@ -105,6 +105,7 @@ def run(args: argparse.Namespace) -> None:
         limits=limits,
         mcp_servers=session.config.mcp,
         python_allowed_modules=list(session.config.python.allowed_modules),
+        prompt_cache_enabled=session.config.prompt_cache_enabled,
     )
 
     input_type = initial_input.get("type", "unknown")

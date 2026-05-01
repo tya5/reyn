@@ -76,6 +76,11 @@ class ReynConfig:
     mcp: dict = field(default_factory=dict)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
+    # When true, attach Anthropic-style cache_control markers to the system
+    # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
+    # Claude) can reuse the prefix across calls. Ignored by providers that
+    # don't recognize cache_control (Gemini / OpenAI proxies pass-through).
+    prompt_cache_enabled: bool = True
 
 
 def _load_yaml(path: Path) -> dict:

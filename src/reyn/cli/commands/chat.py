@@ -47,6 +47,7 @@ def run(args: argparse.Namespace) -> None:
         limits=limits,
         mcp_servers=session_cfg.config.mcp,
         output_language=output_language,
+        prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
     )
     chat.load_history()
 
