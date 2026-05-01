@@ -13,7 +13,8 @@ finish_criteria:
   - If score_threshold_met, improved files have been copied back to the original skill directory
   - The user has a concrete next-step command to verify the result
 graph:
-  prepare: [run_and_eval]
+  prepare: [copy_to_work]
+  copy_to_work: [run_and_eval]
   run_and_eval: [plan_improvements]
   plan_improvements: [apply_improvements]
   apply_improvements: [finalize]
@@ -46,14 +47,15 @@ Copies the target skill to a temp work directory (`.reyn/skill_improver_work/<na
 ## Phase flow
 
 ```
-prepare  →  run_and_eval  →  plan_improvements  →  apply_improvements  →  finalize
-                  ↑___________________________________|
-                       (rollback for next iteration)
+prepare  →  copy_to_work  →  run_and_eval  →  plan_improvements  →  apply_improvements  →  finalize
+                                    ↑___________________________________|
+                                           (rollback for next iteration)
 ```
 
 | Phase | Role | Responsibility |
 |-------|------|----------------|
-| `prepare` | coordinator | Parses the request, ensures an `eval.md` exists (auto-generates via `eval_builder` if not), picks a test case, copies DSL files to temp work dir, initializes session state |
+| `prepare` | coordinator | Parses the request, ensures an `eval.md` exists (auto-generates via `eval_builder` if not), picks a test case, initializes session state |
+| `copy_to_work` | workspace_initializer | Globs the target skill's DSL files, copies them to `.reyn/skill_improver_work/<name>/`, and updates `target_dsl_root` in the session to the temp path |
 | `run_and_eval` | evaluator | Invokes the `eval` stdlib skill via `run_skill`; records the score in `iteration_state` |
 | `plan_improvements` | architect | Reads the target's DSL files from the work dir, diagnoses the weakest phase, and proposes minimal DSL changes targeting failing criteria. Adapts strategy from iteration history (regression / stagnation detection) |
 | `apply_improvements` | implementer | Writes the proposed changes to the work dir, persists iteration state to `.reyn/improver_state.json`, then either **transitions to finalize** or **rolls back** to `run_and_eval` for iteration N+1 |

@@ -356,12 +356,16 @@ class OSRuntime:
         control_ir_results: list[dict] | None = None,
         artifact_path: str | None = None,
         remaining_act_turns: int | None = None,
+        force_decide: bool = False,
     ) -> ContextFrame:
         effective_model = self._effective_model(current_phase)
         phase_def = self.skill.phases[current_phase]
         allowed = set(phase_def.allowed_ops)
         all_ops = self.control_ir_executor.available_ops()
         filtered_ops = [op for op in all_ops if op.kind in allowed]
+        # When the act budget is exhausted, strip available ops so the LLM has
+        # no ops to call and is structurally forced into a decide turn.
+        effective_ops = [] if force_decide else filtered_ops
         return build_frame(
             phase_name=current_phase,
             phase=phase_def,
@@ -372,7 +376,7 @@ class OSRuntime:
             visit_counts=self._visit_counts,
             finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
-            available_ops=filtered_ops,
+            available_ops=effective_ops,
             op_catalog=all_ops,
             effective_model=effective_model,
             model_resolved=self._resolver.resolve(effective_model),
@@ -613,11 +617,16 @@ class OSRuntime:
                 )
 
             remaining = max_act_turns - act_turn_count if max_act_turns > 0 else None
+            # When act budget is exhausted, strip available ops from the frame so
+            # the LLM structurally cannot emit another act turn — it has no ops
+            # to call and must produce a decide turn.
+            force_decide = remaining is not None and remaining <= 0
             frame = self._build_frame(
                 phase, artifact, candidates, output_language,
                 control_ir_results=control_ir_results,
                 artifact_path=artifact_path,
                 remaining_act_turns=remaining,
+                force_decide=force_decide,
             )
             # Pass rollback_context only on the first LLM call; subsequent calls already have context
             raw = await self._call_llm_and_record(
@@ -657,7 +666,9 @@ class OSRuntime:
             ir_results = await self.control_ir_executor.execute(
                 act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
             )
-            control_ir_results = ir_results
+            # Accumulate across act turns so the LLM can see all prior results
+            # when deciding what to do next (e.g. glob→read→write sequences).
+            control_ir_results = control_ir_results + ir_results
             prior_attempts = []
             self.events.emit(
                 "act_executed",

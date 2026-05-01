@@ -15,4 +15,6 @@ models:
   standard: openai/gemini-2.5-flash-lite
   strong:   openai/gemini-2.5-flash-lite
 
-max_phase_visits: 5
+limits:
+  phase:
+    max_visits: 5

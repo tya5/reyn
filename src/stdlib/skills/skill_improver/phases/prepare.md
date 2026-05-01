@@ -97,36 +97,7 @@ A criterion has `required: false` ONLY when it begins with `[aspirational]`. Oth
 
 Strip the `[required]` / `[aspirational]` tag prefix from `description` when present.
 
-## Step 5 — Copy DSL files to a temp work directory
-
-To protect the original skill from mid-loop damage, work on a copy.
-
-Compute:
-- `skill_slug` = last path component of `target_dsl_root` (e.g. `"word_stats_demo"`)
-- `work_dir` = `.reyn/skill_improver_work/<skill_slug>` (e.g. `.reyn/skill_improver_work/word_stats_demo`)
-- `original_dsl_root` = current `target_dsl_root` (save this before overwriting)
-
-**Act turn A — read source files**
-
-Issue these ops in one act turn:
-1. `file glob` for `<target_dsl_root>/**/*.md`
-2. `file glob` for `<target_dsl_root>/**/*.yaml`
-
-Combine the two file lists. Exclude any path that ends with `eval.md` (eval spec stays at its original location; it is never copied to the work dir).
-
-For each path in the combined list, issue a `file read` op.
-
-**Act turn B — write copies**
-
-For each file read in Act turn A, compute the relative path by stripping `<target_dsl_root>/` from the file path, then issue a `file write` op to `<work_dir>/<relative_path>` with the read content.
-
-**After both act turns**, update the session fields:
-- `original_dsl_root` = the original `target_dsl_root` value (set above)
-- `target_dsl_root` = `work_dir`
-- `target_skill_path` = `<work_dir>/skill.md`
-- `eval_spec_path` — keep unchanged (always points to the original eval spec location)
-
-## Step 6 — Initialize workspace state
+## Step 5 — Initialize workspace state
 
 Issue a file write op to `.reyn/improver_state.json` with:
 
@@ -141,4 +112,8 @@ This file accumulates iteration history across the loop, surviving rollback chai
 
 ## Output
 
-Emit `improvement_session` with all required fields populated (including `original_dsl_root`) and choose `transition` → `run_and_eval`.
+Emit `improvement_session` with:
+- All resolved fields from Steps 1–4
+- `original_dsl_root`: set to `target_dsl_root` (the file copy step will update it)
+
+Choose `transition` → `copy_to_work`.

@@ -4,16 +4,17 @@ name: apply_improvements
 input: improvement_plan
 role: implementer
 model_class: standard
+max_act_turns: 1
 allowed_ops: [file]
 ---
 
 Commit the iteration to history, optionally apply the planned DSL changes, then decide whether to loop or finish.
 
-This phase ALWAYS performs at least two act turns before emitting the final artifact:
-1. **First act turn** — issue file ops to commit the iteration to `.reyn/improver_state.json` (and apply DSL changes if any).
-2. **Subsequent call** — receive results, then emit `improvement_result` (finish) or rollback.
+This phase uses exactly **1 act turn** followed by **1 decide turn**:
+- **Act turn** — issue ALL file ops (DSL changes + `.reyn/improver_state.json` read/write) in a single act turn.
+- **Decide turn** — receive results, then emit `improvement_result` or issue rollback. Do NOT emit any more ops.
 
-Do NOT emit the final artifact on the very first LLM call. The history file MUST be updated first.
+CRITICAL: Issue Steps 1 and 2 ops together in the SINGLE act turn. After receiving results, your next response MUST be a decide turn — do NOT issue any more ops.
 
 ## Step 1 — Apply DSL changes (conditional)
 

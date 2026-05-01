@@ -4,6 +4,7 @@ name: run_and_eval
 input: improvement_session
 role: evaluator
 model_class: standard
+max_act_turns: 1
 allowed_ops: [file, run_skill]
 ---
 
@@ -57,7 +58,7 @@ Issue a `run_skill` Control IR op:
 }
 ```
 
-CRITICAL: Run eval EXACTLY ONCE per visit to this phase. After the first `run_skill [finished]` result arrives, proceed to Step 4 — DO NOT issue a second `run_skill` op even if you doubt the result. Repeating the eval wastes tokens without producing different output.
+CRITICAL: Issue Steps 1 and 3 ops in a SINGLE act turn (one file read + one run_skill together). This phase allows only one act turn (`max_act_turns: 1`). After receiving the results, your next response MUST be a decide turn — do NOT issue any more ops. Build `iteration_state` from the results in memory and emit it immediately.
 
 If the sub-skill aborts (status != "finished"), do NOT abort the improver — produce an iteration_state with `latest_eval.passed = false`, `latest_eval.overall_score = 0.0`, `latest_eval.weakest_phase = "<unknown — eval aborted>"`, and `latest_eval.summary` describing the failure. The improver loop will treat this as a low score and either continue trying or terminate via the regression/stagnation rules.
 
