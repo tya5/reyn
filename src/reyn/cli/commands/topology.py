@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from reyn.chat.registry import AgentRegistry
+from reyn.chat.registry import AgentRegistry, _DEFAULT_TOPOLOGY_NAME
 from reyn.chat.topology import KINDS, Topology
 
 
@@ -127,11 +127,18 @@ def _cmd_show(args: argparse.Namespace) -> None:
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"name:        {topo.name}")
+    if topo.name == _DEFAULT_TOPOLOGY_NAME:
+        print(
+            f"name:        {topo.name}  "
+            "(auto-managed; agents not in any user topology)"
+        )
+    else:
+        print(f"name:        {topo.name}")
     print(f"kind:        {topo.kind}")
     if topo.leader is not None:
         print(f"leader:      {topo.leader}")
-    print(f"members:     {_format_members(topo)}")
+    members_str = _format_members(topo) if topo.members else "(none)"
+    print(f"members:     {members_str}")
     if topo.created_at:
         print(f"created_at:  {topo.created_at}")
     edges = topo.edges()
@@ -158,7 +165,11 @@ def _cmd_rm(args: argparse.Namespace) -> None:
         if ans.strip().lower() != "y":
             print("aborted")
             return
-    reg.remove_topology(args.name)
+    try:
+        reg.remove_topology(args.name)
+    except (FileNotFoundError, ValueError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     print(f"Removed topology {args.name!r}")
 
 

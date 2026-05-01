@@ -34,6 +34,13 @@ from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
 
+# PR13: synthesized auto-network topology. Members = every known agent
+# that does NOT belong to any user-declared topology. Computed on demand
+# (no caching — registry state mutates and stale caches are a footgun).
+# Underscore prefix marks it as system-managed; the topology name regex
+# rejects user attempts to create one starting with `_`.
+_DEFAULT_TOPOLOGY_NAME = "_default"
+
 # Lowercase ASCII + digit + underscore + hyphen, 1-32 chars. Mirrors usual
 # directory-name-safety rules and keeps the on-disk layout uncluttered.
 _AGENT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
@@ -338,38 +345,80 @@ class AgentRegistry:
                 continue
             self._topologies[topo.name] = topo
 
+    def _affiliated_agents(self) -> set[str]:
+        """Names of agents that belong to at least one user-declared topology."""
+        s: set[str] = set()
+        for t in self._topologies.values():
+            s.update(t.members)
+        return s
+
+    def _default_topology(self) -> Topology:
+        """Synthesize the auto-managed `_default` network topology.
+
+        Members = every existing agent that is NOT a member of any
+        user-declared topology. Computed on demand; not persisted.
+        """
+        affiliated = self._affiliated_agents()
+        members = tuple(n for n in self.list_names() if n not in affiliated)
+        return Topology(
+            name=_DEFAULT_TOPOLOGY_NAME,
+            kind="network",
+            members=members,
+        )
+
     def list_topologies(self) -> list[Topology]:
-        return [self._topologies[k] for k in sorted(self._topologies)]
+        """Return all topologies including the auto-managed `_default`.
+
+        Order: user-declared (sorted by name) first, then `_default` last
+        so user-declared entries don't get visually buried under the auto
+        one.
+        """
+        out = [self._topologies[k] for k in sorted(self._topologies)]
+        out.append(self._default_topology())
+        return out
 
     def get_topology(self, name: str) -> Topology:
+        if name == _DEFAULT_TOPOLOGY_NAME:
+            return self._default_topology()
         if name not in self._topologies:
             raise FileNotFoundError(f"topology {name!r} not found")
         return self._topologies[name]
 
     def topology_exists(self, name: str) -> bool:
+        if name == _DEFAULT_TOPOLOGY_NAME:
+            return True
         return name in self._topologies
 
     def topologies_for_agent(self, agent: str) -> list[Topology]:
+        """All topologies the agent currently belongs to (including `_default`)."""
         return [t for t in self.list_topologies() if agent in t.members]
 
     def permit(self, from_agent: str, to_agent: str) -> bool:
-        """Return True if at least one shared topology permits from→to.
+        """Return True iff some shared topology permits from→to.
 
-        When `from_agent` and `to_agent` are not co-members of any topology,
-        the edge is permitted (PR11-compatible default). This makes topology
-        an opt-in restriction layer rather than a blocker for naive setups.
+        PR13: there is no permissive fallback. The auto `_default` network
+        topology covers agents that haven't been placed in any user
+        topology, so the empty-topology bootstrap state still permits free
+        communication. Once an agent is placed in a user topology it
+        leaves `_default` and only the user topology's rule applies.
         """
         if from_agent == to_agent:
             return False
+        candidates = list(self._topologies.values())
+        candidates.append(self._default_topology())
         shared = [
-            t for t in self._topologies.values()
+            t for t in candidates
             if from_agent in t.members and to_agent in t.members
         ]
         if not shared:
-            return True
+            return False
         return any(t.can_send(from_agent, to_agent) for t in shared)
 
     def add_topology(self, topo: Topology) -> None:
+        if topo.name == _DEFAULT_TOPOLOGY_NAME:
+            raise ValueError(
+                f"topology {_DEFAULT_TOPOLOGY_NAME!r} is auto-managed; cannot create"
+            )
         _validate_topology_name(topo.name)
         if topo.name in self._topologies:
             raise FileExistsError(f"topology {topo.name!r} already exists")
@@ -380,6 +429,10 @@ class AgentRegistry:
         self._topologies[topo.name] = topo
 
     def remove_topology(self, name: str) -> None:
+        if name == _DEFAULT_TOPOLOGY_NAME:
+            raise ValueError(
+                f"topology {_DEFAULT_TOPOLOGY_NAME!r} is auto-managed; cannot remove"
+            )
         if name not in self._topologies:
             raise FileNotFoundError(f"topology {name!r} not found")
         path = self._topology_dir / f"{name}.yaml"
@@ -388,6 +441,10 @@ class AgentRegistry:
         del self._topologies[name]
 
     def add_member(self, topology_name: str, agent: str) -> Topology:
+        if topology_name == _DEFAULT_TOPOLOGY_NAME:
+            raise ValueError(
+                f"topology {_DEFAULT_TOPOLOGY_NAME!r} is auto-managed; cannot mutate"
+            )
         topo = self.get_topology(topology_name)
         if not self.exists(agent):
             raise ValueError(f"agent {agent!r} does not exist")
@@ -397,6 +454,10 @@ class AgentRegistry:
         return new_topo
 
     def remove_member(self, topology_name: str, agent: str) -> Topology:
+        if topology_name == _DEFAULT_TOPOLOGY_NAME:
+            raise ValueError(
+                f"topology {_DEFAULT_TOPOLOGY_NAME!r} is auto-managed; cannot mutate"
+            )
         topo = self.get_topology(topology_name)
         new_topo = topo.with_member_removed(agent)
         new_topo.save(self._topology_dir / f"{topology_name}.yaml")

@@ -4,10 +4,21 @@ PR12 introduces three kinds (`network` / `team` / `pipeline`) declared in
 `.reyn/topologies/<name>.yaml`. Each topology lists its members and a
 `can_send(from, to)` rule derived from its kind. The registry consults all
 topologies a sender shares with its receiver to decide whether the edge is
-allowed. Agents not co-located in any topology fall back to the PR11 default
-(permissive), so single-agent / no-topology setups behave unchanged.
+allowed.
 
-`tree` / `meeting` / `pair` / `broadcast` kinds are deferred to PR13+.
+PR13 replaces the previous "permissive fallback" with an auto-managed
+`_default` network topology synthesized by AgentRegistry: it contains every
+agent that does not belong to any user-declared topology. With `_default`
+in the picture the permit rule collapses to a single line — "edge allowed
+iff some shared topology's `can_send` is True". The empty-state bootstrap
+still works (all agents are in `_default`, so they freely communicate) and
+declaring even one user topology immediately removes its members from
+`_default`, so any restriction is enforced the moment it's declared.
+
+This composition means a hierarchical organization tree is expressible as
+overlapping `team` topologies (one per parent-team relationship) without
+a dedicated `tree` kind. `meeting` / `pair` / `broadcast` kinds remain
+deferred until there's concrete demand.
 """
 from __future__ import annotations
 
