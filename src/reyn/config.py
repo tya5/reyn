@@ -21,13 +21,8 @@ from pathlib import Path
 class ChatMemoryConfig:
     """`chat.memory` section — controls memory recall/extraction in `reyn chat`."""
     enabled: bool = True
-    # Cross-project memory under ~/.reyn/memory. Off by default because it
-    # writes outside the project root and triggers permission prompts at
-    # startup. Project-scope memory under ./.reyn/memory is always available.
-    global_enabled: bool = False
     turn_threshold: int = 8         # periodic extract: this many new turns AND
     time_threshold: float = 600.0   # this many seconds since last extract
-    recall_top_k: int = 5           # max memories returned per recall
 
 
 @dataclass
@@ -69,7 +64,6 @@ class LimitsConfig:
 @dataclass
 class ReynConfig:
     model: str = "standard"
-    state_dir: str = ".reyn"
     output_language: str = "ja"
     shell_allowed: bool = False
     models: dict[str, str] = field(default_factory=dict)
@@ -161,10 +155,8 @@ def _build_chat_config(raw: object) -> ChatConfig:
     defaults = ChatMemoryConfig()
     return ChatConfig(memory=ChatMemoryConfig(
         enabled=bool(mem_raw.get("enabled", defaults.enabled)),
-        global_enabled=bool(mem_raw.get("global_enabled", defaults.global_enabled)),
         turn_threshold=int(mem_raw.get("turn_threshold", defaults.turn_threshold)),
         time_threshold=float(mem_raw.get("time_threshold", defaults.time_threshold)),
-        recall_top_k=int(mem_raw.get("recall_top_k", defaults.recall_top_k)),
     ))
 
 
@@ -235,7 +227,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
-    merged: dict = {"model": "standard", "state_dir": ".reyn",
+    merged: dict = {"model": "standard",
                     "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {},
                     "limits": {}, "mcp": {}}
 
@@ -256,7 +248,6 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
     return ReynConfig(
         model=str(merged.get("model", "standard")),
-        state_dir=str(merged.get("state_dir", ".reyn")),
         output_language=str(merged.get("output_language", "ja")),
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},

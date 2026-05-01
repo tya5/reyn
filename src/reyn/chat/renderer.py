@@ -150,8 +150,8 @@ class RichChatRenderer(ChatRenderer):
 
     def message(self, kind: str, text: str) -> None:
         # Always pass user text with markup=False so brackets in event payloads
-        # like "[recall_memory] phase started: pick" don't get interpreted as
-        # Rich style tags (which would silently drop the bracketed token).
+        # like "[write_memory] phase started: extract" don't get interpreted
+        # as Rich style tags (which would silently drop the bracketed token).
         self._clear_transient()
         c = self._console
         if kind == "agent":

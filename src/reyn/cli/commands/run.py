@@ -97,7 +97,6 @@ def run(args: argparse.Namespace) -> None:
     logger = make_logger(rich=args.rich)
     agent = Agent(
         model=model,
-        state_dir=session.config.state_dir,
         strict=args.strict,
         subscribers=[logger],
         shell_allowed=shell_allowed,

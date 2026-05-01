@@ -68,7 +68,6 @@ class PreprocessorExecutor:
         events: "EventLog",
         subscribers: list,
         resolver: "ModelResolver",
-        state_dir: str | Path,
         max_phase_visits: int = 25,
         permission_resolver: "PermissionResolver | None" = None,
         python_runner: PythonRunner | None = None,
@@ -79,7 +78,7 @@ class PreprocessorExecutor:
         self._events = events
         self._subscribers = subscribers
         self._resolver = resolver
-        self._state_dir = Path(state_dir)
+        self._state_dir = Path(".reyn")
         self._max_phase_visits = max_phase_visits
         self._perm = permission_resolver
         self._python_runner = python_runner or PythonRunner()
@@ -133,7 +132,7 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep
+        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep
         phase_name = phase.name
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
@@ -145,6 +144,8 @@ class PreprocessorExecutor:
             return self._apply_lint_plan(step, artifact, index, phase_name)
         if isinstance(step, PythonStep):
             return await self._apply_python(step, artifact, index, phase)
+        if isinstance(step, FileReadStep):
+            return self._apply_file_read(step, artifact, index, phase_name)
         raise PreprocessorError(f"Unknown step type: {type(step)}")
 
     # ── validate ──────────────────────────────────────────────────────────────
@@ -175,12 +176,11 @@ class PreprocessorExecutor:
                 f"Phase '{phase_name}' preprocessor step[{index}]: "
                 f"sub-skill '{step.skill}' not in preprocessor_sub_skills"
             )
-        state_dir = self._state_dir / "preprocessor" / phase_name / f"{index}_{step.skill}"
-        self._events.emit("run_skill_started", app=step.skill, state_dir=str(state_dir))
+        sub_state_dir = self._state_dir / "preprocessor" / phase_name / f"{index}_{step.skill}"
+        self._events.emit("run_skill_started", app=step.skill, state_dir=str(sub_state_dir))
         result = await invoke_sub_skill(
             sub_app, artifact,
             model=self._model,
-            state_dir=state_dir,
             subscribers=self._subscribers,
             resolver=self._resolver,
             output_language=output_language,
@@ -246,18 +246,17 @@ class PreprocessorExecutor:
                     "data": item if isinstance(item, dict) else {"value": item},
                 }
 
-            state_dir = (
+            sub_state_dir = (
                 self._state_dir / "preprocessor" / phase_name
                 / f"{index}_{step.apply.skill}" / str(j)
             )
             self._events.emit(
                 "run_skill_started", app=step.apply.skill,
-                state_dir=str(state_dir), iterate_index=j,
+                state_dir=str(sub_state_dir), iterate_index=j,
             )
             result = await invoke_sub_skill(
                 sub_app, item_artifact,
                 model=self._model,
-                state_dir=state_dir,
                 subscribers=self._subscribers,
                 resolver=self._resolver,
                 output_language=output_language,
@@ -311,6 +310,88 @@ class PreprocessorExecutor:
         )
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, issues)
+        return enriched, TokenUsage()
+
+    # ── file_read ─────────────────────────────────────────────────────────────
+
+    def _apply_file_read(
+        self, step: Any, artifact: dict, index: int, phase_name: str,
+    ) -> tuple[dict, TokenUsage]:
+        if step.bases is not None:
+            bases = list(step.bases)
+        else:
+            bases = _get_at_path(artifact, step.bases_from)
+            if not isinstance(bases, list):
+                raise PreprocessorError(
+                    f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
+                    f"bases_from path '{step.bases_from}' is not a list "
+                    f"(got {type(bases).__name__})"
+                )
+
+        results: list[dict] = []
+        for base in bases:
+            base_path = Path(str(base)).expanduser()
+            file_path = base_path / step.filename
+            entry = {"base": str(base), "file": step.filename}
+            try:
+                raw = file_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                if step.on_error == "fail":
+                    raise PreprocessorError(
+                        f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
+                        f"file not found: {file_path}"
+                    )
+                if step.on_error == "skip":
+                    continue
+                # "empty"
+                entry["content"] = ""
+                results.append(entry)
+                continue
+            except OSError as exc:
+                if step.on_error == "fail":
+                    raise PreprocessorError(
+                        f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
+                        f"read failed for {file_path}: {exc}"
+                    ) from exc
+                if step.on_error == "skip":
+                    continue
+                entry["content"] = ""
+                results.append(entry)
+                continue
+
+            if step.format == "text":
+                entry["content"] = raw
+            elif step.format == "json":
+                import json as _json
+                try:
+                    entry["content"] = _json.loads(raw) if raw.strip() else None
+                except _json.JSONDecodeError as exc:
+                    if step.on_error == "fail":
+                        raise PreprocessorError(
+                            f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
+                            f"JSON parse failed for {file_path}: {exc}"
+                        ) from exc
+                    entry["content"] = None
+            elif step.format == "yaml":
+                import yaml as _yaml
+                try:
+                    entry["content"] = _yaml.safe_load(raw) if raw.strip() else None
+                except _yaml.YAMLError as exc:
+                    if step.on_error == "fail":
+                        raise PreprocessorError(
+                            f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
+                            f"YAML parse failed for {file_path}: {exc}"
+                        ) from exc
+                    entry["content"] = None
+            results.append(entry)
+
+        self._events.emit(
+            "file_read_completed",
+            phase=phase_name, step_index=index,
+            base_count=len(bases), hit_count=len(results),
+        )
+        enriched = copy.deepcopy(artifact)
+        _set_at_path(enriched, step.into, results)
         return enriched, TokenUsage()
 
     # ── python ────────────────────────────────────────────────────────────────

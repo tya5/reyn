@@ -8,30 +8,29 @@ max_act_turns: 5
 allowed_ops: [file]
 permissions:
   file.read:
-    - path: ~/.reyn/memory
+    - path: .reyn/memory
       scope: recursive
   file.write:
-    - path: ~/.reyn/memory
+    - path: .reyn/memory
       scope: recursive
 ---
 
 Extract durable, memorable facts from the conversation segment and persist
-them to the right scope. Writes both the per-memory file and updates
+them under `.reyn/memory/`. Writes both the per-memory body file and updates
 `MEMORY.md`.
 
-## Step 1 — Read existing indexes (act turn 1, ONCE)
+## Step 1 — Read the existing index (act turn 1, ONCE)
 
-For each `scope_dir` in input, emit a `file` op `read` for `<path>/MEMORY.md`.
-Do them all in **one act turn**. Treat `not_found` as "the index doesn't
-exist yet — create it on first write".
+Emit a single `file` op `read` for `.reyn/memory/MEMORY.md`. Treat
+`not_found` as "the index doesn't exist yet — create it on first write".
 
 **Never re-read MEMORY.md in subsequent act turns.** Once you have the
 index contents (or confirmed they're absent — `not_found` counts as Step 1
 done), move to Step 2.
 
-If a `not_found` MEMORY.md returned, **do not retry**. The file genuinely
-doesn't exist yet. You will create it in Step 3 if there is anything to
-save, or skip directly to Step 4 (decide turn) with `op: none` if not.
+If `not_found` returned, **do not retry**. The file genuinely doesn't exist
+yet. You will create it in Step 3 if there is anything to save, or skip
+directly to Step 4 (decide turn) with `op: none` if not.
 
 ## Step 2 — Analyze the conversation
 
@@ -72,15 +71,6 @@ missing ones do.
   decide turn (Step 4) with `actions: [{"op": "none", "rationale": "..."}]`.
   Do NOT emit any more act turns — empty file ops do not count as Step 3.
 
-### Picking scope
-
-- `global` — facts about the user-as-a-person that span projects (role,
-  long-term preferences, working style).
-- `project` — anything tied to the current codebase / project / deliverable.
-
-When ambiguous, prefer `project`. Cross-project elevation is easy later;
-overgrowth of global memory is harder to clean up.
-
 ## Step 3 — Write the files (act turn 2)
 
 In **one act turn**, emit all the file ops needed to materialize your
@@ -88,13 +78,8 @@ decisions. Two kinds of ops:
 
 ### Per-memory body files
 
-Each memory belongs to **exactly one** scope_dir — the one matching its
-chosen `scope` (global → the scope_dir with `scope: "global"`, project →
-the scope_dir with `scope: "project"`). **Never write the same memory to
-both.**
-
 For each `create`/`update`: one `file` op with `op: write`,
-path `<chosen_scope_dir>/<slug>.md`, content:
+path `.reyn/memory/<slug>.md`, content:
 
 ```markdown
 ---
@@ -134,16 +119,14 @@ the existing slug rather than creating a near-duplicate.
 
 ### The MEMORY.md index file
 
-Every `scope_dir` has exactly **one** index file, literally named
-`MEMORY.md`, that lists all memories in that scope. There is **NO** separate
-`<slug>_index.md` per memory — only the bodies (`<slug>.md`) and the single
-shared `MEMORY.md`.
+There is exactly **one** index file at `.reyn/memory/MEMORY.md` that lists
+all memories. There is **NO** separate `<slug>_index.md` per memory — only
+the bodies (`<slug>.md`) and the single shared `MEMORY.md`.
 
-For each `scope_dir` you wrote at least one body to this turn, emit
-**exactly one** `file` op:
+If you wrote at least one body this turn, emit **exactly one** `file` op:
 
 - `op: write`
-- `path: <scope_dir>/MEMORY.md`   (verbatim — the filename is "MEMORY.md")
+- `path: .reyn/memory/MEMORY.md`   (verbatim — the filename is "MEMORY.md")
 - `content`: the full reconstructed index. Each entry uses **just the slug
   filename** (e.g. `user_role.md`), not an absolute path — the body lives in
   the same directory as `MEMORY.md`.
@@ -164,7 +147,6 @@ this works whether or not the index existed before.
 Return `actions`: one entry per memory considered. For each:
 
 - `op` — `create` | `update` | `delete` | `none`
-- `scope` — `global` | `project`  (omit for `op: none`)
 - `name` — the memory name (omit for `op: none`)
 - `type` — category (omit for `op: none`)
 - `rationale` — one-line why
@@ -173,8 +155,8 @@ If you saved nothing, return a single `actions: [{"op": "none", "rationale": "no
 
 ## Constraints
 
-- Use only paths from `input_artifact.data.scope_dirs[].path`. Do NOT invent
-  destinations.
+- All paths MUST start with `.reyn/memory/`. Do NOT write outside this
+  directory.
 - Do NOT save secrets, credentials, or PII you wouldn't want in a markdown file.
 - Body language matches the user's primary conversation language; keep it
   concise (under 5 lines per memory typically).

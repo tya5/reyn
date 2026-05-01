@@ -14,7 +14,6 @@ class Agent:
     def __init__(
         self,
         model: str,
-        state_dir: str = ".reyn",
         strict: bool = False,
         subscribers: list[Callable] | None = None,
         user_input_fn: Callable[[str, list[str]], str] | None = None,
@@ -26,7 +25,7 @@ class Agent:
         python_allowed_modules: list[str] | None = None,
     ) -> None:
         self.model = model
-        self.state_dir = state_dir
+        self.state_dir = ".reyn"
         self.strict = strict
         self._subscribers = list(subscribers or [])
         self._user_input_fn = user_input_fn
@@ -46,7 +45,7 @@ class Agent:
         persister = EventPersister(self.events_path)
 
         self._runtime = OSRuntime(
-            skill, self.model, self.state_dir,
+            skill, self.model,
             strict=self.strict,
             subscribers=[persister] + self._subscribers,
             user_input_fn=self._user_input_fn,

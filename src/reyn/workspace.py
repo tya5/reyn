@@ -26,15 +26,11 @@ class Workspace:
     def __init__(
         self,
         events: EventLog,
-        state_dir: str | Path = ".reyn",
         permission_resolver: "PermissionResolver | None" = None,
         skill_name: str = "",
     ) -> None:
         self.base_dir = Path.cwd()
-        self.state_dir = (
-            Path(state_dir) if Path(state_dir).is_absolute()
-            else (self.base_dir / state_dir)
-        ).resolve()
+        self.state_dir = (self.base_dir / ".reyn").resolve()
         self._events = events
         self.artifacts: list[dict] = []
         self.state_dir.mkdir(parents=True, exist_ok=True)

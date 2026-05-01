@@ -103,7 +103,7 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep
+    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep
 
     schema = copy.deepcopy(input_schema)
 
@@ -166,6 +166,45 @@ def infer_llm_visible_schema(
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Deterministic structural-lint issues found in the plan.",
+                },
+            )
+
+        elif isinstance(step, FileReadStep):
+            # Output: list of {base, file, content} entries; one per existing file
+            # across the configured `bases`. `content` shape varies by `format`:
+            # text → string, json/yaml → arbitrary parsed value (any).
+            _require_parent_exists(schema, step.into, label)
+            if step.bases_from is not None:
+                # Verify the bases_from path points to an array in the current schema
+                try:
+                    arr_schema = _get_at_path(schema, step.bases_from)
+                except PreprocessorTypeError as exc:
+                    raise PreprocessorTypeError(
+                        f"{label}: 'bases_from' path error — {exc}"
+                    ) from exc
+                if arr_schema.get("type") != "array":
+                    raise PreprocessorTypeError(
+                        f"{label}: 'bases_from' path '{step.bases_from}' must point to an array "
+                        f"(got type={arr_schema.get('type')!r})"
+                    )
+            content_schema: dict[str, Any]
+            if step.format == "text":
+                content_schema = {"type": "string"}
+            else:
+                content_schema = {}  # arbitrary parsed value
+            schema = _set_at_path(
+                schema, step.into,
+                {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "base": {"type": "string"},
+                            "file": {"type": "string"},
+                            "content": content_schema,
+                        },
+                        "required": ["base", "file", "content"] if step.on_error != "skip" else ["base", "file"],
+                    },
                 },
             )
 

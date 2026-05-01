@@ -40,6 +40,40 @@ class LintPlanStep(BaseModel):
     into: str           # dot path where the list of issue strings is placed
 
 
+class FileReadStep(BaseModel):
+    """Read a fixed-name file from one or more base directories.
+
+    `bases` is a literal list of paths declared in the phase frontmatter; use
+    `bases_from` instead to reference a list at a dot-path in the input artifact.
+    Exactly one must be provided.
+
+    For each base, the executor reads `<base>/<filename>` and collects results
+    as `[{base, file, content}]`. `format` controls how `content` is parsed
+    (text=raw string, json=parsed object, yaml=parsed object).
+
+    `on_error`: "skip" drops missing files silently (empty content); "fail"
+    raises a PreprocessorError; "empty" returns an entry with empty content.
+    """
+    type: Literal["file_read"]
+    bases: list[str] | None = None
+    bases_from: str | None = None
+    filename: str
+    into: str
+    format: Literal["text", "json", "yaml"] = "text"
+    on_error: Literal["skip", "fail", "empty"] = "skip"
+
+    @model_validator(mode="after")
+    def _check_bases(self) -> "FileReadStep":
+        has_lit = self.bases is not None
+        has_ref = self.bases_from is not None
+        if has_lit == has_ref:
+            raise ValueError(
+                "FileReadStep requires exactly one of `bases` (literal list) "
+                "or `bases_from` (dot-path to a list in the input artifact)."
+            )
+        return self
+
+
 class PythonStep(BaseModel):
     """Run a user-supplied Python function as a deterministic preprocessor step.
 
@@ -58,7 +92,7 @@ class PythonStep(BaseModel):
 
 
 PreprocessorStep = Annotated[
-    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep],
+    Union[RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep],
     Field(discriminator="type"),
 ]
 

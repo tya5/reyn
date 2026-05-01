@@ -74,14 +74,6 @@ CONFIG_FIELDS: list[dict] = [
         "example": "output_language: en",
     },
     {
-        "key":     "state_dir",
-        "default": ".reyn",
-        "scope":   "reyn.yaml",
-        "desc":    "Directory for internal state: artifacts, event logs, eval runs.",
-        "values":  "relative or absolute path",
-        "example": "state_dir: .reyn",
-    },
-    {
         "key":     "shell_allowed",
         "default": "false",
         "scope":   "reyn.yaml / .reyn/config.yaml",

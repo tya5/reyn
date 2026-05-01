@@ -16,9 +16,6 @@ schema:
           op:
             type: string
             description: 'create | update | delete | none'
-          scope:
-            type: string
-            description: '"global" or "project"'
           name:
             type: string
             description: Memory name.

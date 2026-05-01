@@ -79,7 +79,6 @@ async def execute_skill_node(
     target_type: str,
     output_language: str,
     *,
-    parent_state_dir: Path,
     model: str,
     strict: bool,
     subscribers: list[Callable],
@@ -98,15 +97,9 @@ async def execute_skill_node(
 
     sub_skill = load_dsl_skill(node_spec.skill_path, dsl_root=node_spec.dsl_root)
 
-    if node_spec.workspace == "shared":
-        sub_state_dir = str(parent_state_dir)
-    else:
-        sub_state_dir = str(parent_state_dir / "invoke" / node_id.lstrip("@"))
-
     sub_runtime = OSRuntime(
         sub_skill,
         model=model,
-        state_dir=sub_state_dir,
         strict=strict,
         subscribers=subscribers,
         resolver=resolver,

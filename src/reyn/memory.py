@@ -1,7 +1,7 @@
 """Memory store helpers — frontmatter-aware reader, indexer, and resolver.
 
-This module centralizes the on-disk format used by `recall_memory` /
-`write_memory` skills and the `reyn memory` CLI:
+This module centralizes the on-disk format used by the `write_memory` skill
+and the `reyn memory` CLI:
 
   <memory_dir>/
     MEMORY.md           — index ([Name](slug.md) — description)
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .compiler.parser import _split_frontmatter
-from .memory_paths import global_memory_dir, project_memory_dir
+from .memory_paths import memory_dir
 
 
 VALID_TYPES = ("user", "feedback", "project", "reference")
@@ -27,12 +27,10 @@ VALID_TYPES = ("user", "feedback", "project", "reference")
 class MemoryEntry:
     """A single memory loaded from disk.
 
-    `scope` is "global" / "project" / "?" (unknown when caller didn't supply).
     `slug` is the filename without the .md extension.
     `body` is the prose with frontmatter stripped and surrounding whitespace
     trimmed — ready to inject without further normalization.
     """
-    scope: str
     slug: str
     path: Path
     name: str
@@ -44,7 +42,7 @@ class MemoryEntry:
 # ── reading ───────────────────────────────────────────────────────────────────
 
 
-def read_entry(scope: str, path: Path) -> MemoryEntry | None:
+def read_entry(path: Path) -> MemoryEntry | None:
     """Load and parse a memory file. Returns None if unreadable."""
     try:
         text = path.read_text(encoding="utf-8")
@@ -54,7 +52,6 @@ def read_entry(scope: str, path: Path) -> MemoryEntry | None:
     description_raw = str(fm.get("description") or "").strip()
     description = description_raw.splitlines()[0] if description_raw else ""
     return MemoryEntry(
-        scope=scope,
         slug=path.stem,
         path=path,
         name=str(fm.get("name") or path.stem),
@@ -64,31 +61,23 @@ def read_entry(scope: str, path: Path) -> MemoryEntry | None:
     )
 
 
-def list_entries(scope_dirs: list[tuple[str, Path]]) -> list[MemoryEntry]:
-    """Read every memory across the given (scope_label, dir) pairs.
+def list_entries(scope_dir: Path | None = None) -> list[MemoryEntry]:
+    """Read every memory in the project memory dir.
 
-    Skips MEMORY.md itself and any unreadable file. Returns entries in
-    (scope_dirs order, file-name sort) order.
+    Skips MEMORY.md itself and any unreadable file. Returns entries sorted by
+    file name. `scope_dir` defaults to the project memory dir.
     """
+    d = Path(scope_dir) if scope_dir is not None else memory_dir()
+    if not d.exists():
+        return []
     out: list[MemoryEntry] = []
-    for scope, d in scope_dirs:
-        if not d.exists():
+    for f in sorted(d.glob("*.md")):
+        if f.name == "MEMORY.md":
             continue
-        for f in sorted(d.glob("*.md")):
-            if f.name == "MEMORY.md":
-                continue
-            entry = read_entry(scope, f)
-            if entry is not None:
-                out.append(entry)
+        entry = read_entry(f)
+        if entry is not None:
+            out.append(entry)
     return out
-
-
-def default_scope_dirs(state_dir: str | Path) -> list[tuple[str, Path]]:
-    """Return the canonical [(global, …), (project, …)] dir pair."""
-    return [
-        ("global", global_memory_dir()),
-        ("project", project_memory_dir(state_dir)),
-    ]
 
 
 # ── name resolution ───────────────────────────────────────────────────────────
@@ -151,7 +140,7 @@ def rewrite_index(scope_dir: Path) -> None:
     for f in sorted(scope_dir.glob("*.md")):
         if f.name == "MEMORY.md":
             continue
-        e = read_entry("?", f)
+        e = read_entry(f)
         if e is not None:
             entries.append(e)
     lines = ["# Memory Index", ""]

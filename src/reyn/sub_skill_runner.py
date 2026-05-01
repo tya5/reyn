@@ -34,7 +34,6 @@ async def invoke_sub_skill(
     input_artifact: dict,
     *,
     model: str,
-    state_dir: str | Path,
     subscribers: list,
     resolver: "ModelResolver",
     output_language: str = "ja",
@@ -49,11 +48,9 @@ async def invoke_sub_skill(
 
     agent = Agent(
         model=model,
-        state_dir=str(state_dir),
         strict=False,
         subscribers=subscribers,
         resolver=resolver,
-        max_phase_visits=max_phase_visits,
     )
     run_result = await agent.run(sub_skill, input_artifact, output_language=output_language)
     return SubSkillResult(

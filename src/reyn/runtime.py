@@ -183,7 +183,6 @@ class OSRuntime:
         self,
         skill: Skill,
         model: str,
-        state_dir: str = ".reyn",
         strict: bool = False,
         subscribers: list[Callable] | None = None,
         user_input_fn: Callable[[str, list[str]], str] | None = None,
@@ -202,7 +201,7 @@ class OSRuntime:
         self.run_id = run_id
         self.events = EventLog(subscribers=subscribers)
         self.workspace = Workspace(
-            self.events, state_dir=state_dir,
+            self.events,
             permission_resolver=permission_resolver,
             skill_name=skill.name,
         )
@@ -229,7 +228,6 @@ class OSRuntime:
             events=self.events,
             subscribers=self.events.subscribers,
             resolver=self._resolver,
-            state_dir=state_dir,
             max_phase_visits=self._max_phase_visits,
             permission_resolver=permission_resolver,
             python_allowed_modules=python_allowed_modules,
@@ -658,7 +656,6 @@ class OSRuntime:
             target_schema=target_schema,
             target_type=target_type,
             output_language=output_language,
-            parent_state_dir=self.workspace.state_dir,
             model=self.model,
             strict=self.strict,
             subscribers=self.events.subscribers,

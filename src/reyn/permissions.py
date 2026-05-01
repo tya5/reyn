@@ -312,10 +312,9 @@ class PermissionResolver:
     ) -> None:
         """Mark `path` as approved for this session only (not persisted).
 
-        Used to suppress startup_guard prompts for paths a stdlib skill declares
-        but won't actually access — e.g. recall_memory's `~/.reyn/memory` when
-        chat is configured with `global_enabled: false` and global scope is
-        excluded from scope_dirs at the call site.
+        Used to suppress startup_guard prompts for paths a stdlib skill
+        declares but the caller wants to silently approve up-front (avoids an
+        interactive prompt before the chat REPL takes over stdin).
 
         kind: "file.read" or "file.write". When recursive=True the approval
         covers the directory and everything beneath it.

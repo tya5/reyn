@@ -114,7 +114,7 @@ def run(args: argparse.Namespace) -> None:
         total_tokens=total_tokens,
         total_cost_usd=total_cost_usd,
     )
-    result_path = report.write_to(session.config.state_dir,
+    result_path = report.write_to(".reyn",
                                   Path(target_skill_path).parent.name)
     print(f" Results → {result_path}")
     print(f"{'═' * 55}")
@@ -173,7 +173,6 @@ def _run_case(
 
     agent = Agent(
         model=model,
-        state_dir=session.config.state_dir,
         resolver=session.resolver,
         limits=session.limits_for(args),
     )

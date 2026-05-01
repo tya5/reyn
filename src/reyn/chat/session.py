@@ -15,7 +15,6 @@ from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import LimitsConfig
 from reyn.events import EventLog
-from reyn.memory_paths import global_memory_dir, project_memory_dir
 from reyn.model_resolver import ModelResolver
 from reyn.permissions import PermissionResolver
 from reyn.reporters.persister import EventPersister
@@ -23,7 +22,6 @@ from reyn.skill_paths import resolve_skill_path, stdlib_root
 
 
 ROUTER_SKILL_NAME = "skill_router"
-RECALL_SKILL_NAME = "recall_memory"
 WRITE_SKILL_NAME = "write_memory"
 
 
@@ -80,7 +78,6 @@ class ChatSession:
         self,
         chat_id: str | None = None,
         model: str = "standard",
-        state_root: str | Path = ".reyn",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
         limits: LimitsConfig | None = None,
@@ -88,10 +85,8 @@ class ChatSession:
         output_language: str = "ja",
         history_window: int = 12,
         memory_enabled: bool = True,
-        memory_global_enabled: bool = False,
         memory_turn_threshold: int = 8,
         memory_time_threshold: float = 600.0,
-        memory_recall_top_k: int = 5,
     ) -> None:
         self.chat_id = chat_id or _new_chat_id()
         self.model = model
@@ -102,13 +97,10 @@ class ChatSession:
         self.output_language = output_language
         self.history_window = history_window
         self._memory_enabled = memory_enabled
-        self._memory_global_enabled = memory_global_enabled
         self._memory_turn_threshold = memory_turn_threshold
         self._memory_time_threshold = memory_time_threshold
-        self._memory_recall_top_k = memory_recall_top_k
 
-        self._state_root = Path(state_root)
-        self.workspace_dir = self._state_root / "chats" / self.chat_id
+        self.workspace_dir = Path(".reyn") / "chats" / self.chat_id
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
         self.events_path = self.workspace_dir / "events.jsonl"
@@ -274,7 +266,6 @@ class ChatSession:
 
     def _build_agent(
         self,
-        state_dir: str | Path,
         *,
         user_input_fn=None,
         mcp_servers: dict | None = None,
@@ -283,7 +274,6 @@ class ChatSession:
         """Construct an Agent with this session's shared defaults applied."""
         return Agent(
             model=self.model,
-            state_dir=str(state_dir),
             resolver=self._resolver,
             permission_resolver=self._perm,
             limits=self._limits,
@@ -323,7 +313,6 @@ class ChatSession:
             from reyn.chat.forwarder import ChatEventForwarder
             subscribers = [ChatEventForwarder(skill_name, self.outbox)]
         agent = self._build_agent(
-            self.workspace_dir / state_subdir,
             user_input_fn=user_input_fn,
             mcp_servers=mcp_servers,
             subscribers=subscribers,
@@ -331,51 +320,6 @@ class ChatSession:
         result = await agent.run(skill, input_artifact, output_language=self.output_language)
         self._accumulate(result)
         return result
-
-    # ── memory recall ───────────────────────────────────────────────────────────
-
-    def _memory_scope_dirs(self) -> list[str]:
-        """Absolute paths to memory dirs in scope. Global is opt-in via
-        chat.memory.global_enabled; project scope is always included."""
-        dirs = [str(project_memory_dir(self._state_root))]
-        if self._memory_global_enabled:
-            dirs.insert(0, str(global_memory_dir()))
-        return dirs
-
-    async def _recall_memories(self, query: str) -> list[dict]:
-        """Run recall_memory and return relevant memory dicts (or [] on failure)."""
-        if not self._memory_enabled or not query.strip():
-            return []
-        recent = [
-            {"role": m.role, "text": m.text}
-            for m in self.history[-4:]
-            if m.role in ("user", "agent")
-        ]
-        try:
-            result = await self._run_stdlib_skill(
-                RECALL_SKILL_NAME,
-                {
-                    "type": "memory_query",
-                    "data": {
-                        "query": query,
-                        "recent_history": recent,
-                        "scope_dirs": self._memory_scope_dirs(),
-                        "top_k": self._memory_recall_top_k,
-                    },
-                },
-                state_subdir="recall",
-                forward_events=True,
-            )
-        except Exception as exc:
-            self._chat_events.emit("memory_recall_failed", error=str(exc))
-            return []
-        relevant = result.data.get("relevant") or []
-        # Strip score field for the router (it doesn't need it)
-        return [
-            {"name": m.get("name", ""), "type": m.get("type", ""), "content": m.get("content", "")}
-            for m in relevant
-            if m.get("name") and m.get("content")
-        ]
 
     # ── memory extraction ───────────────────────────────────────────────────────
 
@@ -407,14 +351,6 @@ class ChatSession:
             await self.outbox.put(("status", "memory: 抽出する新しい発言はありません"))
             return
 
-        scope_dirs: list[dict] = [
-            {"path": str(project_memory_dir(self._state_root)), "scope": "project"},
-        ]
-        if self._memory_global_enabled:
-            scope_dirs.insert(
-                0, {"path": str(global_memory_dir()), "scope": "global"},
-            )
-
         self._journal.mark_started()
         await self.outbox.put(("status", f"memory: 抽出中... ({reason})"))
         self._chat_events.emit(
@@ -428,7 +364,7 @@ class ChatSession:
                 WRITE_SKILL_NAME,
                 {
                     "type": "memory_extract_request",
-                    "data": {"conversation_segment": segment, "scope_dirs": scope_dirs},
+                    "data": {"conversation_segment": segment},
                 },
                 state_subdir="extract",
             )
@@ -486,29 +422,13 @@ class ChatSession:
             if m.role in ("user", "agent")
         ]
         avail = enumerate_available_skills(exclude={
-            ROUTER_SKILL_NAME, RECALL_SKILL_NAME, WRITE_SKILL_NAME,
+            ROUTER_SKILL_NAME, WRITE_SKILL_NAME,
         })
-
-        # Recall memories for both routing and narration. In narration mode
-        # the user's preferences (terse style, output language) should still
-        # shape the report — skipping recall would let saved memory go to
-        # waste at exactly the moment the user is reading the agent's reply.
-        # The narration query falls back to the most recent user utterance,
-        # since user_text is empty in that mode.
-        if skill_completion is None:
-            recall_query = user_text
-        else:
-            last_user = next(
-                (m for m in reversed(self.history) if m.role == "user"), None,
-            )
-            recall_query = last_user.text if last_user is not None else ""
-        relevant_memories = await self._recall_memories(recall_query)
 
         data: dict = {
             "user_message": user_text,
             "history": history_payload,
             "available_skills": avail,
-            "relevant_memories": relevant_memories,
         }
         if skill_completion is not None:
             data["skill_completion"] = skill_completion
@@ -638,7 +558,6 @@ class ChatSession:
 
         from reyn.chat.forwarder import ChatEventForwarder
         agent = self._build_agent(
-            self.runs_root / run_id,
             user_input_fn=self._make_skill_user_input_fn(run_id, skill_name),
             mcp_servers=self._mcp_servers,
             subscribers=[ChatEventForwarder(skill_name, self.outbox)],

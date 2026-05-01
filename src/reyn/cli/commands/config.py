@@ -62,7 +62,6 @@ def _show() -> None:
         "models":          config.models,
         "api_base":        config.api_base or "(not set)",
         "output_language": config.output_language,
-        "state_dir":       config.state_dir,
         "shell_allowed":   config.shell_allowed,
         "permissions":     config.permissions,
         "mcp":             config.mcp if config.mcp else "(not configured)",
