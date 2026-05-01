@@ -1,0 +1,20 @@
+name: web_research_request
+description: |
+  Inputs to the web_research phase: a user question that needs fresh
+  web data, plus recent conversation context for tone/language mirroring.
+schema:
+  type: object
+  properties:
+    user_message:
+      type: string
+      description: The user's latest question — what to research.
+    history:
+      type: array
+      description: Recent conversation turns for tone/language context.
+      items:
+        type: object
+        properties:
+          role: {type: string}
+          text: {type: string}
+        required: [role, text]
+  required: [user_message]

@@ -4,7 +4,8 @@ name: route
 input: chat_routing_request
 role: chat_router
 can_finish: true
-allowed_ops: [file, web_search, web_fetch]
+allowed_ops: [file]
+max_act_turns: 2
 permissions:
   file.read:
     - path: .reyn/memory
@@ -333,59 +334,54 @@ entry.
 Don't persist credentials, API keys, tokens, internal URLs you wouldn't
 commit to git, or anything the user explicitly marked as confidential.
 
-## Looking things up on the web
+## Routing to web_research
 
-You can also fetch information from the open web with two ops:
+For questions that need fresh web data — concept lookups, time-sensitive
+facts, library / tool references, official docs, etc. — **do NOT answer
+from memory or LLM knowledge alone**. Transition to the `web_research`
+phase, which has dedicated `web_search` / `web_fetch` ops and a tighter
+act-turn budget.
 
-- `web_search` — query a search engine, get back a list of `{title, url, snippet}`
-- `web_fetch` — pull a specific URL and get its text content
+Triggers that should transition to `web_research`:
 
-Use them when the user asks something whose answer you don't reliably know
-or whose answer is time-sensitive, e.g.:
+- "X について教えて" / "X とは何か" / "What is X?" — concept / library / tool
+- "最近の…", "今日の…", "今の…", "current X" — time-sensitive
+- "X のドキュメントは？" / "公式の説明" — pointers to authoritative sources
+- A specific URL the user mentioned (let web_research fetch it)
 
-- "X について教えて" / "X とは何か" — concept explanation, library/tool reference
-- "最近の…", "今日の…", "current X" — anything time-dependent
-- "X のドキュメント", "公式の説明" — pointers to authoritative sources
-- A specific URL the user mentioned — `web_fetch` it directly
+Triggers that stay in `route` (do NOT transition):
 
-Don't reach for the web for chitchat, math, code-the-LLM-already-knows, or
-questions answered by `memory_index`.
+- Pure chitchat, greetings, meta questions about you the agent
+- Questions answered by `memory_index` (description grounding)
+- Math, code the LLM already knows, language tasks
+- Tasks that map to one of `available_skills`
 
-### Mechanics
-
-`web_search` and `web_fetch` are **read** ops — you need their results to
-write the reply, so emit them in an `act` turn first:
+When transitioning, emit a transition turn with the `web_research_request`
+artifact:
 
 ```json
 {
-  "type": "act",
-  "ops": [{"kind": "web_search", "query": "DuckDB embedded analytics database", "max_results": 5}]
+  "type": "decide",
+  "control": {
+    "type": "transition",
+    "decision": "continue",
+    "next_phase": "web_research",
+    "confidence": 0.9,
+    "reason": {"summary": "Fact-finding question — delegate to web_research."}
+  },
+  "artifact": {
+    "type": "web_research_request",
+    "data": {
+      "user_message": "<the user's question, verbatim or lightly cleaned>",
+      "history": [<recent {role, text} turns from the input>]
+    }
+  },
+  "ops": []
 }
 ```
 
-The OS runs the search and re-calls you with the results in
-`control_ir_results`. Then either:
-
-- Reply directly using the snippets if they suffice.
-- Pick the most relevant URL(s) and emit a follow-up `act` turn with
-  `web_fetch` for deeper detail.
-- Then emit the `decide` turn with `reply_text` summarizing the findings
-  and citing source URLs.
-
-Always **cite source URLs** in the reply when you used web data — the user
-should be able to verify. Format: a short summary followed by a list like
-
-```
-詳細はこちら:
-- https://duckdb.org/docs/
-- https://github.com/duckdb/duckdb
-```
-
-Keep cited URLs to the 1–3 most relevant; don't dump every search hit.
-
-If `web_search` returns empty / errors, fall back to "見つかりませんでした"
-and (when applicable) admit you don't have the answer rather than
-hallucinating.
+Copy `user_message` verbatim and pass `history` through unchanged so the
+researcher inherits the same tone context.
 
 ## Tone
 
@@ -440,11 +436,15 @@ This is the normal case. Decide how to respond to `user_message`.
    appropriate input artifact. `reply_text` may be a brief acknowledgement
    like "調べてみますね" or empty.
 
-3. **Ambiguous — task-shaped but you cannot pick the right skill confidently**
+3. **Question requiring web lookup** (see "Routing to web_research" above)
+   → Transition to `web_research` with a `web_research_request` artifact.
+   Do NOT answer from memory / LLM knowledge alone for these.
+
+4. **Ambiguous — task-shaped but you cannot pick the right skill confidently**
    → Ask a clarifying question via `reply_text`. Leave `skills_to_run` empty.
    The user's next turn will give you more signal.
 
-4. **Multiple skills clearly needed for one utterance**
+5. **Multiple skills clearly needed for one utterance**
    → Add multiple entries to `skills_to_run`. They will be launched in
    parallel by the caller.
 

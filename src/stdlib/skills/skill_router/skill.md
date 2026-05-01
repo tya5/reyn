@@ -14,8 +14,10 @@ finish_criteria:
   - The user's intent has been classified
   - reply_text is set when a conversational answer alone suffices
   - skills_to_run is populated when one or more skills are appropriate
+  - Web-lookup questions transition to web_research, which produces the same routing_decision
 graph:
-  route: []
+  route: [web_research]
+  web_research: []
 ---
 
 ## Overview
