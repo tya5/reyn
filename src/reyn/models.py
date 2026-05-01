@@ -161,8 +161,8 @@ class Skill(BaseModel):
 
 class FileIROp(BaseModel):
     kind: Literal["file"]
-    op: Literal["read", "write", "glob", "delete", "grep", "edit"]
-    path: str                        # file path for read/write/edit/delete; glob pattern for glob; dir or file for grep
+    op: Literal["read", "write", "glob", "delete", "grep", "edit", "regenerate_index"]
+    path: str                        # file path for read/write/edit/delete; glob pattern for glob; dir or file for grep; source dir for regenerate_index
     content: str | None = None       # write only
     max_results: int = 50            # glob only: cap on number of matching paths returned
     # read-specific
@@ -181,6 +181,14 @@ class FileIROp(BaseModel):
     old_string: str | None = None    # exact text to replace (must be unique unless replace_all=True)
     new_string: str | None = None    # replacement text
     replace_all: bool = False        # replace all occurrences instead of requiring uniqueness
+    # regenerate_index-specific (PR19): build a markdown index from the
+    # frontmatter of every `*.md` file under `path`. The OS layer is format-
+    # agnostic — the caller provides `output_path`, `entry_template`, and
+    # an optional `header`. Designed for memory MEMORY.md but reusable
+    # for any "index from frontmatter" pattern.
+    output_path: str | None = None   # absolute / cwd-relative path for the generated index file
+    entry_template: str | None = None  # e.g. "- [{name}]({slug}.md) — {description}"; placeholders pulled from each body's frontmatter plus `slug` (filename without .md)
+    header: str | None = None        # optional preamble prepended before the entries (e.g. "# Memory Index\n\n")
 
 
 class ToolIROp(BaseModel):

@@ -133,21 +133,30 @@ def find_one(query: str, entries: list[MemoryEntry]) -> MemoryEntry | None:
 
 # ── index regeneration ────────────────────────────────────────────────────────
 
+# Memory-specific format constants. Kept here (NOT in op_runtime, per P7) so
+# the OS layer stays format-agnostic. The classify phase prompt embeds the
+# same constants when emitting `file/regenerate_index` ops, and the CLI calls
+# `rewrite_index` below — both paths produce byte-identical MEMORY.md files.
+INDEX_FILENAME = "MEMORY.md"
+INDEX_HEADER = "# Memory Index\n\n"
+ENTRY_TEMPLATE = "- [{name}]({slug}.md) — {description}"
+
 
 def rewrite_index(scope_dir: Path) -> None:
-    """Rebuild scope_dir/MEMORY.md from the .md files actually present."""
-    entries: list[MemoryEntry] = []
-    for f in sorted(scope_dir.glob("*.md")):
-        if f.name == "MEMORY.md":
-            continue
-        e = read_entry(f)
-        if e is not None:
-            entries.append(e)
-    lines = ["# Memory Index", ""]
-    for e in entries:
-        desc = f" — {e.description}" if e.description else ""
-        lines.append(f"- [{e.name}]({e.slug}.md){desc}")
-    (scope_dir / "MEMORY.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    """Rebuild scope_dir/MEMORY.md from the .md files actually present.
+
+    Thin wrapper over the parameterized `regenerate_index_impl` helper in
+    `op_runtime.file`. Both the LLM-driven Control IR path and the CLI
+    mutation paths share the same traversal + format here so on-disk
+    indexes never drift between the two writers.
+    """
+    from .op_runtime.file import regenerate_index_impl
+    regenerate_index_impl(
+        dir_path=scope_dir,
+        output_path=scope_dir / INDEX_FILENAME,
+        entry_template=ENTRY_TEMPLATE,
+        header=INDEX_HEADER,
+    )
 
 
 # ── direct write (used by CLI import; skills do this through Control IR) ──────

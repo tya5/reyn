@@ -300,63 +300,87 @@ type: user|feedback|project|reference
 <full body — under 5 lines is typical>
 ```
 
-### MEMORY.md index format (REQUIRED)
+### Body frontmatter is the source of truth
 
-```
-- [Name](slug.md) — description
-```
-
-All four parts are mandatory: hyphen+space, `[Name]` matching
-frontmatter, `(slug.md)` bare filename without path prefix,
-em-dash ` — ` plus description verbatim.
-
-The description is **load-bearing** — future turns answer from the
-index alone. Skipping it forces every recall to fetch the body.
+The `name` and `description` you write into a body file's frontmatter
+become the entry shown in `memory_index.content` next turn. The runtime
+rebuilds `MEMORY.md` from frontmatter — you never write `MEMORY.md`
+by hand. So `description` is **load-bearing**: future turns answer
+from the index alone. Skipping it forces every recall to fetch the body.
 
 ### Dedupe (semantic, not string-equal)
 
-Before deciding `create`, scan **the relevant section** of
+Before deciding to create a new entry, scan **the relevant section** of
 `memory_index.content` for any existing entry whose topic overlaps.
 The shared section and agent section are independent — a `user_role`
 in shared and a `user_role` in agent are two different memories.
 **When in doubt, update the existing entry in the same layer** rather
-than creating a near-duplicate.
+than creating a near-duplicate. Updating means rewriting the body
+file (same slug); the index regenerates automatically.
 
-`delete` is rare — only when the user explicitly says "forget X" or
-a memory turned out wrong.
+Deletion is rare — only when the user explicitly says "forget X" or
+a memory turned out wrong. To delete, emit `file/delete` for the
+body file plus the regen op for that layer in the same response.
 
-### How to write
+### How to write (PR19+)
 
-When you decide to save, emit `file/write` ops in the same response.
-**Two ops per memory mutation** (always both, in order):
+When you decide to save, emit **two ops in the same response**, in
+order:
 
-1. Body file — at the path for the chosen layer:
-   - shared: `.reyn/memory/<slug>.md`
-   - agent: `.reyn/agents/<chat_id>/memory/<slug>.md`
-2. The MEMORY.md for the **same layer** — full reconstructed index:
-   - shared: `.reyn/memory/MEMORY.md`
-   - agent: `.reyn/agents/<chat_id>/memory/MEMORY.md`
+**1.** A `file/write` for the body file at the chosen layer's path:
+- shared: `.reyn/memory/<slug>.md`
+- agent: `.reyn/agents/<chat_id>/memory/<slug>.md`
 
-Each layer has its own MEMORY.md; never mix entries between them.
-Attach the ops to either an `act` or `decide` turn — decide-turn ops
-are preferred for simple saves (one round trip).
+The body must include the frontmatter shown above (`name`, `description`,
+`type`).
 
-When updating, write the **full new body** (overwrite). **Preserve
-every fact already in the existing body** — do NOT silently drop
-information. If you cannot see the prior body's full text and you
-need to merge, fetch it first via `file/read`.
+**2.** A `file/regenerate_index` op so `MEMORY.md` for that layer
+picks up the change:
 
-When reconstructing the layer's MEMORY.md, copy entire existing lines
-verbatim for memories you are NOT mutating in that layer. Don't rewrite
-descriptions of unrelated entries. The MEMORY.md you write contains
-ONLY that layer's entries — the merged "(shared)" / "(agent)" headings
-seen in `memory_index.content` are produced by ChatSession and are
-NOT part of either on-disk file. Each on-disk MEMORY.md starts with
-plain `# Memory Index\n\n` followed by its own entries.
+```json
+{
+  "kind": "file",
+  "op": "regenerate_index",
+  "path": "<the layer's memory directory>",
+  "output_path": "<that directory>/MEMORY.md",
+  "entry_template": "- [{name}]({slug}.md) — {description}",
+  "header": "# Memory Index\n\n"
+}
+```
 
-If the relevant section in `memory_index.content` shows `(empty)`
-(or `memory_index.status == "not_found"` for a brand-new layer),
-write a fresh `# Memory Index\n\n` followed by your new entry.
+For a shared write that becomes:
+
+```json
+{"kind": "file", "op": "regenerate_index",
+ "path": ".reyn/memory",
+ "output_path": ".reyn/memory/MEMORY.md",
+ "entry_template": "- [{name}]({slug}.md) — {description}",
+ "header": "# Memory Index\n\n"}
+```
+
+For an agent write (substitute your own `chat_id`):
+
+```json
+{"kind": "file", "op": "regenerate_index",
+ "path": ".reyn/agents/<chat_id>/memory",
+ "output_path": ".reyn/agents/<chat_id>/memory/MEMORY.md",
+ "entry_template": "- [{name}]({slug}.md) — {description}",
+ "header": "# Memory Index\n\n"}
+```
+
+You no longer write `MEMORY.md` by hand. The op rebuilds it from
+every body file's frontmatter — you only need to keep frontmatter
+correct in the body files. **Never** include a `file/write` whose
+target ends in `MEMORY.md`; the regen op replaces that pattern entirely.
+
+The merged "(shared)" / "(agent)" headings you see in `memory_index.content`
+are synthesized by ChatSession at read time, NOT part of either
+on-disk MEMORY.md. Each on-disk MEMORY.md starts with plain
+`# Memory Index\n\n` followed by its own entries — exactly what the
+regen op produces.
+
+Attach both ops to either an `act` or `decide` turn — decide-turn
+ops are preferred for simple saves (one round trip).
 
 ### Don't save secrets
 

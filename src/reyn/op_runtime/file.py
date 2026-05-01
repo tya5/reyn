@@ -1,6 +1,7 @@
-"""file kind handler — read/write/glob/grep/delete/edit."""
+"""file kind handler — read/write/glob/grep/delete/edit/regenerate_index."""
 from __future__ import annotations
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
@@ -9,14 +10,17 @@ from .context import OpContext
 from ..models import FileIROp
 
 
-_WRITE_OPS = frozenset({"write", "edit", "delete"})
+_WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
 
 
 async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    # Permission check (single point for both frontends)
+    # Permission check (single point for both frontends). For
+    # `regenerate_index` the file actually written is `output_path`, not
+    # `path`; everything else writes to `path`.
     if ctx.permission_resolver is not None and op.op in _WRITE_OPS:
+        write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
         ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, op.path, ctx.skill_name,
+            ctx.permission_decl, write_target, ctx.skill_name,
         )
 
     if op.op == "write":
@@ -62,6 +66,9 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
 
     if op.op == "edit":
         return _execute_edit(op, ctx)
+
+    if op.op == "regenerate_index":
+        return _execute_regenerate_index(op, ctx)
 
     raise ValueError(f"unsupported file op: {op.op!r}")
 
@@ -176,6 +183,94 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
     replacements = count if op.replace_all else 1
     ctx.events.emit("tool_executed", op="edit_file", path=op.path, replacements=replacements)
     return {"kind": "file", "op": "edit", "path": op.path, "status": "ok", "replacements": replacements}
+
+
+def regenerate_index_impl(
+    *,
+    dir_path: Path,
+    output_path: Path,
+    entry_template: str,
+    header: str = "",
+) -> int:
+    """Pure helper: rebuild `output_path` from the YAML frontmatter of every
+    `*.md` file in `dir_path`. Returns the number of entries written.
+
+    The OS layer is intentionally format-agnostic — every memory-specific
+    string (the index filename, header text, entry markup) is supplied by
+    the caller. Used by:
+    - the `file/regenerate_index` op handler (LLM-driven regen)
+    - the `reyn memory` CLI (post-mutation sync)
+
+    Behavior:
+    - Scans direct children of `dir_path` matching `*.md`, sorted by name.
+    - Skips any file whose basename equals `output_path.name` so the index
+      doesn't include itself.
+    - Parses YAML frontmatter via `_split_frontmatter`. Files with no /
+      malformed frontmatter are skipped silently.
+    - Substitutes `entry_template` placeholders against frontmatter keys
+      plus `slug` (= filename without `.md`). Missing placeholders fall
+      back to empty strings via `defaultdict`, never raise KeyError.
+    - Writes `header + "\\n".join(entries) + "\\n"` (trailing newline only
+      when entries exist).
+    """
+    from ..compiler.parser import _split_frontmatter
+
+    output_basename = output_path.name
+    entries: list[str] = []
+    if dir_path.is_dir():
+        for child in sorted(dir_path.glob("*.md")):
+            if child.name == output_basename:
+                continue
+            try:
+                content = child.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, _body = _split_frontmatter(content)
+            if not isinstance(fm, dict) or not fm:
+                # No / malformed frontmatter — skip rather than emit a
+                # placeholder-empty entry like `- []() — `.
+                continue
+            ctx_dict: dict = defaultdict(str, **{str(k): "" if v is None else str(v) for k, v in fm.items()})
+            ctx_dict["slug"] = child.stem
+            try:
+                entries.append(entry_template.format_map(ctx_dict))
+            except (KeyError, IndexError, ValueError):
+                continue
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    body_text = "\n".join(entries)
+    output_path.write_text(
+        header + body_text + ("\n" if entries else ""),
+        encoding="utf-8",
+    )
+    return len(entries)
+
+
+def _execute_regenerate_index(op: FileIROp, ctx: OpContext) -> dict:
+    if not op.output_path:
+        return {"kind": "file", "op": "regenerate_index", "status": "error",
+                "error": "output_path is required for regenerate_index"}
+    if not op.entry_template:
+        return {"kind": "file", "op": "regenerate_index", "status": "error",
+                "error": "entry_template is required for regenerate_index"}
+    # Resolve through workspace's permission-aware path methods so reads
+    # outside the project hit the same denylist as the rest of the runtime.
+    dir_resolved = ctx.workspace._resolve_read(op.path)
+    output_resolved = ctx.workspace._resolve_write(op.output_path)
+    n = regenerate_index_impl(
+        dir_path=dir_resolved,
+        output_path=output_resolved,
+        entry_template=op.entry_template,
+        header=op.header or "",
+    )
+    ctx.events.emit(
+        "tool_executed", op="regenerate_index",
+        path=op.path, output_path=op.output_path, entries=n,
+    )
+    return {
+        "kind": "file", "op": "regenerate_index",
+        "path": op.path, "output_path": op.output_path,
+        "status": "ok", "entries": n,
+    }
 
 
 register("file", handle)

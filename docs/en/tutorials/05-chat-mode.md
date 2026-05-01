@@ -66,7 +66,7 @@ Writes happen inside the same router turn that detected something durable. See [
 
 ## Inspecting and managing memory
 
-The `reyn memory` CLI operates on the **shared** layer:
+The `reyn memory` CLI operates on the **shared** layer by default:
 
 ```bash
 reyn memory list             # show all stored memories
@@ -75,7 +75,14 @@ reyn memory edit <slug>      # open in $EDITOR
 reyn memory delete <slug>    # remove
 ```
 
-For agent-scoped memory, edit `.reyn/agents/<name>/memory/MEMORY.md` and the body files directly; a per-agent `reyn memory` mode is on the residual list.
+Pass `--agent <name>` to operate on an agent-scoped layer instead:
+
+```bash
+reyn memory list --agent researcher
+reyn memory delete --agent researcher feedback_arxiv
+```
+
+Mutating commands (`edit`, `delete`, `import`) automatically rebuild the layer's `MEMORY.md` after the change — the index never drifts from the on-disk body files.
 
 ## Why chat mode is just a router skill
 
