@@ -70,6 +70,9 @@ nav:
       - how-to/persist-state.md
       - how-to/localize-output.md
       - how-to/import-an-existing-skill.md
+      - how-to/build-an-agent-team.md
+      - how-to/restrict-agent-skills.md
+      - how-to/multi-hop-delegation.md
   - Reference:
       - CLI:
           - reference/cli/run.md
