@@ -13,7 +13,7 @@ This phase is re-entered each iteration of the improvement loop (via rollback ch
 
 ## Step 1 — Read the iteration history
 
-Issue a file read for `improver_state.json` in the workspace root.
+Issue a file read for `.reyn/improver_state.json` in the workspace root.
 
 The file contains:
 ```json
@@ -77,11 +77,11 @@ From the run_skill result's final_output (the `eval_result` data), construct `it
     "weakest_phase":   <eval_result.weakest_phase>,
     "summary":         <eval_result.summary>
   },
-  "history": <iterations array from improver_state.json, unchanged>
+  "history": <iterations array from .reyn/improver_state.json, unchanged>
 }
 ```
 
-Do NOT modify `improver_state.json` here. apply_improvements is responsible for committing the new iteration into history (because the iteration is only complete after changes have been applied).
+Do NOT modify `.reyn/improver_state.json` here. apply_improvements is responsible for committing the new iteration into history (because the iteration is only complete after changes have been applied).
 
 ## Output
 

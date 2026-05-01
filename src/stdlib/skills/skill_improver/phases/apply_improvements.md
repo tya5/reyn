@@ -11,7 +11,7 @@ allowed_ops: [file]
 Commit the iteration to history, optionally apply the planned DSL changes, then decide whether to loop or finish.
 
 This phase ALWAYS performs at least two act turns before emitting the final artifact:
-1. **First act turn** — issue file ops to commit the iteration to `improver_state.json` (and apply DSL changes if any).
+1. **First act turn** — issue file ops to commit the iteration to `.reyn/improver_state.json` (and apply DSL changes if any).
 2. **Subsequent call** — receive results, then emit `improvement_result` (finish) or rollback.
 
 Do NOT emit the final artifact on the very first LLM call. The history file MUST be updated first.
@@ -39,8 +39,8 @@ This step ALWAYS runs, regardless of whether Step 1 produced any file ops. Skipp
 
 In the SAME first act turn (alongside any Step 1 ops), issue:
 
-A. ONE file read op for `improver_state.json`.
-B. ONE file write op for `improver_state.json` whose `content` is the JSON-serialized updated state, computed as:
+A. ONE file read op for `.reyn/improver_state.json`.
+B. ONE file write op for `.reyn/improver_state.json` whose `content` is the JSON-serialized updated state, computed as:
 
 ```
 existing_state = <result of the file read>
