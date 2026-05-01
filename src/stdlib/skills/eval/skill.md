@@ -12,6 +12,22 @@ finish_criteria:
   - weakest_phase identifies the lowest-scoring phase
 graph:
   run_target: [evaluate]
+routing:
+  intents: [task]
+  when_to_use:
+    - User wants to evaluate or test an existing skill against criteria
+    - User asks to run / score / grade a skill on a test case
+  when_not_to_use:
+    - User asks conceptually what "eval" or LLM-as-judge means (stable_knowledge)
+    - User wants to *generate* eval cases (use eval_builder instead)
+  examples:
+    positive:
+      - "skill X を eval して"
+      - "このスキルを採点して"
+      - "test case で foo を評価"
+    negative:
+      - "eval って何？"
+      - "LLM-as-judge の仕組みを教えて"
 ---
 
 ## Overview

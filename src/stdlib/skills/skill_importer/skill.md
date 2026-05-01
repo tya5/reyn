@@ -19,6 +19,23 @@ graph:
   search: [select]
   select: [convert]
   convert: []
+routing:
+  intents: [task]
+  when_to_use:
+    - User wants to import / install / pull an existing skill from a registry
+    - User mentions importing from Anthropic skills, Claude skills, or similar
+  when_not_to_use:
+    - User wants to build a new skill from scratch (use skill_builder)
+    - User wants to improve an installed skill (use skill_improver)
+    - Conceptual questions about skill registries
+  examples:
+    positive:
+      - "Anthropic の X skill を取り込んで"
+      - "github の skill を import して"
+      - "既存のスキルを reyn/local に追加して"
+    negative:
+      - "skill registry って何？"
+      - "新しい skill を作って"   # this is skill_builder, not importer
 ---
 
 ## Overview

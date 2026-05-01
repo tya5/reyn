@@ -14,6 +14,24 @@ graph:
   design_artifacts: [review_plan]
   review_plan: [build_skill]
   build_skill: [verify_skill]
+routing:
+  intents: [task]
+  when_to_use:
+    - User describes a new skill they want to build / generate / create
+    - Input is a natural-language description of desired skill behavior
+  when_not_to_use:
+    - User wants to modify an existing skill (use skill_improver)
+    - User wants to import an existing skill (use skill_importer)
+    - Conceptual questions about how skill DSL works (stable_knowledge)
+  examples:
+    positive:
+      - "ブログ記事を書く skill を作って"
+      - "X するスキルを生成して"
+      - "新しい skill を作りたい: 〜"
+    negative:
+      - "skill って何？"
+      - "DSL の書き方を教えて"
+      - "既存のスキルを改善して"   # this is skill_improver, not skill_builder
 ---
 
 ## Overview

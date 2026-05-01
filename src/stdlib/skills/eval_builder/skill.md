@@ -12,6 +12,22 @@ finish_criteria:
   - eval_spec_result captures the path, case count, and criterion count
 graph:
   analyze_skill: [write_eval]
+routing:
+  intents: [task]
+  when_to_use:
+    - User wants to create eval criteria / test spec for an existing skill
+    - User asks to generate or scaffold eval.md for a skill
+  when_not_to_use:
+    - User wants to *run* an evaluation (use eval instead)
+    - Conceptual questions about evaluation (stable_knowledge)
+  examples:
+    positive:
+      - "X skill 用の eval を作って"
+      - "eval.md を生成して"
+      - "このスキルのテスト基準を書いて"
+    negative:
+      - "eval ってなに？"
+      - "skill X を eval して"   # this is run, use eval skill instead
 ---
 
 ## Overview

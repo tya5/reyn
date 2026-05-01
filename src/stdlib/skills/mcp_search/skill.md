@@ -13,6 +13,22 @@ finish_criteria:
   - Result list is returned (may be empty)
 graph:
   search: []
+routing:
+  intents: [task]
+  when_to_use:
+    - User wants to find / discover MCP servers for some capability
+    - User asks for MCP server recommendations matching an integration need
+  when_not_to_use:
+    - User asks conceptually what MCP is (stable_knowledge)
+    - User asks to use a *specific known* MCP server (configure directly)
+  examples:
+    positive:
+      - "Slack 連携できる MCP サーバーを探して"
+      - "GitHub の MCP サーバーが欲しい"
+      - "Find MCP servers for Notion"
+    negative:
+      - "MCP って何？"
+      - "MCP サーバーの設定方法は？"
 ---
 
 ## Overview

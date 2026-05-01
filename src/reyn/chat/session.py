@@ -60,7 +60,13 @@ def _new_chat_id() -> str:
 
 
 def enumerate_available_skills(exclude: set[str]) -> list[dict]:
-    """Walk reyn/project, reyn/local, stdlib/skills and collect {name, description}."""
+    """Walk reyn/project, reyn/local, stdlib/skills and collect skill catalogue entries.
+
+    Each entry has `{name, description}` always, plus an optional `routing`
+    block lifted from the skill's frontmatter. The router uses `routing.intents`,
+    `routing.when_to_use`, `routing.when_not_to_use`, and `routing.examples`
+    to decide whether the user's request matches the skill.
+    """
     sl = stdlib_root()
     roots = [
         Path("reyn") / "project",
@@ -85,7 +91,11 @@ def enumerate_available_skills(exclude: set[str]) -> list[dict]:
             description = ""
             if fm.get("description"):
                 description = str(fm["description"]).strip().splitlines()[0]
-            results.append({"name": fm.get("name") or d.name, "description": description})
+            entry: dict = {"name": fm.get("name") or d.name, "description": description}
+            routing = fm.get("routing")
+            if isinstance(routing, dict) and routing:
+                entry["routing"] = routing
+            results.append(entry)
             seen.add(d.name)
     return results
 

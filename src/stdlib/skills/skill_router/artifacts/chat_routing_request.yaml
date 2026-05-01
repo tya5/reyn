@@ -64,6 +64,14 @@ schema:
           description:
             type: string
             description: One-line summary of what the skill does.
+          routing:
+            type: object
+            description: |
+              Optional opt-in metadata that helps the router pick this skill.
+              Lifted verbatim from the skill's frontmatter. Typical fields:
+              `intents` (list of intent labels the skill claims), `when_to_use`,
+              `when_not_to_use`, and `examples` (positive/negative phrasings).
+              Skills without this block fall back to description-only matching.
         required: [name, description]
     skill_completion:
       type: object

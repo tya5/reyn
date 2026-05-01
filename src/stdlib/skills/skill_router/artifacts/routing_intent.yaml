@@ -1,0 +1,63 @@
+name: routing_intent
+description: |
+  Classification result from the classify phase. Carries the intent label
+  plus the dispatch-relevant context (user_message, history, available_skills)
+  so the match phase can construct the final routing_decision or
+  web_research_request without re-reading state. Used only on the
+  classify→match path; simpler intents finish in classify with
+  routing_decision directly.
+schema:
+  type: object
+  properties:
+    intent:
+      type: string
+      description: |
+        One of: "task" | "fresh_lookup". Other intents (narrate / chitchat /
+        memory_recall / stable_knowledge / clarification) finish in classify
+        and never produce this artifact.
+      enum: [task, fresh_lookup]
+    confidence:
+      type: number
+      description: |
+        Self-assessed confidence 0.0-1.0. The match phase may ask a
+        clarifying question instead of dispatching when confidence is low.
+    rationale:
+      type: string
+      description: |
+        One-sentence reason for the classification. For fresh_lookup, name
+        the freshness signal (e.g. "user mentions '最新'"). For task,
+        name the matching skill or capability hint. Used for audit and
+        downstream dispatch.
+    user_message:
+      type: string
+      description: |
+        Pass-through of the original user utterance. The match phase uses
+        this verbatim when constructing skill inputs or web_research queries.
+    history:
+      type: array
+      description: |
+        Pass-through of the sliced history from classify's preprocessor.
+        Used by match when transitioning to web_research so the researcher
+        inherits tone context.
+      items:
+        type: object
+        properties:
+          role: {type: string}
+          text: {type: string}
+        required: [role, text]
+    available_skills:
+      type: array
+      description: |
+        Pass-through of the skill catalogue with routing metadata. The match
+        phase consults each entry's `routing` block (when present) to pick
+        the best skill for `task` intent.
+      items:
+        type: object
+        properties:
+          name: {type: string}
+          description: {type: string}
+          routing:
+            type: object
+            description: Optional opt-in routing metadata (intents, when_to_use, examples, ...).
+        required: [name, description]
+  required: [intent, confidence, rationale, user_message, available_skills]

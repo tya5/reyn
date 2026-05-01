@@ -16,6 +16,23 @@ graph:
   run_and_eval: [plan_improvements]
   plan_improvements: [apply_improvements]
   apply_improvements: []
+routing:
+  intents: [task]
+  when_to_use:
+    - User wants to improve / refine / iterate on an existing skill
+    - User mentions raising eval score or fixing failing criteria
+  when_not_to_use:
+    - User wants to build a fresh skill (use skill_builder)
+    - User wants only to *evaluate* without modifying (use eval)
+    - User wants to generate eval criteria (use eval_builder)
+  examples:
+    positive:
+      - "skill X を改善して"
+      - "eval の点数を上げたい"
+      - "失敗してる criteria を直して"
+    negative:
+      - "skill X を eval して"   # this is eval, not improver
+      - "新しい skill を作って"   # this is skill_builder, not improver
 ---
 
 ## Overview
