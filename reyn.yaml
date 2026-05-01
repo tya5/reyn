@@ -21,6 +21,13 @@ models:
 # Set to "" or a non-existent path to disable.
 # project_context_path: REYN.md
 
+# Pre-approve pure-mode Python preprocessor steps. The stdlib skill_router
+# uses one (`slice_chat_history`) to slice the chat history; pure mode is
+# sandboxed (no file I/O, no untrusted imports) so auto-allow is safe.
+# Trusted-mode steps still require --allow-untrusted-python.
+permissions:
+  python.pure: allow
+
 # Runtime bounds. Each value can be overridden per-invocation via the matching CLI flag.
 limits:
   llm:

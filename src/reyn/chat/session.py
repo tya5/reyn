@@ -79,7 +79,6 @@ class ChatSession:
         limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
         output_language: str = "ja",
-        history_window: int = 12,
         prompt_cache_enabled: bool = True,
         project_context: str = "",
     ) -> None:
@@ -90,7 +89,6 @@ class ChatSession:
         self._limits = limits or LimitsConfig()
         self._mcp_servers = mcp_servers
         self.output_language = output_language
-        self.history_window = history_window
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
 
@@ -289,17 +287,21 @@ class ChatSession:
 
         When `skill_completion` is provided, the router switches to narration
         mode: it produces a natural-language reply describing the result.
+
+        History is NOT inlined into the artifact — the route phase has a
+        Python preprocessor step that reads `.reyn/chats/<chat_id>/history.jsonl`
+        and slices the recent N turns. This eliminates the snapshot-per-turn
+        duplication that previously bloated workspace artifacts.
         """
-        history_payload = [
-            {"role": m.role, "text": m.text}
-            for m in self.history[-self.history_window:]
-            if m.role in ("user", "agent")
-        ]
         avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME})
 
         data: dict = {
             "user_message": user_text,
-            "history": history_payload,
+            "chat_id": self.chat_id,
+            # Precomputed for the route phase preprocessor: the file/read op
+            # uses this via args_from. ChatSession owns this path because the
+            # workspace dir was created relative to the cwd at session start.
+            "history_path": str(self.history_path),
             "available_skills": avail,
         }
         if skill_completion is not None:

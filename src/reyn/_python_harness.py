@@ -109,8 +109,16 @@ def _validate_pure_ast(tree: ast.Module, allowed_modules: frozenset[str]) -> Non
 # ── Restricted execution environment ────────────────────────────────────────
 
 
-def _build_restricted_builtins() -> dict[str, Any]:
-    """Copy the real `builtins` dict minus BANNED_BUILTINS."""
+def _build_restricted_builtins(allowed_modules: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Copy the real `builtins` dict minus BANNED_BUILTINS, plus a guarded
+    `__import__` so allowlisted module imports can actually execute.
+
+    Without a `__import__` entry the user's `import json` AST-validates but
+    fails at exec time with "ImportError: __import__ not found". Restoring
+    a wrapped version that consults `module_is_allowed` lets stdlib safe
+    modules in PURE_STDLIB_ALLOWLIST + allowed_modules import normally
+    while still blocking arbitrary imports.
+    """
     safe: dict[str, Any] = {}
     for name in dir(_builtins_module):
         if name.startswith("_") and name not in {"__build_class__", "__name__"}:
@@ -119,6 +127,20 @@ def _build_restricted_builtins() -> dict[str, Any]:
         if name in BANNED_BUILTINS:
             continue
         safe[name] = getattr(_builtins_module, name)
+
+    real_import = _builtins_module.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        top = name.split(".", 1)[0]
+        if not module_is_allowed(top, allowed_modules):
+            raise ImportError(
+                f"pure mode: import of {name!r} not allowed; "
+                f"allowed stdlib: {sorted(PURE_STDLIB_ALLOWLIST)}, "
+                f"plus user-allowed: {sorted(allowed_modules)}"
+            )
+        return real_import(name, globals, locals, fromlist, level)
+
+    safe["__import__"] = guarded_import
     return safe
 
 
@@ -132,7 +154,7 @@ def _exec_user_module(
     tree = ast.parse(source, filename=module_path)
     if mode == "pure":
         _validate_pure_ast(tree, allowed_modules)
-        builtins_dict = _build_restricted_builtins()
+        builtins_dict = _build_restricted_builtins(allowed_modules)
     else:
         builtins_dict = _builtins_module.__dict__
 

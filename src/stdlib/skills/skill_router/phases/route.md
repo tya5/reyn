@@ -10,9 +10,16 @@ permissions:
   file.read:
     - path: .reyn/memory
       scope: recursive
+    - path: .reyn/chats
+      scope: recursive
   file.write:
     - path: .reyn/memory
       scope: recursive
+  python:
+    - module: ./preprocessor_steps.py
+      function: slice_chat_history
+      mode: pure
+      timeout: 5
 preprocessor:
   - type: run_op
     op:
@@ -21,6 +28,27 @@ preprocessor:
       path: .reyn/memory/MEMORY.md
     into: data.memory_index
     on_error: empty
+  - type: run_op
+    op:
+      kind: file
+      op: read
+      path: ""   # overridden by args_from
+    args_from:
+      path: data.history_path
+    into: data.history_raw
+    on_error: empty
+  - type: python
+    module: ./preprocessor_steps.py
+    function: slice_chat_history
+    into: data.history
+    output_schema:
+      type: array
+      items:
+        type: object
+        properties:
+          role: {type: string}
+          text: {type: string}
+        required: [role, text]
 ---
 
 Decide how the chat agent should respond to the user's latest utterance.

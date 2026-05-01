@@ -246,6 +246,13 @@ class PermissionResolver:
     def _approve(self, key: str, description: str) -> bool:
         if self._is_config_approved(key):
             return True
+        # Composite keys (e.g. "skill_router/python.pure/./mod.py:fn") accept
+        # a kind-level blanket grant in config (e.g. "python.pure: allow").
+        # The startup_guard already honors this; mirror the behavior at the
+        # runtime check so config and startup are consistent.
+        for part in key.split("/"):
+            if "." in part and self._is_config_approved(part):
+                return True
         if key in self._session:
             return self._session[key]
         if key in self._saved:

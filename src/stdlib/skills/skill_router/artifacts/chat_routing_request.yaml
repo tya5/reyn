@@ -1,18 +1,35 @@
 name: chat_routing_request
 description: |
-  A single user utterance plus the context needed to route it: recent conversation
-  history and the catalogue of skills available for invocation.
+  A single user utterance plus the context needed to route it. The chat_id
+  identifies the session whose history.jsonl the route phase preprocessor
+  will read; callers do NOT pre-fill history (the preprocessor populates it).
 schema:
   type: object
   properties:
     user_message:
       type: string
       description: The latest user utterance to route.
+    chat_id:
+      type: string
+      description: |
+        Chat session id. Used by the route phase preprocessor as the
+        canonical session identifier; the actual file path lives in
+        `history_path` so pure-mode preprocessor steps can read it
+        without computing paths.
+    history_path:
+      type: string
+      description: |
+        Absolute / cwd-relative path to the chat session's history.jsonl
+        (typically `.reyn/chats/<chat_id>/history.jsonl`). Computed by
+        ChatSession at session creation; pure-mode preprocessor steps
+        read this verbatim via `args_from` instead of constructing it.
     history:
       type: array
       description: |
-        Recent conversation turns, oldest first. Includes both user messages and
-        prior agent replies. May be empty on the first turn.
+        Populated by the route phase preprocessor — callers MUST NOT
+        pre-fill this. Slicing strategy lives in the preprocessor so it
+        can evolve (token budgeting, compaction summary) without touching
+        ChatSession.
       items:
         type: object
         properties:
@@ -57,4 +74,4 @@ schema:
           type: object
           description: The skill's final_output data, as-is.
       required: [skill, status, result]
-  required: [user_message, history, available_skills]
+  required: [user_message, chat_id, available_skills]
