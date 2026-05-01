@@ -81,6 +81,13 @@ class ReynConfig:
     # Claude) can reuse the prefix across calls. Ignored by providers that
     # don't recognize cache_control (Gemini / OpenAI proxies pass-through).
     prompt_cache_enabled: bool = True
+    # Path (relative to project root) of a markdown file whose content is
+    # injected into the system prompt for every phase. Use this to put
+    # project-wide background, conventions, or references somewhere all
+    # skills implicitly inherit. Set "" or point to a non-existent file to
+    # disable. Default "REYN.md"; users sharing the project with Claude Code
+    # may set this to "CLAUDE.md" to reuse the same source.
+    project_context_path: str = "REYN.md"
 
 
 def _load_yaml(path: Path) -> dict:
@@ -93,6 +100,26 @@ def _load_yaml(path: Path) -> dict:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def load_project_context(config: ReynConfig, project_root: Path) -> str:
+    """Read the project context markdown file referenced by config.project_context_path.
+
+    Returns the file content stripped, or "" when the path is unset, missing,
+    or unreadable. Empty / whitespace-only content also yields "" so callers
+    can short-circuit the system-prompt section.
+    """
+    rel = (config.project_context_path or "").strip()
+    if not rel:
+        return ""
+    target = project_root / rel
+    if not target.is_file():
+        return ""
+    try:
+        content = target.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+    return content
 
 
 def _merge(base: dict, override: dict) -> dict:

@@ -146,8 +146,32 @@ Artifact rules:
 """
 
 
-def _system_prompt() -> str:
-    return _SYSTEM_BASE
+def _system_prompt(
+    skill_name: str = "",
+    skill_description: str = "",
+    phase_role: str | None = None,
+    project_context: str = "",
+) -> str:
+    """Compose the system prompt: format contract + skill goal + role + project context.
+
+    Stable, persona-bearing fields live here (system) so the LLM treats them
+    as authoritative role definitions; volatile per-phase data stays in the
+    user-turn ContextFrame JSON.
+    """
+    sections: list[str] = [_SYSTEM_BASE]
+    if skill_name or skill_description:
+        sections.append(
+            f"━━━ SKILL ━━━\n{skill_name}\n{skill_description}".strip()
+        )
+    if phase_role:
+        sections.append(
+            f"━━━ ROLE ━━━\nYou are acting as: {phase_role}"
+        )
+    if project_context:
+        sections.append(
+            f"━━━ PROJECT CONTEXT ━━━\n{project_context.strip()}"
+        )
+    return "\n\n".join(sections)
 
 
 def _extract_json(text: str) -> str:
@@ -228,6 +252,10 @@ async def call_llm(
     timeout: float = 60.0,
     max_retries: int = 3,
     prompt_cache_enabled: bool = True,
+    skill_name: str = "",
+    skill_description: str = "",
+    phase_role: str | None = None,
+    project_context: str = "",
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -240,8 +268,16 @@ async def call_llm(
     max_retries: transient-error retries (LiteLLM exponential backoff), via num_retries.
     prompt_cache_enabled: when True, attach Anthropic cache_control marker to
       the system prompt. Ignored by non-Anthropic providers.
+    skill_name / skill_description / phase_role / project_context: assembled
+      into the system prompt by `_system_prompt()`. Pass empty strings to fall
+      back to the format-contract-only base.
     """
-    system = _system_prompt()
+    system = _system_prompt(
+        skill_name=skill_name,
+        skill_description=skill_description,
+        phase_role=phase_role,
+        project_context=project_context,
+    )
     user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
     messages: list[dict] = [
         _build_system_message(system, prompt_cache_enabled),

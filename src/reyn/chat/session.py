@@ -81,6 +81,7 @@ class ChatSession:
         output_language: str = "ja",
         history_window: int = 12,
         prompt_cache_enabled: bool = True,
+        project_context: str = "",
     ) -> None:
         self.chat_id = chat_id or _new_chat_id()
         self.model = model
@@ -91,6 +92,7 @@ class ChatSession:
         self.output_language = output_language
         self.history_window = history_window
         self._prompt_cache_enabled = prompt_cache_enabled
+        self._project_context = project_context
 
         self.workspace_dir = Path(".reyn") / "chats" / self.chat_id
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +235,7 @@ class ChatSession:
             user_input_fn=user_input_fn,
             subscribers=subscribers,
             prompt_cache_enabled=self._prompt_cache_enabled,
+            project_context=self._project_context,
         )
 
     def _load_stdlib_skill(self, skill_name: str):

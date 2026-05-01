@@ -14,6 +14,13 @@ models:
   standard: openai/gemini-2.5-flash-lite
   strong:   openai/gemini-2.5-flash-lite
 
+# Project-wide context injected into the system prompt for every phase.
+# Use this for stable background that all skills should implicitly know
+# (project goals, domain glossary, coding conventions, etc.). Pointing this
+# at CLAUDE.md is a valid pattern when sharing context with Claude Code.
+# Set to "" or a non-existent path to disable.
+# project_context_path: REYN.md
+
 # Runtime bounds. Each value can be overridden per-invocation via the matching CLI flag.
 limits:
   llm:

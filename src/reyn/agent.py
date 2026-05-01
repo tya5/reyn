@@ -24,6 +24,7 @@ class Agent:
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
+        project_context: str = "",
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -37,6 +38,7 @@ class Agent:
         self._mcp_servers = mcp_servers
         self._python_allowed_modules = list(python_allowed_modules or [])
         self._prompt_cache_enabled = prompt_cache_enabled
+        self._project_context = project_context
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -59,6 +61,7 @@ class Agent:
             mcp_servers=self._mcp_servers,
             python_allowed_modules=self._python_allowed_modules,
             prompt_cache_enabled=self._prompt_cache_enabled,
+            project_context=self._project_context,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

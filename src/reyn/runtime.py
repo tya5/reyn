@@ -2,6 +2,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Literal
 import pydantic
 from .models import ActOutput, Skill, CandidateOutput, ContextFrame, LLMOutput
@@ -194,6 +195,7 @@ class OSRuntime:
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
+        project_context: str = "",
     ) -> None:
         self.skill = skill
         self.model = model
@@ -212,6 +214,7 @@ class OSRuntime:
         self._llm_timeout = self._limits.llm.timeout
         self._llm_max_retries = self._limits.llm.max_retries
         self._prompt_cache_enabled = prompt_cache_enabled
+        self._project_context = project_context
         self._phase_started_at: float | None = None
         self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(
@@ -456,6 +459,7 @@ class OSRuntime:
         self._check_phase_budget(phase)
         resolved_model = self._resolver.resolve(self._effective_model(phase))
         self.events.emit("llm_called", phase=phase, model=resolved_model)
+        phase_def = self.skill.phases.get(phase)
         llm_result = await call_llm(
             resolved_model, frame,
             prior_attempts=prior_attempts or None,
@@ -463,6 +467,10 @@ class OSRuntime:
             timeout=self._llm_timeout,
             max_retries=self._llm_max_retries,
             prompt_cache_enabled=self._prompt_cache_enabled,
+            skill_name=self.skill.name,
+            skill_description=self.skill.description,
+            phase_role=phase_def.role if phase_def else None,
+            project_context=self._project_context,
         )
         raw = llm_result.data
         cost_usd: float | None = None

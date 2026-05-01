@@ -94,6 +94,9 @@ def run(args: argparse.Namespace) -> None:
     )
 
     from reyn.agent import Agent
+    from reyn.config import _find_project_root, load_project_context
+    project_root = _find_project_root(Path.cwd())
+    project_context = load_project_context(session.config, project_root)
     logger = make_logger(rich=args.rich)
     agent = Agent(
         model=model,
@@ -106,6 +109,7 @@ def run(args: argparse.Namespace) -> None:
         mcp_servers=session.config.mcp,
         python_allowed_modules=list(session.config.python.allowed_modules),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
+        project_context=project_context,
     )
 
     input_type = initial_input.get("type", "unknown")

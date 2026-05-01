@@ -39,6 +39,10 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
+    from reyn.config import load_project_context
+    project_context = load_project_context(
+        session_cfg.config, _find_project_root(Path.cwd()),
+    )
     chat = ChatSession(
         chat_id=args.chat_id,
         model=model,
@@ -48,6 +52,7 @@ def run(args: argparse.Namespace) -> None:
         mcp_servers=session_cfg.config.mcp,
         output_language=output_language,
         prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
+        project_context=project_context,
     )
     chat.load_history()
 

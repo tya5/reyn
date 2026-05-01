@@ -171,11 +171,16 @@ def _run_case(
     if target_dsl_root:
         input_artifact["data"]["dsl_root"] = target_dsl_root
 
+    from reyn.config import _find_project_root, load_project_context
+    project_context = load_project_context(
+        session.config, _find_project_root(Path.cwd()),
+    )
     agent = Agent(
         model=model,
         resolver=session.resolver,
         limits=session.limits_for(args),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
+        project_context=project_context,
     )
 
     try:
