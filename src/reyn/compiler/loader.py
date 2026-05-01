@@ -46,13 +46,18 @@ def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
 
 
 def _find_preprocessor_skill_names(phase_objects: dict) -> set[str]:
-    """Collect all sub-skill names referenced by any phase's preprocessor."""
-    from reyn.models import RunSkillStep, IterateStep
+    """Collect all sub-skill names referenced by any phase's preprocessor.
+
+    Detects both:
+      - `run_op` steps wrapping a `run_skill` ControlIROp (the canonical form)
+      - `iterate.apply` containing the same
+    """
+    from reyn.models import IterateStep, RunOpStep
     names: set[str] = set()
 
     def _collect(step) -> None:
-        if isinstance(step, RunSkillStep):
-            names.add(step.skill)
+        if isinstance(step, RunOpStep) and getattr(step.op, "kind", None) == "run_skill":
+            names.add(step.op.skill)
         elif isinstance(step, IterateStep):
             _collect(step.apply)
 

@@ -6,19 +6,19 @@ input artifact via a chain of steps; the LLM sees the resulting object.
 
 Step semantics:
   run_op     — invoke any ControlIROp via op_runtime (file, run_skill, web_*,
-               shell, lint, mcp). The generic preprocessor primitive.
+               shell, lint, mcp). The generic op-execution primitive.
+               `args_from` resolves dot-paths in the input artifact at execution
+               time; an empty path ("") binds the whole artifact (useful for
+               `run_skill.input` when the calling artifact passes through verbatim).
+  iterate    — fans the inner `run_op` over each element of step.over; collects
+               into step.into. The current item is exposed under `_iter.item`
+               for `args_from` resolution.
   validate   — validates artifact["data"] against step.schema_; aborts on failure
-  iterate    — maps a sub-step (RunSkillStep | RunOpStep) over each element of
-               step.over; collects into step.into
   lint_plan  — runs deterministic structural checks on a plan dict at step.over;
                places list of issue strings at step.into (does NOT abort)
   python     — invokes a user Python function in a sandboxed subprocess
                (pure | trusted mode); places return value at step.into and
                validates it against the declared output_schema
-  run_skill  — sugar for run_op{op=run_skill_iro_op}; passes the calling
-               artifact as input. Retained for back-compat.
-  file_read  — sugar for iterate(bases) × run_op{op=file/read} with format
-               parsing. Retained for back-compat.
 """
 from __future__ import annotations
 import asyncio
@@ -179,22 +179,18 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep, RunOpStep
+        from .models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
         phase_name = phase.name
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
         if isinstance(step, RunOpStep):
             return await self._apply_run_op(step, artifact, index, phase, output_language)
-        if isinstance(step, RunSkillStep):
-            return await self._apply_run_skill(step, artifact, index, phase, output_language)
         if isinstance(step, IterateStep):
             return await self._apply_iterate(step, artifact, index, phase, output_language)
         if isinstance(step, LintPlanStep):
             return self._apply_lint_plan(step, artifact, index, phase_name)
         if isinstance(step, PythonStep):
             return await self._apply_python(step, artifact, index, phase)
-        if isinstance(step, FileReadStep):
-            return await self._apply_file_read(step, artifact, index, phase, output_language)
         raise PreprocessorError(f"Unknown step type: {type(step)}")
 
     # ── validate ──────────────────────────────────────────────────────────────
@@ -252,47 +248,19 @@ class PreprocessorExecutor:
         """Apply args_from dot-path overrides to a literal op.
 
         Returns a new op instance with overridden fields. Empty args_from
-        returns the op unchanged.
+        returns the op unchanged. An empty dot-path ("") binds the whole
+        artifact — useful for `run_skill.input` when the calling artifact
+        should be passed through verbatim.
         """
         if not args_from:
             return op
         overrides: dict = {}
         for field, path in args_from.items():
-            overrides[field] = _get_at_path(artifact, path)
+            if path == "":
+                overrides[field] = artifact
+            else:
+                overrides[field] = _get_at_path(artifact, path)
         return op.model_copy(update=overrides)
-
-    # ── run_skill (sugar — delegates to op_runtime via RunSkillIROp) ──────────
-
-    async def _apply_run_skill(
-        self, step: Any, artifact: dict, index: int,
-        phase: "Phase", output_language: str,
-    ) -> tuple[dict, TokenUsage]:
-        from .models import RunSkillIROp
-        from .op_runtime import execute_op
-
-        # Preprocessor's run_skill semantics: pass the calling artifact as input.
-        op = RunSkillIROp(
-            kind="run_skill",
-            skill=step.skill,
-            input=artifact,
-            model=self._model,
-            workspace="isolated",
-            output_language=output_language,
-        )
-        ctx = self._build_op_ctx(phase, index)
-        ctx.output_language = output_language
-        result = await execute_op(op, ctx, caller="preprocessor")
-
-        status = result.get("status")
-        if status in ("error", "denied") or not result.get("success", False):
-            raise PreprocessorError(
-                f"Phase '{phase.name}' preprocessor step[{index}] run_skill '{step.skill}': "
-                f"sub-skill finished with status '{status}'"
-            )
-
-        enriched = copy.deepcopy(artifact)
-        _set_at_path(enriched, step.into, result.get("final_output"))
-        return enriched, _extract_usage(result)
 
     # ── iterate ───────────────────────────────────────────────────────────────
 
@@ -300,14 +268,14 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunSkillStep, RunOpStep
+        from .models import RunOpStep
         from .op_runtime import execute_op
 
         phase_name = phase.name
-        if not isinstance(step.apply, (RunSkillStep, RunOpStep)):
+        if not isinstance(step.apply, RunOpStep):
             raise PreprocessorError(
                 f"Phase '{phase_name}' preprocessor step[{index}] iterate.apply: "
-                "only run_skill and run_op are supported"
+                "only run_op is supported"
             )
 
         items = _get_at_path(artifact, step.over)
@@ -317,106 +285,50 @@ class PreprocessorExecutor:
                 f"'over' path '{step.over}' is not a list (got {type(items).__name__})"
             )
 
-        # For RunSkillStep we wrap items into the sub-skill's entry artifact.
-        # For RunOpStep we expose the current item under `_iter` so args_from
-        # can reference `_iter.item` (or any sub-path).
-        is_run_skill = isinstance(step.apply, RunSkillStep)
-
-        sub_app = None
-        entry_type = None
-        if is_run_skill:
-            sub_app = self._skill.preprocessor_sub_skills.get(step.apply.skill)
-            if sub_app is None:
-                raise PreprocessorError(
-                    f"Phase '{phase_name}' preprocessor step[{index}] iterate.apply: "
-                    f"sub-skill '{step.apply.skill}' not in preprocessor_sub_skills"
-                )
-            entry_type = sub_app.phases[sub_app.entry_phase].input_schema_name
-
         collected: list[Any] = []
         total_usage = TokenUsage()
         ctx = self._build_op_ctx(phase, index)
         ctx.output_language = output_language
 
         for j, item in enumerate(items):
-            if is_run_skill:
-                # Pre-wrap heuristic: domain dicts with both "type" and "data"
-                # are passed through; otherwise wrap with the sub-skill's entry type.
-                if isinstance(item, dict) and "type" in item and "data" in item:
-                    item_artifact = item
-                else:
-                    item_artifact = {
-                        "type": entry_type,
-                        "data": item if isinstance(item, dict) else {"value": item},
-                    }
+            # Expose the current item under `_iter` so the inner op's
+            # args_from can reference `_iter.item` (or sub-paths thereof).
+            iter_artifact = copy.deepcopy(artifact)
+            iter_artifact["_iter"] = {"item": item, "index": j}
+            op_inst = self._materialize_op(step.apply.op, step.apply.args_from, iter_artifact)
 
-                from .models import RunSkillIROp
-                op = RunSkillIROp(
-                    kind="run_skill",
-                    skill=step.apply.skill,
-                    input=item_artifact,
-                    model=self._model,
-                    workspace="isolated",
-                    output_language=output_language,
-                )
-                # Distinct sub-state-dir per iteration
-                ctx.preprocessor_step_index = index
-                ctx.preprocessor_phase_name = phase_name
+            # When iterating a run_skill op, give each iteration a distinct
+            # sub-state-dir so artifacts don't collide.
+            if op_inst.kind == "run_skill":
                 ctx.sub_state_dir_override = str(
                     self._workspace.state_dir / "preprocessor" / phase_name
-                    / f"{index}_{step.apply.skill}" / str(j)
+                    / f"{index}_{op_inst.skill}" / str(j)
                 )
+            self._events.emit(
+                "preprocessor_iterate_item_started",
+                phase=phase_name, step_index=index, item_index=j,
+            )
+            result = await execute_op(op_inst, ctx, caller="preprocessor")
+            ctx.sub_state_dir_override = None
+
+            status = result.get("status")
+            if status in ("error", "denied"):
+                if step.on_error == "fail":
+                    raise PreprocessorError(
+                        f"Phase '{phase_name}' preprocessor step[{index}] iterate "
+                        f"item[{j}] run_op ({op_inst.kind}): "
+                        f"{result.get('error') or status}"
+                    )
                 self._events.emit(
-                    "preprocessor_iterate_item_started",
+                    "preprocessor_iterate_item_skipped",
                     phase=phase_name, step_index=index, item_index=j,
+                    reason=f"status={status}",
                 )
-                result = await execute_op(op, ctx, caller="preprocessor")
-                ctx.sub_state_dir_override = None
-
-                if result.get("status") in ("error", "denied") or not result.get("success", False):
-                    if step.on_error == "fail":
-                        raise PreprocessorError(
-                            f"Phase '{phase_name}' preprocessor step[{index}] iterate "
-                            f"item[{j}]: sub-skill '{step.apply.skill}' failed with "
-                            f"status '{result.get('status')}'"
-                        )
-                    self._events.emit(
-                        "preprocessor_iterate_item_skipped",
-                        phase=phase_name, step_index=index, item_index=j,
-                        reason=f"status={result.get('status')}",
-                    )
-                    total_usage += _extract_usage(result)
-                    continue
-
                 total_usage += _extract_usage(result)
-                collected.append(result.get("final_output"))
-            else:
-                # RunOpStep apply: build a synthetic artifact that exposes the
-                # current item under `_iter`, then materialize the inner op via
-                # args_from against this view.
-                iter_artifact = copy.deepcopy(artifact)
-                iter_artifact["_iter"] = {"item": item, "index": j}
-                op_inst = self._materialize_op(step.apply.op, step.apply.args_from, iter_artifact)
-                result = await execute_op(op_inst, ctx, caller="preprocessor")
+                continue
 
-                status = result.get("status")
-                if status in ("error", "denied"):
-                    if step.on_error == "fail":
-                        raise PreprocessorError(
-                            f"Phase '{phase_name}' preprocessor step[{index}] iterate "
-                            f"item[{j}] run_op ({op_inst.kind}): "
-                            f"{result.get('error') or status}"
-                        )
-                    self._events.emit(
-                        "preprocessor_iterate_item_skipped",
-                        phase=phase_name, step_index=index, item_index=j,
-                        reason=f"status={status}",
-                    )
-                    total_usage += _extract_usage(result)
-                    continue
-
-                total_usage += _extract_usage(result)
-                collected.append(_strip_internal(result))
+            total_usage += _extract_usage(result)
+            collected.append(_strip_internal(result))
 
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, collected)
@@ -441,99 +353,6 @@ class PreprocessorExecutor:
         )
         enriched = copy.deepcopy(artifact)
         _set_at_path(enriched, step.into, issues)
-        return enriched, TokenUsage()
-
-    # ── file_read (sugar for `iterate(bases) × file/read` with format parsing) ─
-
-    async def _apply_file_read(
-        self, step: Any, artifact: dict, index: int,
-        phase: "Phase", output_language: str,
-    ) -> tuple[dict, TokenUsage]:
-        from .models import FileIROp
-        from .op_runtime import execute_op
-
-        phase_name = phase.name
-        if step.bases is not None:
-            bases = list(step.bases)
-        else:
-            bases = _get_at_path(artifact, step.bases_from)
-            if not isinstance(bases, list):
-                raise PreprocessorError(
-                    f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
-                    f"bases_from path '{step.bases_from}' is not a list "
-                    f"(got {type(bases).__name__})"
-                )
-
-        ctx = self._build_op_ctx(phase, index)
-        ctx.output_language = output_language
-        results: list[dict] = []
-        for base in bases:
-            base_str = str(Path(str(base)).expanduser())
-            file_path = str(Path(base_str) / step.filename)
-            entry = {"base": str(base), "file": step.filename}
-
-            op = FileIROp(kind="file", op="read", path=file_path)
-            op_result = await execute_op(op, ctx, caller="preprocessor")
-
-            if op_result.get("status") == "not_found":
-                if step.on_error == "fail":
-                    raise PreprocessorError(
-                        f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
-                        f"file not found: {file_path}"
-                    )
-                if step.on_error == "skip":
-                    continue
-                entry["content"] = ""
-                results.append(entry)
-                continue
-
-            if op_result.get("status") in ("error", "denied"):
-                if step.on_error == "fail":
-                    raise PreprocessorError(
-                        f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
-                        f"read failed for {file_path}: {op_result.get('error')}"
-                    )
-                if step.on_error == "skip":
-                    continue
-                entry["content"] = ""
-                results.append(entry)
-                continue
-
-            raw = op_result.get("content", "")
-
-            if step.format == "text":
-                entry["content"] = raw
-            elif step.format == "json":
-                import json as _json
-                try:
-                    entry["content"] = _json.loads(raw) if raw.strip() else None
-                except _json.JSONDecodeError as exc:
-                    if step.on_error == "fail":
-                        raise PreprocessorError(
-                            f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
-                            f"JSON parse failed for {file_path}: {exc}"
-                        ) from exc
-                    entry["content"] = None
-            elif step.format == "yaml":
-                import yaml as _yaml
-                try:
-                    entry["content"] = _yaml.safe_load(raw) if raw.strip() else None
-                except _yaml.YAMLError as exc:
-                    if step.on_error == "fail":
-                        raise PreprocessorError(
-                            f"Phase '{phase_name}' preprocessor step[{index}] file_read: "
-                            f"YAML parse failed for {file_path}: {exc}"
-                        ) from exc
-                    entry["content"] = None
-            results.append(entry)
-
-        self._events.emit(
-            "file_read_completed",
-            phase=phase_name, step_index=index,
-            base_count=len(bases), hit_count=len(results),
-        )
-        enriched = copy.deepcopy(artifact)
-        _set_at_path(enriched, step.into, results)
         return enriched, TokenUsage()
 
     # ── python ────────────────────────────────────────────────────────────────

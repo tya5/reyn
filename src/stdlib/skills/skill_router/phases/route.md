@@ -10,12 +10,13 @@ permissions:
     - path: .reyn/memory
       scope: recursive
 preprocessor:
-  - type: file_read
-    bases: [.reyn/memory]
-    filename: MEMORY.md
-    format: text
+  - type: run_op
+    op:
+      kind: file
+      op: read
+      path: .reyn/memory/MEMORY.md
     into: data.memory_index
-    on_error: skip
+    on_error: empty
 ---
 
 Decide how the chat agent should respond to the user's latest utterance.
@@ -25,14 +26,15 @@ Decide how the chat agent should respond to the user's latest utterance.
 - `user_message`: the latest thing the user said (may be empty when narrating)
 - `history`: recent prior turns (oldest first); empty on first turn
 - `available_skills`: catalogue of skills you may invoke (name + description)
-- `memory_index` (preprocessor-injected): list of `{base, file, content}`
-  where `content` is the raw text of `<base>/MEMORY.md`. Empty when no
-  memory exists yet.
+- `memory_index` (preprocessor-injected): the result of reading
+  `.reyn/memory/MEMORY.md`. When the file exists `memory_index.content`
+  is its raw markdown text; when it doesn't exist `memory_index` is null
+  (status="not_found"). Empty/missing means no memory has been recorded yet.
 - `skill_completion` (optional): when set, switch from routing to narrating
 
 ## Using `memory_index`
 
-`memory_index[].content` is the raw markdown of `MEMORY.md`, an index of
+`memory_index.content` is the raw markdown of `MEMORY.md`, an index of
 durable memories about this user/project. Each line in that text looks like:
 
 ```

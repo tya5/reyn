@@ -323,15 +323,13 @@ A Phase may declare a `preprocessor` chain that runs **before** the LLM is calle
 
 There are two layers:
 
-**Op steps** — invoke a `ControlIROp` from preprocessor. The same op catalog as Control IR (see Section 6).
+**Op step** — invoke a `ControlIROp` from preprocessor. The same op catalog as Control IR (see Section 6).
 
-* `run_op` — invoke any op (`file`, `run_skill`, `web_fetch`, `web_search`, `shell`, `lint`, `mcp`); place result at `into` dot-path. `args_from` lets selected fields be pulled from the input artifact at runtime
-* `run_skill` — sugar: shorthand for `run_op` wrapping a `run_skill` op that passes the calling artifact as input
-* `file_read` — sugar: shorthand for `iterate(bases) × run_op{op: file/read}` with optional JSON/YAML parsing
+* `run_op` — invoke any op (`file`, `run_skill`, `web_fetch`, `web_search`, `shell`, `lint`, `mcp`); place result at `into` dot-path. `args_from: {field: dot.path}` resolves selected op fields against the input artifact at execution time. An empty dot-path (`""`) binds the whole artifact (useful for `run_skill.input`).
 
-**Enrichment steps** — pre-processor-only flow control and validation.
+**Enrichment steps** — preprocessor-only flow control and validation.
 
-* `iterate` — fan out an inner step (`run_skill` or `run_op`) over an array; collect results into `into`
+* `iterate` — fan out an inner `run_op` over an array at `over`; collect results into `into`. The current item is exposed under `_iter.item` for `args_from` resolution
 * `validate` — JSON-Schema check against `artifact["data"]`; aborts on failure
 * `lint_plan` — run deterministic structural checks on a plan dict; surface issues
 * `python` — run a user-supplied Python function in a sandboxed subprocess

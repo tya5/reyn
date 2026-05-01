@@ -9,27 +9,37 @@ preprocessor:
   - type: iterate
     over: data.eval_requests
     apply:
-      type: run_skill
-      skill: judge_phase
+      type: run_op
+      op:
+        kind: run_skill
+        skill: judge_phase
+        input: {}
+      args_from:
+        input: "_iter.item"
     into: data.judgments
     on_error: skip
 ---
 
 Aggregate the per-phase judgments (in `data.judgments`) into a single `eval_result`.
 
-`data.judgments` is a list of `phase_judgment` objects — one per successfully judged phase. Each has: `phase_name`, `passed`, `score`, `criteria_results`, `summary`.
+`data.judgments` is a list of `run_skill` op results — one per successfully judged phase. The actual `phase_judgment` payload for entry `i` lives at `data.judgments[i].final_output` and contains: `phase_name`, `passed`, `score`, `criteria_results`, `summary`.
+
+Throughout this phase, when a step refers to a "judgment" field (e.g.
+`phase_name`, `passed`, `score`, `criteria_results`), look at the
+`final_output` of each entry in `data.judgments` — never the wrapping op
+result fields (`kind`, `status`, `success`, etc.).
 
 ## Required-criteria semantics
 
-A criterion in `criteria_results` is **required** when its `required` field is `true` OR the `required` field is absent. Optional (aspirational) criteria are those where `required` is explicitly `false` — they are reported in the summary but excluded from the pass/fail computation.
+A criterion in `final_output.criteria_results` is **required** when its `required` field is `true` OR the `required` field is absent. Optional (aspirational) criteria are those where `required` is explicitly `false` — they are reported in the summary but excluded from the pass/fail computation.
 
 ## Compute
 
-- `total_criteria`: number of **required** criteria across all judgments
-- `passed_criteria`: number of **required** criteria where `met=true` across all judgments
+- `total_criteria`: number of **required** criteria across all `judgments[i].final_output`
+- `passed_criteria`: number of **required** criteria where `met=true` across all `judgments[i].final_output`
 - `overall_score`: `passed_criteria / total_criteria` (use 1.0 if `total_criteria` is 0)
 - `passed`: true only if `overall_score >= 0.6` AND every required criterion across all judgments has `met=true`
-- `weakest_phase`: `phase_name` of the judgment with the lowest `score` (empty string if no judgments)
+- `weakest_phase`: `final_output.phase_name` of the judgment with the lowest `final_output.score` (empty string if no judgments)
 - `spec_path`: from `data.spec_path`
 - `summary`: 2–3 sentences describing what passed, what failed, and the most significant issue. If any optional criteria failed, mention them as aspirational shortfalls.
 

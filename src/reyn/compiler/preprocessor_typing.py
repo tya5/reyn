@@ -126,14 +126,7 @@ def _infer_step_output_schema(
     step_label: str,
 ) -> dict:
     """Return the JSON Schema that a single step produces (for use in iterate.apply)."""
-    from reyn.models import RunSkillStep, IterateStep, ValidateStep, RunOpStep
-    if isinstance(step, RunSkillStep):
-        if step.skill not in sub_skills:
-            raise PreprocessorTypeError(
-                f"{step_label}: sub-skill '{step.skill}' not found. "
-                f"Available: {list(sub_skills.keys())}"
-            )
-        return sub_skills[step.skill].final_output_schema
+    from reyn.models import IterateStep, ValidateStep, RunOpStep
     if isinstance(step, RunOpStep):
         return _op_output_schema(step.op.kind)
     if isinstance(step, ValidateStep):
@@ -153,7 +146,7 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep, RunOpStep
+    from reyn.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
 
     schema = copy.deepcopy(input_schema)
 
@@ -165,20 +158,6 @@ def infer_llm_visible_schema(
                 _require_parent_exists(schema, step.into, label)
                 schema = _set_at_path(schema, step.into, _op_output_schema(step.op.kind))
             # else: result is discarded; no schema change
-
-        elif isinstance(step, RunSkillStep):
-            if step.into is None:
-                raise PreprocessorTypeError(
-                    f"{label}: top-level run_skill must have 'into' set"
-                )
-            if step.skill not in sub_skills:
-                raise PreprocessorTypeError(
-                    f"{label}: sub-skill '{step.skill}' not found. "
-                    f"Available: {list(sub_skills.keys())}"
-                )
-            _require_parent_exists(schema, step.into, label)
-            field_schema = sub_skills[step.skill].final_output_schema
-            schema = _set_at_path(schema, step.into, field_schema)
 
         elif isinstance(step, IterateStep):
             # Verify the 'over' path points to an array in the current schema
@@ -222,45 +201,6 @@ def infer_llm_visible_schema(
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Deterministic structural-lint issues found in the plan.",
-                },
-            )
-
-        elif isinstance(step, FileReadStep):
-            # Output: list of {base, file, content} entries; one per existing file
-            # across the configured `bases`. `content` shape varies by `format`:
-            # text → string, json/yaml → arbitrary parsed value (any).
-            _require_parent_exists(schema, step.into, label)
-            if step.bases_from is not None:
-                # Verify the bases_from path points to an array in the current schema
-                try:
-                    arr_schema = _get_at_path(schema, step.bases_from)
-                except PreprocessorTypeError as exc:
-                    raise PreprocessorTypeError(
-                        f"{label}: 'bases_from' path error — {exc}"
-                    ) from exc
-                if arr_schema.get("type") != "array":
-                    raise PreprocessorTypeError(
-                        f"{label}: 'bases_from' path '{step.bases_from}' must point to an array "
-                        f"(got type={arr_schema.get('type')!r})"
-                    )
-            content_schema: dict[str, Any]
-            if step.format == "text":
-                content_schema = {"type": "string"}
-            else:
-                content_schema = {}  # arbitrary parsed value
-            schema = _set_at_path(
-                schema, step.into,
-                {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "base": {"type": "string"},
-                            "file": {"type": "string"},
-                            "content": content_schema,
-                        },
-                        "required": ["base", "file", "content"] if step.on_error != "skip" else ["base", "file"],
-                    },
                 },
             )
 

@@ -7,13 +7,6 @@ from .permissions import PermissionDecl
 
 # ── Preprocessor step types ───────────────────────────────────────────────────
 
-class RunSkillStep(BaseModel):
-    type: Literal["run_skill"]
-    skill: str          # sub-skill name resolved at compile time
-    into: str | None = None  # dot path where sub-skill's final_output is placed;
-                             # required at top level, None when nested inside iterate.apply
-
-
 class ValidateStep(BaseModel):
     type: Literal["validate"]
     schema_: dict[str, Any] = Field(alias="schema")
@@ -24,7 +17,7 @@ class ValidateStep(BaseModel):
 class IterateStep(BaseModel):
     type: Literal["iterate"]
     over: str                                   # dot path to an array in the input artifact
-    apply: "PreprocessorStep"                   # nested step; MVP: RunSkillStep only
+    apply: "PreprocessorStep"                   # nested step (run_op typically)
     into: str                                   # dot path where the collected array is placed
     on_error: Literal["fail", "skip"] = "fail"
 
@@ -38,40 +31,6 @@ class LintPlanStep(BaseModel):
     type: Literal["lint_plan"]
     over: str = "data"  # dot path to the plan dict; default: artifact["data"]
     into: str           # dot path where the list of issue strings is placed
-
-
-class FileReadStep(BaseModel):
-    """Read a fixed-name file from one or more base directories.
-
-    `bases` is a literal list of paths declared in the phase frontmatter; use
-    `bases_from` instead to reference a list at a dot-path in the input artifact.
-    Exactly one must be provided.
-
-    For each base, the executor reads `<base>/<filename>` and collects results
-    as `[{base, file, content}]`. `format` controls how `content` is parsed
-    (text=raw string, json=parsed object, yaml=parsed object).
-
-    `on_error`: "skip" drops missing files silently (empty content); "fail"
-    raises a PreprocessorError; "empty" returns an entry with empty content.
-    """
-    type: Literal["file_read"]
-    bases: list[str] | None = None
-    bases_from: str | None = None
-    filename: str
-    into: str
-    format: Literal["text", "json", "yaml"] = "text"
-    on_error: Literal["skip", "fail", "empty"] = "skip"
-
-    @model_validator(mode="after")
-    def _check_bases(self) -> "FileReadStep":
-        has_lit = self.bases is not None
-        has_ref = self.bases_from is not None
-        if has_lit == has_ref:
-            raise ValueError(
-                "FileReadStep requires exactly one of `bases` (literal list) "
-                "or `bases_from` (dot-path to a list in the input artifact)."
-            )
-        return self
 
 
 class PythonStep(BaseModel):
@@ -119,7 +78,7 @@ class RunOpStep(BaseModel):
 
 
 PreprocessorStep = Annotated[
-    Union[RunOpStep, RunSkillStep, IterateStep, ValidateStep, LintPlanStep, PythonStep, FileReadStep],
+    Union[RunOpStep, IterateStep, ValidateStep, LintPlanStep, PythonStep],
     Field(discriminator="type"),
 ]
 
