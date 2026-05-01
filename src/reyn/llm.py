@@ -344,10 +344,14 @@ async def call_llm(
 
         # response_format may not be supported by all models; pass it only when available
         extra = proxy_kwargs()
+        # When routing via a local proxy, strip the provider prefix from the model
+        # name (e.g. "openai/gemini-2.5-flash-lite" → "gemini-2.5-flash-lite") so
+        # the proxy receives the bare model name it registered under.
+        effective_model = model.split("/", 1)[1] if extra and "/" in model else model
         common_kwargs = {"timeout": timeout, "num_retries": max_retries}
         try:
             response = await litellm.acompletion(
-                model=model,
+                model=effective_model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 **common_kwargs,
@@ -355,7 +359,7 @@ async def call_llm(
             )
         except Exception:
             response = await litellm.acompletion(
-                model=model, messages=messages, **common_kwargs, **extra,
+                model=effective_model, messages=messages, **common_kwargs, **extra,
             )
 
         usage = _extract_usage(response)

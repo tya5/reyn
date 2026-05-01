@@ -164,7 +164,7 @@ def load_project_context(config: ReynConfig, project_root: Path) -> str:
     can short-circuit the system-prompt section.
     """
     rel = (config.project_context_path or "").strip()
-    if not rel:
+    if not rel or project_root is None:
         return ""
     target = project_root / rel
     if not target.is_file():
@@ -345,6 +345,9 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         project = _load_yaml(project_root / "reyn.yaml")
         _migrate_legacy_keys(project, str(project_root / "reyn.yaml"))
         merged = _merge(merged, project)
+        project_local = _load_yaml(project_root / "reyn.local.yaml")
+        _migrate_legacy_keys(project_local, str(project_root / "reyn.local.yaml"))
+        merged = _merge(merged, project_local)
         local = _load_yaml(project_root / ".reyn" / "config.yaml")
         _migrate_legacy_keys(local, str(project_root / ".reyn" / "config.yaml"))
         merged = _merge(merged, local)
