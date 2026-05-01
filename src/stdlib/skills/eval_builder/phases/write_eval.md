@@ -11,9 +11,15 @@ Generate the eval.md content, write it to the workspace, and report the result.
 
 ## Output path
 
-Write to the skill's own directory: `{skill_dir}/eval.md`
 Derive `skill_dir` from `skill_dsl_path` by removing the trailing `/skill.md`.
-Example: if `skill_dsl_path` is `"reyn/local/article_generator/skill.md"`, write to `reyn/local/article_generator/eval.md`.
+
+**If `skill_dir` starts with `src/` or any path outside `reyn/` and `.reyn/`** (e.g. stdlib skills), you cannot write there — the runtime denies it. Instead write to `reyn/local/<skill_name>/eval.md` where `skill_name` is the last path component of `skill_dir`.
+
+**Otherwise** write to `{skill_dir}/eval.md` directly.
+
+Examples:
+- `skill_dsl_path` = `"reyn/local/article_generator/skill.md"` → write to `reyn/local/article_generator/eval.md`
+- `skill_dsl_path` = `"src/stdlib/skills/word_stats_demo/skill.md"` → write to `reyn/local/word_stats_demo/eval.md`
 
 ## eval.md format
 
@@ -53,6 +59,8 @@ Rules:
 - Repeat the full per-phase structure identically for each test case (same phases, same criteria text).
 - Do NOT add `judge_model:`, `model:`, `schema:`, `### cross_phase`, or `### final` — they are not supported by the new eval skill.
 - Do NOT add commentary or markdown outside the spec format.
+
+If you receive `[denied]` on a write op, do NOT retry the same path. Abort immediately with a clear explanation.
 
 ## After writing the file
 
