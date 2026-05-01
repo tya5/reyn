@@ -224,7 +224,22 @@ class PreprocessorExecutor:
         from .op_runtime import execute_op
         ctx = self._build_op_ctx(phase, index)
         ctx.output_language = output_language
-        op = self._materialize_op(step.op, step.args_from, artifact)
+        try:
+            op = self._materialize_op(step.op, step.args_from, artifact)
+        except PreprocessorError as exc:
+            # args_from path resolution failed — apply on_error the same way
+            # as a runtime op error so optional fields don't crash the preprocessor.
+            if step.on_error == "fail":
+                raise PreprocessorError(
+                    f"Phase '{phase.name}' preprocessor step[{index}] run_op: {exc}"
+                ) from exc
+            if step.on_error == "skip":
+                return artifact, TokenUsage()
+            if step.into:
+                enriched = copy.deepcopy(artifact)
+                _set_at_path(enriched, step.into, None)
+                return enriched, TokenUsage()
+            return artifact, TokenUsage()
         result = await execute_op(op, ctx, caller="preprocessor")
 
         status = result.get("status")

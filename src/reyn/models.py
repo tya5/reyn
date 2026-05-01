@@ -289,7 +289,7 @@ class ControlDecision(BaseModel):
 class CandidateOutput(BaseModel):
     """A single candidate the LLM may choose for its next step."""
     next_phase: str                                        # phase name, or "end"
-    control_type: Literal["transition", "finish"] = "transition"
+    control_type: Literal["transition", "finish", "rollback"] = "transition"
     schema_name: str                                       # artifact type name
     artifact_schema: dict[str, Any]
     description: str = ""

@@ -328,6 +328,19 @@ class OSRuntime:
                 artifact_schema=skill.final_output_schema,
                 description=skill.final_output_description,
             ))
+        if self._prev_phase is not None:
+            candidates.append(CandidateOutput(
+                next_phase="rollback",
+                control_type="rollback",
+                schema_name="rollback",
+                artifact_schema={},
+                description=(
+                    f"Reject the output from '{self._prev_phase}' and send it back for revision. "
+                    "Use when the current phase determines the preceding phase produced invalid output. "
+                    "Put the rejection reason in control.reason.summary. "
+                    "next_phase MUST be null. decision MUST be 'continue'."
+                ),
+            ))
         return candidates
 
     def _effective_model(self, phase_name: str) -> str:
