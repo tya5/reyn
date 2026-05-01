@@ -8,12 +8,11 @@ prompts via `reyn agent new`.
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
 from reyn.chat.profile import AgentProfile
-from reyn.chat.registry import DEFAULT_AGENT_NAME, _validate_agent_name
+from reyn.chat.registry import AgentRegistry, DEFAULT_AGENT_NAME, _validate_agent_name
 
 
 def register(sub) -> None:
@@ -123,7 +122,11 @@ def _cmd_rm(args: argparse.Namespace) -> None:
         if ans.strip().lower() != "y":
             print("aborted")
             return
-    shutil.rmtree(target)
+    # Route through AgentRegistry so PR12 topology cascade fires.
+    def _no_factory(profile):
+        raise RuntimeError("session factory not used in agent CLI")
+    reg = AgentRegistry(project_root=Path.cwd(), session_factory=_no_factory)
+    reg.remove(args.name)
     print(f"Removed agent {args.name!r}")
 
 

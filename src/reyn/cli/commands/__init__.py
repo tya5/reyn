@@ -17,6 +17,7 @@ from . import lint as lint
 from . import memory as memory
 from . import permissions as permissions
 from . import run as run
+from . import topology as topology
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, run, chat, agent, eval, lint, memory, permissions, events]
+ALL = [init, config, skills, run, chat, agent, topology, eval, lint, memory, permissions, events]

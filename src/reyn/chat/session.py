@@ -624,8 +624,9 @@ class ChatSession:
         })
         # PR11: list peer agents (excluding self) so the router can decide
         # between local skill invocation and delegation to another agent.
+        # PR12: filter by topology rules so the LLM only sees reachable peers.
         if self._registry is not None:
-            available_agents = self._registry.iter_other_agents(self.agent_name)
+            available_agents = self._registry.iter_reachable_agents(self.agent_name)
         else:
             available_agents = []
 
@@ -858,6 +859,15 @@ class ChatSession:
         if self._registry is None or not self._registry.exists(to):
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"agent {to!r} not found",
+            ))
+            return
+        # PR12: topology gate. Defense in depth alongside the
+        # `iter_reachable_agents` filter that hides unreachable agents from
+        # the router LLM in the first place.
+        if not self._registry.permit(self.agent_name, to):
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"agent {to!r}: blocked by topology rules",
             ))
             return
 

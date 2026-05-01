@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable
 
 from .profile import AgentProfile, PROFILE_FILENAME
+from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 
 DEFAULT_AGENT_NAME = "default"
@@ -71,6 +72,7 @@ class AgentRegistry:
         """
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME
         self._factory = session_factory
         self._agents: dict[str, "object"] = {}            # name -> ChatSession
         self._tasks: dict[str, asyncio.Task] = {}         # name -> session.run() task
@@ -84,6 +86,11 @@ class AgentRegistry:
             AgentProfile.new(DEFAULT_AGENT_NAME, role="").save(
                 self._dir / DEFAULT_AGENT_NAME
             )
+        # PR12: topology declarations under `.reyn/topologies/<name>.yaml`.
+        # Bad files become warnings rather than startup errors so a hand-edited
+        # yaml doesn't lock the user out of `reyn chat`.
+        self._topologies: dict[str, Topology] = {}
+        self._reload_topologies()
 
     # ── persistence ──────────────────────────────────────────────────────────
 
@@ -126,6 +133,11 @@ class AgentRegistry:
         # Recursive rm — agents/<name>/ is reyn-managed, no surprises expected.
         import shutil
         shutil.rmtree(target)
+        # PR12: cascade — drop the agent from any topology it belongs to so
+        # we don't leave dangling references. Topologies that would become
+        # invalid (team losing its leader, kind=team with no members) are
+        # removed entirely.
+        self._cascade_agent_removal(name)
 
     def last_activity_at(self, name: str) -> datetime | None:
         """Last mtime among history.jsonl / events.jsonl, or None if absent."""
@@ -294,6 +306,130 @@ class AgentRegistry:
             role_excerpt = role_lines[0].strip() if role_lines else ""
             out.append({"name": name, "role": role_excerpt})
         return out
+
+    def iter_reachable_agents(self, self_name: str) -> list[dict]:
+        """Same as iter_other_agents, but filtered by topology rules.
+
+        Agents the caller cannot reach (per `permit`) are dropped so the
+        router LLM never proposes a delegation that would be blocked at
+        send time.
+        """
+        return [
+            entry for entry in self.iter_other_agents(self_name)
+            if self.permit(self_name, entry["name"])
+        ]
+
+    # ── topology ────────────────────────────────────────────────────────────────
+
+    def _reload_topologies(self) -> None:
+        self._topologies = {}
+        if not self._topology_dir.is_dir():
+            return
+        for path in sorted(self._topology_dir.glob("*.yaml")):
+            try:
+                topo = Topology.load(path)
+            except Exception as e:
+                # Hand-edited / outdated yaml — surface but don't crash.
+                import sys
+                print(
+                    f"warning: skipping malformed topology {path.name}: {e}",
+                    file=sys.stderr,
+                )
+                continue
+            self._topologies[topo.name] = topo
+
+    def list_topologies(self) -> list[Topology]:
+        return [self._topologies[k] for k in sorted(self._topologies)]
+
+    def get_topology(self, name: str) -> Topology:
+        if name not in self._topologies:
+            raise FileNotFoundError(f"topology {name!r} not found")
+        return self._topologies[name]
+
+    def topology_exists(self, name: str) -> bool:
+        return name in self._topologies
+
+    def topologies_for_agent(self, agent: str) -> list[Topology]:
+        return [t for t in self.list_topologies() if agent in t.members]
+
+    def permit(self, from_agent: str, to_agent: str) -> bool:
+        """Return True if at least one shared topology permits from→to.
+
+        When `from_agent` and `to_agent` are not co-members of any topology,
+        the edge is permitted (PR11-compatible default). This makes topology
+        an opt-in restriction layer rather than a blocker for naive setups.
+        """
+        if from_agent == to_agent:
+            return False
+        shared = [
+            t for t in self._topologies.values()
+            if from_agent in t.members and to_agent in t.members
+        ]
+        if not shared:
+            return True
+        return any(t.can_send(from_agent, to_agent) for t in shared)
+
+    def add_topology(self, topo: Topology) -> None:
+        _validate_topology_name(topo.name)
+        if topo.name in self._topologies:
+            raise FileExistsError(f"topology {topo.name!r} already exists")
+        for m in topo.members:
+            if not self.exists(m):
+                raise ValueError(f"topology {topo.name!r}: agent {m!r} does not exist")
+        topo.save(self._topology_dir / f"{topo.name}.yaml")
+        self._topologies[topo.name] = topo
+
+    def remove_topology(self, name: str) -> None:
+        if name not in self._topologies:
+            raise FileNotFoundError(f"topology {name!r} not found")
+        path = self._topology_dir / f"{name}.yaml"
+        if path.is_file():
+            path.unlink()
+        del self._topologies[name]
+
+    def add_member(self, topology_name: str, agent: str) -> Topology:
+        topo = self.get_topology(topology_name)
+        if not self.exists(agent):
+            raise ValueError(f"agent {agent!r} does not exist")
+        new_topo = topo.with_member_added(agent)
+        new_topo.save(self._topology_dir / f"{topology_name}.yaml")
+        self._topologies[topology_name] = new_topo
+        return new_topo
+
+    def remove_member(self, topology_name: str, agent: str) -> Topology:
+        topo = self.get_topology(topology_name)
+        new_topo = topo.with_member_removed(agent)
+        new_topo.save(self._topology_dir / f"{topology_name}.yaml")
+        self._topologies[topology_name] = new_topo
+        return new_topo
+
+    def _cascade_agent_removal(self, agent: str) -> None:
+        """Drop `agent` from every topology it's a member of.
+
+        Team topologies losing their leader are removed entirely (a leader-less
+        team is meaningless). Pipelines and networks shrink in place. Empty
+        topologies are removed.
+        """
+        for name in list(self._topologies.keys()):
+            topo = self._topologies[name]
+            if agent not in topo.members:
+                continue
+            if topo.kind == "team" and topo.leader == agent:
+                self.remove_topology(name)
+                continue
+            new_members = tuple(m for m in topo.members if m != agent)
+            if not new_members:
+                self.remove_topology(name)
+                continue
+            new_topo = Topology(
+                name=topo.name,
+                kind=topo.kind,
+                members=new_members,
+                leader=topo.leader,
+                created_at=topo.created_at,
+            )
+            new_topo.save(self._topology_dir / f"{name}.yaml")
+            self._topologies[name] = new_topo
 
 
 def _drain_queue(q: asyncio.Queue) -> None:
