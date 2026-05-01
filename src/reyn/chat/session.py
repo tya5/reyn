@@ -12,11 +12,11 @@ from pathlib import Path
 from reyn.agent import Agent
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import LimitsConfig
+from reyn.config import EventsConfig, LimitsConfig
+from reyn.event_store import EventStore
 from reyn.events import EventLog
 from reyn.model_resolver import ModelResolver
 from reyn.permissions import PermissionResolver
-from reyn.reporters.persister import EventPersister
 from reyn.skill_paths import resolve_skill_path, stdlib_root
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -255,6 +255,7 @@ class ChatSession:
         max_hop_depth: int = 3,
         chain_timeout_seconds: float = 60.0,
         allowed_skills: list[str] | None = None,
+        events_config: EventsConfig | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
@@ -285,18 +286,25 @@ class ChatSession:
             list(allowed_skills) if allowed_skills is not None else None
         )
 
+        # PR20: per-chat rotation policy. Defaults match EventsConfig.
+        self._events_config = events_config or EventsConfig()
+
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
         self._next_seq = 1
         self._compacting = False
         self._compaction_task: asyncio.Task | None = None
 
+        # `agents/<name>/` is state-only as of PR20: profile / history /
+        # memory / .input_history. Audit log lives under `events/`.
         self.workspace_dir = Path(".reyn") / "agents" / self.agent_name
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
-        self.events_path = self.workspace_dir / "events.jsonl"
-        self.runs_root = self.workspace_dir / "runs"
-        self.runs_root.mkdir(parents=True, exist_ok=True)
+        # PR20: chat events live at `events/agents/<name>/chat/<YYYY-MM>/...`.
+        # The folder is created lazily by EventStore on first write.
+        self.events_dir = (
+            Path(".reyn") / "events" / "agents" / self.agent_name / "chat"
+        )
 
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
@@ -323,7 +331,12 @@ class ChatSession:
         self._total_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
 
-        self._chat_events = EventLog(subscribers=[EventPersister(self.events_path)])
+        self._event_store = EventStore(
+            self.events_dir,
+            max_bytes=self._events_config.max_bytes,
+            max_age_seconds=self._events_config.max_age_seconds,
+        )
+        self._chat_events = EventLog(subscribers=[self._event_store])
         self.running_skills: dict[str, asyncio.Task] = {}
         # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
         self.running_skills_started_at: dict[str, float] = {}
@@ -533,6 +546,7 @@ class ChatSession:
             prompt_cache_enabled=self._prompt_cache_enabled,
             project_context=self._project_context,
             agent_role=self._agent_role,
+            caller=f"agents/{self.agent_name}",
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:

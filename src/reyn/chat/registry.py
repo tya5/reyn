@@ -147,13 +147,26 @@ class AgentRegistry:
         self._cascade_agent_removal(name)
 
     def last_activity_at(self, name: str) -> datetime | None:
-        """Last mtime among history.jsonl / events.jsonl, or None if absent."""
+        """Last mtime across history.jsonl and any chat events file.
+
+        history.jsonl lives in `agents/<name>/`; chat audit log lives under
+        `events/agents/<name>/chat/<YYYY-MM>/*.jsonl` (PR20). Take the max
+        mtime across all those files.
+        """
         agent_dir = self._dir / name
         candidates: list[float] = []
-        for fname in ("history.jsonl", "events.jsonl"):
-            p = agent_dir / fname
-            if p.is_file():
-                candidates.append(p.stat().st_mtime)
+        history = agent_dir / "history.jsonl"
+        if history.is_file():
+            candidates.append(history.stat().st_mtime)
+        # PR20: events live outside agents/<name>/. Path is computed relative
+        # to .reyn/ root which is the parent of self._dir (= .reyn/agents).
+        events_root = self._dir.parent / "events" / "agents" / name / "chat"
+        if events_root.is_dir():
+            for f in events_root.rglob("*.jsonl"):
+                try:
+                    candidates.append(f.stat().st_mtime)
+                except OSError:
+                    continue
         if not candidates:
             return None
         return datetime.fromtimestamp(max(candidates), tz=timezone.utc)

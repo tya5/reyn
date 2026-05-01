@@ -65,12 +65,21 @@ def _cmd_list(args: argparse.Namespace) -> None:
             continue
         role_first_line = (profile.role or "").strip().splitlines()
         role_excerpt = role_first_line[0] if role_first_line else ""
-        # Last activity = max mtime among history.jsonl / events.jsonl
+        # Last activity = max mtime across history.jsonl + chat events tree.
         latest = 0.0
-        for fname in ("history.jsonl", "events.jsonl"):
-            f = entry / fname
-            if f.is_file():
-                latest = max(latest, f.stat().st_mtime)
+        history = entry / "history.jsonl"
+        if history.is_file():
+            latest = max(latest, history.stat().st_mtime)
+        # PR20: events live under .reyn/events/agents/<name>/chat/...
+        events_root = (
+            entry.parent.parent / "events" / "agents" / profile.name / "chat"
+        )
+        if events_root.is_dir():
+            for ef in events_root.rglob("*.jsonl"):
+                try:
+                    latest = max(latest, ef.stat().st_mtime)
+                except OSError:
+                    continue
         if latest:
             from datetime import datetime, timezone
             ts = datetime.fromtimestamp(latest, tz=timezone.utc).strftime("%Y-%m-%d %H:%M")

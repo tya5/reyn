@@ -95,6 +95,7 @@ class PreprocessorExecutor:
         intervention_bus: "InterventionBus | None" = None,
         python_runner: PythonRunner | None = None,
         python_allowed_modules: list[str] | None = None,
+        caller: str = "direct",
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -107,6 +108,7 @@ class PreprocessorExecutor:
         self._intervention_bus = intervention_bus
         self._python_runner = python_runner or PythonRunner()
         self._python_allowed_modules = list(python_allowed_modules or [])
+        self._caller = caller
 
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
@@ -132,6 +134,7 @@ class PreprocessorExecutor:
             mcp_clients={},
             intervention_bus=None,  # ask_user is forbidden in preprocessor
             current_phase=phase.name,
+            caller=self._caller,
         )
 
     async def run(

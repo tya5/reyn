@@ -183,6 +183,7 @@ def _run_case(
         limits=session.limits_for(args),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
         project_context=project_context,
+        caller="direct",
     )
 
     try:

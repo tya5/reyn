@@ -70,6 +70,7 @@ def run(args: argparse.Namespace) -> None:
             max_hop_depth=session_cfg.config.multi_agent.max_hop_depth,
             chain_timeout_seconds=session_cfg.config.multi_agent.chain_timeout_seconds,
             allowed_skills=profile.allowed_skills,
+            events_config=session_cfg.config.events,
         )
         s.load_history()
         return s

@@ -56,3 +56,8 @@ class OpContext:
     # User interventions (ask_user, permission prompts in PR7)
     intervention_bus: "InterventionBus | None" = None
     current_phase: str = ""
+
+    # PR20: caller provenance threaded from the parent Agent so sub-skill
+    # invocations land under the same `events/<caller>/skill_runs/...` tree.
+    # Format: "direct" or "agents/<name>" (validated in Agent).
+    caller: str = "direct"

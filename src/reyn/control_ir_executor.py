@@ -35,6 +35,7 @@ class ControlIRExecutor:
         max_phase_visits: int = 25,
         skill_name: str = "",
         mcp_servers: dict | None = None,
+        caller: str = "direct",
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -46,6 +47,7 @@ class ControlIRExecutor:
         self._skill_name = skill_name
         self._mcp_servers: dict = (mcp_servers or {}).get("servers", {})
         self._mcp_clients: dict = {}  # cached across ops
+        self._caller = caller
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -181,6 +183,7 @@ class ControlIRExecutor:
             mcp_clients=self._mcp_clients,
             intervention_bus=self._intervention_bus,
             current_phase=current_phase,
+            caller=self._caller,
         )
 
     async def execute(

@@ -79,6 +79,27 @@ class ChatConfig:
 
 
 @dataclass
+class EventsConfig:
+    """`events:` — audit log rotation policy (PR20).
+
+    Chat session events are appended to a folder under
+    `.reyn/events/agents/<name>/chat/<YYYY-MM>/` and rotated when either
+    the active file's size exceeds `max_bytes` OR its age (or local date)
+    exceeds `max_age_seconds`. Setting both to 0 disables rotation, which
+    is the mode skill_run uses (1 run = 1 file).
+
+    `cleanup_period_days` documents how long closed files should be kept
+    before `reyn events purge` may delete them. `null` (default) disables
+    automatic deletion — purge only runs when invoked explicitly. Setting
+    `0` is rejected (it is a footgun: Claude Code historically treated
+    `0` as "disable transcript writes" and surprised users).
+    """
+    max_bytes: int = 10 * 1024 * 1024     # 10 MB
+    max_age_seconds: int = 24 * 60 * 60   # 1 day
+    cleanup_period_days: int | None = None
+
+
+@dataclass
 class MultiAgentConfig:
     """`multi_agent:` — knobs for agent-to-agent messaging (PR11+).
 
@@ -130,6 +151,8 @@ class ReynConfig:
     chat: ChatConfig = field(default_factory=ChatConfig)
     # Multi-agent settings (delegation hop limits, etc.)
     multi_agent: MultiAgentConfig = field(default_factory=MultiAgentConfig)
+    # Audit-log rotation policy (PR20).
+    events: EventsConfig = field(default_factory=EventsConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -364,6 +387,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         python=_build_python_config(merged.get("python")),
         chat=_build_chat_config(merged.get("chat")),
         multi_agent=_build_multi_agent_config(merged.get("multi_agent")),
+        events=_build_events_config(merged.get("events")),
     )
 
 
@@ -376,4 +400,26 @@ def _build_multi_agent_config(raw: object) -> MultiAgentConfig:
         chain_timeout_seconds=float(
             raw.get("chain_timeout_seconds", defaults.chain_timeout_seconds)
         ),
+    )
+
+
+def _build_events_config(raw: object) -> EventsConfig:
+    defaults = EventsConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    cleanup = raw.get("cleanup_period_days", defaults.cleanup_period_days)
+    if cleanup == 0:
+        # Reject the Claude-Code-style "0 disables writes" footgun.
+        # Use null/None to disable automatic cleanup; positive ints to enable.
+        raise ValueError(
+            "events.cleanup_period_days=0 is not allowed; "
+            "use null to disable automatic cleanup, or a positive int."
+        )
+    cleanup_val: int | None = None
+    if cleanup is not None:
+        cleanup_val = int(cleanup)
+    return EventsConfig(
+        max_bytes=int(raw.get("max_bytes", defaults.max_bytes)),
+        max_age_seconds=int(raw.get("max_age_seconds", defaults.max_age_seconds)),
+        cleanup_period_days=cleanup_val,
     )

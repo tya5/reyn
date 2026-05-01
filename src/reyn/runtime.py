@@ -198,12 +198,14 @@ class OSRuntime:
         prompt_cache_enabled: bool = True,
         project_context: str = "",
         agent_role: str = "",
+        caller: str = "direct",
     ) -> None:
         self.skill = skill
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self.strict = strict
         self.run_id = run_id
+        self._caller = caller
         self.events = EventLog(subscribers=subscribers)
         self.workspace = Workspace(
             self.events,
@@ -230,6 +232,7 @@ class OSRuntime:
             max_phase_visits=self._max_phase_visits,
             skill_name=skill.name,
             mcp_servers=mcp_servers,
+            caller=caller,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
@@ -242,6 +245,7 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             intervention_bus=intervention_bus,
             python_allowed_modules=python_allowed_modules,
+            caller=caller,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}

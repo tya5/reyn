@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -8,7 +9,19 @@ from .config import LimitsConfig
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
 from .user_intervention import InterventionBus
-from reyn.reporters.persister import EventPersister
+from .event_store import EventStore
+
+
+_CALLER_RE = re.compile(r"^(direct|agents/[A-Za-z0-9_\-]+)$")
+
+
+def _validate_caller(caller: str) -> str:
+    if not _CALLER_RE.match(caller):
+        raise ValueError(
+            f"invalid caller {caller!r}; "
+            "expected 'direct' or 'agents/<name>' (alphanumeric / _ / -)"
+        )
+    return caller
 
 
 class Agent:
@@ -27,6 +40,7 @@ class Agent:
         prompt_cache_enabled: bool = True,
         project_context: str = "",
         agent_role: str = "",
+        caller: str = "direct",
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -42,19 +56,40 @@ class Agent:
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
         self._agent_role = agent_role
+        self._caller = _validate_caller(caller)
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
 
+    @property
+    def caller(self) -> str:
+        return self._caller
+
     async def run(self, skill: Skill, initial_input: dict, output_language: str = "ja") -> RunResult:
         self.run_id = self._make_run_id(skill.name)
-        self.events_path = Path(self.state_dir) / "runs" / f"{self.run_id}.jsonl"
-        persister = EventPersister(self.events_path)
+        # PR20: events live under
+        #   <state_dir>/events/<caller>/skill_runs/<YYYY-MM>/<start>_<skill>.jsonl
+        # caller ∈ {"direct", "agents/<name>"}.
+        skill_dir = (
+            Path(self.state_dir)
+            / "events"
+            / self._caller
+            / "skill_runs"
+        )
+        store = EventStore(
+            skill_dir,
+            max_bytes=0,
+            max_age_seconds=0,
+            suffix=f"_{_safe_skill_name(skill.name)}",
+        )
+        # Open eagerly so events_path is populated even if the run errors
+        # before the first emit (CLI prints `events saved → ...`).
+        self.events_path = store.open()
 
         self._runtime = OSRuntime(
             skill, self.model,
             strict=self.strict,
-            subscribers=[persister] + self._subscribers,
+            subscribers=[store] + self._subscribers,
             intervention_bus=self._intervention_bus,
             run_id=self.run_id,
             shell_allowed=self._shell_allowed,
@@ -66,6 +101,7 @@ class Agent:
             prompt_cache_enabled=self._prompt_cache_enabled,
             project_context=self._project_context,
             agent_role=self._agent_role,
+            caller=self._caller,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 
@@ -88,5 +124,11 @@ class Agent:
     @staticmethod
     def _make_run_id(skill_name: str) -> str:
         ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        safe_name = skill_name.replace(" ", "_")[:40]
+        safe_name = _safe_skill_name(skill_name)
         return f"{ts}_{safe_name}"
+
+
+def _safe_skill_name(name: str) -> str:
+    """Produce a filename-safe skill name (truncated, alphanumeric / _ / -)."""
+    cleaned = re.sub(r"[^A-Za-z0-9_\-]+", "_", name)
+    return cleaned.strip("_")[:40] or "skill"

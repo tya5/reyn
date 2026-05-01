@@ -112,6 +112,7 @@ def run(args: argparse.Namespace) -> None:
         python_allowed_modules=list(session.config.python.allowed_modules),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
         project_context=project_context,
+        caller="direct",
     )
 
     input_type = initial_input.get("type", "unknown")

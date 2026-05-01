@@ -40,11 +40,15 @@ async def invoke_sub_skill(
     intervention_bus: "InterventionBus | None" = None,
     output_language: str = "ja",
     max_phase_visits: int = 25,
+    caller: str = "direct",
 ) -> SubSkillResult:
     """Run a sub-app and return a SubSkillResult.
 
     Callers are responsible for event emission around this call and for
     accumulating token_usage into their own counter.
+
+    `caller` is propagated from the parent so the sub-skill's events land
+    under the same `events/<caller>/skill_runs/...` tree (PR20).
     """
     from .agent import Agent
 
@@ -54,6 +58,7 @@ async def invoke_sub_skill(
         subscribers=subscribers,
         resolver=resolver,
         intervention_bus=intervention_bus,
+        caller=caller,
     )
     run_result = await agent.run(sub_skill, input_artifact, output_language=output_language)
     return SubSkillResult(

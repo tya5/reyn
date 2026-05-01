@@ -59,16 +59,19 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         intervention_bus=ctx.intervention_bus,
         output_language=op.output_language or ctx.output_language,
         max_phase_visits=ctx.max_phase_visits,
+        caller=ctx.caller,
     )
 
+    # PR20: per-run events live at
+    #   <state_dir>/events/<caller>/skill_runs/**/*.jsonl
+    # The recursive glob spans monthly subdirs without enumerating them.
     sub_state = Path(sub_state_dir)
     parent_state_path = ctx.workspace.state_dir
+    events_glob = f"events/{ctx.caller}/skill_runs/**/*.jsonl"
     try:
         rel = sub_state.relative_to(parent_state_path)
-        events_glob = str(rel / "runs" / "*.jsonl")
         artifacts_glob = str(rel / "artifacts" / "**" / "*.json")
     except ValueError:
-        events_glob = str(sub_state / "runs" / "*.jsonl")
         artifacts_glob = str(sub_state / "artifacts" / "**" / "*.json")
 
     usage = run_result.token_usage
