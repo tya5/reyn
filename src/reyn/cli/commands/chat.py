@@ -68,6 +68,7 @@ def run(args: argparse.Namespace) -> None:
             compaction_config=session_cfg.config.chat.compaction,
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
             max_hop_depth=session_cfg.config.multi_agent.max_hop_depth,
+            allowed_skills=profile.allowed_skills,
         )
         s.load_history()
         return s

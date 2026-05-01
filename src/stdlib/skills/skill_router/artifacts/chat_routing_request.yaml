@@ -93,4 +93,22 @@ schema:
               First line of the agent's `profile.role`, summarizing its
               specialization. Empty when the agent has no role configured.
         required: [name, role]
+    memory_index:
+      type: object
+      description: |
+        Merged view of the shared (`.reyn/memory/MEMORY.md`) and
+        agent-scoped (`.reyn/agents/<chat_id>/memory/MEMORY.md`) memory
+        indexes (PR15). ChatSession synthesizes this on each route turn;
+        callers do NOT pre-fill it. `content` is markdown organized into
+        a `# Memory Index (shared)` section followed by `# Memory Index
+        (agent: <chat_id>)`, each containing the standard
+        `- [Name](slug.md) — description` lines (or `(empty)`).
+        `status` is `"not_found"` only when both layers are absent.
+      properties:
+        status:
+          type: string
+          description: '"ok" or "not_found".'
+        content:
+          type: string
+          description: Merged markdown content (empty string when status="not_found").
   required: [user_message, chat_id, available_skills]

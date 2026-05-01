@@ -140,6 +140,15 @@ def _cmd_show(args: argparse.Namespace) -> None:
     print(f"name:        {profile.name}")
     print(f"created_at:  {profile.created_at}")
     print(f"workspace:   {target}")
+    # PR15: allowlist visibility.
+    if profile.allowed_skills is None:
+        print("allowed_skills: (unrestricted — all project + stdlib skills)")
+    elif not profile.allowed_skills:
+        print("allowed_skills: (none — router-only, no skill spawn)")
+    else:
+        print("allowed_skills:")
+        for s in profile.allowed_skills:
+            print(f"  - {s}")
     print("role:")
     if profile.role:
         for line in profile.role.splitlines():

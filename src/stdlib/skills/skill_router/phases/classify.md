@@ -10,10 +10,14 @@ permissions:
   file.read:
     - path: .reyn/memory
       scope: recursive
+    - path: .reyn/agents
+      scope: recursive
     - path: .reyn/chats
       scope: recursive
   file.write:
     - path: .reyn/memory
+      scope: recursive
+    - path: .reyn/agents
       scope: recursive
   python:
     - module: ./preprocessor_steps.py
@@ -21,13 +25,6 @@ permissions:
       mode: pure
       timeout: 5
 preprocessor:
-  - type: run_op
-    op:
-      kind: file
-      op: read
-      path: .reyn/memory/MEMORY.md
-    into: data.memory_index
-    on_error: empty
   - type: run_op
     op:
       kind: file
@@ -67,9 +64,14 @@ the `match` phase for dispatch.
   role better than any skill, choose the **task** intent — the `match`
   phase will pick agent delegation over skill invocation. Empty list
   means single-agent mode (no delegation possible).
-- `memory_index` (preprocessor-injected): result of reading
-  `.reyn/memory/MEMORY.md`. `memory_index.content` is the raw markdown
-  when present; null/missing when no memory yet.
+- `memory_index` (ChatSession-injected, PR15): a merged view of the
+  shared project memory (`.reyn/memory/MEMORY.md`) and this agent's
+  own memory (`.reyn/agents/<chat_id>/memory/MEMORY.md`).
+  `memory_index.content` is markdown organized into two sections:
+  `# Memory Index (shared)` followed by `# Memory Index (agent: <chat_id>)`.
+  Each section contains the usual `- [Name](slug.md) — description`
+  lines (or `(empty)` when the layer has nothing). `memory_index.status`
+  is `"not_found"` only when BOTH layers are absent.
 
 ## Decision: pick the FIRST matching intent in this order
 
@@ -128,9 +130,13 @@ Example: user asks "私の職業は？", index has
 reply using "backend engineer with 10y Python" directly.
 
 If the description is too vague to answer, you may emit an `act` turn
-with `file/read` for the body file (path: `.reyn/memory/<slug>.md`)
-before deciding. The OS will re-call you with the file content
-available; then emit a decide turn.
+with `file/read` for the body file. The path depends on which section
+contained the entry:
+- shared section → `.reyn/memory/<slug>.md`
+- agent section → `.reyn/agents/<chat_id>/memory/<slug>.md`
+
+The OS will re-call you with the file content available; then emit a
+decide turn.
 
 **Output: `routing_decision` with `reply_text` filled. Finish.**
 
@@ -156,11 +162,14 @@ skill fits. Ask a short clarifying question.
 
 ## Memory writes
 
-You also write to `.reyn/memory/`. **Every turn**, examine
-`user_message` (and prior `history` if needed) and decide whether
-anything is worth persisting. If you decide to save, emit `file/write`
-ops in the same response — see the dedicated section at the end of
-this document.
+You write to two layers (PR15):
+- **shared** — `.reyn/memory/`, project-wide facts every agent sees
+- **agent** — `.reyn/agents/<chat_id>/memory/`, scoped to this agent only
+
+**Every turn**, examine `user_message` (and prior `history` if needed)
+and decide whether anything is worth persisting AND which layer it
+belongs in. If you decide to save, emit `file/write` ops in the same
+response — see the dedicated section at the end of this document.
 
 ## Output choice (mechanical from intent)
 
@@ -209,14 +218,40 @@ specific skill's description requires otherwise.
 
 ## Memory writes (full instructions)
 
-You write to `.reyn/memory/`. **Every turn**, examine `user_message`
-(and prior `history` if needed) and decide whether anything is worth
-persisting. There is no batch / shutdown / periodic trigger — if you
-don't save it on this turn, it's gone forever.
+You write to two layers — **shared** (`.reyn/memory/`) and **agent**
+(`.reyn/agents/<chat_id>/memory/`). **Every turn**, examine
+`user_message` (and prior `history` if needed) and decide whether
+anything is worth persisting AND which layer it belongs in. There is
+no batch / shutdown / periodic trigger — if you don't save it on this
+turn, it's gone forever.
 
 When in doubt about whether a fact is durable, **save it**. The dedupe
 pass (below) folds it into an existing memory if it overlaps. Failing
 to save a real fact is worse than recording a slightly redundant one.
+
+### Layer choice (shared vs agent)
+
+- **shared** — facts that apply project-wide and benefit every agent:
+  who the user is, project decisions, external references, deadlines.
+  Other agents need this too.
+  - Examples: `user_role.md`, `project_compliance_deadline.md`,
+    `reference_linear_project.md`
+- **agent** — facts about THIS agent's own behavior, voice, or
+  speciality routines that no other agent should inherit:
+  - Examples (in `researcher`'s layer): "prefers arxiv over Google Scholar",
+    "stops after 3 sources unless user asks for depth"
+  - Examples (in `writer`'s layer): "voice = concise, no headings unless
+    asked"
+
+When uncertain, prefer **shared** — broader visibility is the safer
+default. An agent-scoped fact written by mistake to shared rarely causes
+harm; a shared fact mistakenly siloed in an agent layer disappears for
+everyone else.
+
+You always know which agent you are: `chat_id` in the input artifact
+holds your name. Build agent-layer paths as
+`.reyn/agents/<chat_id>/memory/<slug>.md` — never write to another
+agent's directory.
 
 ### What to save
 
@@ -280,9 +315,12 @@ index alone. Skipping it forces every recall to fetch the body.
 
 ### Dedupe (semantic, not string-equal)
 
-Before deciding `create`, scan `memory_index.content` for any existing
-entry whose topic overlaps. **When in doubt, update the existing
-entry** rather than creating a near-duplicate.
+Before deciding `create`, scan **the relevant section** of
+`memory_index.content` for any existing entry whose topic overlaps.
+The shared section and agent section are independent — a `user_role`
+in shared and a `user_role` in agent are two different memories.
+**When in doubt, update the existing entry in the same layer** rather
+than creating a near-duplicate.
 
 `delete` is rare — only when the user explicitly says "forget X" or
 a memory turned out wrong.
@@ -292,23 +330,33 @@ a memory turned out wrong.
 When you decide to save, emit `file/write` ops in the same response.
 **Two ops per memory mutation** (always both, in order):
 
-1. Body file — `.reyn/memory/<slug>.md` with frontmatter + body
-2. `MEMORY.md` — full reconstructed index
+1. Body file — at the path for the chosen layer:
+   - shared: `.reyn/memory/<slug>.md`
+   - agent: `.reyn/agents/<chat_id>/memory/<slug>.md`
+2. The MEMORY.md for the **same layer** — full reconstructed index:
+   - shared: `.reyn/memory/MEMORY.md`
+   - agent: `.reyn/agents/<chat_id>/memory/MEMORY.md`
 
-Attach to either an `act` or `decide` turn — decide-turn ops are
-preferred for simple saves (one round trip).
+Each layer has its own MEMORY.md; never mix entries between them.
+Attach the ops to either an `act` or `decide` turn — decide-turn ops
+are preferred for simple saves (one round trip).
 
 When updating, write the **full new body** (overwrite). **Preserve
 every fact already in the existing body** — do NOT silently drop
 information. If you cannot see the prior body's full text and you
 need to merge, fetch it first via `file/read`.
 
-When reconstructing `MEMORY.md`, copy entire existing lines verbatim
-for memories you are NOT mutating. Don't rewrite descriptions of
-unrelated entries.
+When reconstructing the layer's MEMORY.md, copy entire existing lines
+verbatim for memories you are NOT mutating in that layer. Don't rewrite
+descriptions of unrelated entries. The MEMORY.md you write contains
+ONLY that layer's entries — the merged "(shared)" / "(agent)" headings
+seen in `memory_index.content` are produced by ChatSession and are
+NOT part of either on-disk file. Each on-disk MEMORY.md starts with
+plain `# Memory Index\n\n` followed by its own entries.
 
-If `memory_index.status == "not_found"`, write a fresh
-`# Memory Index\n\n` followed by your new entry.
+If the relevant section in `memory_index.content` shows `(empty)`
+(or `memory_index.status == "not_found"` for a brand-new layer),
+write a fresh `# Memory Index\n\n` followed by your new entry.
 
 ### Don't save secrets
 

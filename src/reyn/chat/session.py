@@ -90,6 +90,62 @@ def _new_chain_id() -> str:
     return uuid.uuid4().hex
 
 
+def _read_memory_index(path: Path) -> str:
+    """Return MEMORY.md contents at `path` or empty string if absent."""
+    try:
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
+    except OSError:
+        return ""
+
+
+def _merge_memory_indexes(
+    *, shared_path: Path, agent_path: Path, agent_name: str,
+) -> dict:
+    """Combine the shared and agent-scoped MEMORY.md files into a single
+    `data.memory_index` payload (PR15).
+
+    The router phase used to read `.reyn/memory/MEMORY.md` via a preprocessor
+    `file/read` step; that step is removed because the agent-scoped path
+    `.reyn/agents/<name>/memory/MEMORY.md` is dynamic and a static phase
+    YAML cannot interpolate it. ChatSession synthesizes the merged view
+    here and stuffs it directly into the artifact.
+
+    The two layers are kept separate in the output markdown — `(shared)` and
+    `(agent: <name>)` — so the LLM can decide which slug path to use when
+    writing new memory entries.
+    """
+    shared = _read_memory_index(shared_path).strip()
+    agent  = _read_memory_index(agent_path).strip()
+
+    if not shared and not agent:
+        return {"status": "not_found", "content": ""}
+
+    parts: list[str] = []
+    if shared:
+        parts.append(f"# Memory Index (shared)\n\n{_strip_index_header(shared)}")
+    else:
+        parts.append("# Memory Index (shared)\n\n(empty)")
+    parts.append(
+        f"# Memory Index (agent: {agent_name})\n\n"
+        f"{_strip_index_header(agent) if agent else '(empty)'}"
+    )
+    return {"status": "ok", "content": "\n\n".join(parts).strip() + "\n"}
+
+
+def _strip_index_header(content: str) -> str:
+    """Drop a leading `# Memory Index` heading (with optional trailing blank
+    lines) from a stored MEMORY.md so we don't render two headings when
+    merging. Anything else is returned verbatim."""
+    lines = content.splitlines()
+    if lines and lines[0].lstrip().startswith("# Memory Index"):
+        # Skip the heading and any immediately-following blank lines.
+        i = 1
+        while i < len(lines) and not lines[i].strip():
+            i += 1
+        lines = lines[i:]
+    return "\n".join(lines).strip()
+
+
 @dataclass
 class _PendingChain:
     """Multi-hop relay state held in a delegating agent.
@@ -197,6 +253,7 @@ class ChatSession:
         compaction_config: "CompactionConfig | None" = None,
         registry: "AgentRegistry | None" = None,
         max_hop_depth: int = 3,
+        allowed_skills: list[str] | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
@@ -215,6 +272,13 @@ class ChatSession:
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
         self._max_hop_depth = max_hop_depth
+        # PR15: optional skill allowlist sourced from profile.allowed_skills.
+        # None = unrestricted (default, BC). Empty list = router runs but no
+        # skill spawn. stdlib router/compactor/narrator are NOT subject to
+        # this — they're always available regardless.
+        self._allowed_skills: list[str] | None = (
+            list(allowed_skills) if allowed_skills is not None else None
+        )
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -662,6 +726,12 @@ class ChatSession:
         avail = enumerate_available_skills(exclude={
             ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
         })
+        # PR15: filter to the agent's allowlist (if any). stdlib system skills
+        # are already excluded above and are not subject to this filter — they
+        # always run. The router LLM only sees what passes both gates.
+        if self._allowed_skills is not None:
+            allow = set(self._allowed_skills)
+            avail = [s for s in avail if s.get("name") in allow]
         # PR11: list peer agents (excluding self) so the router can decide
         # between local skill invocation and delegation to another agent.
         # PR12: filter by topology rules so the LLM only sees reachable peers.
@@ -669,6 +739,16 @@ class ChatSession:
             available_agents = self._registry.iter_reachable_agents(self.agent_name)
         else:
             available_agents = []
+
+        # PR15: pre-merge shared + agent memory indexes here. Static phase
+        # YAML can't interpolate `.reyn/agents/<self.agent_name>/...`, so
+        # we synthesize the merged `memory_index` and embed it directly.
+        # Shape matches what the file/read op used to return ({status, content}).
+        memory_index = _merge_memory_indexes(
+            shared_path=Path(".reyn") / "memory" / "MEMORY.md",
+            agent_path=self.workspace_dir / "memory" / "MEMORY.md",
+            agent_name=self.agent_name,
+        )
 
         data: dict = {
             "user_message": user_text,
@@ -679,6 +759,7 @@ class ChatSession:
             "history_path": str(self.history_path),
             "available_skills": avail,
             "available_agents": available_agents,
+            "memory_index": memory_index,
             # Pass the head/tail config through so the slicer can honor it
             # without needing access to ReynConfig.
             "compaction": {
@@ -1454,6 +1535,25 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"invalid skill spec: {spec}",
             ))
+            return
+        # PR15: defense-in-depth allowlist check. The router-side filter
+        # already hides blocked skills from the LLM, so reaching this branch
+        # implies hallucination or a stale routing_decision. Refuse + audit.
+        if (
+            self._allowed_skills is not None
+            and skill_name not in self._allowed_skills
+        ):
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=(
+                    f"skill {skill_name!r} is not in allowed_skills for agent "
+                    f"{self.agent_name!r}; refused"
+                ),
+            ))
+            self._chat_events.emit(
+                "skill_spawn_refused",
+                reason="allowlist", skill=skill_name, agent=self.agent_name,
+            )
             return
 
         run_id = (
