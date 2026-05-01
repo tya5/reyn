@@ -1,4 +1,11 @@
-"""prompt_toolkit-based REPL for ChatSession."""
+"""prompt_toolkit-based REPL for AgentRegistry-managed multi-agent chat.
+
+The REPL drains the registry-owned `repl_outbox` (always present, regardless
+of which agent is attached) and forwards user input to whichever agent is
+currently attached. Agent switching (`:attach <name>`) flips the registry's
+attached pointer; the REPL doesn't need to re-bind anything because both
+the input and output sides funnel through the registry.
+"""
 from __future__ import annotations
 import asyncio
 
@@ -9,11 +16,11 @@ from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
 from .renderer import ChatRenderer
-from .session import ChatSession
+from .registry import AgentRegistry
 
 
 async def _input_loop(
-    session: ChatSession,
+    registry: AgentRegistry,
     prompt_session: PromptSession,
     renderer: ChatRenderer,
 ) -> None:
@@ -22,20 +29,24 @@ async def _input_loop(
             with patch_stdout():
                 text = await prompt_session.prompt_async(renderer.prompt_text())
         except (EOFError, KeyboardInterrupt):
-            await session.shutdown()
+            await registry.shutdown()
             return
         text = (text or "").strip()
         if not text:
             continue
         if text in {"/quit", "/exit"}:
-            await session.shutdown()
+            await registry.shutdown()
             return
-        await session.submit_user_text(text)
+        attached = registry.attached_session()
+        if attached is None:
+            renderer.message(_simple_status("no agent attached; try :agents"))
+            continue
+        await attached.submit_user_text(text)
 
 
-async def _output_loop(session: ChatSession, renderer: ChatRenderer) -> None:
+async def _output_loop(registry: AgentRegistry, renderer: ChatRenderer) -> None:
     while True:
-        msg = await session.outbox.get()
+        msg = await registry.repl_outbox.get()
         if msg.kind == "__end__":
             return
         # Wrap in run_in_terminal so the prompt is cleared before output and
@@ -48,21 +59,47 @@ async def _output_loop(session: ChatSession, renderer: ChatRenderer) -> None:
             renderer.message(msg)
 
 
-async def run_repl(session: ChatSession, renderer: ChatRenderer) -> None:
-    history_path = session.workspace_dir / ".input_history"
+def _simple_status(text: str):
+    """Build a status OutboxMessage for inline rendering (no async needed)."""
+    from .outbox import OutboxMessage
+    return OutboxMessage(kind="status", text=text)
+
+
+async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
+    """Attach to the default agent (or pre-attached one) and run the REPL.
+
+    Caller is expected to have called `await registry.attach(name)` before
+    invoking this function so the user lands on a known agent.
+    """
+    attached = registry.attached_session()
+    if attached is None:
+        raise RuntimeError("run_repl requires an attached agent; call registry.attach() first")
+
+    history_path = attached.workspace_dir / ".input_history"
     prompt_session: PromptSession[str] = PromptSession(history=FileHistory(str(history_path)))
 
-    renderer.banner(session.chat_id)
+    renderer.banner(attached.agent_name)
 
-    runner = asyncio.create_task(session.run())
-    inputs = asyncio.create_task(_input_loop(session, prompt_session, renderer))
-    outputs = asyncio.create_task(_output_loop(session, renderer))
+    inputs = asyncio.create_task(_input_loop(registry, prompt_session, renderer))
+    outputs = asyncio.create_task(_output_loop(registry, renderer))
 
     try:
-        await runner
+        # Wait until one of the loops returns (user `/quit` or EOF).
+        await asyncio.wait(
+            {inputs, outputs}, return_when=asyncio.FIRST_COMPLETED,
+        )
     finally:
         inputs.cancel()
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)
-        cost_usd = session.total_cost_usd if session.total_cost_usd > 0 else None
-        renderer.cost_summary(session.total_usage, cost_usd)
+        # Aggregate cost from all loaded agents
+        from reyn.pricing import TokenUsage
+        total_usage = TokenUsage()
+        total_cost = 0.0
+        for name in registry.loaded_names():
+            session = registry._agents.get(name)
+            if session is None:
+                continue
+            total_usage += session.total_usage
+            total_cost += session.total_cost_usd
+        renderer.cost_summary(total_usage, total_cost if total_cost > 0 else None)

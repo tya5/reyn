@@ -151,12 +151,18 @@ def _system_prompt(
     skill_description: str = "",
     phase_role: str | None = None,
     project_context: str = "",
+    agent_role: str = "",
 ) -> str:
     """Compose the system prompt: format contract + skill goal + role + project context.
 
     Stable, persona-bearing fields live here (system) so the LLM treats them
     as authoritative role definitions; volatile per-phase data stays in the
     user-turn ContextFrame JSON.
+
+    `agent_role` (multi-agent: PR10) is the persona text from
+    `.reyn/agents/<name>/profile.yaml`. It applies to every phase the agent
+    runs and sits between the project context and the per-phase role so the
+    agent's overall persona doesn't shadow phase-specific responsibilities.
     """
     sections: list[str] = [_SYSTEM_BASE]
     if skill_name or skill_description:
@@ -170,6 +176,10 @@ def _system_prompt(
     if project_context:
         sections.append(
             f"━━━ PROJECT CONTEXT ━━━\n{project_context.strip()}"
+        )
+    if agent_role:
+        sections.append(
+            f"━━━ AGENT ROLE ━━━\n{agent_role.strip()}"
         )
     return "\n\n".join(sections)
 
@@ -256,6 +266,7 @@ async def call_llm(
     skill_description: str = "",
     phase_role: str | None = None,
     project_context: str = "",
+    agent_role: str = "",
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -268,15 +279,16 @@ async def call_llm(
     max_retries: transient-error retries (LiteLLM exponential backoff), via num_retries.
     prompt_cache_enabled: when True, attach Anthropic cache_control marker to
       the system prompt. Ignored by non-Anthropic providers.
-    skill_name / skill_description / phase_role / project_context: assembled
-      into the system prompt by `_system_prompt()`. Pass empty strings to fall
-      back to the format-contract-only base.
+    skill_name / skill_description / phase_role / project_context / agent_role:
+      assembled into the system prompt by `_system_prompt()`. Pass empty strings
+      to fall back to the format-contract-only base.
     """
     system = _system_prompt(
         skill_name=skill_name,
         skill_description=skill_description,
         phase_role=phase_role,
         project_context=project_context,
+        agent_role=agent_role,
     )
     user_content = json.dumps(frame.model_dump(mode="json"), indent=2, ensure_ascii=False)
     messages: list[dict] = [

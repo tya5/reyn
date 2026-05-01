@@ -53,7 +53,7 @@ class ChatRenderer:
     doesn't have to implement every method.
     """
 
-    def banner(self, chat_id: str) -> None:
+    def banner(self, agent_name: str) -> None:
         """Render the startup banner. Called once before the input loop."""
 
     def message(self, msg: OutboxMessage) -> None:
@@ -101,8 +101,8 @@ class ConsoleChatRenderer(ChatRenderer):
             self._write(_CLEAR_PREV_LINE)
             self._transient_active = False
 
-    def banner(self, chat_id: str) -> None:
-        self._write(f"{_BANNER}\n  chat_id={chat_id}\n  {_HELP}\n\n")
+    def banner(self, agent_name: str) -> None:
+        self._write(f"{_BANNER}\n  agent={agent_name}\n  {_HELP}\n\n")
 
     def message(self, msg: OutboxMessage) -> None:
         self._clear_transient()
@@ -167,9 +167,9 @@ class RichChatRenderer(ChatRenderer):
             sys.__stdout__.flush()
             self._transient_active = False
 
-    def banner(self, chat_id: str) -> None:
+    def banner(self, agent_name: str) -> None:
         self._console.print(_BANNER, style="bold cyan")
-        self._console.print(f"  [dim]chat_id={chat_id}[/dim]")
+        self._console.print(f"  [dim]agent={agent_name}[/dim]")
         self._console.print(f"  [dim]{_HELP}[/dim]\n")
         self._flush()
 

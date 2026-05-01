@@ -197,6 +197,7 @@ class OSRuntime:
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
         project_context: str = "",
+        agent_role: str = "",
     ) -> None:
         self.skill = skill
         self.model = model
@@ -216,6 +217,7 @@ class OSRuntime:
         self._llm_max_retries = self._limits.llm.max_retries
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
+        self._agent_role = agent_role
         self._phase_started_at: float | None = None
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
@@ -474,6 +476,7 @@ class OSRuntime:
             skill_description=self.skill.description,
             phase_role=phase_def.role if phase_def else None,
             project_context=self._project_context,
+            agent_role=self._agent_role,
         )
         raw = llm_result.data
         cost_usd: float | None = None

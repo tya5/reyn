@@ -6,6 +6,7 @@ Each command module exposes:
 """
 from __future__ import annotations
 
+from . import agent as agent
 from . import chat as chat
 from . import skills as skills
 from . import config as config
@@ -18,4 +19,4 @@ from . import permissions as permissions
 from . import run as run
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, run, chat, eval, lint, memory, permissions, events]
+ALL = [init, config, skills, run, chat, agent, eval, lint, memory, permissions, events]

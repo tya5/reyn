@@ -114,11 +114,6 @@ def _render_summary_for_storage(structured: dict) -> str:
     return "\n".join(parts)
 
 
-def _new_chat_id() -> str:
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{ts}_{uuid.uuid4().hex[:6]}"
-
-
 def enumerate_available_skills(exclude: set[str]) -> list[dict]:
     """Walk reyn/project, reyn/local, stdlib/skills and collect skill catalogue entries.
 
@@ -163,7 +158,7 @@ def enumerate_available_skills(exclude: set[str]) -> list[dict]:
 class ChatSession:
     def __init__(
         self,
-        chat_id: str | None = None,
+        agent_name: str,
         model: str = "standard",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
@@ -172,9 +167,11 @@ class ChatSession:
         output_language: str = "ja",
         prompt_cache_enabled: bool = True,
         project_context: str = "",
+        agent_role: str = "",
         compaction_config: "CompactionConfig | None" = None,
+        registry: "AgentRegistry | None" = None,
     ) -> None:
-        self.chat_id = chat_id or _new_chat_id()
+        self.agent_name = agent_name
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
@@ -183,6 +180,10 @@ class ChatSession:
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
+        self._agent_role = agent_role
+        # Optional back-reference for slash commands like :agents / :attach.
+        # The factory in cli/commands/chat.py wires this; tests can leave it None.
+        self._registry = registry
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -190,7 +191,7 @@ class ChatSession:
         self._compacting = False
         self._compaction_task: asyncio.Task | None = None
 
-        self.workspace_dir = Path(".reyn") / "chats" / self.chat_id
+        self.workspace_dir = Path(".reyn") / "agents" / self.agent_name
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
         self.history_path = self.workspace_dir / "history.jsonl"
         self.events_path = self.workspace_dir / "events.jsonl"
@@ -200,6 +201,10 @@ class ChatSession:
         self.history: list[ChatMessage] = []
         self.inbox: asyncio.Queue = asyncio.Queue()
         self.outbox: asyncio.Queue = asyncio.Queue()
+        # Detached by default — AgentRegistry.attach() flips this on. Outbox
+        # `status`/`trace` emissions are dropped while detached so background
+        # agents don't accumulate display noise.
+        self.is_attached: bool = False
 
         from reyn.pricing import TokenUsage
         self._total_usage: TokenUsage = TokenUsage()
@@ -275,7 +280,7 @@ class ChatSession:
     # ── main loop ───────────────────────────────────────────────────────────────
 
     async def run(self) -> None:
-        self._chat_events.emit("chat_started", chat_id=self.chat_id, model=self.model)
+        self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
 
         try:
             while True:
@@ -286,8 +291,8 @@ class ChatSession:
                     await self._handle_user_message(text)
         finally:
             await self._drain_on_shutdown()
-            self._chat_events.emit("chat_stopped", chat_id=self.chat_id)
-            await self.outbox.put(OutboxMessage(kind="__end__", text=""))
+            self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
+            await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
         """Cancel any in-flight user-initiated skill runs and await compaction.
@@ -324,19 +329,19 @@ class ChatSession:
 
         self._append_history(ChatMessage(role="user", text=text, ts=_now_iso()))
         self._chat_events.emit("user_message_received", text=text)
-        await self.outbox.put(OutboxMessage(kind="status", text="考え中..."))
+        await self._put_outbox(OutboxMessage(kind="status", text="考え中..."))
 
         try:
             decision = await self._invoke_router(text)
         except Exception as exc:
-            await self.outbox.put(OutboxMessage(kind="error", text=f"router failed: {exc}"))
+            await self._put_outbox(OutboxMessage(kind="error", text=f"router failed: {exc}"))
             return
 
         reply_text = (decision.get("reply_text") or "").strip()
         skills_to_run = decision.get("skills_to_run") or []
 
         if reply_text:
-            await self.outbox.put(OutboxMessage(kind="agent", text=reply_text))
+            await self._put_outbox(OutboxMessage(kind="agent", text=reply_text))
             self._append_history(ChatMessage(role="agent", text=reply_text, ts=_now_iso()))
 
         for spec in skills_to_run:
@@ -370,7 +375,22 @@ class ChatSession:
             subscribers=subscribers,
             prompt_cache_enabled=self._prompt_cache_enabled,
             project_context=self._project_context,
+            agent_role=self._agent_role,
         )
+
+    async def _put_outbox(self, msg: OutboxMessage) -> None:
+        """Drop transient kinds while detached; durable kinds are queued.
+
+        While `is_attached=False` (PR10 multi-agent: agent running in the
+        background), `status`/`trace` carry no value to a detached display
+        and would just accumulate in the queue. `agent`/`skill_done`/
+        `intervention`/`error`/`__end__` are kept so they reach the user
+        when re-attached or remain in history (history append happens
+        independently in callers).
+        """
+        if not self.is_attached and msg.kind in {"status", "trace"}:
+            return
+        await self.outbox.put(msg)
 
     def _load_stdlib_skill(self, skill_name: str):
         """Load a stdlib skill by its directory name. Propagates parse errors."""
@@ -564,7 +584,7 @@ class ChatSession:
         the router is now routing-only (PR9).
 
         History is NOT inlined into the artifact — the classify phase has a
-        Python preprocessor step that reads `.reyn/chats/<chat_id>/history.jsonl`
+        Python preprocessor step that reads `.reyn/agents/<name>/history.jsonl`
         and slices the recent N turns. This eliminates the snapshot-per-turn
         duplication that previously bloated workspace artifacts.
         """
@@ -574,7 +594,7 @@ class ChatSession:
 
         data: dict = {
             "user_message": user_text,
-            "chat_id": self.chat_id,
+            "chat_id": self.agent_name,
             # Precomputed for the classify phase preprocessor: the file/read op
             # uses this via args_from. ChatSession owns this path because the
             # workspace dir was created relative to the cwd at session start.
@@ -657,7 +677,7 @@ class ChatSession:
                 # Unrecognized choice — surface a status hint and don't resolve.
                 # The user can re-type the correct hotkey.
                 hint = " / ".join(c.label for c in iv.choices)
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="status",
                     text=f"unknown choice; expected one of: {hint}",
                     meta=_iv_meta(iv),
@@ -706,7 +726,7 @@ class ChatSession:
         if iv.choices:
             labels = " / ".join(c.label for c in iv.choices)
             lines.append(f"  {labels}")
-        await self.outbox.put(OutboxMessage(
+        await self._put_outbox(OutboxMessage(
             kind="intervention",
             text="\n".join(lines),
             meta=_iv_meta(iv),
@@ -724,7 +744,7 @@ class ChatSession:
                 await self._announce_intervention(iv)
             else:
                 queued = len(self._intervention_order) - 1
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="status",
                     text=f"質問待ち ({queued}件キュー中)",
                     meta=_iv_meta(iv),
@@ -813,9 +833,12 @@ class ChatSession:
         """
         body = text[1:].lstrip()
         if not body:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="status",
-                text="known commands: :list, :cancel <id>, :answer <id> <text>",
+                text=(
+                    "known commands: :list, :cancel <id>, :answer <id> <text>, "
+                    ":agents, :attach <name>"
+                ),
             ))
             return True
         parts = body.split(maxsplit=1)
@@ -825,11 +848,16 @@ class ChatSession:
             "list": self._slash_list,
             "cancel": self._slash_cancel,
             "answer": self._slash_answer,
+            "agents": self._slash_agents,
+            "attach": self._slash_attach,
         }.get(cmd)
         if handler is None:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="status",
-                text=f"unknown command :{cmd}; try :list / :cancel <id> / :answer <id> <text>",
+                text=(
+                    f"unknown command :{cmd}; try :list / :cancel / :answer / "
+                    ":agents / :attach"
+                ),
             ))
             return True
         await handler(args)
@@ -862,36 +890,36 @@ class ChatSession:
                 lines.append(
                     f"  {iid[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
                 )
-        await self.outbox.put(OutboxMessage(kind="status", text="\n".join(lines)))
+        await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
 
     async def _slash_cancel(self, args: str) -> None:
         """`:cancel <id-prefix>` — cancel a running skill task."""
         prefix = args.strip()
         if not prefix:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text="usage: :cancel <id-prefix>",
             ))
             return
         rid, candidates = self._resolve_run_id(prefix)
         if rid is None:
             if not candidates:
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="error", text=f"no running skill matches {prefix!r}",
                 ))
             else:
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="error",
                     text=f"ambiguous prefix {prefix!r}; matches: {', '.join(_run_short(c) for c in candidates)}",
                 ))
             return
         task = self.running_skills.get(rid)
         if task is None or task.done():
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="status", text=f"skill {_run_short(rid)} already finished",
             ))
             return
         task.cancel()
-        await self.outbox.put(OutboxMessage(
+        await self._put_outbox(OutboxMessage(
             kind="status", text="cancel requested",
             meta=_run_meta(rid, None),
         ))
@@ -900,7 +928,7 @@ class ChatSession:
         """`:answer <id-prefix> <text>` — deliver answer to a non-head intervention."""
         parts = args.split(maxsplit=1)
         if not parts:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text="usage: :answer <id-prefix> <text>",
             ))
             return
@@ -909,12 +937,12 @@ class ChatSession:
         iid, candidates = self._resolve_intervention_id(prefix)
         if iid is None:
             if not candidates:
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="error",
                     text=f"no pending intervention matches {prefix!r}",
                 ))
             else:
-                await self.outbox.put(OutboxMessage(
+                await self._put_outbox(OutboxMessage(
                     kind="error",
                     text=f"ambiguous prefix {prefix!r}; matches: {', '.join(c[:8] for c in candidates)}",
                 ))
@@ -922,13 +950,80 @@ class ChatSession:
         iv = self._active_interventions[iid]
         await self._deliver_answer_to(iv, text)
 
+    async def _slash_agents(self, args: str) -> None:
+        """`:agents` — list known agents (registry-backed)."""
+        if self._registry is None:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text="agent registry not wired; :agents only works in `reyn chat`",
+            ))
+            return
+        names = self._registry.list_names()
+        if not names:
+            await self._put_outbox(OutboxMessage(
+                kind="status", text="no agents (this should not happen — default auto-creates)",
+            ))
+            return
+        attached = self._registry.attached_name
+        loaded = set(self._registry.loaded_names())
+        lines = ["agents:"]
+        for n in names:
+            try:
+                profile = self._registry.load_profile(n)
+                role_excerpt = (profile.role or "").strip().splitlines()
+                role = role_excerpt[0] if role_excerpt else ""
+            except Exception:
+                role = "(profile load failed)"
+            last = self._registry.last_activity_at(n)
+            last_str = last.strftime("%Y-%m-%dT%H:%M") if last else "—"
+            mark = "*" if n == attached else (" " if n not in loaded else "·")
+            lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
+        lines.append("(* = attached, · = loaded, blank = not yet loaded)")
+        await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
+
+    async def _slash_attach(self, args: str) -> None:
+        """`:attach <name>` — switch attached agent.
+
+        The actual switch happens in repl._input_loop, which owns the display
+        wiring. Here we only validate the name and put a sentinel attach
+        request on this session's outbox; the REPL listens for the kind.
+        """
+        name = args.strip()
+        if not name:
+            await self._put_outbox(OutboxMessage(
+                kind="error", text="usage: :attach <name>",
+            ))
+            return
+        if self._registry is None:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text="agent registry not wired; :attach only works in `reyn chat`",
+            ))
+            return
+        if not self._registry.exists(name):
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"agent {name!r} not found; create with `reyn agent new {name}`",
+            ))
+            return
+        if name == self._registry.attached_name:
+            await self._put_outbox(OutboxMessage(
+                kind="status", text=f"already attached to {name!r}",
+            ))
+            return
+        # The REPL drains its own outbox loop. Send the attach request as a
+        # specially-kinded message so the input loop can recognize it.
+        await self._put_outbox(OutboxMessage(
+            kind="__attach_request__", text=name,
+        ))
+
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
     async def _spawn_skill(self, spec: dict) -> None:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
         if not skill_name or not isinstance(input_artifact, dict):
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text=f"invalid skill spec: {spec}",
             ))
             return
@@ -940,7 +1035,7 @@ class ChatSession:
         self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         # Track elapsed time for `:list` and provenance for outbox messages
         self.running_skills_started_at[run_id] = time.monotonic()
-        await self.outbox.put(OutboxMessage(
+        await self._put_outbox(OutboxMessage(
             kind="status", text="起動...",
             meta=_run_meta(run_id, skill_name),
         ))
@@ -960,14 +1055,14 @@ class ChatSession:
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
         except SystemExit:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text=f"skill not found: {skill_name}", meta=meta,
             ))
             return
         try:
             skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
         except Exception as exc:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
             ))
             return
@@ -981,13 +1076,13 @@ class ChatSession:
         try:
             result = await agent.run(skill, input_artifact, output_language=self.output_language)
         except asyncio.CancelledError:
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="status", text="cancelled", meta=meta,
             ))
             raise
         except Exception as exc:
             self._chat_events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed: {exc}", meta=meta,
             ))
             return
@@ -1023,7 +1118,7 @@ class ChatSession:
                     "status": result.status,
                 },
             ))
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="agent", text=narrated, meta=meta,
             ))
         else:
@@ -1040,6 +1135,6 @@ class ChatSession:
                     "narration_failed": True,
                 },
             ))
-            await self.outbox.put(OutboxMessage(
+            await self._put_outbox(OutboxMessage(
                 kind="skill_done", text=fallback, meta=meta,
             ))
