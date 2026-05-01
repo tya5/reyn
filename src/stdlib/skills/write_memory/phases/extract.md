@@ -62,9 +62,29 @@ missing ones do.
 
 ### Updating vs creating
 
+**Before deciding `create`, scan Step 1's index for any existing entry whose
+topic overlaps the fact you're about to save**, even when phrased differently.
+The check is semantic, not string-equal:
+
+- `User Role` (existing: "backend engineer with 10y Python") vs new fact
+  "I also use Rust" → **update** the existing entry, do not create
+  `User Languages`.
+- `Pref: Terse` (existing) vs new fact "I want short replies" → **update**
+  (or skip — it may already cover this).
+- `Python Experience` (existing: "10 years") vs new fact "I started Rust
+  recently" → these are different topics; create a new `Rust Experience`
+  entry, but consider whether the original memory's name should be
+  generalized to `Programming Languages` via update.
+
+Same-topic memories under different slugs are a bug, not a feature — they
+fragment recall and let conflicting facts coexist. When in doubt, **update
+the existing entry** rather than creating a near-duplicate.
+
+Decision rules:
+
 - If an existing memory's content needs to grow (new info on the same topic),
-  emit `op: update`.
-- If it's a wholly new topic, emit `op: create`.
+  emit `op: update` with that memory's existing slug.
+- If it's a wholly new topic with no overlap in the index, emit `op: create`.
 - `delete` is rare — only when the user explicitly says "forget X" or the
   memory turned out wrong.
 - If nothing memorable, **skip Step 3 entirely** and go straight to the
@@ -127,20 +147,52 @@ If you wrote at least one body this turn, emit **exactly one** `file` op:
 
 - `op: write`
 - `path: .reyn/memory/MEMORY.md`   (verbatim — the filename is "MEMORY.md")
-- `content`: the full reconstructed index. Each entry uses **just the slug
-  filename** (e.g. `user_role.md`), not an absolute path — the body lives in
-  the same directory as `MEMORY.md`.
+- `content`: the full reconstructed index, in the **exact format** below.
+
+#### Index entry format (REQUIRED — every line MUST match)
+
+```
+- [Name](slug.md) — description
+```
+
+Every entry line MUST contain all four parts:
+
+1. `- ` (hyphen + space)
+2. `[Name]` — the memory's name (matches the body's frontmatter `name`)
+3. `(slug.md)` — bare slug filename, no path prefix
+4. ` — description` — em-dash (` — `) plus the **same one-line description
+   from the body's frontmatter `description` field**, copied verbatim
+
+The description after the em-dash is **load-bearing**: callers (e.g. the
+chat router) decide whether the index entry is enough to answer a question
+or whether they need to open the body. Skipping the description forces every
+caller to open every body — wasteful and slow.
+
+Concrete examples:
 
 ```markdown
 # Memory Index
 
-- [Name 1](slug_1.md) — description 1
-- [Name 2](slug_2.md) — description 2
+- [User Role](user_role.md) — Backend engineer with 10 years of Python experience
+- [Preference: Terse](feedback_terse.md) — Wants short replies, no trailing pleasantries
+- [Project: Memory Layer](project_memory_layer.md) — Active rewrite to inject MEMORY.md as router preprocessor input
 ```
 
-Reconstructed index = existing entries (from Step 1's read) + your new ones
-- any deleted ones. **Always use `write` (full overwrite), never `edit`** —
-this works whether or not the index existed before.
+Wrong forms (do NOT produce these):
+
+- ✗ `- [User Role](user_role.md)` — missing description
+- ✗ `- [User Role](user_role.md) - description` — wrong dash (must be ` — `)
+- ✗ `- User Role: backend engineer...` — missing markdown link
+- ✗ `- [User Role](.reyn/memory/user_role.md) — ...` — path prefix forbidden
+
+Reconstructed index = existing entries (from Step 1's read, parsed and kept
+intact) + your new entries - any deleted ones. **Always use `write` (full
+overwrite), never `edit`** — this works whether or not the index existed
+before.
+
+When carrying over existing entries from Step 1's read, copy the entire
+line verbatim (including its description). Do NOT rewrite descriptions for
+memories you are not creating/updating this turn.
 
 ## Step 4 — Decide turn (after writes complete)
 

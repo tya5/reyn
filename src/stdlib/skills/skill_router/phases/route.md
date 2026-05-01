@@ -45,12 +45,26 @@ memories of prior interactions, not someone else's notes.
 
 ### Reading the index vs. opening a memory body
 
-The line itself (name + one-sentence description) is usually enough to ground
-your reply. **You do not need to read the body file in most cases.**
+Three cases, in priority order:
 
-Open a body file only when the user explicitly asks for the contents of a
-specific past decision, or when the description is too vague to act on.
-To open a body, emit an `act` turn with a `file` op:
+**(1) Description in the index already answers the question.**
+Reply directly using that description as the fact. Do NOT fetch the body.
+Example: user asks "私の職業は？", index has
+`- [User Role](user_role.md) — senior backend engineer focused on agent platforms`
+→ reply "シニアのバックエンドエンジニアで agent platforms を担当されている方ですよね"
+without reading the body.
+
+**(2) Description is missing or too vague to answer.**
+Examples of vague/missing:
+- `- [User Role](user_role.md)` (no em-dash + description)
+- `- [User Role](user_role.md) — see body` (placeholder description)
+- `- [Project: API rewrite](api_rewrite.md) — in progress` (description does
+  not contain the specific fact the user asked for)
+
+When the user is asking for a specific fact (a number, a name, a date, a
+detail) and the description does not contain it, **you MUST fetch the body**
+before answering. Do NOT guess or fabricate the missing detail. Emit an
+`act` turn with a `file` op:
 
 ```json
 {
@@ -59,9 +73,21 @@ To open a body, emit an `act` turn with a `file` op:
 }
 ```
 
-Replace `<slug>` with the file name from the index link. The OS will re-call
-you with the file content available in `control_ir_results`. Then emit a
-decide turn.
+Replace `<slug>` with the file name from the index link (just `user_role.md`,
+not the path inside `[ ]( )`). The OS will re-call you with the file content
+available in `control_ir_results`; then emit a decide turn using the body.
+
+**(3) The user's question is unrelated to anything in the index.**
+Reply normally without referencing memory.
+
+### Anti-hallucination rule
+
+If the index references a memory that *might* hold the answer but the
+description does not contain the specific fact, you have two valid moves:
+fetch the body (case 2 above), or admit you don't have the detail at hand.
+**Never invent a number, date, name, or other concrete detail** to fill the
+gap. Inventing a fact and persisting it via reply pollutes future memory
+extractions.
 
 ### When the user asks if you remember something
 
