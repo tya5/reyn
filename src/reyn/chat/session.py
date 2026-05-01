@@ -253,6 +253,7 @@ class ChatSession:
         compaction_config: "CompactionConfig | None" = None,
         registry: "AgentRegistry | None" = None,
         max_hop_depth: int = 3,
+        chain_timeout_seconds: float = 60.0,
         allowed_skills: list[str] | None = None,
     ) -> None:
         self.agent_name = agent_name
@@ -272,6 +273,10 @@ class ChatSession:
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
         self._max_hop_depth = max_hop_depth
+        # PR18: per-chain wall-clock budget. Non-positive disables. When the
+        # budget elapses, the runtime synthesizes an error response upstream
+        # so a chain stuck on a non-responsive delegate doesn't hang forever.
+        self._chain_timeout_seconds = chain_timeout_seconds
         # PR15: optional skill allowlist sourced from profile.allowed_skills.
         # None = unrestricted (default, BC). Empty list = router runs but no
         # skill spawn. stdlib router/compactor/narrator are NOT subject to
@@ -308,6 +313,11 @@ class ChatSession:
         # locally (user-initiated chains live without a pending entry — their
         # interim+final UX is handled in _handle_user_message).
         self._pending_chains: dict[str, _PendingChain] = {}
+        # PR18: timeout watchdog tasks per pending chain, paired 1:1 with
+        # `_pending_chains`. Started at registration, cancelled on resolution
+        # or shutdown. Empty when timeouts are disabled (chain_timeout_seconds
+        # <= 0).
+        self._pending_chain_timers: dict[str, asyncio.Task] = {}
 
         from reyn.pricing import TokenUsage
         self._total_usage: TokenUsage = TokenUsage()
@@ -436,6 +446,18 @@ class ChatSession:
             task.cancel()
         if self.running_skills:
             await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
+
+        # PR18: cancel any pending chain-timeout watchdogs so they don't keep
+        # the loop alive past shutdown. Late-firing timers swallow their work
+        # (the pending entry is gone) but cancellation is cleaner.
+        for task in list(self._pending_chain_timers.values()):
+            if not task.done():
+                task.cancel()
+        if self._pending_chain_timers:
+            await asyncio.gather(
+                *self._pending_chain_timers.values(), return_exceptions=True
+            )
+        self._pending_chain_timers.clear()
 
         if self._compaction_task is not None and not self._compaction_task.done():
             try:
@@ -1128,6 +1150,8 @@ class ChatSession:
                 original_request=request,
                 waiting_on={(m["to"] or "").strip() for m in messages_to_agents},
             )
+            # PR18: arm the timeout watchdog for this chain.
+            self._arm_chain_timeout(chain_id)
             for msg in messages_to_agents:
                 await self._send_to_agent(
                     to=(msg["to"] or "").strip(),
@@ -1235,6 +1259,7 @@ class ChatSession:
                 depth=pending.origin_depth, chain_id=chain_id,
             )
             self._pending_chains.pop(chain_id, None)
+            self._cancel_chain_timeout(chain_id)
             return
 
         new_delegations = [
@@ -1272,6 +1297,74 @@ class ChatSession:
             depth=pending.origin_depth, chain_id=chain_id,
         )
         self._pending_chains.pop(chain_id, None)
+        self._cancel_chain_timeout(chain_id)
+
+    # ── chain timeout (PR18) ───────────────────────────────────────────────────
+
+    def _arm_chain_timeout(self, chain_id: str) -> None:
+        """Start a watchdog task for `chain_id`. No-op when timeouts are
+        disabled (chain_timeout_seconds <= 0). Idempotent — replaces any
+        existing timer for the same chain_id."""
+        if self._chain_timeout_seconds <= 0:
+            return
+        existing = self._pending_chain_timers.pop(chain_id, None)
+        if existing is not None and not existing.done():
+            existing.cancel()
+        self._pending_chain_timers[chain_id] = asyncio.create_task(
+            self._chain_timeout_watch(chain_id)
+        )
+
+    def _cancel_chain_timeout(self, chain_id: str) -> None:
+        timer = self._pending_chain_timers.pop(chain_id, None)
+        if timer is not None and not timer.done():
+            timer.cancel()
+
+    async def _chain_timeout_watch(self, chain_id: str) -> None:
+        """Watchdog: after `chain_timeout_seconds`, if `chain_id` is still
+        pending, synthesize an error response upstream and clear it.
+
+        Cancellation (when the chain resolves normally) raises CancelledError
+        out of the sleep — we just exit. shutdown() also cancels these tasks
+        and gathers them with `return_exceptions=True`, so a late firing
+        during teardown is harmless.
+        """
+        try:
+            await asyncio.sleep(self._chain_timeout_seconds)
+        except asyncio.CancelledError:
+            return
+        pending = self._pending_chains.pop(chain_id, None)
+        self._pending_chain_timers.pop(chain_id, None)
+        if pending is None:
+            return  # resolved between sleep wake and pop — nothing to do
+        waiting = sorted(pending.waiting_on)
+        error_text = (
+            f"chain timeout: {len(waiting)} delegate(s) "
+            f"({', '.join(waiting) or 'unknown'}) did not respond within "
+            f"{self._chain_timeout_seconds:g}s"
+        )
+        self._chat_events.emit(
+            "chain_timeout",
+            chain_id=chain_id,
+            waiting_on=waiting,
+            timeout_seconds=self._chain_timeout_seconds,
+            origin_agent=pending.origin_agent,
+        )
+        try:
+            await self._send_agent_response(
+                to=pending.origin_agent,
+                response=error_text,
+                depth=pending.origin_depth,
+                chain_id=chain_id,
+            )
+        except Exception as exc:
+            # Don't let send failures wedge the loop — we already removed
+            # the pending entry, so the worst case is a chain that lost its
+            # error message but already won't hang.
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"chain timeout: failed to notify upstream: {exc}",
+                meta={"chain_id": chain_id},
+            ))
 
     async def _dispatch_routing_decision_for_user(
         self, decision: dict, *, chain_id: str, depth: int,

@@ -68,7 +68,7 @@ Every top-level user submission mints a `chain_id` (uuid4 hex) at `submit_user_t
 
 ### Fan-out
 
-`messages_to_agents` may contain multiple entries. The pending chain's `waiting_on` set holds all of them; the synthesized reply happens only after **every** delegate responds (wait-for-all). A single slow delegate currently delays the whole synthesis — chain timeout is on the residual list.
+`messages_to_agents` may contain multiple entries. The pending chain's `waiting_on` set holds all of them; the synthesized reply happens only after **every** delegate responds (wait-for-all). A single slow delegate delays the whole synthesis until either it responds or `multi_agent.chain_timeout_seconds` (default 60s) elapses — at which point a `chain_timeout` event fires and a synthesized error response unblocks the upstream agent.
 
 ## User-initiated vs agent-initiated chains
 

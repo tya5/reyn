@@ -86,8 +86,15 @@ class MultiAgentConfig:
     runaway delegation chains. depth=0 is the user-originated request; each
     `_send_to_agent` increments. `max_hop_depth=3` allows up to user→A→B→C
     (3 hops) before refusing further delegation.
+
+    `chain_timeout_seconds` (PR18) bounds how long a pending chain may wait
+    for delegate responses before the runtime gives up and synthesizes an
+    error response back upstream. `0` (or any non-positive value) disables
+    timeouts entirely — useful for tests / experiments where long-running
+    delegates are expected.
     """
     max_hop_depth: int = 3
+    chain_timeout_seconds: float = 60.0
 
 
 @dataclass
@@ -358,8 +365,12 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
 
 def _build_multi_agent_config(raw: object) -> MultiAgentConfig:
+    defaults = MultiAgentConfig()
     if not isinstance(raw, dict):
-        return MultiAgentConfig()
+        return defaults
     return MultiAgentConfig(
-        max_hop_depth=int(raw.get("max_hop_depth", MultiAgentConfig().max_hop_depth)),
+        max_hop_depth=int(raw.get("max_hop_depth", defaults.max_hop_depth)),
+        chain_timeout_seconds=float(
+            raw.get("chain_timeout_seconds", defaults.chain_timeout_seconds)
+        ),
     )
