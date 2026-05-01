@@ -83,6 +83,32 @@ def _run_meta(run_id: str | None, skill_name: str | None) -> dict:
     }
 
 
+def _new_chain_id() -> str:
+    """Mint a fresh chain_id for a top-level user request. Each user submission
+    starts a new chain; agent_request / agent_response payloads forward the
+    chain_id they received without minting new ones."""
+    return uuid.uuid4().hex
+
+
+@dataclass
+class _PendingChain:
+    """Multi-hop relay state held in a delegating agent.
+
+    Created when an agent receives an `agent_request` and decides to
+    further delegate (router emits `messages_to_agents`). The reply to
+    the upstream `origin_agent` is held back until every entry in
+    `waiting_on` has returned an `agent_response` for this chain_id.
+    On the final response, the agent re-runs its router so the LLM can
+    compose a synthesized answer with all delegate replies in history,
+    then sends that answer to `origin_agent` at `origin_depth`.
+    """
+    chain_id: str
+    origin_agent: str
+    origin_depth: int
+    original_request: str
+    waiting_on: set[str]
+
+
 def _iv_meta(iv: "UserIntervention") -> dict:
     """Standard `meta` payload for OutboxMessage announcing an intervention."""
     out = {"intervention_id": iv.id, "intervention_kind": iv.kind}
@@ -211,6 +237,14 @@ class ChatSession:
         # agents don't accumulate display noise.
         self.is_attached: bool = False
 
+        # PR14: per-chain state for multi-hop relay. When this agent receives
+        # an agent_request and decides to delegate to other agents, the upstream
+        # reply is held back until every delegate replies. Keyed by chain_id;
+        # absent entry means the chain is either not multi-hop or originated
+        # locally (user-initiated chains live without a pending entry — their
+        # interim+final UX is handled in _handle_user_message).
+        self._pending_chains: dict[str, _PendingChain] = {}
+
         from reyn.pricing import TokenUsage
         self._total_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
@@ -277,20 +311,25 @@ class ChatSession:
     # ── inbox API ───────────────────────────────────────────────────────────────
 
     async def submit_user_text(self, text: str) -> None:
-        await self.inbox.put(("user", {"text": text}))
+        # PR14: every top-level user submission starts a fresh chain_id that
+        # propagates through any agent_request / agent_response generated in
+        # response. Logged in history meta + events.jsonl for cross-agent trace.
+        await self.inbox.put(("user", {"text": text, "chain_id": _new_chain_id()}))
 
     async def submit_agent_request(
-        self, *, from_agent: str, request: str, depth: int,
+        self, *, from_agent: str, request: str, depth: int, chain_id: str,
     ) -> None:
         await self.inbox.put(("agent_request", {
             "from_agent": from_agent, "request": request, "depth": depth,
+            "chain_id": chain_id,
         }))
 
     async def submit_agent_response(
-        self, *, from_agent: str, response: str, depth: int,
+        self, *, from_agent: str, response: str, depth: int, chain_id: str,
     ) -> None:
         await self.inbox.put(("agent_response", {
             "from_agent": from_agent, "response": response, "depth": depth,
+            "chain_id": chain_id,
         }))
 
     async def shutdown(self) -> None:
@@ -307,7 +346,10 @@ class ChatSession:
                 if kind == "shutdown":
                     break
                 if kind == "user":
-                    await self._handle_user_message(payload.get("text", ""))
+                    await self._handle_user_message(
+                        payload.get("text", ""),
+                        chain_id=payload.get("chain_id") or _new_chain_id(),
+                    )
                 elif kind == "agent_request":
                     await self._handle_agent_request(payload)
                 elif kind == "agent_response":
@@ -337,7 +379,7 @@ class ChatSession:
             except Exception:
                 pass
 
-    async def _handle_user_message(self, text: str) -> None:
+    async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
         # Slash commands (`:list`, `:cancel <id>`, `:answer <id> <text>`) take
         # precedence over both the active-intervention router and a fresh
         # router turn.
@@ -350,33 +392,31 @@ class ChatSession:
         if await self._maybe_answer_oldest_intervention(text):
             return
 
-        self._append_history(ChatMessage(role="user", text=text, ts=_now_iso()))
-        self._chat_events.emit("user_message_received", text=text)
-        await self._put_outbox(OutboxMessage(kind="status", text="考え中..."))
+        self._append_history(ChatMessage(
+            role="user", text=text, ts=_now_iso(),
+            meta={"chain_id": chain_id},
+        ))
+        self._chat_events.emit("user_message_received", text=text, chain_id=chain_id)
+        await self._put_outbox(OutboxMessage(
+            kind="status", text="考え中...", meta={"chain_id": chain_id},
+        ))
 
         try:
             decision = await self._invoke_router(text)
         except Exception as exc:
-            await self._put_outbox(OutboxMessage(kind="error", text=f"router failed: {exc}"))
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"router failed: {exc}",
+                meta={"chain_id": chain_id},
+            ))
             return
 
-        reply_text = (decision.get("reply_text") or "").strip()
-        skills_to_run = decision.get("skills_to_run") or []
-        messages_to_agents = decision.get("messages_to_agents") or []
-
-        if reply_text:
-            await self._put_outbox(OutboxMessage(kind="agent", text=reply_text))
-            self._append_history(ChatMessage(role="agent", text=reply_text, ts=_now_iso()))
-
-        for spec in skills_to_run:
-            await self._spawn_skill(spec)
-
-        for msg in messages_to_agents:
-            to = (msg.get("to") or "").strip()
-            request = (msg.get("request") or "").strip()
-            if to and request:
-                # User-originated chain starts at depth 1 (incremented from 0).
-                await self._send_to_agent(to=to, request=request, depth=1)
+        # User-initiated chains keep the PR11 interim+final UX: reply_text
+        # is delivered to the user immediately even when delegations are
+        # also present. The deferred-reply mechanic is reserved for the
+        # agent_request branch (see _handle_agent_request).
+        await self._dispatch_routing_decision_for_user(
+            decision, chain_id=chain_id, depth=0,
+        )
 
         # Fire-and-forget compaction check after the user has the reply.
         # Reuses self._compacting as a single-flight lock; no await here so
@@ -833,14 +873,18 @@ class ChatSession:
             if iv is not None and not iv.future.done():
                 iv.future.cancel()
 
-    # ── agent-to-agent messaging (PR11) ─────────────────────────────────────────
+    # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
 
-    async def _send_to_agent(self, *, to: str, request: str, depth: int) -> None:
+    async def _send_to_agent(
+        self, *, to: str, request: str, depth: int, chain_id: str,
+    ) -> None:
         """Route a delegation request from this agent to `to`.
 
         depth is the hop count from the original user request (user → A = 1,
         A → B = 2, ...). Refused when depth > max_hop_depth (LangGraph-style
-        guard, default 3).
+        guard, default 3). chain_id (PR14) identifies the logical request
+        thread for cross-agent trace; it propagates verbatim to the target's
+        inbox payload and is recorded in history meta + events.
         """
         if depth > self._max_hop_depth:
             await self._put_outbox(OutboxMessage(
@@ -849,16 +893,24 @@ class ChatSession:
                     f"agent message depth {depth} exceeds limit "
                     f"{self._max_hop_depth}; chain refused"
                 ),
+                meta={"chain_id": chain_id},
             ))
+            self._chat_events.emit(
+                "agent_message_refused",
+                reason="max_hop_depth",
+                to_agent=to, depth=depth, chain_id=chain_id,
+            )
             return
         if to == self.agent_name:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"agent {to!r}: cannot self-message",
+                meta={"chain_id": chain_id},
             ))
             return
         if self._registry is None or not self._registry.exists(to):
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"agent {to!r} not found",
+                meta={"chain_id": chain_id},
             ))
             return
         # PR12: topology gate. Defense in depth alongside the
@@ -868,6 +920,7 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="error",
                 text=f"agent {to!r}: blocked by topology rules",
+                meta={"chain_id": chain_id},
             ))
             return
 
@@ -882,26 +935,30 @@ class ChatSession:
             role="agent", text=request, ts=_now_iso(),
             meta={
                 "source": "agent_request_outgoing",
-                "to_agent": to, "depth": depth,
+                "to_agent": to, "depth": depth, "chain_id": chain_id,
             },
         ))
         self._chat_events.emit(
             "agent_message_sent",
             kind="agent_request",
-            from_agent=self.agent_name, to_agent=to, depth=depth,
+            from_agent=self.agent_name, to_agent=to,
+            depth=depth, chain_id=chain_id,
         )
         await target.submit_agent_request(
-            from_agent=self.agent_name, request=request, depth=depth,
+            from_agent=self.agent_name, request=request,
+            depth=depth, chain_id=chain_id,
         )
 
     async def _send_agent_response(
-        self, *, to: str, response: str, depth: int,
+        self, *, to: str, response: str, depth: int, chain_id: str,
     ) -> None:
         """Route a reply from this agent back to the requester `to`.
 
         depth is propagated from the original request (B replying to A's
         depth-1 request stays at depth 1; A's next hop will increment).
         Empty response is still sent so chains never silently stall.
+        chain_id (PR14) carries the same value the original request did so
+        the requester can correlate the reply with its pending chain.
         """
         if depth > self._max_hop_depth:
             return  # silently drop — sender already gave up the chain
@@ -912,17 +969,31 @@ class ChatSession:
         self._chat_events.emit(
             "agent_message_sent",
             kind="agent_response",
-            from_agent=self.agent_name, to_agent=to, depth=depth,
+            from_agent=self.agent_name, to_agent=to,
+            depth=depth, chain_id=chain_id,
         )
         await target.submit_agent_response(
-            from_agent=self.agent_name, response=response, depth=depth,
+            from_agent=self.agent_name, response=response,
+            depth=depth, chain_id=chain_id,
         )
 
     async def _handle_agent_request(self, payload: dict) -> None:
-        """Process an incoming agent_request: run router, send back reply."""
+        """Process an incoming agent_request.
+
+        PR14 deferred-reply path: if the router emits `messages_to_agents`
+        (= this agent wants to consult others before answering), the reply
+        to the requester is held back. A `_PendingChain` entry is created
+        keyed by chain_id; when every delegated agent has responded, the
+        router runs again with all replies in history and the synthesized
+        reply_text is finally sent upstream.
+
+        If no delegations are emitted, behavior matches PR11: send the
+        router's reply_text (or empty) right back to the requester.
+        """
         from_agent = payload.get("from_agent", "")
         request = payload.get("request", "")
         depth = int(payload.get("depth", 1))
+        chain_id = payload.get("chain_id") or _new_chain_id()
 
         # Receiver-side audit
         self._append_history(ChatMessage(
@@ -930,11 +1001,12 @@ class ChatSession:
             meta={
                 "source": "agent_request",
                 "from_agent": from_agent, "depth": depth,
+                "chain_id": chain_id,
             },
         ))
         self._chat_events.emit(
             "agent_request_received",
-            from_agent=from_agent, depth=depth,
+            from_agent=from_agent, depth=depth, chain_id=chain_id,
         )
 
         try:
@@ -942,90 +1014,202 @@ class ChatSession:
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"router failed (agent_request): {exc}",
+                meta={"chain_id": chain_id},
             ))
             # Even on failure, send empty response so the requester chain
             # doesn't stall waiting forever.
             await self._send_agent_response(
-                to=from_agent, response="", depth=depth,
+                to=from_agent, response="", depth=depth, chain_id=chain_id,
             )
             return
 
         reply_text = (decision.get("reply_text") or "").strip()
         skills_to_run = decision.get("skills_to_run") or []
-        messages_to_agents = decision.get("messages_to_agents") or []
+        messages_to_agents = [
+            m for m in (decision.get("messages_to_agents") or [])
+            if (m.get("to") or "").strip() and (m.get("request") or "").strip()
+        ]
 
+        # Skills run locally without affecting hop depth.
+        for spec in skills_to_run:
+            await self._spawn_skill(spec)
+
+        if messages_to_agents:
+            # PR14 deferred path: register pending chain, dispatch delegations,
+            # WITHOUT replying to the requester this turn. The reply will be
+            # synthesized after every delegate responds (see _handle_agent_response).
+            # If reply_text was also produced it's discarded — the deferred
+            # final answer takes the place of any interim narration.
+            self._pending_chains[chain_id] = _PendingChain(
+                chain_id=chain_id,
+                origin_agent=from_agent,
+                origin_depth=depth,
+                original_request=request,
+                waiting_on={(m["to"] or "").strip() for m in messages_to_agents},
+            )
+            for msg in messages_to_agents:
+                await self._send_to_agent(
+                    to=(msg["to"] or "").strip(),
+                    request=(msg["request"] or "").strip(),
+                    depth=depth + 1,
+                    chain_id=chain_id,
+                )
+            return
+
+        # PR11-compatible single-hop reply path. Always send (even on empty
+        # reply_text) so the requester's chain unwinds.
         if reply_text:
             self._append_history(ChatMessage(
                 role="agent", text=reply_text, ts=_now_iso(),
                 meta={
                     "source": "agent_response_outgoing",
                     "to_agent": from_agent, "depth": depth,
+                    "chain_id": chain_id,
                 },
             ))
-
-        # PR11 limitation (single-hop relay): we send the reply back to the
-        # requester here. If this turn ALSO emits messages_to_agents (B trying
-        # to relay through C), B replies to A immediately with whatever
-        # reply_text it has — A's chain ends, and B's downstream chain to C
-        # becomes an independent fan-out tracked only by depth + history meta.
-        # Multi-hop relay (B waits for C, then forwards C's reply to A) needs
-        # chain_id correlation; out of scope for PR11, see PR12+ residuals.
-        # Always sending (even on empty reply_text) prevents silent stalls
-        # — the requester's chain unwinds with whatever info B had.
         await self._send_agent_response(
-            to=from_agent, response=reply_text, depth=depth,
+            to=from_agent, response=reply_text, depth=depth, chain_id=chain_id,
         )
 
-        # Skills run locally without affecting hop depth. Further delegation
-        # is an independent chain rooted at this agent (no relay back to the
-        # original requester — see limitation above).
-        for spec in skills_to_run:
-            await self._spawn_skill(spec)
-        for msg in messages_to_agents:
-            to = (msg.get("to") or "").strip()
-            request = (msg.get("request") or "").strip()
-            if to and request:
-                await self._send_to_agent(to=to, request=request, depth=depth + 1)
-
     async def _handle_agent_response(self, payload: dict) -> None:
-        """Process an incoming agent_response: re-invoke router with the reply.
+        """Process an incoming agent_response.
 
-        The router runs again with `response` as the user_message; recent
-        history (including the agent_response audit entry just appended)
-        gives it context about which delegation chain this is closing.
+        Two branches:
+        - chain_id ∈ self._pending_chains → multi-hop relay. Drop sender
+          from waiting_on; when waiting_on becomes empty, re-invoke router
+          and forward the synthesized reply (or fresh delegations) on the
+          same chain. Reply goes to the chain's `origin_agent`, NOT
+          `from_agent`.
+        - chain_id ∉ self._pending_chains → user-initiated chain (PR11
+          compatibility). The router's reply_text is treated as a
+          user-facing message (outbox + history); further delegations
+          continue with depth+1 on the same chain_id.
         """
         from_agent = payload.get("from_agent", "")
         response = payload.get("response", "")
         depth = int(payload.get("depth", 1))
+        chain_id = payload.get("chain_id") or _new_chain_id()
 
         self._append_history(ChatMessage(
             role="user", text=response, ts=_now_iso(),
             meta={
                 "source": "agent_response",
                 "from_agent": from_agent, "depth": depth,
+                "chain_id": chain_id,
             },
         ))
         self._chat_events.emit(
             "agent_response_received",
-            from_agent=from_agent, depth=depth,
+            from_agent=from_agent, depth=depth, chain_id=chain_id,
         )
 
+        pending = self._pending_chains.get(chain_id)
+        if pending is not None:
+            await self._resolve_pending_chain(
+                pending, from_agent=from_agent,
+            )
+            return
+
+        # User-initiated chain: PR11 path, reply goes to user.
         try:
             decision = await self._invoke_router(response)
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"router failed (agent_response): {exc}",
+                meta={"chain_id": chain_id},
             ))
             return
+        await self._dispatch_routing_decision_for_user(
+            decision, chain_id=chain_id, depth=depth,
+        )
 
+    async def _resolve_pending_chain(
+        self, pending: "_PendingChain", *, from_agent: str,
+    ) -> None:
+        """Drive a multi-hop pending chain forward by one delegate response.
+
+        Drops `from_agent` from `pending.waiting_on`. If others remain,
+        no-op (the chain is still gathering replies). Otherwise, re-runs
+        the router on the original request — by now every delegate's
+        response is appended to history, so the LLM has all the material
+        to compose a synthesized answer (or decide on more delegations,
+        which keeps the chain pending).
+        """
+        pending.waiting_on.discard(from_agent)
+        if pending.waiting_on:
+            return  # still waiting on other delegates
+
+        chain_id = pending.chain_id
+        try:
+            decision = await self._invoke_router(pending.original_request)
+        except Exception as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"router failed (chain resolve): {exc}",
+                meta={"chain_id": chain_id},
+            ))
+            # Send empty upstream so the parent chain doesn't hang.
+            await self._send_agent_response(
+                to=pending.origin_agent, response="",
+                depth=pending.origin_depth, chain_id=chain_id,
+            )
+            self._pending_chains.pop(chain_id, None)
+            return
+
+        new_delegations = [
+            m for m in (decision.get("messages_to_agents") or [])
+            if (m.get("to") or "").strip() and (m.get("request") or "").strip()
+        ]
+        for spec in decision.get("skills_to_run") or []:
+            await self._spawn_skill(spec)
+
+        if new_delegations:
+            # Continue the chain with a fresh wave of delegations.
+            pending.waiting_on = {(m["to"] or "").strip() for m in new_delegations}
+            for msg in new_delegations:
+                await self._send_to_agent(
+                    to=(msg["to"] or "").strip(),
+                    request=(msg["request"] or "").strip(),
+                    depth=pending.origin_depth + 1,
+                    chain_id=chain_id,
+                )
+            return
+
+        final_reply = (decision.get("reply_text") or "").strip()
+        if final_reply:
+            self._append_history(ChatMessage(
+                role="agent", text=final_reply, ts=_now_iso(),
+                meta={
+                    "source": "agent_response_outgoing",
+                    "to_agent": pending.origin_agent,
+                    "depth": pending.origin_depth,
+                    "chain_id": chain_id,
+                },
+            ))
+        await self._send_agent_response(
+            to=pending.origin_agent, response=final_reply,
+            depth=pending.origin_depth, chain_id=chain_id,
+        )
+        self._pending_chains.pop(chain_id, None)
+
+    async def _dispatch_routing_decision_for_user(
+        self, decision: dict, *, chain_id: str, depth: int,
+    ) -> None:
+        """Common user-facing tail of `_handle_user_message` / agent_response
+        when chain_id has no pending entry. Pushes reply_text to the user
+        outbox + history, spawns any skills, and forwards delegations on
+        the same chain (depth+1)."""
         reply_text = (decision.get("reply_text") or "").strip()
         skills_to_run = decision.get("skills_to_run") or []
         messages_to_agents = decision.get("messages_to_agents") or []
 
         if reply_text:
-            await self._put_outbox(OutboxMessage(kind="agent", text=reply_text))
+            await self._put_outbox(OutboxMessage(
+                kind="agent", text=reply_text, meta={"chain_id": chain_id},
+            ))
             self._append_history(ChatMessage(
                 role="agent", text=reply_text, ts=_now_iso(),
+                meta={"chain_id": chain_id},
             ))
         for spec in skills_to_run:
             await self._spawn_skill(spec)
@@ -1033,8 +1217,10 @@ class ChatSession:
             to = (msg.get("to") or "").strip()
             request = (msg.get("request") or "").strip()
             if to and request:
-                # Continue the chain with depth+1.
-                await self._send_to_agent(to=to, request=request, depth=depth + 1)
+                await self._send_to_agent(
+                    to=to, request=request,
+                    depth=depth + 1, chain_id=chain_id,
+                )
 
     # ── slash command dispatch ──────────────────────────────────────────────────
 
