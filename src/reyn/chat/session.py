@@ -298,6 +298,24 @@ class ChatSession:
         skill_md = sl / "skills" / skill_name / "skill.md"
         return load_dsl_skill(str(skill_md), dsl_root=str(sl))
 
+    def pre_guard_stdlib_skills(self, skill_names: list[str]) -> None:
+        """Call startup_guard for each named stdlib skill before the REPL starts.
+
+        startup_guard() uses blocking input(). If called inside run_repl's
+        asyncio event loop it blocks prompt_async() and deadlocks. Calling this
+        synchronously here, before run_async(), avoids the race.
+        """
+        if self._perm is None:
+            return
+        for name in skill_names:
+            try:
+                skill = self._load_stdlib_skill(name)
+                self._perm.startup_guard(skill, name)
+            except SystemExit:
+                raise
+            except Exception:
+                pass  # surface the error inside the REPL when the skill runs
+
     async def _run_stdlib_skill(
         self,
         skill_name: str,
