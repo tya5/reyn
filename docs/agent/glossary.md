@@ -12,13 +12,27 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 
 | English | 日本語 | Definition |
 |---------|--------|------------|
-| Agent | エージェント | The interpreter of user intent. Selects or generates a Skill. |
+| Agent | エージェント | A long-lived ChatSession with its own profile, history, memory layer, and inbox. The interpreter of user intent. Persisted under `.reyn/agents/<name>/`. |
+| Agent Profile | エージェントプロファイル | `.reyn/agents/<name>/profile.yaml` declaring `name`, `role`, `created_at`, optional `allowed_skills`. |
+| Agent Registry | エージェントレジストリ | Process-scoped owner of all loaded ChatSession instances. Routes attach/detach and inter-agent messaging. |
 | Skill | スキル | A directory defining a phase graph and final output schema. |
 | Phase | フェーズ | A reusable processing unit declaring only its `input` and instructions. |
 | OS | OS | The runtime executor; sole owner of control flow. |
 | Workspace | ワークスペース | The shared store for files and artifacts. |
 | Artifact | アーティファクト | Structured data passed between phases. |
 | Event | イベント | A recorded state change. |
+
+## Multi-agent
+
+| English | 日本語 | Definition |
+|---------|--------|------------|
+| Topology | トポロジー | A declared communication structure (`network` / `team` / `pipeline`) listing members and edge rules. Persisted at `.reyn/topologies/<name>.yaml`. |
+| `_default` topology | デフォルトトポロジー | Auto-managed network containing every agent that does NOT belong to any user-declared topology. In-memory, recomputed on demand. |
+| Chain | チェイン | One logical request path from a top-level user submission, possibly spanning multiple agents and hops. Identified by `chain_id`. |
+| `chain_id` | チェイン ID | uuid4 hex minted by `submit_user_text`; propagated through every inbox payload, history meta, and event in the same chain. |
+| Pending Chain | ペンディングチェイン | State held in a delegating agent while it waits for delegate responses (deferred reply). Cleared when `waiting_on` becomes empty. |
+| `allowed_skills` | 許可スキル一覧 | Optional `list[str] \| None` in profile.yaml. `None` = unrestricted, `[]` = router-only, `[a, b]` = allowlist. stdlib router/compactor/narrator are not subject. |
+| Hop Depth | ホップ深度 | Number of agent-to-agent forwards from the original user request. Bounded by `multi_agent.max_hop_depth`. |
 
 ## Execution
 

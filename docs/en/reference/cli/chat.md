@@ -7,79 +7,83 @@ applies_to: [reyn chat]
 
 # `reyn chat`
 
-Start an interactive REPL session. Each user turn is dispatched through the `skill_router` stdlib skill, which picks the best skill for the message and runs it. Memory recall and write happen automatically (controlled by `chat.memory` in `reyn.yaml`).
+Start an interactive REPL session attached to an agent. Each user turn is dispatched through the `skill_router` stdlib skill, which classifies the intent and either replies directly, runs a project / stdlib skill, or delegates to another agent.
+
+Memory recall and write happen automatically inside the router phase — see [concepts/memory](../../concepts/memory.md).
 
 ## Synopsis
 
 ```
-reyn chat [OPTIONS]
+reyn chat [agent_name] [OPTIONS]
 ```
+
+`agent_name` is positional and optional. When omitted, reyn attaches to the auto-created `default` agent.
 
 ## Options
 
 | Flag | Description |
 |------|-------------|
-| `--chat-id ID` | Resume an existing chat by id. Default: a new id (a fresh `chats/<id>.json`). |
-| `--model MODEL` | Model class or LiteLLM model string. Default from `reyn.yaml`. |
+| `--rich` | Use Rich-styled console output instead of plain text. |
+| `--model MODEL` | Model class or LiteLLM model string for this session. Default from `reyn.yaml`. |
 | `--output-language LANG` | Output language code. Default from `reyn.yaml`. |
 | `--max-phase-visits N` | Cap on single-phase revisits per turn. `0` = unlimited. |
 
-## Session state
+## Agent workspace
 
-Each session is persisted as JSON at `.reyn/chats/<chat_id>.json`. The file holds:
+Each agent persists state under `.reyn/agents/<name>/`:
 
-- conversation history (user/assistant turns)
-- memory recall results that were injected into past turns
-- per-turn token usage and skill selection
+- `profile.yaml` — name, role, optional `allowed_skills` ([reference](../dsl/profile-yaml.md))
+- `history.jsonl` — append-only conversation log (chat + agent-to-agent messages, with chain_id for cross-agent trace)
+- `events.jsonl` — runtime events for `reyn events`
+- `memory/` — agent-scoped memory layer (`MEMORY.md` + body files)
+- `runs/` — workspaces for spawned skill runs
 
-To continue a conversation later, pass the same `--chat-id`.
+To resume a previous conversation, attach to the same agent:
 
-## Memory hooks
-
-When `chat.memory.enabled: true` (the default), every turn:
-
-1. **Recall**: the router preprocessor calls `recall_memory` and surfaces the top-`recall_top_k` matching memories to the chosen skill.
-2. **Write**: after every `chat.memory.turn_threshold` turns (or every `chat.memory.time_threshold` seconds), the session offers `write_memory` a chance to persist anything new.
-
-Both knobs are configured in `reyn.yaml`:
-
-```yaml
-chat:
-  memory:
-    enabled: true
-    global_enabled: false   # opt in to ~/.reyn/memory (cross-project)
-    turn_threshold: 4
-    time_threshold: 600
-    recall_top_k: 5
+```bash
+reyn chat researcher
 ```
 
-### Memory scopes
+The `default` agent always exists. Create more with [`reyn agent new`](agent.md).
 
-Memory lives in two places:
+## Slash commands
 
-| Scope | Path | Default |
-|-------|------|---------|
-| Project | `./.reyn/memory/` | always on (under CWD, no permission prompt) |
-| Global | `~/.reyn/memory/` | **off** — set `chat.memory.global_enabled: true` to enable |
+While a session is active, lines starting with `:` are intercepted and never routed to an agent.
 
-Global memory persists facts across projects (e.g. `User Role`, long-running preferences). Because `~/.reyn/` is outside the project root, enabling it triggers a one-time permission prompt at chat startup; the approval is persisted to `.reyn/approvals.yaml`.
+| Command | Effect |
+|---------|--------|
+| `:list` | Show running skill spawns and pending interventions |
+| `:cancel <id>` | Cancel a skill spawn (full id or last 4 chars) |
+| `:answer <id> <text>` | Answer a pending `ask_user` / permission prompt |
+| `:agents` | List loaded agents and which one is currently attached |
+| `:attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
+
+`:list` / `:cancel` / `:answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `:agents` / `:attach` are the multi-agent workflow primitives.
+
+## Multi-agent behavior
+
+If the router decides this turn would be better handled by another agent, it emits a `messages_to_agents` entry instead of (or in addition to) a `skills_to_run` entry. The receiving agent processes the request asynchronously; its reply is auto-routed back into the originating chain. See [concepts/multi-agent](../../concepts/multi-agent.md) for the full model.
+
+A user-initiated chain emits an interim `reply_text` (the originating agent's first router turn) followed by a synthesized final reply (after delegate responses arrive). This preserves the "you'll see I'm working on it" UX even across hops.
+
+The `:attach` slash lets you watch a delegate's progress mid-chain — the previous agent's `session.run()` keeps consuming its inbox, so coming back later still resolves cleanly.
 
 ## Permission behavior
 
-`reyn chat` is interactive: when a sub-skill needs a permission outside the defaults, the prompt blocks until you respond. Choices can be persisted to `.reyn/approvals.yaml` (see [permissions reference](../config/permissions.md)).
+`reyn chat` is interactive: when a sub-skill needs a permission outside the defaults, the prompt blocks until you respond via the intervention queue. Choices can be persisted to `.reyn/approvals.yaml` (see [permissions reference](../config/permissions.md)).
 
 ## Examples
 
-Start a new session:
+Start a new session against the default agent:
 
 ```bash
 reyn chat
 ```
 
-Resume a previous session:
+Attach to a named agent:
 
 ```bash
-reyn chat --chat-id 2026-04-30-1430-abc
+reyn chat researcher
 ```
 
 Use a stronger model just for this conversation:
@@ -90,8 +94,11 @@ reyn chat --model strong
 
 ## See also
 
-- [Reference: stdlib/skill_router](../stdlib/skill_router.md)
-- [Reference: stdlib/recall_memory](../stdlib/recall_memory.md)
-- [Reference: stdlib/write_memory](../stdlib/write_memory.md)
-- [Reference: state-dir](../config/state-dir.md) — `chats/` location
+- [Reference: agent CLI](agent.md) — `reyn agent new / list / show / rm`
+- [Reference: topology CLI](topology.md) — `reyn topology` to declare communication structure
+- [Reference: skill_router](../stdlib/skill_router.md)
+- [Reference: profile-yaml](../dsl/profile-yaml.md)
+- [Reference: multi-agent config](../config/multi-agent.md) — `multi_agent.max_hop_depth`
+- [Reference: state-dir](../config/state-dir.md) — `agents/` location
+- [Concepts: multi-agent](../../concepts/multi-agent.md)
 - [Concepts: memory](../../concepts/memory.md)

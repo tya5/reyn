@@ -6,16 +6,64 @@ audience: [human, agent]
 
 # Memory
 
-Memory is reyn's mechanism for facts that should outlive a single run: user preferences, project-specific conventions, prior decisions. Two stdlib skills (`recall_memory`, `write_memory`) are the only entry points — there is no separate memory API in the OS.
+Memory is reyn's mechanism for facts that should outlive a single run: user preferences, project conventions, prior decisions, agent-specific habits. The router phase (`skill_router/classify`) reads memory on every chat turn and decides whether to write new entries.
 
-## Two scopes
+There is no separate memory API in the OS — memory is just files plus the `file/read` and `file/write` ops the router phase uses through normal permission rules.
 
-| Scope | Lives at | Purpose |
-|-------|----------|---------|
-| Global | `~/.reyn/memory/` | Facts about the user (role, preferences) — shared across all projects |
-| Project | `.reyn/memory/` | Facts about this project (conventions, decisions, current state) |
+## Two layers
 
-Both scopes share the same shape: a `MEMORY.md` index plus one `<slug>.md` file per entry. Both are read together by `recall_memory` (project entries surface first).
+| Layer | Lives at | Visible to | Purpose |
+|-------|----------|------------|---------|
+| Shared | `.reyn/memory/` | All agents in the project | Project-wide facts: who the user is, project decisions, external references |
+| Agent | `.reyn/agents/<name>/memory/` | Only that agent | Agent-specific behavior: a researcher's preferred sources, a writer's voice |
+
+Both layers share the same shape: a `MEMORY.md` index plus one `<slug>.md` body file per entry. ChatSession reads both `MEMORY.md` files on every router turn, merges them into a single view, and embeds it in the routing artifact as `memory_index.content`. The merged view has two clearly-marked sections so the LLM can tell which layer an entry came from:
+
+```markdown
+# Memory Index (shared)
+
+- [User Role](user_role.md) — backend engineer with 10y Python
+- [Project Vision](project_reyn_vision.md) — predictability over autonomy
+
+# Memory Index (agent: researcher)
+
+- [Search Pref](feedback_arxiv_first.md) — prefers arxiv before web search
+```
+
+`(empty)` appears under either heading when a layer has no entries yet.
+
+## Choosing a layer
+
+The router prompt instructs the LLM to use **shared** when uncertain — broader visibility is the safer default:
+
+- **Shared**: facts that benefit every agent (user role, project decisions, deadlines, external system pointers)
+- **Agent**: facts only meaningful for *this* agent (its voice, its retrieval habits, behaviors that other agents shouldn't inherit)
+
+When the LLM decides to save, it emits two `file/write` ops in the same router turn:
+
+1. The body file at the chosen layer's path
+2. The MEMORY.md for the **same layer** — full reconstructed index
+
+Each layer has its own MEMORY.md on disk; the merged `(shared)` / `(agent)` headings only exist in the in-memory view ChatSession synthesizes for the LLM.
+
+## Read path
+
+```
+ChatSession._invoke_router
+  └─ _merge_memory_indexes(shared_path, agent_path, agent_name)
+       ├─ reads .reyn/memory/MEMORY.md (if present)
+       ├─ reads .reyn/agents/<name>/memory/MEMORY.md (if present)
+       └─ returns {status, content}  ← embedded in chat_routing_request artifact
+
+skill_router classify phase
+  └─ LLM sees memory_index.content alongside user_message + history
+```
+
+If a description in the index is too vague to answer from, the LLM emits an `act` turn with `file/read` for the body file (`.reyn/memory/<slug>.md` for shared, `.reyn/agents/<chat_id>/memory/<slug>.md` for agent). The phase's permissions allow recursive reads under both `.reyn/memory` and `.reyn/agents`.
+
+## Write path
+
+The router phase has `file.write` permission for both layers. The LLM constructs paths from `chat_id` (= the agent's own name) and never writes into another agent's directory. There is no enforcement at the OS layer beyond the directory-prefix permission grant — the trust boundary is the LLM prompt, audited via the events log.
 
 ## Symmetry with docs
 
@@ -24,62 +72,31 @@ The relationship between memory and docs is intentional:
 | Memory | Docs |
 |--------|------|
 | What the system has learned about *this* user/project | What the system *can do* in general |
-| Read by `recall_memory` (stdlib) | Read by `recall_docs` (planned, not yet implemented) |
+| Read inline by `skill_router` | Read by `recall_docs` (planned, not yet implemented) |
 | Persisted across runs | Static |
 
-Both fit the same shape: a stdlib skill that the OS does not need to know about. Adding new memory or doc kinds doesn't change OS code.
-
-## When to write memory
-
-Write memory for facts that will be useful **in future conversations**:
-
-- The user's role and ways they want to collaborate
-- Feedback they've given you (corrections AND validations)
-- Project context that's not derivable from `git log` or the codebase
-- Pointers to where information lives (Linear projects, Slack channels, dashboards)
-
-Don't write memory for:
-
-- Code patterns or architecture (read the code)
-- The current task's progress (use the task list / plan)
-- Things already documented (read the docs)
-
-## When to recall memory
-
-Recall is automatic in `reyn chat` (every turn, if `chat.memory.enabled`). Skills can also opt in via a preprocessor:
-
-```yaml
-preprocessor:
-  - run_skill:
-      skill: recall_memory
-      input:
-        type: user_message
-        data: { text: "what does the user prefer?" }
-      into: relevant_memories
-```
-
-The fetched entries land at `input.relevant_memories` and the LLM uses them like any other input field.
-
-## Staleness
-
-Memory is a snapshot in time. A "feedback" entry from six months ago may no longer apply; a "project" entry that names a file path may be wrong if the file moved. Skills that read memory should verify before acting on specifics.
-
-The system does not auto-decay or expire entries. Pruning is the user's responsibility (`reyn memory delete`, `reyn memory edit`).
+`recall_docs` is on the residual list — once shipped it will provide a project-documentation analogue with the same 2-tier shape but a different read trigger.
 
 ## Where memory differs from events
 
 | | Memory | Events |
 |---|--------|--------|
-| Across-run state? | Yes | No (per-run) |
-| Author | The user (or `write_memory` on the user's behalf) | The OS |
+| Across-run state? | Yes | No (per-run, append-only audit) |
+| Author | The user, via the router LLM persisting facts | The OS |
 | Format | Markdown w/ frontmatter | JSONL |
-| Read by | `recall_memory` skill | `reyn events` CLI |
+| Read by | `skill_router` classify phase | `reyn events` CLI |
 
 Events answer "what happened in this run?"; memory answers "what should I know going into the next run?"
 
+## Staleness
+
+Memory is a snapshot in time. A "feedback" entry from six months ago may no longer apply; a "project" entry that names a file path may be wrong if the file moved. The router LLM is instructed to verify before acting on specifics.
+
+The system does not auto-decay or expire entries. Pruning is left to the user and to a planned `reyn memory gc` CLI (residual) that will sweep MEMORY.md against on-disk body files.
+
 ## See also
 
-- [Reference: stdlib/recall_memory](../reference/stdlib/recall_memory.md)
-- [Reference: stdlib/write_memory](../reference/stdlib/write_memory.md)
-- [Reference: state-dir](../reference/config/state-dir.md) — `memory/` location
+- [Reference: skill_router](../reference/stdlib/skill_router.md) — the phase that reads/writes memory
+- [Reference: profile-yaml](../reference/dsl/profile-yaml.md) — agent profile shape
+- [Reference: state-dir](../reference/config/state-dir.md) — `memory/` and `agents/<name>/` locations
 - [events.md](events.md)

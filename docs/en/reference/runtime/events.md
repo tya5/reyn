@@ -61,9 +61,27 @@ Each Control IR op kind emits its own event:
 
 | Kind | When |
 |------|------|
-| `user_message_received` | A new user turn enters the runtime |
+| `user_message_received` | A new user turn enters the runtime. Carries `chain_id` (the uuid minted by `submit_user_text` and propagated through any agent-to-agent messages this turn produces) |
 | `user_intervention_received` | An `ask_user` op got its answer |
 | `chat_started`, `chat_stopped` | Chat session lifecycle |
+
+## Skill spawning (chat)
+
+| Kind | When |
+|------|------|
+| `skill_run_spawned` | A skill was launched from a router decision (`run_id`, `skill`) |
+| `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills` (PR15). Payload: `reason="allowlist"`, `skill`, `agent` |
+
+## Agent-to-agent messaging (PR11 / PR14)
+
+| Kind | When | Key payload |
+|------|------|-------------|
+| `agent_message_sent` | `_send_to_agent` or `_send_agent_response` delivered a payload | `kind=agent_request\|agent_response`, `from_agent`, `to_agent`, `depth`, `chain_id` |
+| `agent_request_received` | Receiving agent pulled an `agent_request` from its inbox | `from_agent`, `depth`, `chain_id` |
+| `agent_response_received` | Originating agent pulled an `agent_response` from its inbox | `from_agent`, `depth`, `chain_id` |
+| `agent_message_refused` | A send was refused (e.g. exceeded `multi_agent.max_hop_depth`) | `reason`, `to_agent`, `depth`, `chain_id` |
+
+`chain_id` is uuid4 hex; one per top-level user submission, propagated unchanged across every hop. Cross-agent reconstruction is `grep <chain_id>` over each agent's `events.jsonl` plus `history.jsonl`.
 
 ## Workspace
 
@@ -71,7 +89,6 @@ Each Control IR op kind emits its own event:
 |------|------|
 | `workspace_updated` | Any artifact is written |
 | `tool` / `tool_executed` | Generic tool dispatch |
-| `memory_recall_failed` | A `recall_memory` invocation failed silently |
 
 ## Replay
 

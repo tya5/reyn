@@ -76,6 +76,8 @@ nav:
           - reference/cli/eval.md
           - reference/cli/lint.md
           - reference/cli/chat.md
+          - reference/cli/agent.md
+          - reference/cli/topology.md
           - reference/cli/common-flags.md
       - DSL:
           - reference/dsl/skill-md.md
@@ -83,6 +85,8 @@ nav:
           - reference/dsl/artifact-yaml.md
           - reference/dsl/preprocessor.md
           - reference/dsl/graph.md
+          - reference/dsl/profile-yaml.md
+          - reference/dsl/topology-yaml.md
       - Runtime:
           - reference/runtime/context-frame.md
           - reference/runtime/llm-output-contract.md
@@ -92,6 +96,7 @@ nav:
           - reference/config/reyn-yaml.md
           - reference/config/permissions.md
           - reference/config/state-dir.md
+          - reference/config/multi-agent.md
       - Stdlib:
           - reference/stdlib/index.md
           - reference/stdlib/skill_builder.md
@@ -100,8 +105,6 @@ nav:
           - reference/stdlib/eval.md
           - reference/stdlib/eval_builder.md
           - reference/stdlib/skill_router.md
-          - reference/stdlib/recall_memory.md
-          - reference/stdlib/write_memory.md
   - Concepts:
       - concepts/principles.md
       - concepts/architecture.md
@@ -111,6 +114,8 @@ nav:
       - concepts/events.md
       - concepts/permission-model.md
       - concepts/memory.md
+      - concepts/multi-agent.md
+      - concepts/topology.md
       - Agent engineering:
           - concepts/agent-engineering/index.md
           - concepts/agent-engineering/system-design.md

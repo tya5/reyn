@@ -55,9 +55,7 @@ Retrieval engineering isn't just "did we find the doc?" — it's "did the agent 
 
 ## See also
 
-- [memory.md](../memory.md) — concept
-- [Reference: stdlib/recall_memory](../../reference/stdlib/recall_memory.md)
-- [Reference: stdlib/write_memory](../../reference/stdlib/write_memory.md)
+- [memory.md](../memory.md) — concept (memory is read inline by `skill_router/classify` since PR15; see also the [stdlib/skill_router reference](../../reference/stdlib/skill_router.md))
 - [Reference: preprocessor](../../reference/dsl/preprocessor.md)
 - [tool-contract-design.md](tool-contract-design.md) — how retrieval slots into the contract
 - [evaluation-and-observability.md](evaluation-and-observability.md) — measuring retrieval quality
