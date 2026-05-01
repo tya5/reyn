@@ -7,10 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-import time as _time
-
 from reyn.agent import Agent
-from reyn.chat.extraction import ExtractionJournal, should_extract
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import LimitsConfig
@@ -22,7 +19,6 @@ from reyn.skill_paths import resolve_skill_path, stdlib_root
 
 
 ROUTER_SKILL_NAME = "skill_router"
-WRITE_SKILL_NAME = "write_memory"
 
 
 @dataclass
@@ -84,9 +80,6 @@ class ChatSession:
         mcp_servers: dict | None = None,
         output_language: str = "ja",
         history_window: int = 12,
-        memory_enabled: bool = True,
-        memory_turn_threshold: int = 8,
-        memory_time_threshold: float = 600.0,
     ) -> None:
         self.chat_id = chat_id or _new_chat_id()
         self.model = model
@@ -96,9 +89,6 @@ class ChatSession:
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self.history_window = history_window
-        self._memory_enabled = memory_enabled
-        self._memory_turn_threshold = memory_turn_threshold
-        self._memory_time_threshold = memory_time_threshold
 
         self.workspace_dir = Path(".reyn") / "chats" / self.chat_id
         self.workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -117,10 +107,6 @@ class ChatSession:
 
         self._chat_events = EventLog(subscribers=[EventPersister(self.events_path)])
         self.running_skills: dict[str, asyncio.Task] = {}
-
-        # Memory extraction state.
-        self._journal = ExtractionJournal(self.workspace_dir / "extraction.json")
-        self._extraction_tasks: dict[str, asyncio.Task] = {}
 
         # ask_user routing state. Only one question is "active" at a time;
         # extra questions queue. Each entry: (run_id, skill_name, question, suggestions, future)
@@ -168,73 +154,37 @@ class ChatSession:
     async def submit_user_text(self, text: str) -> None:
         await self.inbox.put(("user", text))
 
-    async def trigger_manual_extraction(self) -> None:
-        await self.inbox.put(("manual_extract", ""))
-
     async def shutdown(self) -> None:
         await self.inbox.put(("shutdown", ""))
 
     # ── main loop ───────────────────────────────────────────────────────────────
 
-    def _should_extract(self, reason: str) -> bool:
-        """Wrapper that fills in this session's configured thresholds."""
-        return should_extract(
-            len(self.history), self._journal, reason=reason,
-            turn_threshold=self._memory_turn_threshold,
-            time_threshold=self._memory_time_threshold,
-        )
-
     async def run(self) -> None:
         self._chat_events.emit("chat_started", chat_id=self.chat_id, model=self.model)
-        self._journal.load()
-        # Crash recovery: any prior extraction was interrupted, clear the flag
-        # so new triggers can fire.
-        if self._journal.in_progress:
-            self._journal.mark_aborted()
-        if self._should_extract("startup"):
-            self._spawn_extraction(reason="startup")
 
         try:
             while True:
                 kind, text = await self.inbox.get()
                 if kind == "shutdown":
                     break
-                if kind == "manual_extract":
-                    self._spawn_extraction(reason="manual")
-                    continue
                 if kind == "user":
                     await self._handle_user_message(text)
-                    if self._should_extract("periodic"):
-                        self._spawn_extraction(reason="periodic")
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", chat_id=self.chat_id)
             await self.outbox.put(("__end__", ""))
 
     async def _drain_on_shutdown(self) -> None:
-        """Wind down both background task families.
+        """Cancel any in-flight user-initiated skill runs.
 
-        Asymmetric on purpose:
-
-        * Skill runs are user-initiated; we cancel them so the user doesn't
-          wait for in-flight LLM calls when they've signaled exit.
-        * Memory extractions are housekeeping; we await them (or run a fresh
-          one) so durable memory isn't lost on the way out.
+        Memory writes happen inline during each router turn, so there is no
+        background extraction to drain — shutdown is now strictly a teardown
+        of whatever the user explicitly launched.
         """
         for task in self.running_skills.values():
             task.cancel()
         if self.running_skills:
             await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
-
-        if self._should_extract("shutdown"):
-            # Synchronous final extraction — overrides any in-flight one.
-            await self._extract_now(reason="shutdown")
-        elif self._extraction_tasks:
-            # Nothing new to extract, but a background extraction may still
-            # be running; let it finish so its results are persisted.
-            await asyncio.gather(
-                *self._extraction_tasks.values(), return_exceptions=True,
-            )
 
     async def _handle_user_message(self, text: str) -> None:
         # If a spawned skill is waiting on ask_user, route this input to that skill
@@ -321,88 +271,6 @@ class ChatSession:
         self._accumulate(result)
         return result
 
-    # ── memory extraction ───────────────────────────────────────────────────────
-
-    def _spawn_extraction(self, reason: str) -> None:
-        """Fire a background extraction. Skips if one is already pending."""
-        if not self._memory_enabled:
-            return
-        # Skip overlapping spawns: if a task is already in-flight, ignore.
-        active = {k: t for k, t in self._extraction_tasks.items() if not t.done()}
-        self._extraction_tasks = active
-        if active:
-            return
-        task = asyncio.create_task(self._extract_now(reason=reason))
-        self._extraction_tasks[reason + "_" + str(_time.time())] = task
-
-    async def _extract_now(self, reason: str) -> None:
-        """Run write_memory over the unprocessed conversation segment."""
-        if not self._memory_enabled:
-            return
-        history_count = len(self.history)
-        if history_count <= self._journal.last_extracted_msg_count and reason != "manual":
-            return
-        segment = [
-            {"role": m.role, "text": m.text, "ts": m.ts}
-            for m in self.history[self._journal.last_extracted_msg_count:]
-            if m.role in ("user", "agent")
-        ]
-        if not segment:
-            await self.outbox.put(("status", "memory: 抽出する新しい発言はありません"))
-            return
-
-        self._journal.mark_started()
-        await self.outbox.put(("status", f"memory: 抽出中... ({reason})"))
-        self._chat_events.emit(
-            "memory_extraction_started",
-            reason=reason,
-            segment_size=len(segment),
-        )
-
-        try:
-            result = await self._run_stdlib_skill(
-                WRITE_SKILL_NAME,
-                {
-                    "type": "memory_extract_request",
-                    "data": {"conversation_segment": segment},
-                },
-                state_subdir="extract",
-            )
-        except Exception as exc:
-            self._journal.mark_aborted()
-            self._chat_events.emit(
-                "memory_extraction_failed", reason=reason, error=str(exc),
-            )
-            await self.outbox.put(("error", f"memory extraction failed: {exc}"))
-            return
-
-        actions = result.data.get("actions") or []
-        created = [a.get("name") for a in actions if a.get("op") == "create" and a.get("name")]
-        updated = [a.get("name") for a in actions if a.get("op") == "update" and a.get("name")]
-        deleted = [a.get("name") for a in actions if a.get("op") == "delete" and a.get("name")]
-        self._journal.mark_finished(history_count, _time.time())
-        self._chat_events.emit(
-            "memory_extraction_completed",
-            reason=reason,
-            creates=len(created),
-            updates=len(updated),
-            deletes=len(deleted),
-            created_names=created,
-            updated_names=updated,
-            deleted_names=deleted,
-        )
-        if created or updated or deleted:
-            parts: list[str] = []
-            if created:
-                parts.append(f"created [{', '.join(created)}]")
-            if updated:
-                parts.append(f"updated [{', '.join(updated)}]")
-            if deleted:
-                parts.append(f"deleted [{', '.join(deleted)}]")
-            await self.outbox.put(("status", f"memory: {' · '.join(parts)}"))
-        else:
-            await self.outbox.put(("status", "memory: 新規記憶なし"))
-
     # ── router ──────────────────────────────────────────────────────────────────
 
     async def _invoke_router(
@@ -421,9 +289,7 @@ class ChatSession:
             for m in self.history[-self.history_window:]
             if m.role in ("user", "agent")
         ]
-        avail = enumerate_available_skills(exclude={
-            ROUTER_SKILL_NAME, WRITE_SKILL_NAME,
-        })
+        avail = enumerate_available_skills(exclude={ROUTER_SKILL_NAME})
 
         data: dict = {
             "user_message": user_text,

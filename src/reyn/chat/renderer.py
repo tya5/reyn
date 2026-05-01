@@ -16,7 +16,7 @@ _BANNER = """\
  ██║  ██║███████╗   ██║   ██║ ╚███║
  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚══╝"""
 
-_HELP = "/quit or Ctrl-D to exit   /remember to save memory"
+_HELP = "/quit or Ctrl-D to exit"
 
 # kinds that should overwrite the previous transient line in place rather than
 # append a new line. The renderer tracks "did the last write leave a transient
@@ -150,8 +150,8 @@ class RichChatRenderer(ChatRenderer):
 
     def message(self, kind: str, text: str) -> None:
         # Always pass user text with markup=False so brackets in event payloads
-        # like "[write_memory] phase started: extract" don't get interpreted
-        # as Rich style tags (which would silently drop the bracketed token).
+        # like "[skill_router] phase started: route" don't get interpreted as
+        # Rich style tags (which would silently drop the bracketed token).
         self._clear_transient()
         c = self._console
         if kind == "agent":

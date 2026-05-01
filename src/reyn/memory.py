@@ -1,15 +1,15 @@
 """Memory store helpers — frontmatter-aware reader, indexer, and resolver.
 
-This module centralizes the on-disk format used by the `write_memory` skill
-and the `reyn memory` CLI:
+This module centralizes the on-disk format used by `skill_router` (which
+writes memories inline as it routes) and the `reyn memory` CLI:
 
   <memory_dir>/
     MEMORY.md           — index ([Name](slug.md) — description)
     <slug>.md           — body file with frontmatter (name, description, type)
 
-Each callsite that wanted to read or rewrite this layout previously
-reimplemented frontmatter splitting and index regeneration locally. This
-module is the single source of truth.
+The router LLM emits `file/write` Control IR ops following this format. The
+helpers here are used by the `reyn memory` CLI for read paths and by import
+tooling for direct writes that bypass the LLM.
 """
 from __future__ import annotations
 

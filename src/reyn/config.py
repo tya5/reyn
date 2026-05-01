@@ -18,20 +18,6 @@ from pathlib import Path
 
 
 @dataclass
-class ChatMemoryConfig:
-    """`chat.memory` section — controls memory recall/extraction in `reyn chat`."""
-    enabled: bool = True
-    turn_threshold: int = 8         # periodic extract: this many new turns AND
-    time_threshold: float = 600.0   # this many seconds since last extract
-
-
-@dataclass
-class ChatConfig:
-    """`chat` section — settings for `reyn chat`."""
-    memory: ChatMemoryConfig = field(default_factory=ChatMemoryConfig)
-
-
-@dataclass
 class PythonConfig:
     """`python` section — settings for the python preprocessor step."""
     # Modules that user code may import in pure mode in addition to the
@@ -88,8 +74,6 @@ class ReynConfig:
     #         headers:
     #           Authorization: "Bearer ${MY_TOKEN}"
     mcp: dict = field(default_factory=dict)
-    # Chat agent settings (memory thresholds, etc.).
-    chat: ChatConfig = field(default_factory=ChatConfig)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
 
@@ -144,20 +128,6 @@ def _merge(base: dict, override: dict) -> dict:
         else:
             result[key] = val
     return result
-
-
-def _build_chat_config(raw: object) -> ChatConfig:
-    if not isinstance(raw, dict):
-        return ChatConfig()
-    mem_raw = raw.get("memory") or {}
-    if not isinstance(mem_raw, dict):
-        mem_raw = {}
-    defaults = ChatMemoryConfig()
-    return ChatConfig(memory=ChatMemoryConfig(
-        enabled=bool(mem_raw.get("enabled", defaults.enabled)),
-        turn_threshold=int(mem_raw.get("turn_threshold", defaults.turn_threshold)),
-        time_threshold=float(mem_raw.get("time_threshold", defaults.time_threshold)),
-    ))
 
 
 def _build_python_config(raw: object) -> PythonConfig:
@@ -255,6 +225,5 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         permissions=dict(merged.get("permissions") or {}),
         limits=_build_limits_config(merged.get("limits")),
         mcp=dict(merged.get("mcp") or {}),
-        chat=_build_chat_config(merged.get("chat")),
         python=_build_python_config(merged.get("python")),
     )

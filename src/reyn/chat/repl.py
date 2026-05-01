@@ -30,9 +30,6 @@ async def _input_loop(
         if text in {"/quit", "/exit"}:
             await session.shutdown()
             return
-        if text == "/remember":
-            await session.trigger_manual_extraction()
-            continue
         await session.submit_user_text(text)
 
 

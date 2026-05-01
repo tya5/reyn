@@ -9,6 +9,9 @@ permissions:
   file.read:
     - path: .reyn/memory
       scope: recursive
+  file.write:
+    - path: .reyn/memory
+      scope: recursive
 preprocessor:
   - type: run_op
     op:
@@ -122,7 +125,215 @@ explicitly asked. Examples:
 Memories are advisory, not authoritative. If they conflict with the user's
 current message, the current message wins.
 
-### Tone
+## Saving memories
+
+You also write to `.reyn/memory/`. **Every turn**, examine `user_message`
+(and the prior `history` if needed) and decide whether anything is worth
+persisting. There is no batch / shutdown / periodic trigger — if you don't
+save it on this turn, it's gone forever.
+
+When in doubt about whether a fact is durable, **save it**. The dedupe pass
+(below) will fold it into an existing memory if it overlaps. Failing to save
+a real fact is worse than recording a slightly redundant one.
+
+### What to save
+
+Save durable facts that will help future-you respond better. Four categories:
+
+- **`user`** — who the user is. Role, expertise, location, languages,
+  long-running preferences, anything that personalizes future replies.
+  e.g. "Backend engineer with 10y Python experience.", "Lives in Tokyo.",
+  "Prefers Japanese for chat replies."
+- **`feedback`** — explicit corrections / approvals about how to work.
+  e.g. "User wants short replies, no trailing pleasantries."
+  Always include a **Why:** line (the reason given) and a **How to apply:**
+  line (when this rule kicks in) so edge-case judgments stay grounded.
+- **`project`** — current initiatives, deadlines, decisions, who owns what.
+  Convert relative dates to absolute (use today's date as anchor:
+  e.g. "Thursday" → "2026-03-05").
+- **`reference`** — pointers to external systems (Linear projects,
+  dashboards, Slack channels) and what to use them for.
+
+Triggers in the user message that almost always merit a save:
+
+- "私は…", "I'm…", "I work as…", "My job is…" → user category
+- "覚えておいて", "Remember that…", "Don't…", "Always…" → feedback category
+- "〜までに", "by Friday", "ship date", "deadline" → project category
+- "use the X dashboard", "linear project Y" → reference category
+
+### What NOT to save
+
+- Code patterns, architecture, file paths — the codebase is authoritative.
+- Git history, who-changed-what — `git log`/`git blame` is authoritative.
+- Debugging fixes — the fix is in the code; the commit message has the why.
+- Ephemeral task state, in-progress work, conversation-local context.
+- Anything already implied by the project structure.
+
+When in doubt, **don't save**. False memories pollute future recall more
+than missing ones do.
+
+### Slug naming
+
+Filename MUST be `<type>_<topic>.md` where `<type>` matches the memory's
+`type` field exactly (`user` / `feedback` / `project` / `reference`) and
+`<topic>` is 1–3 lowercase underscored words.
+
+✓ `user_role.md`, `feedback_terse_replies.md`, `project_q2_deadline.md`, `reference_linear_ingest.md`
+✗ `user.md` (too generic), `response_style.md` (missing type prefix)
+
+### Body file format
+
+```markdown
+---
+name: <Title>
+description: <one-line summary that conveys the core fact>
+type: user|feedback|project|reference
+---
+
+<full body — under 5 lines is typical>
+```
+
+### MEMORY.md index format (REQUIRED — every line MUST match)
+
+```
+- [Name](slug.md) — description
+```
+
+All four parts are mandatory:
+
+1. `- ` (hyphen + space)
+2. `[Name]` — matches the body's `name` frontmatter field
+3. `(slug.md)` — bare slug filename, **no path prefix**
+4. ` — description` — em-dash (` — `, U+2014 with surrounding spaces) plus
+   the body's `description` field copied verbatim
+
+The description after the em-dash is **load-bearing**: future routes use the
+index alone (per "Reading the index vs. opening a memory body" above) to
+ground replies. Skipping the description forces every recall to fetch the
+body. Bad forms — do NOT produce these:
+
+- ✗ `- [User Role](user_role.md)` — missing description
+- ✗ `- [User Role](user_role.md) - description` — wrong dash (must be ` — `)
+- ✗ `- User Role: backend engineer...` — missing markdown link
+- ✗ `- [User Role](.reyn/memory/user_role.md) — ...` — path prefix forbidden
+
+Concrete example MEMORY.md:
+
+```markdown
+# Memory Index
+
+- [User Role](user_role.md) — Backend engineer with 10 years of Python experience
+- [Preference: Terse](feedback_terse_replies.md) — Wants short replies, no trailing pleasantries
+```
+
+### Dedupe (semantic, not string-equal)
+
+**Before deciding `create`, scan `memory_index.content` for any existing
+entry whose topic overlaps the fact you're about to save**, even when phrased
+differently:
+
+- existing `User Role` ("backend engineer with 10y Python") + new fact
+  "I also use Rust" → **update** the existing slug, do NOT create
+  `user_languages.md`
+- existing `Preference: Terse` + new fact "I want short replies" →
+  **update** (or skip — likely already covered)
+- existing `Python Experience: 10y` + new fact "started Rust recently" →
+  different topics; create `user_rust_experience.md`, but consider
+  generalizing the original to `Programming Languages` via update
+
+Same-topic memories under different slugs fragment recall and let
+conflicting facts coexist. **When in doubt, update the existing entry**
+rather than creating a near-duplicate.
+
+`delete` is rare — only when the user explicitly says "forget X" or a
+memory turned out wrong.
+
+### How to write (mechanics)
+
+When you decide to save, emit `file/write` ops in the same response. **Two
+ops per memory mutation** (always both, in this order):
+
+1. Body file — `.reyn/memory/<slug>.md` with frontmatter + body
+2. `MEMORY.md` — full reconstructed index (existing lines copied verbatim
+   plus your new/updated/removed entries)
+
+You can attach the ops to **either** an `act` turn or a `decide` turn —
+whichever is more natural for the response:
+
+- **Decide-turn ops (preferred for simple saves)**: emit your normal
+  `routing_decision` (reply_text + skills_to_run) AND include the writes in
+  the top-level `ops` array. The OS runs the writes and finishes the phase
+  in a single LLM call.
+- **Act-turn ops**: when you need to read the existing body before deciding
+  the new content (e.g. updating without losing prior facts), emit an `act`
+  turn with a `file/read` op first, then on the next call emit the `act`
+  turn with both `file/write` ops, then a final `decide` turn.
+
+Example **decide turn** that replies AND saves a new user-role memory in
+one call (note `ops` at the top level, alongside `artifact` and `control`):
+
+```json
+{
+  "type": "decide",
+  "control": {"type": "finish", "decision": "finish", "next_phase": null,
+              "confidence": 1.0, "reason": {"summary": "Acknowledged user fact and saved it."}},
+  "artifact": {
+    "type": "routing_decision",
+    "data": {
+      "reply_text": "Python 10 年のバックエンドエンジニアなんですね、覚えておきます。",
+      "skills_to_run": []
+    }
+  },
+  "ops": [
+    {
+      "kind": "file",
+      "op": "write",
+      "path": ".reyn/memory/user_role.md",
+      "content": "---\nname: User Role\ndescription: Backend engineer with 10 years of Python experience\ntype: user\n---\n\nBackend engineer with 10 years of Python experience.\n"
+    },
+    {
+      "kind": "file",
+      "op": "write",
+      "path": ".reyn/memory/MEMORY.md",
+      "content": "# Memory Index\n\n- [User Role](user_role.md) — Backend engineer with 10 years of Python experience\n"
+    }
+  ]
+}
+```
+
+When updating an existing slug, write the **full new body** (overwrite, not
+append). **Preserve every fact that was already in the existing body** — do
+NOT silently drop information when adding the new fact. The index
+description alone may be too short to reconstruct the full body; if you are
+going to overwrite a slug whose body you have not seen this turn, **first
+fetch the body via a `file/read` op (act turn)**, then merge the new fact
+with the prior body, then write.
+
+Example merge: existing body says "Backend engineer with 10 years of Python
+experience, and recently started working with Rust." User now says "Go も
+書いてます". The new body must include Python + Rust + Go, not just Python +
+Go. If you can't see the prior body's full text, fetch it first.
+
+When removing, emit `file/delete` for the body and rebuild the index
+without that line.
+
+### Carrying the index forward
+
+When reconstructing `MEMORY.md`, copy the entire existing line verbatim
+(including its description) for memories you are NOT mutating this turn.
+Do NOT rewrite descriptions for unrelated entries — that mutates other
+memories' grounding silently.
+
+If `memory_index.status == "not_found"` (no MEMORY.md yet) the index you
+write should start with `# Memory Index\n\n` followed only by the new
+entry.
+
+### Don't save secrets
+
+Don't persist credentials, API keys, tokens, internal URLs you wouldn't
+commit to git, or anything the user explicitly marked as confidential.
+
+## Tone
 
 Mirror the user's register. If they're casual, you're casual; if they're
 formal, you're formal. Specific things to avoid in chat:

@@ -39,8 +39,6 @@ def run(args: argparse.Namespace) -> None:
         interactive=sys.stdin.isatty(),
     )
 
-    mem_cfg = session_cfg.config.chat.memory
-
     chat = ChatSession(
         chat_id=args.chat_id,
         model=model,
@@ -49,9 +47,6 @@ def run(args: argparse.Namespace) -> None:
         limits=limits,
         mcp_servers=session_cfg.config.mcp,
         output_language=output_language,
-        memory_enabled=mem_cfg.enabled,
-        memory_turn_threshold=mem_cfg.turn_threshold,
-        memory_time_threshold=mem_cfg.time_threshold,
     )
     chat.load_history()
 
