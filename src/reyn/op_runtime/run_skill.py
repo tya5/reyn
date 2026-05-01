@@ -56,6 +56,7 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         model=model,
         subscribers=ctx.subscribers,
         resolver=ctx.resolver,
+        intervention_bus=ctx.intervention_bus,
         output_language=op.output_language or ctx.output_language,
         max_phase_visits=ctx.max_phase_visits,
     )

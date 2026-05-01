@@ -175,9 +175,11 @@ def _run_case(
     project_context = load_project_context(
         session.config, _find_project_root(Path.cwd()),
     )
+    from reyn.user_intervention import StdinInterventionBus
     agent = Agent(
         model=model,
         resolver=session.resolver,
+        intervention_bus=StdinInterventionBus(),
         limits=session.limits_for(args),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
         project_context=project_context,

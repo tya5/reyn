@@ -11,7 +11,7 @@ Workspace owns data; op_runtime owns execution; this module owns
 LLM-act-turn dispatch policy.
 """
 from __future__ import annotations
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from .models import ControlIROp, ControlIROpSpec
 from .workspace import Workspace
@@ -20,6 +20,7 @@ from .model_resolver import ModelResolver
 from .permissions import PermissionDecl, PermissionResolver
 from .op_runtime import execute_op
 from .op_runtime.context import OpContext
+from .user_intervention import InterventionBus
 
 
 class ControlIRExecutor:
@@ -27,7 +28,7 @@ class ControlIRExecutor:
         self,
         workspace: Workspace,
         events: EventLog,
-        user_input_fn: Callable[[str, list[str]], str | Awaitable[str]] | None = None,
+        intervention_bus: InterventionBus | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
@@ -37,7 +38,7 @@ class ControlIRExecutor:
     ) -> None:
         self.workspace = workspace
         self.events = events
-        self._user_input_fn = user_input_fn
+        self._intervention_bus = intervention_bus
         self._max_phase_visits = max_phase_visits
         self._shell_allowed = shell_allowed
         self._resolver = resolver or ModelResolver({})
@@ -178,7 +179,7 @@ class ControlIRExecutor:
             shell_allowed=self._shell_allowed,
             mcp_servers=self._mcp_servers,
             mcp_clients=self._mcp_clients,
-            user_input_fn=self._user_input_fn,
+            intervention_bus=self._intervention_bus,
             current_phase=current_phase,
         )
 

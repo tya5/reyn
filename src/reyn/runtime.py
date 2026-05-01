@@ -20,6 +20,7 @@ from .permissions import PermissionResolver
 from .context_builder import build_frame
 from .skill_node_runner import execute_skill_node
 from .preprocessor_executor import PreprocessorExecutor
+from .user_intervention import InterventionBus
 
 
 class LoopLimitExceededError(Exception):
@@ -186,7 +187,7 @@ class OSRuntime:
         model: str,
         strict: bool = False,
         subscribers: list[Callable] | None = None,
-        user_input_fn: Callable[[str, list[str]], str] | None = None,
+        intervention_bus: "InterventionBus | None" = None,
         run_id: str | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
@@ -219,7 +220,7 @@ class OSRuntime:
         self._perm = permission_resolver
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
-            user_input_fn=user_input_fn,
+            intervention_bus=intervention_bus,
             shell_allowed=shell_allowed,
             resolver=self._resolver,
             permission_resolver=permission_resolver,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,9 +17,38 @@ from reyn.model_resolver import ModelResolver
 from reyn.permissions import PermissionResolver
 from reyn.reporters.persister import EventPersister
 from reyn.skill_paths import resolve_skill_path, stdlib_root
+from reyn.user_intervention import (
+    InterventionAnswer,
+    InterventionBus,
+    UserIntervention,
+    match_choice,
+)
 
 
 ROUTER_SKILL_NAME = "skill_router"
+
+
+class ChatInterventionBus:
+    """InterventionBus impl that routes through ChatSession's outbox/inbox.
+
+    One instance per skill spawn — captures `run_id` and a default `skill_name`
+    so the chat session can drop pending interventions when the spawn is
+    cancelled. Interventions emitted by ops carry their own `skill_name` from
+    `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
+    have, since chat tracks runs separately from `Agent.run_id`).
+    """
+
+    def __init__(self, session: "ChatSession", run_id: str | None, skill_name: str | None) -> None:
+        self._session = session
+        self._run_id = run_id
+        self._skill_name = skill_name
+
+    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+        if iv.run_id is None:
+            iv.run_id = self._run_id
+        if not iv.skill_name:
+            iv.skill_name = self._skill_name
+        return await self._session._dispatch_intervention(iv)
 
 
 @dataclass
@@ -148,10 +178,11 @@ class ChatSession:
         self._chat_events = EventLog(subscribers=[EventPersister(self.events_path)])
         self.running_skills: dict[str, asyncio.Task] = {}
 
-        # ask_user routing state. Only one question is "active" at a time;
-        # extra questions queue. Each entry: (run_id, skill_name, question, suggestions, future)
-        self._active_question: tuple[str, str, asyncio.Future] | None = None
-        self._pending_questions: list[tuple[str, str, str, list[str], asyncio.Future]] = []
+        # User-intervention routing state. The deque preserves FIFO emission order;
+        # the dict gives O(1) lookup by intervention id. Untyped user lines answer
+        # the head of the deque (oldest still-pending intervention).
+        self._active_interventions: dict[str, UserIntervention] = {}
+        self._intervention_order: deque[str] = deque()
 
     # ── cost accumulation ───────────────────────────────────────────────────────
 
@@ -247,9 +278,10 @@ class ChatSession:
                 pass
 
     async def _handle_user_message(self, text: str) -> None:
-        # If a spawned skill is waiting on ask_user, route this input to that skill
-        # instead of the router.
-        if await self._maybe_answer_active_question(text):
+        # If a spawned skill is waiting on a user intervention (ask_user or
+        # permission prompt), route this input to that intervention instead of
+        # starting a fresh router turn.
+        if await self._maybe_answer_oldest_intervention(text):
             return
 
         self._append_history(ChatMessage(role="user", text=text, ts=_now_iso()))
@@ -285,7 +317,7 @@ class ChatSession:
     def _build_agent(
         self,
         *,
-        user_input_fn=None,
+        intervention_bus: InterventionBus | None = None,
         mcp_servers: dict | None = None,
         subscribers: list | None = None,
     ) -> Agent:
@@ -296,7 +328,7 @@ class ChatSession:
             permission_resolver=self._perm,
             limits=self._limits,
             mcp_servers=mcp_servers,
-            user_input_fn=user_input_fn,
+            intervention_bus=intervention_bus,
             subscribers=subscribers,
             prompt_cache_enabled=self._prompt_cache_enabled,
             project_context=self._project_context,
@@ -332,7 +364,7 @@ class ChatSession:
         input_artifact: dict,
         *,
         state_subdir: str,
-        user_input_fn=None,
+        intervention_bus: InterventionBus | None = None,
         mcp_servers: dict | None = None,
         forward_events: bool = False,
     ):
@@ -351,7 +383,7 @@ class ChatSession:
             from reyn.chat.forwarder import ChatEventForwarder
             subscribers = [ChatEventForwarder(skill_name, self.outbox)]
         agent = self._build_agent(
-            user_input_fn=user_input_fn,
+            intervention_bus=intervention_bus,
             mcp_servers=mcp_servers,
             subscribers=subscribers,
         )
@@ -547,83 +579,140 @@ class ChatSession:
         )
         return result.data
 
-    # ── ask_user routing ────────────────────────────────────────────────────────
+    # ── intervention routing ─────────────────────────────────────────────────────
 
-    async def _maybe_answer_active_question(self, text: str) -> bool:
-        """If a skill is awaiting ask_user, deliver `text` to it and return True.
+    async def _maybe_answer_oldest_intervention(self, text: str) -> bool:
+        """If any intervention is pending, deliver `text` to the oldest and
+        return True. Stale (already-resolved) entries are evicted transparently."""
+        # Evict stale heads.
+        while self._intervention_order:
+            head_id = self._intervention_order[0]
+            iv = self._active_interventions.get(head_id)
+            if iv is None or iv.future.done():
+                self._intervention_order.popleft()
+                self._active_interventions.pop(head_id, None)
+                continue
+            break
 
-        Stale (cancelled/done) futures are discarded transparently and the next
-        pending question is promoted in their place.
-        """
-        # Clean up any stale active question first
-        while self._active_question is not None and self._active_question[2].done():
-            self._active_question = None
-            await self._promote_next_question()
-
-        if self._active_question is None:
+        if not self._intervention_order:
             return False
 
-        run_id, skill_name, future = self._active_question
-        future.set_result(text)
+        head_id = self._intervention_order[0]
+        iv = self._active_interventions[head_id]
+
+        if iv.choices:
+            choice = match_choice(text, iv.choices)
+            if choice is None:
+                # Unrecognized choice — surface a status hint and don't consume
+                # the message. The user can re-type the correct hotkey.
+                hint = " / ".join(c.label for c in iv.choices)
+                await self.outbox.put(
+                    ("status", f"unknown choice; expected one of: {hint}")
+                )
+                return True  # consumed: don't fall through to a fresh router turn
+            answer = InterventionAnswer(text=text, choice_id=choice.id)
+        else:
+            answer = InterventionAnswer(text=text)
+
+        iv.future.set_result(answer)
         self._append_history(ChatMessage(
             role="user", text=text, ts=_now_iso(),
-            meta={"answered_skill": skill_name, "answered_run_id": run_id},
+            meta={
+                "answered_skill": iv.skill_name or "",
+                "answered_run_id": iv.run_id or "",
+                "intervention_id": iv.id,
+                "intervention_kind": iv.kind,
+            },
         ))
         self._chat_events.emit(
-            "user_answered_skill", run_id=run_id, skill=skill_name, answer=text,
+            "user_answered_intervention",
+            intervention_id=iv.id,
+            kind=iv.kind,
+            run_id=iv.run_id,
+            skill=iv.skill_name,
+            choice_id=answer.choice_id,
+            answer_text=text if not iv.choices else "",
         )
-        self._active_question = None
-        await self._promote_next_question()
         return True
 
-    async def _promote_next_question(self) -> None:
-        """Pop the next pending question (if any) and make it active."""
-        while self._pending_questions:
-            run_id, skill_name, question, suggestions, future = self._pending_questions.pop(0)
-            if future.done():
-                continue
-            self._active_question = (run_id, skill_name, future)
-            await self._announce_question(skill_name, question, suggestions)
-            return
+    async def _announce_intervention(self, iv: UserIntervention) -> None:
+        """Format and publish an intervention to the outbox for the renderer."""
+        skill_prefix = f"[{iv.skill_name}] " if iv.skill_name else ""
+        lines: list[str] = []
+        if iv.kind == "ask_user":
+            lines.append(f"{skill_prefix}質問: {iv.prompt}")
+        else:
+            lines.append(f"{skill_prefix}{iv.prompt}")
+        if iv.detail:
+            lines.append(f"  {iv.detail}")
+        if iv.suggestions:
+            lines.append(f"  候補: {' / '.join(iv.suggestions)}")
+        if iv.choices:
+            labels = " / ".join(c.label for c in iv.choices)
+            lines.append(f"  {labels}")
+        await self.outbox.put(("intervention", "\n".join(lines)))
 
-    async def _announce_question(self, skill_name: str, question: str, suggestions: list[str]) -> None:
-        msg = f"[{skill_name}] 質問: {question}"
-        if suggestions:
-            msg += f"\n  候補: {' / '.join(suggestions)}"
-        await self.outbox.put(("ask", msg))
-
-    def _make_skill_user_input_fn(self, run_id: str, skill_name: str):
-        """Build a user_input_fn that surfaces the question through chat outbox
-        and waits for the user's next message to fulfill it."""
-        async def fn(question: str, suggestions: list[str]) -> str:
-            loop = asyncio.get_running_loop()
-            future: asyncio.Future = loop.create_future()
-            if self._active_question is None:
-                self._active_question = (run_id, skill_name, future)
-                await self._announce_question(skill_name, question, suggestions)
+    async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
+        """Register an intervention in the queue, announce it (or signal queued
+        status), then await the user's response. Always cleans up on exit so a
+        cancelled skill doesn't leave dangling entries.
+        """
+        self._active_interventions[iv.id] = iv
+        self._intervention_order.append(iv.id)
+        try:
+            if len(self._intervention_order) == 1:
+                await self._announce_intervention(iv)
             else:
-                self._pending_questions.append((run_id, skill_name, question, suggestions, future))
+                queued = len(self._intervention_order) - 1
+                prefix = f"[{iv.skill_name}] " if iv.skill_name else ""
                 await self.outbox.put((
                     "status",
-                    f"[{skill_name}] 質問待ち ({len(self._pending_questions)}件キュー中)",
+                    f"{prefix}質問待ち ({queued}件キュー中)",
                 ))
             try:
-                return await future
+                return await iv.future
             except asyncio.CancelledError:
-                # Skill was cancelled while awaiting; surface empty answer
-                return ""
-        return fn
+                return InterventionAnswer(text="")
+        finally:
+            self._active_interventions.pop(iv.id, None)
+            try:
+                self._intervention_order.remove(iv.id)
+            except ValueError:
+                pass
+            # If the head was cleared, announce the next pending intervention.
+            await self._maybe_announce_next()
 
-    def _drop_question_for_run(self, run_id: str) -> None:
-        """Clear any question state belonging to a finished/cancelled run."""
-        if self._active_question and self._active_question[0] == run_id:
-            _, _, future = self._active_question
-            if not future.done():
-                future.cancel()
-            self._active_question = None
-        self._pending_questions = [
-            q for q in self._pending_questions if q[0] != run_id
+    async def _maybe_announce_next(self) -> None:
+        """Announce the new head intervention (if any) when the previous one
+        was resolved or cancelled. Skips already-announced heads."""
+        if not self._intervention_order:
+            return
+        head_id = self._intervention_order[0]
+        iv = self._active_interventions.get(head_id)
+        if iv is None or iv.future.done():
+            return
+        # We can't tell from state alone whether this head was already announced;
+        # _dispatch_intervention announces eagerly when len==1 on first push, so
+        # if we're here because the previous head finished, this head still
+        # needs an announcement.
+        await self._announce_intervention(iv)
+
+    def _drop_interventions_for_run(self, run_id: str | None) -> None:
+        """Cancel any pending interventions tagged with `run_id`."""
+        if not run_id:
+            return
+        victims = [
+            iv_id for iv_id, iv in self._active_interventions.items()
+            if iv.run_id == run_id
         ]
+        for iv_id in victims:
+            iv = self._active_interventions.pop(iv_id, None)
+            try:
+                self._intervention_order.remove(iv_id)
+            except ValueError:
+                pass
+            if iv is not None and not iv.future.done():
+                iv.future.cancel()
 
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
@@ -691,7 +780,7 @@ class ChatSession:
 
         def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
             self.running_skills.pop(rid, None)
-            self._drop_question_for_run(rid)
+            self._drop_interventions_for_run(rid)
 
         task.add_done_callback(_cleanup)
 
@@ -709,7 +798,7 @@ class ChatSession:
 
         from reyn.chat.forwarder import ChatEventForwarder
         agent = self._build_agent(
-            user_input_fn=self._make_skill_user_input_fn(run_id, skill_name),
+            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
             mcp_servers=self._mcp_servers,
             subscribers=[ChatEventForwarder(skill_name, self.outbox)],
         )

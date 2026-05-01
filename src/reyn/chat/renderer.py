@@ -41,7 +41,7 @@ class ChatRenderer:
     def message(self, kind: str, text: str) -> None:
         """Render one outbox item.
 
-        kind ∈ {"agent","status","error","ask","trace","skill_done"}
+        kind ∈ {"agent","status","error","intervention","trace","skill_done"}
         """
 
     def prompt_text(self) -> AnyFormattedText:
@@ -60,7 +60,7 @@ class ConsoleChatRenderer(ChatRenderer):
         "agent": "agent>",
         "status": "[…]",
         "error": "[error]",
-        "ask": "[ask]",
+        "intervention": "[ask]",
         "trace": "[trace]",
         "skill_done": "[done]",
     }
@@ -162,7 +162,7 @@ class RichChatRenderer(ChatRenderer):
             c.print(f"⟳ {text}", style="dim", markup=False)
         elif kind == "error":
             c.print(f"✗ {text}", style="bold red", markup=False)
-        elif kind == "ask":
+        elif kind == "intervention":
             from rich.panel import Panel
             from rich.text import Text
             c.print(Panel(Text(text), border_style="yellow"))

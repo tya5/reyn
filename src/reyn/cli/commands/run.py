@@ -95,6 +95,7 @@ def run(args: argparse.Namespace) -> None:
 
     from reyn.agent import Agent
     from reyn.config import _find_project_root, load_project_context
+    from reyn.user_intervention import StdinInterventionBus
     project_root = _find_project_root(Path.cwd())
     project_context = load_project_context(session.config, project_root)
     logger = make_logger(rich=args.rich)
@@ -102,6 +103,7 @@ def run(args: argparse.Namespace) -> None:
         model=model,
         strict=args.strict,
         subscribers=[logger],
+        intervention_bus=StdinInterventionBus(),
         shell_allowed=shell_allowed,
         resolver=session.resolver,
         permission_resolver=perm_resolver,

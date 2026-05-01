@@ -7,8 +7,7 @@ and reuse it for the whole phase or act loop.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..models import Skill
@@ -16,6 +15,7 @@ if TYPE_CHECKING:
     from ..events import EventLog
     from ..model_resolver import ModelResolver
     from ..permissions import PermissionDecl, PermissionResolver
+    from ..user_intervention import InterventionBus
 
 
 @dataclass
@@ -53,6 +53,6 @@ class OpContext:
     # Mutable cache for MCP HTTP clients keyed by server name
     mcp_clients: dict = field(default_factory=dict)
 
-    # ask_user
-    user_input_fn: Callable[[str, list[str]], Any] | None = None
+    # User interventions (ask_user, permission prompts in PR7)
+    intervention_bus: "InterventionBus | None" = None
     current_phase: str = ""

@@ -7,6 +7,7 @@ from .runtime import OSRuntime, RunResult
 from .config import LimitsConfig
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
+from .user_intervention import InterventionBus
 from reyn.reporters.persister import EventPersister
 
 
@@ -16,7 +17,7 @@ class Agent:
         model: str,
         strict: bool = False,
         subscribers: list[Callable] | None = None,
-        user_input_fn: Callable[[str, list[str]], str] | None = None,
+        intervention_bus: InterventionBus | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
@@ -30,7 +31,7 @@ class Agent:
         self.state_dir = ".reyn"
         self.strict = strict
         self._subscribers = list(subscribers or [])
-        self._user_input_fn = user_input_fn
+        self._intervention_bus = intervention_bus
         self._shell_allowed = shell_allowed
         self._limits = limits or LimitsConfig()
         self._resolver = resolver or ModelResolver({})
@@ -52,7 +53,7 @@ class Agent:
             skill, self.model,
             strict=self.strict,
             subscribers=[persister] + self._subscribers,
-            user_input_fn=self._user_input_fn,
+            intervention_bus=self._intervention_bus,
             run_id=self.run_id,
             shell_allowed=self._shell_allowed,
             resolver=self._resolver,

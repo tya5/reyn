@@ -15,6 +15,7 @@ from .pricing import TokenUsage
 if TYPE_CHECKING:
     from .models import Skill
     from .model_resolver import ModelResolver
+    from .user_intervention import InterventionBus
 
 
 @dataclass
@@ -36,6 +37,7 @@ async def invoke_sub_skill(
     model: str,
     subscribers: list,
     resolver: "ModelResolver",
+    intervention_bus: "InterventionBus | None" = None,
     output_language: str = "ja",
     max_phase_visits: int = 25,
 ) -> SubSkillResult:
@@ -51,6 +53,7 @@ async def invoke_sub_skill(
         strict=False,
         subscribers=subscribers,
         resolver=resolver,
+        intervention_bus=intervention_bus,
     )
     run_result = await agent.run(sub_skill, input_artifact, output_language=output_language)
     return SubSkillResult(

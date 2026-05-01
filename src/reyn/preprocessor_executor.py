@@ -127,7 +127,7 @@ class PreprocessorExecutor:
             shell_allowed=True,  # gating handled by permission_resolver.require_shell
             mcp_servers={},
             mcp_clients={},
-            user_input_fn=None,
+            intervention_bus=None,  # ask_user is forbidden in preprocessor
             current_phase=phase.name,
         )
 
