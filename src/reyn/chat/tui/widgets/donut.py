@@ -51,14 +51,17 @@ class DonutScreen(ModalScreen):
 
     def on_mount(self) -> None:
         size = self.app.size
-        self._w = max(20, size.width)
-        # Reserve one row so trailing newlines don't push render off-screen.
-        self._h = max(10, size.height - 1)
+        # Cap render size: a fullscreen 200x60 frame costs ~5x more than 80x24
+        # and Pure Python can't keep up. Centre a fixed window.
+        self._w = min(80, max(20, size.width))
+        self._h = min(28, max(10, size.height - 1))
         # K1 sized so the torus fills ~3/4 of the smaller screen dim.
         self._k1 = min(self._w, self._h * 2) * _K2 * 3 / (8 * (_R1 + _R2))
         self._a = 0.0
         self._b = 0.0
-        self._timer = self.set_interval(0.05, self._tick)
+        # 12.5 fps target — donut is graceful, not frantic; this also keeps
+        # us under the per-frame budget on slow terminals.
+        self._timer = self.set_interval(0.08, self._tick)
 
     def on_key(self, event) -> None:
         event.stop()
@@ -132,16 +135,36 @@ class DonutScreen(ModalScreen):
                 phi += _PHI_STEP
             theta += _THETA_STEP
 
-        # Render to Rich Text with brightness-graded coral.
+        # Render to Rich Text — group consecutive same-style chars into
+        # single append calls to keep span count manageable. Naive
+        # per-char append explodes Text's internal span list and stalls
+        # Textual's render loop.
         out = Text()
         for y in range(h):
-            for x in range(w):
+            x = 0
+            while x < w:
                 idx = x + y * w
                 ch = buf[idx]
                 if ch == " ":
-                    out.append(" ")
+                    # Run of background spaces — no style needed.
+                    run_end = x + 1
+                    while run_end < w and buf[run_end + y * w] == " ":
+                        run_end += 1
+                    out.append(" " * (run_end - x))
+                    x = run_end
                 else:
-                    out.append(ch, style=_style_for(shade[idx]))
+                    # Run of identical-shade chars.
+                    s = shade[idx]
+                    run_end = x + 1
+                    while (
+                        run_end < w
+                        and buf[run_end + y * w] != " "
+                        and shade[run_end + y * w] == s
+                    ):
+                        run_end += 1
+                    chunk = "".join(buf[i + y * w] for i in range(x, run_end))
+                    out.append(chunk, style=_style_for(s))
+                    x = run_end
             if y < h - 1:
                 out.append("\n")
         return out
