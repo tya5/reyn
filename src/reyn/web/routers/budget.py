@@ -123,7 +123,7 @@ async def patch_budget_caps(
             hard_limit=new_hard_limit,
             warn_ratio=current.warn_ratio,
         )
-        object.__setattr__(cfg, field_name, updated)
+        setattr(cfg, field_name, updated)
 
     _apply("daily_tokens", body.daily_tokens_hard_limit)
     _apply("daily_cost_usd", body.daily_cost_usd_hard_limit)
