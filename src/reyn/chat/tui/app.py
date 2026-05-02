@@ -81,6 +81,13 @@ class ReynTUIApp(App):
         Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
         Binding("ctrl+p", "palette_prev", "Prev", priority=True, show=False),
+        # Plain-letter shortcuts only work while the palette is visible
+        # (gated via check_action). Otherwise typing "n" into a message
+        # would silently navigate.
+        Binding("n", "palette_next_only", "Next", priority=True, show=False),
+        Binding("p", "palette_prev", "Prev", priority=True, show=False),
+        Binding("j", "palette_next_only", "Next", priority=True, show=False),
+        Binding("k", "palette_prev", "Prev", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette", priority=True, show=False),
     ]
@@ -399,8 +406,14 @@ class ReynTUIApp(App):
         else:
             self.action_open_palette()
 
+    def action_palette_next_only(self) -> None:
+        """n / j — advance selection; only fires when palette is visible
+        (gated via check_action so plain letters don't capture in input)."""
+        self._move_palette_cursor(1)
+
     def action_palette_prev(self) -> None:
-        """Shift+Tab / Ctrl+P — move selection up; no-op if palette is closed."""
+        """Shift+Tab / Ctrl+P / p / k — move selection up; gated via
+        check_action so plain letters don't capture when input has focus."""
         if self._palette_visible:
             self._move_palette_cursor(-1)
 
@@ -424,7 +437,16 @@ class ReynTUIApp(App):
         bindings would swallow them — Backspace wouldn't delete characters,
         Esc wouldn't reach prompt-toolkit-style chord handlers, etc.
         """
-        if action in {"palette_backspace", "palette_prev", "close_palette"}:
+        if action in {
+            "palette_backspace",
+            "palette_prev",
+            "palette_next_only",
+            "close_palette",
+        }:
+            # Plain-letter palette nav (n/p/j/k), Backspace, Esc must only
+            # fire while the palette is open — otherwise typing those into
+            # a message would silently navigate / delete. Tab keeps using
+            # `palette_next` (un-gated) so it can still open the palette.
             return self._palette_visible
         return True
 
