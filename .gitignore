@@ -20,3 +20,4 @@ improver_state.json
 .vscode/
 .idea/
 site/
+tmp/
