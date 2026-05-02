@@ -58,6 +58,23 @@ While reading each phase, **note whether it has a `preprocessor` block**, and if
 This information shapes the criteria you write in Step 6 — see the
 "Phases with python preprocessor" subsection.
 
+## Step 3.5 — Read existing eval.md if present (preserves user-curated cases)
+
+Before designing new cases, attempt `file.read({skill_dir}/eval.md)`. If the file
+is found, parse its `## case:` blocks to extract the existing case names AND
+their `input:` strings — these are the canonical case identities. Any new
+criteria you write MUST reuse those `case_name` values verbatim. Do not rename
+existing cases (`narrator output conciseness` ≠ `typical_finished_skill`) — the
+downstream eval/improver loop joins on case_name.
+
+If the file is not found (`[denied]`, `not_found`, or any error), proceed with
+fresh case design grounded in `phase_order` from Step 2.
+
+When extending an existing eval.md, you MAY add NEW cases for branches not yet
+covered, but the existing case names stay as they are. Phase names referenced
+in any case's `phase_criteria` MUST be members of `phase_order` — never invent
+phase names like `improve_skill` if the graph contains only `narrate`.
+
 ## Step 4 — Read artifact files
 
 Issue a glob op for `{skill_dir}/artifacts/*.yaml` using the `path` field:
@@ -106,6 +123,8 @@ If a phase has a `type: python` preprocessor step, the python computation is det
 ## Final checklist (apply before emitting skill_analysis)
 
 - [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of phase files in the directory.
+- [ ] Every `phase_criteria[*].phase` value is a member of `phase_order`. No invented phase names (e.g. if the graph only has `narrate`, `phase` MUST be `narrate` — never `improve_skill`, `revise`, etc.).
+- [ ] If an existing eval.md was found in Step 3.5, every test case I emit either reuses one of its case names verbatim or is a clearly-marked NEW case that doesn't collide with existing ones.
 - [ ] Every test case has a `phase_criteria` array with at least one phase entry.
 - [ ] Criteria differ meaningfully between cases — no verbatim copies from one case to another.
 - [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I read — no invented fields.

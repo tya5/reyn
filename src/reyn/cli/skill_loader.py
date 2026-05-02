@@ -12,10 +12,31 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.skill.skill_paths import resolve_skill_path, stdlib_root  # re-exported for convenience
+from reyn.skill.skill_paths import (  # re-exported for convenience
+    resolve_skill_path as _resolve_skill_path_raw,
+    stdlib_root,
+    SkillNotFoundError,
+)
 from reyn.schemas.models import Skill
 
-__all__ = ["LoadedSkill", "load_skill_from_args", "resolve_skill_path", "stdlib_root"]
+__all__ = [
+    "LoadedSkill", "load_skill_from_args",
+    "resolve_skill_path", "stdlib_root", "SkillNotFoundError",
+]
+
+
+def resolve_skill_path(name: str):
+    """CLI-friendly wrapper: print + sys.exit(1) on lookup failure.
+
+    The runtime layer calls reyn.skill.skill_paths.resolve_skill_path
+    directly so the SkillNotFoundError can propagate as a regular op
+    failure (no SystemExit leaking through eval workflows).
+    """
+    try:
+        return _resolve_skill_path_raw(name)
+    except SkillNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 @dataclass
