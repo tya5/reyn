@@ -358,6 +358,7 @@
   function _injectDesign(mount, html, slug) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
+    const designBase = `/web/designs/${encodeURIComponent(slug)}/`;
 
     // Walk BOTH head and body. The HTML5 parser routes `<link>` / `<style>`
     // / `<script>` placed before the implicit body to head, so a Reyn.html
@@ -366,8 +367,11 @@
     [...doc.head.childNodes, ...doc.body.childNodes].forEach(node => {
       if (node.nodeName === "SCRIPT") {
         scripts.push(node);
-      } else if (node.nodeType === Node.ELEMENT_NODE
-                 || (node.nodeType === Node.TEXT_NODE && node.textContent.trim())) {
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const imported = document.importNode(node, true);
+        _rewriteAssetUrls(imported, designBase);
+        mount.appendChild(imported);
+      } else if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
         mount.appendChild(document.importNode(node, true));
       }
     });
@@ -376,6 +380,14 @@
      // dev; a per-load timestamp keeps us from chasing stale assets without
      // forcing the user to disable cache in DevTools.
     const cacheBust = `?v=${Date.now()}`;
+    // Apply the same cache-buster to the link/img URLs we rewrote above.
+    mount.querySelectorAll("link[href], img[src]").forEach(el => {
+      const attr = el.tagName === "LINK" ? "href" : "src";
+      const v = el.getAttribute(attr);
+      if (v && v.startsWith("/web/designs/")) {
+        el.setAttribute(attr, v + cacheBust);
+      }
+    });
 
     // Inject and execute scripts in order
     scripts.forEach(orig => {
@@ -397,6 +409,27 @@
         s.textContent = orig.textContent;
       }
       document.head.appendChild(s);
+    });
+  }
+
+  /**
+   * Rewrite relative URLs on link/img elements to point at the design's
+   * served path (/web/designs/<slug>/). Without this, a design's
+   * <link href="styles.css"> resolves against the shell URL
+   * (/static/index.html) and 404s.
+   */
+  function _rewriteAssetUrls(el, designBase) {
+    const candidates = el.tagName === "LINK" || el.tagName === "IMG"
+      ? [el]
+      : el.querySelectorAll("link[href], img[src]");
+    candidates.forEach(node => {
+      const attr = node.tagName === "LINK" ? "href" : "src";
+      const v = node.getAttribute(attr);
+      if (!v) return;
+      if (v.startsWith("http") || v.startsWith("//") || v.startsWith("/")) {
+        return;  // already absolute
+      }
+      node.setAttribute(attr, designBase + v);
     });
   }
 
