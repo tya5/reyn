@@ -1,324 +1,297 @@
-# The Engine-Design Contract
+# Engine-Design Contract
 
-> **Why this is a top-level document**: until recently, producing a single
-> polished UI design was expensive enough that "core" and "design" were
-> co-developed by the same team in the same repo. Now that a designer
-> can ship a complete, contract-conforming UI from `claude.ai/design` in
-> hours, **the interface between engine and design becomes Reyn's most
-> consequential external API** — comparable in importance to the engine's
-> internal principles (P1–P8). Designs and engine should evolve on
-> independent release cadences, bound only by this contract.
->
-> This document is the canonical specification of that contract. The
-> operational documents in `docs/web/` (prompt template, selection,
-> distribution) are how this contract is exercised in practice.
+> Reyn's web UI is built on the **OpenUI** protocol, with a Reyn-specific
+> Layer 1 schema (`reyn-ui/v1`). This document captures the architectural
+> framing — *why* the contract exists, *what* it binds, *how* the layers
+> compose, and the *evolution policy*. The protocol itself is specified
+> in [docs/openui/](../openui/).
 
 ---
 
-## What the contract binds
+## Why this is a top-level document
 
-The contract sits between two parties:
+Until recently, producing a polished UI design was expensive enough that
+core engine and visual design were co-developed by the same team in the
+same repo. Now that a designer can ship a complete, contract-conforming
+UI from `claude.ai/design` in hours, **the interface between engine and
+design becomes Reyn's most consequential external surface** — comparable
+in importance to the engine's internal principles (P1–P8) for the
+project's success.
 
-- **The engine**: `src/reyn/`, including the web gateway under
-  `src/reyn/web/`. Owns data shape, runtime semantics, and the OS-level
-  vocabulary (Phase, Skill, Agent, Run, Event, Workspace, etc.).
-- **The design**: a `web/designs/<name>/` (or
-  `reyn/local/designs/<name>/`, etc.) directory containing tokens,
-  components, and pages. Owns visual chrome, density, vocabulary
-  translation for the App face, and interaction details.
+The killer feature this contract enables is **design swappability**:
+end users can drop a new design into a directory and `reyn web` shows
+it, without rebuilding anything. That is the user-facing impact.
 
-Each side may evolve on its own schedule **as long as the contract holds**.
-A bundled engine release is compatible with all designs whose
-`contract_version` is supported by that engine. A design is portable
-across all engine releases that support its `contract_version`. This is
-the same shape as POSIX (kernel/userspace), HTTP (server/client), or
-SQL (engine/queries) — a standardised interface enabling independent
-evolution.
+Designs and engine should evolve on independent release cadences, bound
+only by this contract.
 
 ---
 
-## The four layers of the contract
-
-The full IF is captured across four layers. Together they completely
-define what the design needs to know about the engine, and vice versa.
-
-### Layer 1 — Data shapes (engine → design)
-
-What the engine sends, what the design must accept:
-
-- **WebSocket message envelope** (`/ws/chat/{agent_name}`): the engine
-  pushes JSON messages tagged with a `kind` from the OS-generic
-  taxonomy: `agent`, `status`, `error`, `intervention`, `trace`,
-  `skill_done`. Payload includes `text`, optional `meta` (run_id,
-  skill_name, agent_name), and for `intervention` the `choices` and an
-  acknowledgement token.
-- **REST endpoint shapes** (`/api/agents`, `/api/skills`, `/api/runs`,
-  `/api/topologies`, `/api/permissions`, `/api/budget/usage`): each
-  documented under `src/reyn/web/routers/` with stable JSON shapes.
-  All skill-domain values (artifact types, phase names, decision
-  values) are passed through as opaque strings — the design never
-  interprets them, only displays them.
-- **Server config** (`/api/web/config`): the engine reports
-  `default_design`, `available_designs[]`, `output_language`, and
-  `contract_version` it implements.
-
-### Layer 2 — Action surface (design → engine)
-
-What the design sends, what the engine must accept:
-
-- **User text submission**: `{type: "user_message", text: string}` over
-  the WebSocket. Engine routes to `session.submit_user_text`.
-- **Intervention answer**: `{type: "intervention_answer", id: string,
-  choice_id?: string, text?: string}` over the same WebSocket.
-- **Permission decision** (REST): `PUT /api/permissions/{key}` with a
-  rule body.
-- **Design selection** (in-shell, no engine round-trip): localStorage
-  + URL param. Reported back to the engine only as a usage signal, not
-  a state change.
-
-### Layer 3 — Component contracts (design ↔ shell ↔ design)
-
-What every design's components must look like, so the shell's adapters
-can pass props uniformly:
-
-- **Per-face required components** with exact prop interfaces. See
-  [claude-design-prompt.md § Component contracts](claude-design-prompt.md).
-- **Token schema**: `tokens.json` keys and shapes. See
-  [claude-design-prompt.md § Token schema](claude-design-prompt.md).
-- **Naming conventions**: PascalCase TSX files, page files end with
-  `Page`, files live under `components/` or `pages/`.
-
-The shell-side TypeScript types in `web/shell/contracts/v<MAJOR>/` are
-the single source of truth at typecheck time. This document describes
-their semantics; the `.ts` files are the precise definitions.
-
-### Layer 4 — Anti-requirements (forbidden behaviour)
-
-What designs must NOT do, regardless of what the rest of the contract
-allows:
-
-- No `fetch` / `XMLHttpRequest` / WebSocket calls inside design
-  components. The shell injects all data via props.
-- No global state imports (Zustand, Redux, Recoil, Jotai, …). The
-  shell owns state.
-- No bundler / framework configs (Tailwind, postinstall scripts,
-  `package.json`). The shell owns the build.
-- No hardcoded user-visible strings on the App face. All text comes
-  via props, allowing i18n through the shell.
-- No engine-vocabulary leakage on the App face (`phase`, `artifact`,
-  `control_ir`, `event`, `validation`, `schema`).
-
-These rules are statically checkable. Violations fail
-`reyn design lint` at install time.
-
----
-
-## Versioning
-
-The contract uses **SemVer** under a single `contract_version` key.
-Designs declare the version they target in `design.yaml`; the engine
-declares the versions it supports in
-`src/reyn/web/contracts/SUPPORTED.md`.
+## The three layers
 
 ```
-contract_version: "1.2.0"
-                   │ │ └── patch — clarifications only, no semantic change
-                   │ └──── minor — backward-compatible addition
-                   └────── major — breaking change, designs must update
+┌─────────────────────────────────────────────────────────────┐
+│ Layer 0 — OpenUI host adapter protocol                      │
+│   window.OPENUI_HOST  (invoke + listen)                     │
+│   window.OPENUI_DATA  (initial data, schema-shaped)         │
+│   window.OPENUI_SCHEMA (e.g. "reyn-ui/v1")                  │
+│   window.OPENUI_DESIGN_MODE (designer preview vs embedded)  │
+│   spec: docs/openui/spec/layer-0.md                         │
+│   domain-neutral, transport-neutral                         │
+└─────────────────────────────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│ Layer 1 — reyn-ui/v1 domain schema                          │
+│   ReynUiData shape (Agents, Runs, Events, SkillGraph, ...)  │
+│   Actions: agent.submit, agent.intervention.answer, ...     │
+│   Channels: agent.message, run.started, state.delta, ...    │
+│   Components: TodayScreen, Conversation, SkillGraphPage, .. │
+│   spec: docs/openui/schemas/reyn-ui-v1/                     │
+│   Reyn-specific, but agent-domain-shaped                    │
+└──────────────────────┬──────────────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────────────┐
+│ Layer 2 — implementation-specific (inside Layer 1 data)     │
+│   Reyn's Skill / Phase / Workspace / Topology / Control IR  │
+│   Carried as opaque structured JSON inside ReynUiData.      │
+│   The schema documents their shape but Layer 0 does not     │
+│   interpret them — they pass through verbatim from Reyn     │
+│   gateway to design.                                        │
+│   (This satisfies Reyn's P7 on the host adapter side.)      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### What counts as each kind of change
-
-**Major (breaking)** — designs targeting the previous major must be
-updated:
-- Removing a required component
-- Changing the type of a required prop
-- Removing a required token key
-- Changing the WebSocket envelope keys
-- Removing a REST endpoint or changing its response shape (other than
-  additive)
-- Renaming an existing kind in the message taxonomy
-
-**Minor (additive)** — designs targeting an older minor still work:
-- Adding a new optional component to the contract (designs without
-  it: the shell falls back to the default design's version, or hides
-  the feature)
-- Adding a new optional prop to an existing component (designs
-  ignore it; shell passes it only if present)
-- Adding a new token key (designs without it: that token's theming
-  degrades to a sensible default, set by the shell)
-- Adding a new REST endpoint (designs only need it if they consume
-  the new feature)
-- Adding a new optional kind to the message taxonomy (designs
-  rendering only known kinds keep working)
-
-**Patch** — no behaviour change, only documentation or wording fixes
-in this document.
-
-### Compatibility check
-
-`reyn design add` and the boot path of `reyn web` both check that the
-design's `contract_version` major matches the engine's supported major,
-and that the design's minor is ≤ the engine's minor.
-
-```
-design.yaml says contract_version: "1.2.0"
-engine supports     1.4.x
-                   ──────
-                   compatible: same major, design's minor ≤ engine's minor
-
-design.yaml says contract_version: "2.0.0"
-engine supports     1.4.x
-                   ──────
-                   incompatible: major mismatch — refuse install with diagnostic
-
-design.yaml says contract_version: "1.5.0"
-engine supports     1.4.x
-                   ──────
-                   incompatible: design needs features the engine doesn't have
-                   yet — refuse install with "upgrade Reyn to use this design"
-```
+The full canonical spec for each layer lives in
+[docs/openui/](../openui/). This document tells you why we chose this
+shape, how it relates to Reyn's principles, and how it evolves.
 
 ---
 
-## Evolution process
+## Why OpenUI rather than an existing protocol
 
-Every contract change goes through this flow. The aim is that contract
-changes are visible, reviewable, and slow enough that the community has
-time to keep up.
+Two adjacent protocols already exist and were evaluated:
 
-```
-1. Propose a contract change as a PR touching ALL of:
-     - this document (engine-design-contract.md) — the prose semantics
-     - web/shell/contracts/v<MAJOR>/*.ts — the machine-readable types
-     - claude-design-prompt.md — operational template
-     - bundled designs under web/designs/ — show that the change is
-       implementable; update each design to satisfy the new contract
+### AG-UI (Agent-User Interaction Protocol)
 
-2. Bump contract_version per SemVer rules:
-     - patch  : SUPPORTED.md only
-     - minor  : SUPPORTED.md + designs may opt into the new feature
-     - major  : SUPPORTED.md + new directory web/shell/contracts/v2/,
-                 deprecation note in v1, migration guide
+[ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui) — open,
+event-based protocol for "any AG-UI compliant frontend" ↔ "any AG-UI
+compliant agent backend". Adopted by Microsoft Agent Framework, Oracle
+Open Agent Specification, CopilotKit, Google ADK, AWS Strands, Mastra,
+Pydantic AI, Agno, LlamaIndex, AG2, LangGraph, CrewAI. ~28 standardised
+event types. Real industry traction.
 
-3. For majors only: ship a deprecation period.
-     - Announce in CHANGELOG: "v1 deprecated, removal in 2 minor versions"
-     - Engine continues to support v1 for at least 2 minor releases
-     - reyn design lint warns on v1 designs starting from the
-        deprecation announcement
-     - Removal in a future major release of Reyn itself (not just a
-        contract minor)
+**Why we did not adopt as-is**:
 
-4. Update community channels:
-     - awesome-reyn-designs: tag designs by the contract major they
-        target
-     - Release notes link to the migration guide
-```
+1. AG-UI is **agent-specific by scope**. Its documentation explicitly
+   binds it to "any agentic backend". Reyn's longer-term vision keeps
+   the door open for the same UI host pattern to apply to non-agent
+   tools (file managers, IDEs, CLI utilities). A locked-in agent
+   protocol forecloses that.
+2. **The killer feature for end users is design swap, not backend
+   interop**. AG-UI optimises for "swap the LLM provider" /
+   "swap the frontend framework"; OpenUI optimises for "swap the
+   visual design". These are different axes — AG-UI doesn't
+   directly enable the latter.
+3. AG-UI **does not replace design work**. Even fully adopted, Reyn
+   would still need custom designs for Today / Library / SkillGraph /
+   RunTimeline / Permissions screens — CopilotKit covers only chat
+   plumbing (~30-40% of Reyn's surface). The cost of refactoring
+   Reyn's gateway to AG-UI events did not buy a corresponding cost
+   reduction in design work.
+4. **Reyn-specific concepts** (Skill, Phase, Workspace, Topology,
+   Control IR) would have to live inside AG-UI's `Custom` event type,
+   which is the protocol's escape hatch. Going through Custom for our
+   core concepts means we get less of AG-UI's typed event vocabulary
+   and more of its bookkeeping.
 
-Patch and minor changes can ship in any Reyn release. Major changes are
-high-friction by design — the bar is "the existing contract genuinely
-prevents Reyn from delivering value" rather than "we want to clean
-things up".
+### MCP (Model Context Protocol)
 
----
+Adjacent, but solves a different problem (LLM ↔ external
+tool/resource). Not a UI host protocol. We borrow its **governance
+philosophy** (neutral name, spec-first, multi-vendor adoption from day 1)
+but not its surface.
 
-## Why this contract is the central artifact
+### What we kept from AG-UI
 
-For most of software's history, "the UI" and "the engine" were
-co-evolved. A redesign meant a code change. Designers and developers
-worked together synchronously. The interface between them was implicit,
-encoded in shared assumptions and reviewed by humans.
+OpenUI is informed by AG-UI even though we did not adopt it:
 
-LLM-driven design tools (Claude Design, Figma AI, v0, etc.) are
-collapsing the cost of producing a UI from "weeks of human effort" to
-"hours of conversation". When the cost of producing a UI approaches
-zero, the bottleneck shifts from "designing the UI" to "ensuring it
-fits the engine cleanly". The IF stops being implicit and becomes the
-**limiting reagent of the whole system**.
+- **JSON Patch (RFC 6902) for state diffs** — AG-UI's StateDelta event
+  taught us this is a clean, tooling-friendly choice. Our
+  `state.delta` channel uses it.
+- **Lifecycle event vocabulary** — `run.started` / `run.finished` /
+  `phase.started` / `phase.finished` echo AG-UI's `RunStarted` /
+  `StepStarted` directly.
+- **Spec-first, neutral naming** — same governance shape as MCP / LSP.
 
-A few consequences for Reyn:
+The full evaluation is in the project memory
+(`project_engine_design_contract_standard.md`); this document captures
+the result.
 
-- **The IF is what makes the design ecosystem possible**. Without a
-  stable, statically-checkable contract, community designs would be
-  one-off integrations — high friction, low diversity. With it,
-  publishing a design is `reyn design pack && git push`.
-- **The IF lets the engine evolve faster, not slower**. A design that
-  pins `contract_version: "1.2.0"` is unaffected by engine internals
-  — Reyn's runtime can be rewritten arbitrarily as long as the
-  contract holds. This is the same trick HTTP played for the web.
-- **The IF is the OSS competitive moat**. Reyn's value is not just the
-  engine; it's the engine **and the surface area on which a design
-  community can grow**. Whoever defines the design contract well in
-  this category will own the gravitational pull.
+### Future re-evaluation
 
-That is why this document exists, and why changes to it are reviewed
-with the same gravity as changes to CLAUDE.md's P1–P8.
+If AG-UI traction reaches a point where Reyn's positioning suffers from
+*not* being AG-UI-compatible, the door is open: a future Layer 1
+schema (`ag-ui/v1`) could be added, the host could route appropriately,
+and existing reyn-ui/v1 designs would keep working. We chose the path
+that preserves option value rather than committing now.
 
 ---
 
-## Implementation milestones
+## Layer responsibilities
 
-The contract is being established progressively. Current state and
-near-term roadmap:
+### Layer 0 (`docs/openui/`) — the universal protocol
 
-| Milestone | Status |
-|---|---|
-| Layer 1 (data shapes) defined and shipped via `feat/web-gateway` | ✅ done |
-| Layer 4 (anti-requirements) documented in `claude-design-prompt.md` | ✅ done |
-| Layer 3 (component contracts) prose in `claude-design-prompt.md` | ✅ done |
-| Layer 3 machine-readable in `web/shell/contracts/v1/*.ts` | ⏳ frontend phase |
-| Layer 2 (action surface) for `intervention_answer` over WS | ⏳ frontend phase |
-| `contract_version` declared in `design.yaml` and validated at install | ⏳ `reyn design ...` CLI |
-| `web/shell/contracts/SUPPORTED.md` (engine-side declaration) | ⏳ frontend phase |
-| Bundled `web/designs/<name>/` set with at least one canonical design | ⏳ post-Claude-Design first export |
-| Deprecation pipeline (warn on stale contracts) | ⏳ on first minor bump |
+**Owns**: the four `window.OPENUI_*` globals, `invoke` / `listen`
+semantics, the manifest format, action / channel naming rules, the
+reserved `data.refetch` action, JSON Patch convention for `state.delta`.
 
-The vision in [design-distribution.md](design-distribution.md) requires
-all of the above to be real before community publishing is a smooth
-loop. The current focus is to land the milestones above in order; this
-document defines the destination.
+**Does not own**: any domain-specific data shape, any specific action /
+channel name beyond reserved, any component contract.
+
+**Stability**: Layer 0 is intentionally minuscule. Changes here are
+breaking for every host and every design across all schemas. Bumps
+should be rare and well-warranted. Currently `1.0`.
+
+### Layer 1 (`docs/openui/schemas/reyn-ui-v1/`) — Reyn's domain schema
+
+**Owns**: the `ReynUiData` shape, the set of actions
+(`agent.submit`, `data.refetch`, `permission.update`, …), the set of
+channels (`agent.message`, `run.started`, `state.delta`, …), and the
+component contracts (App / Studio surfaces, prop shapes).
+
+**Does not own**: visual chrome, density, color palette, component
+implementation, brand voice. Those are owned by individual designs.
+
+**Stability**: SemVer. 1.x.y is additive; 2.0 is breaking. See the
+schema's [README](../openui/schemas/reyn-ui-v1/README.md) for the
+versioning policy and changelog.
+
+### Layer 2 (inside Layer 1 data) — Reyn-specific extensions
+
+**Owns**: Skill, Phase, Workspace, Topology, Control IR op shapes —
+all the engine-level concepts that the Studio face renders verbatim and
+the App face hides behind humanized wrappers.
+
+These types are typed in `data.types.ts` for documentation, but the
+**Layer 0 protocol does not interpret them**. They are pass-through
+opaque values. New skills, new phase types, new event types appear in
+Studio without bumping the schema.
+
+This is the design-side analogue of P7 (OS skill-agnostic): the schema
+is skill-agnostic too.
 
 ---
 
-## Relationship to Reyn's principles
+## Relationship to Reyn's principles (P1–P8)
 
 CLAUDE.md's P1–P8 govern the **engine's internal coherence**. They are
 the constitution of the OS. They say nothing about UI.
 
 This contract governs the **engine's external surface to the design
 layer**. It is to P1–P8 what HTTP is to a web server's internal
-architecture: orthogonal, complementary, and equally load-bearing for
-the project's success.
+architecture: orthogonal, complementary, equally load-bearing.
 
 Where the two interact:
 
 - **P5 (Workspace)**: design-installed files in
-  `reyn/local/designs/<name>/` are workspace state. Edits and
-  installs emit events.
+  `reyn/local/designs/<name>/` are workspace state. Edits and installs
+  emit events.
 - **P6 (Events)**: every design install / remove / select emits an
   event (`design_installed`, `design_removed`, `design_selected`).
   Design-related runtime debugging uses the same audit log as
   everything else.
-- **P7 (OS skill-agnostic)**: the contract's data shapes are
-  skill-agnostic. Skill-domain values (artifact types, phase names)
-  flow through the IF as opaque strings — the design renders them,
-  never interprets them. A new skill or new phase requires zero
-  contract changes.
+- **P7 (OS skill-agnostic)**: Layer 1's data shape carries
+  skill-domain values (artifact types, phase names) as opaque strings.
+  The host produces them, the design renders them, neither interprets.
+  A new skill or phase requires zero schema or contract changes.
 
-This last property is what makes the contract sustainable across
-arbitrary skill / phase evolution. It is the design-side equivalent
-of P7.
+---
+
+## Evolution policy
+
+Every change to a Layer 0 or Layer 1 spec is a PR that touches the
+corresponding `docs/openui/` files. SemVer rules apply per layer.
+
+### Patch (e.g. 1.0.0 → 1.0.1)
+
+Documentation clarifications only. No behaviour change. No version bump
+required for hosts or designs.
+
+### Minor (e.g. 1.0 → 1.1)
+
+Additive. Existing designs continue to work without modification.
+Hosts implementing the older minor SHOULD upgrade lazily.
+
+What counts as additive:
+
+- New optional component (with `required: false`)
+- New optional prop on existing component
+- New action or channel
+- New optional payload field on existing action
+- New `data.types.ts` field
+
+### Major (e.g. 1.x → 2.0)
+
+Breaking. Designs targeting `1.x` do not work with hosts implementing
+`2.0` and vice versa.
+
+What counts as breaking:
+
+- Removing or renaming a component / action / channel / data field
+- Changing the type of an existing prop / payload field / event field
+- Changing the meaning of an existing string identifier
+
+Major bumps SHIP a migration guide and a deprecation period: at least
+one minor release where the old form is marked deprecated but still
+works, before the major bump removes it.
+
+### Versioning of designs
+
+A design's `design.yaml` declares the schema it targets:
+
+```yaml
+schema: reyn-ui/v1     # any 1.x.y
+schema: reyn-ui/1.2    # any 1.2.x
+schema: reyn-ui/1.2.3  # exact pin
+```
+
+The host accepts any compatible declaration. See
+`design-distribution.md` for full details on the manifest.
+
+---
+
+## Implementation status
+
+| Layer | Status |
+|---|---|
+| Layer 0 spec | ✅ docs/openui/spec/ |
+| Layer 0 TypeScript types | ✅ docs/openui/types/ |
+| Layer 0 JSON Schema validator (manifest) | ✅ docs/openui/schemas/manifest.schema.json |
+| reyn-ui/v1 schema | ✅ docs/openui/schemas/reyn-ui-v1/ |
+| reyn-ui/v1 TypeScript types | ✅ docs/openui/schemas/reyn-ui-v1/data.types.ts |
+| Reyn host implementation (`OPENUI_HOST`, gateway endpoints) | ⏳ PR30 |
+| Reference design (coral/) re-exported as reyn-ui/v1 compliant | ⏳ PR31 |
+| `reyn design ...` CLI (install / list / remove community designs) | ⏳ Phase 2 |
+| `@openui/validator` external library | ⏳ Phase 2-3 |
+| Lifting `docs/openui/` into a standalone repo | ⏳ on traction |
 
 ---
 
 ## See also
 
-- [claude-design-prompt.md](claude-design-prompt.md) — how Claude
-  Design is constrained to produce contract-conformant exports
-- [multi-design-selection.md](multi-design-selection.md) — how the
-  shell selects among installed designs at runtime
-- [design-distribution.md](design-distribution.md) — how designs are
-  published, installed, and discovered
-- [design_brief.md](design_brief.md) — the visual / brand
-  specification for Reyn's two faces
+- [docs/openui/README.md](../openui/README.md) — entry point for the
+  OpenUI specification
+- [docs/openui/spec/layer-0.md](../openui/spec/layer-0.md) — Layer 0
+  protocol normative spec
+- [docs/openui/schemas/reyn-ui-v1/](../openui/schemas/reyn-ui-v1/) —
+  reyn-ui/v1 schema
+- [claude-design-prompt.md](claude-design-prompt.md) — the prompt
+  template Cowork pastes into Claude Design to generate
+  reyn-ui/v1-compliant designs
+- [multi-design-selection.md](multi-design-selection.md) — how the host
+  picks among installed designs at runtime
+- [design-distribution.md](design-distribution.md) — how community
+  designs are installed, shared, and discovered
+- [design_brief.md](design_brief.md) — the visual / brand specification
+  for Reyn's two faces
 - `CLAUDE.md` (project root) — engine-side principles (P1–P8)

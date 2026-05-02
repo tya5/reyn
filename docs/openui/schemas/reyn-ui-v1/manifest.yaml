@@ -1,0 +1,284 @@
+# reyn-ui/v1 — Layer 1 schema for Reyn agent OS
+#
+# This manifest declares the data shape, actions, channels, and component
+# contracts that Reyn-targeted designs satisfy. It conforms to OpenUI's
+# manifest format (see docs/openui/spec/manifest.md).
+#
+# Designs targeting reyn-ui/v1 are dropped into:
+#   reyn/local/designs/<slug>/   (per-user, gitignored)
+#   reyn/project/designs/<slug>/ (project-committed)
+#   web/designs/<slug>/          (bundled with Reyn)
+# and selected at runtime via the design picker.
+
+schema: "reyn-ui/v1"
+title: "Reyn agent OS UI v1"
+description: |
+  Layer 1 schema for Reyn — a workflow-engine-driven agent OS that exposes
+  two faces:
+
+  - **App face**: end-user-friendly chat with named agents, agent gallery,
+    a Library of "things your agents can do", and Today recap.
+  - **Studio face**: developer-facing skill graph, run timeline, evals,
+    permissions table, settings.
+
+  Reyn-specific concepts (Skill, Phase, Workspace, Topology, Run, Event)
+  are carried as structured data inside `OPENUI_DATA` and as event
+  payloads on lifecycle channels. Layer 0 does not interpret these; the
+  design renders them, the host's backend produces them.
+spec_version: "1.0"
+
+data:
+  type: ReynUiData
+  description: |
+    Top-level shape of `window.OPENUI_DATA`. See `data.types.ts` for the
+    full type tree (Agent, RecapEntry, Quickstart, LibraryItem,
+    ChatMessage, SkillGraph, RunEvent, RunSummary, PermissionRule,
+    I18nKeys).
+
+actions:
+  data.refetch:
+    description: |
+      Re-fetch the full `ReynUiData` snapshot. Hosts MUST implement this
+      (Layer 0 § 4.1).
+    returns: ReynUiData
+
+  agent.submit:
+    description: |
+      User submitted a chat message to an agent.
+    payload:
+      agentId: string
+      text: string
+    returns: void
+
+  agent.intervention.answer:
+    description: |
+      User answered an `ask_user` intervention prompt — either by
+      selecting one of the suggested chips (`choiceId`) or by typing a
+      free-text response (`text`).
+    payload:
+      choiceId?: string
+      text?: string
+    returns: void
+
+  agent.add:
+    description: |
+      Create a new agent from a profile draft.
+    payload:
+      name: string
+      role_prompt: string
+      animal: AgentAnimal
+      color: string
+      allowed_skills?: string[]
+    returns: Agent
+
+  agent.remove:
+    description: |
+      Delete an agent.
+    payload:
+      agentId: string
+    returns: void
+
+  run.cancel:
+    description: |
+      Cancel a running skill execution.
+    payload:
+      runId: string
+    returns: void
+
+  permission.update:
+    description: |
+      Update or insert a permission rule (Studio Permissions table).
+    payload:
+      op: string
+      glob: string
+      rule: "allow" | "prompt" | "deny"
+      note?: string
+    returns: void
+
+  permission.remove:
+    description: |
+      Delete a permission rule.
+    payload:
+      op: string
+      glob: string
+    returns: void
+
+channels:
+  agent.message:
+    description: |
+      A chat message arrived from an agent (streaming text, status banner,
+      mid-task question, or completion summary). Append to the active
+      conversation transcript.
+    event: ChatMessage
+
+  run.started:
+    description: |
+      A skill run started. Designs may show a "Aria is working on it"
+      indicator on the App face or push a row into the Runs table on
+      Studio.
+    event: "{ runId: string, skillName: string, agentId: string }"
+
+  run.finished:
+    description: |
+      A skill run finished. `status` is `ok` for success, `failed` for
+      crash, `aborted` for user-cancelled. Update the runs table and
+      humanize the App-face conversation banner.
+    event: '{ runId: string, status: "ok" | "failed" | "aborted" }'
+
+  phase.started:
+    description: |
+      A phase within an active run started. Studio may highlight the
+      phase node in the skill graph mini-map; App may humanize as a
+      single-line progress update.
+    event: "{ runId: string, phaseId: string }"
+
+  phase.finished:
+    description: |
+      A phase finished. `status` reflects whether the phase completed
+      successfully, errored, or was skipped.
+    event: '{ runId: string, phaseId: string, status: "done" | "active" | "pending" }'
+
+  state.delta:
+    description: |
+      Incremental update to `OPENUI_DATA`. Payload is RFC 6902 JSON Patch.
+      Designs apply the patch to their local copy of `OPENUI_DATA` (or
+      to the parts of state they render).
+    event: "{ patch: JsonPatch }"
+
+  budget.updated:
+    description: |
+      Budget counters changed (LLM call recorded). Designs MAY update a
+      Settings → Budget panel without refetching.
+    event: "{ tokensToday: number, usdToday: number, tokensMonth: number, usdMonth: number }"
+
+  permission.prompted:
+    description: |
+      Backend asked the user to allow / deny / always-allow an op. App
+      face renders an inline prompt-card (sheet on mobile); Studio renders
+      a modal-lite. The user's answer is sent back via
+      `agent.intervention.answer` (handled by the same intervention bus).
+    event: '{ op: string, target: string, decision_required: ("allow"|"deny"|"prompt")[] }'
+
+components:
+  # ── App face (required) ─────────────────────────────────────────────────
+
+  TodayScreen:
+    surface: app
+    required: true
+    props:
+      onPickAgent: (agentId: string) => void
+      onOpenLibrary: () => void
+      lang: '"en" | "ja"'
+      layout?: '"default" | "hero" | "agents-first"'
+
+  Conversation:
+    surface: app
+    required: true
+    props:
+      agentId: string
+      onSubmit: (text: string) => void
+      onAnswerIntervention: (a: { choiceId?: string, text?: string }) => void
+      onOpenStudio: () => void
+      lang: '"en" | "ja"'
+
+  AgentsGallery:
+    surface: app
+    required: true
+    props:
+      onPickAgent: (agentId: string) => void
+      onOpenProfile: (agentId: string) => void
+      onAddAgent: () => void
+      lang: '"en" | "ja"'
+
+  AgentProfileSheet:
+    surface: app
+    required: true
+    props:
+      agentId: string
+      onClose: () => void
+      onOpenStudio: (agentId: string) => void
+      lang: '"en" | "ja"'
+
+  LibraryScreen:
+    surface: app
+    required: true
+    props:
+      onPickCard: (libraryItemId: string) => void
+      lang: '"en" | "ja"'
+
+  GuidedRunFlow:
+    surface: app
+    required: true
+    props:
+      libraryItemId: string
+      onComplete: (result: unknown) => void
+      onCancel: () => void
+      lang: '"en" | "ja"'
+
+  # ── Studio face (required) ──────────────────────────────────────────────
+
+  StudioConversation:
+    surface: studio
+    required: true
+    props:
+      agentId: string
+      runId?: string
+      onSelectEvent: (eventId: number) => void
+      lang: '"en" | "ja"'
+
+  SkillGraphPage:
+    surface: studio
+    required: true
+    props:
+      skillName: string
+      onSelectPhase: (phaseId: string) => void
+      lang: '"en" | "ja"'
+
+  RunTimelinePage:
+    surface: studio
+    required: true
+    props:
+      runId: string
+      onSelectEvent: (eventId: number) => void
+      lang: '"en" | "ja"'
+
+  PermissionsPage:
+    surface: studio
+    required: true
+    props:
+      onUpdate: (rule: PermissionRule) => void
+      onRemove: (op: string, glob: string) => void
+      lang: '"en" | "ja"'
+
+  # ── Shared / chrome (required) ─────────────────────────────────────────
+
+  ModeToggle:
+    surface: shared
+    required: true
+    props:
+      mode: '"app" | "studio"'
+      onChange: (next: "app" | "studio") => void
+      lang: '"en" | "ja"'
+
+extensions:
+  studio_extends_layer_2: |
+    The Studio components consume Reyn-specific concepts (Skill, Phase,
+    Workspace, Topology, Control IR ops) as structured data inside
+    `ReynUiData.SKILL_GRAPH`, `RUN_EVENTS`, `PERMISSIONS`, etc. These
+    are typed in `data.types.ts` but the Layer 0 protocol does not
+    interpret them — they are pass-through opaque values per OpenUI's
+    Layer 2 (implementation-specific extensions inside Layer 1 data).
+
+  i18n: |
+    All user-visible strings on the App face come via `ReynUiData.COPY`
+    and the design's `t(key, lang)` helper. Studio-face strings may be
+    inline English (the design's audience is developers; `output_language`
+    in `reyn.yaml` controls this preference).
+
+  pass_through_types: |
+    The Studio face consumes Reyn-engine vocabulary (phase ids, artifact
+    type names, event-type strings like "llm_called", op identifiers like
+    "file.read") as opaque strings. Designs render them verbatim; they
+    are not interpreted by the schema. This satisfies Reyn's P7
+    (OS skill-agnostic) on the host side and lets new skills appear in
+    Studio without schema bumps.
