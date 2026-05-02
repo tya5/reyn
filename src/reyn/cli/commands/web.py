@@ -47,6 +47,13 @@ def register(sub) -> None:
         metavar="LEVEL",
         help="uvicorn のログレベル (デフォルト: info)",
     )
+    p.add_argument(
+        "--default-design",
+        default=None,
+        metavar="SLUG",
+        dest="default_design",
+        help="デフォルトの design slug (env REYN_WEB_DEFAULT_DESIGN に設定)",
+    )
     p.set_defaults(func=run)
 
 
@@ -70,6 +77,11 @@ def run(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # --default-design flag: propagate via env so web_config router can read it.
+    import os
+    if getattr(args, "default_design", None):
+        os.environ["REYN_WEB_DEFAULT_DESIGN"] = args.default_design
 
     uvicorn.run(
         "reyn.web.server:app",
