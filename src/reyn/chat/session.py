@@ -175,13 +175,24 @@ class _PendingChain:
 
 
 def _iv_meta(iv: "UserIntervention") -> dict:
-    """Standard `meta` payload for OutboxMessage announcing an intervention."""
+    """Standard `meta` payload for OutboxMessage announcing an intervention.
+
+    Includes structured choice data so TUI renderers can build chip buttons
+    without re-parsing the formatted text string.
+    """
     out = {"intervention_id": iv.id, "intervention_kind": iv.kind}
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = _run_short(iv.run_id)
     if iv.skill_name:
         out["skill_name"] = iv.skill_name
+    if iv.choices:
+        out["choices"] = [
+            {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+            for c in iv.choices
+        ]
+    if iv.suggestions:
+        out["suggestions"] = list(iv.suggestions)
     return out
 
 

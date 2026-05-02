@@ -185,8 +185,12 @@ class ReynTUIApp(App):
             # Intervention: mount inline widget for structured response
             if msg.kind == "intervention":
                 iv_id = msg.meta.get("intervention_id", "")
+                raw_choices = msg.meta.get("choices")
+                choices = None
+                if raw_choices:
+                    choices = [(c["label"], c["id"]) for c in raw_choices]
                 self.call_from_thread(
-                    self._mount_intervention, conv, msg.text, iv_id
+                    self._mount_intervention, conv, msg.text, iv_id, choices
                 )
                 continue
 
@@ -198,10 +202,19 @@ class ReynTUIApp(App):
                 self._maybe_refresh_status(header)
 
     def _mount_intervention(
-        self, conv: ConversationView, text: str, iv_id: str
+        self,
+        conv: ConversationView,
+        text: str,
+        iv_id: str,
+        choices: list[tuple[str, str]] | None = None,
     ) -> None:
-        """Mount an InterventionWidget inline in the conversation view."""
-        # Provide an async callback that calls session._maybe_answer_oldest_intervention
+        """Mount an InterventionWidget inline in the conversation view.
+
+        When `choices` is provided (from meta["choices"]), chip buttons are
+        rendered. The user's answer (chip label or free text) is routed via
+        session._maybe_answer_oldest_intervention — which matches hotkeys /
+        choice labels against the pending intervention.
+        """
         async def _callback(answer: str) -> None:
             session = self._get_session()
             if session is not None:
@@ -209,7 +222,7 @@ class ReynTUIApp(App):
 
         conv.mount_intervention(
             question=text,
-            choices=None,   # free-text only (chips require structured meta)
+            choices=choices,
             answer_callback=_callback,
             iv_id=iv_id,
         )
