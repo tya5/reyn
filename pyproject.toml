@@ -46,6 +46,7 @@ web = [
     "uvicorn[standard]>=0.27",
     "websockets>=12",
 ]
+mcp = ["mcp>=1.0"]
 
 [project.scripts]
 reyn = "reyn._cli:main"

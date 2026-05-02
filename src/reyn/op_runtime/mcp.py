@@ -1,6 +1,11 @@
-"""mcp kind handler — call a tool on a configured MCP HTTP server."""
+"""mcp kind handler — call a tool on a configured MCP server.
+
+Supports stdio + Streamable HTTP transports (sse deferred). The transport
+is selected per-server via the ``type:`` field in ``mcp.servers.<name>``;
+configs that omit ``type`` default to ``http`` for backward compatibility
+with pre-PR32 reyn.yaml files.
+"""
 from __future__ import annotations
-import asyncio
 from typing import Literal
 
 from . import register
@@ -8,8 +13,8 @@ from .context import OpContext
 from reyn.schemas.models import MCPIROp
 
 
-def _execute(op: MCPIROp, ctx: OpContext) -> dict:
-    from reyn.mcp_client import MCPHTTPClient, MCPError, expand_env
+async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
+    from reyn.mcp_client import MCPClient, MCPError, expand_env
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:
@@ -20,20 +25,26 @@ def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         }
 
     expanded = expand_env(server_cfg)
-    url = expanded.get("url", "")
-    if not url:
+    if not isinstance(expanded, dict):
         return {"kind": "mcp", "status": "error",
-                "error": f"MCP server '{op.server}' has no url configured."}
+                "error": f"MCP server '{op.server}' config must be a dict."}
 
-    headers = {str(k): str(v) for k, v in (expanded.get("headers") or {}).items()}
+    # Backward compat: a config with `url` but no `type` is treated as http.
+    if "type" not in expanded:
+        if expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
 
     if op.server not in ctx.mcp_clients:
-        ctx.mcp_clients[op.server] = MCPHTTPClient(url, headers)
+        try:
+            ctx.mcp_clients[op.server] = MCPClient(expanded)
+        except ValueError as exc:
+            return {"kind": "mcp", "status": "error", "server": op.server,
+                    "tool": op.tool, "error": str(exc)}
     client = ctx.mcp_clients[op.server]
 
     ctx.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
     try:
-        result = client.call_tool(op.tool, op.args)
+        result = await client.call_tool(op.tool, op.args)
     except MCPError as exc:
         ctx.events.emit("mcp_failed", server=op.server, tool=op.tool, error=str(exc))
         return {"kind": "mcp", "status": "error", "server": op.server,
@@ -67,7 +78,7 @@ async def handle(op: MCPIROp, ctx: OpContext, caller: Literal["preprocessor", "c
         await ctx.permission_resolver.require_mcp(
             ctx.permission_decl, op.server, ctx.intervention_bus,
         )
-    return await asyncio.to_thread(_execute, op, ctx)
+    return await _execute(op, ctx)
 
 
 register("mcp", handle)
