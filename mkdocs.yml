@@ -73,6 +73,7 @@ nav:
       - how-to/build-an-agent-team.md
       - how-to/restrict-agent-skills.md
       - how-to/multi-hop-delegation.md
+      - how-to/author-a-design.md
   - Reference:
       - CLI:
           - reference/cli/run.md
