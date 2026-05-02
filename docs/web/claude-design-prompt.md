@@ -199,6 +199,35 @@ brief without flagging it in the canvas chat.
   the bundled scripts. `Reyn UI.html` is for `claude.ai/design` and
   for opening the export directly in a browser.
 
+- **`Reyn.html` MUST trigger Babel transformation explicitly.** If you
+  bundle `babel-standalone` to compile `type="text/babel"` scripts, do
+  NOT rely on Babel's auto-runner (which fires once on
+  `DOMContentLoaded`). The host shell injects designs after DCL has
+  already fired, so the auto-runner finds nothing to transform.
+
+  At the bottom of `Reyn.html`, after declaring all `text/babel`
+  scripts, add an inline plain-JS script that polls for `window.Babel`
+  and calls `Babel.transformScriptTags()` once:
+
+  ```html
+  <script>
+    (function () {
+      var t = setInterval(function () {
+        if (window.Babel && Babel.transformScriptTags) {
+          clearInterval(t);
+          Babel.transformScriptTags();
+        }
+      }, 50);
+    })();
+  </script>
+  ```
+
+  This is idempotent: in standalone mode the auto-runner has already
+  transformed everything by the time this fires, so the explicit call
+  is a no-op. In embedded mode it's the only way the JSX modules
+  execute. Same pattern works for any future transformer Reyn-ui/v1
+  designs adopt.
+
 ## Designer-mode niceties (optional)
 
 When `window.OPENUI_DESIGN_MODE === true`, you MAY render a small
