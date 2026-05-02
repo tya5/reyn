@@ -131,8 +131,12 @@ brief without flagging it in the canvas chat.
   verbatim.
 - **i18n**: App face strings come from `OPENUI_DATA.COPY[lang]` via a
   `t(key, lang)` helper. Studio face strings may be inline English.
-- **Only one face per export.** Generate App or Studio in one
-  iteration; the other face is a separate export.
+- **Both faces in one export is fine.** Generate App and Studio
+  together (canonical layout: App screens in `app-screens.jsx`
+  exporting `window.AppScreens.{...}`, Studio screens in
+  `studio-screens.jsx` exporting `window.StudioScreens.{...}`,
+  shared CSS variables in one `styles.css`). Single-face exports
+  are acceptable if focusing on one face.
 
 ## Designer-mode niceties (optional)
 
@@ -162,8 +166,11 @@ the design will not load cleanly in Reyn — fix it in the canvas first.
 
 ### Structure
 
-- [ ] **Only one face per export.** App and Studio are separate
-      exports.
+- [ ] **Faces are coherently scoped.** Both faces in one export is
+      preferred (canonical layout); single-face exports also OK.
+      Don't mix App-side screens and Studio-side screens into the
+      same `window.AppScreens` global — keep them separate per the
+      schema's `surface` declarations.
 - [ ] **All required components present** for the chosen face. See
       [reyn-ui/v1 components.md](../openui/schemas/reyn-ui-v1/components.md).
 - [ ] **Component prop shapes match the contract verbatim** (extra
