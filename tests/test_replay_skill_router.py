@@ -27,7 +27,7 @@ from reyn.schemas.models import (
 )
 from reyn.testing.replay import REPLAY_DATETIME
 
-MODEL = "gemini-2.5-flash-lite"
+MODEL = "openai/gemini-2.5-flash-lite"
 SKILL_DESC = (
     "Route a single user chat utterance to an appropriate skill (or reply directly).\n"
     "Used by reyn chat to turn natural language into a routing decision."
@@ -90,7 +90,7 @@ def _run(coro):
 def test_classify_chitchat_finishes_directly():
     """Tier 3a: skill_router classifies chitchat → finish with reply_text."""
     frame = ContextFrame(
-        current_phase="classify",
+        current_phase="triage",
         current_phase_role="chat_router",
         instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
         candidate_outputs=[_candidate_finish(), _candidate_match()],
@@ -152,7 +152,7 @@ def test_classify_chitchat_finishes_directly():
 def test_classify_task_transitions_to_match():
     """Tier 3a: skill_router classifies a task utterance → transition to match."""
     frame = ContextFrame(
-        current_phase="classify",
+        current_phase="triage",
         current_phase_role="chat_router",
         instructions="Classify user intent into one of 6 intents. For task intent, transition to match.",
         candidate_outputs=[_candidate_finish(), _candidate_match()],
@@ -215,7 +215,7 @@ def test_classify_ambiguous_with_no_context():
     makes; we pin that a valid decide turn is produced and no skill is run.
     """
     frame = ContextFrame(
-        current_phase="classify",
+        current_phase="triage",
         current_phase_role="chat_router",
         instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
         candidate_outputs=[_candidate_finish(), _candidate_match()],
@@ -291,7 +291,7 @@ def test_classify_out_of_scope_does_not_invent_skill():
     declining or redirecting).
     """
     frame = ContextFrame(
-        current_phase="classify",
+        current_phase="triage",
         current_phase_role="chat_router",
         instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
         candidate_outputs=[_candidate_finish(), _candidate_match()],
