@@ -131,6 +131,9 @@ class ReynTUIApp(App):
         if self._registry is not None:
             self._outbox_task = asyncio.create_task(self._outbox_loop())
 
+        # Periodic status line refresh (budget counters update between messages)
+        self.set_interval(1.0, self._periodic_status_refresh)
+
     # ── outbox subscription (phases 3+) ────────────────────────────────────────
 
     async def _outbox_loop(self) -> None:
@@ -227,9 +230,23 @@ class ReynTUIApp(App):
             iv_id=iv_id,
         )
 
-    def _maybe_refresh_status(self, header: ReynHeader) -> None:
-        """Fetch budget snapshot and update the header."""
+    def _maybe_refresh_status(self, header: ReynHeader | None = None) -> None:
+        """Fetch budget snapshot and update the header.
+
+        Can be called with a pre-fetched header widget (from outbox loop)
+        or None (will query the DOM — safe from the main thread).
+        """
+        if header is None:
+            try:
+                header = self.query_one("#header", ReynHeader)
+            except Exception:
+                return
         if self._budget_tracker is None:
+            # Still update agent name + model even without budget
+            header.refresh_status(
+                agent_name=self._agent_name,
+                model=self._model,
+            )
             return
         try:
             snap = self._budget_tracker.snapshot()
@@ -243,6 +260,10 @@ class ReynTUIApp(App):
             )
         except Exception:
             pass
+
+    def _periodic_status_refresh(self) -> None:
+        """Called every 1s by set_interval to keep status line current."""
+        self._maybe_refresh_status()
 
     # ── message handlers from widgets ─────────────────────────────────────────
 
