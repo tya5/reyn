@@ -73,12 +73,9 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
-    # Hide Textual's built-in command palette behind an unused key (F24).
-    # Reyn already exposes the slash-command list via Tab → custom palette
-    # and `/help`; the built-in palette would only add a redundant overlay
-    # with non-matching keybindings. Setting to None breaks Textual's key
-    # parser, so we route to a key virtually no keyboard ships.
-    COMMAND_PALETTE_BINDING = "f24"
+    # Textual's built-in command palette stays on its default Ctrl+P. It
+    # surfaces system actions (Keys, Quit, Screenshot, …) and complements
+    # the Reyn slash palette (Tab — surfaces /list, /budget, /help, …).
 
     BINDINGS = [
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
@@ -87,7 +84,8 @@ class ReynTUIApp(App):
         Binding("tab", "palette_next", "Commands / next", priority=True, show=False),
         Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
-        Binding("ctrl+p", "palette_prev", "Prev", priority=True, show=False),
+        # ctrl+p is reserved for Textual's built-in command palette;
+        # Reyn's own slash-palette nav uses Shift+Tab / k / p when open.
         # Plain-letter shortcuts only work while the palette is visible
         # (gated via check_action). Otherwise typing "n" into a message
         # would silently navigate.
