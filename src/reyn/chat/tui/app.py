@@ -192,6 +192,12 @@ class ReynTUIApp(App):
                 self.push_screen(MatrixScreen())
                 continue
 
+            if msg.kind == "__donut__":
+                # Easter egg: /donut slash command lands here.
+                from reyn.chat.tui.widgets.donut import DonutScreen
+                self.push_screen(DonutScreen())
+                continue
+
             if msg.kind == "__stream_start__":
                 # Begin a streaming row
                 current_stream_id = msg.meta.get("msg_id", id(msg))
