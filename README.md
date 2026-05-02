@@ -25,6 +25,14 @@ Phases are stateless and reusable. They don't know what comes next — the Skill
 pip install -e ".[rich]"
 ```
 
+To also enable the **Web UI gateway** (`reyn web`):
+
+```bash
+pip install -e ".[web]"
+# or both at once:
+pip install -e ".[rich,web]"
+```
+
 Requires Python 3.11+ and a [LiteLLM](https://github.com/BerriAI/litellm)-compatible model.
 
 Set your API key before running:
