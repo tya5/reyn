@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Callable
 from .models import Skill
 from .runtime import OSRuntime, RunResult
+from .budget import BudgetTracker
 from .config import LimitsConfig
 from .model_resolver import ModelResolver
 from .permissions import PermissionResolver
@@ -41,6 +42,7 @@ class Agent:
         project_context: str = "",
         agent_role: str = "",
         caller: str = "direct",
+        budget_tracker: BudgetTracker | None = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -57,6 +59,7 @@ class Agent:
         self._project_context = project_context
         self._agent_role = agent_role
         self._caller = _validate_caller(caller)
+        self._budget_tracker = budget_tracker
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -65,7 +68,13 @@ class Agent:
     def caller(self) -> str:
         return self._caller
 
-    async def run(self, skill: Skill, initial_input: dict, output_language: str = "ja") -> RunResult:
+    async def run(
+        self,
+        skill: Skill,
+        initial_input: dict,
+        output_language: str = "ja",
+        chain_id: str | None = None,
+    ) -> RunResult:
         self.run_id = self._make_run_id(skill.name)
         # PR20: events live under
         #   <state_dir>/events/<caller>/skill_runs/<YYYY-MM>/<start>_<skill>.jsonl
@@ -102,6 +111,9 @@ class Agent:
             project_context=self._project_context,
             agent_role=self._agent_role,
             caller=self._caller,
+            chain_id=chain_id,
+            budget_tracker=self._budget_tracker,
+            skill_name=skill.name,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

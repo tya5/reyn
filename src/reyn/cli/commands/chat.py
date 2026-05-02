@@ -32,6 +32,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.registry import AgentRegistry, DEFAULT_AGENT_NAME
     from reyn.chat.profile import AgentProfile
     from reyn.chat.repl import run_repl
+    from reyn.budget import BudgetTracker
     from reyn.config import _find_project_root, load_project_context
     from reyn.permissions import PermissionResolver
     from reyn.state_log import StateLog
@@ -45,6 +46,9 @@ def run(args: argparse.Namespace) -> None:
     # PR21: process-shared WAL for crash recovery. Owned by AgentRegistry,
     # injected into each ChatSession at construction.
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
+    # PR22: process-shared budget tracker. Defaults to all unlimited unless
+    # `cost:` is configured.
+    budget_tracker = BudgetTracker(session_cfg.config.cost)
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).
@@ -76,6 +80,7 @@ def run(args: argparse.Namespace) -> None:
             allowed_skills=profile.allowed_skills,
             events_config=session_cfg.config.events,
             state_log=state_log,
+            budget_tracker=budget_tracker,
         )
         s.load_history()
         return s

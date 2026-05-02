@@ -11,6 +11,13 @@ from pathlib import Path
 
 from reyn.agent import Agent
 from reyn.agent_snapshot import AgentSnapshot
+from reyn.budget import (
+    BudgetTracker,
+    format_budget_full,
+    format_cost_line,
+    format_refusal_message,
+    format_warn_message,
+)
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, LimitsConfig
@@ -259,6 +266,7 @@ class ChatSession:
         allowed_skills: list[str] | None = None,
         events_config: EventsConfig | None = None,
         state_log: StateLog | None = None,
+        budget_tracker: BudgetTracker | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
@@ -300,6 +308,10 @@ class ChatSession:
         self._snapshot_path = (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
+
+        # PR22: budget / rate-limit tracker (process-shared). When None,
+        # checks are noops and counters are not maintained.
+        self._budget_tracker = budget_tracker
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -689,6 +701,7 @@ class ChatSession:
             project_context=self._project_context,
             agent_role=self._agent_role,
             caller=f"agents/{self.agent_name}",
+            budget_tracker=self._budget_tracker,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:
@@ -1291,7 +1304,7 @@ class ChatSession:
 
         # Skills run locally without affecting hop depth.
         for spec in skills_to_run:
-            await self._spawn_skill(spec)
+            await self._spawn_skill(spec, chain_id=chain_id)
 
         if messages_to_agents:
             # PR14 deferred path: register pending chain, dispatch delegations,
@@ -1436,7 +1449,7 @@ class ChatSession:
             if (m.get("to") or "").strip() and (m.get("request") or "").strip()
         ]
         for spec in decision.get("skills_to_run") or []:
-            await self._spawn_skill(spec)
+            await self._spawn_skill(spec, chain_id=chain_id)
 
         if new_delegations:
             # Continue the chain with a fresh wave of delegations.
@@ -1563,7 +1576,7 @@ class ChatSession:
                 meta={"chain_id": chain_id},
             ))
         for spec in skills_to_run:
-            await self._spawn_skill(spec)
+            await self._spawn_skill(spec, chain_id=chain_id)
         for msg in messages_to_agents:
             to = (msg.get("to") or "").strip()
             request = (msg.get("request") or "").strip()
@@ -1616,7 +1629,7 @@ class ChatSession:
                 kind="status",
                 text=(
                     "known commands: :list, :cancel <id>, :answer <id> <text>, "
-                    ":agents, :attach <name>"
+                    ":agents, :attach <name>, :cost, :budget [reset]"
                 ),
             ))
             return True
@@ -1629,13 +1642,15 @@ class ChatSession:
             "answer": self._slash_answer,
             "agents": self._slash_agents,
             "attach": self._slash_attach,
+            "cost": self._slash_cost,
+            "budget": self._slash_budget,
         }.get(cmd)
         if handler is None:
             await self._put_outbox(OutboxMessage(
                 kind="status",
                 text=(
                     f"unknown command :{cmd}; try :list / :cancel / :answer / "
-                    ":agents / :attach"
+                    ":agents / :attach / :cost / :budget"
                 ),
             ))
             return True
@@ -1796,9 +1811,50 @@ class ChatSession:
             kind="__attach_request__", text=name,
         ))
 
+    async def _slash_cost(self, args: str) -> None:
+        """`:cost` — quick token + USD line for the attached agent."""
+        if self._budget_tracker is None:
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
+            ))
+            return
+        snap = self._budget_tracker.snapshot()
+        line = format_cost_line(snap, self.agent_name)
+        await self._put_outbox(OutboxMessage(kind="status", text=line))
+
+    async def _slash_budget(self, args: str) -> None:
+        """`:budget` (full breakdown) / `:budget reset` (clear counters)."""
+        if self._budget_tracker is None:
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
+            ))
+            return
+        sub = args.strip()
+        if sub == "reset":
+            before = self._budget_tracker.reset_all()
+            self._chat_events.emit("budget_reset", before=before)
+            lines = ["Budget counters reset."]
+            if before.get("agent_tokens"):
+                for a, t in before["agent_tokens"].items():
+                    cost = before.get("agent_cost_usd", {}).get(a, 0.0)
+                    lines.append(f"  per-agent ({a}) tokens:    {t:>10,} → 0")
+                    lines.append(f"  per-agent ({a}) cost_usd:  ${cost:.4f} → $0.00")
+            if before.get("chain_skill_calls"):
+                lines.append("  per-chain skill calls:        cleared")
+            if before.get("rate_window_sizes"):
+                lines.append("  rate-limit window:            cleared")
+            lines.append("Use `:budget` to verify.")
+            await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
+            return
+        snap = self._budget_tracker.snapshot()
+        text = format_budget_full(snap, attached=self.agent_name)
+        await self._put_outbox(OutboxMessage(kind="status", text=text))
+
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
-    async def _spawn_skill(self, spec: dict) -> None:
+    async def _spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
         if not skill_name or not isinstance(input_artifact, dict):
@@ -1826,6 +1882,39 @@ class ChatSession:
             )
             return
 
+        # PR22: per-chain per-skill cap check. Refuse spawn if hard limit
+        # reached. Warn dimensions are emitted via events + outbox status.
+        if self._budget_tracker is not None and chain_id is not None:
+            check = self._budget_tracker.check_pre_spawn(
+                chain_id=chain_id, skill=skill_name,
+            )
+            if not check.allowed:
+                self._chat_events.emit(
+                    "budget_exceeded",
+                    dimension=check.hard_dimension,
+                    detail=check.detail,
+                    skill=skill_name,
+                    chain_id=chain_id,
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=format_refusal_message(check),
+                    meta={"chain_id": chain_id, "skill": skill_name},
+                ))
+                return
+            for dim in check.warn_dimensions:
+                self._chat_events.emit(
+                    "budget_warn",
+                    dimension=dim, chain_id=chain_id, skill=skill_name,
+                    **check.context,
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="status",
+                    text=format_warn_message(dim, check.context),
+                    meta={"chain_id": chain_id, "skill": skill_name},
+                ))
+            self._budget_tracker.record_spawn(chain_id=chain_id, skill=skill_name)
+
         run_id = (
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
             f"_{skill_name}_{uuid.uuid4().hex[:4]}"
@@ -1838,7 +1927,9 @@ class ChatSession:
             meta=_run_meta(run_id, skill_name),
         ))
 
-        task = asyncio.create_task(self._run_one_skill(run_id, skill_name, input_artifact))
+        task = asyncio.create_task(
+            self._run_one_skill(run_id, skill_name, input_artifact, chain_id=chain_id)
+        )
         self.running_skills[run_id] = task
 
         def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
@@ -1848,7 +1939,14 @@ class ChatSession:
 
         task.add_done_callback(_cleanup)
 
-    async def _run_one_skill(self, run_id: str, skill_name: str, input_artifact: dict) -> None:
+    async def _run_one_skill(
+        self,
+        run_id: str,
+        skill_name: str,
+        input_artifact: dict,
+        *,
+        chain_id: str | None = None,
+    ) -> None:
         meta = _run_meta(run_id, skill_name)
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
@@ -1872,7 +1970,11 @@ class ChatSession:
             subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
         )
         try:
-            result = await agent.run(skill, input_artifact, output_language=self.output_language)
+            result = await agent.run(
+                skill, input_artifact,
+                output_language=self.output_language,
+                chain_id=chain_id,
+            )
         except asyncio.CancelledError:
             await self._put_outbox(OutboxMessage(
                 kind="status", text="cancelled", meta=meta,
@@ -1882,6 +1984,20 @@ class ChatSession:
             self._chat_events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed: {exc}", meta=meta,
+            ))
+            return
+
+        # PR22: surface budget_exceeded result as a user-facing error.
+        if result.status == "budget_exceeded":
+            self._chat_events.emit(
+                "skill_run_failed",
+                run_id=run_id, skill=skill_name,
+                error="budget_exceeded",
+            )
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=result.error or "budget exceeded",
+                meta=meta,
             ))
             return
 

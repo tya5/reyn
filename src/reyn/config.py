@@ -78,6 +78,12 @@ class ChatConfig:
     compaction: CompactionConfig = field(default_factory=CompactionConfig)
 
 
+# PR22: CostConfig + CostLimitConfig live in `reyn.budget` (re-exported here
+# for ReynConfig typing). They include domain logic (warn_threshold etc.)
+# that doesn't belong in the config-only module.
+from reyn.budget import CostConfig, CostLimitConfig  # noqa: E402
+
+
 @dataclass
 class EventsConfig:
     """`events:` — audit log rotation policy (PR20).
@@ -153,6 +159,8 @@ class ReynConfig:
     multi_agent: MultiAgentConfig = field(default_factory=MultiAgentConfig)
     # Audit-log rotation policy (PR20).
     events: EventsConfig = field(default_factory=EventsConfig)
+    # Budget / rate-limit policy (PR22).
+    cost: CostConfig = field(default_factory=CostConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -388,6 +396,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         chat=_build_chat_config(merged.get("chat")),
         multi_agent=_build_multi_agent_config(merged.get("multi_agent")),
         events=_build_events_config(merged.get("events")),
+        cost=_build_cost_config(merged.get("cost")),
     )
 
 
@@ -400,6 +409,49 @@ def _build_multi_agent_config(raw: object) -> MultiAgentConfig:
         chain_timeout_seconds=float(
             raw.get("chain_timeout_seconds", defaults.chain_timeout_seconds)
         ),
+    )
+
+
+def _build_cost_limit(raw: object) -> CostLimitConfig:
+    if not isinstance(raw, dict):
+        return CostLimitConfig()
+    hard = raw.get("hard_limit")
+    if hard is not None:
+        try:
+            hard = float(hard)
+        except (TypeError, ValueError):
+            hard = None
+    warn_ratio = raw.get("warn_ratio", 0.8)
+    try:
+        warn_ratio = float(warn_ratio)
+    except (TypeError, ValueError):
+        warn_ratio = 0.8
+    return CostLimitConfig(hard_limit=hard, warn_ratio=warn_ratio)
+
+
+def _build_cost_config(raw: object) -> CostConfig:
+    if not isinstance(raw, dict):
+        return CostConfig()
+    rate_raw = raw.get("rate_limit_per_minute") or {}
+    rate: dict[str, int] = {}
+    if isinstance(rate_raw, dict):
+        for k, v in rate_raw.items():
+            try:
+                rate[str(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+    warn_ratio = raw.get("rate_limit_warn_ratio", 0.8)
+    try:
+        warn_ratio = float(warn_ratio)
+    except (TypeError, ValueError):
+        warn_ratio = 0.8
+    return CostConfig(
+        per_agent_tokens=_build_cost_limit(raw.get("per_agent_tokens")),
+        per_agent_cost_usd=_build_cost_limit(raw.get("per_agent_cost_usd")),
+        per_chain_skill_calls=_build_cost_limit(raw.get("per_chain_skill_calls")),
+        per_chain_skill_tokens=_build_cost_limit(raw.get("per_chain_skill_tokens")),
+        rate_limit_per_minute=rate,
+        rate_limit_warn_ratio=warn_ratio,
     )
 
 

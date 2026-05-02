@@ -3,9 +3,12 @@ import json
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, TYPE_CHECKING
 import pydantic
 from .models import ActOutput, Skill, CandidateOutput, ContextFrame, LLMOutput
+from .budget import BudgetExceeded, format_refusal_message, format_warn_message
+if TYPE_CHECKING:
+    from .budget import BudgetTracker
 from .events import EventLog
 from .workspace import Workspace
 from .config import LimitsConfig
@@ -46,9 +49,10 @@ class WorkflowAbortedError(Exception):
 class RunResult:
     """Typed return value of OSRuntime.run() and Agent.run()."""
     data: dict[str, Any]
-    status: Literal["finished", "loop_limit_exceeded", "phase_budget_exceeded"]
+    status: Literal["finished", "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded"]
     token_usage: TokenUsage | None = None
     cost_usd: float | None = None
+    error: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -199,6 +203,9 @@ class OSRuntime:
         project_context: str = "",
         agent_role: str = "",
         caller: str = "direct",
+        chain_id: str | None = None,
+        budget_tracker: "BudgetTracker | None" = None,
+        skill_name: str = "",
     ) -> None:
         self.skill = skill
         self.model = model
@@ -206,6 +213,9 @@ class OSRuntime:
         self.strict = strict
         self.run_id = run_id
         self._caller = caller
+        self._chain_id = chain_id
+        self._budget_tracker = budget_tracker
+        self._budget_skill_name = skill_name or skill.name
         self.events = EventLog(subscribers=subscribers)
         self.workspace = Workspace(
             self.events,
@@ -467,6 +477,7 @@ class OSRuntime:
     ) -> dict:
         self._check_phase_budget(phase)
         resolved_model = self._resolver.resolve(self._effective_model(phase))
+        self._check_budget_pre_llm(resolved_model)
         self.events.emit("llm_called", phase=phase, model=resolved_model)
         phase_def = self.skill.phases.get(phase)
         llm_result = await call_llm(
@@ -490,6 +501,7 @@ class OSRuntime:
             cost_usd, pricing_snapshot = estimate_cost(resolved_model, llm_result.usage)
             if cost_usd is not None:
                 self._total_cost_usd += cost_usd
+            self._record_budget_post_llm(resolved_model, llm_result.usage)
         self.events.emit(
             "llm_response_received",
             phase=phase,
@@ -501,6 +513,61 @@ class OSRuntime:
             pricing_snapshot=pricing_snapshot,
         )
         return raw
+
+    # ── Budget hooks (PR22) ─────────────────────────────────────────────
+
+    def _budget_agent_name(self) -> str | None:
+        """Extract the agent name from caller (`agents/<name>` → `<name>`).
+
+        Returns None when caller is `direct` (no agent context, per-agent
+        budget noop). The chain_id key is unchanged either way.
+        """
+        if self._caller and self._caller.startswith("agents/"):
+            return self._caller.split("/", 1)[1]
+        return None
+
+    def _check_budget_pre_llm(self, model: str) -> None:
+        if self._budget_tracker is None:
+            return
+        agent = self._budget_agent_name()
+        check = self._budget_tracker.check_pre_llm(model=model, agent=agent)
+        if not check.allowed:
+            self.events.emit(
+                "budget_exceeded",
+                dimension=check.hard_dimension,
+                detail=check.detail,
+                agent=agent,
+                chain_id=self._chain_id,
+            )
+            raise BudgetExceeded(
+                check.hard_dimension or "budget",
+                format_refusal_message(check, agent=agent),
+            )
+        for dim in check.warn_dimensions:
+            self.events.emit(
+                "budget_warn",
+                dimension=dim,
+                agent=agent,
+                chain_id=self._chain_id,
+                **check.context,
+            )
+
+    def _record_budget_post_llm(self, model: str, usage: TokenUsage) -> None:
+        if self._budget_tracker is None:
+            return
+        agent = self._budget_agent_name()
+        check = self._budget_tracker.record_llm(
+            model=model, agent=agent, usage=usage,
+            chain_id=self._chain_id, skill=self._budget_skill_name,
+        )
+        for dim in check.warn_dimensions:
+            self.events.emit(
+                "budget_warn",
+                dimension=dim,
+                agent=agent,
+                chain_id=self._chain_id,
+                **check.context,
+            )
 
     async def _run_act_loop(
         self,
@@ -970,6 +1037,24 @@ class OSRuntime:
                 final_output_keys=list(final_output.keys()),
             )
             return RunResult(data=final_output, status="phase_budget_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
+
+        except BudgetExceeded as exc:
+            # PR22: hard budget cap hit — surface the user-facing message
+            # via the result's `error` (let the caller route to outbox).
+            final_output = self._fallback_final_output()
+            self.events.emit(
+                "workflow_terminated",
+                reason=f"budget_exceeded: {exc.dimension}",
+                total_phase_count=sum(self._visit_counts.values()),
+                final_output_keys=list(final_output.keys()),
+            )
+            return RunResult(
+                data=final_output,
+                status="budget_exceeded",
+                token_usage=self._token_usage,
+                cost_usd=self._total_cost_usd or None,
+                error=str(exc),
+            )
 
         except WorkflowAbortedError as exc:
             self.events.emit(
