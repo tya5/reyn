@@ -471,6 +471,9 @@ class ReynTUIApp(App):
             self.query_one("#inputbar", InputBar).add_class("palette-open")
         except Exception:
             pass
+        # Highlight the first match so Enter is immediately useful — no
+        # need to press Ctrl+N before selecting the only candidate.
+        overlay.highlighted = 0
         overlay.focus()
         self._palette_visible = True
 
