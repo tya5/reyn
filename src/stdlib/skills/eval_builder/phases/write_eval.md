@@ -52,11 +52,11 @@ input: "{case2.input}"
 Rules:
 
 - Each `## case:` block has exactly one `input:` line (a quoted string). Escape any internal `"` with `\"`.
-- For each test case, write one `### phase: {phase_name}` section per entry in `phase_eval_designs` whose `quality` list is non-empty.
+- For each test case, write one `### phase: {phase_name}` section per entry in that case's `phase_criteria` array whose `quality` list is non-empty.
 - Phase sections appear in `phase_order`.
 - The `quality:` block is a YAML list — each item starts with `- `.
 - A criterion that begins with `[aspirational]` keeps that prefix in the output (it controls scoring semantics).
-- Repeat the full per-phase structure identically for each test case (same phases, same criteria text).
+- Use each case's own `phase_criteria` — do NOT copy criteria from one case to another. Each case was designed with different criteria that probe different behavior.
 - Do NOT add `judge_model:`, `model:`, `schema:`, `### cross_phase`, or `### final` — they are not supported by the new eval skill.
 - Do NOT add commentary or markdown outside the spec format.
 

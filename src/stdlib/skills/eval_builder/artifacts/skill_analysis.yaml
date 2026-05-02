@@ -1,5 +1,5 @@
 name: skill_analysis
-description: Structured analysis of a target skill's phases, test cases, and per-phase quality criteria — consumed by write_eval to generate an eval spec.
+description: Structured analysis of a target skill's phases, test cases, and per-case per-phase quality criteria — consumed by write_eval to generate an eval spec.
 schema:
   type: object
   properties:
@@ -20,7 +20,7 @@ schema:
         Phase names in execution order. MUST be derived from the skill's graph alone — start at the entry phase, follow transitions breadth-first, emit each phase once. Phase files that exist on disk but are NOT reachable via graph transitions (orphan files) MUST be excluded — they will not execute, so generating eval criteria for them produces null artifact_path errors at eval time.
     test_cases:
       type: array
-      description: Representative test cases that cover different input scenarios.
+      description: Representative test cases. Each case carries its own per-phase criteria tailored to what that specific case is designed to probe.
       items:
         type: object
         properties:
@@ -33,23 +33,23 @@ schema:
           rationale:
             type: string
             description: Why this case is a good test — what scenario or edge case it covers.
-        required: [name, input, rationale]
-    phase_eval_designs:
-      type: array
-      description: Per-phase quality criteria. One entry per phase in phase_order.
-      items:
-        type: object
-        properties:
-          phase:
-            type: string
-            description: Phase name.
-          quality:
+          phase_criteria:
             type: array
+            description: Per-phase quality criteria for THIS test case. One entry per phase in phase_order whose criteria are non-empty.
             items:
-              type: string
-            description: |
-              LLM-judged criteria for this phase's output artifact. Each item is a plain English/Japanese
-              sentence describing what the artifact should contain. Optionally prefix with `[aspirational]`
-              to mark a criterion as informational (excluded from pass/fail).
-        required: [phase, quality]
-  required: [skill_dsl_path, dsl_root, skill_name, phase_order, test_cases, phase_eval_designs]
+              type: object
+              properties:
+                phase:
+                  type: string
+                  description: Phase name.
+                quality:
+                  type: array
+                  items:
+                    type: string
+                  description: |
+                    LLM-judged criteria specific to this test case and phase. Each item is a plain English/Japanese
+                    sentence describing what the artifact should contain for THIS input. Optionally prefix with
+                    `[aspirational]` to mark a criterion as informational (excluded from pass/fail).
+              required: [phase, quality]
+        required: [name, input, rationale, phase_criteria]
+  required: [skill_dsl_path, dsl_root, skill_name, phase_order, test_cases]

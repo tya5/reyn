@@ -3,8 +3,8 @@ type: phase
 name: analyze_skill
 input: user_message
 role: eval_designer
-max_act_turns: 20
-allowed_ops: [file, ask_user]
+max_act_turns: 7
+allowed_ops: [file]
 ---
 
 Read the target skill's DSL files and design per-phase quality criteria.
@@ -13,7 +13,7 @@ Read the target skill's DSL files and design per-phase quality criteria.
 
 - `skill_dsl_path`: the path to the target skill's skill.md (e.g. "reyn/project/writing_review_app/skill.md")
 - `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/" or "reyn/local/")
-- If the path is missing, use ask_user to request it.
+- If the path is missing or cannot be inferred, emit `control.type="abort"` with a reason explaining what was missing. Do NOT use ask_user — eval environments are non-interactive and ask_user will always fail with EOF.
 
 ## Step 2 — Read skill.md AND derive phase_order from graph
 
@@ -60,80 +60,54 @@ This information shapes the criteria you write in Step 6 — see the
 
 ## Step 4 — Read artifact files
 
-Glob `{skill_dir}/artifacts/*.yaml` and read every artifact file. Artifact files do NOT have an "orphan" problem — read them all for context.
+Issue a glob op for `{skill_dir}/artifacts/*.yaml` using the `path` field:
+`{"kind": "file", "op": "glob", "path": "{skill_dir}/artifacts/*.yaml"}`
+
+Then read every file returned. Artifact files do NOT have an "orphan" problem — read them all for context.
 
 For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml`.
 
 **CRITICAL**: You MUST read every artifact file referenced by phases in `phase_order` before designing criteria. Quality criteria reference artifact field semantics.
 
-## Step 5 — Design test cases
+## Step 5 — Design test cases WITH per-case criteria
 
-Design 1–2 realistic test cases:
-- Case 1: a typical, well-formed input the skill is designed to handle.
-- Case 2 (if the skill has review/revision loops): an input where the first draft is likely to be **rejected** — causing the review phase to rollback. Make the input deliberately ambiguous, underspecified, or contradictory so the reviewer is likely to reject it.
-- Optional Case 3 (if any phase has a python preprocessor): an **edge case
-  for the python step** — empty / minimal input, or unusually large input —
-  to stress the deterministic path. Helpful when criteria check that the
-  LLM cites the python output correctly even at extremes.
+Design 2–3 test cases. For each case, design its `phase_criteria` at the same time — criteria must reflect what THAT specific case is testing, not generic criteria copied across all cases.
 
-The goal is branch coverage: if the skill has a rollback path, at least one test case should exercise it.
+**Case types to cover:**
+- Case 1 (always): typical, well-formed input the skill is designed to handle.
+- Case 2 (if the skill has review/revision loops): an input where the first draft is likely to be **rejected** — make it deliberately ambiguous, underspecified, or contradictory. Criteria should test that the review phase actually rejects (e.g. "the review verdict is 'reject' and cites a specific flaw").
+- Case 3 (if any phase has a python preprocessor): an **edge case for the python step** — empty, minimal, or unusually large input. Criteria should test that the LLM handles boundary values from the preprocessor (e.g. "when char_count=0, the commentary acknowledges the empty input rather than fabricating statistics").
 
-Each test case `input` must be a complete user_message string.
+The goal is branch coverage: if the skill has a rollback path, at least one case should exercise it.
 
-## Step 6 — Design per-phase quality criteria
+Each test case `input` must be a **plain text string** — the raw message the user would type. Do NOT wrap it in `{"type":"user_message",...}` JSON. Write just the text, e.g. `"Hello world"`, not `"{\"type\":\"user_message\",\"data\":{\"text\":\"Hello world\"}}"`.
 
-`phase_eval_designs` has EXACTLY one entry per phase in `phase_order` — no more, no less. Entries appear in the same order as `phase_order`.
 
-For each phase, write 1–4 `quality` criteria as plain sentences. Each criterion should:
+### Criteria rules (apply per case)
 
-- Describe a semantic property the phase's output artifact must satisfy that requires reading content (e.g. "summary describes the skill's purpose", "review explicitly lists rejection conditions").
+For each case's `phase_criteria`, write 1–4 `quality` criteria per phase as plain sentences. Each criterion must:
+
+- Describe a semantic property **observable for this specific input** — not a generic property true for all inputs.
 - Refer to fields that actually exist in the artifact (do not invent field names).
-- Be evaluable by reading the artifact alone — if the criterion needs cross-phase context, omit it.
+- Be evaluable by reading the artifact alone.
 
-### `[aspirational]` tag
-
-Prefix a criterion with `[aspirational]` when it represents a model capability ceiling rather than a fixable bug:
-
-- Subjective judgments ("is specific", "is detailed") that consistently score below 1.0 even on correct output.
-- "Gold standard" quality bars that go beyond the skill's contract.
-- Criteria that are only evaluable when a specific runtime branch fires (e.g. "if rollback is chosen ...") — these cannot be reliably tested without forcing that branch.
-
-`[aspirational]` criteria are tracked but excluded from pass/fail.
+**`[aspirational]` tag**: prefix when the criterion represents a model capability ceiling (subjective judgments, gold-standard bars, or branch-dependent checks). These are tracked but excluded from pass/fail.
 
 ### Phases with a python preprocessor
 
-If a phase has a `type: python` preprocessor step (recorded in Step 3),
-the deterministic computation is performed by Python — **not** by the LLM.
-Tailor criteria accordingly:
+If a phase has a `type: python` preprocessor step, the python computation is deterministic. Write criteria that test the LLM's **integration** with the python output. Reference **numeric values**, not internal field paths:
 
-**DO write criteria like:**
-
-- "The output cites the precomputed `data.stats.char_count` value
-  verbatim rather than estimating it." — checks that the LLM actually
-  used the python output instead of ignoring it.
-- "The commentary is consistent with `data.stats` (no statements
-  contradicting the precomputed values)." — catches the LLM
-  overriding python with its own (wrong) guess.
-- "Conclusions about size/count/length reference numeric fields from
-  `data.stats` rather than vague terms like 'long' or 'short'."
-
-**DON'T write criteria like:**
-
-- ~~"`char_count` is the correct number of characters."~~ — Python
-  computed it; this is vacuously true. Useless eval signal.
-- ~~"Counts and lengths are accurate."~~ — same problem.
-- ~~"The phase computes statistics correctly."~~ — the phase doesn't
-  compute, the python step does. Mis-attribution.
-
-The point of a python preprocessor is that determinism is **assumed**,
-not tested. Criteria should test the LLM's **integration** with the
-python output, since that's the part that can fail.
+- DO: "The commentary cites the exact character count computed by the preprocessor (e.g. states '156 characters')."
+- DO: "For empty input, the commentary acknowledges that there is no text rather than fabricating statistics."
+- DO (case-specific): "The commentary reports exactly 2 characters and 1 word." (for a `"hi"` test case)
+- DON'T: ~~"The commentary cites `data.stats.char_count` verbatim."~~ — The commentary should cite the NUMBER, not the Python field path. Users see values, not field names.
+- DON'T: ~~"`char_count` is the correct number."~~ — Python guarantees this; useless signal.
 
 ## Final checklist (apply before emitting skill_analysis)
 
 - [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of phase files in the directory.
-- [ ] `phase_order` length equals the number of phases reachable from `entry` (typically 2–6, never includes orphan phase files).
-- [ ] `phase_eval_designs` has exactly one entry per `phase_order` phase, in the same order.
+- [ ] Every test case has a `phase_criteria` array with at least one phase entry.
+- [ ] Criteria differ meaningfully between cases — no verbatim copies from one case to another.
 - [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I read — no invented fields.
 - [ ] Criteria that depend on a specific runtime branch firing are tagged `[aspirational]`.
-- [ ] At most 4 criteria per phase.
+- [ ] At most 4 criteria per phase per case.

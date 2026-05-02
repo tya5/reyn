@@ -49,7 +49,7 @@ analyze_skill  →  write_eval
 
 ## Input
 
-A natural-language sentence including the target skill's `skill.md` path. If the path is unclear, `ask_user` will request it.
+A natural-language sentence including the target skill's `skill.md` path. The path must be present in the message — if it cannot be inferred, the skill aborts rather than asking interactively.
 
 ```
 reyn run eval_builder "Generate an eval.md for reyn/local/my_skill/skill.md"
