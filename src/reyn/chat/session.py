@@ -712,7 +712,7 @@ class ChatSession:
         ))
         self._chat_events.emit("user_message_received", text=text, chain_id=chain_id)
         await self._put_outbox(OutboxMessage(
-            kind="status", text="考え中...", meta={"chain_id": chain_id},
+            kind="status", text="thinking…", meta={"chain_id": chain_id},
         ))
 
         # Reset the per-turn router cap counter at the top of each fresh
@@ -1131,13 +1131,13 @@ class ChatSession:
         """
         lines: list[str] = []
         if iv.kind == "ask_user":
-            lines.append(f"質問: {iv.prompt}")
+            lines.append(f"Question: {iv.prompt}")
         else:
             lines.append(iv.prompt)
         if iv.detail:
             lines.append(f"  {iv.detail}")
         if iv.suggestions:
-            lines.append(f"  候補: {' / '.join(iv.suggestions)}")
+            lines.append(f"  options: {' / '.join(iv.suggestions)}")
         if iv.choices:
             labels = " / ".join(c.label for c in iv.choices)
             lines.append(f"  {labels}")
@@ -1161,7 +1161,7 @@ class ChatSession:
                 queued = len(self._intervention_order) - 1
                 await self._put_outbox(OutboxMessage(
                     kind="status",
-                    text=f"質問待ち ({queued}件キュー中)",
+                    text=f"awaiting answer ({queued} queued)",
                     meta=_iv_meta(iv),
                 ))
             try:
@@ -1988,7 +1988,7 @@ class ChatSession:
         # Track elapsed time for `:list` and provenance for outbox messages
         self.running_skills_started_at[run_id] = time.monotonic()
         await self._put_outbox(OutboxMessage(
-            kind="status", text="起動...",
+            kind="status", text="starting…",
             meta=_run_meta(run_id, skill_name),
         ))
 
@@ -2115,7 +2115,7 @@ class ChatSession:
         else:
             # Fallback: raw dump so the user at least sees something.
             summary = json.dumps(result.data, ensure_ascii=False, indent=2)
-            fallback = f"完了 (status={result.status})\n{summary}"
+            fallback = f"done (status={result.status})\n{summary}"
             self._append_history(ChatMessage(
                 role="agent", text=fallback, ts=_now_iso(),
                 meta={
@@ -2560,7 +2560,7 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(kind="agent", text=narrated, meta=meta))
         else:
             summary = json.dumps(result.data, ensure_ascii=False, indent=2)
-            fallback = f"完了 (status={result.status})\n{summary}"
+            fallback = f"done (status={result.status})\n{summary}"
             self._append_history(ChatMessage(
                 role="agent", text=fallback, ts=_now_iso(),
                 meta={

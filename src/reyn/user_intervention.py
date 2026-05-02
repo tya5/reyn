@@ -111,7 +111,7 @@ class StdinInterventionBus:
         if iv.detail:
             lines.append(f"  {iv.detail}")
         if iv.suggestions:
-            lines.append(f"  候補: {' / '.join(iv.suggestions)}")
+            lines.append(f"  options: {' / '.join(iv.suggestions)}")
         if iv.choices:
             labels = " / ".join(c.label for c in iv.choices)
             lines.append(f"  {labels}")
