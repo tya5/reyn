@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reyn</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f0f11; color: #e8e8ec; min-height: 100vh; }
+
+    #shell-chrome {
+      position: fixed;
+      top: 0;
+      right: 0;
+      z-index: 9999;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: rgba(15, 15, 17, 0.85);
+      border-bottom-left-radius: 8px;
+      backdrop-filter: blur(8px);
+      font-size: 12px;
+    }
+
+    #shell-chrome label { color: #888; }
+    #design-picker {
+      background: #1c1c22;
+      color: #e8e8ec;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    #schema-warning {
+      display: none;
+      position: fixed;
+      top: 48px;
+      right: 12px;
+      background: #3a1f00;
+      border: 1px solid #b34700;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #ffb86c;
+      z-index: 9998;
+      max-width: 320px;
+    }
+
+    #design-mount { width: 100%; min-height: 100vh; }
+
+    #shell-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      color: #555;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Shell chrome: design picker (top-right) -->
+<div id="shell-chrome">
+  <label for="design-picker">Design</label>
+  <select id="design-picker" title="Switch design"></select>
+</div>
+
+<!-- Schema mismatch warning (shown if needed) -->
+<div id="schema-warning"></div>
+
+<!-- Design mount point -->
+<div id="design-mount">
+  <div id="shell-loading">Loading Reyn…</div>
+</div>
+
+<script>
+(async function shellMain() {
+  "use strict";
+
+  // ── 1. Fetch /api/web/config ─────────────────────────────────────────────
+  let config = { default_design: null, schemas_supported: ["reyn-ui/v1"], available_designs: [] };
+  try {
+    const r = await fetch("/api/web/config");
+    if (r.ok) config = await r.json();
+  } catch (e) {
+    console.warn("[shell] /api/web/config fetch failed:", e);
+  }
+
+  const { available_designs = [], schemas_supported = [], default_design: serverDefault = null } = config;
+
+  // ── 2. Design selection (priority: URL param → localStorage → server default → first alpha) ──
+  const urlParam = new URLSearchParams(location.search).get("design");
+  const lsDesign = localStorage.getItem("openui_design");
+  let chosenSlug = urlParam || lsDesign || serverDefault || null;
+
+  // Fallback: first alphabetically
+  if (!chosenSlug && available_designs.length > 0) {
+    chosenSlug = [...available_designs].sort((a, b) => a.slug.localeCompare(b.slug))[0].slug;
+  }
+
+  // Persist URL param to localStorage
+  if (urlParam) localStorage.setItem("openui_design", urlParam);
+
+  // ── 3. Populate design picker ─────────────────────────────────────────────
+  const picker = document.getElementById("design-picker");
+  const sortedDesigns = [...available_designs].sort((a, b) => a.slug.localeCompare(b.slug));
+
+  sortedDesigns.forEach(d => {
+    const opt = document.createElement("option");
+    opt.value = d.slug;
+    const sourceLabel = d.source === "stdlib" ? "⬡" : d.source === "project" ? "⬢" : "◈";
+    opt.textContent = `${d.slug} ${sourceLabel}`;
+    if (d.slug === chosenSlug) opt.selected = true;
+    picker.appendChild(opt);
+  });
+
+  if (sortedDesigns.length === 0) {
+    const opt = document.createElement("option");
+    opt.textContent = "(no designs)";
+    opt.disabled = true;
+    picker.appendChild(opt);
+  }
+
+  picker.addEventListener("change", () => {
+    localStorage.setItem("openui_design", picker.value);
+    location.reload();
+  });
+
+  // ── 4. Schema check ───────────────────────────────────────────────────────
+  const chosenDesign = available_designs.find(d => d.slug === chosenSlug);
+  if (chosenDesign) {
+    const designSchema = chosenDesign.schema || "reyn-ui/v1";
+    if (!schemas_supported.includes(designSchema)) {
+      const w = document.getElementById("schema-warning");
+      w.style.display = "block";
+      w.textContent = `Warning: design "${chosenSlug}" targets schema "${designSchema}" but this host supports ${schemas_supported.join(", ")}.`;
+    }
+  }
+
+  // ── 5. Set OPENUI_* globals ───────────────────────────────────────────────
+  window.OPENUI_SCHEMA = "reyn-ui/v1";
+  window.OPENUI_DESIGN_MODE = false;
+
+  // Fetch initial data
+  let initialData = {
+    AGENTS: [], RECAP: [], QUICKSTARTS: [], LIBRARY: [],
+    CONVO_ARIA: [], CONVO_ARIA_STUDIO: [],
+    SKILL_GRAPH: { name: "", source: "", entry: "", finish_criteria: "", phases: [] },
+    SKILL_MD: "",
+    RUN_EVENTS: [], RUNS_LIST: [], PERMISSIONS: [],
+    COPY: { en: _defaultCopy("en"), ja: _defaultCopy("ja") }
+  };
+  try {
+    const r = await fetch("/api/web/data");
+    if (r.ok) initialData = await r.json();
+  } catch (e) {
+    console.warn("[shell] /api/web/data fetch failed:", e);
+  }
+  window.OPENUI_DATA = initialData;
+
+  // ── 6. WebSocket setup ────────────────────────────────────────────────────
+  const wsProtocol = location.protocol === "https:" ? "wss:" : "ws:";
+  let ws = null;
+  let wsReady = false;
+  const _channelHandlers = {};  // channel → Set<handler>
+  const _pendingMessages = [];  // buffer while ws is connecting
+
+  function _connectWS(agentName) {
+    if (ws) { try { ws.close(); } catch (_) {} }
+    ws = new WebSocket(`${wsProtocol}//${location.host}/ws/chat/${agentName}`);
+    wsReady = false;
+
+    ws.addEventListener("open", () => {
+      wsReady = true;
+      _pendingMessages.forEach(m => ws.send(JSON.stringify(m)));
+      _pendingMessages.length = 0;
+    });
+
+    ws.addEventListener("message", (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+
+      // Dispatch by kind to channel handlers.
+      // PR30: pass-through — design side handles kind taxonomy.
+      const kind = msg.kind;
+
+      // Map WS kinds → OpenUI channels
+      // agent.message channel receives all forwarded WS messages
+      _dispatch("agent.message", msg);
+
+      // Future channels pre-wired (backend not yet emitting these)
+      if (kind === "run_started")    _dispatch("run.started",    msg.meta || {});
+      if (kind === "run_finished")   _dispatch("run.finished",   msg.meta || {});
+      if (kind === "phase_started")  _dispatch("phase.started",  msg.meta || {});
+      if (kind === "phase_finished") _dispatch("phase.finished", msg.meta || {});
+      if (kind === "state_delta")    _dispatch("state.delta",    msg.meta || {});
+      if (kind === "budget_updated") _dispatch("budget.updated", msg.meta || {});
+    });
+
+    ws.addEventListener("close", () => { wsReady = false; });
+    ws.addEventListener("error", (e) => console.warn("[shell] WS error:", e));
+  }
+
+  function _dispatch(channel, event) {
+    const handlers = _channelHandlers[channel];
+    if (!handlers) return;
+    handlers.forEach(h => {
+      try { h(event); } catch (e) { console.error("[shell] channel handler threw:", e); }
+    });
+  }
+
+  // ── 7. OPENUI_HOST.invoke ─────────────────────────────────────────────────
+  async function invoke(action, payload) {
+    if (action === "data.refetch") {
+      const r = await fetch("/api/web/data");
+      if (!r.ok) throw new Error(`data.refetch failed: ${r.status}`);
+      const data = await r.json();
+      window.OPENUI_DATA = data;
+      return data;
+    }
+
+    if (action === "agent.submit") {
+      const { agentId, text } = payload || {};
+      if (!agentId) throw new Error("agent.submit requires agentId");
+      // Connect WS to this agent if not already connected
+      if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+        _connectWS(agentId);
+      }
+      const msg = { type: "user_message", text: String(text || "") };
+      if (wsReady) {
+        ws.send(JSON.stringify(msg));
+      } else {
+        _pendingMessages.push(msg);
+      }
+      return;
+    }
+
+    if (action === "agent.intervention.answer") {
+      const { choiceId, text } = payload || {};
+      const msg = { type: "user_message", text: String(choiceId || text || "") };
+      if (ws && wsReady) {
+        ws.send(JSON.stringify(msg));
+      } else {
+        _pendingMessages.push(msg);
+      }
+      return;
+    }
+
+    if (action === "agent.add") {
+      const r = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: payload.name, role: payload.role_prompt || "" }),
+      });
+      if (!r.ok) throw new Error(`agent.add failed: ${r.status}`);
+      return await r.json();
+    }
+
+    if (action === "agent.remove") {
+      const r = await fetch(`/api/agents/${encodeURIComponent(payload.agentId)}`, { method: "DELETE" });
+      if (!r.ok) throw new Error(`agent.remove failed: ${r.status}`);
+      return;
+    }
+
+    if (action === "run.cancel") {
+      const r = await fetch(`/api/runs/${encodeURIComponent(payload.runId)}/cancel`, { method: "POST" });
+      if (!r.ok && r.status !== 404) throw new Error(`run.cancel failed: ${r.status}`);
+      return;
+    }
+
+    if (action === "permission.update") {
+      // Best-effort: permission store is approvals.yaml; full rule update not yet wired
+      console.warn("[shell] permission.update not yet fully wired:", payload);
+      return;
+    }
+
+    if (action === "permission.remove") {
+      const key = `${payload.op}:${payload.glob}`;
+      const r = await fetch(`/api/permissions/${encodeURIComponent(key)}`, { method: "DELETE" });
+      if (!r.ok && r.status !== 404) throw new Error(`permission.remove failed: ${r.status}`);
+      return;
+    }
+
+    throw new Error(`unknown action: ${action}`);
+  }
+
+  // ── 8. OPENUI_HOST.listen ─────────────────────────────────────────────────
+  function listen(channel, handler) {
+    if (!_channelHandlers[channel]) _channelHandlers[channel] = new Set();
+    _channelHandlers[channel].add(handler);
+
+    let removed = false;
+    return function unsubscribe() {
+      if (removed) return;
+      removed = true;
+      const s = _channelHandlers[channel];
+      if (s) s.delete(handler);
+    };
+  }
+
+  window.OPENUI_HOST = { invoke, listen };
+
+  // ── 9. Load design ────────────────────────────────────────────────────────
+  const mount = document.getElementById("design-mount");
+  mount.innerHTML = "";  // clear loading indicator
+
+  if (!chosenSlug) {
+    mount.innerHTML = `<div style="padding:40px;color:#888;text-align:center">
+      No design installed. Drop a design into <code>reyn/local/designs/&lt;slug&gt;/</code> and reload.
+    </div>`;
+    return;
+  }
+
+  // Strategy: fetch Reyn.html from the design directory, extract and inject its
+  // <body> content into the mount point, then inject its <script> tags so they
+  // execute in the shell's context (where OPENUI_* globals are already set).
+  // This is simpler than iframe + postMessage and keeps all globals shared.
+  try {
+    const designUrl = `/web/designs/${encodeURIComponent(chosenSlug)}/Reyn.html`;
+    const r = await fetch(designUrl);
+    if (!r.ok) {
+      mount.innerHTML = `<div style="padding:40px;color:#888;text-align:center">
+        Design <strong>${_esc(chosenSlug)}</strong> not found at <code>${_esc(designUrl)}</code>.<br/>
+        <small>Status: ${r.status}</small>
+      </div>`;
+      return;
+    }
+    const html = await r.text();
+    _injectDesign(mount, html, chosenSlug);
+  } catch (e) {
+    console.error("[shell] failed to load design:", e);
+    mount.innerHTML = `<div style="padding:40px;color:#f55;text-align:center">
+      Failed to load design <strong>${_esc(chosenSlug)}</strong>: ${_esc(String(e))}
+    </div>`;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function _esc(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  }
+
+  /**
+   * Inject a design's Reyn.html into the mount div.
+   *
+   * Approach:
+   * 1. Parse the HTML string with DOMParser.
+   * 2. Copy <body> children (except <script>) into #design-mount.
+   * 3. Re-create <script> tags and append them so they execute.
+   *    (cloneNode does not execute scripts; creating new elements does.)
+   */
+  function _injectDesign(mount, html, slug) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, "text/html");
+
+    // Copy non-script body content
+    const body = doc.body;
+    const scripts = [];
+    body.childNodes.forEach(node => {
+      if (node.nodeName === "SCRIPT") {
+        scripts.push(node);
+      } else {
+        mount.appendChild(document.importNode(node, true));
+      }
+    });
+
+    // Inject and execute scripts in order
+    scripts.forEach(orig => {
+      const s = document.createElement("script");
+      // Copy attributes (type, src, etc.)
+      Array.from(orig.attributes).forEach(a => s.setAttribute(a.name, a.value));
+      if (orig.src) {
+        // External script: rewrite relative URLs to design's base path
+        const base = `/web/designs/${encodeURIComponent(slug)}/`;
+        const src = orig.getAttribute("src");
+        s.src = src.startsWith("http") || src.startsWith("/") ? src : base + src;
+        s.async = false;
+      } else {
+        s.textContent = orig.textContent;
+      }
+      document.head.appendChild(s);
+    });
+  }
+
+  /**
+   * Default i18n copy so OPENUI_DATA.COPY is always populated.
+   */
+  function _defaultCopy(lang) {
+    const en = {
+      today_morning: "Good morning",
+      today_sub: "Here's what's happening",
+      recap_label: "Today",
+      your_agents: "Your agents",
+      quickstarts: "Quickstarts",
+      seeAll: "See all",
+      chat: "Chat",
+      profile: "Profile",
+      open_studio: "Open Studio",
+      back_app: "Back to App",
+      studio: "Studio",
+      app: "App",
+      today: "Today",
+      agents: "Agents",
+      library: "Library",
+      skills: "Skills",
+      runs: "Runs",
+      evals: "Evals",
+      topologies: "Topologies",
+      settings: "Settings",
+      send: "Send",
+      placeholder: "Message…",
+      permissions: "Permissions",
+      new_agent: "New agent",
+      add_agent: "Add agent",
+      library_lead: "Things your agents can do",
+      agents_lead: "Meet your team",
+    };
+    const ja = {
+      today_morning: "おはようございます",
+      today_sub: "今日の状況",
+      recap_label: "今日",
+      your_agents: "エージェント",
+      quickstarts: "クイックスタート",
+      seeAll: "すべて表示",
+      chat: "チャット",
+      profile: "プロフィール",
+      open_studio: "スタジオを開く",
+      back_app: "アプリに戻る",
+      studio: "スタジオ",
+      app: "アプリ",
+      today: "今日",
+      agents: "エージェント",
+      library: "ライブラリ",
+      skills: "スキル",
+      runs: "実行",
+      evals: "評価",
+      topologies: "トポロジー",
+      settings: "設定",
+      send: "送信",
+      placeholder: "メッセージ…",
+      permissions: "権限",
+      new_agent: "新しいエージェント",
+      add_agent: "エージェントを追加",
+      library_lead: "エージェントができること",
+      agents_lead: "チームの紹介",
+    };
+    return lang === "ja" ? ja : en;
+  }
+
+})();
+</script>
+
+</body>
+</html>
