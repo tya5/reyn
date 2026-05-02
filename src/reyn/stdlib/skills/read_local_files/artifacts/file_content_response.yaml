@@ -1,0 +1,26 @@
+name: file_content_response
+description: |
+  Final answer produced by `read_and_respond` after reading the planned
+  files via the filesystem MCP server. `response` is the natural-language
+  answer that uses the file contents; `files_read` records exactly which
+  paths landed in the synthesis (a subset of `read_plan.paths` if any
+  reads errored).
+schema:
+  type: object
+  properties:
+    response:
+      type: string
+      description: |
+        Natural-language answer to the user, in the same language as the
+        original prompt. May contain markdown (code fences, lists, etc.).
+        When some MCP reads errored the response should mention which
+        paths failed rather than fabricating their content.
+    files_read:
+      type: array
+      description: |
+        Paths that were successfully read and incorporated into the
+        response. Empty list is allowed when every read failed — in that
+        case `response` should explain the failure to the user.
+      items:
+        type: string
+  required: [response, files_read]

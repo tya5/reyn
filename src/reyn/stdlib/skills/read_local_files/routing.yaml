@@ -1,0 +1,37 @@
+# Routing metadata for skill_router.
+#
+# NOTE: The active routing source for stdlib skills is the `routing` block
+# in skill.md frontmatter — that is what `skill_router` actually consumes.
+# This file mirrors that block so external tooling that prefers a separate
+# YAML file gets the same metadata. Keep both in sync if either changes.
+
+intents: [task]
+priority: normal
+
+when_to_use:
+  - User wants to read or analyse local project files (README, source
+    code, config, docs)
+  - "「プロジェクトの構成を見せて」「READMEを要約して」 — read-and-respond
+    style requests over the local checkout"
+  - Inspecting code under a specific directory ("what's in src/foo/?")
+  - Locating files by content within the project tree
+
+when_not_to_use:
+  - User wants to write or modify files — this skill is read-only
+  - Multi-step refactoring or code-generation tasks (use a custom skill)
+  - Files outside the configured filesystem MCP server's path scope
+  - Single-shot LLM tasks that don't need file access (use direct_llm)
+
+examples:
+  positive:
+    - "Read the README and summarise the philosophy section"
+    - "プロジェクトの構成を見せて"
+    - "What's in src/reyn/op_runtime/?"
+    - "Find all files mentioning 'topology' under docs/"
+    - "src/reyn/runtime.py の概要を教えて"
+  negative:
+    - "Edit the file"
+    - "Create a new file under src/"
+    - "Search the web for X"
+    - "Read /etc/passwd"
+    - "Improve this skill"
