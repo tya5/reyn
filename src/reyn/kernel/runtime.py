@@ -231,6 +231,12 @@ class OSRuntime:
         self._project_context = project_context
         self._agent_role = agent_role
         self._phase_started_at: float | None = None
+        # PR33: trusted source for cross-field validation. Set in run() to
+        # the initial input artifact and never overwritten — phases that
+        # are LLM-authored cannot tamper with this. Validators reference it
+        # via x-reyn-members-of: skill_input.data.X paths to enforce that
+        # an LLM-emitted field's value is in a list it cannot fabricate.
+        self._skill_input: dict | None = None
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
         self.control_ir_executor = ControlIRExecutor(
@@ -449,12 +455,25 @@ class OSRuntime:
             raise
 
         # Plumb input artifact as validation context so cross-field
-        # constraints (e.g. ``x-reyn-members-of: input.data.X``) can resolve
-        # against the phase's actual input. P7-clean: the OS supplies the
-        # generic context dict; only the skill's schema names specific keys.
-        validation_context = (
-            {"input": input_artifact} if input_artifact is not None else None
-        )
+        # constraints can resolve against the phase's input. Two slots:
+        #  - ``input``        — the immediate phase input (LLM-authored
+        #                       in chained phases; do NOT use for trust
+        #                       checks).
+        #  - ``skill_input``  — PR33. The skill's initial input pinned at
+        #                       run() entry. Trusted: no LLM phase can
+        #                       overwrite. Use this slot in
+        #                       ``x-reyn-members-of`` paths whose
+        #                       membership set the LLM must not be able
+        #                       to fabricate.
+        # P7-clean: the OS supplies the generic context dict; only the
+        # skill's schema names specific keys.
+        validation_context: dict | None = None
+        if input_artifact is not None or self._skill_input is not None:
+            validation_context = {}
+            if input_artifact is not None:
+                validation_context["input"] = input_artifact
+            if self._skill_input is not None:
+                validation_context["skill_input"] = self._skill_input
         norm_data, corrections, errors = validate_artifact_data(
             normalized,
             matched_candidate.artifact_schema,
@@ -937,6 +956,10 @@ class OSRuntime:
 
         current_phase = self.skill.entry_phase
         artifact = initial_input
+        # PR33: pin the trusted input for cross-field validation across all
+        # phases. Schemas downstream can reference fields here that no LLM
+        # phase can tamper with.
+        self._skill_input = initial_input
 
         self.events.emit(
             "workflow_started",

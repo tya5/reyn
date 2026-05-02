@@ -22,7 +22,12 @@ schema:
           skill:
             type: string
             description: Skill name (must appear in input.available_skills).
-            x-reyn-members-of: input.data.available_skills[*].name
+            # PR33: anchored at skill_input (the router's initial input,
+            # `chat_routing_request`), NOT the immediate phase input.
+            # Earlier phases of the router are LLM-authored and can fabricate
+            # an `available_skills` field; only the skill's first input is
+            # OS-trusted, so the membership check must reference it.
+            x-reyn-members-of: skill_input.data.available_skills[*].name
           input:
             type: object
             description: |

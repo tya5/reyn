@@ -419,7 +419,7 @@ def test_out_of_pool_skill_rejected():
     _, _, errors = validate_artifact_data(
         artifact,
         schema,
-        validation_context={"input": input_artifact},
+        validation_context={"skill_input": input_artifact},
     )
     assert errors, "OS should reject hallucinated skill name"
     joined = " ".join(errors)
@@ -454,7 +454,7 @@ def test_out_of_pool_retry_then_empty():
         },
     }
     _, _, errors1 = validate_artifact_data(
-        bad, schema, validation_context={"input": input_artifact},
+        bad, schema, validation_context={"skill_input": input_artifact},
     )
     assert errors1, "first attempt must be rejected"
 
@@ -467,10 +467,73 @@ def test_out_of_pool_retry_then_empty():
         },
     }
     norm, _, errors2 = validate_artifact_data(
-        good, schema, validation_context={"input": input_artifact},
+        good, schema, validation_context={"skill_input": input_artifact},
     )
     assert errors2 == [], f"corrected attempt should validate clean: {errors2}"
     assert norm["skills_to_run"] == []
+
+
+def test_validator_uses_skill_input_not_phase_input():
+    """PR33: the membership check must reference the OS-trusted ``skill_input``
+    (the skill's initial artifact), NOT the phase's immediate ``input`` —
+    earlier phases can be LLM-authored and would otherwise let the LLM
+    fabricate its own membership set.
+
+    Pre-OSS dogfood (PR32, chat-routed) reproduced the bug: classify-phase
+    LLM produced ``routing_intent.data.available_skills =
+    [{"name": "blog_writer"}]`` (a fabricated single-element pass-through);
+    the ``match`` phase emitted ``skills_to_run=[{skill: "blog_writer"}]``;
+    membership check anchored at ``input.data.available_skills`` then said
+    "yes, blog_writer is in the list" because the list was fabricated.
+
+    Anchoring at ``skill_input`` (the chat_routing_request, OS-injected at
+    run() entry) closes the hole.
+    """
+    from reyn.workspace import validate_artifact_data
+
+    schema = _routing_decision_schema()
+
+    # Trusted source — the skill's first input. Real catalogue, no
+    # blog_writer.
+    skill_input = _chat_routing_input(["article_generator", "text_summarizer"])
+
+    # The fabricated phase input — what the classify LLM produced and the
+    # match LLM saw. Includes blog_writer because the LLM lied to itself.
+    fabricated_phase_input = {
+        "type": "routing_intent",
+        "data": {
+            "intent": "task",
+            "available_skills": [{"name": "blog_writer"}],
+        },
+    }
+
+    artifact = {
+        "type": "routing_decision",
+        "data": {
+            "reply_text": "",
+            "skills_to_run": [
+                {"skill": "blog_writer",
+                 "input": {"type": "user_message", "data": {"text": "x"}}}
+            ],
+        },
+    }
+
+    # If the validator naively trusted ``input``, this would pass — the
+    # fabricated set contains blog_writer. With ``skill_input`` anchoring,
+    # the real catalogue rejects it.
+    _, _, errors = validate_artifact_data(
+        artifact,
+        schema,
+        validation_context={
+            "input": fabricated_phase_input,
+            "skill_input": skill_input,
+        },
+    )
+    assert errors, (
+        "Validator must reject blog_writer based on skill_input even though "
+        "the LLM-fabricated phase input would have allowed it."
+    )
+    assert "blog_writer" in " ".join(errors)
 
 
 def test_in_pool_skill_accepted():
@@ -491,7 +554,7 @@ def test_in_pool_skill_accepted():
         },
     }
     _, _, errors = validate_artifact_data(
-        artifact, schema, validation_context={"input": input_artifact},
+        artifact, schema, validation_context={"skill_input": input_artifact},
     )
     assert errors == [], f"in-pool skill must not be rejected: {errors}"
 
