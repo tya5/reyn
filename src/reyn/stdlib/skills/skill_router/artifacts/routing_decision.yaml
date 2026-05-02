@@ -22,6 +22,7 @@ schema:
           skill:
             type: string
             description: Skill name (must appear in input.available_skills).
+            x-reyn-members-of: input.data.available_skills[*].name
           input:
             type: object
             description: |

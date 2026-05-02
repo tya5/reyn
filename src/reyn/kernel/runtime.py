@@ -394,6 +394,7 @@ class OSRuntime:
         current_phase: str,
         candidates: list[CandidateOutput],
         allowed_next: list[str],
+        input_artifact: dict | None = None,
     ) -> tuple[NormalizationResult, LLMOutput]:
         """
         Normalize and validate one LLM response.
@@ -447,8 +448,18 @@ class OSRuntime:
             self.events.emit("validation_error", phase=current_phase, error=str(exc))
             raise
 
+        # Plumb input artifact as validation context so cross-field
+        # constraints (e.g. ``x-reyn-members-of: input.data.X``) can resolve
+        # against the phase's actual input. P7-clean: the OS supplies the
+        # generic context dict; only the skill's schema names specific keys.
+        validation_context = (
+            {"input": input_artifact} if input_artifact is not None else None
+        )
         norm_data, corrections, errors = validate_artifact_data(
-            normalized, matched_candidate.artifact_schema, strict=self.strict
+            normalized,
+            matched_candidate.artifact_schema,
+            strict=self.strict,
+            validation_context=validation_context,
         )
         self.events.emit(
             "artifact_validated",
@@ -718,7 +729,9 @@ class OSRuntime:
 
         while True:
             try:
-                result, output = self._validate_phase_output(raw, phase, candidates, allowed_next)
+                result, output = self._validate_phase_output(
+                    raw, phase, candidates, allowed_next, input_artifact=artifact,
+                )
                 return result, output, len(prior_attempts)
             except WorkflowAbortedError:
                 raise
