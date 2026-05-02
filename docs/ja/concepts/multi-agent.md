@@ -1,0 +1,97 @@
+---
+type: concept
+topic: architecture
+audience: [human, agent]
+---
+
+# マルチ agent
+
+1 つの reyn プロセスは、任意の数の長期稼働 **agent** をホストできます。各 agent は独自のプロファイル、履歴、memory レイヤー、受信ボックス、Skill カタログビューを持つ ChatSession です。Agent は人間と（一度に 1 つ、attach 経由で）、そして互いに（構造化されたリクエスト/レスポンスチャンネルを通じて）通信します。
+
+## agent とは何か
+
+Agent は `.reyn/agents/<name>/` にあるディレクトリと、ランタイムがオンデマンドで起動するインメモリ ChatSession です：
+
+- `profile.yaml` — 名前、役割（システムプロンプトのペルソナ）、`allowed_skills`（オプション）
+- `history.jsonl` — 追記専用の会話ログ
+- `events.jsonl` — ランタイム監査ログ
+- `memory/` — agent スコープの memory レイヤー（`.reyn/memory/` の共有レイヤーはすべての agent から見える）
+- `runs/` — Skill スポーンごとの workspace
+
+`default` agent は必要に応じて自動作成されます。名前付き agent は `reyn agent new` から作成します。
+
+## AgentRegistry
+
+プロセスごとに 1 つの `AgentRegistry` インスタンスがすべてのロード済み agent を所有します。処理内容：
+
+- **遅延ロード** — agent は最初の attach またはエージェント間メッセージの受信時にインスタンス化されます。起動時ではありません。
+- **attach ポインター** — 常に 1 つの agent だけが REPL にアタッチされています。デタッチされた agent は受信ボックスループ（バックグラウンドの Skill 進行、介入キュー）を実行し続けますが、一時的な送信ボックスメッセージは破棄されます。永続的な履歴のみが残ります。
+- **送信ボックスフォワーダー** — agent ごとのタスクが、アタッチされた agent の送信ボックスを共有 REPL キューにポンプします。
+- **Topology ゲート** — `permit(from, to)` が宣言されたトポロジーを参照してから agent 間の送信を許可します。[topology.md](topology.md) を参照してください。
+
+## Attach モデル
+
+`reyn chat researcher` が `researcher` をアタッチされた agent にします。アタッチ中は `:attach default` でポインターを切り替えられます。`researcher` は受信ボックスループを実行し続けます。スイッチしたときに委譲チェーンが進行中であれば、送信ボックスに解決済みの結果が戻ってきます。
+
+## Agent 間メッセージング
+
+ルーターの決定が `messages_to_agents: [{to, request}, ...]` を発行すると、ChatSession は各エントリーを対象の受信ボックスに `agent_request` ペイロードとしてルーティングします：
+
+```
+{from_agent, request, depth, chain_id}
+```
+
+受信 agent の `session.run()` がそれを処理し、自分自身のルーターを実行して、すぐに応答するか（送信者への `agent_response`）、さらに委譲したい場合は **遅延** します。
+
+### 遅延応答
+
+受信 agent のルーターが独自の `messages_to_agents` を発行する場合、上流への応答は保留されます。`chain_id` をキーとする `_PendingChain` が記録します：
+
+- `origin_agent` — チェーンが解決したら返信する相手
+- `origin_depth` — 返信を送る深さ
+- `original_request` — 合成のために次のルーターターンに再生される上流リクエスト
+- `waiting_on` — まだ応答待ちの agent のセット
+
+各委譲先が応答するたびに、送信者が `waiting_on` から除かれます。セットが空になると、agent は全委譲先の応答を履歴に持った状態でルーターを再実行します。結果として得られた `reply_text` が上流に送られる単一の合成応答になります。2 回目のルーターパスがさらに委譲を発行する場合、チェーンは新しい `waiting_on` セットで保留状態を維持します。これは `max_hop_depth` によってのみ制限されます。
+
+これにより「マネージャー → デリゲート → 合成」モデルが実現します。ユーザーはアタッチされた agent から暫定的な `（処理中）` を受け取り、その後、すべての委譲先の入力を取り込んだ単一の最終回答を受け取ります。
+
+### chain_id
+
+すべてのトップレベルのユーザー送信は `submit_user_text` で `chain_id`（uuid4 hex）を採番します。これは次の通り伝播します：
+
+- 受信ボックスペイロード（すべてのホップ）
+- チェーンに関わるすべての `_append_history` での履歴メタ（ソース：`agent_request`、`agent_request_outgoing`、`agent_response`、`agent_response_outgoing`）
+- `agent_message_*` events
+
+`chain_id` は **監査専用** です。ルーター LLM はそれを見ません。CLI は表示しません。複数の agent にまたがるチェーンを end-to-end でトレースするには、各 agent の `events.jsonl` と `history.jsonl` に対して `grep <chain_id>` します。
+
+### ファンアウト
+
+`messages_to_agents` には複数のエントリーを含めることができます。保留チェーンの `waiting_on` セットはそれらすべてを保持します。合成応答はすべての委譲先が応答した後にのみ発生します（wait-for-all）。遅い委譲先 1 つが合成全体を遅らせます。`multi_agent.chain_timeout_seconds`（デフォルト 60 秒）が経過するまで遅延し、その時点で `chain_timeout` event が発火し、合成エラー応答が上流 agent のブロックを解除します。
+
+## ユーザー起点 vs agent 起点のチェーン
+
+遅延応答のメカニックは、上流に別の agent が待機しているチェーンにのみ適用されます。**ユーザー起点** のチェーンでは、起点 agent はルーターの `reply_text` をすぐにユーザーに送信し（暫定確認）、委譲先からの応答後に 2 回目のパスで最終回答を生成します。2 つの可視メッセージが生成され、1 つの合成まとまりにはなりません。
+
+これにより既存のチャット UX（「処理中です」が見える）を維持しながら、agent 間チェーンがリクエストごとに 1 つの応答へとクリーンにまとまります。
+
+## max_hop_depth
+
+`multi_agent.max_hop_depth`（デフォルト 3）はチェーンがどこまで延びられるかを制限します。`depth = 0` がユーザー入力で、各 `_send_to_agent` でインクリメントされます。`depth > max_hop_depth` の送信は `agent_message_refused` event と共に拒否されます。[reference: multi-agent config](../reference/config/multi-agent.md) を参照してください。
+
+## OS が管理しないもの
+
+- **Topology**：誰が誰に送信できるかは別のコンセプトです（[topology.md](topology.md) 参照）。レジストリの `permit()` で参照されます。
+- **Skill アクセス**：LLM サイドの Skill フィルターは `profile.allowed_skills` による agent ごとの設定です。OS はプロファイルの内容に従うだけです。
+- **Memory のレイヤリング**：共有と agent のレイヤーはルーターの classify phase によって読み書きされます。レジストリは memory ファイルを操作しません。
+
+Agent はファーストクラスのアイデンティティと状態です。Topology と Skill アクセスはその上に重ねるポリシーです。
+
+## 参考
+
+- [Reference: agent CLI](../reference/cli/agent.md)
+- [Reference: profile-yaml](../reference/dsl/profile-yaml.md)
+- [Reference: multi-agent config](../reference/config/multi-agent.md)
+- [Concepts: topology](topology.md)
+- [Concepts: memory](memory.md)
