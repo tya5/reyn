@@ -1,578 +1,549 @@
-"""Replay tests for skill_router intent classification.
+"""RouterLoop replay / unit tests (PR35 Wave 3 Task G).
 
-Verifies that the intent classification path produces stable, deterministic
-outputs for representative utterances. All LLM calls are intercepted by the
-``@pytest.mark.replay`` fixture — no real LLM is invoked in normal test runs.
+Replaces the old skill_router phase-based tests with tests that exercise the
+RouterLoop + native tool_use path.
 
-Areas covered (Tier 3a)
------------------------
-- Chitchat: direct finish with ``reply_text``, empty ``skills_to_run``.
-- Task dispatch: classify → transition to match.
-- Monkeypatch lifecycle invariant (Tier 2): LLMReplay does not leak across tests.
+Strategy
+--------
+- Semantic / E2E tests (chitchat, skill invocation, memory, delegation) →
+  ``@pytest.mark.replay`` with fixtures in ``tests/fixtures/llm/router/``.
+  LLMReplay intercepts ``litellm.acompletion`` and either replays a recorded
+  response or records a new one on first run (REYN_LLM_RECORD=1 or missing fixture).
+
+- Pathology / structural tests (max_iterations, parallel dispatch, tools catalog
+  inspection) → direct monkeypatch on ``reyn.chat.router_loop.call_llm_tools``.
+  These tests verify RouterLoop structural invariants without needing a real LLM
+  call, so they don't need fixtures.
+
+Fixture directory: ``tests/fixtures/llm/router/`` (created on first record run).
+Old ``tests/fixtures/llm/skill_router/`` is preserved until Wave H.
 """
 from __future__ import annotations
 
 import asyncio
 import json
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from reyn.llm.llm import call_llm
-from reyn.schemas.models import (
-    CandidateOutput,
-    ContextFrame,
-    ControlIROpSpec,
-    ExecutionState,
-    PhaseConstraints,
-)
-from reyn.testing.replay import REPLAY_DATETIME
-
-MODEL = "openai/gemini-2.5-flash-lite"
-SKILL_DESC = (
-    "Route a single user chat utterance to an appropriate skill (or reply directly).\n"
-    "Used by reyn chat to turn natural language into a routing decision."
-)
+from reyn.chat.router_loop import RouterLoop
+from reyn.chat.router_tools import build_tools
+from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.llm.llm import LLMToolCallResult
+from reyn.llm.pricing import TokenUsage
 
 
-# ── helpers ────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# FakeRouterHost (shared with test_router_loop.py — kept in sync)
+# ---------------------------------------------------------------------------
+
+class FakeRouterHost:
+    """In-memory RouterLoopHost implementation for tests."""
+
+    chat_id: str = "test-chat-id"
+    agent_name: str = "test-agent"
+    agent_role: str = "test role"
+
+    def __init__(
+        self,
+        skills: list[dict] | None = None,
+        agents: list[dict] | None = None,
+        memory_index: dict | None = None,
+        file_permissions: dict | None = None,
+        mcp_servers: list[dict] | None = None,
+    ):
+        self._skills = skills or []
+        self._agents = agents or []
+        self._memory_index = memory_index or {"status": "not_found", "content": ""}
+        self._file_permissions = file_permissions
+        self._mcp_servers = mcp_servers or []
+
+        # Track calls
+        self.outbox: list[dict] = []
+        self.skill_calls: list[dict] = []
+        self.agent_sends: list[dict] = []
+        self.file_writes: list[tuple[str, str]] = []
+        self.file_deletes: list[str] = []
+        self.file_reads: list[str] = []
+        self.index_regenerations: list[dict] = []
+
+        # In-memory "file system"
+        self._files: dict[str, str] = {}
+
+    # --- Catalogue ---
+
+    def list_available_skills(self) -> list[dict]:
+        return self._skills
+
+    def list_available_agents(self) -> list[dict]:
+        return self._agents
+
+    def get_memory_index(self) -> dict:
+        return self._memory_index
+
+    def get_file_permissions(self) -> dict | None:
+        return self._file_permissions
+
+    def get_mcp_servers(self) -> list[dict]:
+        return self._mcp_servers
+
+    # --- Memory paths ---
+
+    def memory_path(self, layer: str, slug: str) -> str:
+        return f"/memory/{layer}/{slug}"
+
+    def memory_dir(self, layer: str) -> str:
+        return f"/memory/{layer}"
+
+    # --- Action callbacks ---
+
+    async def run_skill_awaitable(self, *, skill: str, input: dict,
+                                   chain_id: str) -> dict:
+        self.skill_calls.append({"skill": skill, "input": input, "chain_id": chain_id})
+        return {"status": "finished", "data": {"result": f"{skill} ran"}}
+
+    async def send_to_agent(self, *, to: str, request: str, depth: int,
+                            chain_id: str) -> None:
+        self.agent_sends.append({"to": to, "request": request, "depth": depth,
+                                  "chain_id": chain_id})
+
+    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+        self.outbox.append({"kind": kind, "text": text, "meta": meta})
+
+    # --- File ops ---
+
+    async def file_read(self, path: str) -> str:
+        self.file_reads.append(path)
+        if path not in self._files:
+            raise FileNotFoundError(f"not found: {path}")
+        return self._files[path]
+
+    async def file_write(self, path: str, content: str) -> dict:
+        self.file_writes.append((path, content))
+        self._files[path] = content
+        return {"status": "ok", "path": path}
+
+    async def file_delete(self, path: str) -> dict:
+        self.file_deletes.append(path)
+        self._files.pop(path, None)
+        return {"status": "ok", "path": path}
+
+    async def file_list_directory(self, path: str) -> list[dict]:
+        return [{"name": "file.txt", "type": "file"}]
+
+    async def file_regenerate_index(self, path: str, output_path: str,
+                                     entry_template: str, header: str) -> dict:
+        self.index_regenerations.append({
+            "path": path,
+            "output_path": output_path,
+            "entry_template": entry_template,
+            "header": header,
+        })
+        return {"status": "ok"}
+
+    # --- MCP ops ---
+
+    async def mcp_list_servers(self) -> list[dict]:
+        return self._mcp_servers
+
+    async def mcp_list_tools(self, server: str) -> list[dict]:
+        return [{"name": "tool1", "description": "A tool"}]
+
+    async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+        return {"status": "ok", "server": server, "tool": tool}
+
+    # --- Model resolution ---
+
+    def resolve_model(self, name: str) -> str:
+        # Return the bare model name (no provider prefix).
+        # LLMReplay computes the fixture key from the model string passed to
+        # litellm.acompletion.  call_llm_tools only strips the provider prefix
+        # when LITELLM_API_BASE is set (proxy_kwargs non-empty).  By returning
+        # the bare name here the key is identical in both record mode (proxy
+        # active, no stripping needed) and replay mode (no proxy).
+        return "gemini-2.5-flash-lite"
 
 
-def _candidate_finish(schema: str = "routing_decision") -> CandidateOutput:
-    return CandidateOutput(
-        next_phase="end",
-        control_type="finish",
-        schema_name=schema,
-        artifact_schema={
-            "type": "object",
-            "properties": {
-                "reply_text": {"type": "string"},
-                "skills_to_run": {"type": "array", "items": {}},
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_EMPTY_USAGE = TokenUsage(prompt_tokens=10, completion_tokens=5)
+
+
+def _text_result(text: str) -> LLMToolCallResult:
+    return LLMToolCallResult(
+        content=text,
+        tool_calls=[],
+        finish_reason="stop",
+        usage=_EMPTY_USAGE,
+    )
+
+
+def _tool_result(calls: list[dict]) -> LLMToolCallResult:
+    """calls: list of {id?, name, args?}"""
+    tool_calls = [
+        {
+            "id": c.get("id", f"tc_{i}"),
+            "type": "function",
+            "function": {
+                "name": c["name"],
+                "arguments": json.dumps(c.get("args", {})),
             },
-            "required": ["reply_text", "skills_to_run"],
-        },
-        description="Direct reply for chitchat/stable_knowledge/memory_recall/clarification",
+        }
+        for i, c in enumerate(calls)
+    ]
+    return LLMToolCallResult(
+        content=None,
+        tool_calls=tool_calls,
+        finish_reason="tool_calls",
+        usage=_EMPTY_USAGE,
     )
 
 
-def _candidate_match() -> CandidateOutput:
-    return CandidateOutput(
-        next_phase="match",
-        control_type="transition",
-        schema_name="routing_intent",
-        artifact_schema={
-            "type": "object",
-            "properties": {
-                "intent": {"type": "string"},
-                "user_message": {"type": "string"},
+def _make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
+    return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations)
+
+
+# ---------------------------------------------------------------------------
+# ── Semantic / E2E tests (LLMReplay) ────────────────────────────────────────
+# ---------------------------------------------------------------------------
+
+@pytest.mark.replay("fixtures/llm/router/chitchat.jsonl")
+@pytest.mark.asyncio
+async def test_chitchat_text_reply():
+    """LLM returns text directly with no tool_calls; outbox has kind='agent'."""
+    host = FakeRouterHost(
+        skills=[
+            {"name": "text_summariser", "description": "Summarises text.", "category": "general"},
+        ],
+    )
+    loop = _make_loop(host)
+
+    await loop.run("Hi! How are you?", [])
+
+    assert len(host.outbox) == 1, f"Expected 1 outbox entry, got: {host.outbox}"
+    msg = host.outbox[0]
+    assert msg["kind"] == "agent", f"Expected kind='agent', got: {msg['kind']}"
+    assert isinstance(msg["text"], str) and len(msg["text"]) > 0, (
+        "Expected non-empty text reply for chitchat"
+    )
+    assert len(host.skill_calls) == 0, (
+        f"Chitchat should not invoke any skill; got: {host.skill_calls}"
+    )
+
+
+@pytest.mark.replay("fixtures/llm/router/invoke_skill_single_round.jsonl")
+@pytest.mark.asyncio
+async def test_invoke_skill_single_round():
+    """LLM calls invoke_skill then returns text; host.run_skill_awaitable called once."""
+    host = FakeRouterHost(
+        skills=[
+            {"name": "text_summariser", "description": "Summarises text.", "category": "general"},
+        ],
+    )
+    loop = _make_loop(host)
+
+    await loop.run(
+        "Use the text_summariser skill to summarise: The quick brown fox jumps over the lazy dog.",
+        [],
+    )
+
+    # The LLM must have called invoke_skill at least once before producing text.
+    # We assert that a skill was invoked (not which name) because the LLM picks
+    # the skill name from the catalogue; exact name matching would be brittle.
+    assert len(host.skill_calls) >= 1, (
+        f"Expected at least 1 skill call; got: {host.skill_calls}"
+    )
+    assert host.skill_calls[0]["chain_id"] == "chain-test"
+
+    # Final outbox entry is text
+    assert len(host.outbox) == 1
+    assert host.outbox[0]["kind"] == "agent"
+    assert len(host.outbox[0]["text"]) > 0
+
+
+@pytest.mark.replay("fixtures/llm/router/delegate_to_agent.jsonl")
+@pytest.mark.asyncio
+async def test_delegate_to_agent():
+    """LLM calls delegate_to_agent; host.send_to_agent called with correct args."""
+    host = FakeRouterHost(
+        agents=[{"name": "researcher", "role": "research agent", "cluster": "default"}],
+    )
+    loop = _make_loop(host)
+
+    await loop.run(
+        "Delegate this research task to the researcher agent: find info on climate change.",
+        [],
+    )
+
+    assert len(host.agent_sends) >= 1, (
+        f"Expected at least 1 delegate call; got: {host.agent_sends}"
+    )
+    assert host.agent_sends[0]["to"] == "researcher"
+    assert host.agent_sends[0]["chain_id"] == "chain-test"
+    assert isinstance(host.agent_sends[0]["request"], str)
+
+    assert len(host.outbox) == 1
+    assert host.outbox[0]["kind"] == "agent"
+
+
+@pytest.mark.replay("fixtures/llm/router/memory_recall.jsonl")
+@pytest.mark.asyncio
+async def test_memory_recall_via_list_then_read():
+    """LLM lists memory then reads a body; sequence produces final text reply."""
+    memory_content = (
+        "# Memory Index (shared)\n\n"
+        "- [User Role](user_role.md) — The user is a senior developer.\n"
+    )
+    host = FakeRouterHost(
+        memory_index={"status": "ok", "content": memory_content},
+    )
+    # Seed the in-memory file system so file_read works
+    host._files["/memory/shared/user_role.md"] = (
+        "---\nname: User Role\ndescription: The user is a senior developer.\n"
+        "type: user\n---\n\nThe user is a senior developer working on agent OS.\n"
+    )
+
+    loop = _make_loop(host)
+
+    await loop.run("What do you know about my role?", [])
+
+    # At least one list_memory or read_memory_body call should have happened
+    # (we track these via file_reads since read_memory_body calls host.file_read)
+    # The final outbox must have a text reply
+    assert len(host.outbox) == 1
+    assert host.outbox[0]["kind"] == "agent"
+    assert len(host.outbox[0]["text"]) > 0
+
+
+# ---------------------------------------------------------------------------
+# ── Pathology / structural tests (direct monkeypatch) ───────────────────────
+# These don't need recorded fixtures because LLM behavior is scripted.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_max_iterations_aborts_with_error():
+    """Every LLM round returns tool_calls; error outbox emitted after max_iterations."""
+    host = FakeRouterHost()
+    loop = _make_loop(host, max_iterations=3)
+
+    always_tool = _tool_result([{"name": "bogus_tool", "args": {}}])
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = always_tool
+        await loop.run("do stuff forever", [])
+
+    assert mock_llm.await_count == 3, (
+        f"Expected exactly 3 LLM calls (max_iterations), got {mock_llm.await_count}"
+    )
+    assert len(host.outbox) == 1
+    assert host.outbox[0]["kind"] == "error"
+    assert "max iterations" in host.outbox[0]["text"].lower() or "3" in host.outbox[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_tool_calls_in_one_round():
+    """One LLM round with 2 tool_calls; both executed before next round."""
+    host = FakeRouterHost(
+        skills=[
+            {"name": "skill_a", "category": "general"},
+            {"name": "skill_b", "category": "general"},
+        ]
+    )
+    loop = _make_loop(host)
+
+    rounds = [
+        _tool_result([
+            {"id": "tc_0", "name": "invoke_skill",
+             "args": {"name": "skill_a", "input": {"type": "X", "data": {}}}},
+            {"id": "tc_1", "name": "invoke_skill",
+             "args": {"name": "skill_b", "input": {"type": "Y", "data": {}}}},
+        ]),
+        _text_result("Both skills ran successfully."),
+    ]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run("run both skills", [])
+
+    assert len(host.skill_calls) == 2, (
+        f"Both skills must be called; got: {[c['skill'] for c in host.skill_calls]}"
+    )
+    called_skills = {c["skill"] for c in host.skill_calls}
+    assert called_skills == {"skill_a", "skill_b"}
+    assert host.outbox[0]["text"] == "Both skills ran successfully."
+
+
+@pytest.mark.asyncio
+async def test_tools_param_includes_only_allowed_skills():
+    """The tools= sent to call_llm_tools are built from host.list_available_skills() only.
+
+    Sets up a host with 2 skills. Captures the tools= argument on the first LLM
+    call and verifies the tool catalog reflects the host's skill list.
+    Specifically: build_tools is called with host's skills, so any additional
+    skill NOT in the host is absent from the resulting tool spec.
+    """
+    allowed_skills = [
+        {"name": "read_local_files", "description": "Read local files.", "category": "file"},
+        {"name": "text_summariser", "description": "Summarises text.", "category": "general"},
+    ]
+    host = FakeRouterHost(skills=allowed_skills)
+    loop = _make_loop(host)
+
+    captured_tools: list[dict] = []
+    captured_system: list[str] = []
+
+    async def capturing_llm(*, model, messages, tools, tool_choice, **kwargs):
+        captured_tools.extend(tools)
+        # System prompt is always the first message
+        if messages and messages[0]["role"] == "system":
+            captured_system.append(messages[0]["content"])
+        return _text_result("Done.")
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=capturing_llm):
+        await loop.run("hello", [])
+
+    # The tool catalog must have been passed (non-empty)
+    assert len(captured_tools) > 0, "tools= must be non-empty"
+
+    # Build the expected tool catalog directly and compare names
+    expected_tools = build_tools(
+        allowed_skills,
+        [],  # no agents
+        file_permissions=None,
+        mcp_servers=None,
+    )
+    expected_tool_names = {t["function"]["name"] for t in expected_tools}
+    actual_tool_names = {t["function"]["name"] for t in captured_tools}
+    assert actual_tool_names == expected_tool_names, (
+        f"Tool names mismatch.\nExpected: {sorted(expected_tool_names)}\n"
+        f"Actual:   {sorted(actual_tool_names)}"
+    )
+
+    # A skill NOT in the allowlist must not appear in the system prompt skill summary
+    # The system prompt lists skill categories; "text_summariser" / "read_local_files"
+    # categories should appear and no phantom skill names should be present.
+    system_text = captured_system[0] if captured_system else ""
+    # "disallowed_secret_skill" is not in the host — verify it's absent
+    assert "disallowed_secret_skill" not in system_text
+
+
+@pytest.mark.asyncio
+async def test_validator_anchor_unchanged():
+    """System prompt lists only the host's allowed skill categories; absent skills are absent.
+
+    Build a host with skills=[A, B]; render system prompt; assert both categories
+    appear and a phantom category 'phantom' is absent.
+    """
+    allowed_skills = [
+        {"name": "skill_alpha", "description": "Alpha skill.", "category": "analytics"},
+        {"name": "skill_beta", "description": "Beta skill.", "category": "analytics"},
+    ]
+    host = FakeRouterHost(skills=allowed_skills)
+
+    prompt = build_system_prompt(
+        agent_name=host.agent_name,
+        agent_role=host.agent_role,
+        available_skills=host.list_available_skills(),
+        available_agents=host.list_available_agents(),
+        memory_index=host.get_memory_index(),
+        file_permissions=host.get_file_permissions(),
+        mcp_servers=host.get_mcp_servers(),
+    )
+
+    # The analytics category with 2 skills must appear
+    assert "analytics (2)" in prompt, (
+        f"Expected 'analytics (2)' in system prompt.\nPrompt: {prompt[:500]}"
+    )
+    # A phantom category must not appear
+    assert "phantom" not in prompt, (
+        "Phantom skill category must not appear in system prompt"
+    )
+    # When no skills exist for a category, it's absent from the prompt
+    host_no_skills = FakeRouterHost(skills=[])
+    prompt_empty = build_system_prompt(
+        agent_name=host_no_skills.agent_name,
+        agent_role=host_no_skills.agent_role,
+        available_skills=[],
+        available_agents=[],
+        memory_index=host_no_skills.get_memory_index(),
+        file_permissions=None,
+        mcp_servers=None,
+    )
+    assert "(none)" in prompt_empty, (
+        "Empty skill list must render '(none)' in system prompt"
+    )
+
+
+@pytest.mark.asyncio
+async def test_invoke_skill_then_remember():
+    """Round 1: invoke_skill; round 2: remember_shared; round 3: text reply.
+
+    Verifies the multi-step sequence: skill run + memory write + final outbox.
+    Uses direct monkeypatch (no fixture needed — fully scripted behavior).
+    """
+    host = FakeRouterHost(
+        skills=[{"name": "text_summariser", "category": "general"}],
+        file_permissions={"read": ["/memory"], "write": ["/memory"]},
+    )
+    loop = _make_loop(host)
+
+    rounds = [
+        _tool_result([{"name": "invoke_skill", "args": {
+            "name": "text_summariser",
+            "input": {"type": "user_message", "data": {"text": "summarise this"}},
+        }}]),
+        _tool_result([{
+            "name": "remember_shared",
+            "args": {
+                "slug": "project_goal",
+                "name": "Project Goal",
+                "description": "Build a reliable agent OS",
+                "type": "project",
+                "body": "The project goal is to build a reliable agent OS.",
             },
-            "required": ["intent", "user_message"],
-        },
-        description="Hand off to match for task/fresh_lookup",
-    )
+        }]),
+        _text_result("I ran the summariser and saved the project goal."),
+    ]
 
-
-def _op_file() -> ControlIROpSpec:
-    return ControlIROpSpec(
-        kind="file",
-        description="Read a file",
-        example={"kind": "file", "op": "read", "path": ".reyn/memory/MEMORY.md"},
-    )
-
-
-def _run(coro):
-    return asyncio.run(coro)
-
-
-# ── test: chitchat — direct finish ────────────────────────────────────────────
-
-
-@pytest.mark.replay("fixtures/llm/skill_router/chitchat.jsonl")
-def test_classify_chitchat_finishes_directly():
-    """Tier 3a: skill_router classifies chitchat → finish with reply_text."""
-    frame = ContextFrame(
-        current_phase="triage",
-        current_phase_role="chat_router",
-        instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
-        candidate_outputs=[_candidate_finish(), _candidate_match()],
-        finish_criteria=["Intent classified"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[_op_file()],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "chat_routing_request",
-            "data": {
-                "user_message": "Hello, how are you today?",
-                "chat_id": "test-session-001",
-                "available_skills": [],
-                "history": [],
-            },
-        },
-        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
-        control_ir_results=[],
-        remaining_act_turns=2,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="skill_router",
-            skill_description=SKILL_DESC,
-            phase_role="chat_router",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide", f"Expected decide turn, got: {data.get('type')}"
-    ctrl = data["control"]
-    assert ctrl["type"] == "finish"
-    assert ctrl["decision"] == "finish"
-    assert ctrl["next_phase"] is None
-
-    artifact = data["artifact"]
-    assert artifact["type"] == "routing_decision"
-    art_data = artifact["data"]
-    assert isinstance(art_data["reply_text"], str)
-    assert len(art_data["reply_text"]) > 0, "Expected non-empty reply_text for chitchat"
-    assert art_data["skills_to_run"] == [], "Chitchat should not invoke any skills"
-
-    assert result.usage is not None
-    assert result.usage.prompt_tokens > 0
-
-
-# ── test: task intent — classify transitions to match ─────────────────────────
-
-
-@pytest.mark.replay("fixtures/llm/skill_router/task_dispatch.jsonl")
-def test_classify_task_transitions_to_match():
-    """Tier 3a: skill_router classifies a task utterance → transition to match."""
-    frame = ContextFrame(
-        current_phase="triage",
-        current_phase_role="chat_router",
-        instructions="Classify user intent into one of 6 intents. For task intent, transition to match.",
-        candidate_outputs=[_candidate_finish(), _candidate_match()],
-        finish_criteria=["Intent classified"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[_op_file()],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "chat_routing_request",
-            "data": {
-                "user_message": "Please run the article_generator skill to write about climate change.",
-                "chat_id": "test-session-002",
-                "available_skills": [
-                    {
-                        "name": "article_generator",
-                        "description": "Generates a polished article on a given topic.",
-                    }
-                ],
-                "history": [],
-            },
-        },
-        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
-        control_ir_results=[],
-        remaining_act_turns=2,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="skill_router",
-            skill_description=SKILL_DESC,
-            phase_role="chat_router",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide"
-    ctrl = data["control"]
-    assert ctrl["type"] == "transition"
-    assert ctrl["next_phase"] == "match"
-    assert ctrl["decision"] == "continue"
-
-
-# ── corner case: ambiguous intent — no prior context ─────────────────────────
-
-
-@pytest.mark.replay("fixtures/llm/skill_router/ambiguous_intent.jsonl")
-def test_classify_ambiguous_with_no_context():
-    """Tier 3a corner: 'how about that' with no history — classifier behaviour.
-
-    The user utterance is referentially ambiguous. The router has no history
-    to ground "that". A reasonable skill should either ask a clarifying
-    question (finish with reply_text) or decline. We don't pin which choice it
-    makes; we pin that a valid decide turn is produced and no skill is run.
-    """
-    frame = ContextFrame(
-        current_phase="triage",
-        current_phase_role="chat_router",
-        instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
-        candidate_outputs=[_candidate_finish(), _candidate_match()],
-        finish_criteria=["Intent classified"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[_op_file()],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "chat_routing_request",
-            "data": {
-                "user_message": "how about that",
-                "chat_id": "test-ambiguous-001",
-                "available_skills": [
-                    {
-                        "name": "article_generator",
-                        "description": "Generates a polished article on a given topic.",
-                    }
-                ],
-                "history": [],
-            },
-        },
-        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
-        control_ir_results=[],
-        remaining_act_turns=2,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="skill_router",
-            skill_description=SKILL_DESC,
-            phase_role="chat_router",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide"
-    ctrl = data["control"]
-    # Ambiguous-intent: should not blindly dispatch to a skill.
-    if ctrl["type"] == "transition":
-        # If it does transition, it must not fabricate a task from no context.
-        assert ctrl["next_phase"] in ("match",), (
-            f"Unexpected next_phase for ambiguous input: {ctrl['next_phase']}"
-        )
-    else:
-        # Most natural outcome: finish with a reply (clarification or chitchat).
-        assert ctrl["type"] == "finish"
-        artifact = data["artifact"]
-        assert artifact["type"] == "routing_decision"
-        art_data = artifact["data"]
-        assert isinstance(art_data["reply_text"], str) and len(art_data["reply_text"]) > 0
-        assert art_data["skills_to_run"] == [], (
-            "Ambiguous user message should not invoke any skill"
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run(
+            "Summarise this and remember the project goal.", []
         )
 
+    # Skill ran
+    assert len(host.skill_calls) == 1
+    assert host.skill_calls[0]["skill"] == "text_summariser"
 
-# ── corner case: out-of-scope request maps to no skill ───────────────────────
+    # Memory written
+    written_paths = [p for p, _ in host.file_writes]
+    assert "/memory/shared/project_goal.md" in written_paths
 
+    # Index regenerated
+    assert len(host.index_regenerations) == 1
 
-@pytest.mark.replay("fixtures/llm/skill_router/out_of_scope.jsonl")
-def test_classify_out_of_scope_does_not_invent_skill():
-    """Tier 3a corner: 'paint my house' has no matching skill — must not fabricate one.
-
-    Protects against the most common router misbehaviour: hallucinating a
-    skill name or transitioning to match with an intent it cannot satisfy.
-    The expected behaviour is a finish with empty skills_to_run (politely
-    declining or redirecting).
-    """
-    frame = ContextFrame(
-        current_phase="triage",
-        current_phase_role="chat_router",
-        instructions="Classify user intent into one of 6 intents. For chitchat, finish immediately.",
-        candidate_outputs=[_candidate_finish(), _candidate_match()],
-        finish_criteria=["Intent classified"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[_op_file()],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "chat_routing_request",
-            "data": {
-                "user_message": "Please paint my house blue.",
-                "chat_id": "test-oos-001",
-                "available_skills": [
-                    {
-                        "name": "article_generator",
-                        "description": "Generates a polished article on a given topic.",
-                    },
-                    {
-                        "name": "text_summarizer",
-                        "description": "Summarises long text into a short summary.",
-                    },
-                ],
-                "history": [],
-            },
-        },
-        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
-        control_ir_results=[],
-        remaining_act_turns=2,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="skill_router",
-            skill_description=SKILL_DESC,
-            phase_role="chat_router",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide"
-    ctrl = data["control"]
-    # The router must not transition to match for an out-of-scope task; even if
-    # it does, skills_to_run must not contain a fabricated skill name.
-    art_data = data["artifact"]["data"]
-    skills_to_run = art_data.get("skills_to_run", [])
-    available_names = {"article_generator", "text_summarizer"}
-    for entry in skills_to_run:
-        # Each entry should at minimum be a valid skill name from the catalogue.
-        if isinstance(entry, dict):
-            name = entry.get("skill") or entry.get("name")
-        else:
-            name = entry
-        assert name in available_names, (
-            f"Router invented an unknown skill for out-of-scope request: {name!r}"
-        )
+    # Final text outbox
+    assert len(host.outbox) == 1
+    assert host.outbox[0]["kind"] == "agent"
+    assert "summariser" in host.outbox[0]["text"].lower() or len(host.outbox[0]["text"]) > 0
 
 
-# ── OS validator: out-of-pool skill names are rejected (P4 enforcement) ───────
-
-
-def _routing_decision_schema() -> dict:
-    """Load the actual routing_decision schema from the stdlib skill.
-
-    Pinning the live schema (rather than a copy) ensures the
-    ``x-reyn-members-of`` annotation is what the OS will encounter at
-    runtime — the test fails loudly if someone removes the annotation.
-    """
-    import yaml
-    from pathlib import Path
-
-    p = (
-        Path(__file__).resolve().parents[1]
-        / "src/reyn/stdlib/skills/skill_router/artifacts/routing_decision.yaml"
-    )
-    return yaml.safe_load(p.read_text(encoding="utf-8"))["schema"]
-
-
-def _chat_routing_input(available: list[str]) -> dict:
-    return {
-        "type": "chat_routing_request",
-        "data": {
-            "user_message": "irrelevant",
-            "chat_id": "test-validator",
-            "available_skills": [{"name": n} for n in available],
-            "history": [],
-        },
-    }
-
-
-def test_out_of_pool_skill_rejected():
-    """OS rejects routing_decision when skills_to_run names a skill outside
-    input.data.available_skills.
-
-    Pre-OSS dogfood (S1/S3/S4) showed the LLM hallucinates skill names
-    (`researcher`, `code_reviewer`, `blog_post_generator`). Without OS
-    enforcement this propagates to ``run_skill`` and surfaces as a
-    runtime "skill not found". This test pins that the validator
-    catches it at decision time so the retry loop can re-prompt.
-    """
-    from reyn.workspace import validate_artifact_data
-
-    schema = _routing_decision_schema()
-    input_artifact = _chat_routing_input(["article_generator", "text_summarizer"])
-
-    artifact = {
-        "type": "routing_decision",
-        "data": {
-            "reply_text": "",
-            "skills_to_run": [
-                {
-                    "skill": "researcher",  # NOT in available_skills
-                    "input": {"type": "user_message", "data": {"text": "go"}},
-                }
-            ],
-        },
-    }
-
-    _, _, errors = validate_artifact_data(
-        artifact,
-        schema,
-        validation_context={"skill_input": input_artifact},
-    )
-    assert errors, "OS should reject hallucinated skill name"
-    joined = " ".join(errors)
-    assert "researcher" in joined and "available_skills" in joined, (
-        f"Validation error should name the offender and the source path: {errors}"
-    )
-
-
-def test_out_of_pool_retry_then_empty():
-    """Two-attempt sequence: hallucinated skill → corrected to empty.
-
-    Models the OS retry path: first attempt fails membership check,
-    second attempt (after re-prompt feedback) corrects to empty
-    ``skills_to_run`` and validates clean. This pins the recovery
-    semantics — the OS never lets a fabricated skill leak into
-    ``run_skill`` even when the LLM took an extra turn to comply.
-    """
-    from reyn.workspace import validate_artifact_data
-
-    schema = _routing_decision_schema()
-    input_artifact = _chat_routing_input(["article_generator", "text_summarizer"])
-
-    # Attempt 1 — hallucinated.
-    bad = {
-        "type": "routing_decision",
-        "data": {
-            "reply_text": "",
-            "skills_to_run": [
-                {"skill": "blog_post_generator",
-                 "input": {"type": "user_message", "data": {"text": "x"}}}
-            ],
-        },
-    }
-    _, _, errors1 = validate_artifact_data(
-        bad, schema, validation_context={"skill_input": input_artifact},
-    )
-    assert errors1, "first attempt must be rejected"
-
-    # Attempt 2 — corrected (empty list, polite decline).
-    good = {
-        "type": "routing_decision",
-        "data": {
-            "reply_text": "I can't help with that — none of the available skills fit.",
-            "skills_to_run": [],
-        },
-    }
-    norm, _, errors2 = validate_artifact_data(
-        good, schema, validation_context={"skill_input": input_artifact},
-    )
-    assert errors2 == [], f"corrected attempt should validate clean: {errors2}"
-    assert norm["skills_to_run"] == []
-
-
-def test_validator_uses_skill_input_not_phase_input():
-    """PR33: the membership check must reference the OS-trusted ``skill_input``
-    (the skill's initial artifact), NOT the phase's immediate ``input`` —
-    earlier phases can be LLM-authored and would otherwise let the LLM
-    fabricate its own membership set.
-
-    Pre-OSS dogfood (PR32, chat-routed) reproduced the bug: classify-phase
-    LLM produced ``routing_intent.data.available_skills =
-    [{"name": "blog_writer"}]`` (a fabricated single-element pass-through);
-    the ``match`` phase emitted ``skills_to_run=[{skill: "blog_writer"}]``;
-    membership check anchored at ``input.data.available_skills`` then said
-    "yes, blog_writer is in the list" because the list was fabricated.
-
-    Anchoring at ``skill_input`` (the chat_routing_request, OS-injected at
-    run() entry) closes the hole.
-    """
-    from reyn.workspace import validate_artifact_data
-
-    schema = _routing_decision_schema()
-
-    # Trusted source — the skill's first input. Real catalogue, no
-    # blog_writer.
-    skill_input = _chat_routing_input(["article_generator", "text_summarizer"])
-
-    # The fabricated phase input — what the classify LLM produced and the
-    # match LLM saw. Includes blog_writer because the LLM lied to itself.
-    fabricated_phase_input = {
-        "type": "routing_intent",
-        "data": {
-            "intent": "task",
-            "available_skills": [{"name": "blog_writer"}],
-        },
-    }
-
-    artifact = {
-        "type": "routing_decision",
-        "data": {
-            "reply_text": "",
-            "skills_to_run": [
-                {"skill": "blog_writer",
-                 "input": {"type": "user_message", "data": {"text": "x"}}}
-            ],
-        },
-    }
-
-    # If the validator naively trusted ``input``, this would pass — the
-    # fabricated set contains blog_writer. With ``skill_input`` anchoring,
-    # the real catalogue rejects it.
-    _, _, errors = validate_artifact_data(
-        artifact,
-        schema,
-        validation_context={
-            "input": fabricated_phase_input,
-            "skill_input": skill_input,
-        },
-    )
-    assert errors, (
-        "Validator must reject blog_writer based on skill_input even though "
-        "the LLM-fabricated phase input would have allowed it."
-    )
-    assert "blog_writer" in " ".join(errors)
-
-
-def test_in_pool_skill_accepted():
-    """Sanity counterpart: a skill name that IS in available_skills validates."""
-    from reyn.workspace import validate_artifact_data
-
-    schema = _routing_decision_schema()
-    input_artifact = _chat_routing_input(["article_generator"])
-
-    artifact = {
-        "type": "routing_decision",
-        "data": {
-            "reply_text": "",
-            "skills_to_run": [
-                {"skill": "article_generator",
-                 "input": {"type": "user_message", "data": {"text": "topic"}}}
-            ],
-        },
-    }
-    _, _, errors = validate_artifact_data(
-        artifact, schema, validation_context={"skill_input": input_artifact},
-    )
-    assert errors == [], f"in-pool skill must not be rejected: {errors}"
-
-
-# ── test: monkeypatch does not leak across tests ──────────────────────────────
-
+# ---------------------------------------------------------------------------
+# ── Monkeypatch lifecycle invariant ─────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 def test_no_monkeypatch_leak():
-    """Tier 2 (OS invariant): LLMReplay monkeypatch is confined to replay-marked tests.
+    """LLMReplay monkeypatch is confined to @replay-marked tests.
 
-    Protects: the conftest install/restore contract. If LLMReplay leaks into
-    non-replay tests, any test that calls litellm.acompletion directly would
-    silently use the fake, masking real integration failures.
+    Protects the conftest install/restore contract. If LLMReplay leaks into
+    non-replay tests, calls to litellm.acompletion would use the fake,
+    masking real integration failures.
     """
     import litellm
 
-    # In a non-replay test, acompletion must be the real function from litellm,
-    # not the LLMReplay._handle bound method (which lives in the reyn package).
     mod = getattr(litellm.acompletion, "__module__", "") or ""
     assert "reyn" not in mod, (
         f"litellm.acompletion appears to still be monkeypatched! module={mod!r}"

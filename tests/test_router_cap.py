@@ -23,7 +23,6 @@ import pytest
 
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatSession, RouterCapExceeded
-from reyn.kernel.runtime import RunResult
 
 
 def _run(coro):
@@ -54,70 +53,30 @@ def _drain_outbox(session: ChatSession) -> list:
     return msgs
 
 
-def _stub_router_result() -> RunResult:
-    """Canned router output that emits a reply but spawns no skills.
-    `_handle_user_message` will dispatch this with no further router
-    re-invocation (no messages_to_agents, no pending chain). Used to
-    drive the counter from outside without triggering side-effects.
-    """
-    return RunResult(
-        data={
-            "control": {
-                "type": "finish",
-                "decision": "finish",
-                "next_phase": None,
-                "reason": {"summary": "stub_reason"},
-            },
-            "reply_text": "stub-reply",
-            "skills_to_run": [],
-            "messages_to_agents": [],
-        },
-        status="finished",
-    )
-
-
 # ── test 1: cap is enforced — fourth attempt is blocked ───────────────────────
 
 
 def test_router_retry_cap_enforced(tmp_path, monkeypatch):
     """The cap counter accumulates within a turn; once the cap is hit,
-    further `_invoke_router` raises RouterCapExceeded *before* the LLM
-    is called. The user gets the structured fallback reply.
+    _check_and_increment_router_cap raises RouterCapExceeded *before* any
+    LLM call. The user gets the structured fallback reply.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3)
 
-    # Pre-spend the budget so the next _invoke_router crosses the cap.
+    # Pre-spend the budget so the next check crosses the cap.
     session._reset_router_turn_counter()
     session._router_invocations_this_turn = 3
     session._router_last_reason = "previous_reason"
 
-    call_count = {"n": 0}
-
-    async def fake_run_stdlib_skill(
-        self, skill_name, input_artifact, *, state_subdir,
-        mcp_servers=None, forward_events=False,
-    ):
-        call_count["n"] += 1
-        return _stub_router_result()
-
-    monkeypatch.setattr(
-        ChatSession, "_run_stdlib_skill", fake_run_stdlib_skill,
-    )
-
-    # The next attempt should overflow.
+    # The next attempt should overflow immediately via the cap check.
     with pytest.raises(RouterCapExceeded) as excinfo:
-        _run(session._invoke_router("would_be_4th_call"))
+        session._check_and_increment_router_cap("would_be_4th_call")
 
     exc = excinfo.value
     assert exc.count == 3
     assert exc.cap == 3
     assert exc.last_reason == "previous_reason"
-
-    # The LLM must not have been called for the 4th attempt.
-    assert call_count["n"] == 0, (
-        "skill_router was invoked despite the cap being exhausted"
-    )
 
     # Counter is unchanged (no spurious increment on rejection).
     assert session._router_invocations_this_turn == 3
@@ -134,7 +93,7 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
 
     # Pre-spend so the very first router call in this turn is rejected.
     # Note: `_handle_user_message` resets the counter at its top, then
-    # calls `_invoke_router` — so to simulate exhaustion we monkeypatch
+    # calls _run_router_loop — so to simulate exhaustion we monkeypatch
     # the reset to no-op AND pre-set the counter.
     monkeypatch.setattr(
         ChatSession, "_reset_router_turn_counter", lambda self: None,
@@ -180,24 +139,30 @@ def test_handle_user_message_emits_fallback_when_cap_exhausted(
 
 
 def test_router_succeeds_within_cap(tmp_path, monkeypatch):
-    """Two ordinary turns of `_invoke_router` succeed; the counter
-    accumulates correctly per turn (resets between fresh user turns).
+    """Two ordinary turns of router (now via RouterLoop) succeed; the
+    counter accumulates correctly per turn (resets between fresh user
+    turns).
+
+    PR35: `_handle_user_message` now invokes RouterLoop. We patch
+    `RouterLoop.run` to count invocations and emit a stub reply via the
+    host's put_outbox callback.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=3)
 
     call_count = {"n": 0}
 
-    async def fake_run_stdlib_skill(
-        self, skill_name, input_artifact, *, state_subdir,
-        mcp_servers=None, forward_events=False,
-    ):
+    async def fake_router_run(self, user_text, history):
         call_count["n"] += 1
-        return _stub_router_result()
+        # Mirror what real RouterLoop does on a chitchat reply: put a text
+        # outbox via the host callback.
+        await self.host.put_outbox(
+            kind="agent", text="stub-reply",
+            meta={"chain_id": self.chain_id},
+        )
 
-    monkeypatch.setattr(
-        ChatSession, "_run_stdlib_skill", fake_run_stdlib_skill,
-    )
+    from reyn.chat.router_loop import RouterLoop
+    monkeypatch.setattr(RouterLoop, "run", fake_router_run)
 
     # First turn: one router call, counter at 1, no exception.
     _run(session._handle_user_message("first message", chain_id="c1"))
@@ -216,33 +181,19 @@ def test_router_succeeds_within_cap(tmp_path, monkeypatch):
     assert all(m.text == "stub-reply" for m in agent_replies)
 
     # No exhaustion event was emitted.
-    # (We don't capture events here — absence of error messages on the
-    # outbox is sufficient.)
     assert not any(m.kind == "error" for m in msgs)
 
 
 def test_cap_zero_disables_check(tmp_path, monkeypatch):
     """cap=0 disables the per-turn cap entirely (escape hatch). Many
-    consecutive invocations should all go through."""
+    consecutive _check_and_increment_router_cap calls should all go through
+    without raising and without touching the counter."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path, cap=0)
 
-    call_count = {"n": 0}
-
-    async def fake_run_stdlib_skill(
-        self, skill_name, input_artifact, *, state_subdir,
-        mcp_servers=None, forward_events=False,
-    ):
-        call_count["n"] += 1
-        return _stub_router_result()
-
-    monkeypatch.setattr(
-        ChatSession, "_run_stdlib_skill", fake_run_stdlib_skill,
-    )
-
+    # With cap=0, _check_and_increment_router_cap returns immediately.
     for _ in range(20):
-        _run(session._invoke_router("noop"))
+        session._check_and_increment_router_cap("noop")  # must not raise
 
-    assert call_count["n"] == 20
     # Counter does not increment when cap is disabled.
     assert session._router_invocations_this_turn == 0

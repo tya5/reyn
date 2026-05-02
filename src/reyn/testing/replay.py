@@ -25,7 +25,9 @@ Fixture format (JSONL, one call per line)
     {"key": "<sha256>", "model": "openai/gemini-2.5-flash-lite",
      "prompt_preview": "...", "response": {...}}
 
-- ``key``   SHA-256 hex of ``model + canonical_json(messages)``.
+- ``key``   SHA-256 hex of ``model + canonical_json(messages)`` (legacy, no tools)
+  or ``model + canonical_json(messages) + canonical_json(tools) + tool_choice``
+  when tools/tool_choice are present (PR35+).
 - ``model`` / ``prompt_preview``  human-readable grep aids; not used for lookup.
 - ``response``  ``litellm.ModelResponse.model_dump()`` serialised to dict.
   On replay the dict is reconstructed as a ``litellm.ModelResponse``.
@@ -100,17 +102,38 @@ class LLMReplay:
     # ── Key computation ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _key(model: str, messages: list[dict]) -> str:
-        """SHA-256 hex of ``model + canonical_json(messages)``.
+    def _key(
+        model: str,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+    ) -> str:
+        """Return the SHA-256 cache key for an acompletion call.
+
+        Backward compatibility (Option A):
+        - When ``tools`` is None/empty *and* ``tool_choice`` is None/empty,
+          the key is byte-identical to the pre-PR35 format
+          ``sha256(model_bytes + messages_json_bytes)`` so existing fixtures
+          continue to match without re-recording.
+        - When tools or tool_choice are non-empty (PR35+ calls), the key uses
+          a pipe-delimited format that incorporates tools and tool_choice.
 
         ``sort_keys=True`` + ``ensure_ascii=False`` gives a stable
         serialisation regardless of insertion order.
         """
+        messages_json = json.dumps(messages, sort_keys=True, ensure_ascii=False)
         h = hashlib.sha256()
-        h.update(model.encode())
-        h.update(
-            json.dumps(messages, sort_keys=True, ensure_ascii=False).encode()
-        )
+        if tools or tool_choice:
+            # PR35+ format: pipe-delimited payload including tools and tool_choice.
+            tools_json = json.dumps(tools or [], sort_keys=True, ensure_ascii=False)
+            payload = f"{model}|{messages_json}|{tools_json}|{tool_choice or ''}"
+            h.update(payload.encode())
+        else:
+            # Legacy format — preserves all pre-PR35 fixture keys unchanged.
+            # The original code concatenated model bytes then messages bytes
+            # directly (no separator), so we must replicate that exactly.
+            h.update(model.encode())
+            h.update(messages_json.encode())
         return h.hexdigest()
 
     @staticmethod
@@ -188,7 +211,9 @@ class LLMReplay:
         Replay mode: look up by key; raise ``MissingFixture`` on miss.
         Record mode: forward to real LLM; save response; return response.
         """
-        key = self._key(model, messages)
+        tools: list[dict] | None = kwargs.get("tools")
+        tool_choice: str | None = kwargs.get("tool_choice")
+        key = self._key(model, messages, tools=tools, tool_choice=tool_choice)
 
         if self.mode == "replay":
             return self._replay(key, model, messages)

@@ -413,6 +413,18 @@ class ChatSession:
         self._active_interventions: dict[str, UserIntervention] = {}
         self._intervention_order: deque[str] = deque()
 
+        # F2: Delegation tracking for RouterLoop runs. Set to a list before
+        # calling RouterLoop.run(); send_to_agent appends dispatched targets.
+        # None when not inside a RouterLoop run (send_to_agent from old paths
+        # does not accumulate). Cleared after each loop run.
+        self._router_loop_delegations: list[dict] | None = None
+
+        # F2: Agent-reply capture for agent-to-agent RouterLoop paths.
+        # Set to [] before running RouterLoop in agent_request / chain_resolve
+        # context; put_outbox appends "agent" kind text here so callers can
+        # forward the reply upstream. None = not capturing (user-turn context).
+        self._router_loop_agent_replies: list[str] | None = None
+
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
@@ -703,7 +715,7 @@ class ChatSession:
         self._reset_router_turn_counter()
 
         try:
-            decision = await self._invoke_router(text)
+            await self._run_router_loop(text, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
             return
@@ -713,14 +725,6 @@ class ChatSession:
                 meta={"chain_id": chain_id},
             ))
             return
-
-        # User-initiated chains keep the PR11 interim+final UX: reply_text
-        # is delivered to the user immediately even when delegations are
-        # also present. The deferred-reply mechanic is reserved for the
-        # agent_request branch (see _handle_agent_request).
-        await self._dispatch_routing_decision_for_user(
-            decision, chain_id=chain_id, depth=0,
-        )
 
         # Fire-and-forget compaction check after the user has the reply.
         # Reuses self._compacting as a single-flight lock; no await here so
@@ -1018,85 +1022,6 @@ class ChatSession:
                 last_reason=self._router_last_reason,
             )
         self._router_invocations_this_turn += 1
-
-    async def _invoke_router(self, user_text: str, state_subdir: str = "router") -> dict:
-        """Run the skill_router skill on a user utterance.
-
-        Narration of finished skill runs is handled by `_invoke_narrator` —
-        the router is now routing-only (PR9).
-
-        History is NOT inlined into the artifact — the classify phase has a
-        Python preprocessor step that reads `.reyn/agents/<name>/history.jsonl`
-        and slices the recent N turns. This eliminates the snapshot-per-turn
-        duplication that previously bloated workspace artifacts.
-
-        Raises RouterCapExceeded when the per-turn cap is reached. Callers
-        catch this and emit a structured "exhausted retry budget" reply.
-        """
-        self._check_and_increment_router_cap(user_text)
-        avail = enumerate_available_skills(exclude={
-            ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
-        })
-        # PR15: filter to the agent's allowlist (if any). stdlib system skills
-        # are already excluded above and are not subject to this filter — they
-        # always run. The router LLM only sees what passes both gates.
-        if self._allowed_skills is not None:
-            allow = set(self._allowed_skills)
-            avail = [s for s in avail if s.get("name") in allow]
-        # PR11: list peer agents (excluding self) so the router can decide
-        # between local skill invocation and delegation to another agent.
-        # PR12: filter by topology rules so the LLM only sees reachable peers.
-        if self._registry is not None:
-            available_agents = self._registry.iter_reachable_agents(self.agent_name)
-        else:
-            available_agents = []
-
-        # PR15: pre-merge shared + agent memory indexes here. Static phase
-        # YAML can't interpolate `.reyn/agents/<self.agent_name>/...`, so
-        # we synthesize the merged `memory_index` and embed it directly.
-        # Shape matches what the file/read op used to return ({status, content}).
-        memory_index = _merge_memory_indexes(
-            shared_path=Path(".reyn") / "memory" / "MEMORY.md",
-            agent_path=self.workspace_dir / "memory" / "MEMORY.md",
-            agent_name=self.agent_name,
-        )
-
-        data: dict = {
-            "user_message": user_text,
-            "chat_id": self.agent_name,
-            # Precomputed for the classify phase preprocessor: the file/read op
-            # uses this via args_from. ChatSession owns this path because the
-            # workspace dir was created relative to the cwd at session start.
-            "history_path": str(self.history_path),
-            "available_skills": avail,
-            "available_agents": available_agents,
-            "memory_index": memory_index,
-            # Pass the head/tail config through so the slicer can honor it
-            # without needing access to ReynConfig.
-            "compaction": {
-                "head_size": self._compaction.head_size,
-                "tail_size": self._compaction.tail_size,
-            },
-        }
-        input_artifact = {"type": "chat_routing_request", "data": data}
-
-        result = await self._run_stdlib_skill(
-            ROUTER_SKILL_NAME, input_artifact, state_subdir=state_subdir,
-            forward_events=True,
-        )
-        # Stash a brief router-side reason for forensics. The LLM control
-        # block contains a `reason.summary` when present; we capture
-        # whichever shape this run produced so a later cap exhaustion
-        # event has something to point at.
-        last_reason = ""
-        if isinstance(result.data, dict):
-            ctrl = result.data.get("control")
-            if isinstance(ctrl, dict):
-                reason = ctrl.get("reason")
-                if isinstance(reason, dict):
-                    last_reason = str(reason.get("summary") or "")[:200]
-        self._router_last_reason = last_reason or "(no reason)"
-        return result.data
 
     async def _invoke_narrator(
         self, skill_name: str, status: str, result: dict, state_subdir: str,
@@ -1417,8 +1342,11 @@ class ChatSession:
         # is a fresh top-level entry into this agent's loop.
         self._reset_router_turn_counter()
 
+        # Arm delegation and reply capture before running RouterLoop.
+        self._router_loop_delegations = []
+        self._router_loop_agent_replies = []
         try:
-            decision = await self._invoke_router(request)
+            await self._run_router_loop(request, chain_id)
         except RouterCapExceeded as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error",
@@ -1444,25 +1372,17 @@ class ChatSession:
                 to=from_agent, response="", depth=depth, chain_id=chain_id,
             )
             return
+        finally:
+            dispatched = list(self._router_loop_delegations or [])
+            agent_replies = list(self._router_loop_agent_replies or [])
+            self._router_loop_delegations = None
+            self._router_loop_agent_replies = None
 
-        reply_text = (decision.get("reply_text") or "").strip()
-        skills_to_run = decision.get("skills_to_run") or []
-        messages_to_agents = [
-            m for m in (decision.get("messages_to_agents") or [])
-            if (m.get("to") or "").strip() and (m.get("request") or "").strip()
-        ]
-
-        # Skills run locally without affecting hop depth.
-        for spec in skills_to_run:
-            await self._spawn_skill(spec, chain_id=chain_id)
-
-        if messages_to_agents:
-            # PR14 deferred path: register pending chain, dispatch delegations,
-            # WITHOUT replying to the requester this turn. The reply will be
-            # synthesized after every delegate responds (see _handle_agent_response).
-            # If reply_text was also produced it's discarded — the deferred
-            # final answer takes the place of any interim narration.
-            waiting_on = {(m["to"] or "").strip() for m in messages_to_agents}
+        if dispatched:
+            # PR14 deferred path: RouterLoop called send_to_agent for one or
+            # more peers. Register _PendingChain so the reply is held until
+            # all delegates respond.
+            waiting_on = {d["to"] for d in dispatched}
             self._pending_chains[chain_id] = _PendingChain(
                 chain_id=chain_id,
                 origin_agent=from_agent,
@@ -1481,26 +1401,12 @@ class ChatSession:
             )
             # PR18: arm the timeout watchdog for this chain.
             self._arm_chain_timeout(chain_id)
-            for msg in messages_to_agents:
-                await self._send_to_agent(
-                    to=(msg["to"] or "").strip(),
-                    request=(msg["request"] or "").strip(),
-                    depth=depth + 1,
-                    chain_id=chain_id,
-                )
             return
 
-        # PR11-compatible single-hop reply path. Always send (even on empty
-        # reply_text) so the requester's chain unwinds.
-        if reply_text:
-            self._append_history(ChatMessage(
-                role="agent", text=reply_text, ts=_now_iso(),
-                meta={
-                    "source": "agent_response_outgoing",
-                    "to_agent": from_agent, "depth": depth,
-                    "chain_id": chain_id,
-                },
-            ))
+        # PR11-compatible single-hop reply path. RouterLoop emitted reply_text
+        # via put_outbox → captured in agent_replies. Forward upstream.
+        reply_text = agent_replies[0] if agent_replies else ""
+        # Note: history was already appended by put_outbox; add routing meta.
         await self._send_agent_response(
             to=from_agent, response=reply_text, depth=depth, chain_id=chain_id,
         )
@@ -1546,7 +1452,7 @@ class ChatSession:
 
         # User-initiated chain: PR11 path, reply goes to user.
         try:
-            decision = await self._invoke_router(response)
+            await self._run_router_loop(response, chain_id)
         except RouterCapExceeded as exc:
             await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
             return
@@ -1556,9 +1462,6 @@ class ChatSession:
                 meta={"chain_id": chain_id},
             ))
             return
-        await self._dispatch_routing_decision_for_user(
-            decision, chain_id=chain_id, depth=depth,
-        )
 
     async def _resolve_pending_chain(
         self, pending: "_PendingChain", *, from_agent: str,
@@ -1579,8 +1482,11 @@ class ChatSession:
             await self._record_chain_update(chain_id, sorted(pending.waiting_on))
             return  # still waiting on other delegates
 
+        # Arm delegation and reply capture for the re-run.
+        self._router_loop_delegations = []
+        self._router_loop_agent_replies = []
         try:
-            decision = await self._invoke_router(pending.original_request)
+            await self._run_router_loop(pending.original_request, chain_id)
         except RouterCapExceeded as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error",
@@ -1614,40 +1520,24 @@ class ChatSession:
             self._cancel_chain_timeout(chain_id)
             await self._record_chain_resolve(chain_id)
             return
+        finally:
+            new_dispatched = list(self._router_loop_delegations or [])
+            agent_replies = list(self._router_loop_agent_replies or [])
+            self._router_loop_delegations = None
+            self._router_loop_agent_replies = None
 
-        new_delegations = [
-            m for m in (decision.get("messages_to_agents") or [])
-            if (m.get("to") or "").strip() and (m.get("request") or "").strip()
-        ]
-        for spec in decision.get("skills_to_run") or []:
-            await self._spawn_skill(spec, chain_id=chain_id)
-
-        if new_delegations:
+        if new_dispatched:
             # Continue the chain with a fresh wave of delegations.
-            pending.waiting_on = {(m["to"] or "").strip() for m in new_delegations}
+            pending.waiting_on = {d["to"] for d in new_dispatched}
             await self._record_chain_update(
                 chain_id, sorted(pending.waiting_on),
             )
-            for msg in new_delegations:
-                await self._send_to_agent(
-                    to=(msg["to"] or "").strip(),
-                    request=(msg["request"] or "").strip(),
-                    depth=pending.origin_depth + 1,
-                    chain_id=chain_id,
-                )
+            # PR18: re-arm watchdog for the continued chain.
+            self._arm_chain_timeout(chain_id)
             return
 
-        final_reply = (decision.get("reply_text") or "").strip()
-        if final_reply:
-            self._append_history(ChatMessage(
-                role="agent", text=final_reply, ts=_now_iso(),
-                meta={
-                    "source": "agent_response_outgoing",
-                    "to_agent": pending.origin_agent,
-                    "depth": pending.origin_depth,
-                    "chain_id": chain_id,
-                },
-            ))
+        final_reply = agent_replies[0] if agent_replies else ""
+        # History already appended by put_outbox.
         await self._send_agent_response(
             to=pending.origin_agent, response=final_reply,
             depth=pending.origin_depth, chain_id=chain_id,
@@ -2220,3 +2110,632 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="skill_done", text=fallback, meta=meta,
             ))
+
+    # ── RouterLoop helper methods (Wave 3 F1) ───────────────────────────────────
+
+    def _memory_dir(self, layer: str) -> str:
+        """Directory for the memory layer.
+
+        layer="shared" → .reyn/memory
+        layer="agent"  → .reyn/agents/<agent_name>/memory
+        """
+        if layer == "shared":
+            return str(Path(".reyn") / "memory")
+        return str(self.workspace_dir / "memory")
+
+    def _memory_path(self, layer: str, slug: str) -> str:
+        """Resolve layer + slug to absolute file path.
+
+        layer="shared" → .reyn/memory/<slug>.md
+        layer="agent"  → .reyn/agents/<agent_name>/memory/<slug>.md
+        """
+        return str(Path(self._memory_dir(layer)) / f"{slug}.md")
+
+    def _get_file_permissions_for_router(self) -> dict | None:
+        """Return file permissions in the form {read: [paths], write: [paths]}
+        for the router's tool catalog. None if no file permissions configured.
+
+        Reads from self._perm (PermissionResolver) config to expose what
+        paths are permitted. Returns None when no PermissionResolver is
+        wired or when no file.read/file.write is configured.
+        """
+        if self._perm is None:
+            return None
+        config = self._perm._config or {}
+        read_val = config.get("file.read") or (config.get("file") or {}).get("read")
+        write_val = config.get("file.write") or (config.get("file") or {}).get("write")
+
+        # "allow" string → treat as project-wide wildcard
+        read_paths: list[str] = []
+        write_paths: list[str] = []
+
+        if read_val == "allow":
+            read_paths = ["*"]
+        elif isinstance(read_val, list):
+            for entry in read_val:
+                if isinstance(entry, str):
+                    read_paths.append(entry)
+                elif isinstance(entry, dict) and entry.get("path"):
+                    read_paths.append(str(entry["path"]))
+
+        if write_val == "allow":
+            write_paths = ["*"]
+        elif isinstance(write_val, list):
+            for entry in write_val:
+                if isinstance(entry, str):
+                    write_paths.append(entry)
+                elif isinstance(entry, dict) and entry.get("path"):
+                    write_paths.append(str(entry["path"]))
+
+        if not read_paths and not write_paths:
+            return None
+        return {"read": read_paths, "write": write_paths}
+
+    def _get_mcp_servers_for_router(self) -> list[dict]:
+        """Return [{name, description}, ...] for configured MCP servers
+        accessible to this agent. [] if none."""
+        if not self._mcp_servers:
+            return []
+        result: list[dict] = []
+        for name, cfg in self._mcp_servers.items():
+            if not isinstance(cfg, dict):
+                continue
+            result.append({
+                "name": name,
+                "description": cfg.get("description", ""),
+            })
+        return result
+
+    def _make_router_op_context(self) -> "OpContext":
+        """Build a minimal OpContext for router-initiated file/MCP ops.
+
+        Uses the session's events log and permission resolver. The skill_name
+        "chat_router" is used for permission key lookups — it matches what the
+        PermissionResolver uses to gate paths. All .reyn/ paths are in the
+        default write zone so memory ops pass without additional approval.
+        """
+        from reyn.op_runtime.context import OpContext
+        from reyn.workspace.workspace import Workspace
+        from reyn.permissions.permissions import PermissionDecl
+
+        workspace = Workspace(
+            events=self._chat_events,
+            permission_resolver=self._perm,
+            skill_name="chat_router",
+        )
+        return OpContext(
+            workspace=workspace,
+            events=self._chat_events,
+            permission_decl=PermissionDecl(),
+            permission_resolver=self._perm,
+            skill_name="chat_router",
+            mcp_servers=self._mcp_servers or {},
+        )
+
+    async def _file_op(self, op_dict: dict) -> dict:
+        """Dispatch a file op via op_runtime. Returns result dict."""
+        from reyn.op_runtime import execute_op
+        from reyn.schemas.models import FileIROp
+
+        op = FileIROp(**op_dict)
+        ctx = self._make_router_op_context()
+        return await execute_op(op, ctx, caller="control_ir")
+
+    async def _file_read(self, path: str) -> dict:
+        """Read a file through op_runtime.
+
+        Returns: {"path": path, "content": <text>} or {"error": ...}.
+        """
+        result = await self._file_op({"kind": "file", "op": "read", "path": path})
+        if result.get("status") == "ok":
+            return {"path": path, "content": result.get("content", "")}
+        if result.get("status") == "not_found":
+            return {"error": f"file not found: {path}"}
+        return {"error": result.get("error", "read failed")}
+
+    async def _file_write(self, path: str, content: str) -> dict:
+        """Write a file through op_runtime.
+
+        Returns: {"path": path, "written": True} or {"error": ...}.
+        """
+        result = await self._file_op({"kind": "file", "op": "write", "path": path, "content": content})
+        if result.get("status") == "ok":
+            return {"path": path, "written": True}
+        return {"error": result.get("error", "write failed")}
+
+    async def _file_delete(self, path: str) -> dict:
+        """Delete a file through op_runtime.
+
+        Returns: {"path": path, "deleted": bool} or {"error": ...}.
+        """
+        result = await self._file_op({"kind": "file", "op": "delete", "path": path})
+        if result.get("status") == "ok":
+            return {"path": path, "deleted": result.get("deleted", True)}
+        return {"error": result.get("error", "delete failed")}
+
+    async def _file_list_directory(self, path: str) -> dict:
+        """List directory contents through op_runtime (glob).
+
+        Returns: {"path": path, "entries": [...]} or {"error": ...}.
+        """
+        result = await self._file_op({"kind": "file", "op": "glob", "path": f"{path.rstrip('/')}/*"})
+        if result.get("status") == "ok":
+            return {"path": path, "entries": result.get("matches", [])}
+        return {"error": result.get("error", "list_directory failed")}
+
+    async def _file_regenerate_index(
+        self, *, path: str, output_path: str, entry_template: str, header: str,
+    ) -> dict:
+        """Regenerate an index file through op_runtime.
+
+        Returns: {"path": path, "output_path": output_path, "entries": n} or {"error": ...}.
+        """
+        result = await self._file_op({
+            "kind": "file", "op": "regenerate_index",
+            "path": path,
+            "output_path": output_path,
+            "entry_template": entry_template,
+            "header": header,
+        })
+        if result.get("status") == "ok":
+            return {
+                "path": path,
+                "output_path": output_path,
+                "entries": result.get("entries", 0),
+            }
+        return {"error": result.get("error", "regenerate_index failed")}
+
+    async def _run_remember(
+        self,
+        *,
+        layer: str,
+        slug: str,
+        name: str,
+        description: str,
+        type: str,
+        body: str,
+    ) -> dict:
+        """Persist a memory entry. Constructs frontmatter, writes body file,
+        regenerates the layer's MEMORY.md.
+
+        layer: "shared" or "agent"
+        Returns: {"saved": slug, "layer": layer, "path": <relative>}
+        """
+        mem_dir = self._memory_dir(layer)
+        body_path = self._memory_path(layer, slug)
+        # Relative path for the caller to reference
+        rel_path = body_path
+
+        # Build frontmatter + body
+        frontmatter = (
+            f"---\n"
+            f"name: {name}\n"
+            f"description: {description}\n"
+            f"type: {type}\n"
+            f"---\n"
+        )
+        full_content = frontmatter + body
+
+        write_result = await self._file_write(body_path, full_content)
+        if "error" in write_result:
+            return {"error": write_result["error"]}
+
+        index_path = str(Path(mem_dir) / "MEMORY.md")
+        regen_result = await self._file_regenerate_index(
+            path=mem_dir,
+            output_path=index_path,
+            entry_template="- [{name}]({slug}.md) — {description}",
+            header="# Memory Index\n\n",
+        )
+        if "error" in regen_result:
+            return {"error": regen_result["error"]}
+
+        self._chat_events.emit(
+            "memory_saved", layer=layer, slug=slug, path=body_path,
+        )
+        return {"saved": slug, "layer": layer, "path": rel_path}
+
+    async def _read_memory_body(self, *, layer: str, slug: str) -> dict:
+        """Read a memory body file's contents.
+
+        Returns: {"layer": layer, "slug": slug, "content": <text>}
+        or {"error": <reason>} if not found.
+        """
+        body_path = self._memory_path(layer, slug)
+        result = await self._file_read(body_path)
+        if "error" in result:
+            return {"error": result["error"]}
+        return {"layer": layer, "slug": slug, "content": result["content"]}
+
+    async def _run_forget(self, *, layer: str, slug: str) -> dict:
+        """Delete a memory entry and regenerate index.
+
+        Returns: {"deleted": slug, "layer": layer}
+        or {"error": <reason>} if not found.
+        """
+        body_path = self._memory_path(layer, slug)
+        del_result = await self._file_delete(body_path)
+        if "error" in del_result:
+            return {"error": del_result["error"]}
+        if not del_result.get("deleted"):
+            return {"error": f"memory entry not found: {slug}"}
+
+        mem_dir = self._memory_dir(layer)
+        index_path = str(Path(mem_dir) / "MEMORY.md")
+        regen_result = await self._file_regenerate_index(
+            path=mem_dir,
+            output_path=index_path,
+            entry_template="- [{name}]({slug}.md) — {description}",
+            header="# Memory Index\n\n",
+        )
+        if "error" in regen_result:
+            return {"error": regen_result["error"]}
+
+        self._chat_events.emit("memory_deleted", layer=layer, slug=slug, path=body_path)
+        return {"deleted": slug, "layer": layer}
+
+    async def _run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
+        """Awaitable variant of _spawn_skill. Runs a single skill, awaits its
+        completion, narrates result to outbox via _invoke_narrator, returns
+        the final_output dict.
+
+        spec format: {"skill": <name>, "input": <artifact dict>}
+        Returns: {"status": "finished"|"error", "data": <final_output>}
+        """
+        skill_name = spec.get("skill")
+        input_artifact = spec.get("input")
+        if not skill_name or not isinstance(input_artifact, dict):
+            return {"status": "error", "data": {"error": f"invalid skill spec: {spec}"}}
+
+        # PR15: allowlist check — same defense as _spawn_skill
+        if (
+            self._allowed_skills is not None
+            and skill_name not in self._allowed_skills
+        ):
+            self._chat_events.emit(
+                "skill_spawn_refused",
+                reason="allowlist", skill=skill_name, agent=self.agent_name,
+            )
+            return {
+                "status": "error",
+                "data": {
+                    "error": (
+                        f"skill {skill_name!r} is not in allowed_skills for agent "
+                        f"{self.agent_name!r}; refused"
+                    )
+                },
+            }
+
+        # PR22: budget cap check
+        if self._budget_tracker is not None:
+            check = self._budget_tracker.check_pre_spawn(
+                chain_id=chain_id, skill=skill_name,
+            )
+            if not check.allowed:
+                self._chat_events.emit(
+                    "budget_exceeded",
+                    dimension=check.hard_dimension,
+                    detail=check.detail,
+                    skill=skill_name,
+                    chain_id=chain_id,
+                )
+                return {
+                    "status": "error",
+                    "data": {"error": check.detail or "budget exceeded"},
+                }
+            self._budget_tracker.record_spawn(chain_id=chain_id, skill=skill_name)
+
+        run_id = (
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
+        )
+        self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
+
+        try:
+            skill_dir, dsl_root = resolve_skill_path(skill_name)
+        except SkillNotFoundError:
+            return {"status": "error", "data": {"error": f"skill not found: {skill_name}"}}
+
+        try:
+            skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
+        except Exception as exc:
+            return {"status": "error", "data": {"error": f"failed to load {skill_name}: {exc}"}}
+
+        from reyn.chat.forwarder import ChatEventForwarder
+        agent = self._build_agent(
+            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
+            mcp_servers=self._mcp_servers,
+            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
+        )
+
+        try:
+            result = await agent.run(
+                skill, input_artifact,
+                output_language=self.output_language,
+                chain_id=chain_id,
+            )
+        except asyncio.CancelledError:
+            return {"status": "error", "data": {"error": "cancelled"}}
+        except Exception as exc:
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc),
+            )
+            return {"status": "error", "data": {"error": str(exc)}}
+
+        if result.status == "budget_exceeded":
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name, error="budget_exceeded",
+            )
+            return {"status": "error", "data": {"error": result.error or "budget exceeded"}}
+
+        self._accumulate(result)
+        self._chat_events.emit(
+            "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
+        )
+
+        # Narrate so the user sees the work (same as _run_one_skill)
+        meta = _run_meta(run_id, skill_name)
+        narrated = await self._invoke_narrator(
+            skill_name=skill_name,
+            status=result.status,
+            result=result.data,
+            state_subdir=f"narrator/{run_id}",
+        )
+        if narrated:
+            self._append_history(ChatMessage(
+                role="agent", text=narrated, ts=_now_iso(),
+                meta={
+                    "source": "narrator",
+                    "skill": skill_name,
+                    "run_id": run_id,
+                    "status": result.status,
+                },
+            ))
+            await self._put_outbox(OutboxMessage(kind="agent", text=narrated, meta=meta))
+        else:
+            summary = json.dumps(result.data, ensure_ascii=False, indent=2)
+            fallback = f"完了 (status={result.status})\n{summary}"
+            self._append_history(ChatMessage(
+                role="agent", text=fallback, ts=_now_iso(),
+                meta={
+                    "source": "narrator",
+                    "skill": skill_name,
+                    "run_id": run_id,
+                    "status": result.status,
+                    "narration_failed": True,
+                },
+            ))
+            await self._put_outbox(OutboxMessage(kind="skill_done", text=fallback, meta=meta))
+
+        return {"status": result.status or "finished", "data": result.data or {}}
+
+    async def _mcp_list_servers(self) -> list[dict]:
+        """Returns the configured MCP server list with descriptions."""
+        return self._get_mcp_servers_for_router()
+
+    async def _mcp_list_tools(self, server: str) -> list[dict]:
+        """Query the MCP server for its tools list."""
+        from reyn.mcp_client import MCPClient, MCPError, expand_env
+
+        if not self._mcp_servers:
+            return [{"error": f"no MCP servers configured"}]
+        server_cfg = self._mcp_servers.get(server)
+        if not server_cfg:
+            return [{"error": f"MCP server {server!r} not configured"}]
+
+        expanded = expand_env(server_cfg)
+        if not isinstance(expanded, dict):
+            return [{"error": f"MCP server {server!r} config must be a dict"}]
+        if "type" not in expanded and expanded.get("url"):
+            expanded = {**expanded, "type": "http"}
+
+        try:
+            client = MCPClient(expanded)
+            tools = await client.list_tools()
+            await client.close()
+            return tools
+        except MCPError as exc:
+            return [{"error": str(exc)}]
+        except Exception as exc:
+            return [{"error": str(exc)}]
+
+    async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+        """Invoke an MCP tool and return its result."""
+        from reyn.op_runtime import execute_op
+        from reyn.schemas.models import MCPIROp
+        from reyn.permissions.permissions import PermissionDecl
+
+        op = MCPIROp(kind="mcp", server=server, tool=tool, args=args)
+        ctx = self._make_router_op_context()
+        # MCP handler requires intervention_bus; wire the session's bus
+        ctx.intervention_bus = ChatInterventionBus(self, run_id=None, skill_name="chat_router")
+        # For MCP, permission_decl.mcp must include the server so require_mcp passes
+        ctx.permission_decl = PermissionDecl(mcp=[server])
+        return await execute_op(op, ctx, caller="control_ir")
+
+    # ── RouterLoopHost protocol (Wave 3 F2) ─────────────────────────────────────
+
+    # --- Properties required by RouterLoopHost ---
+
+    @property
+    def chat_id(self) -> str:
+        """chat_id exposed to RouterLoopHost — same as agent_name."""
+        return self.agent_name
+
+    @property
+    def agent_role(self) -> str:
+        """agent_role exposed to RouterLoopHost."""
+        return self._agent_role
+
+    # --- Catalogue accessors ---
+
+    def list_available_skills(self) -> list[dict]:
+        """Return enumerated skills with skill_router excluded (deleted in wave H).
+
+        Also excludes chat_compactor and skill_narrator — these are internal
+        infrastructure, not user-facing skills.
+        """
+        avail = enumerate_available_skills(exclude={
+            ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
+        })
+        # PR15: allowlist filter
+        if self._allowed_skills is not None:
+            allow = set(self._allowed_skills)
+            avail = [s for s in avail if s.get("name") in allow]
+        return avail
+
+    def list_available_agents(self) -> list[dict]:
+        """Return topology-reachable peers (PR11/PR12)."""
+        if self._registry is not None:
+            return list(self._registry.iter_reachable_agents(self.agent_name))
+        return []
+
+    def get_memory_index(self) -> dict:
+        """Return merged shared + agent memory index."""
+        return _merge_memory_indexes(
+            shared_path=Path(".reyn") / "memory" / "MEMORY.md",
+            agent_path=self.workspace_dir / "memory" / "MEMORY.md",
+            agent_name=self.agent_name,
+        )
+
+    def get_file_permissions(self) -> dict | None:
+        return self._get_file_permissions_for_router()
+
+    def get_mcp_servers(self) -> list[dict]:
+        return self._get_mcp_servers_for_router()
+
+    def memory_path(self, layer: str, slug: str) -> str:
+        return self._memory_path(layer, slug)
+
+    def memory_dir(self, layer: str) -> str:
+        return self._memory_dir(layer)
+
+    # --- Action callbacks ---
+
+    async def run_skill_awaitable(self, *, skill: str, input: dict,
+                                   chain_id: str) -> dict:
+        return await self._run_skill_awaitable(
+            {"skill": skill, "input": input}, chain_id=chain_id,
+        )
+
+    async def send_to_agent(self, *, to: str, request: str, depth: int,
+                            chain_id: str) -> None:
+        """RouterLoopHost callback: dispatch to peer and record delegation
+        for pending-chain registration (F2 wave)."""
+        await self._send_to_agent(
+            to=to, request=request, depth=depth, chain_id=chain_id,
+        )
+        # Track delegations so callers can register _PendingChain after the loop.
+        if self._router_loop_delegations is not None:
+            self._router_loop_delegations.append({"to": to, "request": request})
+
+    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
+        await self._put_outbox(OutboxMessage(kind=kind, text=text, meta=meta))
+        # Persist agent (conversational) replies to history so the context
+        # window stays coherent across turns.
+        if kind == "agent" and text:
+            self._append_history(ChatMessage(
+                role="agent", text=text, ts=_now_iso(), meta=meta,
+            ))
+            # Capture for agent-to-agent paths (agent_request / chain_resolve)
+            # that need to forward the reply upstream via _send_agent_response.
+            if self._router_loop_agent_replies is not None:
+                self._router_loop_agent_replies.append(text)
+
+    async def file_read(self, path: str) -> str:
+        """RouterLoopHost file_read — returns content string or JSON error."""
+        res = await self._file_read(path)
+        if "content" in res:
+            return res["content"]
+        return json.dumps(res)
+
+    async def file_write(self, path: str, content: str) -> dict:
+        return await self._file_write(path, content)
+
+    async def file_delete(self, path: str) -> dict:
+        return await self._file_delete(path)
+
+    async def file_list_directory(self, path: str) -> list[dict]:
+        result = await self._file_list_directory(path)
+        if isinstance(result, dict):
+            return result.get("entries", [result])
+        return result
+
+    async def file_regenerate_index(self, path: str, output_path: str,
+                                     entry_template: str, header: str) -> dict:
+        return await self._file_regenerate_index(
+            path=path,
+            output_path=output_path,
+            entry_template=entry_template,
+            header=header,
+        )
+
+    async def mcp_list_servers(self) -> list[dict]:
+        return await self._mcp_list_servers()
+
+    async def mcp_list_tools(self, server: str) -> list[dict]:
+        return await self._mcp_list_tools(server)
+
+    async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+        return await self._mcp_call_tool(server, tool, args)
+
+    def resolve_model(self, name: str) -> str:
+        """Resolve config model name (e.g. 'router') to actual model id."""
+        return self._resolver.resolve(name)
+
+    # --- RouterLoop orchestration ---
+
+    def _build_history_for_router(self) -> list[dict]:
+        """Slice self.history into OpenAI-style messages for RouterLoop.
+
+        Mirrors the head/tail compaction config so the LLM sees the same
+        context window the old skill_router preprocessor produced.
+        Returns [{role: 'user'|'assistant', content: str}, ...] ordered
+        chronologically. The system prompt is prepended by RouterLoop itself.
+
+        Only user/agent conversational turns are included. The compaction
+        head_size + tail_size governs which turns to keep.
+        """
+        cfg = self._compaction
+        turns = [m for m in self.history if m.role in ("user", "agent")]
+
+        # Apply the same head/body/tail windowing as the compaction slicer:
+        # always keep first head_size turns (HEAD) and last tail_size turns (TAIL).
+        head = turns[:cfg.head_size]
+        tail = turns[-cfg.tail_size:] if cfg.tail_size else []
+
+        # Use summary as a bridge when body is compacted.
+        summary = self._latest_summary()
+        if summary and len(turns) > cfg.head_size + cfg.tail_size:
+            bridge = [ChatMessage(
+                role="agent",
+                text=f"[summary of earlier conversation]\n{summary.text}",
+                ts=summary.ts,
+            )]
+        else:
+            bridge = []
+
+        selected = head + bridge + tail if bridge else head + tail
+
+        messages: list[dict] = []
+        for m in selected:
+            role = "user" if m.role == "user" else "assistant"
+            messages.append({"role": role, "content": m.text})
+        return messages
+
+    async def _run_router_loop(
+        self,
+        user_text: str,
+        chain_id: str,
+    ) -> None:
+        """Run RouterLoop for one user utterance. Enforces the per-turn cap,
+        builds history, and calls RouterLoop.run(). Does NOT modify history
+        or outbox directly — RouterLoop calls host callbacks.
+
+        Raises RouterCapExceeded when the per-turn cap is reached.
+        """
+        self._check_and_increment_router_cap(user_text)
+        from reyn.chat.router_loop import RouterLoop
+        loop = RouterLoop(host=self, chain_id=chain_id, max_iterations=5)
+        history = self._build_history_for_router()
+        await loop.run(user_text=user_text, history=history)

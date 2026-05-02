@@ -60,6 +60,20 @@ class LLMCallResult:
     data: dict
     usage: TokenUsage | None
 
+
+@dataclass
+class LLMToolCallResult:
+    """Result for tool_use loop. Returns the raw assistant message so the
+    caller can branch on tool_calls vs text content."""
+    content: str | None              # text content, may be None or ""
+    tool_calls: list                 # provider-normalized list (litellm shape:
+                                     # [{id, type:"function", function:{name, arguments}}, ...]),
+                                     # empty list if none
+    finish_reason: str | None
+    usage: TokenUsage
+    # raw message for debugging:
+    raw_message: object | None = None
+
 _SYSTEM_BASE = """\
 You are an AI agent executing a phase in a structured workflow.
 Respond with ONLY valid JSON — no markdown fences, no explanation, no comments.
@@ -389,3 +403,73 @@ async def call_llm(
         f"Error: {last_exc}\n"
         f"Raw response (first 800 chars):\n{last_raw[:800]}"
     ) from last_exc
+
+
+async def call_llm_tools(
+    *,
+    model: str,
+    messages: list[dict],            # OpenAI-format messages (role/content/tool_calls/tool_call_id)
+    tools: list[dict],               # OpenAI-format tools array
+    tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
+    timeout: float | None = None,
+    max_retries: int = 1,
+    skill_name: str = "router",      # for budget/event tagging
+    skill_description: str = "",
+    prompt_cache_enabled: bool = True,
+) -> LLMToolCallResult:
+    """Tool-use variant of call_llm. Returns raw assistant message.
+
+    Forces gemini-safe settings:
+      - stream=False (Gemini #21041 streaming+tools bug)
+      - thinking disabled (Gemini #17949 multi-turn parallel + thinking bug)
+    """
+    extra = proxy_kwargs()
+    # Strip provider prefix when routing via local proxy (same logic as call_llm)
+    effective_model = model.split("/", 1)[1] if extra and "/" in model else model
+
+    call_kwargs: dict = {
+        "model": effective_model,
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": tool_choice,
+        # Gemini-safe forced settings:
+        "stream": False,             # Gemini #21041: streaming + tools bug
+        # No response_format: incompatible with tools= on most providers
+        # No thinking kwargs: disabled by default on all providers
+        **extra,
+    }
+    if timeout is not None:
+        call_kwargs["timeout"] = timeout
+    call_kwargs["num_retries"] = max_retries
+
+    response = await litellm.acompletion(**call_kwargs)
+
+    msg = response.choices[0].message
+    usage = _extract_usage(response) or TokenUsage()
+
+    # Normalize tool_calls to plain dicts so callers don't depend on litellm internals
+    tool_calls = [
+        {
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,  # already JSON string
+            },
+        }
+        for tc in (msg.tool_calls or [])
+    ]
+
+    finish_reason = None
+    try:
+        finish_reason = response.choices[0].finish_reason
+    except Exception:
+        pass
+
+    return LLMToolCallResult(
+        content=msg.content,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        usage=usage,
+        raw_message=msg,
+    )

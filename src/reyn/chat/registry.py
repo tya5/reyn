@@ -376,8 +376,8 @@ class AgentRegistry:
     def iter_other_agents(self, self_name: str) -> list[dict]:
         """List `{name, role}` for every agent except `self_name`.
 
-        Used by ChatSession._invoke_router to populate `available_agents`
-        in chat_routing_request. `role` is the first non-empty line of
+        Used by RouterLoop (via ChatSession.list_available_agents) to populate
+        the reachable agent list. `role` is the first non-empty line of
         each agent's profile.role; empty when the agent has no role.
         """
         out: list[dict] = []
