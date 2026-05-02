@@ -74,6 +74,11 @@ class CostConfig:
     per_chain_skill_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     rate_limit_per_minute: dict[str, int] = field(default_factory=dict)
     rate_limit_warn_ratio: float = 0.8
+    # Hard cap on consecutive skill_router invocations within a single user
+    # turn (or top-level agent_request). Prevents runaway re-routing loops
+    # such as the S4 dogfood incident (16 invocations / 245k prompt tokens
+    # for one paste). 0 disables the cap (not recommended).
+    router_invocations_per_turn: int = 3
     # PR25: persistent daily / monthly quota (reset automatically at period boundary)
     daily_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     daily_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)

@@ -445,6 +445,13 @@ def _build_cost_config(raw: object) -> CostConfig:
         warn_ratio = float(warn_ratio)
     except (TypeError, ValueError):
         warn_ratio = 0.8
+    router_cap_raw = raw.get("router_invocations_per_turn", 3)
+    try:
+        router_cap = int(router_cap_raw)
+        if router_cap < 0:
+            router_cap = 3
+    except (TypeError, ValueError):
+        router_cap = 3
     return CostConfig(
         per_agent_tokens=_build_cost_limit(raw.get("per_agent_tokens")),
         per_agent_cost_usd=_build_cost_limit(raw.get("per_agent_cost_usd")),
@@ -452,6 +459,7 @@ def _build_cost_config(raw: object) -> CostConfig:
         per_chain_skill_tokens=_build_cost_limit(raw.get("per_chain_skill_tokens")),
         rate_limit_per_minute=rate,
         rate_limit_warn_ratio=warn_ratio,
+        router_invocations_per_turn=router_cap,
         # PR25: persistent daily / monthly quota
         daily_tokens=_build_cost_limit(raw.get("daily_tokens")),
         daily_cost_usd=_build_cost_limit(raw.get("daily_cost_usd")),

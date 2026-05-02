@@ -25,7 +25,7 @@ from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
-from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
+from reyn.skill.skill_paths import resolve_skill_path, stdlib_root, SkillNotFoundError
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -38,6 +38,20 @@ from reyn.chat.outbox import OutboxMessage
 
 ROUTER_SKILL_NAME = "skill_router"
 NARRATOR_SKILL_NAME = "skill_narrator"
+
+
+class RouterCapExceeded(Exception):
+    """Raised when a user turn (or top-level agent_request) drives more
+    skill_router invocations than the configured cap. Caught by handlers,
+    which surface a structured fallback reply to the user / requester."""
+
+    def __init__(self, count: int, cap: int, last_reason: str = "") -> None:
+        super().__init__(
+            f"Router exhausted retry budget ({count}/{cap}) for this turn"
+        )
+        self.count = count
+        self.cap = cap
+        self.last_reason = last_reason
 
 
 class ChatInterventionBus:
@@ -323,6 +337,23 @@ class ChatSession:
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
         self._budget_tracker = budget_tracker
+
+        # Per-turn cap on consecutive skill_router invocations. Prevents the
+        # S4 dogfood runaway (16 router calls / 245k prompt tokens for one
+        # user paste). The counter is reset at the top of each new turn
+        # (`_handle_user_message` or `_handle_agent_request`); subsequent
+        # in-chain re-invocations (agent_response continuation,
+        # chain_resolve) accumulate against the same budget.
+        if budget_tracker is not None:
+            self._router_cap: int = int(
+                getattr(
+                    budget_tracker.config, "router_invocations_per_turn", 3
+                )
+            )
+        else:
+            self._router_cap = 3
+        self._router_invocations_this_turn: int = 0
+        self._router_last_reason: str = ""
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -665,8 +696,17 @@ class ChatSession:
             kind="status", text="考え中...", meta={"chain_id": chain_id},
         ))
 
+        # Reset the per-turn router cap counter at the top of each fresh
+        # user turn. Subsequent in-chain re-invocations (agent_response on
+        # this chain, _resolve_pending_chain) accumulate against the same
+        # budget without resetting.
+        self._reset_router_turn_counter()
+
         try:
             decision = await self._invoke_router(text)
+        except RouterCapExceeded as exc:
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"router failed: {exc}",
@@ -914,6 +954,71 @@ class ChatSession:
 
     # ── router ──────────────────────────────────────────────────────────────────
 
+    async def _emit_router_cap_exhausted_user(
+        self, exc: "RouterCapExceeded", *, chain_id: str,
+    ) -> None:
+        """User-facing fallback when the per-turn router cap is reached.
+        Emits a structured error + a polite agent reply on the outbox so
+        the chat loop recovers cleanly. The underlying event was already
+        emitted by `_check_and_increment_router_cap`."""
+        await self._put_outbox(OutboxMessage(
+            kind="error",
+            text=(
+                f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
+                f"for this turn. Last reason: "
+                f"{exc.last_reason or '(none)'}. Falling back to direct reply."
+            ),
+            meta={"chain_id": chain_id},
+        ))
+        fallback = (
+            "I couldn't find a way to handle that within this turn's "
+            "routing budget. Please try rephrasing or breaking the request "
+            "into smaller pieces."
+        )
+        await self._put_outbox(OutboxMessage(
+            kind="agent", text=fallback, meta={"chain_id": chain_id},
+        ))
+        self._append_history(ChatMessage(
+            role="agent", text=fallback, ts=_now_iso(),
+            meta={
+                "chain_id": chain_id,
+                "source": "router_cap_exhausted",
+            },
+        ))
+
+    def _reset_router_turn_counter(self) -> None:
+        """Reset the per-turn router invocation counter. Called at the top
+        of each fresh turn (`_handle_user_message`, `_handle_agent_request`).
+        Re-entrant in-chain paths (`_handle_agent_response` continuation,
+        `_resolve_pending_chain`) intentionally do NOT reset — their
+        invocations count against the same budget."""
+        self._router_invocations_this_turn = 0
+        self._router_last_reason = ""
+
+    def _check_and_increment_router_cap(self, user_text: str) -> None:
+        """Increment the per-turn router invocation counter and enforce the
+        cap. Raises RouterCapExceeded when the counter would exceed the
+        configured cap. cap=0 disables the check.
+        """
+        if self._router_cap <= 0:
+            return
+        # If we're already at the cap, the next attempt is rejected.
+        if self._router_invocations_this_turn >= self._router_cap:
+            count = self._router_invocations_this_turn
+            self._chat_events.emit(
+                "router_retry_exhausted",
+                user_message=user_text[:200],
+                count=count,
+                cap=self._router_cap,
+                last_reason=self._router_last_reason,
+            )
+            raise RouterCapExceeded(
+                count=count,
+                cap=self._router_cap,
+                last_reason=self._router_last_reason,
+            )
+        self._router_invocations_this_turn += 1
+
     async def _invoke_router(self, user_text: str, state_subdir: str = "router") -> dict:
         """Run the skill_router skill on a user utterance.
 
@@ -924,7 +1029,11 @@ class ChatSession:
         Python preprocessor step that reads `.reyn/agents/<name>/history.jsonl`
         and slices the recent N turns. This eliminates the snapshot-per-turn
         duplication that previously bloated workspace artifacts.
+
+        Raises RouterCapExceeded when the per-turn cap is reached. Callers
+        catch this and emit a structured "exhausted retry budget" reply.
         """
+        self._check_and_increment_router_cap(user_text)
         avail = enumerate_available_skills(exclude={
             ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
         })
@@ -975,6 +1084,18 @@ class ChatSession:
             ROUTER_SKILL_NAME, input_artifact, state_subdir=state_subdir,
             forward_events=True,
         )
+        # Stash a brief router-side reason for forensics. The LLM control
+        # block contains a `reason.summary` when present; we capture
+        # whichever shape this run produced so a later cap exhaustion
+        # event has something to point at.
+        last_reason = ""
+        if isinstance(result.data, dict):
+            ctrl = result.data.get("control")
+            if isinstance(ctrl, dict):
+                reason = ctrl.get("reason")
+                if isinstance(reason, dict):
+                    last_reason = str(reason.get("summary") or "")[:200]
+        self._router_last_reason = last_reason or "(no reason)"
         return result.data
 
     async def _invoke_narrator(
@@ -1292,8 +1413,26 @@ class ChatSession:
             from_agent=from_agent, depth=depth, chain_id=chain_id,
         )
 
+        # Reset the per-turn router cap counter — an inbound agent_request
+        # is a fresh top-level entry into this agent's loop.
+        self._reset_router_turn_counter()
+
         try:
             decision = await self._invoke_router(request)
+        except RouterCapExceeded as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=(
+                    f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
+                    f"for incoming agent_request from {from_agent!r}. "
+                    f"Last reason: {exc.last_reason or '(none)'}."
+                ),
+                meta={"chain_id": chain_id, "from_agent": from_agent},
+            ))
+            await self._send_agent_response(
+                to=from_agent, response="", depth=depth, chain_id=chain_id,
+            )
+            return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"router failed (agent_request): {exc}",
@@ -1408,6 +1547,9 @@ class ChatSession:
         # User-initiated chain: PR11 path, reply goes to user.
         try:
             decision = await self._invoke_router(response)
+        except RouterCapExceeded as exc:
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"router failed (agent_response): {exc}",
@@ -1439,6 +1581,24 @@ class ChatSession:
 
         try:
             decision = await self._invoke_router(pending.original_request)
+        except RouterCapExceeded as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=(
+                    f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
+                    f"resolving chain {chain_id}. "
+                    f"Last reason: {exc.last_reason or '(none)'}."
+                ),
+                meta={"chain_id": chain_id},
+            ))
+            await self._send_agent_response(
+                to=pending.origin_agent, response="",
+                depth=pending.origin_depth, chain_id=chain_id,
+            )
+            self._pending_chains.pop(chain_id, None)
+            self._cancel_chain_timeout(chain_id)
+            await self._record_chain_resolve(chain_id)
+            return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
                 kind="error",
@@ -1958,7 +2118,7 @@ class ChatSession:
         meta = _run_meta(run_id, skill_name)
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
-        except SystemExit:
+        except SkillNotFoundError:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"skill not found: {skill_name}", meta=meta,
             ))
