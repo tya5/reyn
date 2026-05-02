@@ -95,7 +95,7 @@ done
 
 fan-out の場合（researcher が 1 ターンで複数のピアに委任）、researcher のルーターが再び実行されて統合するまでに、すべてのデリゲートが応答する必要があります。遅い 1 つのデリゲートは `multi_agent.chain_timeout_seconds`（デフォルト 60 秒）まで統合全体を遅延させます。時間を超えると `chain_timeout` イベントが発生し、上流の agent は統合されたエラーレスポンスを受け取るのでチェーンがハングしません。
 
-## `:attach` でライブ監視する
+## `/attach` でライブ監視する
 
 `lead` がユーザーターンを処理している間、REPL ポインターをデリゲートに切り替えてその進捗を監視できます:
 
@@ -103,14 +103,14 @@ fan-out の場合（researcher が 1 ターンで複数のピアに委任）、r
 > DuckDB v1 の破壊的変更を調査し、200 語の変更ログサマリーを作成してください。
 [lead] (researcher と writer で調査中)
 
-:attach researcher
+/attach researcher
 attached: researcher
 
 [researcher] (archivist で確認中)
 [researcher] DuckDB v1 では...
 ```
 
-`lead` の `session.run()` はバックグラウンドで受信トレイを消費し続けるので、（`:attach lead` で）切り戻したときには、統合された最終返信がすでに届いています。
+`lead` の `session.run()` はバックグラウンドで受信トレイを消費し続けるので、（`/attach lead` で）切り戻したときには、統合された最終返信がすでに届いています。
 
 ## `max_hop_depth` の拒否
 

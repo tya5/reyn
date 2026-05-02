@@ -44,7 +44,6 @@ All limits are read from `reyn.yaml`'s `limits:` block by default and can be ove
 
 | Flag | Available on | Description |
 |------|--------------|-------------|
-| `--rich` | `run`, `events` | Rich-styled console output. |
 | `--events` | `run` | Print the full event log at the end of execution. |
 
 ## Resolution order

@@ -95,7 +95,7 @@ Notice that `researcher` does NOT emit `agent_message_sent (response)` to `lead`
 
 For a fan-out (researcher delegates to multiple peers in one turn), every delegate must respond before researcher's router runs again to synthesize. A single slow delegate delays the whole synthesis up to `multi_agent.chain_timeout_seconds` (default 60s); past that, a `chain_timeout` event fires and the upstream agent receives a synthesized error response so the chain doesn't hang.
 
-## Watching live with `:attach`
+## Watching live with `/attach`
 
 While `lead` is processing the user turn, you can switch the REPL pointer to a delegate to watch its progress:
 
@@ -103,14 +103,14 @@ While `lead` is processing the user turn, you can switch the REPL pointer to a d
 > Investigate DuckDB v1's breaking changes and produce a 200-word changelog summary.
 [lead] (researching with researcher and writer)
 
-:attach researcher
+/attach researcher
 attached: researcher
 
 [researcher] (verifying with archivist)
 [researcher] DuckDB v1 introduced...
 ```
 
-`lead`'s `session.run()` keeps consuming its inbox in the background, so when you switch back (`:attach lead`) the synthesized final reply is already there.
+`lead`'s `session.run()` keeps consuming its inbox in the background, so when you switch back (`/attach lead`) the synthesized final reply is already there.
 
 ## `max_hop_depth` refusal
 

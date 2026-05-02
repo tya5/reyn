@@ -59,8 +59,6 @@ def register(sub) -> None:
                        "Enable strict schema validation: enforce required fields at every nesting depth. "
                        "Default (lenient) only enforces required at the top level of each artifact."
                    ))
-    p.add_argument("--rich", action="store_true",
-                   help="Use Rich-styled console output instead of plain text logging.")
     p.add_argument("--allow-shell", dest="allow_shell", action="store_true",
                    help=(
                        "Enable the 'shell' Control IR op, which allows the LLM to execute shell commands. "
@@ -98,7 +96,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.user_intervention import StdinInterventionBus
     project_root = _find_project_root(Path.cwd())
     project_context = load_project_context(session.config, project_root)
-    logger = make_logger(rich=args.rich)
+    logger = make_logger()
     agent = Agent(
         model=model,
         strict=args.strict,

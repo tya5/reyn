@@ -56,7 +56,7 @@ Float in `[0.0, 1.0]`. Used for telemetry; does not affect dispatch.
 
 ### `reason.summary`
 
-One-sentence rationale. Stored in the event log; surfaced in `--rich` output.
+One-sentence rationale. Stored in the event log.
 
 ## `artifact` block
 

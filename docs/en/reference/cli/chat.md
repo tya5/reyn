@@ -23,7 +23,6 @@ reyn chat [agent_name] [OPTIONS]
 
 | Flag | Description |
 |------|-------------|
-| `--rich` | Use Rich-styled console output instead of plain text. |
 | `--model MODEL` | Model class or LiteLLM model string for this session. Default from `reyn.yaml`. |
 | `--output-language LANG` | Output language code. Default from `reyn.yaml`. |
 | `--max-phase-visits N` | Cap on single-phase revisits per turn. `0` = unlimited. |
@@ -48,17 +47,17 @@ The `default` agent always exists. Create more with [`reyn agent new`](agent.md)
 
 ## Slash commands
 
-While a session is active, lines starting with `:` are intercepted and never routed to an agent.
+While a session is active, lines starting with `/` are intercepted and never routed to an agent.
 
 | Command | Effect |
 |---------|--------|
-| `:list` | Show running skill spawns and pending interventions |
-| `:cancel <id>` | Cancel a skill spawn (full id or last 4 chars) |
-| `:answer <id> <text>` | Answer a pending `ask_user` / permission prompt |
-| `:agents` | List loaded agents and which one is currently attached |
-| `:attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
+| `/list` | Show running skill spawns and pending interventions |
+| `/cancel <id>` | Cancel a skill spawn (full id or last 4 chars) |
+| `/answer <id> <text>` | Answer a pending `ask_user` / permission prompt |
+| `/agents` | List loaded agents and which one is currently attached |
+| `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
 
-`:list` / `:cancel` / `:answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `:agents` / `:attach` are the multi-agent workflow primitives.
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives.
 
 ## Multi-agent behavior
 
@@ -66,7 +65,7 @@ If the router decides this turn would be better handled by another agent, it emi
 
 A user-initiated chain emits an interim `reply_text` (the originating agent's first router turn) followed by a synthesized final reply (after delegate responses arrive). This preserves the "you'll see I'm working on it" UX even across hops.
 
-The `:attach` slash lets you watch a delegate's progress mid-chain — the previous agent's `session.run()` keeps consuming its inbox, so coming back later still resolves cleanly.
+The `/attach` slash lets you watch a delegate's progress mid-chain — the previous agent's `session.run()` keeps consuming its inbox, so coming back later still resolves cleanly.
 
 ## Permission behavior
 

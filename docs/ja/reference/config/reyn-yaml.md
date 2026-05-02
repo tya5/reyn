@@ -103,7 +103,7 @@ api_base: http://localhost:4000
 
 ```yaml
 cost:
-  # エージェントごとの上限（メモリ内、再起動または :budget reset でリセット）
+  # エージェントごとの上限（メモリ内、再起動または /budget reset でリセット）
   per_agent_tokens:
     hard_limit: 50000    # この数のトークンを超えると 1 エージェントが拒否される
     warn_ratio: 0.8      # hard_limit の 80% で警告（デフォルト: 0.8）
@@ -136,17 +136,17 @@ cost:
 
 | フィールド | スコープ | 永続 | リセット |
 |---|---|---|---|
-| `per_agent_tokens` | エージェントごと | メモリ内 | `:budget reset` または再起動 |
-| `per_agent_cost_usd` | エージェントごと | メモリ内 | `:budget reset` または再起動 |
-| `per_chain_skill_calls` | チェーン+Skill ごと | メモリ内 | チェーン解決または `:budget reset` |
-| `per_chain_skill_tokens` | チェーン+Skill ごと | メモリ内 | チェーン解決または `:budget reset` |
+| `per_agent_tokens` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
+| `per_agent_cost_usd` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
+| `per_chain_skill_calls` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
+| `per_chain_skill_tokens` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
 | `rate_limit_per_minute` | モデルごと | メモリ内（60 秒ウィンドウ） | 自動（スライディングウィンドウ） |
 | `daily_tokens` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `daily_cost_usd` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `monthly_tokens` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 | `monthly_cost_usd` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 
-**上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `:budget`、メモリ内カウンターをクリアするには `:budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
+**上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `/budget`、メモリ内カウンターをクリアするには `/budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
 
 **台帳の場所:** `.reyn/state/budget_ledger.jsonl` — LLM 呼び出しごとに 1 レコード、fsync 付きの追記専用。このファイルは自動的にローテーションされません。月あたり数 MB 程度で成長し、必要に応じて手動でアーカイブできます。
 

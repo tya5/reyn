@@ -103,7 +103,7 @@ Budget caps and rate limits. All fields are optional; omitting a field (or setti
 
 ```yaml
 cost:
-  # Per-agent caps (in-memory, reset on restart or :budget reset)
+  # Per-agent caps (in-memory, reset on restart or /budget reset)
   per_agent_tokens:
     hard_limit: 50000    # refuse after this many tokens for one agent
     warn_ratio: 0.8      # warn at 80% of hard_limit (default: 0.8)
@@ -136,17 +136,17 @@ cost:
 
 | Field | Scope | Persists | Reset |
 |---|---|---|---|
-| `per_agent_tokens` | per agent | in-memory | `:budget reset` or restart |
-| `per_agent_cost_usd` | per agent | in-memory | `:budget reset` or restart |
-| `per_chain_skill_calls` | per chain+skill | in-memory | chain resolves or `:budget reset` |
-| `per_chain_skill_tokens` | per chain+skill | in-memory | chain resolves or `:budget reset` |
+| `per_agent_tokens` | per agent | in-memory | `/budget reset` or restart |
+| `per_agent_cost_usd` | per agent | in-memory | `/budget reset` or restart |
+| `per_chain_skill_calls` | per chain+skill | in-memory | chain resolves or `/budget reset` |
+| `per_chain_skill_tokens` | per chain+skill | in-memory | chain resolves or `/budget reset` |
 | `rate_limit_per_minute` | per model | in-memory (60s window) | automatic (sliding window) |
 | `daily_tokens` | process-global | ledger file | midnight (local time) |
 | `daily_cost_usd` | process-global | ledger file | midnight (local time) |
 | `monthly_tokens` | process-global | ledger file | 1st of month (local time) |
 | `monthly_cost_usd` | process-global | ledger file | 1st of month (local time) |
 
-**Cap behavior:** when a hard limit is exceeded, the LLM call is refused before it is made. Use `:budget` to see current usage and `:budget reset` to clear in-memory counters (daily/monthly are not affected by reset — they are backed by the persistent ledger).
+**Cap behavior:** when a hard limit is exceeded, the LLM call is refused before it is made. Use `/budget` to see current usage and `/budget reset` to clear in-memory counters (daily/monthly are not affected by reset — they are backed by the persistent ledger).
 
 **Ledger location:** `.reyn/state/budget_ledger.jsonl` — one record per LLM call, append-only with fsync. This file is **not** rotated automatically; it grows at roughly a few MB per month and can be manually archived if needed.
 

@@ -44,7 +44,6 @@ applies_to: [reyn run, reyn eval, reyn chat]
 
 | フラグ | 利用可能 | 説明 |
 |------|--------------|-------------|
-| `--rich` | `run`、`events` | Rich スタイルのコンソール出力。 |
 | `--events` | `run` | 実行終了後に完全なイベントログを表示。 |
 
 ## 解決順序

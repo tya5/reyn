@@ -278,7 +278,7 @@ class ChatSession:
         self._prompt_cache_enabled = prompt_cache_enabled
         self._project_context = project_context
         self._agent_role = agent_role
-        # Optional back-reference for slash commands like :agents / :attach
+        # Optional back-reference for slash commands like /agents / /attach
         # and for agent-to-agent message routing (PR11). The factory in
         # cli/commands/chat.py wires this; tests can leave it None.
         self._registry = registry
@@ -633,10 +633,10 @@ class ChatSession:
                 pass
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
-        # Slash commands (`:list`, `:cancel <id>`, `:answer <id> <text>`) take
+        # Slash commands (`/list`, `/cancel <id>`, `/answer <id> <text>`) take
         # precedence over both the active-intervention router and a fresh
         # router turn.
-        if text.startswith(":"):
+        if text.startswith("/"):
             if await self._maybe_handle_slash(text):
                 return
         # If a spawned skill is waiting on a user intervention (ask_user or
@@ -1018,7 +1018,7 @@ class ChatSession:
         Returns True when the intervention was consumed (answer set OR
         unrecognized-choice hint emitted, both of which should suppress
         a fresh router turn). Shared between oldest-intervention routing
-        and the targeted `:answer <id>` slash command.
+        and the targeted `/answer <id>` slash command.
         """
         if iv.future.done():
             return False
@@ -1618,18 +1618,18 @@ class ChatSession:
         return (candidates[0] if len(candidates) == 1 else None), candidates
 
     async def _maybe_handle_slash(self, text: str) -> bool:
-        """Dispatch `:command args...` lines. Returns True when consumed.
+        """Dispatch `/command args...` lines. Returns True when consumed.
 
         Unknown slash commands also return True (with a hint on outbox) to
-        keep the router from running on user typos like ":halp".
+        keep the router from running on user typos like "/halp".
         """
         body = text[1:].lstrip()
         if not body:
             await self._put_outbox(OutboxMessage(
                 kind="status",
                 text=(
-                    "known commands: :list, :cancel <id>, :answer <id> <text>, "
-                    ":agents, :attach <name>, :cost, :budget [reset]"
+                    "known commands: /list, /cancel <id>, /answer <id> <text>, "
+                    "/agents, /attach <name>, /cost, /budget [reset]"
                 ),
             ))
             return True
@@ -1649,8 +1649,8 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="status",
                 text=(
-                    f"unknown command :{cmd}; try :list / :cancel / :answer / "
-                    ":agents / :attach / :cost / :budget"
+                    f"unknown command /{cmd}; try /list / /cancel / /answer / "
+                    "/agents / /attach / /cost / /budget"
                 ),
             ))
             return True
@@ -1658,7 +1658,7 @@ class ChatSession:
         return True
 
     async def _slash_list(self, args: str) -> None:
-        """`:list` — running skills + pending interventions."""
+        """`/list` — running skills + pending interventions."""
         now = time.monotonic()
         lines: list[str] = []
         if self.running_skills:
@@ -1687,11 +1687,11 @@ class ChatSession:
         await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
 
     async def _slash_cancel(self, args: str) -> None:
-        """`:cancel <id-prefix>` — cancel a running skill task."""
+        """`/cancel <id-prefix>` — cancel a running skill task."""
         prefix = args.strip()
         if not prefix:
             await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: :cancel <id-prefix>",
+                kind="error", text="usage: /cancel <id-prefix>",
             ))
             return
         rid, candidates = self._resolve_run_id(prefix)
@@ -1719,11 +1719,11 @@ class ChatSession:
         ))
 
     async def _slash_answer(self, args: str) -> None:
-        """`:answer <id-prefix> <text>` — deliver answer to a non-head intervention."""
+        """`/answer <id-prefix> <text>` — deliver answer to a non-head intervention."""
         parts = args.split(maxsplit=1)
         if not parts:
             await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: :answer <id-prefix> <text>",
+                kind="error", text="usage: /answer <id-prefix> <text>",
             ))
             return
         prefix = parts[0]
@@ -1745,11 +1745,11 @@ class ChatSession:
         await self._deliver_answer_to(iv, text)
 
     async def _slash_agents(self, args: str) -> None:
-        """`:agents` — list known agents (registry-backed)."""
+        """`/agents` — list known agents (registry-backed)."""
         if self._registry is None:
             await self._put_outbox(OutboxMessage(
                 kind="error",
-                text="agent registry not wired; :agents only works in `reyn chat`",
+                text="agent registry not wired; /agents only works in `reyn chat`",
             ))
             return
         names = self._registry.list_names()
@@ -1776,7 +1776,7 @@ class ChatSession:
         await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
 
     async def _slash_attach(self, args: str) -> None:
-        """`:attach <name>` — switch attached agent.
+        """`/attach <name>` — switch attached agent.
 
         The actual switch happens in repl._input_loop, which owns the display
         wiring. Here we only validate the name and put a sentinel attach
@@ -1785,13 +1785,13 @@ class ChatSession:
         name = args.strip()
         if not name:
             await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: :attach <name>",
+                kind="error", text="usage: /attach <name>",
             ))
             return
         if self._registry is None:
             await self._put_outbox(OutboxMessage(
                 kind="error",
-                text="agent registry not wired; :attach only works in `reyn chat`",
+                text="agent registry not wired; /attach only works in `reyn chat`",
             ))
             return
         if not self._registry.exists(name):
@@ -1812,7 +1812,7 @@ class ChatSession:
         ))
 
     async def _slash_cost(self, args: str) -> None:
-        """`:cost` — quick token + USD line for the attached agent."""
+        """`/cost` — quick token + USD line for the attached agent."""
         if self._budget_tracker is None:
             await self._put_outbox(OutboxMessage(
                 kind="status",
@@ -1824,7 +1824,7 @@ class ChatSession:
         await self._put_outbox(OutboxMessage(kind="status", text=line))
 
     async def _slash_budget(self, args: str) -> None:
-        """`:budget` (full breakdown) / `:budget reset` (clear counters)."""
+        """`/budget` (full breakdown) / `/budget reset` (clear counters)."""
         if self._budget_tracker is None:
             await self._put_outbox(OutboxMessage(
                 kind="status",
@@ -1849,7 +1849,7 @@ class ChatSession:
                 "Note: daily / monthly counters are NOT reset — "
                 "they auto-reset at period boundary."
             )
-            lines.append("Use `:budget` to verify.")
+            lines.append("Use `/budget` to verify.")
             await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
             return
         snap = self._budget_tracker.snapshot()
