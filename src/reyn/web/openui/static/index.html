@@ -359,13 +359,15 @@
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, "text/html");
 
-    // Copy non-script body content
-    const body = doc.body;
+    // Walk BOTH head and body. The HTML5 parser routes `<link>` / `<style>`
+    // / `<script>` placed before the implicit body to head, so a Reyn.html
+    // that omits explicit <html>/<body> would otherwise lose its scripts.
     const scripts = [];
-    body.childNodes.forEach(node => {
+    [...doc.head.childNodes, ...doc.body.childNodes].forEach(node => {
       if (node.nodeName === "SCRIPT") {
         scripts.push(node);
-      } else {
+      } else if (node.nodeType === Node.ELEMENT_NODE
+                 || (node.nodeType === Node.TEXT_NODE && node.textContent.trim())) {
         mount.appendChild(document.importNode(node, true));
       }
     });
