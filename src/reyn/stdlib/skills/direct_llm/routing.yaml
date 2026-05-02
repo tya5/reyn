@@ -1,0 +1,40 @@
+# Routing metadata for skill_router.
+#
+# NOTE: The active routing source for stdlib skills is the `routing` block
+# in skill.md frontmatter — that is what `skill_router` actually consumes.
+# This file mirrors that block so external tooling that prefers a separate
+# YAML file (or future loaders that read `routing.yaml`) gets the same
+# metadata. Keep both in sync if either changes.
+
+intents: [task]
+priority: low
+tier: fallback
+
+when_to_use:
+  - Single-shot conversational tasks where no specialised skill exists
+  - Translate a paragraph, summarise pasted text, answer a knowledge question,
+    format a snippet, reword some prose — anything completable in one LLM call
+  - Default fallback for catalogue gaps when no other skill clearly fits
+
+when_not_to_use:
+  - A more specific skill in the catalogue matches — prefer that one
+  - Multi-step tasks (use skill_builder to design a proper skill)
+  - Tasks needing file system / shell / external access
+    (this skill has no permissions for side effects)
+  - Tasks the user would benefit from packaging as a reusable skill
+    (suggest skill_builder instead)
+
+examples:
+  positive:
+    - "翻訳して: Hello, world."
+    - "要約してください: …長文…"
+    - "What does 'idempotent' mean?"
+    - "Format this as JSON: name=alice age=30"
+    - "Reply in Japanese: how are you?"
+    - "Reword this more formally: …"
+  negative:
+    - "Build a skill that does X"
+    - "Read this file and …"
+    - "Run a shell command"
+    - "Schedule weekly reports"
+    - "Improve this skill"

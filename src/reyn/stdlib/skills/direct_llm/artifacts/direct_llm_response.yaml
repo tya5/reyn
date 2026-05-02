@@ -1,0 +1,13 @@
+name: direct_llm_response
+description: |
+  Plain-text response from a single-shot LLM call. The `response` field
+  contains the full answer, in the same language as the input prompt.
+schema:
+  type: object
+  properties:
+    response:
+      type: string
+      description: |
+        The LLM's complete answer to the user's prompt. Matches the
+        language of the input. May contain newlines and markdown.
+  required: [response]

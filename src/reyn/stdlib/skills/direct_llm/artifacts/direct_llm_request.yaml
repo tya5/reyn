@@ -1,0 +1,19 @@
+name: direct_llm_request
+description: |
+  Structured envelope for a single-shot LLM task. Optional alternative to
+  the standard `user_message` artifact when callers want to pass extra
+  context alongside the prompt. Note: the `respond` phase reads from
+  `user_message` (the catalogue's standard text-input artifact); this
+  envelope is provided for explicit programmatic use.
+schema:
+  type: object
+  properties:
+    user_prompt:
+      type: string
+      description: The user's prompt, exactly as it should be answered.
+    context:
+      type: string
+      description: |
+        Optional extra context to prepend to the prompt (e.g. a snippet
+        the user is referring to, or a system-style framing note).
+  required: [user_prompt]
