@@ -52,7 +52,7 @@ Use artifacts when:
 
 ## See also
 
-- [principles.md](principles.md) — P3, P5
+- [principles.md](principles.md) — P3 (OS controls execution), P5 (Workspace is the single source of truth)
 - [Reference: artifact.yaml](../reference/dsl/artifact-yaml.md)
 - [Reference: control-ir](../reference/runtime/control-ir.md)
 - [events.md](events.md)

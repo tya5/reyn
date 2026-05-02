@@ -68,7 +68,7 @@ Don't translate every "look up X" into `recall_memory`. Only when the source cle
 ```
 Source:  "Return JSON like {entities: [{name, type, confidence}, ...]}"
 Reyn:    artifacts/entity_list.yaml with that schema. Phase output flows into
-         this shape via P5 (next-phase input or final_output_schema).
+         this shape via P1 (next-phase input or final_output_schema).
 ```
 
 ## Don't do

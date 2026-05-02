@@ -7,7 +7,7 @@ applies_to: [phases/*.md]
 
 # `phase.md` frontmatter
 
-Each phase lives in `phases/<phase_name>.md` under its skill directory. The YAML frontmatter declares only what the phase consumes — never what it produces, never which phase comes next ([P1, P5](../../concepts/principles.md)).
+Each phase lives in `phases/<phase_name>.md` under its skill directory. The YAML frontmatter declares only what the phase consumes — never what it produces, never which phase comes next ([P1](../../concepts/principles.md)).
 
 ## Schema
 
@@ -48,7 +48,7 @@ preprocessor:                  # optional; deterministic pre-LLM steps
 
 ## What MUST NOT appear
 
-- Output schema of any kind. Output is determined by the next phase's input or the skill's `final_output` ([P5](../../concepts/principles.md#p5-no-output-schema-in-phase)).
+- Output schema of any kind. Output is determined by the next phase's input or the skill's `final_output` ([P1](../../concepts/principles.md#p1-phase-is-stateless-and-reusable)).
 - The next phase name. The Skill graph owns transitions ([P1](../../concepts/principles.md#p1-phase-is-stateless-and-reusable)).
 - Control IR format descriptions. The OS injects available ops into the context frame ([P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)).
 
@@ -84,4 +84,4 @@ Avoid: meta-commentary, scope hedging, more than three bullets.
 
 - [skill-md.md](skill-md.md) — Skill frontmatter
 - `reference/dsl/preprocessor.md` — preprocessor steps (Phase 2)
-- [Concepts: principles P1, P5, P8](../../concepts/principles.md)
+- [Concepts: principles P1, P8](../../concepts/principles.md)

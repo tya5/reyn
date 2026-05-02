@@ -13,8 +13,8 @@ Use this list when you (the `skill_improver` skill) audit an existing skill. Eac
 
 For every `phases/<name>.md`:
 
-- [ ] Frontmatter declares **only** `input` (and optionally `preprocessor`, `role`, `can_finish`). No output schema. [P1, P5]
-- [ ] No enumeration of next-phase artifact fields in the body. [P5, P8]
+- [ ] Frontmatter declares **only** `input` (and optionally `preprocessor`, `role`, `can_finish`). No output schema. [P1]
+- [ ] No enumeration of next-phase artifact fields in the body. [P1, P8]
 - [ ] No description of Control IR format (e.g. "emit `{kind: file, op: write, ...}`"). [P8]
 - [ ] No reference to a sibling phase's name. Transitions live in the skill graph. [P1]
 - [ ] Body covers WHAT to do, WHEN to pick which candidate, and domain rules — nothing else.
@@ -24,7 +24,7 @@ For every `phases/<name>.md`:
 
 For `skill.md`:
 
-- [ ] `entry`, `graph`, `final_output` all present. [P2, P6]
+- [ ] `entry`, `graph`, `final_output` all present. [P2]
 - [ ] `final_output` is a single artifact type.
 - [ ] Every phase referenced in `graph` has a corresponding `phases/<name>.md`.
 - [ ] Every phase whose `can_finish: true` has a path to `end` in the graph.

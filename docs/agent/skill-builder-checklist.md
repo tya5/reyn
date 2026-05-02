@@ -11,15 +11,15 @@ Use this checklist whenever you (the `skill_builder` skill) plan or write a new 
 
 ## Phase decisions (must hold)
 
-- [ ] Each phase declares **only** `input` (and optional `preprocessor`, `role`, `can_finish`). [P1, P5]
-- [ ] No phase markdown enumerates output fields. [P5, P8]
+- [ ] Each phase declares **only** `input` (and optional `preprocessor`, `role`, `can_finish`). [P1]
+- [ ] No phase markdown enumerates output fields. [P1, P8]
 - [ ] No phase markdown describes Control IR format. [P8]
 - [ ] No phase markdown names the next phase. The Skill graph owns transitions. [P1]
 - [ ] Phase instructions describe **what** to do, **when** to choose which candidate, and domain rules — nothing else.
 
 ## Skill decisions (must hold)
 
-- [ ] `skill.md` declares `entry`, `graph`, `final_output`. [P2, P6]
+- [ ] `skill.md` declares `entry`, `graph`, `final_output`. [P2]
 - [ ] `final_output` is a single artifact type, not a union.
 - [ ] `graph` uses `end` as the terminal sentinel for any phase whose `can_finish: true`.
 - [ ] If the skill has multiple paths, every leaf path eventually reaches `end`.

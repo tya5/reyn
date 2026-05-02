@@ -11,18 +11,28 @@ require OS changes (P7).
 
 ## P1–P8 (CRITICAL — violations break the OS)
 
-- **P1** Phase declares only `input_schema` and instructions. It MUST NOT know
-  next phase, output schema, or its parent skill.
-- **P2** Skill declares `entry_phase`, `graph`, `final_output_schema`. Phase
-  connections live in Skill, NEVER in Phase.
+- **P1** Phase declares only `input_schema` and instructions. It MUST NOT
+  know its next phase, output schema, or parent skill. Output shape is
+  determined externally — by `next_phase.input_schema` or by the skill's
+  `final_output_schema`.
+- **P2** Skill declares `entry_phase`, `graph` (allowed transitions), and
+  `final_output_schema`. Phase connections live in Skill, never in Phase.
+  Final-output validation is the OS's responsibility against this schema.
 - **P3** OS is the runtime engine — context build, LLM call, validation,
-  Control IR execution, transitions, events. Skills and LLM do not run things.
+  Control IR execution, transitions, events. Skills and the LLM do not run
+  things; they describe and decide.
 - **P4** LLM picks ONLY from OS-provided candidates: next phase + artifact +
   control_ir. No arbitrary next phases.
-- **P5** Phase has NO output schema. Output shape is determined by
-  `next_phase.input_schema` or `skill.final_output_schema`.
-- **P6** Only Skill defines `final_output_schema`. OS validates final output
-  against it.
+- **P5 (Workspace is the single source of truth)** All data, artifacts, and
+  files passed between phases live in the workspace. Phases read and write
+  only through Control IR (gated by the permission system). In-memory state
+  inside a phase is not trustworthy until it lands in the workspace — this is
+  what makes permission enforcement and crash recovery (PR21) possible.
+- **P6 (Events are the audit truth)** Every state change emits an event. The
+  event log (`events/`) is append-only and replay-capable. State recovery
+  (crash recovery, audit trails, future hash chain), debugging, and
+  cross-agent tracing all derive from events. Anything that mutates state
+  without an event is invisible to the OS.
 - **P7 (CRITICAL)** OS code MUST NOT contain skill-specific strings (phase
   names, artifact types, fields). **Detection rule**: if a literal naming a
   specific phase / artifact type / field appears in OS code, it's a violation.
@@ -70,14 +80,15 @@ Single format for all phases:
 
 ## Hard "NEVER" rules (cross-refs to P-numbers)
 
-- NEVER define transitions inside Phase (P1)
-- NEVER define output schema inside Phase (P5)
+- NEVER define transitions or output schema inside Phase (P1)
 - NEVER allow LLM to choose arbitrary next phase (P4)
+- NEVER pass data between phases outside the workspace (P5)
+- NEVER mutate runtime state without emitting an event (P6)
 - NEVER put skill-specific strings in OS code (P7)
 - NEVER enumerate artifact fields in Phase instructions (P8)
 - NEVER describe Control IR format in Phase instructions (P8)
 - ALWAYS validate LLM output (Transition + Finish above)
-- ALWAYS emit events for state changes (P3)
+- ALWAYS emit events for state changes (P6)
 
 ## Skill resolution order
 
@@ -93,8 +104,8 @@ Single format for all phases:
 - **Architecture overview / component layers**: `docs/en/concepts/architecture.md`
 - **Phase vs Skill vs OS boundary**: `docs/en/concepts/phase-vs-skill-vs-os.md`
 - **Why constrain the LLM (P4)**: `docs/en/concepts/llm-as-decision-engine.md`
-- **Event model / replay**: `docs/en/concepts/events.md`
-- **Workspace**: `docs/en/concepts/workspace.md`
+- **Workspace** (P5): `docs/en/concepts/workspace.md`
+- **Events / replay** (P6): `docs/en/concepts/events.md`
 - **Permission model**: `docs/en/concepts/permission-model.md`
 - **Input handling, ask_user, Phase Preprocessor (run_op / iterate / validate
   / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,
