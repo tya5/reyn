@@ -21,6 +21,15 @@ def register(sub) -> None:
         help="Agent to attach to (default: 'default'). "
              "Use `reyn agent new <name>` to create a new agent.",
     )
+    p.add_argument(
+        "--cui",
+        action="store_true",
+        default=False,
+        help=(
+            "Use plain console output (no TUI). "
+            "Useful for piping output, debugging, or headless environments."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -100,15 +109,34 @@ def run(args: argparse.Namespace) -> None:
         )
         sys.exit(1)
 
-    from ..logger_factory import make_chat_renderer
-    renderer = make_chat_renderer()
+    use_tui = not getattr(args, "cui", False) and sys.stdin.isatty()
 
-    async def _main() -> None:
-        # PR21: replay WAL into per-agent snapshots before any new state
-        # changes happen. Agents with restored state get their inbox /
-        # pending_chains repopulated and their main loop started here.
-        await registry.restore_all()
-        await registry.attach(name)
-        await run_repl(registry, renderer=renderer)
+    if use_tui:
+        from reyn.chat.tui.app import run_tui
 
-    run_async(_main())
+        async def _main_tui() -> None:
+            await registry.restore_all()
+            await registry.attach(name)
+            await run_tui(
+                registry,
+                agent_name=name,
+                model=model,
+                budget_tracker=budget_tracker,
+            )
+
+        run_async(_main_tui())
+    else:
+        from ..logger_factory import make_chat_renderer
+        from reyn.chat.repl import run_repl
+
+        renderer = make_chat_renderer()
+
+        async def _main_cui() -> None:
+            # PR21: replay WAL into per-agent snapshots before any new state
+            # changes happen. Agents with restored state get their inbox /
+            # pending_chains repopulated and their main loop started here.
+            await registry.restore_all()
+            await registry.attach(name)
+            await run_repl(registry, renderer=renderer)
+
+        run_async(_main_cui())

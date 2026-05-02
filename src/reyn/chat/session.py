@@ -175,13 +175,24 @@ class _PendingChain:
 
 
 def _iv_meta(iv: "UserIntervention") -> dict:
-    """Standard `meta` payload for OutboxMessage announcing an intervention."""
+    """Standard `meta` payload for OutboxMessage announcing an intervention.
+
+    Includes structured choice data so TUI renderers can build chip buttons
+    without re-parsing the formatted text string.
+    """
     out = {"intervention_id": iv.id, "intervention_kind": iv.kind}
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = _run_short(iv.run_id)
     if iv.skill_name:
         out["skill_name"] = iv.skill_name
+    if iv.choices:
+        out["choices"] = [
+            {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+            for c in iv.choices
+        ]
+    if iv.suggestions:
+        out["suggestions"] = list(iv.suggestions)
     return out
 
 
@@ -1620,41 +1631,34 @@ class ChatSession:
     async def _maybe_handle_slash(self, text: str) -> bool:
         """Dispatch `/command args...` lines. Returns True when consumed.
 
+        Delegates to the SlashRegistry in `reyn.chat.slash` so new commands
+        can be added without touching this method.
+
         Unknown slash commands also return True (with a hint on outbox) to
         keep the router from running on user typos like "/halp".
         """
+        from reyn.chat.slash import REGISTRY
+
         body = text[1:].lstrip()
         if not body:
+            known = ", ".join(f"/{n}" for n in REGISTRY.names())
             await self._put_outbox(OutboxMessage(
                 kind="status",
-                text=(
-                    "known commands: /list, /cancel <id>, /answer <id> <text>, "
-                    "/agents, /attach <name>, /cost, /budget [reset]"
-                ),
+                text=f"known commands: {known}",
             ))
             return True
         parts = body.split(maxsplit=1)
         cmd = parts[0]
         args = parts[1] if len(parts) > 1 else ""
-        handler = {
-            "list": self._slash_list,
-            "cancel": self._slash_cancel,
-            "answer": self._slash_answer,
-            "agents": self._slash_agents,
-            "attach": self._slash_attach,
-            "cost": self._slash_cost,
-            "budget": self._slash_budget,
-        }.get(cmd)
-        if handler is None:
+        slash_cmd = REGISTRY.get(cmd)
+        if slash_cmd is None:
+            known = ", ".join(f"/{n}" for n in REGISTRY.names())
             await self._put_outbox(OutboxMessage(
                 kind="status",
-                text=(
-                    f"unknown command /{cmd}; try /list / /cancel / /answer / "
-                    "/agents / /attach / /cost / /budget"
-                ),
+                text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
-        await handler(args)
+        await slash_cmd.handler(self, args)
         return True
 
     async def _slash_list(self, args: str) -> None:

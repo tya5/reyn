@@ -1,0 +1,129 @@
+/* Reyn TUI — coral theme. One bundled theme, no user customisation in v1.
+   Primary accent: #C8553D (warm coral matching the coral design's App primary)
+*/
+
+Screen {
+    layout: vertical;
+    background: $surface;
+}
+
+ReynHeader {
+    dock: top;
+    height: 1;
+    background: #1a1a1a;
+    color: #dddddd;
+    padding: 0 2;
+}
+
+ReynHeader #title {
+    color: #C8553D;
+    text-style: bold;
+}
+
+ReynHeader #status {
+    dock: right;
+    color: #aaaaaa;
+}
+
+ConversationView {
+    height: 1fr;
+    border: tall #2a2a2a;
+    padding: 0 1;
+    overflow-y: scroll;
+    scrollbar-color: #C8553D;
+    scrollbar-background: #1a1a1a;
+}
+
+ConversationView > RichLog {
+    background: transparent;
+    scrollbar-color: #C8553D;
+}
+
+InputBar {
+    dock: bottom;
+    height: auto;
+    max-height: 10;
+    background: #111111;
+    border-top: tall #2a2a2a;
+    padding: 0 1;
+}
+
+InputBar Input {
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    padding: 0 1;
+    height: 1;
+}
+
+InputBar #hints {
+    height: 1;
+    color: #666666;
+    padding: 0 1;
+    dock: bottom;
+}
+
+/* Command palette overlay */
+CommandPalette {
+    background: #1a1a1a;
+    border: tall #C8553D;
+    padding: 0 1;
+    height: auto;
+    max-height: 12;
+    min-width: 50;
+}
+
+CommandPalette .palette-item {
+    padding: 0 1;
+    height: 1;
+}
+
+CommandPalette .palette-item:hover {
+    background: #C8553D 30%;
+}
+
+CommandPalette .palette-item--selected {
+    background: #C8553D 50%;
+    color: #ffffff;
+    text-style: bold;
+}
+
+/* Intervention widget */
+InterventionWidget {
+    background: #1e1510;
+    border: tall #C8553D;
+    padding: 1 2;
+    height: auto;
+    margin: 1 0;
+    color: #eeddcc;
+}
+
+InterventionWidget .iv-question {
+    color: #ffcc88;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+InterventionWidget .iv-chips {
+    layout: horizontal;
+    height: auto;
+    margin-top: 1;
+}
+
+InterventionWidget Button {
+    margin: 0 1 0 0;
+    background: #C8553D;
+    color: #ffffff;
+    border: none;
+    padding: 0 2;
+    height: 1;
+}
+
+InterventionWidget Button:hover {
+    background: #e0664e;
+}
+
+InterventionWidget Button:focus {
+    background: #e0664e;
+    text-style: bold;
+}
