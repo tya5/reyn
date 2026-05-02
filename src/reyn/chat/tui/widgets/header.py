@@ -40,12 +40,6 @@ class ReynHeader(Widget):
         padding: 0 1;
         width: 1fr;
     }
-    ReynHeader #clock {
-        color: #888888;
-        padding: 0 1;
-        width: 21;
-        text-align: right;
-    }
     """
 
     @dataclass
@@ -76,11 +70,11 @@ class ReynHeader(Widget):
     def compose(self) -> ComposeResult:
         yield Label("Reyn", id="title")
         yield Label(self._format_status(), id="status")
-        yield Label(self._now_text(), id="clock")
 
     def on_mount(self) -> None:
-        # Tick the clock every second. 1 Hz is plenty — the seconds field
-        # is included so a frozen UI is immediately obvious.
+        # Re-render once per second so the embedded clock stays current.
+        # 1 Hz is plenty — seconds are included so a frozen UI is
+        # immediately visible (the clock is the canary).
         self.set_interval(1.0, self._tick_clock)
 
     @staticmethod
@@ -89,7 +83,7 @@ class ReynHeader(Widget):
 
     def _tick_clock(self) -> None:
         try:
-            self.query_one("#clock", Label).update(self._now_text())
+            self.query_one("#status", Label).update(self._format_status())
         except Exception:
             pass
 
@@ -109,7 +103,9 @@ class ReynHeader(Widget):
                 cost_str += f" / ${self._cost_cap:.2f}"
             parts.append(tok_str)
             parts.append(cost_str)
-        return "  ·  ".join(parts) if parts else "Reyn"
+        # Clock always present, last — the canary for "is the UI frozen?"
+        parts.append(self._now_text())
+        return "  ·  ".join(parts)
 
     def refresh_status(
         self,

@@ -29,13 +29,6 @@ ReynHeader #status {
     padding: 0 1;
 }
 
-ReynHeader #clock {
-    color: #888888;
-    width: 21;
-    text-align: right;
-    padding: 0 1;
-}
-
 ConversationView {
     height: 1fr;
     border: tall #2a2a2a;
