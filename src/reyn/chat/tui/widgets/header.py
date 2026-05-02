@@ -12,6 +12,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
@@ -87,7 +88,8 @@ class ReynHeader(Widget):
         except Exception:
             pass
 
-    def _format_status(self) -> str:
+    def _format_status(self) -> Text:
+        """Build the right-side status as a Rich Text with dim │ separators."""
         parts: list[str] = []
         if self._agent_name:
             parts.append(self._agent_name)
@@ -105,7 +107,13 @@ class ReynHeader(Widget):
             parts.append(cost_str)
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append(self._now_text())
-        return "  ·  ".join(parts)
+
+        out = Text()
+        for i, p in enumerate(parts):
+            if i > 0:
+                out.append("  │  ", style="dim #555555")
+            out.append(p)
+        return out
 
     def refresh_status(
         self,
