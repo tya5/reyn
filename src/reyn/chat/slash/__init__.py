@@ -53,6 +53,7 @@ from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
 from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
+from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
 
 
 __all__ = ["REGISTRY", "SlashRegistry", "SlashCommand"]
