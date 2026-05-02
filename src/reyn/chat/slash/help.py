@@ -1,8 +1,7 @@
 """/help — list all available slash commands with one-line summaries."""
 from __future__ import annotations
 
-from reyn.chat.outbox import OutboxMessage
-from reyn.chat.slash import REGISTRY, SlashCommand
+from reyn.chat.slash import REGISTRY, reply, slash
 
 
 # Built-ins handled outside the registry (intercepted by the TUI / REPL
@@ -13,8 +12,8 @@ _BUILTIN_HINTS: list[tuple[str, str]] = [
 ]
 
 
-async def _handle_help(session: "object", args: str) -> None:
-    """Emit a status message listing every registered slash command."""
+@slash("help", summary="Show this list of slash commands")
+async def help_cmd(session: "object", args: str) -> None:
     rows: list[tuple[str, str]] = [
         (cmd.name, cmd.summary) for cmd in REGISTRY.all_commands()
     ]
@@ -28,13 +27,4 @@ async def _handle_help(session: "object", args: str) -> None:
     lines.append("")
     lines.append("Tab opens the command palette with the same list.")
 
-    await session._put_outbox(OutboxMessage(
-        kind="status", text="\n".join(lines),
-    ))
-
-
-REGISTRY.register(SlashCommand(
-    name="help",
-    summary="Show this list of slash commands",
-    handler=_handle_help,
-))
+    await reply(session, "\n".join(lines))

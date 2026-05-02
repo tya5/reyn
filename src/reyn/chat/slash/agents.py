@@ -1,15 +1,7 @@
 """/agents, /attach slash commands."""
 from __future__ import annotations
 
-from reyn.chat.slash import REGISTRY, SlashCommand
-
-
-async def _handle_agents(session: "object", args: str) -> None:
-    await session._slash_agents(args)
-
-
-async def _handle_attach(session: "object", args: str) -> None:
-    await session._slash_attach(args)
+from reyn.chat.slash import slash
 
 
 def _attach_completer(session: "object") -> list[str]:
@@ -19,15 +11,15 @@ def _attach_completer(session: "object") -> list[str]:
     return session._registry.list_names()
 
 
-REGISTRY.register(SlashCommand(
-    name="agents",
-    summary="List all agents (* = attached, · = loaded)",
-    handler=_handle_agents,
-))
+@slash("agents", summary="List all agents (* = attached, · = loaded)")
+async def agents_cmd(session: "object", args: str) -> None:
+    await session._slash_agents(args)
 
-REGISTRY.register(SlashCommand(
-    name="attach",
+
+@slash(
+    "attach",
     summary="Switch attached agent: /attach <name>",
-    handler=_handle_attach,
     completer=_attach_completer,
-))
+)
+async def attach_cmd(session: "object", args: str) -> None:
+    await session._slash_attach(args)
