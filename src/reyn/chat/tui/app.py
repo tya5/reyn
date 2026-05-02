@@ -45,16 +45,18 @@ from textual.widgets.option_list import Option
 
 
 class CommandPaletteOverlay(OptionList):
-    """Floating command palette that appears on Tab press."""
+    """Inline command palette that appears above the Input on Tab press.
+
+    Mounted (hidden) inside InputBar in compose(). Toggling the "visible"
+    class flips display between none and block. InputBar is `height: auto`
+    so the bar grows upward when the palette becomes visible.
+    """
 
     DEFAULT_CSS = """
     CommandPaletteOverlay {
-        dock: bottom;
-        layer: overlay;
-        offset: 0 -3;
-        max-height: 12;
-        min-width: 50;
-        width: auto;
+        height: auto;
+        max-height: 10;
+        min-width: 40;
         background: #1a1a1a;
         border: tall #C8553D;
         display: none;
@@ -115,6 +117,13 @@ class ReynTUIApp(App):
 
         inputbar = self.query_one("#inputbar", InputBar)
         inputbar.update_slash_names(self._all_slash_names)
+
+        # Pre-mount the command palette (hidden) inside InputBar so that
+        # Tab handling only needs to populate + toggle the visible class —
+        # no race with the async mount lifecycle.
+        palette = CommandPaletteOverlay(id="palette")
+        inputbar.mount(palette)
+
         inputbar.focus_input()
 
         # Show startup banner
@@ -396,14 +405,15 @@ class ReynTUIApp(App):
         try:
             overlay = self.query_one("#palette", CommandPaletteOverlay)
         except Exception:
-            overlay = CommandPaletteOverlay(id="palette")
-            self.query_one("#inputbar", InputBar).mount(overlay)
+            # Should not happen — palette is pre-mounted in on_mount.
+            return
 
         overlay.clear_options()
         for cmd in matches:
             overlay.add_option(Option(f"/{cmd.name}  — {cmd.summary}", id=cmd.name))
 
         overlay.add_class("visible")
+        overlay.focus()
         self._palette_visible = True
 
     def _close_palette(self) -> None:
