@@ -13,57 +13,110 @@ a matter of pointing the shell at a different directory — no code changes.
 
 ## Directory layout
 
+Designs live in three locations, resolved in the same order as Reyn's
+skills (project → local → bundled):
+
 ```
-web/
-├── designs/                  ← all design variants live here
-│   ├── warm/
-│   │   ├── app/              ← warm App face (tokens.json + components/ + pages/)
-│   │   └── studio/           ← warm Studio face
-│   ├── dark/
-│   │   ├── app/
-│   │   └── studio/
-│   └── claude/
-│       ├── app/
-│       └── studio/
+reyn/project/designs/         ← project-checked-in designs (committed)
+│   └── <name>/{app,studio}/  ← e.g. an organisation's brand design
 │
-├── shell/                    ← Reyn-owned, design-agnostic
-│   ├── routes/               ← App/Studio toggle, design-selector route
-│   ├── adapters/             ← maps Reyn data → component props
-│   ├── contracts/            ← TS interfaces that EVERY design must satisfy
-│   ├── api/                  ← REST + WS client to reyn.web gateway
-│   └── design-loader.ts      ← dynamic import based on selection
+reyn/local/designs/           ← user-specific designs (gitignored)
+│   └── <name>/{app,studio}/  ← e.g. an end-user's personal palette
 │
-└── README.md                 ← shell maintenance + add-a-design recipe
+web/designs/                  ← bundled with the Reyn repo (stdlib-equivalent)
+├── warm/
+│   ├── app/                  ← warm App face (tokens.json + components/ + pages/)
+│   └── studio/               ← warm Studio face
+├── dark/
+│   ├── app/
+│   └── studio/
+└── claude/
+    ├── app/
+    └── studio/
+
+web/shell/                    ← Reyn-owned, design-agnostic
+├── routes/                   ← App/Studio toggle, design-selector route
+├── adapters/                 ← maps Reyn data → component props
+├── contracts/                ← TS interfaces that EVERY design must satisfy
+├── api/                      ← REST + WS client to reyn.web gateway
+└── design-loader.ts          ← runtime discovery + selection
 ```
 
-Each `web/designs/<name>/{app,studio}/` directory is a Claude Design
-export, dropped in as-is. The shell never modifies these directories.
+Each `<root>/<name>/{app,studio}/` directory is a Claude Design export,
+dropped in as-is. The shell never modifies these directories.
+
+### Resolution
+
+When the shell lists "available designs", it merges the three roots and
+deduplicates by name. If two roots define the same name (e.g. both
+`reyn/local/designs/warm/` and `web/designs/warm/`), the higher-priority
+root wins:
+
+```
+reyn/project/designs/  >  reyn/local/designs/  >  web/designs/
+```
+
+This mirrors how Reyn resolves skills (project → local → stdlib). It
+means an organisation can override a bundled design by checking in their
+own version under the same name in `reyn/project/designs/`, and an
+individual user can override that locally under `reyn/local/designs/`.
+
+### Why three roots
+
+- **`reyn/project/designs/`**: checked into the repo of the project that
+  uses Reyn — typically an organisation's brand design, shared across the
+  team. Subject to PR review.
+- **`reyn/local/designs/`**: gitignored, per-user. Lets an end user drop
+  in their own Claude Design export without committing it. Useful for
+  personal experimentation, palette tweaks, or keeping a working draft
+  before contributing it upstream.
+- **`web/designs/`**: bundled with Reyn itself. The "stdlib" of designs.
+  Always available, never user-modified.
 
 ---
 
 ## Adding a design
 
+Pick the right root based on who the design is for:
+
 ```bash
+# Bundled with the repo (rare — only Reyn's own canonical designs)
+ROOT=web/designs
+
+# Project-level design committed to the consuming project
+ROOT=reyn/project/designs
+
+# Personal / experimental, not committed
+ROOT=reyn/local/designs
+
 DESIGN=<short-slug>            # e.g. "warm", "dark", "lobster"
 
-mkdir -p web/designs/${DESIGN}/app
-mkdir -p web/designs/${DESIGN}/studio
+mkdir -p "${ROOT}/${DESIGN}/app"
+mkdir -p "${ROOT}/${DESIGN}/studio"
 
 # Drop the App face export
-unzip <app_export>.zip -d web/designs/${DESIGN}/app
+unzip <app_export>.zip -d "${ROOT}/${DESIGN}/app"
 
-# Drop the Studio face export
-unzip <studio_export>.zip -d web/designs/${DESIGN}/studio
+# Drop the Studio face export (or skip if you only have one face)
+unzip <studio_export>.zip -d "${ROOT}/${DESIGN}/studio"
 
 # Verify the new design satisfies the contracts
 cd web && npm run typecheck
 ```
 
 If `typecheck` passes, the design is selectable. No registration step:
-the shell discovers designs by listing `web/designs/*/`.
+the shell discovers designs at runtime by reading the three roots via the
+gateway's `GET /api/web/config` (see § Server-side default).
 
-Removing a design: `rm -rf web/designs/<name>`. If a user had selected
-that design, the shell falls back to the default at next load.
+Removing a design: `rm -rf <root>/<name>`. If a user had selected that
+design, the shell falls back to the default at next load.
+
+### A face is optional
+
+A design may ship only `app/` or only `studio/` if you only want to theme
+one face. The shell falls back to the default design's other face when a
+selected design is missing it. (Useful for personal designs that only
+care about the App side.)
 
 ---
 
@@ -105,18 +158,34 @@ The default design is set at `reyn web` startup, in priority order:
    ```
 4. None (fall through to "first alphabetically").
 
-The CLI passes the resolved default to the frontend via a single endpoint
-`GET /api/web/config` returning:
+The gateway exposes `GET /api/web/config` which returns the merged design
+roster across all three roots:
 
 ```json
 {
   "default_design": "warm",
-  "available_designs": ["warm", "dark", "claude"]
+  "available_designs": [
+    {"name": "warm",     "source": "stdlib", "faces": ["app", "studio"]},
+    {"name": "dark",     "source": "stdlib", "faces": ["app", "studio"]},
+    {"name": "claude",   "source": "stdlib", "faces": ["app", "studio"]},
+    {"name": "my-pink",  "source": "local",  "faces": ["app"]},
+    {"name": "acme",     "source": "project","faces": ["app", "studio"]}
+  ]
 }
 ```
 
 The shell fetches this once on load, then resolves selection per the
-priority above.
+priority in § Selection mechanisms. The `source` field surfaces in the
+design picker UI so users know whether they're looking at a personal
+design or a project-committed one (small badge: `local` / `project` /
+`stdlib`).
+
+User designs (`reyn/local/designs/`) are served as static assets via the
+gateway: assets are read from disk on each request (no build step), so a
+user can drop in a new design and refresh the browser to see it.
+Bundled designs (`web/designs/`) are baked into the frontend build for
+production and served from disk in dev. Project designs
+(`reyn/project/designs/`) work the same way as user designs.
 
 ---
 
@@ -147,6 +216,12 @@ a design.
   design, prod defaults to "warm".
 - **Reviewer mode**: a design system review session uses
   `?design=variant-name` URLs to walk through candidates.
+- **End-user personalisation**: an end user drops their own Claude Design
+  export into `reyn/local/designs/my-design/` and selects it via the
+  picker. No PR, no rebuild, no permission required.
+- **Organisation override**: an organisation deploying Reyn checks
+  `reyn/project/designs/acme/` into their fork, set as the default in
+  `reyn.yaml`. Bundled designs remain available as fallback.
 
 ---
 
