@@ -25,13 +25,22 @@
 3. Iterate visuals on the canvas.
 4. Before export, run through the **Acceptance Checklist** at the bottom.
 5. Export → `Send to Claude Code` (handoff bundle) **or** `.zip`.
-6. Drop the export into `web/design/app/` (or `web/design/studio/`),
-   replacing the previous content entirely:
+6. Drop the export into `web/designs/<name>/<face>/`, where `<name>` is
+   a short slug for this design variant (e.g. `warm`, `dark`, `claude`),
+   and `<face>` is `app` or `studio`. Multiple designs coexist; users pick
+   one at web startup or via URL param. See
+   `docs/web/multi-design-selection.md` for the selection mechanism.
+
    ```bash
-   rm -rf web/design/app
-   unzip <new_app_export>.zip -d web/design/app
-   # If TypeScript still typechecks, swap is good. Otherwise the
-   # contracts/ directory tells you what changed.
+   # Add a new design
+   mkdir -p web/designs/warm/app
+   unzip <new_app_export>.zip -d web/designs/warm/app
+
+   # Replace an existing design (App face only)
+   rm -rf web/designs/warm/app
+   unzip <new_app_export>.zip -d web/designs/warm/app
+
+   # If TypeScript still typechecks across all designs, swap is good.
    ```
 7. Commit on a branch separate from `feat/web-gateway` (frontend integration
    happens in its own session).
@@ -428,23 +437,31 @@ If anything fails, fix it in the canvas before exporting.
 ## Drop-in procedure (after export)
 
 ```bash
-# Pick the right destination
-TARGET=web/design/app    # or web/design/studio
+# Pick a slug for this design variant ("warm", "dark", "claude", etc.)
+DESIGN=warm
+FACE=app    # or studio
 
-# Wipe the previous design entirely
+TARGET="web/designs/${DESIGN}/${FACE}"
+
+# Wipe and replace this face of this design
 rm -rf "$TARGET"
 mkdir -p "$TARGET"
-
-# Drop the new export
 unzip <new_export>.zip -d "$TARGET"
 
-# Verify the swap is clean
+# Verify the swap is clean across all designs
 cd web && npm run typecheck
-# - If typecheck passes, the contracts still hold and the swap is done.
-# - If typecheck fails, the diff tells you exactly which contract broke.
-#   Either fix the design (re-prompt Claude Design with the missing
-#   contract excerpt) or update the contract on the Reyn shell side.
+# - If typecheck passes, contracts hold for the new design; users can
+#   pick it via the design selector at startup.
+# - If typecheck fails, the diff tells you which contract broke. Fix
+#   the design (re-prompt Claude Design with the missing contract
+#   excerpt) or, if the contract itself needs to evolve, propose the
+#   change on the shell side.
 ```
+
+Adding a brand-new design alongside existing ones is the same procedure
+with a fresh `$DESIGN` slug. Removing a design is `rm -rf web/designs/<name>`.
+Users select among available designs at startup; see
+`docs/web/multi-design-selection.md`.
 
 ---
 
