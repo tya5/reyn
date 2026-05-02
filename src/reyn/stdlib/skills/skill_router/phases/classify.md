@@ -80,6 +80,30 @@ encodes specificity-first / catchall-last: more specific triggers come
 before broader fallbacks so skills and freshness routing are not
 shadowed by direct-reply paths.
 
+### P0. Hard chitchat fast-path (check BEFORE P1)
+
+If `user_message` is **clearly a greeting / thanks / acknowledgement
+/ short social ping**, jump straight to **P3 chitchat** WITHOUT
+considering whether some skill could plausibly fit. Heuristic
+checklist:
+
+- **Greetings** (any language): "hi", "hello", "hey", "yo",
+  "こんにちは", "こんちわ", "おはよう", "こんばんは", "おっす",
+  "你好", "안녕"
+- **Thanks**: "thanks", "thank you", "ty", "ありがとう", "サンキュー",
+  "謝謝", "감사"
+- **Acks**: "ok", "okay", "got it", "了解", "わかった", "うん",
+  "はい", "はいはい"
+- **Single-token social**: a single word ≤ 8 chars + no verb
+  ("yo", "sup", "moshimoshi", "もしもし")
+- **Punctuation-only / single emoji**: "?", "?", "wait", "👋"
+
+In all of these cases the user is NOT requesting work. Skills like
+`article_writer` / `blog_writer` / `summarizer` MUST NOT be
+considered — even when the catalogue has them and the LLM can
+"justify" a match post-hoc. **Output a chitchat reply (P3) and
+finish.**
+
 ### P1. task — `available_skills` has a clear semantic match
 A skill in `available_skills` whose `routing.when_to_use` /
 `routing.examples.positive` (or `description` if no `routing` block)
@@ -98,6 +122,17 @@ specific skill and construct its input.
 If multiple skills look plausible but none is clearly best, prefer
 `task` (let `match` ask a clarifying question). If NO skill fits at
 all, fall through to later intents.
+
+**Negative signals — do NOT trigger task on these:**
+- Greeting / thanks / ack (already handled by P0; this reminder
+  exists because catalogues with many writer/blog skills tempt
+  the LLM to rationalize a match for "hello" → "user wants a blog
+  post". Don't.)
+- The user is asking the agent a question about itself / its
+  capabilities ("what can you do?", "君は何ができる？"). That's
+  chitchat (P3) or meta — not a task.
+- The user's message is shorter than 3 substantive characters AND
+  contains no imperative verb. Real tasks have a verb.
 
 ### P2. fresh_lookup — the question requires fresh / time-sensitive data
 Trigger when EITHER:
