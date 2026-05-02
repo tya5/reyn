@@ -22,12 +22,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.scroll_view import ScrollView
 from textual.widget import Widget
-from textual.widgets import Markdown, RichLog, Static
+from textual.widgets import RichLog
 
 from reyn.chat.outbox import OutboxMessage
 from .intervention import InterventionWidget
@@ -70,13 +71,6 @@ class ConversationView(Widget):
         scrollbar-color: #C8553D;
         padding: 0 1;
     }
-    ConversationView .agent-prefix {
-        padding: 0 1;
-        color: #C8553D;
-    }
-    ConversationView .agent-body {
-        padding: 0 1 0 9;
-    }
     """
 
     def __init__(self, *, scroll_end: bool = True, id: str | None = None) -> None:
@@ -109,13 +103,23 @@ class ConversationView(Widget):
             self._write_log(text)
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
-        """Mount a coral prefix Static + Markdown widget pair for agent messages."""
+        """Render agent message as Markdown into the RichLog timeline.
+
+        Earlier wave-B impl mounted Textual `Markdown` widgets as siblings
+        below the RichLog, which broke chronological flow — user messages
+        sat in RichLog while agent messages stacked separately at the
+        bottom. Writing `rich.markdown.Markdown` directly into the RichLog
+        keeps every turn in one append-only timeline (the original design)
+        while still rendering markdown features (headers / lists / code
+        blocks with syntax highlight via Rich's built-in renderer).
+        """
+        log = self._log()
         meta_pfx = _meta_prefix(msg.meta)
         prefix_text = f"agent  {meta_pfx}" if meta_pfx else "agent  "
-        prefix = Static(prefix_text, classes="agent-prefix")
-        body_text = msg.text if msg.text else ""
-        body = Markdown(body_text, classes="agent-body")
-        self.mount(prefix, body)
+        prefix = Text(prefix_text, style="bold #C8553D")
+        log.write(prefix)
+        if msg.text:
+            log.write(RichMarkdown(msg.text))
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
