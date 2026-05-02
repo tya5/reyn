@@ -1,480 +1,242 @@
-# Claude Design Prompt Template — Reyn
+# Claude Design Prompt — Reyn (reyn-ui/v1)
 
-> Paste **§ Opening Prompt** below into a fresh `claude.ai/design` thread as the
-> first message. Append `→ App` or `→ Studio` to specify which face you want
-> generated. Iterate via the canvas chat.
->
-> The whole point of this template is **swappability**: every Claude Design
-> export must drop into `web/design/<face>/` and Just Work, without rewriting
-> the Reyn shell. To make that possible, the template fixes:
->
-> 1. The output file structure (Claude Design produces these files, this naming)
-> 2. The token schema (`tokens.json` keys are stable across designs)
-> 3. The component prop contracts (Reyn's adapter layer passes these props)
->
-> If a generated design violates any of these, it isn't swap-ready. Fix the
-> design (or the template) before exporting.
+> **Navigation**: this is the operational document for prompting Claude
+> Design. The architecture (3-layer model + AG-UI evaluation) is in
+> [engine-design-contract.md](engine-design-contract.md). The protocol
+> spec itself is in [docs/openui/](../openui/). The component contracts
+> a design must satisfy are in
+> [docs/openui/schemas/reyn-ui-v1/components.md](../openui/schemas/reyn-ui-v1/components.md).
+
+This document holds the **prompt** Cowork pastes into a fresh
+`claude.ai/design` thread to generate a reyn-ui/v1 conformant design.
+It is intentionally short — the spec lives elsewhere; the prompt
+references it.
 
 ---
 
 ## How to use
 
-1. Open `claude.ai/design`, start a new project under the Reyn organisation.
-2. Paste the **Opening Prompt** (next section), with `→ App` or `→ Studio`
-   appended on the last line.
-3. Iterate visuals on the canvas.
-4. Before export, run through the **Acceptance Checklist** at the bottom.
-5. Export → `Send to Claude Code` (handoff bundle) **or** `.zip`.
-6. Drop the export into `web/designs/<name>/<face>/`, where `<name>` is
-   a short slug for this design variant (e.g. `warm`, `dark`, `claude`),
-   and `<face>` is `app` or `studio`. Multiple designs coexist; users pick
-   one at web startup or via URL param. See
-   `docs/web/multi-design-selection.md` for the selection mechanism.
+1. Open `claude.ai/design`, start a new project.
+2. Paste the **§ Opening Prompt** below.
+3. Append `→ App` or `→ Studio` on the last line to choose which face.
+4. Iterate visuals on the canvas.
+5. Before export, run through the **§ Acceptance Checklist**.
+6. Export → `.zip` (preferred) or `Send to Claude Code`.
+7. Drop into `reyn/local/designs/<slug>/`. See
+   [multi-design-selection.md](multi-design-selection.md) for layout.
 
-   ```bash
-   # Add a new design
-   mkdir -p web/designs/warm/app
-   unzip <new_app_export>.zip -d web/designs/warm/app
-
-   # Replace an existing design (App face only)
-   rm -rf web/designs/warm/app
-   unzip <new_app_export>.zip -d web/designs/warm/app
-
-   # If TypeScript still typechecks across all designs, swap is good.
-   ```
-7. Commit on a branch separate from `feat/web-gateway` (frontend integration
-   happens in its own session).
+The prompt is in **English** because Claude Design responds more
+reliably to English instructions, even when the resulting UI strings
+are Japanese (i18n keys are passed via `OPENUI_DATA.COPY` at runtime —
+the design itself does not hardcode language). See feedback memory
+`feedback_claude_design_english.md`.
 
 ---
 
 ## § Opening Prompt
 
 ````markdown
-You are designing one face of a two-face product called Reyn. Read the spec
-below in full before producing anything. The output will drop into a code
-project that has fixed expectations for file structure, design tokens, and
-component prop shapes — listed at the end of this prompt. If you can't
-satisfy them, ask before generating.
+You are designing a UI for **Reyn**, a workflow-engine-driven agent OS.
+The design will integrate with Reyn via the **OpenUI Layer 0 protocol**
+and the **reyn-ui/v1 Layer 1 schema**. Read this entire prompt before
+producing anything.
 
 ## What is Reyn
 
-Reyn is an LLM-driven workflow engine. Skills (Markdown files) declare graphs
-of phases; the runtime calls the LLM, validates outputs, executes side-effect
-ops, and emits an audit-grade event log. Reyn has two web faces:
+Reyn lets non-technical users converse with specialist AI agents and
+lets developers build & ship those agents from Markdown. Underneath,
+it is an LLM-driven workflow engine; designs render the UI that wraps
+that engine.
 
-- **App** — the friendly, end-user surface. Pick an agent, chat, get things
-  done. Think Claude.ai / OpenClaw / ChatGPT in tone. Default landing.
-- **Studio** — the dense, dev-tool surface. Build & debug Skills, inspect
-  runs, edit permissions. Think Linear / Vercel / Cursor / Temporal Web UI.
-  Hidden behind a "Studio" button on the App rail.
+The Reyn UI has **two faces**:
 
-The two faces share the backend and the agent identity, but **share nothing
-in visual chrome, density, or vocabulary**. Switching App ↔ Studio should
-feel like opening a different mode of the same product.
+- **App** — friendly end-user surface (default landing). Pick an agent,
+  chat, get things done. Tone: Claude.ai / OpenClaw / ChatGPT. Hides
+  engine vocabulary entirely.
+- **Studio** — dense developer surface. Build & debug skills, inspect
+  runs, edit permissions. Tone: Linear / Vercel / Cursor / Temporal /
+  LangSmith. Surfaces engine vocabulary verbatim.
 
-> If a screen is App-side, it must never expose engine-level vocabulary
-> (phase / artifact / control_ir / event / validation / schema). Studio-side
-> screens should expose all of it, fluently.
+The two faces share the agent identity (name, color, avatar) and a
+top-right App ↔ Studio toggle, but **share nothing else** — different
+chrome, density, vocabulary.
 
-## Personas
+## How the design connects to the engine
 
-- **End user** (App) — non-technical, default UI language Japanese. Cares
-  about picking the right agent and trusting that things got done.
-- **Skill author** (Studio) — developer. Cares about editing skills,
-  debugging runs, eval iteration.
-- **Reviewer / on-call** (Studio) — replays failed runs, fixes permissions
-  and budget.
+Reyn implements the **OpenUI Layer 0 protocol**. The design reads four
+globals on `window`:
 
-## Domain (Studio-side vocabulary; App must hide all of it)
+- `window.OPENUI_HOST` — `{ invoke(action, payload?), listen(channel, handler) }`
+- `window.OPENUI_DATA` — initial data (shape: `ReynUiData`)
+- `window.OPENUI_SCHEMA` — should be `"reyn-ui/v1"`
+- `window.OPENUI_DESIGN_MODE` — `true` in standalone preview, `false`
+  when embedded in the host
 
-Agent, Skill, Phase, Artifact, Run, Event, Eval, Topology, Workspace,
-Permission policy, Budget, Control IR op. (See the project's
-`docs/web/design_brief.md` for the full glossary if it's been imported.)
+Pattern at boot:
 
-## App-side vocabulary translations
-
-| Engine | App |
-|---|---|
-| Agent | Agent (kept) |
-| Skill | "a thing your agent can do" — phrase as a verb on cards |
-| Phase | (hidden) |
-| Artifact | (hidden — render as form field for entry, plain text/markdown for output) |
-| Run | "Aria is working on it" / "Aria finished" |
-| Event | (hidden — humanised inline status) |
-| `ask_user` Control IR | Inline soft question with chip suggestions |
-| Validation error | "Hmm, something didn't look right — let me try again" |
-| Permission prompt | "Aria wants to read `notes.txt`. Allow once / always / no" |
-| Budget hit | "You've used 80% of today's budget" toast |
-| Sub-skill nesting | "Aria asked the writing helper to draft a section" |
-| `loop_limit_exceeded` | "I'm having trouble making progress — want to give me more guidance?" |
-
-## App face — visual & interaction language
-
-- Vibe: warm, light, breathing. Closer to Claude.ai / OpenClaw / Notion's
-  onboarding than to Vercel.
-- Color: warm primary (coral / amber / soft teal — pick one). Light mode
-  primary; dark mode polished.
-- Typography: humanist sans (Inter / Geist / Söhne), generous line-height,
-  large readable body. **No monospace anywhere on App.**
-- Density: low. Big cards, generous padding. Mobile-friendly,
-  desktop-first.
-- Iconography: rounded line icons. Optional mascot avatars per agent
-  (OpenClaw-style).
-- Voice: first-name agents, present tense ("Aria is researching…"). No
-  jargon. No exclamation marks.
-
-### App priority screens (generate in this order)
-
-1. **Today / home** — calm, warm, scannable. Greeting, recap of recent
-   agent activity (humanised, no IDs / no event types), agent cards row,
-   suggested quick-starts.
-2. **Conversation** — bread-and-butter chat. Streaming text feels like
-   speech. Subtle "thinking…" pill. Inline soft questions (chips) for
-   `ask_user`. Background skill status as friendly inline banner ("Aria
-   found 5 sources").
-3. **Agent gallery + profile sheet** — pickable personalities. Tap → chat;
-   long-press → friendly profile sheet with a small "Open in Studio" link.
-4. **Library card → guided run** — tap a card, walk through a tiny form
-   (auto-rendered from artifact JSON Schema, presented as labeled inputs
-   with examples).
-
-## Studio face — visual & interaction language
-
-- Vibe: dev-tool dense. Dark mode primary. Linear / Vercel dashboard /
-  Cursor / Temporal / LangSmith.
-- Color: cool accent (teal / cyan); state colors used sparingly. Yellow =
-  intervention, red = error, green = done.
-- Typography: monospace for IDs / paths / JSON / event types; sans-serif
-  (Inter) for chrome.
-- Density: high. Tables, side rails, keyboard shortcut hints.
-- Iconography: simple line icons. Glyphs `⟳ · ✗` carry over from the TUI.
-- Voice: neutral, technical. Engine terms verbatim.
-
-### Studio priority screens
-
-1. **Conversation + live skill-run inspector** — same chat UX as App, plus
-   a right rail with the live mini-map: phase graph, current phase
-   highlighted, control-IR ops fired, token/cost so far.
-2. **Skill graph** — interactive node-and-edge canvas. Phases as nodes;
-   transitions as edges; sentinel `end` styled distinctly; sub-skills
-   (`@name`) styled as nested. Hover = instructions; click = phase detail.
-3. **Run timeline / event log** — vertical timeline with collapsible
-   groups, filter chips by event type, jump-to-phase markers.
-4. **Permissions table** — ops × rules grid, editable inline.
-
-## Shared rules (both faces)
-
-- Agent identity (name, color, avatar) is the same across faces.
-- Top-right "App ↔ Studio" toggle on every screen.
-- Edits never destroy: skill / phase / artifact edits create a new
-  version; old runs replay against the version they ran with.
-- The agent's spoken voice is identical across faces — only the chrome
-  differs.
-
-## ─── HARD OUTPUT REQUIREMENTS — DO NOT VIOLATE ───
-
-The following are **machine-checked** when the design lands in code. If
-your generated design doesn't satisfy them, the swap will fail.
-
-### 1. File structure
-
-The export must contain at minimum:
-
-```
-manifest.json              ← whatever Claude Design produces; ignored by Reyn
-tokens.json                ← see § Token Schema below — REQUIRED
-components/
-  <ComponentName>.tsx      ← one file per component; PascalCase
-  ...
-pages/
-  <PageName>Page.tsx       ← one file per page; PascalCase + "Page" suffix
-  ...
-```
-
-No other top-level files. No `index.html` boilerplate. No `package.json`.
-The Reyn shell provides routing, build tooling, and runtime.
-
-### 2. Token schema (tokens.json)
-
-`tokens.json` MUST validate against this schema. New designs CAN add
-extra keys but MUST keep these:
-
-```json
-{
-  "color": {
-    "background": "<hex>",
-    "surface":    "<hex>",
-    "primary":    "<hex>",
-    "primary_fg": "<hex>",
-    "muted":      "<hex>",
-    "muted_fg":   "<hex>",
-    "border":     "<hex>",
-    "warn":       "<hex>",
-    "error":      "<hex>",
-    "success":    "<hex>"
-  },
-  "typography": {
-    "font_sans": "<css font-family stack>",
-    "font_mono": "<css font-family stack>",
-    "size": {
-      "xs": "<rem>", "sm": "<rem>", "base": "<rem>",
-      "lg": "<rem>", "xl": "<rem>", "2xl": "<rem>"
-    },
-    "weight": {
-      "regular": 400, "medium": 500, "semibold": 600, "bold": 700
-    }
-  },
-  "spacing": {
-    "0": "0", "1": "<rem>", "2": "<rem>", "3": "<rem>",
-    "4": "<rem>", "6": "<rem>", "8": "<rem>", "12": "<rem>", "16": "<rem>"
-  },
-  "radius": {
-    "sm": "<rem>", "md": "<rem>", "lg": "<rem>", "full": "9999px"
-  },
-  "shadow": {
-    "sm": "<css>", "md": "<css>", "lg": "<css>"
-  }
+```js
+if (window.OPENUI_HOST && window.OPENUI_SCHEMA === "reyn-ui/v1") {
+  // Embedded in Reyn host: use real data and route callbacks to host
+  const data = window.OPENUI_DATA; // type: ReynUiData
+  // user actions: window.OPENUI_HOST.invoke("agent.submit", { agentId, text })
+  // streams:      window.OPENUI_HOST.listen("agent.message", handler)
+} else {
+  // Standalone preview (designer mode): use mock data, log actions to console
 }
 ```
 
-Use these as CSS variables in component styles
-(`var(--color-primary)`, `var(--space-4)`, etc.) so a new tokens.json
-re-themes the whole UI.
+The design MUST work in both modes. Standalone preview shows the
+design on top of mock data; embedded mode shows it on top of real
+Reyn data piped through the host adapter.
 
-### 3. Component contracts (REQUIRED components)
+## Required components, data shape, actions, channels
 
-Each face must export the components below with **exactly** these prop
-shapes. The Reyn shell's adapter layer passes props in this shape.
-Components that diverge cannot be swapped in.
+Do NOT redefine these here. They are specified canonically in:
 
-#### Both faces
+- **Component contracts** (which components to export, their props):
+  see `docs/openui/schemas/reyn-ui-v1/components.md`
+- **Data shape** (`ReynUiData` type tree):
+  see `docs/openui/schemas/reyn-ui-v1/data.types.ts`
+- **Actions and channels** (what `invoke` and `listen` accept):
+  see `docs/openui/schemas/reyn-ui-v1/manifest.yaml`
 
-```typescript
-// components/ChatMessage.tsx
-export type ChatMessageKind =
-  | "agent" | "status" | "error"
-  | "intervention" | "trace" | "skill_done"
+You will be given the contents of these files when you start. Treat
+them as the contract: every required component must be exported,
+prop shapes must match, action / channel names must be used as
+defined.
 
-export interface ChatMessageProps {
-  kind: ChatMessageKind
-  content: string                       // markdown OK
-  agentName: string
-  agentColor?: string                   // hex; falls back to default
-  runId?: string                        // optional, surfaces "Open in Studio"
-  timestamp: string                     // ISO 8601
-  /** Only present when kind="intervention". Choices to render as chips. */
-  choices?: { id: string; label: string }[]
-  /** Only present when kind="intervention". Called with chosen id or free text. */
-  onAnswer?: (answer: { choiceId?: string; text?: string }) => void
-}
+## Visual brief
 
-// components/AgentCard.tsx
-export interface AgentCardProps {
-  name: string
-  color: string                         // hex
-  avatarUrl?: string
-  tagline: string                       // one-line "what I'm good at"
-  lastActiveAt?: string                 // ISO 8601, optional
-  onClick: () => void
-}
+For visual / interaction direction (App's warm friendly tone, Studio's
+dense developer tone, screen layouts, color guidance, density,
+typography), see `docs/web/design_brief.md`. Do not deviate from the
+brief without flagging it in the canvas chat.
 
-// components/ModeToggle.tsx
-export interface ModeToggleProps {
-  current: "app" | "studio"
-  onChange: (next: "app" | "studio") => void
-}
-```
+## Hard rules
 
-#### App face only
+- **No hardcoded mock data inside components.** Components read from
+  `window.OPENUI_DATA` (shape: `ReynUiData`) when embedded, or from a
+  fallback mock when standalone. Mock data lives in a separate
+  `data.js` (or equivalent) so it can be replaced.
+- **No `fetch` / `XMLHttpRequest` / `WebSocket` calls inside
+  components.** All backend interaction goes through
+  `window.OPENUI_HOST.invoke` and `window.OPENUI_HOST.listen`.
+- **No global state libraries** (Zustand, Redux, Recoil, Jotai, …).
+  The host owns durable state. Local component state for transient
+  UI is fine.
+- **No bundler / framework configs** (Tailwind config, postinstall
+  scripts, `package.json`). The host owns the build.
+- **App face vocabulary**: never expose the words `phase`, `artifact`,
+  `control_ir`, `event`, `validation`, `schema`. Studio face uses these
+  verbatim.
+- **i18n**: App face strings come from `OPENUI_DATA.COPY[lang]` via a
+  `t(key, lang)` helper. Studio face strings may be inline English.
+- **Only one face per export.** Generate App or Studio in one
+  iteration; the other face is a separate export.
 
-```typescript
-// components/QuickstartCard.tsx
-export interface QuickstartCardProps {
-  title: string                         // verb phrase, e.g. "Research a topic"
-  description: string
-  iconKey?: string                      // optional icon hint; renderer maps it
-  onClick: () => void
-}
+## Designer-mode niceties (optional)
 
-// components/RecapLine.tsx
-export interface RecapLineProps {
-  agentName: string
-  agentColor: string
-  /** Already humanised — engine vocab MUST NOT appear here. */
-  message: string
-  runId?: string                        // optional "Open in Studio" link
-}
+When `window.OPENUI_DESIGN_MODE === true`, you MAY render a small
+designer-only chrome (theme tweaks panel, color / density switcher).
+Gate it explicitly so the host (with `OPENUI_DESIGN_MODE = false`)
+never sees it.
 
-// pages/TodayPage.tsx
-export interface TodayPageProps {
-  greeting: string                      // "Good morning, Tetsuya"
-  recap: RecapLineProps[]
-  agents: AgentCardProps[]
-  quickstarts: QuickstartCardProps[]
-}
+## Now generate
 
-// pages/ConversationPage.tsx (App)
-export interface ConversationPageProps {
-  agentName: string
-  agentColor: string
-  messages: ChatMessageProps[]
-  onSubmit: (text: string) => void
-  /** Set when an ask_user is pending; render as inline soft question. */
-  pendingIntervention?: ChatMessageProps  // kind="intervention"
-}
-```
-
-#### Studio face only
-
-```typescript
-// components/EventTimelineItem.tsx
-export interface EventTimelineItemProps {
-  type: string                          // raw engine event type, displayed verbatim
-  timestamp: string                     // ISO 8601
-  payload: Record<string, unknown>      // opaque; render as collapsible JSON
-  isError?: boolean
-}
-
-// components/SkillGraphNode.tsx
-export interface SkillGraphNodeProps {
-  phaseName: string                     // verbatim
-  isCurrent?: boolean
-  isError?: boolean
-  visitCount?: number
-  onClick: () => void
-}
-
-// pages/RunDetailPage.tsx
-export interface RunDetailPageProps {
-  runId: string
-  skillName: string
-  status: "running" | "finished" | "failed" | "aborted"
-  startedAt: string
-  durationMs?: number
-  events: EventTimelineItemProps[]
-  /** Adjacency for the skill graph mini-map, if available. */
-  graph?: { nodes: SkillGraphNodeProps[]; edges: { from: string; to: string }[] }
-}
-
-// pages/PermissionsPage.tsx
-export interface PermissionsPageProps {
-  rules: {
-    op: string                          // verbatim, e.g. "file.write"
-    pattern: string
-    decision: "allow" | "deny" | "prompt"
-  }[]
-  onEdit: (index: number, next: { decision: "allow" | "deny" | "prompt" }) => void
-  onDelete: (index: number) => void
-}
-```
-
-### 4. Anti-requirements (do not do)
-
-- Do **NOT** include hardcoded mock data. All data must come from props.
-- Do **NOT** include `fetch()` calls or imports of HTTP / WebSocket
-  clients. Reyn's shell injects data.
-- Do **NOT** introduce global state (Zustand, Redux, Recoil, Jotai, …).
-  The shell owns state.
-- Do **NOT** ship a Tailwind config / framework wrapper. Use plain CSS or
-  CSS-in-JS scoped per component, referencing `tokens.json` via
-  CSS variables.
-- Do **NOT** invent new component names beyond those above without
-  flagging it in the canvas chat first. Extra components are fine but
-  they need a Reyn-side contract before they ship.
-- Do **NOT** mix App and Studio component aesthetics in one export. One
-  face per export.
-- Do **NOT** include test files, Storybook configs, build scripts,
-  README, or `.gitignore`. The shell owns those.
-
-### 5. i18n hooks
-
-All user-visible strings in App-face components must be passed via props
-(do not hardcode English or Japanese inside components). The shell maps
-Reyn's `output_language` setting to the appropriate string before
-passing it down. Studio-face strings can stay English (developer
-audience).
-
----
-
-## Now, generate the design
-
-Append one of the following lines to specify which face:
+Append one of these to specify which face:
 
 > `→ App`
 >
 > `→ Studio`
 
-Begin by enumerating which priority screens you'll cover and what tokens
-you propose, then iterate.
+Begin by enumerating which screens you'll cover and your token /
+typography proposal, then iterate.
 ````
 
 ---
 
-## Acceptance Checklist (before export)
+## § Acceptance Checklist
 
-Cowork session runs through this before clicking Export:
+Run through this before clicking Export. Anything failing here means
+the design will not load cleanly in Reyn — fix it in the canvas first.
 
-- [ ] **One face per export** — App and Studio are separate exports.
-- [ ] **All required components present** — see § 3 above for the list.
-- [ ] **Component prop shapes match the contract verbatim** (extra optional
-      props OK; missing required props NOT OK).
-- [ ] `tokens.json` validates against § 2 schema (all required keys present,
-      values valid CSS).
-- [ ] **No hardcoded mock data** in components — all from props.
+### Structure
+
+- [ ] **Only one face per export.** App and Studio are separate
+      exports.
+- [ ] **All required components present** for the chosen face. See
+      [reyn-ui/v1 components.md](../openui/schemas/reyn-ui-v1/components.md).
+- [ ] **Component prop shapes match the contract verbatim** (extra
+      optional props are OK; missing required props are not).
+
+### Behaviour
+
+- [ ] **`window.OPENUI_HOST` detection**: each component that takes
+      callback props uses them when the host is present, falls back
+      to local-state mocks otherwise.
+- [ ] **`window.OPENUI_DATA`** is the source of truth for data;
+      `data.js` (or equivalent) only provides the fallback mock.
+- [ ] **`window.OPENUI_DESIGN_MODE`** gates any designer-only chrome
+      (tweaks panel etc.).
+- [ ] **`window.OPENUI_SCHEMA === "reyn-ui/v1"`** check at boot, with a
+      clear console warning if the schema doesn't match.
+
+### Anti-requirements
+
+- [ ] **No hardcoded mock data inside components** — only via
+      `OPENUI_DATA` / fallback module.
 - [ ] **No HTTP / WebSocket / global state** in components.
-- [ ] **No Tailwind / framework configs** — plain CSS, CSS variables only.
-- [ ] **App face strings come via props** (i18n hook); Studio face strings
-      can be inline English.
-- [ ] **App face never says** `phase`, `artifact`, `control_ir`, `event`,
-      `validation`, or `schema` (case-insensitive grep over the export).
-- [ ] **Studio face uses engine terms verbatim** — no humanised paraphrases.
-- [ ] **App ↔ Studio toggle present** on every page-level component.
+- [ ] **No Tailwind / framework configs.** Plain CSS, CSS variables.
 
-If anything fails, fix it in the canvas before exporting.
+### Surface vocabulary
+
+- [ ] **App face never says** `phase`, `artifact`, `control_ir`,
+      `event`, `validation`, `schema` (case-insensitive grep over
+      the export, App face only).
+- [ ] **Studio face uses engine terms verbatim** — no humanized
+      paraphrases.
+
+### Chrome
+
+- [ ] **App ↔ Studio toggle** present on every page-level component
+      (uses `ModeToggle` from
+      [components.md](../openui/schemas/reyn-ui-v1/components.md)).
+
+If anything fails, fix it in Claude Design before exporting.
 
 ---
 
 ## Drop-in procedure (after export)
 
 ```bash
-# Pick a slug for this design variant ("warm", "dark", "claude", etc.)
-DESIGN=warm
-FACE=app    # or studio
+DESIGN=<your-slug>     # e.g. "warm", "lobster", "v1"
 
-TARGET="web/designs/${DESIGN}/${FACE}"
+# Wipe and replace this design's directory
+rm -rf "reyn/local/designs/$DESIGN"
+mkdir -p "reyn/local/designs/$DESIGN"
+unzip <export>.zip -d "reyn/local/designs/$DESIGN"
 
-# Wipe and replace this face of this design
-rm -rf "$TARGET"
-mkdir -p "$TARGET"
-unzip <new_export>.zip -d "$TARGET"
-
-# Verify the swap is clean across all designs
-cd web && npm run typecheck
-# - If typecheck passes, contracts hold for the new design; users can
-#   pick it via the design selector at startup.
-# - If typecheck fails, the diff tells you which contract broke. Fix
-#   the design (re-prompt Claude Design with the missing contract
-#   excerpt) or, if the contract itself needs to evolve, propose the
-#   change on the shell side.
+# When the host implementation lands (PR30), starting `reyn web`
+# will discover and offer this design in the picker.
 ```
 
-Adding a brand-new design alongside existing ones is the same procedure
-with a fresh `$DESIGN` slug. Removing a design is `rm -rf web/designs/<name>`.
-Users select among available designs at startup; see
-`docs/web/multi-design-selection.md`.
+To target `reyn/project/designs/<slug>/` (committed to the team's
+project) instead, replace `local` with `project` in the path. See
+[multi-design-selection.md](multi-design-selection.md) for the
+three-root layout and selection priority.
 
 ---
 
-## When to update this template
+## When to revise the prompt
 
-- A new required component on either face → add to § 3 component
-  contracts, bump tokens.json schema if needed, re-prompt designs that
-  predate the change.
-- Reyn data model changes (new WebSocket message kind, new agent profile
-  field) → update the contract for the affected component.
-- Brand pivot → only `tokens.json` should need to change. If components
-  themselves need different markup, add a new component name (don't
-  mutate the existing contract).
+- A new required component / new minor of `reyn-ui/v1` →
+  re-prompt the design (existing designs MAY skip optional new
+  components and host falls back).
+- A breaking change (`reyn-ui/v2`) → re-prompt against the new schema
+  identifier, or pin existing designs to v1 with the older host.
+- Brand pivot → only the visual brief (`design_brief.md`) changes;
+  this prompt remains.
 
-The whole point of fixing component contracts is that a brand pivot only
-changes pixels and tokens, not code structure on the Reyn side.
+The point of fixing the contract in `docs/openui/` is that visual
+iteration only requires Claude Design to re-read the brief and the
+schema files; the structural prompt above stays stable.
