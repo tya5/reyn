@@ -222,6 +222,12 @@ a design.
 - **Organisation override**: an organisation deploying Reyn checks
   `reyn/project/designs/acme/` into their fork, set as the default in
   `reyn.yaml`. Bundled designs remain available as fallback.
+- **Community design ecosystem**: an author publishes their design as
+  open source (e.g. on GitHub with the `reyn-design` topic). Other users
+  install via `reyn design add gh:<author>/<repo>`, the package lands in
+  `reyn/local/designs/<name>/`, picker shows it next refresh. See
+  [design-distribution.md](design-distribution.md) for the install /
+  publish pipeline.
 
 ---
 
