@@ -608,8 +608,13 @@ class BudgetTracker:
 
     # ── PR25: period counter helpers ─────────────────────────────────────
 
-    def _update_period_counters(self, tokens: int, cost_usd: float) -> None:
-        """Update daily / monthly counters, resetting if period changed."""
+    def _roll_period_if_needed(self) -> None:
+        """Reset daily / monthly counters when the local-time period boundary
+        has been crossed since the last update.
+
+        Called from both check_pre_llm (to avoid wrongly refusing across the
+        midnight boundary when no record_llm has run yet) and record_llm.
+        """
         now = time.time()
         new_day = _period_key(now, "day")
         new_month = _period_key(now, "month")
@@ -624,6 +629,9 @@ class BudgetTracker:
             self._monthly_cost_usd = 0.0
             self._month_key = new_month
 
+    def _update_period_counters(self, tokens: int, cost_usd: float) -> None:
+        """Roll period if needed, then add the new tokens / cost."""
+        self._roll_period_if_needed()
         self._daily_tokens += tokens
         self._daily_cost_usd += cost_usd
         self._monthly_tokens += tokens
@@ -631,6 +639,9 @@ class BudgetTracker:
 
     def _check_daily_monthly(self) -> BudgetCheck:
         """Return allowed=False if a daily or monthly hard limit is exceeded."""
+        # Roll the period first so a check immediately after midnight does not
+        # see yesterday's exhausted counters.
+        self._roll_period_if_needed()
         # Daily tokens
         cap = self._config.daily_tokens
         if cap.is_active and self._daily_tokens >= cap.hard_limit:

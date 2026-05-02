@@ -274,6 +274,34 @@ def test_daily_warn_threshold():
         assert "800" in warn_msg or "1,000" in warn_msg
 
 
+def test_check_pre_llm_rolls_period_across_midnight():
+    """If check_pre_llm runs after the local-time period boundary, stale
+    counters from the previous day must not cause a wrongful refusal."""
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger_path = Path(tmp) / "budget_ledger.jsonl"
+        cfg = _make_cfg(daily_tokens=100, monthly_tokens=100_000)
+
+        t = BudgetTracker(cfg)
+        t.hydrate(ledger_path)
+
+        # Simulate "yesterday's exhausted state": counters at the cap, day_key
+        # is yesterday's value. record_llm has not run since the boundary, so
+        # without _roll_period_if_needed in check_pre_llm the tracker would
+        # still refuse despite the new day starting.
+        t._daily_tokens = 999
+        t._daily_cost_usd = 99.0
+        t._day_key = ("day", "1999-01-01")  # forced to be in the past
+
+        check = t.check_pre_llm(model="openai/test", agent="alice")
+        assert check.allowed, (
+            f"check_pre_llm should roll the day before deciding; "
+            f"got hard_dimension={check.hard_dimension}"
+        )
+        # And the counter should now reflect today, with zero usage.
+        assert t._daily_tokens == 0
+        assert t._day_key is not None and t._day_key[1] != "1999-01-01"
+
+
 def test_monthly_warn_threshold():
     """Monthly warn threshold emits the correct warn dimension."""
     with tempfile.TemporaryDirectory() as tmp:
