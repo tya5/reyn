@@ -74,13 +74,13 @@ class DonutScreen(ModalScreen):
     def _tick(self) -> None:
         self._a += 0.07
         self._b += 0.03
-        frame = self._render(self._a, self._b)
+        frame = self._compute_frame(self._a, self._b)
         try:
             self.query_one("#donut", Static).update(frame)
         except Exception:
             pass
 
-    def _render(self, a: float, b: float) -> Text:
+    def _compute_frame(self, a: float, b: float) -> Text:
         w, h = self._w, self._h
         k1 = self._k1
         # Flat buffers: index = x + y * w
