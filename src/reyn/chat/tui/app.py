@@ -76,7 +76,10 @@ class ReynTUIApp(App):
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
-        Binding("tab", "open_palette", "Commands", priority=True, show=False),
+        Binding("tab", "palette_next", "Commands / next", priority=True, show=False),
+        Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
+        Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
+        Binding("ctrl+p", "palette_prev", "Prev", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette"),
     ]
 
@@ -386,6 +389,30 @@ class ReynTUIApp(App):
         except Exception:
             prefix = ""
         self._open_palette(prefix=prefix)
+
+    def action_palette_next(self) -> None:
+        """Tab / Ctrl+N — open the palette, or advance selection if already open."""
+        if self._palette_visible:
+            self._move_palette_cursor(1)
+        else:
+            self.action_open_palette()
+
+    def action_palette_prev(self) -> None:
+        """Shift+Tab / Ctrl+P — move selection up; no-op if palette is closed."""
+        if self._palette_visible:
+            self._move_palette_cursor(-1)
+
+    def _move_palette_cursor(self, delta: int) -> None:
+        """Advance / retreat the palette selection by `delta` (±1)."""
+        try:
+            overlay = self.query_one("#palette", CommandPaletteOverlay)
+        except Exception:
+            return
+        count = overlay.option_count
+        if count == 0:
+            return
+        current = overlay.highlighted if overlay.highlighted is not None else -1
+        overlay.highlighted = (current + delta) % count
 
     # ── command palette ───────────────────────────────────────────────────────
 
