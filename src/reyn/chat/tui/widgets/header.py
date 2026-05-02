@@ -1,12 +1,15 @@
 """ReynHeader — top-of-screen status bar.
 
 Displays: Reyn · <agent_name> · <model> · <tokens today> · <cost today>
+on the left/centre, and a live clock (YYYY-MM-DD HH:MM:SS) on the right.
 
 Updated via `app.post_message(ReynHeader.StatusUpdate(...))` or by calling
-`refresh_status()` directly from async code.
+`refresh_status()` directly from async code. The clock self-ticks once
+per second from on_mount.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from textual.app import ComposeResult
@@ -36,6 +39,11 @@ class ReynHeader(Widget):
         text-align: right;
         padding: 0 1;
         width: 1fr;
+    }
+    ReynHeader #clock {
+        color: #888888;
+        padding: 0 1;
+        width: auto;
     }
     """
 
@@ -67,6 +75,22 @@ class ReynHeader(Widget):
     def compose(self) -> ComposeResult:
         yield Label("Reyn", id="title")
         yield Label(self._format_status(), id="status")
+        yield Label(self._now_text(), id="clock")
+
+    def on_mount(self) -> None:
+        # Tick the clock every second. 1 Hz is plenty — the seconds field
+        # is included so a frozen UI is immediately obvious.
+        self.set_interval(1.0, self._tick_clock)
+
+    @staticmethod
+    def _now_text() -> str:
+        return time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _tick_clock(self) -> None:
+        try:
+            self.query_one("#clock", Label).update(self._now_text())
+        except Exception:
+            pass
 
     def _format_status(self) -> str:
         parts: list[str] = []
