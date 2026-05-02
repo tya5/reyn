@@ -131,6 +131,7 @@ from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
 from reyn.chat.slash import matrix as _matrix_mod  # noqa: E402, F401
+from reyn.chat.slash import zen as _zen_mod  # noqa: E402, F401
 
 
 __all__ = [
