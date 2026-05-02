@@ -2193,10 +2193,29 @@ class ChatSession:
         "chat_router" is used for permission key lookups — it matches what the
         PermissionResolver uses to gate paths. All .reyn/ paths are in the
         default write zone so memory ops pass without additional approval.
+
+        PermissionDecl is populated from the agent's effective permissions
+        (file_read / file_write from config, mcp from configured servers) so
+        that op_runtime layer permission checks actually gate access rather than
+        silently allowing everything through an empty decl.
         """
         from reyn.op_runtime.context import OpContext
         from reyn.workspace.workspace import Workspace
         from reyn.permissions.permissions import PermissionDecl
+
+        file_perms = self._get_file_permissions_for_router() or {}
+        mcp_servers = self._get_mcp_servers_for_router() or []
+
+        # Convert flat path strings to the {path, scope} dict format used by PermissionDecl
+        file_read = [{"path": p, "scope": "recursive"} for p in file_perms.get("read", [])]
+        file_write = [{"path": p, "scope": "recursive"} for p in file_perms.get("write", [])]
+        mcp_names = [s["name"] for s in mcp_servers]
+
+        decl = PermissionDecl(
+            file_read=file_read,
+            file_write=file_write,
+            mcp=mcp_names,
+        )
 
         workspace = Workspace(
             events=self._chat_events,
@@ -2206,7 +2225,7 @@ class ChatSession:
         return OpContext(
             workspace=workspace,
             events=self._chat_events,
-            permission_decl=PermissionDecl(),
+            permission_decl=decl,
             permission_resolver=self._perm,
             skill_name="chat_router",
             mcp_servers=self._mcp_servers or {},
@@ -2549,8 +2568,13 @@ class ChatSession:
         ctx = self._make_router_op_context()
         # MCP handler requires intervention_bus; wire the session's bus
         ctx.intervention_bus = ChatInterventionBus(self, run_id=None, skill_name="chat_router")
-        # For MCP, permission_decl.mcp must include the server so require_mcp passes
-        ctx.permission_decl = PermissionDecl(mcp=[server])
+        # Narrow mcp scope to just this server while preserving file perms from the
+        # populated decl. PermissionDecl.mcp must include the server for require_mcp to pass.
+        ctx.permission_decl = PermissionDecl(
+            file_read=ctx.permission_decl.file_read,
+            file_write=ctx.permission_decl.file_write,
+            mcp=[server],
+        )
         return await execute_op(op, ctx, caller="control_ir")
 
     # ── RouterLoopHost protocol (Wave 3 F2) ─────────────────────────────────────

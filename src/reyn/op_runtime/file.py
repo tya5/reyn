@@ -11,17 +11,24 @@ from reyn.schemas.models import FileIROp
 
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
+_READ_OPS = frozenset({"read", "glob", "grep"})
 
 
 async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     # Permission check (single point for both frontends). For
     # `regenerate_index` the file actually written is `output_path`, not
     # `path`; everything else writes to `path`.
-    if ctx.permission_resolver is not None and op.op in _WRITE_OPS:
-        write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
-        ctx.permission_resolver.require_file_write(
-            ctx.permission_decl, write_target, ctx.skill_name,
-        )
+    if ctx.permission_resolver is not None:
+        if op.op in _WRITE_OPS:
+            write_target = op.output_path if op.op == "regenerate_index" and op.output_path else op.path
+            ctx.permission_resolver.require_file_write(
+                ctx.permission_decl, write_target, ctx.skill_name,
+            )
+        elif op.op in _READ_OPS:
+            # read / glob / grep — gate against read scope
+            ctx.permission_resolver.require_file_read(
+                ctx.permission_decl, op.path, ctx.skill_name,
+            )
 
     if op.op == "write":
         ctx.workspace.write_file(op.path, op.content or "")

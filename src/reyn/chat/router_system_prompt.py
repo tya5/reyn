@@ -56,6 +56,14 @@ def build_system_prompt(
     parts.append("")
     parts.append("## What you can do (intent axis)")
     parts.append("")
+    has_file_read = bool(
+        file_permissions and file_permissions.get("read")
+    )
+    has_file_write = bool(
+        file_permissions and file_permissions.get("write")
+    )
+    has_mcp = bool(mcp_servers)
+
     parts.append("- Action — run external work")
     parts.append(
         "           skills:  list_skills / describe_skill / invoke_skill"
@@ -63,31 +71,28 @@ def build_system_prompt(
     parts.append(
         "           agents:  list_agents / describe_agent / delegate_to_agent"
     )
-    parts.append(
-        "           files:   list_directory / read_file"
-        "        (when file scope set)"
-    )
-    parts.append(
-        "           mcp:     list_mcp_servers / list_mcp_tools"
-    )
-    parts.append(
-        "                    / call_mcp_tool"
-        "                   (when mcp configured)"
-    )
+    if has_file_read:
+        parts.append(
+            "           files:   list_directory / read_file"
+        )
+    if has_mcp:
+        parts.append(
+            "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool"
+        )
     parts.append("- Recall — read persisted facts")
     parts.append("           tools: list_memory / read_memory_body")
     parts.append("- Save — persist new facts")
-    parts.append("         tools: remember_shared / remember_agent")
-    parts.append(
-        "                write_file"
-        "                          (when file write scope set)"
-    )
+    if has_file_write:
+        parts.append(
+            "         tools: remember_shared / remember_agent / write_file"
+        )
+    else:
+        parts.append("         tools: remember_shared / remember_agent")
     parts.append("- Forget — delete persisted facts")
-    parts.append("           tools: forget_memory")
-    parts.append(
-        "                  delete_file"
-        "                         (when file write scope set)"
-    )
+    if has_file_write:
+        parts.append("           tools: forget_memory / delete_file")
+    else:
+        parts.append("           tools: forget_memory")
     parts.append("- Reply — answer directly (no tool)")
     parts.append("")
     parts.append(

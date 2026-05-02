@@ -343,7 +343,11 @@ async def test_unknown_tool_returns_error_in_result():
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
     result_data = json.loads(tool_msgs[0]["content"])
-    assert "unknown tool" in result_data.get("error", "")
+    # PR36: unknown tools now return {status: "error", error: {kind: "unknown_tool", ...}}
+    assert result_data.get("status") == "error"
+    error = result_data.get("error", {})
+    assert error.get("kind") == "unknown_tool"
+    assert "bogus" in error.get("message", "")
     assert host.outbox[0]["text"] == "Recovered."
 
 
@@ -522,3 +526,118 @@ async def test_history_appended_to_messages():
     # system, history[0], history[1], user
     assert roles == ["system", "user", "assistant", "user"]
     assert first_call_messages[-1]["content"] == "new message"
+
+
+# ---------------------------------------------------------------------------
+# PR36 Layer 1: tool name validation tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_unknown_tool_name_returns_error_not_dispatched():
+    """LLM emits tool_call with name='read_file' (not in catalog for no-file host).
+
+    Assert: returned tool_result has status='error' and kind='unknown_tool',
+    and host.file_read is never called.
+    """
+    # Host with no file_permissions → read_file not in catalog
+    host = FakeRouterHost(
+        skills=[{"name": "list_skills", "category": "general"}],
+        file_permissions=None,  # no file tools
+        mcp_servers=[],
+    )
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "read_file", "args": {"path": "/some/file.txt"}}]),
+        text_result("Sorry, let me try differently."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("read README.md", [])
+
+    # host.file_read must NOT have been called
+    assert len(host.file_reads) == 0, "file_read must not be called for unknown tool"
+
+    # The tool result fed back to the LLM should carry status=error, kind=unknown_tool
+    round2_messages = messages_captured[1]
+    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    result_data = json.loads(tool_msgs[0]["content"])
+    assert result_data.get("status") == "error"
+    error = result_data.get("error", {})
+    assert error.get("kind") == "unknown_tool"
+    assert "read_file" in error.get("message", "")
+
+    # Loop recovered and produced a reply
+    assert host.outbox[0]["text"] == "Sorry, let me try differently."
+
+
+@pytest.mark.asyncio
+async def test_tool_names_populated_per_run():
+    """_tool_names reflects the host's configuration on each run() call.
+
+    First run: no file permissions, no MCP → file/mcp tools absent.
+    Second run: with file permissions → file tools present.
+    """
+    host_no_file = FakeRouterHost(file_permissions=None, mcp_servers=[])
+    loop = RouterLoop(host=host_no_file, chain_id="chain-test")
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = text_result("ok")
+        await loop.run("hello", [])
+
+    names_no_file = frozenset(loop._tool_names)
+    assert "read_file" not in names_no_file
+    assert "list_skills" in names_no_file  # always present
+
+    # Second run with a host that has file permissions
+    host_with_file = FakeRouterHost(
+        file_permissions={"read": ["/docs"], "write": []},
+        mcp_servers=[],
+    )
+    loop2 = RouterLoop(host=host_with_file, chain_id="chain-test-2")
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.return_value = text_result("ok")
+        await loop2.run("hello", [])
+
+    names_with_file = frozenset(loop2._tool_names)
+    assert "read_file" in names_with_file
+
+
+@pytest.mark.asyncio
+async def test_known_tool_still_dispatches():
+    """Sanity check: a valid catalog tool (list_skills) dispatches normally."""
+    host = FakeRouterHost(
+        skills=[{"name": "my_skill", "category": "general"}],
+    )
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "list_skills", "args": {"path": ""}}]),
+        text_result("Here are the skills."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("what skills do you have?", [])
+
+    # The tool result should not be an error
+    round2_messages = messages_captured[1]
+    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    result_data = json.loads(tool_msgs[0]["content"])
+    # list_skills returns a list (categories), not an error dict
+    assert isinstance(result_data, list)
+    assert host.outbox[0]["text"] == "Here are the skills."

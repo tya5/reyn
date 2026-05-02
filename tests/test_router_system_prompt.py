@@ -298,18 +298,77 @@ class TestMCPSection:
 
 
 # ---------------------------------------------------------------------------
-# New tests: Intent axis annotations
+# New tests: Dynamic intent axis (PR36 Layer 2)
 # ---------------------------------------------------------------------------
 
-class TestIntentAxisFilesMCPAnnotations:
-    def test_intent_axis_includes_file_mcp_annotations(self):
-        """Annotations are always present regardless of actual permission state."""
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
+def _base_prompt(**kwargs) -> str:
+    return build_system_prompt(
+        agent_name="chat",
+        agent_role="assistant",
+        available_skills=[],
+        available_agents=[],
+        memory_index=_EMPTY_MEMORY,
+        **kwargs,
+    )
+
+
+class TestIntentAxisDynamic:
+    def test_no_file_tool_names_when_no_file_permissions(self):
+        prompt = _base_prompt(file_permissions=None)
+        assert "read_file" not in prompt
+        assert "write_file" not in prompt
+        assert "delete_file" not in prompt
+        assert "list_directory" not in prompt
+
+    def test_no_mcp_tool_names_when_no_mcp_servers(self):
+        prompt = _base_prompt(mcp_servers=[])
+        assert "list_mcp_servers" not in prompt
+        assert "list_mcp_tools" not in prompt
+        assert "call_mcp_tool" not in prompt
+
+    def test_no_mcp_tool_names_when_mcp_servers_none(self):
+        prompt = _base_prompt(mcp_servers=None)
+        assert "list_mcp_servers" not in prompt
+        assert "list_mcp_tools" not in prompt
+        assert "call_mcp_tool" not in prompt
+
+    def test_no_when_clause_annotations(self):
+        prompt = _base_prompt()
+        assert "(when file scope set)" not in prompt
+        assert "(when mcp configured)" not in prompt
+        assert "(when file write scope set)" not in prompt
+
+    def test_write_file_only_when_write_scope(self):
+        prompt = _base_prompt(
+            file_permissions={"read": ["src"], "write": []}
         )
-        assert "(when file scope set)" in prompt
-        assert "(when mcp configured)" in prompt
+        assert "read_file" in prompt
+        assert "list_directory" in prompt
+        assert "write_file" not in prompt
+        assert "delete_file" not in prompt
+
+    def test_full_file_scope_shows_all_file_tools(self):
+        prompt = _base_prompt(
+            file_permissions={"read": ["src"], "write": ["output"]}
+        )
+        assert "read_file" in prompt
+        assert "list_directory" in prompt
+        assert "write_file" in prompt
+        assert "delete_file" in prompt
+
+    def test_mcp_tools_when_servers_configured(self):
+        prompt = _base_prompt(mcp_servers=[{"name": "fs"}])
+        assert "list_mcp_servers" in prompt
+        assert "list_mcp_tools" in prompt
+        assert "call_mcp_tool" in prompt
+
+    def test_intent_axis_still_renders_without_permissions(self):
+        """Core intent rows must remain even with no permissions."""
+        prompt = _base_prompt()
+        assert "Action — run external work" in prompt
+        assert "skills:  list_skills / describe_skill / invoke_skill" in prompt
+        assert "agents:  list_agents / describe_agent / delegate_to_agent" in prompt
+        assert "Recall — read persisted facts" in prompt
+        assert "Save — persist new facts" in prompt
+        assert "Forget — delete persisted facts" in prompt
+        assert "Reply — answer directly (no tool)" in prompt

@@ -345,6 +345,79 @@ def test_get_mcp_servers_for_router_empty_when_none(tmp_path, monkeypatch):
     assert session._get_mcp_servers_for_router() == []
 
 
+# ── _make_router_op_context PermissionDecl populate (PR36 Layer 3b) ──────────
+
+
+def test_make_router_op_context_populates_file_perms(tmp_path, monkeypatch):
+    """PermissionDecl.file_read/file_write populated from agent config."""
+    monkeypatch.chdir(tmp_path)
+    perm = PermissionResolver(
+        config_permissions={"file.read": [{"path": "src", "scope": "recursive"}],
+                            "file.write": []},
+        project_root=tmp_path,
+    )
+    session = _make_session(tmp_path, permission_resolver=perm)
+
+    ctx = session._make_router_op_context()
+
+    decl = ctx.permission_decl
+    assert decl.file_read, "file_read should be non-empty"
+    assert any(e["path"] == "src" for e in decl.file_read), (
+        f"expected 'src' in file_read, got {decl.file_read}"
+    )
+    assert decl.file_write == [], f"expected empty file_write, got {decl.file_write}"
+
+
+def test_make_router_op_context_populates_mcp_servers(tmp_path, monkeypatch):
+    """PermissionDecl.mcp populated from configured MCP servers."""
+    monkeypatch.chdir(tmp_path)
+    mcp_servers = {
+        "my_server": {"url": "http://localhost:3001/mcp", "description": "Test"},
+    }
+    session = _make_session(tmp_path, mcp_servers=mcp_servers)
+
+    ctx = session._make_router_op_context()
+
+    assert "my_server" in ctx.permission_decl.mcp, (
+        f"expected 'my_server' in decl.mcp, got {ctx.permission_decl.mcp}"
+    )
+
+
+def test_make_router_op_context_empty_when_no_perms(tmp_path, monkeypatch):
+    """Minimal session with no permissions yields empty (not None) decl lists."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+
+    ctx = session._make_router_op_context()
+
+    decl = ctx.permission_decl
+    assert decl.file_read == [], f"expected [], got {decl.file_read}"
+    assert decl.file_write == [], f"expected [], got {decl.file_write}"
+    assert decl.mcp == [], f"expected [], got {decl.mcp}"
+
+
+def test_router_file_read_blocked_by_decl(tmp_path, monkeypatch):
+    """File read outside allowed scope is blocked when decl restricts paths.
+
+    Layer 3a + 3b integration test: PermissionResolver.is_read_allowed gates
+    reads outside CWD even without Layer 3a op_runtime changes.
+    """
+    monkeypatch.chdir(tmp_path)
+    # Session with read scope limited to "src" — /etc/passwd is outside
+    perm = PermissionResolver(
+        config_permissions={"file.read": [{"path": str(tmp_path / "src"), "scope": "recursive"}]},
+        project_root=tmp_path,
+        interactive=False,
+    )
+    session = _make_session(tmp_path, permission_resolver=perm)
+
+    result = _run(session._file_read("/etc/passwd"))
+    # Expect an error result — op_runtime should deny the read
+    assert "error" in result, (
+        f"Expected error for out-of-scope read, got: {result}"
+    )
+
+
 # ── _memory_path / _memory_dir ────────────────────────────────────────────────
 
 

@@ -117,6 +117,7 @@ class RouterLoop:
         self.chain_id = chain_id
         self.max_iterations = max_iterations
         self.router_model = router_model
+        self._tool_names: frozenset[str] = frozenset()  # populated per run()
 
     async def run(self, user_text: str, history: list[dict]) -> None:
         """Process one user utterance end-to-end. Emits to host.put_outbox."""
@@ -126,6 +127,9 @@ class RouterLoop:
             host.list_available_agents(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
+        )
+        self._tool_names = frozenset(
+            t["function"]["name"] for t in tools
         )
         system_prompt = build_system_prompt(
             agent_name=host.agent_name,
@@ -191,6 +195,23 @@ class RouterLoop:
         """Dispatch one tool call. Returns the tool_result content (will be
         JSON-serialized into the next round's messages)."""
         name = tc["function"]["name"]
+
+        # Catalog membership check — reject hallucinated tool names before dispatch
+        if name not in self._tool_names:
+            available = sorted(self._tool_names)
+            preview = ", ".join(available[:6]) + ("..." if len(available) > 6 else "")
+            return {
+                "status": "error",
+                "error": {
+                    "kind": "unknown_tool",
+                    "message": (
+                        f"Tool '{name}' is not available in this session. "
+                        f"Available tools include: {preview}. "
+                        f"Use one of the listed tools or reply directly with text."
+                    ),
+                },
+            }
+
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):

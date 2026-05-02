@@ -514,6 +514,28 @@ class PermissionResolver:
 
     # ── Public check methods ──────────────────────────────────────────────────
 
+    def require_file_read(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
+        """
+        Raise PermissionError if read/glob/grep access to path is not allowed.
+        Default zone (CWD and below) is always granted.
+        Outside CWD, the path must have been approved at startup or via config.
+        """
+        if _in_default_read_zone(path):
+            return
+        if self._is_config_approved("file.read"):
+            return
+        if self._is_path_approved_for(path, skill_name, "file.read"):
+            return
+        raise PermissionError(
+            f"read from '{path}' was not approved. "
+            f"Declare it in the phase frontmatter:\n"
+            f"  permissions:\n"
+            f"    file.read:\n"
+            f"      - path: {path}\n"
+            f"        scope: just_path\n"
+            f"Then re-run — the startup guard will ask for approval before execution starts."
+        )
+
     def require_file_write(self, decl: PermissionDecl, path: str, skill_name: str = "") -> None:
         """
         Raise PermissionError if write/edit/delete access to path is not allowed.
