@@ -18,12 +18,17 @@ references it.
 
 1. Open `claude.ai/design`, start a new project.
 2. Paste the **§ Opening Prompt** below.
-3. Append `→ App` or `→ Studio` on the last line to choose which face.
-4. Iterate visuals on the canvas.
-5. Before export, run through the **§ Acceptance Checklist**.
-6. Export → `.zip` (preferred) or `Send to Claude Code`.
-7. Drop into `reyn/local/designs/<slug>/`. See
+3. **Edit ONLY the 🔓 EDITABLE brief zone** at the top. Leave the
+   🔒 LOCKED protocol contract below it untouched.
+4. Append `→ App` or `→ Studio` on the last line to choose which face.
+5. Iterate visuals on the canvas.
+6. Before export, run through the **§ Acceptance Checklist**.
+7. Export → `.zip` (preferred) or `Send to Claude Code`.
+8. Drop into `reyn/local/designs/<slug>/`. See
    [multi-design-selection.md](multi-design-selection.md) for layout.
+
+For a friendlier walkthrough with example briefs and troubleshooting,
+see [design-author-guide.md](design-author-guide.md).
 
 The prompt is in **English** because Claude Design responds more
 reliably to English instructions, even when the resulting UI strings
@@ -35,11 +40,64 @@ the design itself does not hardcode language). See feedback memory
 
 ## § Opening Prompt
 
+The prompt body has two zones:
+
+- **🔓 EDITABLE** — your design brief at the top. Edit freely.
+- **🔒 LOCKED** — the OpenUI / reyn-ui/v1 protocol contract below.
+  Don't touch — it's what lets Reyn's engine wire in.
+
 ````markdown
 You are designing a UI for **Reyn**, a workflow-engine-driven agent OS.
 The design will integrate with Reyn via the **OpenUI Layer 0 protocol**
 and the **reyn-ui/v1 Layer 1 schema**. Read this entire prompt before
 producing anything.
+
+<!--
+=================================================================
+  🔓 EDITABLE — fill in your design brief below.
+  Edit freely. This is your design intent.
+=================================================================
+-->
+
+## Your design brief
+
+Fill in each field. Examples in brackets are placeholders to replace.
+
+**Brand voice** (1–2 sentences):
+> [REPLACE: e.g. "Warm and approachable but technically credible.
+> Inspired by Linear's clarity and Stripe's precision."]
+
+**Primary color**: [REPLACE: coral / amber / teal / monochrome / your-pick]
+**Mode**: [REPLACE: light / dark / both]
+**Density**: [REPLACE: cozy / comfortable / dense]
+
+**Typography**:
+- Body: [REPLACE: e.g. Inter, Geist, Söhne]
+- Display (optional): [REPLACE: e.g. Instrument Serif for App headers only]
+- Mono (Studio only): [REPLACE: e.g. JetBrains Mono, IBM Plex Mono]
+
+**Screens to prioritise** (App side):
+- [REPLACE: Today, Conversation, Agent gallery, Library card → guided run]
+
+**Screens to prioritise** (Studio side):
+- [REPLACE: Conversation+inspector, Skill graph, Run timeline, Permissions]
+
+**Inspirations** (optional): [REPLACE: e.g. Claude.ai App tone, Linear Studio density]
+**Avoid** (optional): [REPLACE: e.g. Tailwind-default look, generic SaaS purple]
+
+The two faces have **deliberately different aesthetics** (App = warm,
+breathing; Studio = dense, dev-tool). Use the brief above for the App
+face vibe; Studio leans cool and dense by convention. If you want to
+override Studio's defaults, add a "Studio overrides" subsection above.
+
+<!--
+=================================================================
+  🔒 LOCKED — DO NOT EDIT BELOW THIS LINE.
+  This is the OpenUI / reyn-ui/v1 protocol contract. Editing it
+  will break the engine ↔ design integration (App ↔ Studio
+  toggle, real engine responses, hot reload, multi-design picker).
+=================================================================
+-->
 
 ## What is Reyn
 
@@ -105,12 +163,14 @@ them as the contract: every required component must be exported,
 prop shapes must match, action / channel names must be used as
 defined.
 
-## Visual brief
+## Visual direction
 
-For visual / interaction direction (App's warm friendly tone, Studio's
-dense developer tone, screen layouts, color guidance, density,
-typography), see `docs/web/design_brief.md`. Do not deviate from the
-brief without flagging it in the canvas chat.
+The user's brief is in the 🔓 EDITABLE zone at the top of this prompt
+— follow it for App-face palette, type, density, voice. For deeper
+product framing (personas, IA, screen-by-screen rationale, surface
+vocabulary rules), consult `docs/web/design_brief.md` — that is the
+fixed Reyn product context. **Do not deviate from the user's brief
+without flagging it in the canvas chat.**
 
 ## Hard rules
 
