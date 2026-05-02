@@ -217,6 +217,31 @@ async def test_streaming_row_no_append_after_seal():
 
 
 @pytest.mark.asyncio
+async def test_streaming_row_seal_mounts_markdown():
+    """After seal(), a Markdown widget is present as a child of StreamingRow."""
+    from textual.widgets import Markdown
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        row = conv.begin_stream("test_stream_md", "aria")
+        # Pause to let begin_stream's mount() complete before calling seal()
+        await pilot.pause()
+        row.append("# Hello\n\n```py\nprint(1)\n```")
+        row.seal()
+        # Allow mount() of sealed widgets to complete
+        for _ in range(3):
+            await pilot.pause()
+        md_widgets = row.query(Markdown)
+        assert len(md_widgets) > 0, "Expected a Markdown widget after seal()"
+        # The streaming Static should be hidden after seal()
+        from textual.widgets import Static
+        static_widget = row.query_one("#streaming_text", Static)
+        assert not static_widget.display, "Streaming Static should be hidden after seal()"
+
+
+@pytest.mark.asyncio
 async def test_streaming_via_begin_append_end():
     """begin_stream / append_stream / end_stream lifecycle works."""
     app = _make_app()
@@ -326,3 +351,118 @@ async def test_ctrl_l_clears_conversation():
         await pilot.press("ctrl+l")
         await pilot.pause()
         # RichLog should be cleared (no exception raised = pass)
+
+
+# ── test: wave B — Markdown rendering for agent messages ─────────────────────
+
+@pytest.mark.asyncio
+async def test_agent_message_mounts_markdown_widget():
+    """kind=agent renders as a Markdown widget (not a RichLog append)."""
+    from textual.widgets import Markdown
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        msg = OutboxMessage(kind="agent", text="# Hello\n\n- item one\n- item two")
+        conv.render_message(msg)
+        await pilot.pause()
+        md_widgets = conv.query(Markdown)
+        assert len(md_widgets) > 0, "Expected at least one Markdown widget after agent message"
+
+
+@pytest.mark.asyncio
+async def test_agent_message_mounts_prefix_static():
+    """kind=agent mounts a Static prefix widget with 'agent-prefix' CSS class."""
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        msg = OutboxMessage(kind="agent", text="Hello world")
+        conv.render_message(msg)
+        await pilot.pause()
+        prefix_widgets = conv.query(".agent-prefix")
+        assert len(prefix_widgets) > 0, "Expected agent-prefix Static widget"
+
+
+@pytest.mark.asyncio
+async def test_agent_message_empty_text_mounts_markdown():
+    """kind=agent with empty text still mounts Markdown (no crash)."""
+    from textual.widgets import Markdown
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        msg = OutboxMessage(kind="agent", text="")
+        conv.render_message(msg)  # must not raise
+        await pilot.pause()
+        md_widgets = conv.query(Markdown)
+        assert len(md_widgets) > 0
+
+
+@pytest.mark.asyncio
+async def test_user_message_uses_richlog_not_markdown():
+    """kind=user still goes through RichLog (existing path, no Markdown widget)."""
+    from textual.widgets import Markdown
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        before = len(conv.query(Markdown))
+        msg = OutboxMessage(kind="user", text="Hello from user")
+        conv.render_message(msg)
+        await pilot.pause()
+        after = len(conv.query(Markdown))
+        assert after == before, "User messages must NOT mount Markdown widgets"
+
+
+@pytest.mark.asyncio
+async def test_status_message_uses_richlog_not_markdown():
+    """kind=status still goes through RichLog (existing path)."""
+    from textual.widgets import Markdown
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        before = len(conv.query(Markdown))
+        msg = OutboxMessage(kind="status", text="thinking...")
+        conv.render_message(msg)
+        await pilot.pause()
+        after = len(conv.query(Markdown))
+        assert after == before, "Status messages must NOT mount Markdown widgets"
+
+
+@pytest.mark.asyncio
+async def test_error_message_uses_richlog_not_markdown():
+    """kind=error still goes through RichLog (existing path)."""
+    from textual.widgets import Markdown
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        before = len(conv.query(Markdown))
+        msg = OutboxMessage(kind="error", text="something broke")
+        conv.render_message(msg)
+        await pilot.pause()
+        after = len(conv.query(Markdown))
+        assert after == before, "Error messages must NOT mount Markdown widgets"
+
+
+@pytest.mark.asyncio
+async def test_agent_message_with_meta_prefix():
+    """kind=agent with skill_name+run_id_short meta includes prefix in Static."""
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        msg = OutboxMessage(
+            kind="agent",
+            text="Result",
+            meta={"skill_name": "article_writer", "run_id_short": "ab12"},
+        )
+        conv.render_message(msg)
+        await pilot.pause()
+        prefix_widgets = list(conv.query(".agent-prefix"))
+        assert len(prefix_widgets) > 0
+        # Use the content property (string set at construction time)
+        prefix_content = str(prefix_widgets[0].content)
+        assert "article_writer" in prefix_content or "ab12" in prefix_content

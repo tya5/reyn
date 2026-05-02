@@ -27,7 +27,7 @@ from textual.app import ComposeResult
 from textual.message import Message
 from textual.scroll_view import ScrollView
 from textual.widget import Widget
-from textual.widgets import RichLog
+from textual.widgets import Markdown, RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage
 from .intervention import InterventionWidget
@@ -70,6 +70,13 @@ class ConversationView(Widget):
         scrollbar-color: #C8553D;
         padding: 0 1;
     }
+    ConversationView .agent-prefix {
+        padding: 0 1;
+        color: #C8553D;
+    }
+    ConversationView .agent-body {
+        padding: 0 1 0 9;
+    }
     """
 
     def __init__(self, *, scroll_end: bool = True, id: str | None = None) -> None:
@@ -94,9 +101,21 @@ class ConversationView(Widget):
             # Fall back to a plain log line for display when no callback wired.
             self._write_log(_format_intervention_line(msg))
             return
+        if msg.kind == "agent":
+            self._render_agent_markdown(msg)
+            return
         text = _format_message(msg)
         if text is not None:
             self._write_log(text)
+
+    def _render_agent_markdown(self, msg: OutboxMessage) -> None:
+        """Mount a coral prefix Static + Markdown widget pair for agent messages."""
+        meta_pfx = _meta_prefix(msg.meta)
+        prefix_text = f"agent  {meta_pfx}" if meta_pfx else "agent  "
+        prefix = Static(prefix_text, classes="agent-prefix")
+        body_text = msg.text if msg.text else ""
+        body = Markdown(body_text, classes="agent-body")
+        self.mount(prefix, body)
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
