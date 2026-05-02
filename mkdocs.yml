@@ -74,6 +74,7 @@ nav:
       - how-to/restrict-agent-skills.md
       - how-to/multi-hop-delegation.md
       - how-to/author-a-design.md
+      - how-to/use-an-mcp-server.md
   - Reference:
       - CLI:
           - reference/cli/run.md
@@ -109,6 +110,7 @@ nav:
           - reference/stdlib/eval.md
           - reference/stdlib/eval_builder.md
           - reference/stdlib/skill_router.md
+          - reference/stdlib/read_local_files.md
   - Concepts:
       - concepts/principles.md
       - concepts/architecture.md
@@ -117,6 +119,7 @@ nav:
       - concepts/workspace.md
       - concepts/events.md
       - concepts/permission-model.md
+      - concepts/mcp.md
       - concepts/memory.md
       - concepts/multi-agent.md
       - concepts/topology.md

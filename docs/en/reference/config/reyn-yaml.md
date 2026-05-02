@@ -150,7 +150,48 @@ cost:
 
 **Ledger location:** `.reyn/state/budget_ledger.jsonl` — one record per LLM call, append-only with fsync. This file is **not** rotated automatically; it grows at roughly a few MB per month and can be manually archived if needed.
 
+## MCP servers
+
+External tool servers reyn can call via the [Model Context Protocol](../../concepts/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
+
+```yaml
+mcp:
+  servers:
+    # stdio: local process, JSON-RPC over stdin/stdout (most official servers)
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      env:
+        FS_LOG_LEVEL: "info"
+
+    # http: hosted server, JSON-RPC over Streamable HTTP
+    internal_tools:
+      type: http
+      url: https://tools.example.internal/mcp
+      headers:
+        Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
+```
+
+| Field | Type | Required for | Description |
+|-------|------|--------------|-------------|
+| `type` | string | all | `stdio` \| `http` \| `sse` |
+| `command` | string | stdio | Executable to spawn. |
+| `args` | list[string] | stdio (optional) | Argument vector passed to `command`. |
+| `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. |
+| `url` | string | http, sse | Endpoint URL. |
+| `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
+
+`${VAR}` in any string value is expanded from `os.environ` when the op dispatches. Missing variables expand to `""` and emit a runtime warning. Keep tokens in environment variables — never paste them into `reyn.yaml` directly.
+
+Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`. The merge is a shallow union on `mcp.servers` keys — a per-machine `reyn.local.yaml` can add or override a single server without re-stating the rest.
+
+The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in the official `mcp` Python SDK. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
+
+See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to: use an MCP server](../../how-to/use-an-mcp-server.md) for the end-to-end quickstart.
+
 ## See also
 
 - `reference/config/permissions.md` — full permission grammar (Phase 2)
 - `reference/config/state-dir.md` — `.reyn/` layout (Phase 2)
+- [Concepts: MCP](../../concepts/mcp.md)
