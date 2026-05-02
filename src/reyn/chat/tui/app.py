@@ -150,6 +150,17 @@ class ReynTUIApp(App):
             if msg.kind == "__end__":
                 break
 
+            if msg.kind == "__attach_request__":
+                # Handled by AgentRegistry._forwarder; we just update our state
+                new_name = msg.text
+                if new_name and self._registry is not None:
+                    self._agent_name = new_name
+                    self.call_from_thread(
+                        self.query_one("#header", ReynHeader).refresh_status,
+                        agent_name=new_name,
+                    )
+                continue
+
             if msg.kind == "__stream_start__":
                 # Begin a streaming row
                 current_stream_id = msg.meta.get("msg_id", id(msg))
@@ -171,12 +182,37 @@ class ReynTUIApp(App):
                 self._maybe_refresh_status(header)
                 continue
 
+            # Intervention: mount inline widget for structured response
+            if msg.kind == "intervention":
+                iv_id = msg.meta.get("intervention_id", "")
+                self.call_from_thread(
+                    self._mount_intervention, conv, msg.text, iv_id
+                )
+                continue
+
             # Regular message
             self.call_from_thread(conv.render_message, msg)
 
             # Refresh status after agent/skill_done messages
             if msg.kind in {"agent", "skill_done"}:
                 self._maybe_refresh_status(header)
+
+    def _mount_intervention(
+        self, conv: ConversationView, text: str, iv_id: str
+    ) -> None:
+        """Mount an InterventionWidget inline in the conversation view."""
+        # Provide an async callback that calls session._maybe_answer_oldest_intervention
+        async def _callback(answer: str) -> None:
+            session = self._get_session()
+            if session is not None:
+                await session._maybe_answer_oldest_intervention(answer)
+
+        conv.mount_intervention(
+            question=text,
+            choices=None,   # free-text only (chips require structured meta)
+            answer_callback=_callback,
+            iv_id=iv_id,
+        )
 
     def _maybe_refresh_status(self, header: ReynHeader) -> None:
         """Fetch budget snapshot and update the header."""
