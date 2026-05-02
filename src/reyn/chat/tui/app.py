@@ -73,6 +73,13 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
+    # Hide Textual's built-in command palette behind an unused key (F24).
+    # Reyn already exposes the slash-command list via Tab → custom palette
+    # and `/help`; the built-in palette would only add a redundant overlay
+    # with non-matching keybindings. Setting to None breaks Textual's key
+    # parser, so we route to a key virtually no keyboard ships.
+    COMMAND_PALETTE_BINDING = "f24"
+
     BINDINGS = [
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
