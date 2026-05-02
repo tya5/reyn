@@ -23,7 +23,7 @@ Replay it:
 reyn events .reyn/events/<run_id>.jsonl
 ```
 
-The output looks like a live run, formatted the same way. Add `--rich` for color.
+The output looks like a live run, formatted the same way.
 
 ## Common debug questions
 

@@ -31,7 +31,7 @@ A single `AgentRegistry` instance per process owns all loaded agents. It handles
 
 ## Attach model
 
-`reyn chat researcher` makes `researcher` the attached agent. While attached, `:attach default` switches the pointer back; `researcher` keeps its inbox loop running. If a delegation chain is mid-flight when you switch, you'll come back to find the resolution sitting in the outbox.
+`reyn chat researcher` makes `researcher` the attached agent. While attached, `/attach default` switches the pointer back; `researcher` keeps its inbox loop running. If a delegation chain is mid-flight when you switch, you'll come back to find the resolution sitting in the outbox.
 
 ## Agent-to-agent messaging
 

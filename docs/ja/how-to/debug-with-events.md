@@ -23,7 +23,7 @@ events saved → .reyn/events/<run_id>.jsonl
 reyn events .reyn/events/<run_id>.jsonl
 ```
 
-出力はライブランと同じフォーマットで表示されます。カラー表示には `--rich` を追加します。
+出力はライブランと同じフォーマットで表示されます。
 
 ## よくあるデバッグの問い
 

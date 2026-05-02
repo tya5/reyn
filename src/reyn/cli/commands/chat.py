@@ -2,7 +2,7 @@
 
 PR10: launches the AgentRegistry, attaches to the named agent (or `default`),
 then hands off to `run_repl`. The registry holds all loaded ChatSession
-instances; switching agents mid-REPL via `:attach <name>` happens through it.
+instances; switching agents mid-REPL via `/attach <name>` happens through it.
 """
 from __future__ import annotations
 import argparse
@@ -21,8 +21,6 @@ def register(sub) -> None:
         help="Agent to attach to (default: 'default'). "
              "Use `reyn agent new <name>` to create a new agent.",
     )
-    p.add_argument("--rich", action="store_true",
-                   help="Use Rich-styled console output instead of plain text.")
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -103,7 +101,7 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     from ..logger_factory import make_chat_renderer
-    renderer = make_chat_renderer(rich=args.rich)
+    renderer = make_chat_renderer()
 
     async def _main() -> None:
         # PR21: replay WAL into per-agent snapshots before any new state

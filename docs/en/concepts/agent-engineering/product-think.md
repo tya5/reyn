@@ -42,7 +42,6 @@ Three levers, all surfaced as flags or config:
 A few small choices that compound:
 
 - **`output_language`.** One config key controls the language of user-facing output across every skill. No per-skill localization code.
-- **`--rich` / plain.** Same data, two render modes — pick what fits the terminal or pipeline.
 - **`--events` / `--conversation`.** When a run does something unexpected, the artifact-of-record is one CLI call away.
 - **State is on disk.** `.reyn/` holds events, chats, eval reports, approvals, memory. Nothing important is in process memory only.
 

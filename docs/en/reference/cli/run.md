@@ -34,7 +34,6 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--max-phase-visits N` | Cap on single-phase revisits per run. `0` = unlimited. Default `25`. |
 | `--events` | Print the full event log after execution. |
 | `--strict` | Enforce required fields at every nesting depth (default: top-level only). |
-| `--rich` | Use Rich-styled console output. |
 | `--allow-shell` | Enable the `shell` Control IR op. Off by default. |
 | `--allow-untrusted-python` | Enable trusted-mode Python preprocessor steps (no AST sandbox). |
 

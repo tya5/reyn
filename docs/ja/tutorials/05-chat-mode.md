@@ -30,13 +30,13 @@ reyn chat researcher
 
 ## スラッシュコマンド
 
-`:` で始まる行はルーティングされず、制御コマンドとして処理されます:
+`/` で始まる行はルーティングされず、制御コマンドとして処理されます:
 
-- `:list` — 実行中の Skill スポーンと保留中の介入
-- `:cancel <id>` — Skill スポーンをキャンセル
-- `:answer <id> <text>` — 保留中の `ask_user` / Permission プロンプトに回答
-- `:agents` — このプロセスに読み込まれた agent を一覧表示
-- `:attach <name>` — REPL を別の agent に切り替える
+- `/list` — 実行中の Skill スポーンと保留中の介入
+- `/cancel <id>` — Skill スポーンをキャンセル
+- `/answer <id> <text>` — 保留中の `ask_user` / Permission プロンプトに回答
+- `/agents` — このプロセスに読み込まれた agent を一覧表示
+- `/attach <name>` — REPL を別の agent に切り替える
 
 ## 複数の agent
 
@@ -47,7 +47,7 @@ reyn agent new researcher --role "deep technical research, prefers primary sourc
 reyn agent new writer     --role "concise long-form prose"
 ```
 
-`default` にアタッチされた chat セッションでは、ルーターがリクエストを `researcher` が処理した方がよいと判断し、委任を出力することがあります。返信は自動的にルーティングされて戻ります。中間の確認の後、統合された最終回答が表示されます。チェーン中の進捗を監視するには `:attach researcher` を使用します。
+`default` にアタッチされた chat セッションでは、ルーターがリクエストを `researcher` が処理した方がよいと判断し、委任を出力することがあります。返信は自動的にルーティングされて戻ります。中間の確認の後、統合された最終回答が表示されます。チェーン中の進捗を監視するには `/attach researcher` を使用します。
 
 通信できる相手に関する構造的な制限については、[topology CLI](../reference/cli/topology.md) と [コンセプト/topology](../concepts/topology.md) を参照してください。
 

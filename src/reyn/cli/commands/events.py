@@ -28,8 +28,6 @@ def register(sub) -> None:
             "or the literal 'purge' to delete old files (use --before)."
         ),
     )
-    p.add_argument("--rich", action="store_true",
-                   help="Use Rich-styled output instead of plain text")
     p.add_argument(
         "--filter", metavar="TYPE", action="append", dest="filter_types", default=[],
         help="Only show events of this type (repeatable)",
@@ -95,7 +93,7 @@ def run_replay(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     conversation: bool = args.conversation
-    logger = make_logger(rich=args.rich, conversation=conversation)
+    logger = make_logger(conversation=conversation)
 
     filter_types: set[str] = set(args.filter_types)
     skip_types: set[str] = set(args.skip_types)

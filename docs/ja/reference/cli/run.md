@@ -34,7 +34,6 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--max-phase-visits N` | ランごとの単一 Phase 再訪問の上限。`0` = 無制限。デフォルト `25`。 |
 | `--events` | 実行後に完全なイベントログを表示。 |
 | `--strict` | すべてのネスト深さで必須フィールドを強制します（デフォルト: トップレベルのみ）。 |
-| `--rich` | Rich スタイルのコンソール出力を使用。 |
 | `--allow-shell` | `shell` Control IR op を有効にする。デフォルトはオフ。 |
 | `--allow-untrusted-python` | trusted モードの Python preprocessor ステップを有効にする（AST サンドボックスなし）。 |
 

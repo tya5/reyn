@@ -30,13 +30,13 @@ The router picks `text_summarizer` (or whatever stdlib/project skill best matche
 
 ## Slash commands
 
-Lines starting with `:` are intercepted as control commands, not routed:
+Lines starting with `/` are intercepted as control commands, not routed:
 
-- `:list` — running skill spawns and pending interventions
-- `:cancel <id>` — cancel a skill spawn
-- `:answer <id> <text>` — answer a pending `ask_user` / permission prompt
-- `:agents` — list loaded agents in this process
-- `:attach <name>` — switch the REPL to another agent
+- `/list` — running skill spawns and pending interventions
+- `/cancel <id>` — cancel a skill spawn
+- `/answer <id> <text>` — answer a pending `ask_user` / permission prompt
+- `/agents` — list loaded agents in this process
+- `/attach <name>` — switch the REPL to another agent
 
 ## Multiple agents
 
@@ -47,7 +47,7 @@ reyn agent new researcher --role "deep technical research, prefers primary sourc
 reyn agent new writer     --role "concise long-form prose"
 ```
 
-In a chat session attached to `default`, the router may decide a request is better handled by `researcher` and emit a delegation. The reply auto-routes back; you'll see an interim acknowledgement followed by a synthesized final answer. Use `:attach researcher` to watch progress mid-chain.
+In a chat session attached to `default`, the router may decide a request is better handled by `researcher` and emit a delegation. The reply auto-routes back; you'll see an interim acknowledgement followed by a synthesized final answer. Use `/attach researcher` to watch progress mid-chain.
 
 For structural restrictions on who-can-talk-to-whom, see [topology CLI](../reference/cli/topology.md) and [concepts/topology](../concepts/topology.md).
 
