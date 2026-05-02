@@ -177,3 +177,163 @@ def test_wrong_input_raises_missing_fixture():
                 phase_role="eval_builder",
             )
         )
+
+
+# ── corner case: malformed prior attempt (non-JSON) — recovery path ──────────
+
+
+@pytest.mark.replay("fixtures/llm/eval_builder/malformed_criteria.jsonl")
+def test_analyze_skill_recovers_from_malformed_prior_attempt():
+    """Tier 3a corner: prior attempt produced non-JSON criteria → next call must produce valid JSON.
+
+    Protects: when a previous LLM attempt emitted non-parseable output (a
+    common failure mode), the prior_attempts injection plus the OS retry
+    mechanism must drive the next call to produce a structurally valid
+    artifact. We pin: cases is present, criteria are non-empty strings.
+    """
+    frame = ContextFrame(
+        current_phase="analyze_skill",
+        current_phase_role="eval_builder",
+        instructions="Analyze the skill and design representative test cases with per-case criteria.",
+        candidate_outputs=[_candidate_write_eval()],
+        finish_criteria=["cases designed"],
+        constraints=PhaseConstraints(),
+        available_control_ops=[],  # force decide
+        op_catalog=[],
+        output_language="en",
+        model="openai/gemini-2.5-flash-lite",
+        model_resolved=MODEL,
+        input_artifact={
+            "type": "user_message",
+            "data": {
+                "text": "Generate an eval spec for the article_generator skill.",
+                "skill_path": "dsl/skills/article_generator",
+            },
+        },
+        execution=ExecutionState(
+            path=["analyze_skill"], current_visit=1, total_steps=1,
+        ),
+        control_ir_results=[
+            {
+                "kind": "file",
+                "op": "read",
+                "path": "dsl/skills/article_generator/skill.md",
+                "content": "# article_generator\n\nGenerates a polished article on a given topic.",
+                "status": "ok",
+            }
+        ],
+        remaining_act_turns=0,  # force decide after a bad attempt
+        current_datetime=REPLAY_DATETIME,
+    )
+
+    prior_attempts = [
+        {
+            "raw": "I will produce 3 test cases for the article generator: a happy path, an empty input, and a multilingual input.",
+            "error": "Output is not valid JSON; expected an object with type/control/artifact keys.",
+        }
+    ]
+
+    result = _run(
+        call_llm(
+            MODEL,
+            frame,
+            prior_attempts=prior_attempts,
+            prompt_cache_enabled=False,
+            skill_name=SKILL_NAME,
+            skill_description=SKILL_DESC,
+            phase_role="eval_builder",
+        )
+    )
+
+    data = result.data
+    assert data["type"] == "decide", "After a non-JSON attempt, recovery must produce a decide turn"
+    artifact = data["artifact"]
+    assert artifact["type"] == "eval_analysis"
+    cases = artifact["data"].get("cases", [])
+    assert len(cases) >= 1
+    for case in cases:
+        criteria = case.get("criteria", [])
+        assert len(criteria) >= 1
+        for c in criteria:
+            assert isinstance(c, str) and len(c) > 0
+
+
+# ── corner case: conflicting per-case criteria — what does the skill produce? ─
+
+
+@pytest.mark.replay("fixtures/llm/eval_builder/conflicting_per_case_criteria.jsonl")
+def test_analyze_skill_with_conflicting_user_criteria():
+    """Tier 3a corner: user states two requirements that cannot both hold for one phase.
+
+    The user's brief embeds a logical contradiction: 'always reject any input
+    in any language other than English' AND 'always accept Japanese input
+    gracefully'. This is the kind of input that surfaces in real dogfooding
+    when a user pastes inconsistent specs. The skill should still produce a
+    structurally valid eval_analysis (cases with criteria) — we don't pin
+    which side of the contradiction it picks. The job of catching the
+    contradiction belongs to the eval skill (LLM-as-judge), not the test.
+    """
+    frame = ContextFrame(
+        current_phase="analyze_skill",
+        current_phase_role="eval_builder",
+        instructions="Analyze the skill and design representative test cases with per-case criteria.",
+        candidate_outputs=[_candidate_write_eval()],
+        finish_criteria=["cases designed"],
+        constraints=PhaseConstraints(),
+        available_control_ops=[_op_file()],
+        op_catalog=[],
+        output_language="en",
+        model="openai/gemini-2.5-flash-lite",
+        model_resolved=MODEL,
+        input_artifact={
+            "type": "user_message",
+            "data": {
+                "text": (
+                    "Generate an eval spec for the article_generator skill. "
+                    "REQUIREMENT A: the skill must always reject any input in any "
+                    "language other than English with a clear error message. "
+                    "REQUIREMENT B: the skill must always gracefully produce a "
+                    "Japanese article when the input topic is in Japanese. "
+                    "Make sure both requirements are reflected in the criteria."
+                ),
+                "skill_path": "dsl/skills/article_generator",
+            },
+        },
+        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
+        control_ir_results=[],
+        remaining_act_turns=2,
+        current_datetime=REPLAY_DATETIME,
+    )
+
+    result = _run(
+        call_llm(
+            MODEL,
+            frame,
+            prompt_cache_enabled=False,
+            skill_name=SKILL_NAME,
+            skill_description=SKILL_DESC,
+            phase_role="eval_builder",
+        )
+    )
+
+    data = result.data
+
+    # The skill may emit a transition (analysis done) OR an act turn that reads
+    # additional files (the natural first move). Either is structurally valid.
+    if data["type"] == "act":
+        ops = data.get("ops", [])
+        assert isinstance(ops, list) and len(ops) >= 1, (
+            "act turn must include at least one op"
+        )
+        # The skill is reading files; cannot assert on cases yet.
+        return
+
+    assert data["type"] == "decide"
+    if data["control"]["type"] == "transition":
+        artifact = data["artifact"]
+        assert artifact["type"] == "eval_analysis"
+        cases = artifact["data"].get("cases", [])
+        assert len(cases) >= 1
+        for case in cases:
+            assert "criteria" in case
+            assert len(case["criteria"]) >= 1
