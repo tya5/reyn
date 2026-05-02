@@ -41,7 +41,7 @@ class InputBar(Widget):
     InputBar {
         dock: bottom;
         height: auto;
-        max-height: 5;
+        max-height: 20;
         background: #111111;
         border-top: tall #2a2a2a;
     }
@@ -56,6 +56,9 @@ class InputBar(Widget):
         height: 1;
         color: #555555;
         padding: 0 2;
+    }
+    InputBar.palette-open #hints {
+        display: none;
     }
     """
 

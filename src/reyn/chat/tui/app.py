@@ -54,8 +54,9 @@ class CommandPaletteOverlay(OptionList):
 
     DEFAULT_CSS = """
     CommandPaletteOverlay {
+        dock: top;
         height: auto;
-        max-height: 10;
+        max-height: 12;
         min-width: 40;
         background: #1a1a1a;
         border: tall #C8553D;
@@ -466,6 +467,10 @@ class ReynTUIApp(App):
             overlay.add_option(Option(f"/{cmd.name}  — {cmd.summary}", id=cmd.name))
 
         overlay.add_class("visible")
+        try:
+            self.query_one("#inputbar", InputBar).add_class("palette-open")
+        except Exception:
+            pass
         overlay.focus()
         self._palette_visible = True
 
@@ -473,6 +478,10 @@ class ReynTUIApp(App):
         try:
             overlay = self.query_one("#palette", CommandPaletteOverlay)
             overlay.remove_class("visible")
+        except Exception:
+            pass
+        try:
+            self.query_one("#inputbar", InputBar).remove_class("palette-open")
         except Exception:
             pass
         self._palette_visible = False
