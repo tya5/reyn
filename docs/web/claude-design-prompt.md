@@ -118,9 +118,58 @@ brief without flagging it in the canvas chat.
   `window.OPENUI_DATA` (shape: `ReynUiData`) when embedded, or from a
   fallback mock when standalone. Mock data lives in a separate
   `data.js` (or equivalent) so it can be replaced.
+- **All user actions go through `window.OPENUI_HOST.invoke()`.** Every
+  user-driven side-effect (sending a message, answering an
+  intervention, attaching to an agent, switching face, accepting a
+  permission, cancelling a run, …) MUST `await
+  window.OPENUI_HOST.invoke(<action>, <payload>)`. The action / payload
+  shapes are listed in the schema's `manifest.yaml`. Local-only state
+  updates (toggling a sidebar, focusing an input) stay in component
+  state and do NOT need invoke.
+
+  Concrete example — Conversation submit handler:
+
+  ```js
+  const submit = async (text) => {
+    if (!text.trim()) return;
+    setMessages(m => [...m, { kind: "user", text, complete: true }]);
+    setInput("");
+    if (window.OPENUI_HOST?.invoke) {
+      await window.OPENUI_HOST.invoke("agent.submit", { agentId, text });
+    } else {
+      // Standalone preview only: synthesise a fake reply.
+      simulateLocalReply(text, setMessages);
+    }
+  };
+  ```
+
+  The `OPENUI_HOST?.invoke` check is the ONLY place mock behaviour is
+  acceptable: standalone preview without a host attached. When embedded,
+  the host always wins. Components that simulate replies / data updates
+  unconditionally are non-conforming.
+
+- **All async data goes through `window.OPENUI_HOST.listen()`.**
+  Streaming agent messages, live event log entries, run-status
+  changes, budget updates — anything pushed by the backend — MUST
+  subscribe via:
+
+  ```js
+  React.useEffect(() => {
+    if (!window.OPENUI_HOST?.listen) return;
+    const off = window.OPENUI_HOST.listen("agent.message", (chunk) => {
+      setMessages(m => /* append/extend the streaming message */);
+    });
+    return off;  // unsubscribe on unmount
+  }, [agentId]);
+  ```
+
+  Channel names are in the schema's `manifest.yaml`. Polling with
+  `setInterval` against `OPENUI_DATA` is non-conforming; the host
+  emits diffs via channels.
+
 - **No `fetch` / `XMLHttpRequest` / `WebSocket` calls inside
-  components.** All backend interaction goes through
-  `window.OPENUI_HOST.invoke` and `window.OPENUI_HOST.listen`.
+  components.** Those are the host's job. Components see only
+  `OPENUI_HOST.invoke` / `OPENUI_HOST.listen` / `OPENUI_DATA`.
 - **No global state libraries** (Zustand, Redux, Recoil, Jotai, …).
   The host owns durable state. Local component state for transient
   UI is fine.
@@ -195,11 +244,20 @@ the design will not load cleanly in Reyn — fix it in the canvas first.
 
 ### Behaviour
 
-- [ ] **`window.OPENUI_HOST` detection**: each component that takes
-      callback props uses them when the host is present, falls back
-      to local-state mocks otherwise.
-- [ ] **`window.OPENUI_DATA`** is the source of truth for data;
-      `data.js` (or equivalent) only provides the fallback mock.
+- [ ] **All user actions invoke the host.** `grep` the export for
+      every event handler that mutates app state (sending a message,
+      answering an intervention, switching agents, accepting a
+      permission, etc.). Each MUST call
+      `window.OPENUI_HOST.invoke(<action>, <payload>)`. Local-only
+      mock side-effects are permitted ONLY inside
+      `if (!window.OPENUI_HOST) { ... }` fallback branches.
+- [ ] **All async data uses `listen`.** Streaming messages, run
+      events, budget updates, etc. subscribe via
+      `window.OPENUI_HOST.listen(<channel>, handler)` and unsubscribe
+      on unmount. No `setInterval` polling against `OPENUI_DATA`.
+- [ ] **`window.OPENUI_DATA`** is the source of truth for the initial
+      / static-shape data; `data.js` (or equivalent) only provides the
+      fallback mock.
 - [ ] **`window.OPENUI_DESIGN_MODE`** gates any designer-only chrome
       (tweaks panel etc.).
 - [ ] **`window.OPENUI_SCHEMA === "reyn-ui/v1"`** check at boot, with a
@@ -209,6 +267,10 @@ the design will not load cleanly in Reyn — fix it in the canvas first.
 
 - [ ] **No hardcoded mock data inside components** — only via
       `OPENUI_DATA` / fallback module.
+- [ ] **No silent fake replies.** A Conversation that fabricates an
+      agent reply via `setTimeout` outside the standalone-only
+      fallback branch is non-conforming. Real reply chunks come from
+      `OPENUI_HOST.listen("agent.message", ...)`.
 - [ ] **No HTTP / WebSocket / global state** in components.
 - [ ] **No Tailwind / framework configs.** Plain CSS, CSS variables.
 
