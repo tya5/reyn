@@ -37,6 +37,6 @@ _ZEN = """The Zen of Reyn, by Tetsuya Yasuda
   Workspace に書かれていないものは、未来に届かない。"""
 
 
-@slash("zen", summary="The Zen of Reyn")
+@slash("zen", summary="The Zen of Reyn", hidden=True)
 async def zen_cmd(session: "object", args: str) -> None:
     await reply(session, _ZEN)
