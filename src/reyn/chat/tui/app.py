@@ -186,6 +186,12 @@ class ReynTUIApp(App):
                     )
                 continue
 
+            if msg.kind == "__matrix__":
+                # Easter egg: /matrix slash command lands here.
+                from reyn.chat.tui.widgets.matrix import MatrixScreen
+                self.push_screen(MatrixScreen())
+                continue
+
             if msg.kind == "__stream_start__":
                 # Begin a streaming row
                 current_stream_id = msg.meta.get("msg_id", id(msg))
@@ -470,9 +476,13 @@ class ReynTUIApp(App):
         """Show or refresh the command palette."""
         from reyn.chat.slash import REGISTRY
 
-        # Filter commands by prefix (after /), sorted alphabetically
+        # Filter commands by prefix (after /), sorted alphabetically.
+        # Hidden commands (e.g. easter eggs) only appear when typed by name.
         cmd_prefix = prefix[1:] if prefix.startswith("/") else ""
-        all_cmds = sorted(REGISTRY.all_commands(), key=lambda c: c.name)
+        all_cmds = sorted(
+            (c for c in REGISTRY.all_commands() if not c.hidden),
+            key=lambda c: c.name,
+        )
         matches = [c for c in all_cmds if c.name.startswith(cmd_prefix)]
 
         if not matches:

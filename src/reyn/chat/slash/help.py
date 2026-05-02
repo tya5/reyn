@@ -15,7 +15,9 @@ _BUILTIN_HINTS: list[tuple[str, str]] = [
 @slash("help", summary="Show this list of slash commands")
 async def help_cmd(session: "object", args: str) -> None:
     rows: list[tuple[str, str]] = [
-        (cmd.name, cmd.summary) for cmd in REGISTRY.all_commands()
+        (cmd.name, cmd.summary)
+        for cmd in REGISTRY.all_commands()
+        if not cmd.hidden
     ]
     rows.extend(_BUILTIN_HINTS)
     rows.sort(key=lambda r: r[0])

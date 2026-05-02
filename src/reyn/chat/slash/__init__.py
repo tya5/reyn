@@ -36,6 +36,8 @@ class SlashCommand:
     handler: HandlerFn      # async (session, args: str) -> None
     aliases: tuple[str, ...] = ()
     completer: CompleterFn | None = None  # optional: (session) -> list[str]
+    hidden: bool = False    # if True, omit from /help and the Tab palette
+                            # (still dispatchable when typed by name)
 
 
 class SlashRegistry:
@@ -80,6 +82,7 @@ def slash(
     summary: str,
     aliases: Iterable[str] = (),
     completer: CompleterFn | None = None,
+    hidden: bool = False,
 ) -> Callable[[HandlerFn], HandlerFn]:
     """Decorator that registers `fn` as a slash command on import.
 
@@ -94,6 +97,7 @@ def slash(
             handler=fn,
             aliases=tuple(aliases),
             completer=completer,
+            hidden=hidden,
         ))
         return fn
 
@@ -126,6 +130,7 @@ from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
+from reyn.chat.slash import matrix as _matrix_mod  # noqa: E402, F401
 
 
 __all__ = [
