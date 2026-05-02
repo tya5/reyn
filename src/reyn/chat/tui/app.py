@@ -447,9 +447,9 @@ class ReynTUIApp(App):
         """Show or refresh the command palette."""
         from reyn.chat.slash import REGISTRY
 
-        # Filter commands by prefix (after /)
+        # Filter commands by prefix (after /), sorted alphabetically
         cmd_prefix = prefix[1:] if prefix.startswith("/") else ""
-        all_cmds = REGISTRY.all_commands()
+        all_cmds = sorted(REGISTRY.all_commands(), key=lambda c: c.name)
         matches = [c for c in all_cmds if c.name.startswith(cmd_prefix)]
 
         if not matches:
