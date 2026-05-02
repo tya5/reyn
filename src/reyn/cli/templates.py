@@ -18,6 +18,22 @@ models:
 
 # output_language: en          # en | ja | zh | ...
 # shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
+
+# Optional: configure MCP servers. Each entry is either stdio (local
+# subprocess, e.g. official @modelcontextprotocol servers) or http.
+# See docs/en/concepts/mcp.md for details.
+#
+# mcp:
+#   servers:
+#     filesystem:
+#       type: stdio
+#       command: npx
+#       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+#     remote_search:
+#       type: http
+#       url: http://localhost:3000/mcp
+#       headers:
+#         Authorization: "Bearer ${SEARCH_API_KEY}"
 """
 
 

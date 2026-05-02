@@ -1,0 +1,36 @@
+# Example reyn.yaml with MCP servers configured.
+# Drop into your project root to enable the read_local_files stdlib skill
+# (and any future skills that target these servers).
+
+model: standard
+models:
+  light:    openai/gemini-2.5-flash-lite
+  standard: openai/gemini-2.5-flash-lite
+  strong:   openai/gemini-2.5-pro
+
+permissions:
+  python.pure: allow
+
+mcp:
+  servers:
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+    git:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
+
+    fetch:
+      type: stdio
+      command: uvx
+      args: ["mcp-server-fetch"]
+
+    # Remote HTTP example
+    # team_search:
+    #   type: http
+    #   url: ${TEAM_SEARCH_MCP_URL}
+    #   headers:
+    #     Authorization: "Bearer ${TEAM_SEARCH_TOKEN}"
