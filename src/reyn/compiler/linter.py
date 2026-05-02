@@ -305,7 +305,7 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
         # python.allowed_modules can legitimately whitelist additional imports)
         if mode == "pure":
             try:
-                from reyn._python_harness import _validate_pure_ast
+                from reyn.kernel._python_harness import _validate_pure_ast
             except Exception:
                 # harness isn't importable in this lint context — skip silently
                 continue

@@ -6,7 +6,7 @@ from typing import Literal
 
 from . import register
 from .context import OpContext
-from ..models import WebFetchIROp, WebSearchIROp
+from reyn.schemas.models import WebFetchIROp, WebSearchIROp
 
 
 class _TextExtractor(html.parser.HTMLParser):
@@ -85,7 +85,7 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
 
 
 async def handle_web_search(op: WebSearchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from ..search_backends import get_backend
+    from reyn.search_backends import get_backend
 
     ctx.events.emit("web_search_started", query=op.query, backend=op.backend)
     try:

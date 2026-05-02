@@ -12,7 +12,7 @@ import jsonschema
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.models import Skill, PreprocessorStep
+    from reyn.schemas.models import Skill, PreprocessorStep
 
 
 class PreprocessorTypeError(ValueError):
@@ -126,7 +126,7 @@ def _infer_step_output_schema(
     step_label: str,
 ) -> dict:
     """Return the JSON Schema that a single step produces (for use in iterate.apply)."""
-    from reyn.models import IterateStep, ValidateStep, RunOpStep
+    from reyn.schemas.models import IterateStep, ValidateStep, RunOpStep
     if isinstance(step, RunOpStep):
         return _op_output_schema(step.op.kind)
     if isinstance(step, ValidateStep):
@@ -146,7 +146,7 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
+    from reyn.schemas.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
 
     schema = copy.deepcopy(input_schema)
 

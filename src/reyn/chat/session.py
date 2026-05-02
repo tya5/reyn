@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from reyn.agent import Agent
-from reyn.agent_snapshot import AgentSnapshot
-from reyn.budget import (
+from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.budget.budget import (
     BudgetTracker,
     format_budget_full,
     format_cost_line,
@@ -21,12 +21,12 @@ from reyn.budget import (
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, LimitsConfig
-from reyn.event_store import EventStore
-from reyn.events import EventLog
-from reyn.model_resolver import ModelResolver
-from reyn.permissions import PermissionResolver
-from reyn.skill_paths import resolve_skill_path, stdlib_root
-from reyn.state_log import StateLog
+from reyn.events.event_store import EventStore
+from reyn.events.events import EventLog
+from reyn.llm.model_resolver import ModelResolver
+from reyn.permissions.permissions import PermissionResolver
+from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
+from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -351,7 +351,7 @@ class ChatSession:
         # <= 0).
         self._pending_chain_timers: dict[str, asyncio.Task] = {}
 
-        from reyn.pricing import TokenUsage
+        from reyn.llm.pricing import TokenUsage
         self._total_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
 

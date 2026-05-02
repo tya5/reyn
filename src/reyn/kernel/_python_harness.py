@@ -35,7 +35,7 @@ from typing import Any
 
 
 # Re-exported to keep parent and child agreeing on the constants.
-from reyn._python_allowlist import (
+from reyn.kernel._python_allowlist import (
     BANNED_BUILTINS,
     PURE_STDLIB_ALLOWLIST,
     module_is_allowed,

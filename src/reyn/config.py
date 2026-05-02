@@ -81,7 +81,7 @@ class ChatConfig:
 # PR22: CostConfig + CostLimitConfig live in `reyn.budget` (re-exported here
 # for ReynConfig typing). They include domain logic (warn_threshold etc.)
 # that doesn't belong in the config-only module.
-from reyn.budget import CostConfig, CostLimitConfig  # noqa: E402
+from reyn.budget.budget import CostConfig, CostLimitConfig  # noqa: E402
 
 
 @dataclass

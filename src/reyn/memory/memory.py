@@ -16,8 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .compiler.parser import _split_frontmatter
-from .memory_paths import memory_dir
+from reyn.compiler.parser import _split_frontmatter
+from reyn.memory.memory_paths import memory_dir
 
 
 VALID_TYPES = ("user", "feedback", "project", "reference")

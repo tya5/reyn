@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from ...llm import run_async
+from reyn.llm.llm import run_async
 from ..common_args import add_common_args
 from ..skill_loader import load_skill_from_args
 from ..logger_factory import make_logger
@@ -167,7 +167,7 @@ def _parse_cli_input(raw: str) -> dict:
 
 
 def _build_permission_resolver(config, shell_allowed: bool, trusted_python: bool = False):
-    from reyn.permissions import PermissionResolver
+    from reyn.permissions.permissions import PermissionResolver
     from reyn.config import _find_project_root
     project_root = _find_project_root(Path.cwd())
     perm_config = getattr(config, "permissions", {}) or {}

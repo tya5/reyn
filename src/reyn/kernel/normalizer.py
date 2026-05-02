@@ -24,7 +24,7 @@ from typing import Any
 
 import pydantic
 
-from .models import ControlDecision, ControlReason
+from reyn.schemas.models import ControlDecision, ControlReason
 
 
 class NormalizationError(Exception):

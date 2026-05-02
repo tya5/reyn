@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, replace
 
 from reyn.config import LimitsConfig, LLMLimitsConfig, PhaseLimitsConfig, ReynConfig, load_config
-from reyn.model_resolver import ModelResolver
+from reyn.llm.model_resolver import ModelResolver
 
 
 @dataclass

@@ -6,7 +6,7 @@ from io import StringIO
 from prompt_toolkit.formatted_text import AnyFormattedText, HTML
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.pricing import TokenUsage
+from reyn.llm.pricing import TokenUsage
 
 
 def _meta_prefix(meta: dict) -> str:

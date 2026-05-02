@@ -93,7 +93,7 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
         outputs.cancel()
         await asyncio.gather(inputs, outputs, return_exceptions=True)
         # Aggregate cost from all loaded agents
-        from reyn.pricing import TokenUsage
+        from reyn.llm.pricing import TokenUsage
         total_usage = TokenUsage()
         total_cost = 0.0
         for name in registry.loaded_names():

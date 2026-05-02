@@ -10,12 +10,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .pricing import TokenUsage
+from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
-    from .models import Skill
-    from .model_resolver import ModelResolver
-    from .user_intervention import InterventionBus
+    from reyn.schemas.models import Skill
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.user_intervention import InterventionBus
 
 
 @dataclass
@@ -50,7 +50,7 @@ async def invoke_sub_skill(
     `caller` is propagated from the parent so the sub-skill's events land
     under the same `events/<caller>/skill_runs/...` tree (PR20).
     """
-    from .agent import Agent
+    from reyn.agent import Agent
 
     agent = Agent(
         model=model,

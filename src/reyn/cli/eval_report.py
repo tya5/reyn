@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from reyn.pricing import TokenUsage
+from reyn.llm.pricing import TokenUsage
 
 
 @dataclass

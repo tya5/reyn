@@ -27,16 +27,16 @@ import jsonschema
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from .pricing import TokenUsage
-from .python_runner import PythonRunner, PythonStepError
+from reyn.llm.pricing import TokenUsage
+from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
-    from .models import Skill, Phase, PreprocessorStep
-    from .events import EventLog
-    from .model_resolver import ModelResolver
-    from .permissions import PermissionResolver
-    from .user_intervention import InterventionBus
-    from .workspace import Workspace
+    from reyn.schemas.models import Skill, Phase, PreprocessorStep
+    from reyn.events.events import EventLog
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.permissions.permissions import PermissionResolver
+    from reyn.user_intervention import InterventionBus
+    from reyn.workspace.workspace import Workspace
 
 
 class PreprocessorError(RuntimeError):
@@ -112,7 +112,7 @@ class PreprocessorExecutor:
 
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
-        from .op_runtime.context import OpContext
+        from reyn.op_runtime.context import OpContext
         return OpContext(
             workspace=self._workspace,
             events=self._events,
@@ -185,7 +185,7 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
+        from reyn.schemas.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
         phase_name = phase.name
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
@@ -221,7 +221,7 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .op_runtime import execute_op
+        from reyn.op_runtime import execute_op
         ctx = self._build_op_ctx(phase, index)
         ctx.output_language = output_language
         try:
@@ -289,8 +289,8 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str,
     ) -> tuple[dict, TokenUsage]:
-        from .models import RunOpStep
-        from .op_runtime import execute_op
+        from reyn.schemas.models import RunOpStep
+        from reyn.op_runtime import execute_op
 
         phase_name = phase.name
         if not isinstance(step.apply, RunOpStep):
@@ -360,7 +360,7 @@ class PreprocessorExecutor:
     def _apply_lint_plan(
         self, step: Any, artifact: dict, index: int, phase_name: str,
     ) -> tuple[dict, TokenUsage]:
-        from .compiler.linter import lint_plan
+        from reyn.compiler.linter import lint_plan
         plan = _get_at_path(artifact, step.over)
         if not isinstance(plan, dict):
             raise PreprocessorError(
@@ -404,7 +404,7 @@ class PreprocessorExecutor:
                     f"{step.module}:{step.function}: {exc}"
                 ) from exc
         else:
-            from .permissions import PythonPermission
+            from reyn.permissions.permissions import PythonPermission
             perm = PythonPermission(module=step.module, function=step.function)
 
         if not self._skill.skill_dir:

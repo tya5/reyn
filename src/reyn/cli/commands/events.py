@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def run_replay(args: argparse.Namespace) -> None:
-    from reyn.models import Event
+    from reyn.schemas.models import Event
 
     target = Path(args.target)
     if not target.exists():

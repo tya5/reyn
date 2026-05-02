@@ -10,12 +10,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..models import Skill
-    from ..workspace import Workspace
-    from ..events import EventLog
-    from ..model_resolver import ModelResolver
-    from ..permissions import PermissionDecl, PermissionResolver
-    from ..user_intervention import InterventionBus
+    from reyn.schemas.models import Skill
+    from reyn.workspace.workspace import Workspace
+    from reyn.events.events import EventLog
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.user_intervention import InterventionBus
 
 
 @dataclass

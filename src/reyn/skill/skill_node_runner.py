@@ -10,11 +10,11 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from .events import EventLog
-from .llm import proxy_kwargs
-from .model_resolver import ModelResolver
-from .models import SkillNodeSpec
-from .pricing import TokenUsage
+from reyn.events.events import EventLog
+from reyn.llm.llm import proxy_kwargs
+from reyn.llm.model_resolver import ModelResolver
+from reyn.schemas.models import SkillNodeSpec
+from reyn.llm.pricing import TokenUsage
 
 
 async def _adapt_artifact(
@@ -91,7 +91,7 @@ async def execute_skill_node(
     Returns (adapted_artifact, accumulated_token_usage).
     """
     from reyn.compiler import load_dsl_skill
-    from reyn.runtime import OSRuntime
+    from reyn.kernel.runtime import OSRuntime
 
     events.emit("skill_node_started", node=node_id, skill_path=node_spec.skill_path)
 

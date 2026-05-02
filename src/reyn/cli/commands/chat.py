@@ -9,7 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ...llm import run_async
+from reyn.llm.llm import run_async
 from ..common_args import add_common_args
 from ..session import Session
 
@@ -32,10 +32,10 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.registry import AgentRegistry, DEFAULT_AGENT_NAME
     from reyn.chat.profile import AgentProfile
     from reyn.chat.repl import run_repl
-    from reyn.budget import BudgetTracker
+    from reyn.budget.budget import BudgetTracker
     from reyn.config import _find_project_root, load_project_context
-    from reyn.permissions import PermissionResolver
-    from reyn.state_log import StateLog
+    from reyn.permissions.permissions import PermissionResolver
+    from reyn.events.state_log import StateLog
 
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)

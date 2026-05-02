@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from reyn.budget import (
+from reyn.budget.budget import (
     BudgetLedger,
     BudgetTracker,
     CostConfig,
@@ -26,7 +26,7 @@ from reyn.budget import (
     _period_key,
     _parse_iso_ts,
 )
-from reyn.pricing import TokenUsage
+from reyn.llm.pricing import TokenUsage
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────

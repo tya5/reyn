@@ -4,8 +4,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from reyn.llm import run_async
-from reyn.pricing import TokenUsage
+from reyn.llm.llm import run_async
+from reyn.llm.pricing import TokenUsage
 
 from ..common_args import add_model_arg, add_limits_args, add_output_language_arg
 from ..skill_loader import resolve_skill_path, stdlib_root

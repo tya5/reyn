@@ -3,7 +3,7 @@ from .parser import parse_artifact, parse_phase, parse_skill
 from .expander import expand_phase, expand_skill
 from .ir import ArtifactDef, PhaseDef
 from .preprocessor_typing import infer_llm_visible_schema, PreprocessorTypeError
-from reyn.models import Skill
+from reyn.schemas.models import Skill
 
 
 def _not_found_error(name: str, search_dirs: list[Path], kind: str, ext: str = ".md") -> ValueError:
@@ -26,7 +26,7 @@ def _load_dir(directory: Path, parser, registry: dict, glob: str = "*.md") -> No
 def _stdlib_dir(kind: str) -> Path:
     """Return the installed stdlib/<kind> directory via importlib.resources."""
     import importlib.resources
-    return Path(importlib.resources.files("stdlib") / kind)  # type: ignore[arg-type]
+    return Path(importlib.resources.files("reyn") / "stdlib" / kind)  # type: ignore[arg-type]
 
 
 def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
@@ -52,7 +52,7 @@ def _find_preprocessor_skill_names(phase_objects: dict) -> set[str]:
       - `run_op` steps wrapping a `run_skill` ControlIROp (the canonical form)
       - `iterate.apply` containing the same
     """
-    from reyn.models import IterateStep, RunOpStep
+    from reyn.schemas.models import IterateStep, RunOpStep
     names: set[str] = set()
 
     def _collect(step) -> None:
@@ -163,7 +163,7 @@ def load_dsl_skill(
     _load_dir(local_phases_dir, parse_phase, phase_defs)
 
     # Resolve skill nodes: load each sub-skill for its entry schema; detect cycles
-    from reyn.models import SkillNodeSpec
+    from reyn.schemas.models import SkillNodeSpec
     loading_stack = _loading_stack or frozenset()
     abs_skill_path = str(skill_path.resolve())
     loading_stack = loading_stack | {abs_skill_path}

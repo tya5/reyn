@@ -38,8 +38,8 @@ The `@pytest.mark.replay` mechanism offers a third option: **record once, replay
 
 ```python
 import pytest
-from reyn.llm import call_llm
-from reyn.models import ContextFrame, PhaseConstraints, ExecutionState, CandidateOutput
+from reyn.llm.llm import call_llm
+from reyn.schemas.models import ContextFrame, PhaseConstraints, ExecutionState, CandidateOutput
 from reyn.testing.replay import REPLAY_DATETIME   # fixed datetime for stable keys
 
 @pytest.mark.replay("fixtures/llm/my_area/my_scenario.jsonl")

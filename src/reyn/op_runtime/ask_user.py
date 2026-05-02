@@ -12,8 +12,8 @@ from typing import Literal
 
 from . import register
 from .context import OpContext
-from ..models import AskUserIROp
-from ..user_intervention import UserIntervention
+from reyn.schemas.models import AskUserIROp
+from reyn.user_intervention import UserIntervention
 
 
 async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:

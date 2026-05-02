@@ -33,12 +33,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
-from .user_intervention import (
+from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
     UserIntervention,
 )
-from .intervention_choices import (
+from reyn.intervention_choices import (
     ALWAYS,
     JUST_PATH,
     NEVER,

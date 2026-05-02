@@ -1,9 +1,9 @@
 # `reyn.testing.LLMReplay` API
 
-`LLMReplay` is the core class powering `@pytest.mark.replay`. It monkeypatches `litellm.acompletion` at the boundary shared by all Reyn LLM calls (`reyn.llm.call_llm` and `reyn.skill_node_runner._adapt_artifact`).
+`LLMReplay` is the core class powering `@pytest.mark.replay`. It monkeypatches `litellm.acompletion` at the boundary shared by all Reyn LLM calls (`reyn.llm.llm.call_llm` and `reyn.skill.skill_node_runner._adapt_artifact`).
 
 ```python
-from reyn.testing import LLMReplay, MissingFixture, REPLAY_DATETIME
+from reyn.testing.replay import LLMReplay, MissingFixture, REPLAY_DATETIME
 ```
 
 ---

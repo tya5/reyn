@@ -4,10 +4,10 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .events import EventLog
+from reyn.events.events import EventLog
 
 if TYPE_CHECKING:
-    from .permissions import PermissionResolver
+    from reyn.permissions.permissions import PermissionResolver
 
 
 class Workspace:

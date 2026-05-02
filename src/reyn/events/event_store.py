@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
-from reyn.models import Event
+from reyn.schemas.models import Event
 
 
 class EventStore:

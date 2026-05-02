@@ -6,7 +6,7 @@ from typing import Literal
 from . import register
 from .context import OpContext
 from .result import OpSkipped
-from ..models import ShellIROp
+from reyn.schemas.models import ShellIROp
 
 
 async def handle(op: ShellIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:

@@ -13,14 +13,14 @@ LLM-act-turn dispatch policy.
 from __future__ import annotations
 from typing import Any
 
-from .models import ControlIROp, ControlIROpSpec
-from .workspace import Workspace
-from .events import EventLog
-from .model_resolver import ModelResolver
-from .permissions import PermissionDecl, PermissionResolver
-from .op_runtime import execute_op
-from .op_runtime.context import OpContext
-from .user_intervention import InterventionBus
+from reyn.schemas.models import ControlIROp, ControlIROpSpec
+from reyn.workspace.workspace import Workspace
+from reyn.events.events import EventLog
+from reyn.llm.model_resolver import ModelResolver
+from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.op_runtime import execute_op
+from reyn.op_runtime.context import OpContext
+from reyn.user_intervention import InterventionBus
 
 
 class ControlIRExecutor:

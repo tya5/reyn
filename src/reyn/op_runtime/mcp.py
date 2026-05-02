@@ -5,11 +5,11 @@ from typing import Literal
 
 from . import register
 from .context import OpContext
-from ..models import MCPIROp
+from reyn.schemas.models import MCPIROp
 
 
 def _execute(op: MCPIROp, ctx: OpContext) -> dict:
-    from ..mcp_client import MCPHTTPClient, MCPError, expand_env
+    from reyn.mcp_client import MCPHTTPClient, MCPError, expand_env
 
     server_cfg = ctx.mcp_servers.get(op.server)
     if not server_cfg:

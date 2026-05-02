@@ -12,8 +12,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from reyn.skill_paths import resolve_skill_path, stdlib_root  # re-exported for convenience
-from reyn.models import Skill
+from reyn.skill.skill_paths import resolve_skill_path, stdlib_root  # re-exported for convenience
+from reyn.schemas.models import Skill
 
 __all__ = ["LoadedSkill", "load_skill_from_args", "resolve_skill_path", "stdlib_root"]
 

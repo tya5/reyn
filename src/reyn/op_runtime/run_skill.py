@@ -5,13 +5,13 @@ from typing import Literal
 
 from . import register
 from .context import OpContext
-from ..models import RunSkillIROp
+from reyn.schemas.models import RunSkillIROp
 
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from ..compiler import load_dsl_skill
-    from ..sub_skill_runner import invoke_sub_skill
-    from ..skill_paths import resolve_skill_path
+    from reyn.compiler import load_dsl_skill
+    from reyn.skill.sub_skill_runner import invoke_sub_skill
+    from reyn.skill.skill_paths import resolve_skill_path
 
     # Resolve sub-skill: prefer preloaded preprocessor sub-skills (set up at compile time)
     # before falling back to filesystem resolution.

@@ -5,11 +5,11 @@ from typing import Literal
 
 from . import register
 from .context import OpContext
-from ..models import LintIROp
+from reyn.schemas.models import LintIROp
 
 
 async def handle(op: LintIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
-    from ..compiler.linter import lint_skill_dir
+    from reyn.compiler.linter import lint_skill_dir
 
     skill_dir = Path(op.skill_path)
     if not (skill_dir / "skill.md").exists():

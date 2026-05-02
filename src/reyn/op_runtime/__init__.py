@@ -16,7 +16,7 @@ from typing import Literal
 
 from .context import OpContext
 from .result import OpResult, OpDenied, OpSkipped
-from ..models import ControlIROp
+from reyn.schemas.models import ControlIROp
 
 
 class OpDispatchError(RuntimeError):

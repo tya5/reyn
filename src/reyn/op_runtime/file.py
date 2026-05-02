@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from . import register
 from .context import OpContext
-from ..models import FileIROp
+from reyn.schemas.models import FileIROp
 
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
@@ -213,7 +213,7 @@ def regenerate_index_impl(
     - Writes `header + "\\n".join(entries) + "\\n"` (trailing newline only
       when entries exist).
     """
-    from ..compiler.parser import _split_frontmatter
+    from reyn.compiler.parser import _split_frontmatter
 
     output_basename = output_path.name
     entries: list[str] = []

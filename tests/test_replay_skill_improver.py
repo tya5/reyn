@@ -14,8 +14,8 @@ import asyncio
 
 import pytest
 
-from reyn.llm import call_llm
-from reyn.models import (
+from reyn.llm.llm import call_llm
+from reyn.schemas.models import (
     CandidateOutput,
     ContextFrame,
     ControlIROpSpec,

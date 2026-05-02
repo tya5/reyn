@@ -6,7 +6,7 @@ in a single place.
 """
 from __future__ import annotations
 
-from .user_intervention import InterventionChoice
+from reyn.user_intervention import InterventionChoice
 
 # Choice ids
 YES = "yes"           # one-shot allow (session-only)

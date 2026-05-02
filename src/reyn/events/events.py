@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Callable
-from .models import Event
+from reyn.schemas.models import Event
 
 
 class EventLog:

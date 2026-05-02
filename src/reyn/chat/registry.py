@@ -28,8 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from reyn.agent_snapshot import AgentSnapshot
-from reyn.state_log import StateLog
+from reyn.events.agent_snapshot import AgentSnapshot
+from reyn.events.state_log import StateLog
 from .profile import AgentProfile, PROFILE_FILENAME
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 

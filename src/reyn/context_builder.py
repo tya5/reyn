@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .models import CandidateOutput, ContextFrame, ControlIROpSpec, ExecutionState, Phase, PhaseConstraints
+from reyn.schemas.models import CandidateOutput, ContextFrame, ControlIROpSpec, ExecutionState, Phase, PhaseConstraints
 
 ARTIFACT_REF_THRESHOLD = 8000  # characters; larger artifacts are stored by ref in ContextFrame
 
