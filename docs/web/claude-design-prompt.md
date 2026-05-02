@@ -137,13 +137,26 @@ brief without flagging it in the canvas chat.
   `studio-screens.jsx` exporting `window.StudioScreens.{...}`,
   shared CSS variables in one `styles.css`). Single-face exports
   are acceptable if focusing on one face.
+- **Two HTML entries (REQUIRED)**:
+  - **`Reyn.html`** — *host-mountable runtime*. Single full-screen
+    mount that renders `<AppPrototype/>` or `<StudioPrototype/>` based
+    on the URL hash (`#studio` → Studio, anything else → App). No
+    artboards, no design-canvas chrome. This is what `reyn web` loads.
+  - **`Reyn UI.html`** — *design canvas*. Artboards side-by-side for
+    design review, optional Tweaks panel for theme / density / lang
+    switching. Designer mode only.
+
+  The host shell loads `Reyn.html` and expects globals to come from
+  the bundled scripts. `Reyn UI.html` is for `claude.ai/design` and
+  for opening the export directly in a browser.
 
 ## Designer-mode niceties (optional)
 
 When `window.OPENUI_DESIGN_MODE === true`, you MAY render a small
 designer-only chrome (theme tweaks panel, color / density switcher).
 Gate it explicitly so the host (with `OPENUI_DESIGN_MODE = false`)
-never sees it.
+never sees it. The two-entry split above is the canonical way to
+isolate designer chrome from host-mode runtime.
 
 ## Now generate
 
@@ -171,6 +184,10 @@ the design will not load cleanly in Reyn — fix it in the canvas first.
       Don't mix App-side screens and Studio-side screens into the
       same `window.AppScreens` global — keep them separate per the
       schema's `surface` declarations.
+- [ ] **Two HTML entries**: `Reyn.html` (host-mountable runtime,
+      hash-routed App/Studio mount, no artboards) and `Reyn UI.html`
+      (design canvas with artboards). The host shell fetches the
+      former; the latter is for design review.
 - [ ] **All required components present** for the chosen face. See
       [reyn-ui/v1 components.md](../openui/schemas/reyn-ui-v1/components.md).
 - [ ] **Component prop shapes match the contract verbatim** (extra
