@@ -321,7 +321,9 @@
   // This is simpler than iframe + postMessage and keeps all globals shared.
   try {
     const designUrl = `/web/designs/${encodeURIComponent(chosenSlug)}/Reyn.html`;
-    const r = await fetch(designUrl);
+    // cache: no-store — designs change often during development; we'd rather
+    // pay the network cost than serve a stale Reyn.html on every refresh.
+    const r = await fetch(designUrl, { cache: "no-store" });
     if (!r.ok) {
       mount.innerHTML = `<div style="padding:40px;color:#888;text-align:center">
         Design <strong>${_esc(chosenSlug)}</strong> not found at <code>${_esc(designUrl)}</code>.<br/>
@@ -368,6 +370,11 @@
       }
     });
 
+    // Cache-buster for design-local scripts. Designs iterate frequently in
+     // dev; a per-load timestamp keeps us from chasing stale assets without
+     // forcing the user to disable cache in DevTools.
+    const cacheBust = `?v=${Date.now()}`;
+
     // Inject and execute scripts in order
     scripts.forEach(orig => {
       const s = document.createElement("script");
@@ -377,7 +384,12 @@
         // External script: rewrite relative URLs to design's base path
         const base = `/web/designs/${encodeURIComponent(slug)}/`;
         const src = orig.getAttribute("src");
-        s.src = src.startsWith("http") || src.startsWith("/") ? src : base + src;
+        let resolved = src.startsWith("http") || src.startsWith("/") ? src : base + src;
+        // Only cache-bust design-local URLs (skip CDN scripts).
+        if (resolved.startsWith("/web/designs/")) {
+          resolved += cacheBust;
+        }
+        s.src = resolved;
         s.async = false;
       } else {
         s.textContent = orig.textContent;
