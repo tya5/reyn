@@ -3,10 +3,13 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Coroutine, TypeVar
+from typing import TYPE_CHECKING, Coroutine, TypeVar
 import litellm
 from reyn.schemas.models import ContextFrame
 from reyn.llm.pricing import TokenUsage
+
+if TYPE_CHECKING:
+    from reyn.budget.budget import BudgetTracker
 
 T = TypeVar("T")
 
@@ -281,6 +284,8 @@ async def call_llm(
     phase_role: str | None = None,
     project_context: str = "",
     agent_role: str = "",
+    budget: "BudgetTracker | None" = None,
+    budget_agent: str | None = None,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -296,7 +301,22 @@ async def call_llm(
     skill_name / skill_description / phase_role / project_context / agent_role:
       assembled into the system prompt by `_system_prompt()`. Pass empty strings
       to fall back to the format-contract-only base.
+    budget: optional BudgetTracker. When provided, check_pre_llm is called
+      before the LLM call (raises BudgetExceeded if refused) and record_llm
+      is called after a successful call. budget=None skips all tracking.
+    budget_agent: agent name passed to budget.check_pre_llm / record_llm.
+      Typically the agent running the skill (e.g. "default"). None = no agent context.
     """
+    # Budget pre-check — runs before any LLM call
+    if budget is not None:
+        from reyn.budget.budget import BudgetExceeded, format_refusal_message
+        check = budget.check_pre_llm(model=model, agent=budget_agent)
+        if not check.allowed:
+            raise BudgetExceeded(
+                check.hard_dimension or "budget",
+                format_refusal_message(check, agent=budget_agent),
+            )
+
     system = _system_prompt(
         skill_name=skill_name,
         skill_description=skill_description,
@@ -387,16 +407,28 @@ async def call_llm(
 
         text = _extract_json(last_raw)
 
+        parsed: dict | None = None
         try:
-            return LLMCallResult(data=json.loads(text), usage=usage)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
             pass
 
-        try:
-            return LLMCallResult(data=json.loads(_repair_json(text)), usage=usage)
-        except json.JSONDecodeError as exc:
-            last_exc = exc
-            continue  # retry
+        if parsed is None:
+            try:
+                parsed = json.loads(_repair_json(text))
+            except json.JSONDecodeError as exc:
+                last_exc = exc
+                continue  # retry
+
+        result = LLMCallResult(data=parsed, usage=usage)
+        # Budget post-record — after successful parse
+        if budget is not None and result.usage is not None:
+            budget.record_llm(
+                model=model,
+                agent=budget_agent,
+                usage=result.usage,
+            )
+        return result
 
     raise ValueError(
         f"LLM returned invalid JSON after repair and retry.\n"
@@ -416,13 +448,30 @@ async def call_llm_tools(
     skill_name: str = "router",      # for budget/event tagging
     skill_description: str = "",
     prompt_cache_enabled: bool = True,
+    budget: "BudgetTracker | None" = None,
+    budget_agent: str | None = None,
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
     Forces gemini-safe settings:
       - stream=False (Gemini #21041 streaming+tools bug)
       - thinking disabled (Gemini #17949 multi-turn parallel + thinking bug)
+
+    budget: optional BudgetTracker. When provided, check_pre_llm is called
+      before the LLM call (raises BudgetExceeded if refused) and record_llm
+      is called after a successful call. budget=None skips all tracking.
+    budget_agent: agent name passed to budget.check_pre_llm / record_llm.
     """
+    # Budget pre-check — runs before the LLM call
+    if budget is not None:
+        from reyn.budget.budget import BudgetExceeded, format_refusal_message
+        check = budget.check_pre_llm(model=model, agent=budget_agent)
+        if not check.allowed:
+            raise BudgetExceeded(
+                check.hard_dimension or "budget",
+                format_refusal_message(check, agent=budget_agent),
+            )
+
     extra = proxy_kwargs()
     # Strip provider prefix when routing via local proxy (same logic as call_llm)
     effective_model = model.split("/", 1)[1] if extra and "/" in model else model
@@ -446,6 +495,14 @@ async def call_llm_tools(
 
     msg = response.choices[0].message
     usage = _extract_usage(response) or TokenUsage()
+
+    # Budget post-record — after successful LLM call
+    if budget is not None:
+        budget.record_llm(
+            model=model,
+            agent=budget_agent,
+            usage=usage,
+        )
 
     # Normalize tool_calls to plain dicts so callers don't depend on litellm internals
     tool_calls = [

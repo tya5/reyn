@@ -18,6 +18,20 @@ from reyn.llm.pricing import TokenUsage
 
 
 # ---------------------------------------------------------------------------
+# Minimal EventLog stub for tests
+# ---------------------------------------------------------------------------
+
+class FakeEventLog:
+    """Minimal events stub: records emitted events, no subscribers."""
+
+    def __init__(self) -> None:
+        self.emitted: list[dict] = []
+
+    def emit(self, type: str, **data) -> None:
+        self.emitted.append({"type": type, **data})
+
+
+# ---------------------------------------------------------------------------
 # FakeRouterHost
 # ---------------------------------------------------------------------------
 
@@ -53,6 +67,13 @@ class FakeRouterHost:
 
         # In-memory "file system"
         self._files: dict[str, str] = {}
+
+        # Events (required by RouterLoopHost protocol for dispatch_tool)
+        self._events = FakeEventLog()
+
+    @property
+    def events(self) -> FakeEventLog:
+        return self._events
 
     # --- Catalogue ---
 
@@ -639,6 +660,181 @@ async def test_known_tool_still_dispatches():
     tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
     assert len(tool_msgs) == 1
     result_data = json.loads(tool_msgs[0]["content"])
-    # list_skills returns a list (categories), not an error dict
-    assert isinstance(result_data, list)
+    # dispatch_tool wraps success as {"status": "ok", "data": <result>}
+    assert result_data.get("status") == "ok"
+    # list_skills returns a list (categories) inside "data"
+    assert isinstance(result_data.get("data"), list)
     assert host.outbox[0]["text"] == "Here are the skills."
+
+
+# ---------------------------------------------------------------------------
+# PR37 Wave 2D: dispatch_tool integration + S13b skill-name validation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
+    """dispatch_tool emits tool_called and tool_returned events on success."""
+    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "invoke_skill", "args": {
+            "name": "my_skill",
+            "input": {"type": "Foo", "data": {}},
+        }}]),
+        text_result("Done!"),
+    ]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run("run skill", [])
+
+    event_types = [e["type"] for e in host.events.emitted]
+    assert "tool_called" in event_types
+    assert "tool_returned" in event_types
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
+    """dispatch_tool emits tool_failed on unknown_tool error."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "bogus_unknown_tool", "args": {}}]),
+        text_result("Recovered."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("try bogus", [])
+
+    event_types = [e["type"] for e in host.events.emitted]
+    assert "tool_failed" in event_types
+    failed = next(e for e in host.events.emitted if e["type"] == "tool_failed")
+    assert failed["error_kind"] == "unknown_tool"
+
+
+@pytest.mark.asyncio
+async def test_invoke_skill_with_unknown_skill_name_rejected():
+    """invoke_skill with a hallucinated skill name is rejected.
+
+    Layer A (enum) catches it via jsonschema validation → invalid_args.
+    If somehow enum is bypassed, Layer B raises ValueError → exception kind.
+    Either way, no skill spawn occurs.
+    """
+    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "invoke_skill", "args": {
+            "name": "ai_article_writer.write_article",  # hallucinated name
+            "input": {"type": "T", "data": {}},
+        }}]),
+        text_result("Ok, trying differently."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("run bogus skill", [])
+
+    # No skill should have been spawned
+    assert len(host.skill_calls) == 0, "No skill must be spawned for unknown name"
+
+    # Tool result must be an error (either invalid_args from enum or exception from Layer B)
+    round2_messages = messages_captured[1]
+    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1
+    result_data = json.loads(tool_msgs[0]["content"])
+    assert result_data.get("status") == "error"
+    error_kind = result_data.get("error", {}).get("kind", "")
+    assert error_kind in ("invalid_args", "exception"), (
+        f"Expected invalid_args or exception, got {error_kind!r}"
+    )
+
+    assert host.outbox[0]["text"] == "Ok, trying differently."
+
+
+@pytest.mark.asyncio
+async def test_invoke_skill_with_known_name_dispatches():
+    """invoke_skill with a valid skill name runs successfully (happy path)."""
+    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "invoke_skill", "args": {
+            "name": "real_skill",
+            "input": {"type": "T", "data": {"key": "value"}},
+        }}]),
+        text_result("Skill ran."),
+    ]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run("run real skill", [])
+
+    assert len(host.skill_calls) == 1
+    assert host.skill_calls[0]["skill"] == "real_skill"
+    assert host.outbox[0]["text"] == "Skill ran."
+
+
+@pytest.mark.asyncio
+async def test_invoke_skill_layer_b_catches_bypass():
+    """Layer B defense: even if enum validation is skipped (no skills in enum),
+    an unknown skill name raises ValueError → exception error kind.
+
+    Simulate by calling _invoke_router_tool directly with a name not in skills.
+    """
+    host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
+    loop = RouterLoop(host=host, chain_id="chain-test")
+
+    # Prime the catalog (normally done in run())
+    from reyn.chat.router_tools import build_tools
+    tools = build_tools(host.list_available_skills(), host.list_available_agents())
+    loop._catalog = {t["function"]["name"]: t for t in tools}
+    loop._tool_names = frozenset(loop._catalog.keys())
+
+    with pytest.raises(ValueError, match="not found"):
+        await loop._invoke_router_tool(
+            "invoke_skill",
+            {"name": "hallucinated_skill", "input": {"type": "T", "data": {}}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_no_events_attribute_needed_for_unknown_tool_path():
+    """Regression: unknown tool error still uses events from host.events via dispatch_tool."""
+    host = FakeRouterHost()
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "nonexistent_tool", "args": {}}]),
+        text_result("Recovered."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("try nonexistent", [])
+
+    round2_messages = messages_captured[1]
+    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
+    result_data = json.loads(tool_msgs[0]["content"])
+    assert result_data.get("status") == "error"
+    assert result_data["error"]["kind"] == "unknown_tool"
+    # events were emitted
+    assert any(e["type"] == "tool_failed" for e in host.events.emitted)

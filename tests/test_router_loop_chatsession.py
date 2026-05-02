@@ -141,7 +141,9 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
 
     async def run():
         with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm, \
-             patch.object(session, "_run_skill_awaitable", side_effect=fake_run_skill_awaitable):
+             patch.object(session, "_run_skill_awaitable", side_effect=fake_run_skill_awaitable), \
+             patch.object(session, "list_available_skills",
+                          return_value=[{"name": "some_skill", "category": "general"}]):
             mock_llm.side_effect = rounds
             await session._handle_user_message("run skill", chain_id="chain-003")
 

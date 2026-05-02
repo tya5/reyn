@@ -249,6 +249,7 @@ class OSRuntime:
             skill_name=skill.name,
             mcp_servers=mcp_servers,
             caller=caller,
+            chain_id=chain_id,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,

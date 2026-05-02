@@ -12,6 +12,13 @@ Semantics for `allowed_skills`:
 - empty list `[]` → router runs (LLM-only replies) but no skill spawn
 - `[a, b]`        → only those skill names
 
+PR37 adds `allowed_mcp`: an optional allowlist of MCP server names this
+agent may access, layered on top of the project-wide `permissions.mcp`
+config. Semantics:
+- absent / null  → no per-agent restriction (inherits project config)
+- `"all"`        → same as null but explicit in YAML for audit clarity
+- `[a, b]`       → intersect with project allow-list (per-agent narrowing)
+
 The `role` text is injected into the LLM's system prompt by
 `llm._system_prompt` so each agent gets a distinct persona without
 changing the OS layer.
@@ -37,6 +44,10 @@ class AgentProfile:
     # skills at all, [...] = only those names. stdlib router/compactor/narrator
     # are NOT subject to this list.
     allowed_skills: list[str] | None = None
+    # PR37: optional MCP server allowlist. None = no per-agent restriction
+    # (inherits project config). "all" in YAML normalizes to None here.
+    # list[str] = intersect with project allow-list.
+    allowed_mcp: list[str] | None = None
 
     @classmethod
     def new(cls, name: str, role: str = "") -> "AgentProfile":
@@ -59,11 +70,18 @@ class AgentProfile:
         else:
             # Accept yaml empty mapping `[]` or list of strings; coerce to list[str].
             allowed = [str(s) for s in raw_allowed]
+        # PR37: parse allowed_mcp — "all" sentinel normalizes to None.
+        raw_allowed_mcp = data.get("allowed_mcp", None)
+        if raw_allowed_mcp is None or raw_allowed_mcp == "all":
+            allowed_mcp: list[str] | None = None
+        else:
+            allowed_mcp = [str(s) for s in raw_allowed_mcp]
         return cls(
             name=str(data.get("name", agent_dir.name)),
             role=str(data.get("role", "") or ""),
             created_at=str(data.get("created_at", "") or ""),
             allowed_skills=allowed,
+            allowed_mcp=allowed_mcp,
         )
 
     def save(self, agent_dir: Path) -> None:
@@ -78,6 +96,8 @@ class AgentProfile:
         }
         if self.allowed_skills is not None:
             payload["allowed_skills"] = list(self.allowed_skills)
+        if self.allowed_mcp is not None:
+            payload["allowed_mcp"] = list(self.allowed_mcp)
         path.write_text(
             yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
             encoding="utf-8",

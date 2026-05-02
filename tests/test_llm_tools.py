@@ -181,3 +181,169 @@ async def test_tools_and_tool_choice_passed_through(monkeypatch):
 
     assert captured["tools"] == custom_tools
     assert captured["tool_choice"] == "required"
+
+
+# ---------------------------------------------------------------------------
+# Budget tracking tests (PR37 E)
+# ---------------------------------------------------------------------------
+
+def _make_budget_tracker(*, per_agent_tokens_hard: int | None = None):
+    """Build a real BudgetTracker with optional per-agent token cap."""
+    from reyn.budget.budget import BudgetTracker, CostConfig, CostLimitConfig
+    cfg = CostConfig()
+    if per_agent_tokens_hard is not None:
+        cfg.per_agent_tokens = CostLimitConfig(hard_limit=per_agent_tokens_hard)
+    return BudgetTracker(cfg)
+
+
+@pytest.mark.asyncio
+async def test_call_llm_tools_records_tokens_to_budget(monkeypatch):
+    """Budget tracker accumulates prompt+completion tokens after a call."""
+    fake = _make_response(content="hello", tool_calls=None,
+                          prompt_tokens=42, completion_tokens=17)
+    monkeypatch.setattr(litellm, "acompletion", AsyncMock(return_value=fake))
+
+    from reyn.llm.llm import call_llm_tools
+
+    tracker = _make_budget_tracker()
+    await call_llm_tools(
+        model="openai/gpt-4o",
+        messages=MINIMAL_MESSAGES,
+        tools=MINIMAL_TOOLS,
+        budget=tracker,
+        budget_agent="test-agent",
+    )
+
+    snap = tracker.snapshot()
+    assert snap["agent_tokens"].get("test-agent", 0) == 42 + 17
+    # daily / monthly counters should also reflect the call
+    assert snap["daily_tokens"] == 42 + 17
+    assert snap["monthly_tokens"] == 42 + 17
+
+
+@pytest.mark.asyncio
+async def test_call_llm_tools_pre_check_blocks_when_over_quota(monkeypatch):
+    """When per-agent token cap is exhausted, call raises BudgetExceeded before
+    calling litellm."""
+    called = []
+
+    async def fake_acompletion(**kwargs):
+        called.append(True)
+        return _make_response(content="should not reach here")
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    from reyn.llm.llm import call_llm_tools
+    from reyn.budget.budget import BudgetExceeded
+
+    # Set hard limit of 10 tokens, then fill it up with a real record
+    tracker = _make_budget_tracker(per_agent_tokens_hard=10)
+    from reyn.llm.pricing import TokenUsage
+    tracker.record_llm(
+        model="openai/gpt-4o",
+        agent="test-agent",
+        usage=TokenUsage(prompt_tokens=8, completion_tokens=5),  # total=13 > 10
+    )
+
+    with pytest.raises(BudgetExceeded):
+        await call_llm_tools(
+            model="openai/gpt-4o",
+            messages=MINIMAL_MESSAGES,
+            tools=MINIMAL_TOOLS,
+            budget=tracker,
+            budget_agent="test-agent",
+        )
+
+    # litellm must NOT have been called
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_call_llm_tools_no_budget_kwarg_skips_tracking(monkeypatch):
+    """Backward compat: budget=None (default) → no tracking, no checks."""
+    fake = _make_response(content="ok", prompt_tokens=99, completion_tokens=50)
+    monkeypatch.setattr(litellm, "acompletion", AsyncMock(return_value=fake))
+
+    from reyn.llm.llm import call_llm_tools
+
+    # No budget kwarg — should work exactly as before with no side effects
+    result = await call_llm_tools(
+        model="openai/gpt-4o",
+        messages=MINIMAL_MESSAGES,
+        tools=MINIMAL_TOOLS,
+    )
+    assert result.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_records_tokens_to_budget(monkeypatch):
+    """call_llm also records tokens when budget kwarg is provided."""
+    import json
+
+    payload = json.dumps({"type": "decide", "control": {"type": "finish", "decision": "finish",
+                         "next_phase": None, "confidence": 1.0, "reason": {"summary": "done"}},
+                         "artifact": {"type": "x", "data": {}}, "ops": []})
+    fake = _make_response(content=payload, prompt_tokens=55, completion_tokens=22)
+    monkeypatch.setattr(litellm, "acompletion", AsyncMock(return_value=fake))
+
+    from reyn.llm.llm import call_llm
+    from reyn.schemas.models import ContextFrame
+
+    tracker = _make_budget_tracker()
+    frame = ContextFrame(
+        current_phase="test",
+        instructions="test instructions",
+        input_artifact={},
+        candidate_outputs=[],
+        output_language="en",
+    )
+    await call_llm(
+        "openai/gpt-4o",
+        frame,
+        budget=tracker,
+        budget_agent="skill-agent",
+    )
+
+    snap = tracker.snapshot()
+    assert snap["agent_tokens"].get("skill-agent", 0) == 55 + 22
+
+
+@pytest.mark.asyncio
+async def test_call_llm_pre_check_blocks_when_over_quota(monkeypatch):
+    """call_llm raises BudgetExceeded before calling litellm when cap exceeded."""
+    called = []
+
+    async def fake_acompletion(**kwargs):
+        called.append(True)
+        return _make_response(content="{}")
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+
+    from reyn.llm.llm import call_llm
+    from reyn.budget.budget import BudgetExceeded
+    from reyn.llm.pricing import TokenUsage
+    from reyn.schemas.models import ContextFrame
+
+    tracker = _make_budget_tracker(per_agent_tokens_hard=5)
+    tracker.record_llm(
+        model="openai/gpt-4o",
+        agent="skill-agent",
+        usage=TokenUsage(prompt_tokens=4, completion_tokens=3),  # total=7 > 5
+    )
+
+    frame = ContextFrame(
+        current_phase="test",
+        instructions="test instructions",
+        input_artifact={},
+        candidate_outputs=[],
+        output_language="en",
+    )
+    with pytest.raises(BudgetExceeded):
+        await call_llm(
+            "openai/gpt-4o",
+            frame,
+            budget=tracker,
+            budget_agent="skill-agent",
+        )
+
+    assert called == []

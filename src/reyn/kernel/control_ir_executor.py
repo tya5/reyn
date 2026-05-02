@@ -9,11 +9,20 @@ frontend as well.
 
 Workspace owns data; op_runtime owns execution; this module owns
 LLM-act-turn dispatch policy.
+
+Each op invocation is wrapped with dispatch_tool (PR37 wave 2C) which
+adds tool_called / tool_returned / tool_failed event brackets and a
+uniform error shape. The existing tool_executed events from op_runtime
+handlers are preserved (they run inside the invoker).
 """
 from __future__ import annotations
 from typing import Any
 
-from reyn.schemas.models import ControlIROp, ControlIROpSpec
+from reyn.schemas.models import (
+    ControlIROp, ControlIROpSpec,
+    FileIROp, MCPIROp, RunSkillIROp, ShellIROp, LintIROp,
+    AskUserIROp, WebFetchIROp, WebSearchIROp,
+)
 from reyn.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
@@ -21,6 +30,57 @@ from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
 from reyn.user_intervention import InterventionBus
+from reyn.dispatch import DispatchContext, dispatch_tool
+
+
+# Map: op kind -> IROp Pydantic model (used to derive tool parameter schemas)
+_IROP_MODEL_MAP: dict[str, type] = {
+    "file": FileIROp,
+    "mcp": MCPIROp,
+    "run_skill": RunSkillIROp,
+    "shell": ShellIROp,
+    "lint": LintIROp,
+    "ask_user": AskUserIROp,
+    "web_fetch": WebFetchIROp,
+    "web_search": WebSearchIROp,
+}
+
+
+def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
+    """Build a tool_catalog for dispatch_tool from a set of allowed op kinds.
+
+    Each allowed op kind becomes a tool entry whose parameters schema is
+    derived from the corresponding IROp Pydantic model (with 'kind' removed
+    from required fields, since kind is implicit at dispatch time).
+
+    Returns a dict[str, dict] in litellm tools= entry shape:
+        {op_kind: {"function": {"name": op_kind, "parameters": <json schema>}}}
+    """
+    catalog: dict[str, dict] = {}
+    for kind in allowed_ops:
+        model_cls = _IROP_MODEL_MAP.get(kind)
+        if model_cls is None:
+            # Unknown op kinds get a schema-less entry (no arg validation)
+            catalog[kind] = {"function": {"name": kind}}
+            continue
+        schema = model_cls.model_json_schema()
+        # Remove 'kind' from required — it's implicit at dispatch time and
+        # would fail validation since we pass args without the kind field.
+        required = [f for f in schema.get("required", []) if f != "kind"]
+        properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
+        clean_schema = {
+            "type": "object",
+            "properties": properties,
+        }
+        if required:
+            clean_schema["required"] = required
+        catalog[kind] = {
+            "function": {
+                "name": kind,
+                "parameters": clean_schema,
+            }
+        }
+    return catalog
 
 
 class ControlIRExecutor:
@@ -36,6 +96,7 @@ class ControlIRExecutor:
         skill_name: str = "",
         mcp_servers: dict | None = None,
         caller: str = "direct",
+        chain_id: str | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -48,6 +109,7 @@ class ControlIRExecutor:
         self._mcp_servers: dict = (mcp_servers or {}).get("servers", {})
         self._mcp_clients: dict = {}  # cached across ops
         self._caller = caller
+        self._chain_id = chain_id
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -199,10 +261,29 @@ class ControlIRExecutor:
         `allowed_ops` filters at the frontend level: ops whose kind is not in
         the set are skipped with `not_allowed_in_phase`. This is defense-in-
         depth against the LLM emitting an op it wasn't shown.
+
+        Each op is wrapped with dispatch_tool (PR37 wave 2C), adding
+        tool_called / tool_returned / tool_failed event brackets around
+        the existing tool_executed events emitted by op_runtime handlers.
         """
         effective_decl = decl or PermissionDecl()
         ctx = self._build_ctx(effective_decl, phase)
         results: list[dict[str, Any]] = []
+
+        # Build a tool catalog for dispatch_tool name/arg validation.
+        # Use allowed_ops if provided; fall back to all known op kinds.
+        catalog_ops = allowed_ops if allowed_ops is not None else set(_IROP_MODEL_MAP.keys())
+        tool_catalog = _build_phase_tool_catalog(catalog_ops)
+
+        caller_id = f"{self._skill_name}.{phase}" if self._skill_name else phase
+
+        dctx = DispatchContext(
+            caller_kind="skill_phase",
+            caller_id=caller_id,
+            chain_id=self._chain_id,
+            tool_catalog=tool_catalog,
+            events=self.events,
+        )
 
         for op in ops:
             if allowed_ops is not None and op.kind not in allowed_ops:
@@ -217,10 +298,38 @@ class ControlIRExecutor:
                 })
                 continue
 
-            result = await execute_op(op, ctx, caller="control_ir")
-            # run_skill emits an internal `_token_usage` field used by the
-            # preprocessor frontend; control IR doesn't propagate it, so drop it.
-            result.pop("_token_usage", None)
-            results.append(result)
+            op_args = op.model_dump(exclude={"kind"})
+
+            async def _invoker(args: dict, _op=op, _ctx=ctx) -> Any:
+                # execute_op catches PermissionError internally and returns
+                # {"status": "denied"}.  Re-raise as PermissionError so that
+                # dispatch_tool's handler emits tool_failed with error_kind
+                # "permission_denied" (the designed cross-cutting pattern).
+                result = await execute_op(_op, _ctx, caller="control_ir")
+                result.pop("_token_usage", None)
+                if result.get("status") == "denied":
+                    raise PermissionError(result.get("error", "permission denied"))
+                return result
+
+            dispatch_result = await dispatch_tool(
+                name=op.kind,
+                args=op_args,
+                ctx=dctx,
+                invoker=_invoker,
+            )
+
+            if dispatch_result["status"] == "ok":
+                op_result = dispatch_result["data"]
+            else:
+                # Uniform error shape → internal shape so downstream logic
+                # (force_decide / retry) continues to work.
+                err = dispatch_result.get("error", {})
+                op_result = {
+                    "kind": op.kind,
+                    "status": "error",
+                    "error": err.get("message", str(err)),
+                }
+
+            results.append(op_result)
 
         return results

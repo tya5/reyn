@@ -289,6 +289,7 @@ class ChatSession:
         max_hop_depth: int = 3,
         chain_timeout_seconds: float = 60.0,
         allowed_skills: list[str] | None = None,
+        allowed_mcp: list[str] | None = None,
         events_config: EventsConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
@@ -320,6 +321,12 @@ class ChatSession:
         # this — they're always available regardless.
         self._allowed_skills: list[str] | None = (
             list(allowed_skills) if allowed_skills is not None else None
+        )
+        # PR37: optional MCP server allowlist from agent profile. None = no
+        # per-agent restriction (inherits project config). list[str] = only
+        # these servers pass the per-agent check in require_mcp.
+        self._allowed_mcp: list[str] | None = (
+            list(allowed_mcp) if allowed_mcp is not None else None
         )
 
         # PR20: per-chat rotation policy. Defaults match EventsConfig.
@@ -2242,6 +2249,7 @@ class ChatSession:
             file_read=file_read,
             file_write=file_write,
             mcp=mcp_names,
+            allowed_mcp=self._allowed_mcp,
         )
 
         workspace = Workspace(
@@ -2631,6 +2639,11 @@ class ChatSession:
         """agent_role exposed to RouterLoopHost."""
         return self._agent_role
 
+    @property
+    def events(self):
+        """EventLog exposed to RouterLoopHost for dispatch_tool events."""
+        return self._chat_events
+
     # --- Catalogue accessors ---
 
     def list_available_skills(self) -> list[dict]:
@@ -2800,6 +2813,9 @@ class ChatSession:
         """
         self._check_and_increment_router_cap(user_text)
         from reyn.chat.router_loop import RouterLoop
-        loop = RouterLoop(host=self, chain_id=chain_id, max_iterations=5)
+        loop = RouterLoop(
+            host=self, chain_id=chain_id, max_iterations=5,
+            budget=self._budget_tracker,
+        )
         history = self._build_history_for_router()
         await loop.run(user_text=user_text, history=history)

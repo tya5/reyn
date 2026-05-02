@@ -35,6 +35,20 @@ from reyn.llm.pricing import TokenUsage
 
 
 # ---------------------------------------------------------------------------
+# Minimal events stub
+# ---------------------------------------------------------------------------
+
+class _FakeEventLog:
+    """Minimal events stub: records emitted events, no subscribers."""
+
+    def __init__(self) -> None:
+        self.emitted: list[dict] = []
+
+    def emit(self, type: str, **data) -> None:
+        self.emitted.append({"type": type, **data})
+
+
+# ---------------------------------------------------------------------------
 # FakeRouterHost (shared with test_router_loop.py — kept in sync)
 # ---------------------------------------------------------------------------
 
@@ -70,6 +84,13 @@ class FakeRouterHost:
 
         # In-memory "file system"
         self._files: dict[str, str] = {}
+
+        # Events stub for dispatch_tool
+        self._events = _FakeEventLog()
+
+    @property
+    def events(self) -> "_FakeEventLog":
+        return self._events
 
     # --- Catalogue ---
 
@@ -265,19 +286,34 @@ async def test_invoke_skill_single_round():
     assert len(host.outbox[0]["text"]) > 0
 
 
-@pytest.mark.replay("fixtures/llm/router/delegate_to_agent.jsonl")
 @pytest.mark.asyncio
 async def test_delegate_to_agent():
-    """LLM calls delegate_to_agent; host.send_to_agent called with correct args."""
+    """RouterLoop dispatches LLM-emitted delegate_to_agent to host.send_to_agent.
+
+    Uses direct monkeypatch (not LLMReplay) because PR37 wave 2D removed the
+    enum attractor on `delegate_to_agent.to`, so the LLM no longer reliably
+    picks the agent name from a recorded prompt — we'd be testing LLM behavior
+    rather than dispatch correctness. Direct mock pins the dispatch path.
+    """
     host = FakeRouterHost(
         agents=[{"name": "researcher", "role": "research agent", "cluster": "default"}],
     )
     loop = _make_loop(host)
 
-    await loop.run(
-        "Delegate this research task to the researcher agent: find info on climate change.",
-        [],
-    )
+    rounds = [
+        _tool_result([{
+            "name": "delegate_to_agent",
+            "args": {"to": "researcher",
+                     "request": "find info on climate change"},
+        }]),
+        _text_result("Delegated to researcher."),
+    ]
+    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run(
+            "Delegate to the researcher: find info on climate change.",
+            [],
+        )
 
     assert len(host.agent_sends) >= 1, (
         f"Expected at least 1 delegate call; got: {host.agent_sends}"

@@ -435,3 +435,74 @@ def test_memory_path_agent(tmp_path, monkeypatch):
     session = _make_session(tmp_path)
     path = session._memory_path("agent", "my_slug")
     assert "agents/test_agent/memory/my_slug.md" in path.replace("\\", "/")
+
+
+# ── PR37: allowed_mcp ─────────────────────────────────────────────────────────
+
+
+def test_allowed_mcp_loaded_from_profile(tmp_path, monkeypatch):
+    """Profile.yaml with allowed_mcp: [filesystem] is parsed into AgentProfile."""
+    monkeypatch.chdir(tmp_path)
+    import yaml
+    from reyn.chat.profile import AgentProfile
+
+    agent_dir = tmp_path / ".reyn" / "agents" / "test_agent"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    profile_path = agent_dir / "profile.yaml"
+    profile_path.write_text(
+        yaml.safe_dump({
+            "name": "test_agent",
+            "role": "test role",
+            "created_at": "2026-05-02T00:00:00+00:00",
+            "allowed_skills": ["read_local_files"],
+            "allowed_mcp": ["filesystem"],
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    profile = AgentProfile.load(agent_dir)
+    assert profile.allowed_mcp == ["filesystem"]
+
+
+def test_allowed_mcp_in_permission_decl(tmp_path, monkeypatch):
+    """ChatSession constructed with allowed_mcp=[filesystem] sets it in the PermissionDecl."""
+    monkeypatch.chdir(tmp_path)
+    session = ChatSession(
+        agent_name="test_agent",
+        allowed_mcp=["filesystem"],
+    )
+    ctx = session._make_router_op_context()
+    assert ctx.permission_decl.allowed_mcp == ["filesystem"]
+
+
+def test_allowed_mcp_none_means_no_restriction(tmp_path, monkeypatch):
+    """allowed_mcp=None means no per-agent restriction; decl.allowed_mcp is None."""
+    monkeypatch.chdir(tmp_path)
+    session = ChatSession(agent_name="test_agent")
+    ctx = session._make_router_op_context()
+    assert ctx.permission_decl.allowed_mcp is None
+
+
+def test_allowed_mcp_all_string_normalized_to_none(tmp_path, monkeypatch):
+    """Profile with allowed_mcp: all normalizes to None (no restriction)."""
+    monkeypatch.chdir(tmp_path)
+    import yaml
+    from reyn.chat.profile import AgentProfile
+
+    agent_dir = tmp_path / ".reyn" / "agents" / "test_agent2"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    profile_path = agent_dir / "profile.yaml"
+    profile_path.write_text(
+        yaml.safe_dump({
+            "name": "test_agent2",
+            "role": "",
+            "created_at": "2026-05-02T00:00:00+00:00",
+            "allowed_mcp": "all",
+        }, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+    profile = AgentProfile.load(agent_dir)
+    assert profile.allowed_mcp is None, (
+        "allowed_mcp='all' should normalize to None (no restriction)"
+    )

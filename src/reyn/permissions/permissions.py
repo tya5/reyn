@@ -126,6 +126,11 @@ class PermissionDecl:
     file_write: list[dict] = field(default_factory=list)
     # Python preprocessor steps the phase intends to run.
     python: list[PythonPermission] = field(default_factory=list)
+    # PR37: per-agent MCP allowlist. None = no per-agent restriction (only
+    # project-wide config applies). list[str] = agent must be in this list
+    # AND the server must pass project-wide checks. "all" sentinel is
+    # normalized to None by the loader before constructing PermissionDecl.
+    allowed_mcp: list[str] | None = None
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -601,6 +606,13 @@ class PermissionResolver:
     async def require_mcp(
         self, decl: PermissionDecl, server: str, bus: InterventionBus,
     ) -> None:
+        # PR37: per-agent allowlist check (narrower than project config).
+        # None means no per-agent restriction; list means server must be in it.
+        if decl.allowed_mcp is not None and server not in decl.allowed_mcp:
+            raise PermissionError(
+                f"MCP server {server!r} not in allowed_mcp for caller "
+                f"(agent allowlist exhausted)"
+            )
         if server not in decl.mcp:
             raise PermissionError(
                 f"MCP server {server!r} not declared in phase permissions. "

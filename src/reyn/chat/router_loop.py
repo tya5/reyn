@@ -7,11 +7,13 @@ outbox and stop. Bounded by max_iterations.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from reyn.chat.router_tools import build_tools
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
 
 if TYPE_CHECKING:
@@ -30,6 +32,11 @@ class RouterLoopHost(Protocol):
     chat_id: str
     agent_name: str
     agent_role: str
+
+    @property
+    def events(self) -> Any:
+        """EventLog (has .emit(type: str, **data)) for tool dispatch events."""
+        ...
 
     def list_available_skills(self) -> list[dict]:
         """Each entry: {name, description, routing?, category?}"""
@@ -112,12 +119,15 @@ class RouterLoop:
         chain_id: str,
         max_iterations: int = 5,
         router_model: str = "light",  # config tier (light = intent classification)
+        budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
     ):
         self.host = host
         self.chain_id = chain_id
         self.max_iterations = max_iterations
         self.router_model = router_model
-        self._tool_names: frozenset[str] = frozenset()  # populated per run()
+        self.budget = budget
+        self._catalog: dict[str, dict] = {}  # populated per run()
+        self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
 
     async def run(self, user_text: str, history: list[dict]) -> None:
         """Process one user utterance end-to-end. Emits to host.put_outbox."""
@@ -128,9 +138,8 @@ class RouterLoop:
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
         )
-        self._tool_names = frozenset(
-            t["function"]["name"] for t in tools
-        )
+        self._catalog = {t["function"]["name"]: t for t in tools}
+        self._tool_names = frozenset(self._catalog.keys())  # backward compat
         system_prompt = build_system_prompt(
             agent_name=host.agent_name,
             agent_role=host.agent_role,
@@ -151,6 +160,8 @@ class RouterLoop:
                 tools=tools,
                 tool_choice="auto",
                 skill_name="router",
+                budget=self.budget,
+                budget_agent=host.agent_name,
             )
             if result.tool_calls:
                 # parallel execute all tool calls
@@ -192,31 +203,38 @@ class RouterLoop:
     # -----------------------------------------------------------------------
 
     async def _execute_tool(self, tc: dict) -> dict:
-        """Dispatch one tool call. Returns the tool_result content (will be
-        JSON-serialized into the next round's messages)."""
+        """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
+
+        Returns the tool_result content (will be JSON-serialized into the
+        next round's messages).
+        """
         name = tc["function"]["name"]
-
-        # Catalog membership check — reject hallucinated tool names before dispatch
-        if name not in self._tool_names:
-            available = sorted(self._tool_names)
-            preview = ", ".join(available[:6]) + ("..." if len(available) > 6 else "")
-            return {
-                "status": "error",
-                "error": {
-                    "kind": "unknown_tool",
-                    "message": (
-                        f"Tool '{name}' is not available in this session. "
-                        f"Available tools include: {preview}. "
-                        f"Use one of the listed tools or reply directly with text."
-                    ),
-                },
-            }
-
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):
             args = {}
 
+        dctx = DispatchContext(
+            caller_kind="router",
+            caller_id=self.host.agent_name,
+            chain_id=self.chain_id,
+            tool_catalog=self._catalog,
+            events=self.host.events,
+        )
+
+        return await dispatch_tool(
+            name=name,
+            args=args,
+            ctx=dctx,
+            invoker=functools.partial(self._invoke_router_tool, name),
+        )
+
+    async def _invoke_router_tool(self, name: str, args: dict) -> Any:
+        """Execute a validated tool call by name.
+
+        Called by dispatch_tool after name/args validation. The if/elif
+        tree from the old _execute_tool lives here — assumes name is valid.
+        """
         # A. Discovery
         if name == "list_skills":
             return self._list_skills(args.get("path", ""))
@@ -235,8 +253,18 @@ class RouterLoop:
 
         # B. Action
         if name == "invoke_skill":
+            skill_name = args["name"]
+            # Layer B: defense-in-depth — verify skill name at runtime.
+            # Only enforced when the host exposes a non-empty skills list
+            # (same precondition as Layer A enum in build_tools).
+            available_skills = {s["name"] for s in self.host.list_available_skills()}
+            if available_skills and skill_name not in available_skills:
+                raise ValueError(
+                    f"skill {skill_name!r} not found; "
+                    f"available: {sorted(available_skills)}"
+                )
             return await self.host.run_skill_awaitable(
-                skill=args["name"],
+                skill=skill_name,
                 input=args["input"],
                 chain_id=self.chain_id,
             )
@@ -274,7 +302,9 @@ class RouterLoop:
                 args["server"], args["tool"], args["args"]
             )
 
-        return {"error": f"unknown tool: {name}"}
+        # Should not be reached if catalog is correct — dispatch_tool already
+        # validated name is in catalog. Return error for safety.
+        return {"error": f"unhandled tool: {name}"}
 
     # -----------------------------------------------------------------------
     # Discovery helpers (pure, no async host calls)

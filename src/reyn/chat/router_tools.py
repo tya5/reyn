@@ -38,12 +38,13 @@ def build_tools(
     ----------
     available_skills:
         Skill catalogue entries. Each dict must have at least ``name``.
-        Used only to document what names are valid; the parameter itself
-        stays ``{"type": "string"}`` without enum (skill names can be many —
-        discovery via list_skills / describe_skill).
+        When the list is non-empty the ``name`` field of ``invoke_skill`` gets
+        an ``enum`` constraint so dispatch_tool's schema validation rejects
+        hallucinated skill names (S13b gap). When empty, plain ``string`` is
+        used (no enum) to avoid an empty-enum schema that some providers reject.
     available_agents:
         Peer agent entries. Each dict must have at least ``name``.
-        Same rationale — plain string, discovery via list_agents.
+        Same enum strategy as above for ``delegate_to_agent.to``.
     file_permissions:
         Optional dict with ``read`` and/or ``write`` lists of path strings.
         - None or both empty → File tools omitted entirely (C1–C4).
@@ -54,6 +55,16 @@ def build_tools(
         ``description``). None or [] → MCP tools omitted. Otherwise all 3
         MCP tools (D1–D3) are included.
     """
+    # PR37 wave 2D added enum for invoke_skill.name / delegate_to_agent.to
+    # to close the S13b hallucination gap at the schema layer. Post-2D dogfood
+    # showed an attractor side-effect: surfacing skill names directly in the
+    # tool schema made the LLM too eager to pick a skill for any prompt
+    # ("hello" → ai_article_writer was the regression). Roll Layer A back
+    # to plain string; defense relies on Layer B (invoker-side catalog check
+    # in router_loop._invoke_router_tool) which catches hallucinated names
+    # without tempting the LLM with a visible menu.
+    _invoke_skill_name_schema: dict = {"type": "string"}
+    _delegate_to_schema: dict = {"type": "string"}
     # fmt: off
     tools: list[dict] = [
         # ── A1: list_skills ──────────────────────────────────────────────
@@ -197,7 +208,7 @@ def build_tools(
                     "type": "object",
                     "properties": {
                         "name": {
-                            "type": "string",
+                            **_invoke_skill_name_schema,
                             "description": "Skill name as listed by list_skills.",
                         },
                         "input": {
@@ -222,7 +233,7 @@ def build_tools(
                     "type": "object",
                     "properties": {
                         "to": {
-                            "type": "string",
+                            **_delegate_to_schema,
                             "description": (
                                 "Target agent name as listed by list_agents."
                             ),
