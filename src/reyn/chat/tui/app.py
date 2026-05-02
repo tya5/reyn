@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.widgets import Label
 
 from .widgets import ReynHeader, ConversationView, InputBar
@@ -70,10 +71,10 @@ class ReynTUIApp(App):
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
     BINDINGS = [
-        ("ctrl+d", "quit_tui", "Quit"),
-        ("ctrl+l", "clear_conversation", "Clear"),
-        ("ctrl+c", "cancel_inflight", "Cancel"),
-        ("escape", "close_palette", "Close palette"),
+        Binding("ctrl+d", "quit_tui", "Quit", priority=True),
+        Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
+        Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
+        Binding("escape", "close_palette", "Close palette"),
     ]
 
     def __init__(
@@ -158,8 +159,7 @@ class ReynTUIApp(App):
                 new_name = msg.text
                 if new_name and self._agent_registry is not None:
                     self._agent_name = new_name
-                    self.call_from_thread(
-                        self.query_one("#header", ReynHeader).refresh_status,
+                    self.query_one("#header", ReynHeader).refresh_status(
                         agent_name=new_name,
                     )
                 continue
@@ -168,18 +168,18 @@ class ReynTUIApp(App):
                 # Begin a streaming row
                 current_stream_id = msg.meta.get("msg_id", id(msg))
                 agent = self._agent_name
-                self.call_from_thread(conv.begin_stream, current_stream_id, agent)
+                conv.begin_stream(current_stream_id, agent)
                 continue
 
             if msg.kind == "__stream_chunk__":
                 # Append to the current streaming row
                 if current_stream_id is not None:
-                    self.call_from_thread(conv.append_stream, current_stream_id, msg.text)
+                    conv.append_stream(current_stream_id, msg.text)
                 continue
 
             if msg.kind == "__stream_end__":
                 if current_stream_id is not None:
-                    self.call_from_thread(conv.end_stream, current_stream_id)
+                    conv.end_stream(current_stream_id)
                     current_stream_id = None
                 # Update status line after stream ends
                 self._maybe_refresh_status(header)
@@ -192,13 +192,11 @@ class ReynTUIApp(App):
                 choices = None
                 if raw_choices:
                     choices = [(c["label"], c["id"]) for c in raw_choices]
-                self.call_from_thread(
-                    self._mount_intervention, conv, msg.text, iv_id, choices
-                )
+                self._mount_intervention(conv, msg.text, iv_id, choices)
                 continue
 
             # Regular message
-            self.call_from_thread(conv.render_message, msg)
+            conv.render_message(msg)
 
             # Refresh status after agent/skill_done messages
             if msg.kind in {"agent", "skill_done"}:
