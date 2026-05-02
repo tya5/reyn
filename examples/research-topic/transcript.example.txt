@@ -1,0 +1,23 @@
+$ reyn run mcp_search "What changed in DuckDB v1.0 vs v0.10?"
+skill           : mcp_search
+model           : openai/gemini-2.5-flash-lite
+output_language : en
+input type      : user_message
+input           : {"type": "user_message", "data": {"text": "What changed in DuckDB v1.0 vs v0.10?"}}
+
+[phase] plan_query
+[phase] search        (mcp_call: search.web_search → 8 results)
+[phase] synthesize
+
+=== Final Output ===
+{
+  "summary": "DuckDB v1.0 (June 2024) marked the project's first stable release. Key changes vs v0.10: stable on-disk format with forward/backward compat guarantees, new ART index improvements, ...",
+  "citations": [
+    {"title": "Announcing DuckDB 1.0.0", "url": "https://duckdb.org/2024/06/03/announcing-duckdb-100"},
+    {"title": "DuckDB 0.10.0 Release Notes", "url": "https://duckdb.org/2024/02/13/announcing-duckdb-0100"}
+  ]
+}
+
+tokens: 4,210 prompt / 612 completion   cost: $0.0017
+
+events saved → .reyn/events/run_2026-05-02T18-04-12.jsonl

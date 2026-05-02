@@ -1,0 +1,22 @@
+$ reyn chat
+
+(attached: default   topology: _default   model: openai/gemini-2.5-flash-lite)
+
+> Write a Reyn-style README for the `mcp_search` stdlib skill. Match the
+  voice of the existing how-to guides under docs/en/how-to/. Output
+  Markdown only.
+
+[skill_router] intent=task → dispatch skill_builder
+[skill_builder] generating...
+
+# mcp_search
+
+Run web research from a Reyn skill via an MCP search server.
+
+## What this shows
+
+- ...
+
+(full README rendered inline)
+
+> /quit

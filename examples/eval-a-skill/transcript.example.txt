@@ -1,0 +1,23 @@
+$ reyn run eval '{"type":"eval_request","data":{"target_skill":"word_stats_demo","test_input":{"type":"user_message","data":{"text":"The quick brown fox jumps over the lazy dog."}},"criteria":["Output reports a non-zero word_count","Output reports a non-zero char_count","No phase errored"]}}'
+
+skill           : eval
+model           : openai/gemini-2.5-flash-lite
+input type      : eval_request
+
+[phase] run_target          → run_skill word_stats_demo
+[phase] evaluate            → judge_phase × 1
+
+=== Final Output ===
+{
+  "verdict": "pass",
+  "overall_score": 1.0,
+  "per_criterion": [
+    {"criterion": "Output reports a non-zero word_count", "met": true},
+    {"criterion": "Output reports a non-zero char_count", "met": true},
+    {"criterion": "No phase errored", "met": true}
+  ],
+  "weakest_phase": null
+}
+
+tokens: 2,840 prompt / 410 completion   cost: $0.0011
+events saved → .reyn/events/run_2026-05-02T18-12-03.jsonl

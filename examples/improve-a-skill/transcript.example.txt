@@ -1,0 +1,29 @@
+$ reyn run skill_improver "improve sample_skill to score >= 0.9 on summarization fidelity" --allow-shell
+
+skill           : skill_improver
+model           : openai/gemini-2.5-flash-lite
+
+[phase] prepare              → score_threshold=0.9, max_iterations=4
+[phase] copy_to_work         → /tmp/reyn_improver_xy12/sample_skill
+[phase] run_and_eval (it=1)  → score=0.42  weakest=summarize
+[phase] plan_improvements    → 2 edits proposed
+[phase] apply_improvements   → write_file × 2
+[phase] run_and_eval (it=2)  → score=0.71  weakest=summarize
+[phase] plan_improvements    → 1 edit
+[phase] apply_improvements   → write_file × 1
+[phase] run_and_eval (it=3)  → score=0.93  ✓ threshold met
+[phase] finalize             → copy back to reyn/local/sample_skill/
+
+=== Final Output ===
+{
+  "score_history": [0.42, 0.71, 0.93],
+  "iterations": 3,
+  "termination_reason": "score_threshold_met",
+  "files_modified": [
+    "reyn/local/sample_skill/phases/summarize.md",
+    "reyn/local/sample_skill/skill.md"
+  ],
+  "next_step": "reyn run sample_skill \"summarize: ...\" to verify"
+}
+
+events saved → .reyn/events/run_2026-05-02T18-30-44.jsonl

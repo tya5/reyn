@@ -1,0 +1,15 @@
+type: artifact
+name: translated_document
+fields:
+  language:
+    type: string
+    description: BCP-47 language tag of the translated text (e.g. "ja").
+  text:
+    type: string
+    description: The full translated document, with structure preserved.
+  structural_notes:
+    type: array
+    items:
+      type: string
+    description: Free-form notes from the translator about structure preservation.
+required: [language, text]

@@ -1,0 +1,20 @@
+$ reyn run translate_doc "Hello, world. This is a small paragraph to translate."
+
+skill           : translate_doc
+model           : openai/gemini-2.5-flash-lite
+input type      : user_message
+
+[phase] translate
+
+=== Final Output ===
+{
+  "language": "ja",
+  "text": "こんにちは、世界。これは翻訳する短い段落です。",
+  "structural_notes": [
+    "preserved 0 code blocks",
+    "preserved 0 headings"
+  ]
+}
+
+tokens: 380 prompt / 92 completion   cost: $0.0002
+events saved → .reyn/events/run_2026-05-02T18-45-10.jsonl

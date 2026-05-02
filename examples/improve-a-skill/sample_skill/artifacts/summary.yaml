@@ -1,0 +1,7 @@
+type: artifact
+name: summary
+fields:
+  text:
+    type: string
+    description: The summary text.
+required: [text]

@@ -1,0 +1,12 @@
+$ reyn topology show launch
+name:        launch
+kind:        team
+leader:      lead
+members:     lead*, researcher, writer
+created_at:  2026-05-02T18:00:00+00:00
+
+permitted edges (4):
+  lead → researcher
+  lead → writer
+  researcher → lead
+  writer → lead

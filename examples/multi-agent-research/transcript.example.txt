@@ -1,0 +1,19 @@
+$ reyn chat lead
+
+(attached: lead   topology: launch   model: openai/gemini-2.5-flash-lite)
+
+> Investigate DuckDB v1's breaking changes and produce a 200-word summary.
+
+[lead]   delegating → researcher
+[researcher → lead] (working on it)
+[lead]   delegating → writer
+[writer → lead]     (working on it)
+
+DuckDB 1.0 (June 2024) marked the project's first stable release, locking
+the on-disk format and committing to backward-compatibility going forward.
+Breaking changes vs 0.10 cluster around a stricter SQL parser, ART index
+upgrades that invalidate older index files, ...
+
+(200 words)
+
+> /quit
