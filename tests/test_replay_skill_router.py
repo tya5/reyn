@@ -1,16 +1,14 @@
 """Replay tests for skill_router intent classification.
 
-Verifies that the six-intent classification path produces stable, deterministic
+Verifies that the intent classification path produces stable, deterministic
 outputs for representative utterances. All LLM calls are intercepted by the
 ``@pytest.mark.replay`` fixture — no real LLM is invoked in normal test runs.
 
-Areas covered
--------------
+Areas covered (Tier 3a)
+-----------------------
 - Chitchat: direct finish with ``reply_text``, empty ``skills_to_run``.
-- Task dispatch: classify → match two-phase flow; ``skills_to_run`` populated.
-
-The expected behavior is tested via ``call_llm`` directly, using the same
-``ContextFrame`` objects that were used to generate the fixture entries.
+- Task dispatch: classify → transition to match.
+- Monkeypatch lifecycle invariant (Tier 2): LLMReplay does not leak across tests.
 """
 from __future__ import annotations
 
@@ -90,7 +88,7 @@ def _run(coro):
 
 @pytest.mark.replay("fixtures/llm/skill_router/chitchat.jsonl")
 def test_classify_chitchat_finishes_directly():
-    """Classify 'Hello, how are you?' as chitchat → finish with reply_text."""
+    """Tier 3a: skill_router classifies chitchat → finish with reply_text."""
     frame = ContextFrame(
         current_phase="classify",
         current_phase_role="chat_router",
@@ -143,7 +141,6 @@ def test_classify_chitchat_finishes_directly():
     assert len(art_data["reply_text"]) > 0, "Expected non-empty reply_text for chitchat"
     assert art_data["skills_to_run"] == [], "Chitchat should not invoke any skills"
 
-    # Token usage is present from fixture
     assert result.usage is not None
     assert result.usage.prompt_tokens > 0
 
@@ -153,7 +150,7 @@ def test_classify_chitchat_finishes_directly():
 
 @pytest.mark.replay("fixtures/llm/skill_router/task_dispatch.jsonl")
 def test_classify_task_transitions_to_match():
-    """Classify 'run article_generator' → task intent → transition to match."""
+    """Tier 3a: skill_router classifies a task utterance → transition to match."""
     frame = ContextFrame(
         current_phase="classify",
         current_phase_role="chat_router",
@@ -205,94 +202,20 @@ def test_classify_task_transitions_to_match():
     assert ctrl["decision"] == "continue"
 
 
-@pytest.mark.replay("fixtures/llm/skill_router/task_dispatch.jsonl")
-def test_match_phase_populates_skills_to_run():
-    """Match phase selects article_generator and populates skills_to_run."""
-    candidate_end = CandidateOutput(
-        next_phase="end",
-        control_type="finish",
-        schema_name="routing_decision",
-        artifact_schema={
-            "type": "object",
-            "properties": {
-                "reply_text": {"type": "string"},
-                "skills_to_run": {"type": "array", "items": {}},
-            },
-            "required": ["reply_text", "skills_to_run"],
-        },
-        description="Return the routing decision with skills to run",
-    )
-    frame = ContextFrame(
-        current_phase="match",
-        current_phase_role="skill_matcher",
-        instructions="Select skills to run based on the task intent.",
-        candidate_outputs=[candidate_end],
-        finish_criteria=["Skills selected"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "routing_intent",
-            "data": {
-                "intent": "task",
-                "user_message": "Please run the article_generator skill to write about climate change.",
-                "available_skills": [
-                    {
-                        "name": "article_generator",
-                        "description": "Generates a polished article on a given topic.",
-                    }
-                ],
-            },
-        },
-        execution=ExecutionState(path=["classify → match"], current_visit=1, total_steps=1),
-        control_ir_results=[],
-        remaining_act_turns=None,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name="skill_router",
-            skill_description=SKILL_DESC,
-            phase_role="skill_matcher",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide"
-    ctrl = data["control"]
-    assert ctrl["type"] == "finish"
-    assert ctrl["decision"] == "finish"
-
-    artifact = data["artifact"]
-    assert artifact["type"] == "routing_decision"
-    art_data = artifact["data"]
-    skills = art_data["skills_to_run"]
-    assert len(skills) >= 1, "Match phase should populate at least one skill"
-    skill_names = [s["skill"] for s in skills]
-    assert "article_generator" in skill_names
-
-
 # ── test: monkeypatch does not leak across tests ──────────────────────────────
 
 
 def test_no_monkeypatch_leak():
-    """litellm.acompletion should be the real function in a non-replay test."""
+    """Tier 2 (OS invariant): LLMReplay monkeypatch is confined to replay-marked tests.
+
+    Protects: the conftest install/restore contract. If LLMReplay leaks into
+    non-replay tests, any test that calls litellm.acompletion directly would
+    silently use the fake, masking real integration failures.
+    """
     import litellm
 
-    # In a non-replay test, acompletion should be the real coroutine function.
-    # The LLMReplay._handle method is an async method on an instance — it won't
-    # be the same object as the real litellm.acompletion.
-    import inspect
-
-    # Real acompletion is defined in litellm package; our mock is on an instance.
-    # Check that the function's __module__ starts with 'litellm', not 'reyn'.
+    # In a non-replay test, acompletion must be the real function from litellm,
+    # not the LLMReplay._handle bound method (which lives in the reyn package).
     mod = getattr(litellm.acompletion, "__module__", "") or ""
     assert "reyn" not in mod, (
         f"litellm.acompletion appears to still be monkeypatched! module={mod!r}"

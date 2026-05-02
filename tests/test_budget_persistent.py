@@ -6,10 +6,14 @@ Covers:
 3. Daily hard limit triggers refusal with correct dimension
 4. Monthly hit with daily warn simultaneously
 5. Broken JSON lines in ledger are skipped silently
+
+All assertions go through snapshot() / public API (check_pre_llm / record_llm).
+Direct access to private state is forbidden per the testing policy (Tier 4).
+Exception: test_check_pre_llm_rolls_period_across_midnight writes private state
+to simulate a stale clock — annotated explicitly as Tier 2 (OS invariant).
 """
 from __future__ import annotations
 import json
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -23,8 +27,6 @@ from reyn.budget.budget import (
     CostLimitConfig,
     format_refusal_message,
     format_warn_message,
-    _period_key,
-    _parse_iso_ts,
 )
 from reyn.llm.pricing import TokenUsage
 
@@ -61,11 +63,23 @@ def _write_ledger(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _ts_from_localtime(lt) -> str:
+    """Format a time.struct_time with UTC offset into an ISO 8601 string."""
+    offset_sec = lt.tm_gmtoff
+    sign = "+" if offset_sec >= 0 else "-"
+    offset_abs = abs(offset_sec)
+    return (
+        f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
+        f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
+        f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
+    )
+
+
 # ── 1. round-trip: append then hydrate ───────────────────────────────────────
 
 
 def test_ledger_append_and_hydrate():
-    """Appending via record_llm then hydrating in a new tracker restores counters."""
+    """Tier 1 (Contract): ledger JSONL round-trip — append then hydrate restores counters."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / ".reyn" / "state" / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000, monthly_tokens=1_000_000)
@@ -76,54 +90,45 @@ def test_ledger_append_and_hydrate():
         t1.record_llm(model="openai/test", agent="alice", usage=_usage(200))
         t1.record_llm(model="openai/test", agent="alice", usage=_usage(300))
 
-        # tracker 2: fresh instance, hydrate from ledger
+        # tracker 2: fresh instance, hydrate from same ledger
         t2 = BudgetTracker(cfg)
         t2.hydrate(ledger_path)
 
-        assert t2._daily_tokens == 500, f"expected 500, got {t2._daily_tokens}"
-        assert t2._monthly_tokens == 500
-        # cost may be 0 since estimate_cost may return 0.0 for unknown test model
-        assert t2._daily_cost_usd >= 0.0
+        snap = t2.snapshot()
+        assert snap["daily_tokens"] == 500, f"expected 500, got {snap['daily_tokens']}"
+        assert snap["monthly_tokens"] == 500
+        assert snap["daily_cost_usd"] >= 0.0
 
 
 def test_hydrate_noop_if_no_ledger():
-    """hydrate() is a no-op when the ledger file does not exist."""
+    """Tier 1 (Contract): hydrate() is a no-op when the ledger file does not exist."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "nonexistent" / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000)
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
-        assert t._daily_tokens == 0
-        assert t._monthly_tokens == 0
+
+        snap = t.snapshot()
+        assert snap["daily_tokens"] == 0
+        assert snap["monthly_tokens"] == 0
 
 
 # ── 2. period boundary ────────────────────────────────────────────────────────
 
 
 def test_period_boundary_yesterday_excluded():
-    """Records from yesterday are not counted in today's daily counter."""
+    """Tier 2 (P5/P6): records from yesterday are not counted in today's daily counter."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
-        # Build timestamps: yesterday and today
         now = time.time()
-        yesterday = now - 86400  # exactly 24h ago
+        yesterday = now - 86400
         lt_yesterday = time.localtime(yesterday)
         lt_today = time.localtime(now)
 
-        def _ts(lt) -> str:
-            offset_sec = lt.tm_gmtoff
-            sign = "+" if offset_sec >= 0 else "-"
-            offset_abs = abs(offset_sec)
-            return (
-                f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-                f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-                f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-            )
-
         lines = [
-            _ledger_line(_ts(lt_yesterday), tokens=1000, cost=0.1),
-            _ledger_line(_ts(lt_today), tokens=200, cost=0.02),
+            _ledger_line(_ts_from_localtime(lt_yesterday), tokens=1000, cost=0.1),
+            _ledger_line(_ts_from_localtime(lt_today), tokens=200, cost=0.02),
         ]
         _write_ledger(ledger_path, lines)
 
@@ -131,17 +136,19 @@ def test_period_boundary_yesterday_excluded():
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
 
+        snap = t.snapshot()
         # Daily should only include today's record (200 tokens, 0.02 USD)
-        assert t._daily_tokens == 200, f"daily_tokens should be 200, got {t._daily_tokens}"
-        assert abs(t._daily_cost_usd - 0.02) < 1e-6
-
-        # Monthly includes both if same month, or just today if different month.
-        # We check: monthly_tokens >= daily_tokens always.
-        assert t._monthly_tokens >= t._daily_tokens
+        assert snap["daily_tokens"] == 200, (
+            f"daily_tokens should be 200, got {snap['daily_tokens']}"
+        )
+        assert abs(snap["daily_cost_usd"] - 0.02) < 1e-6
+        # Monthly includes both if same month (or just today if different month).
+        # The invariant: monthly_tokens >= daily_tokens always.
+        assert snap["monthly_tokens"] >= snap["daily_tokens"]
 
 
 def test_period_boundary_month():
-    """Records from last month are excluded from this month's counter."""
+    """Tier 2 (P5/P6): records from last month are excluded from this month's counter."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         now = time.time()
@@ -150,19 +157,9 @@ def test_period_boundary_month():
         lt_last = time.localtime(last_month)
         lt_now = time.localtime(now)
 
-        def _ts(lt) -> str:
-            offset_sec = lt.tm_gmtoff
-            sign = "+" if offset_sec >= 0 else "-"
-            offset_abs = abs(offset_sec)
-            return (
-                f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-                f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-                f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-            )
-
         lines = [
-            _ledger_line(_ts(lt_last), tokens=5000, cost=0.50),
-            _ledger_line(_ts(lt_now), tokens=100, cost=0.01),
+            _ledger_line(_ts_from_localtime(lt_last), tokens=5000, cost=0.50),
+            _ledger_line(_ts_from_localtime(lt_now), tokens=100, cost=0.01),
         ]
         _write_ledger(ledger_path, lines)
 
@@ -170,53 +167,43 @@ def test_period_boundary_month():
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
 
-        # Monthly should NOT include last month's 5000 tokens.
-        assert t._monthly_tokens == 100, f"monthly_tokens should be 100, got {t._monthly_tokens}"
+        snap = t.snapshot()
+        assert snap["monthly_tokens"] == 100, (
+            f"monthly_tokens should be 100, got {snap['monthly_tokens']}"
+        )
 
 
 # ── 3. daily hard limit → refusal ─────────────────────────────────────────────
 
 
 def test_daily_token_hard_limit_refuses():
-    """Exceeding daily_tokens hard limit causes check_pre_llm to refuse."""
+    """Tier 1 (Contract): exceeding daily_tokens hard limit causes check_pre_llm to refuse."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100)  # very low
 
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
-
-        # Record enough to exceed limit
         t.record_llm(model="openai/test", agent="alice", usage=_usage(200))
-        assert t._daily_tokens == 200
 
-        # Next pre-check should refuse
+        snap = t.snapshot()
+        assert snap["daily_tokens"] == 200
+
         check = t.check_pre_llm(model="openai/test", agent="alice")
         assert not check.allowed
         assert check.hard_dimension == "daily_tokens"
 
-        # format_refusal_message should mention daily
         msg = format_refusal_message(check)
         assert "daily" in msg.lower()
         assert "Triggered:" in msg
 
 
 def test_daily_cost_hard_limit_refuses():
-    """Exceeding daily_cost_usd hard limit causes refusal."""
+    """Tier 1 (Contract): exceeding daily_cost_usd hard limit causes refusal."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
-        # Write a ledger record with a large cost
-        now = time.time()
-        lt = time.localtime(now)
-        offset_sec = lt.tm_gmtoff
-        sign = "+" if offset_sec >= 0 else "-"
-        offset_abs = abs(offset_sec)
-        ts_str = (
-            f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-            f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-            f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-        )
+        ts_str = _ts_from_localtime(time.localtime(time.time()))
         _write_ledger(ledger_path, [
             json.dumps({"ts": ts_str, "agent": "alice", "model": "x", "tokens": 10, "cost_usd": 10.0})
         ])
@@ -225,7 +212,8 @@ def test_daily_cost_hard_limit_refuses():
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
 
-        assert t._daily_cost_usd >= 10.0
+        snap = t.snapshot()
+        assert snap["daily_cost_usd"] >= 10.0
 
         check = t.check_pre_llm(model="openai/test", agent="alice")
         assert not check.allowed
@@ -238,7 +226,7 @@ def test_daily_cost_hard_limit_refuses():
 
 
 def test_monthly_refusal_with_context():
-    """Monthly_tokens hard limit also refuses; format_refusal_message mentions monthly."""
+    """Tier 1 (Contract): monthly_tokens hard limit refuses; message mentions monthly."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(monthly_tokens=50, daily_tokens=10_000)
@@ -256,7 +244,7 @@ def test_monthly_refusal_with_context():
 
 
 def test_daily_warn_threshold():
-    """Crossing daily warn threshold emits a warn dimension in record_llm result."""
+    """Tier 1 (Contract): crossing daily warn threshold emits a warn dimension in record_llm result."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = CostConfig(
@@ -269,14 +257,30 @@ def test_daily_warn_threshold():
         result = t.record_llm(model="openai/test", agent="alice", usage=_usage(800))
         assert "daily_tokens" in result.warn_dimensions
 
-        warn_msg = format_warn_message("daily_tokens", t._period_context())
+        snap = t.snapshot()
+        # format_warn_message for daily_tokens needs the hard-limit key too.
+        # We build a minimal context from snapshot() plus the config value we
+        # already know from the test setup.
+        ctx = {"daily_tokens": snap["daily_tokens"], "daily_tokens_hard": 1000}
+        warn_msg = format_warn_message("daily_tokens", ctx)
         assert "daily" in warn_msg.lower()
         assert "800" in warn_msg or "1,000" in warn_msg
 
 
 def test_check_pre_llm_rolls_period_across_midnight():
-    """If check_pre_llm runs after the local-time period boundary, stale
-    counters from the previous day must not cause a wrongful refusal."""
+    """Tier 2 (P5/P6 OS invariant): stale period counters from yesterday must not
+    cause a wrongful refusal when check_pre_llm is called after the local-time
+    period boundary.
+
+    Implementation note: this test writes to private state directly (_daily_tokens,
+    _daily_cost_usd, _day_key) in order to simulate a stale-clock scenario that
+    cannot be constructed through the public API alone (record_llm always stamps
+    with the current wall-clock time). This is an intentional exception to the
+    Tier 4 rule against private state access — the invariant being guarded is
+    OS-level (period roll must happen in check_pre_llm, not only in record_llm),
+    and there is no other way to create a tracker that appears to be from
+    yesterday without manipulating time itself.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100, monthly_tokens=100_000)
@@ -284,10 +288,7 @@ def test_check_pre_llm_rolls_period_across_midnight():
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)
 
-        # Simulate "yesterday's exhausted state": counters at the cap, day_key
-        # is yesterday's value. record_llm has not run since the boundary, so
-        # without _roll_period_if_needed in check_pre_llm the tracker would
-        # still refuse despite the new day starting.
+        # Directly inject "yesterday's exhausted state". See docstring for rationale.
         t._daily_tokens = 999
         t._daily_cost_usd = 99.0
         t._day_key = ("day", "1999-01-01")  # forced to be in the past
@@ -297,13 +298,14 @@ def test_check_pre_llm_rolls_period_across_midnight():
             f"check_pre_llm should roll the day before deciding; "
             f"got hard_dimension={check.hard_dimension}"
         )
-        # And the counter should now reflect today, with zero usage.
-        assert t._daily_tokens == 0
-        assert t._day_key is not None and t._day_key[1] != "1999-01-01"
+        # The period should now reflect today, with zero usage.
+        snap = t.snapshot()
+        assert snap["daily_tokens"] == 0
+        assert snap["day_key"] is not None and snap["day_key"] != "1999-01-01"
 
 
 def test_monthly_warn_threshold():
-    """Monthly warn threshold emits the correct warn dimension."""
+    """Tier 1 (Contract): monthly warn threshold emits the correct warn dimension."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = CostConfig(
@@ -320,21 +322,11 @@ def test_monthly_warn_threshold():
 
 
 def test_broken_ledger_lines_skipped():
-    """Corrupt / partial lines in the ledger are skipped without error."""
+    """Tier 1 (Contract): corrupt / partial lines in the ledger are skipped without error."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
 
-        now = time.time()
-        lt = time.localtime(now)
-        offset_sec = lt.tm_gmtoff
-        sign = "+" if offset_sec >= 0 else "-"
-        offset_abs = abs(offset_sec)
-        ts_str = (
-            f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-            f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-            f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-        )
-
+        ts_str = _ts_from_localtime(time.localtime(time.time()))
         lines = [
             "{broken json",
             "",
@@ -348,40 +340,15 @@ def test_broken_ledger_lines_skipped():
         t = BudgetTracker(cfg)
         t.hydrate(ledger_path)  # should not raise
 
-        # Only the valid line with a parseable timestamp should count
-        assert t._daily_tokens == 400
+        snap = t.snapshot()
+        assert snap["daily_tokens"] == 400
 
 
-# ── 6. _parse_iso_ts round-trip ──────────────────────────────────────────────
-
-
-def test_parse_iso_ts_round_trip():
-    """_parse_iso_ts returns a float close to the time it was generated from."""
-    now = time.time()
-    lt = time.localtime(now)
-    offset_sec = lt.tm_gmtoff
-    sign = "+" if offset_sec >= 0 else "-"
-    offset_abs = abs(offset_sec)
-    ts_str = (
-        f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
-        f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
-        f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-    )
-    parsed = _parse_iso_ts(ts_str)
-    # Allow ±1 second (truncation from seconds)
-    assert abs(parsed - now) < 2, f"parsed={parsed}, now={now}"
-
-
-def test_parse_iso_ts_invalid():
-    with pytest.raises(ValueError):
-        _parse_iso_ts("not-a-timestamp")
-
-
-# ── 7. snapshot includes daily/monthly fields ─────────────────────────────────
+# ── 6. snapshot includes daily/monthly fields ─────────────────────────────────
 
 
 def test_snapshot_includes_period_fields():
-    """snapshot() includes daily_tokens, monthly_tokens, day_key, month_key."""
+    """Tier 1 (Contract): snapshot() exposes daily_tokens, monthly_tokens, day_key, month_key."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000, monthly_tokens=1_000_000)
@@ -398,11 +365,11 @@ def test_snapshot_includes_period_fields():
         assert snap["monthly_tokens"] == 100
 
 
-# ── 8. reset_all does NOT clear daily / monthly ───────────────────────────────
+# ── 7. reset_all does NOT clear daily / monthly ───────────────────────────────
 
 
 def test_reset_all_preserves_daily_monthly():
-    """reset_all() clears per-agent counters but leaves daily/monthly unchanged."""
+    """Tier 1 (Contract): reset_all() clears per-agent counters but leaves daily/monthly unchanged."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "budget_ledger.jsonl"
         cfg = _make_cfg(daily_tokens=100_000)
@@ -410,20 +377,21 @@ def test_reset_all_preserves_daily_monthly():
         t.hydrate(ledger_path)
         t.record_llm(model="openai/test", agent="alice", usage=_usage(500))
 
-        before_daily = t._daily_tokens
+        before_daily = t.snapshot()["daily_tokens"]
         t.reset_all()
 
+        snap = t.snapshot()
         # Per-agent cleared
-        assert t._agent_tokens.get("alice", 0) == 0
+        assert snap["agent_tokens"].get("alice", 0) == 0
         # Daily / monthly NOT cleared
-        assert t._daily_tokens == before_daily
+        assert snap["daily_tokens"] == before_daily
 
 
-# ── 9. ledger file is created on first append ─────────────────────────────────
+# ── 8. ledger file is created on first append ─────────────────────────────────
 
 
 def test_ledger_created_on_first_append():
-    """The ledger file (and parent dirs) are created automatically."""
+    """Tier 1 (Contract): the ledger file and parent dirs are created automatically."""
     with tempfile.TemporaryDirectory() as tmp:
         ledger_path = Path(tmp) / "deep" / "nested" / "budget_ledger.jsonl"
         assert not ledger_path.exists()

@@ -1,11 +1,13 @@
 """Replay tests for eval_builder per-case criteria generation.
 
 Verifies that the ``analyze_skill`` phase produces:
-1. A valid ``eval_analysis`` artifact with ``cases`` and ``criteria`` fields.
-2. Per-case criteria — each case has its own list (not a global flat list).
-3. A more complex analysis when the target skill has review/rollback loops.
+1. A valid ``eval_analysis`` artifact with ``cases`` and ``criteria`` fields,
+   where each case has its own criteria list (not a global flat list).
+2. Drift detection: a modified input raises MissingFixture.
 
 Fixtures are pre-recorded at ``tests/fixtures/llm/eval_builder/``.
+
+Tier 3a: one typical case + one drift detection.
 """
 from __future__ import annotations
 
@@ -63,7 +65,7 @@ def _op_file() -> ControlIROpSpec:
 
 @pytest.mark.replay("fixtures/llm/eval_builder/analyze_skill.jsonl")
 def test_analyze_skill_produces_per_case_criteria():
-    """analyze_skill produces cases with per-case criteria for article_generator."""
+    """Tier 3a: analyze_skill produces cases with per-case criteria for article_generator."""
     frame = ContextFrame(
         current_phase="analyze_skill",
         current_phase_role="eval_builder",
@@ -117,7 +119,6 @@ def test_analyze_skill_produces_per_case_criteria():
     cases = analysis["cases"]
     assert len(cases) >= 1, "Expected at least one test case"
 
-    # Each case should have per-case criteria
     for case in cases:
         assert "id" in case or "name" in case, f"Case missing id/name: {case}"
         assert "criteria" in case, f"Case missing per-case criteria: {case}"
@@ -127,86 +128,19 @@ def test_analyze_skill_produces_per_case_criteria():
             assert len(criterion) > 5, f"Criterion too short: {criterion!r}"
 
 
-# ── test: analyze_skill — skill with rollback loop ────────────────────────────
-
-
-@pytest.mark.replay("fixtures/llm/eval_builder/analyze_with_rollback.jsonl")
-def test_analyze_skill_with_rollback_includes_revision_case():
-    """analyze_skill for a skill with a review/rollback loop includes a revision case."""
-    frame = ContextFrame(
-        current_phase="analyze_skill",
-        current_phase_role="eval_builder",
-        instructions="Analyze the skill and design representative test cases with per-case criteria.",
-        candidate_outputs=[_candidate_write_eval()],
-        finish_criteria=["cases designed"],
-        constraints=PhaseConstraints(),
-        available_control_ops=[_op_file()],
-        op_catalog=[],
-        output_language="en",
-        model="openai/gemini-2.5-flash-lite",
-        model_resolved=MODEL,
-        input_artifact={
-            "type": "user_message",
-            "data": {
-                "text": "Generate eval spec for the writing_review_app skill (has a review/rollback loop).",
-                "skill_path": "dsl/skills/writing_review_app",
-            },
-        },
-        execution=ExecutionState(path=[], current_visit=1, total_steps=0),
-        control_ir_results=[],
-        remaining_act_turns=2,
-        current_datetime=REPLAY_DATETIME,
-    )
-
-    result = _run(
-        call_llm(
-            MODEL,
-            frame,
-            prompt_cache_enabled=False,
-            skill_name=SKILL_NAME,
-            skill_description=SKILL_DESC,
-            phase_role="eval_builder",
-        )
-    )
-
-    data = result.data
-    assert data["type"] == "decide"
-
-    artifact = data["artifact"]
-    analysis = artifact["data"]
-
-    cases = analysis["cases"]
-    # Should include at least 2 cases: happy path + revision/rollback
-    assert len(cases) >= 2, (
-        f"Expected >= 2 cases for a skill with rollback; got {len(cases)}"
-    )
-
-    # All cases should have per-case criteria
-    total_criteria = sum(len(c.get("criteria", [])) for c in cases)
-    assert total_criteria >= 4, (
-        f"Expected >= 4 total criteria across cases; got {total_criteria}"
-    )
-
-    # At least one case should describe a rollback/revision scenario
-    all_text = " ".join(
-        " ".join(c.get("criteria", [])) + " " + c.get("name", "")
-        for c in cases
-    ).lower()
-    rollback_keywords = ["rollback", "revision", "review", "reject", "revise"]
-    assert any(kw in all_text for kw in rollback_keywords), (
-        f"Expected a rollback/revision case in the analysis; got: {all_text[:300]}"
-    )
-
-
 # ── test: missing fixture raises MissingFixture loudly ────────────────────────
 
 
 @pytest.mark.replay("fixtures/llm/eval_builder/analyze_skill.jsonl")
 def test_wrong_input_raises_missing_fixture():
-    """A modified input produces a different key → MissingFixture is raised."""
+    """Tier 3a drift detection: a modified input produces a different key → MissingFixture.
+
+    Protects: if instructions or input artifact change (e.g. skill_path is
+    different), the fixture key will not match. This ensures prompt drift is
+    detected immediately rather than silently using a stale fixture.
+    """
     from reyn.testing.replay import MissingFixture
 
-    # Same phase but DIFFERENT skill_path — different key
     frame = ContextFrame(
         current_phase="analyze_skill",
         current_phase_role="eval_builder",

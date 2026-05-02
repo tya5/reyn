@@ -7,6 +7,12 @@ Verifies that:
    decide turn — the LLM is not allowed to emit act ops.
 
 Both scenarios use pre-recorded fixtures so the tests are fully deterministic.
+
+Note: drift detection test for this area is deferred to a future PR (no new
+tests may be added in PR28 step 2). Coverage checklist item is tracked in
+the PR28 plan.
+
+Tier 3a: two cases (typical + force_decide boundary).
 """
 from __future__ import annotations
 
@@ -68,7 +74,7 @@ def _op_file() -> ControlIROpSpec:
 
 @pytest.mark.replay("fixtures/llm/skill_improver/prepare_phase.jsonl")
 def test_prepare_phase_produces_work_config():
-    """prepare phase transitions to copy_to_work with a valid work_config."""
+    """Tier 3a: prepare phase transitions to copy_to_work with a valid work_config."""
     frame = ContextFrame(
         current_phase="prepare",
         current_phase_role="skill_improver",
@@ -120,11 +126,8 @@ def test_prepare_phase_produces_work_config():
     assert "score_threshold" in cfg
     assert "max_iterations" in cfg
 
-    # Threshold should be reasonable (0.0–1.0)
     assert 0.0 < cfg["score_threshold"] <= 1.0
     assert cfg["max_iterations"] >= 1
-
-    # The skill_path and work_path should be strings
     assert isinstance(cfg["skill_path"], str)
     assert isinstance(cfg["work_path"], str)
 
@@ -134,7 +137,7 @@ def test_prepare_phase_produces_work_config():
 
 @pytest.mark.replay("fixtures/llm/skill_improver/force_decide.jsonl")
 def test_force_decide_produces_decide_turn():
-    """When remaining_act_turns=0, LLM must emit a decide turn (force_decide path)."""
+    """Tier 3a: when remaining_act_turns=0, LLM must emit a decide turn (force_decide path)."""
     frame = ContextFrame(
         current_phase="prepare",
         current_phase_role="skill_improver",
@@ -180,18 +183,14 @@ def test_force_decide_produces_decide_turn():
     )
 
     data = result.data
-    # Must be a decide turn, not an act turn — remaining_act_turns=0 forbids act
     assert data["type"] == "decide", (
         "force_decide path: LLM must emit a decide turn when remaining_act_turns=0"
     )
     ctrl = data["control"]
-    # Should still transition to copy_to_work with whatever info it has
     assert ctrl["type"] == "transition"
     assert ctrl["next_phase"] == "copy_to_work"
 
-    artifact = data["artifact"]
-    cfg = artifact["data"]
-    # Even under force_decide, work_config fields must be populated
+    cfg = data["artifact"]["data"]
     assert "skill_path" in cfg
     assert "work_path" in cfg
     assert "score_threshold" in cfg
