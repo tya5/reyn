@@ -2171,13 +2171,28 @@ class ChatSession:
             return None
         return {"read": read_paths, "write": write_paths}
 
+    def _mcp_servers_flat(self) -> dict:
+        """Unwrap config.mcp's `{servers: {...}}` shape to flat `{name: cfg}`.
+
+        ChatSession receives the wrapped form from CLI bootstrap (config.mcp).
+        The Agent / control_ir_executor unwraps via `.get("servers", {})`;
+        chat-router-side helpers historically did not (PR35 oversight) and
+        treated "servers" as if it were a server name. Centralized unwrap.
+        """
+        raw = self._mcp_servers or {}
+        if isinstance(raw, dict) and "servers" in raw:
+            inner = raw.get("servers") or {}
+            return inner if isinstance(inner, dict) else {}
+        return raw if isinstance(raw, dict) else {}
+
     def _get_mcp_servers_for_router(self) -> list[dict]:
         """Return [{name, description}, ...] for configured MCP servers
         accessible to this agent. [] if none."""
-        if not self._mcp_servers:
+        servers = self._mcp_servers_flat()
+        if not servers:
             return []
         result: list[dict] = []
-        for name, cfg in self._mcp_servers.items():
+        for name, cfg in servers.items():
             if not isinstance(cfg, dict):
                 continue
             result.append({
@@ -2228,7 +2243,7 @@ class ChatSession:
             permission_decl=decl,
             permission_resolver=self._perm,
             skill_name="chat_router",
-            mcp_servers=self._mcp_servers or {},
+            mcp_servers=self._mcp_servers_flat(),
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
@@ -2536,9 +2551,10 @@ class ChatSession:
         """Query the MCP server for its tools list."""
         from reyn.mcp_client import MCPClient, MCPError, expand_env
 
-        if not self._mcp_servers:
+        servers = self._mcp_servers_flat()
+        if not servers:
             return [{"error": f"no MCP servers configured"}]
-        server_cfg = self._mcp_servers.get(server)
+        server_cfg = servers.get(server)
         if not server_cfg:
             return [{"error": f"MCP server {server!r} not configured"}]
 
