@@ -484,10 +484,15 @@ class RouterLoop:
         body: str,
     ) -> dict:
         """Write a memory entry and regenerate the index."""
+        # Defensive: strip trailing .md if LLM emitted it in slug despite
+        # the tool description saying "Filename stem".
+        if slug.endswith(".md"):
+            slug = slug[:-3]
         frontmatter = (
             f"---\nname: {name}\ndescription: {description}\ntype: {type}\n---\n\n{body}\n"
         )
-        file_path = self.host.memory_path(layer, slug + ".md")
+        # memory_path appends .md itself — pass bare slug.
+        file_path = self.host.memory_path(layer, slug)
         await self.host.file_write(file_path, frontmatter)
 
         mem_dir = self.host.memory_dir(layer)
@@ -502,7 +507,11 @@ class RouterLoop:
 
     async def _forget(self, layer: str, slug: str) -> dict:
         """Delete a memory entry and regenerate the index."""
-        file_path = self.host.memory_path(layer, slug + ".md")
+        # Defensive: strip trailing .md if LLM emitted it.
+        if slug.endswith(".md"):
+            slug = slug[:-3]
+        # memory_path appends .md itself.
+        file_path = self.host.memory_path(layer, slug)
         await self.host.file_delete(file_path)
 
         mem_dir = self.host.memory_dir(layer)

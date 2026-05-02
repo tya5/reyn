@@ -104,7 +104,8 @@ def build_system_prompt(
     parts.append(f"  {agent_section}")
     parts.append("")
     parts.append(
-        "## Memory (resource axis, path roots — use list_memory(path))"
+        "## Memory (entries inlined — answer recall queries from these "
+        "descriptions; use read_memory_body for full content if vague)"
     )
     for line in memory_section:
         parts.append(f"  {line}")
@@ -135,10 +136,13 @@ def build_system_prompt(
         "    (list_skills, then describe_skill if needed) before invoke_skill."
     )
     parts.append(
-        "  - For Recall, list_memory the relevant path first; read_memory_body"
+        "  - For Recall, answer from the Memory section's inlined descriptions;"
     )
     parts.append(
-        "    only when the listing's description is too vague."
+        "    use read_memory_body only when a description is too vague."
+    )
+    parts.append(
+        "  - (list_memory is available for hierarchical browsing if needed.)"
     )
     parts.append(
         "  - Use parallel tool_calls when discovery / fetches are independent."
@@ -267,27 +271,56 @@ def _render_mcp(mcp_servers: list[dict] | None) -> list[str]:
     return lines
 
 
+_ENTRY_FULL_RE = re.compile(
+    r"^\s*-\s*\[([^\]]+)\]\(([^)]+)\.md\)\s*[—–-]+\s*(.+)$"
+)
+
+
+def _parse_memory_entries(
+    content: str,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Return {layer: [(slug, name, description), ...]} from merged memory
+    index text. Layers are "shared" and "agent"."""
+    shared: list[tuple[str, str, str]] = []
+    agent: list[tuple[str, str, str]] = []
+    current: list[tuple[str, str, str]] | None = None
+
+    for line in content.splitlines():
+        h = _SECTION_HEADER_RE.match(line.strip())
+        if h:
+            current = shared if h.group("layer") == "shared" else agent
+            continue
+        if current is None:
+            continue
+        m = _ENTRY_FULL_RE.match(line)
+        if m:
+            name, slug, desc = m.group(1), m.group(2), m.group(3).strip()
+            current.append((slug, name, desc))
+    return {"shared": shared, "agent": agent}
+
+
 def _render_memory(memory_index: dict) -> list[str]:
-    """Return lines for the memory section."""
-    zero = {t: 0 for t in _MEMORY_TYPES}
+    """Return lines for the memory section.
 
+    Inline all entries with their descriptions so the LLM can answer
+    recall queries directly without round-tripping through list_memory.
+    Memory is bounded per agent (~tens of entries typically) so linear
+    rendering is acceptable. read_memory_body remains available for cases
+    where the description is too vague to answer from.
+    """
     if memory_index.get("status") != "ok":
-        shared_counts = zero.copy()
-        agent_counts = zero.copy()
-    else:
-        content = memory_index.get("content", "")
-        parsed = _parse_memory_counts(content)
-        shared_counts = {t: parsed["shared"].get(t, 0) for t in _MEMORY_TYPES}
-        agent_counts = {t: parsed["agent"].get(t, 0) for t in _MEMORY_TYPES}
+        return ["shared: (no entries)", "agent: (no entries)"]
 
-    def _fmt(counts: dict[str, int]) -> str:
-        tokens = [f"{t}({counts[t]})" for t in _MEMORY_TYPES if counts[t] > 0]
-        return " ".join(tokens) if tokens else "(empty)"
+    content = memory_index.get("content", "")
+    entries = _parse_memory_entries(content)
 
-    shared_str = _fmt(shared_counts)
-    agent_str = _fmt(agent_counts)
-
-    return [
-        f"shared/{{{shared_str}}}",
-        f"agent/{{{agent_str}}}",
-    ]
+    lines: list[str] = []
+    for layer in ("shared", "agent"):
+        layer_entries = entries.get(layer, [])
+        if not layer_entries:
+            lines.append(f"{layer}: (no entries)")
+            continue
+        lines.append(f"{layer}:")
+        for slug, _name, desc in layer_entries:
+            lines.append(f"  - {slug}: {desc}")
+    return lines

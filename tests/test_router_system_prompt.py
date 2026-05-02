@@ -96,8 +96,12 @@ class TestCategoriesGroupedCorrectly:
         assert "general (1)" in prompt
 
 
-class TestMemoryCountFromIndex:
-    def test_memory_count_from_index(self):
+class TestMemoryEntriesInlined:
+    """PR36b: Memory descriptions are inlined so LLM can answer recall
+    queries directly. Previously only counts were shown, defeating the
+    point of having memory."""
+
+    def test_memory_entries_with_descriptions_inlined(self):
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
@@ -105,14 +109,30 @@ class TestMemoryCountFromIndex:
             available_agents=[],
             memory_index=_SYNTHETIC_MEMORY,
         )
-        # shared section: user(1) project(1) feedback(1)
-        assert "user(1)" in prompt
-        assert "project(1)" in prompt
-        assert "feedback(1)" in prompt
-        # agent section: user(1) reference(1)
-        assert "reference(1)" in prompt
+        # Slugs from _SYNTHETIC_MEMORY (shared layer) should appear in the prompt
+        assert "user_role" in prompt
+        assert "project_x" in prompt
+        assert "feedback_y" in prompt
+        # Slugs from agent layer also visible
+        assert "user_pref" in prompt
+        assert "reference_doc" in prompt
+        # Description fragments visible (so LLM can answer recall queries)
+        assert "describes user's role" in prompt
+        assert "main project context" in prompt
 
-    def test_memory_not_found_shows_empty(self):
+    def test_memory_layers_separately_rendered(self):
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[],
+            available_agents=[],
+            memory_index=_SYNTHETIC_MEMORY,
+        )
+        # The Memory section should have "shared:" and "agent:" subheads.
+        assert "shared:" in prompt
+        assert "agent:" in prompt
+
+    def test_memory_not_found_shows_no_entries(self):
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
@@ -120,7 +140,8 @@ class TestMemoryCountFromIndex:
             available_agents=[],
             memory_index={"status": "not_found", "content": ""},
         )
-        assert "(empty)" in prompt
+        # No old "(empty)" / count format; new format says "(no entries)"
+        assert "(no entries)" in prompt
 
 
 class TestIntentAxisSectionAlwaysPresent:
