@@ -390,6 +390,7 @@
     });
 
     // Inject and execute scripts in order
+    let hasBabelScript = false;
     scripts.forEach(orig => {
       const s = document.createElement("script");
       // Copy attributes (type, src, etc.)
@@ -405,11 +406,45 @@
         }
         s.src = resolved;
         s.async = false;
+        if (/babel(\.min)?\.js/.test(resolved)) hasBabelScript = true;
       } else {
         s.textContent = orig.textContent;
       }
       document.head.appendChild(s);
     });
+
+    // Babel-standalone normally auto-transforms type="text/babel" scripts on
+    // DOMContentLoaded. The shell injects designs AFTER DCL, so the auto-
+    // runner has already fired (and found nothing). We must invoke it
+    // ourselves once Babel is loaded. Poll for window.Babel because the
+    // CDN script load is async.
+    if (hasBabelScript) {
+      _runBabelWhenReady();
+    }
+  }
+
+  function _runBabelWhenReady() {
+    const start = Date.now();
+    const MAX = 30000;  // 30 s — slow networks / large CDN bundle
+    function tick() {
+      if (window.Babel && typeof window.Babel.transformScriptTags === "function") {
+        try {
+          window.Babel.transformScriptTags();
+        } catch (e) {
+          console.error("[shell] Babel.transformScriptTags() threw:", e);
+        }
+        return;
+      }
+      if (Date.now() - start > MAX) {
+        console.error(
+          "[shell] Babel never finished loading from the CDN. " +
+          "type=text/babel scripts will not execute; the design will not render."
+        );
+        return;
+      }
+      setTimeout(tick, 50);
+    }
+    tick();
   }
 
   /**
