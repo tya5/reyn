@@ -12,17 +12,28 @@ ReynHeader {
     height: 1;
     background: #1a1a1a;
     color: #dddddd;
+    layout: horizontal;
     padding: 0 2;
 }
 
 ReynHeader #title {
     color: #C8553D;
     text-style: bold;
+    width: auto;
 }
 
 ReynHeader #status {
-    dock: right;
     color: #aaaaaa;
+    text-align: right;
+    width: 1fr;
+    padding: 0 1;
+}
+
+ReynHeader #clock {
+    color: #888888;
+    width: 21;
+    text-align: right;
+    padding: 0 1;
 }
 
 ConversationView {
