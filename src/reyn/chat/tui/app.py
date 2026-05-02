@@ -85,7 +85,7 @@ class ReynTUIApp(App):
         budget_tracker=None,
     ) -> None:
         super().__init__()
-        self._registry = registry
+        self._agent_registry = registry   # NOTE: NOT _registry (Textual internal)
         self._agent_name = agent_name
         self._model = model
         self._budget_tracker = budget_tracker
@@ -128,7 +128,7 @@ class ReynTUIApp(App):
         conv._write_log(t)
 
         # Start outbox subscription if registry is available
-        if self._registry is not None:
+        if self._agent_registry is not None:
             self._outbox_task = asyncio.create_task(self._outbox_loop())
 
         # Periodic status line refresh (budget counters update between messages)
@@ -138,7 +138,7 @@ class ReynTUIApp(App):
 
     async def _outbox_loop(self) -> None:
         """Drain registry.repl_outbox and render each message."""
-        if self._registry is None:
+        if self._agent_registry is None:
             return
         conv = self.query_one("#conversation", ConversationView)
         header = self.query_one("#header", ReynHeader)
@@ -146,7 +146,7 @@ class ReynTUIApp(App):
 
         while True:
             try:
-                msg = await self._registry.repl_outbox.get()
+                msg = await self._agent_registry.repl_outbox.get()
             except asyncio.CancelledError:
                 break
 
@@ -156,7 +156,7 @@ class ReynTUIApp(App):
             if msg.kind == "__attach_request__":
                 # Handled by AgentRegistry._forwarder; we just update our state
                 new_name = msg.text
-                if new_name and self._registry is not None:
+                if new_name and self._agent_registry is not None:
                     self._agent_name = new_name
                     self.call_from_thread(
                         self.query_one("#header", ReynHeader).refresh_status,
@@ -344,9 +344,9 @@ class ReynTUIApp(App):
                 await self._outbox_task
             except asyncio.CancelledError:
                 pass
-        if self._registry is not None:
+        if self._agent_registry is not None:
             try:
-                await self._registry.shutdown()
+                await self._agent_registry.shutdown()
             except Exception:
                 pass
         self.exit()
@@ -424,9 +424,9 @@ class ReynTUIApp(App):
     # ── helpers ───────────────────────────────────────────────────────────────
 
     def _get_session(self) -> "ChatSession | None":
-        if self._registry is None:
+        if self._agent_registry is None:
             return None
-        return self._registry.attached_session()
+        return self._agent_registry.attached_session()
 
 
 async def run_tui(
