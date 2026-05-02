@@ -79,7 +79,7 @@ Every state change emits an event. The event log (`events/`) is append-only and 
 - **Debuggability.** When something goes wrong, the event log is the first — and usually only — tool needed. Every LLM call, every Control IR op, every validation failure leaves a record.
 - **Replay.** A complete event log is a complete description of execution. `reyn events <log>` re-renders a run without re-invoking the LLM.
 - **Audit trail.** For environments with compliance requirements, the append-only log is the foundation of an auditable record. Future work may add hash chaining to make tampering detectable.
-- **Cross-agent tracing.** When a skill calls a sub-skill, both runs emit events with a shared `chain_id`, making the full call tree visible in one log.
+- **Cross-agent tracing.** When agent A delegates to agent B (which may delegate further), every hop emits events carrying the same `chain_id` minted at the original user submission. Reconstructing a multi-hop chain end-to-end is `grep <chain_id>` across each agent's `events.jsonl`.
 
 **Common traps:**
 

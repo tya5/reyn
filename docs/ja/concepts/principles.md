@@ -79,7 +79,7 @@ phase 間でやりとりするすべてのデータ・artifact・ファイルは
 - **デバッグ可能性。** 何かが間違っているとき、event log が最初の — そして通常唯一の — ツールです。すべての LLM 呼び出し・Control IR op・バリデーション失敗が記録されます。
 - **再生。** 完全な event log は実行の完全な記述です。`reyn events <log>` は LLM を再呼び出しせずにランを再現します。
 - **監査証跡。** コンプライアンス要件のある環境では、append-only log が監査可能な記録の基盤になります。将来の作業でハッシュチェーンを追加し改ざん検知を可能にする計画があります。
-- **エージェント間トレース。** skill が sub-skill を呼び出すとき、両方のランが共通の `chain_id` を持つ event を発行し、1 つの log でコールツリー全体が見えます。
+- **エージェント間トレース。** agent A が agent B に委譲し（さらに B が別の agent に委譲することもある）、その全ホップが、最初の user submission で採番された同じ `chain_id` を持つ event を発行します。マルチホップ chain の end-to-end 再構築は、各 agent の `events.jsonl` を `grep <chain_id>` するだけ。
 
 **よくある罠：**
 
