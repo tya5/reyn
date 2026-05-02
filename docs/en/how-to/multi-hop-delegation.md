@@ -32,7 +32,7 @@ After every delegate responds, the originating agent's router runs again with th
        (200-word summary follows)
 ```
 
-The interim message is **not** an artifact of streaming or partial output — it's a separate, complete LLM turn. PR14's deferred-reply only applies to *agent-initiated* chains; user-initiated chains keep the interim+final UX so you can see "I'm working on it" right away.
+The interim message is **not** an artifact of streaming or partial output — it's a separate, complete LLM turn. The deferred-reply mechanic only applies to *agent-initiated* chains; user-initiated chains keep the interim+final UX so you can see "I'm working on it" right away.
 
 ## Setup for this walkthrough
 
@@ -91,7 +91,7 @@ Reading top-to-bottom: `user → lead → researcher → archivist → researche
 
 ## What deferred reply looks like in the events
 
-Notice that `researcher` does NOT emit `agent_message_sent (response)` to `lead` until **after** `agent_response_received` from `archivist` arrives. That's PR14's deferred-reply mechanic: when `researcher`'s router emits `messages_to_agents` (here, to `archivist`), the registry holds a `_PendingChain` keyed by `chain_id`, and `lead`'s reply waits until every entry in `waiting_on` resolves.
+Notice that `researcher` does NOT emit `agent_message_sent (response)` to `lead` until **after** `agent_response_received` from `archivist` arrives. That's the deferred-reply mechanic: when `researcher`'s router emits `messages_to_agents` (here, to `archivist`), the registry holds a `_PendingChain` keyed by `chain_id`, and `lead`'s reply waits until every entry in `waiting_on` resolves.
 
 For a fan-out (researcher delegates to multiple peers in one turn), every delegate must respond before researcher's router runs again to synthesize. A single slow delegate delays the whole synthesis up to `multi_agent.chain_timeout_seconds` (default 60s); past that, a `chain_timeout` event fires and the upstream agent receives a synthesized error response so the chain doesn't hang.
 

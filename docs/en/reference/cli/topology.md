@@ -9,7 +9,7 @@ applies_to: [reyn topology]
 
 Manage agent communication topologies — declarative structure that constrains which agent can send to which.
 
-Three kinds ship in PR12: `network` (complete graph), `team` (leader-centric star), `pipeline` (directed path). The auto-managed `_default` network covers every agent that does NOT belong to any user-declared topology — the empty-state case behaves freely while declared topologies enforce their rules immediately. See [concepts/topology](../../concepts/topology.md) for the model.
+Three kinds are supported: `network` (complete graph), `team` (leader-centric star), `pipeline` (directed path). The auto-managed `_default` network covers every agent that does NOT belong to any user-declared topology — the empty-state case behaves freely while declared topologies enforce their rules immediately. See [concepts/topology](../../concepts/topology.md) for the model.
 
 ## Synopsis
 

@@ -70,9 +70,9 @@ Each Control IR op kind emits its own event:
 | Kind | When |
 |------|------|
 | `skill_run_spawned` | A skill was launched from a router decision (`run_id`, `skill`) |
-| `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills` (PR15). Payload: `reason="allowlist"`, `skill`, `agent` |
+| `skill_spawn_refused` | `_spawn_skill` rejected a skill not in the agent's `allowed_skills`. Payload: `reason="allowlist"`, `skill`, `agent` |
 
-## Agent-to-agent messaging (PR11 / PR14)
+## Agent-to-agent messaging
 
 | Kind | When | Key payload |
 |------|------|-------------|
@@ -80,7 +80,7 @@ Each Control IR op kind emits its own event:
 | `agent_request_received` | Receiving agent pulled an `agent_request` from its inbox | `from_agent`, `depth`, `chain_id` |
 | `agent_response_received` | Originating agent pulled an `agent_response` from its inbox | `from_agent`, `depth`, `chain_id` |
 | `agent_message_refused` | A send was refused (e.g. exceeded `multi_agent.max_hop_depth`) | `reason`, `to_agent`, `depth`, `chain_id` |
-| `chain_timeout` | A pending chain exceeded `multi_agent.chain_timeout_seconds` and was force-resolved with a synthetic error response upstream (PR18) | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
+| `chain_timeout` | A pending chain exceeded `multi_agent.chain_timeout_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
 
 `chain_id` is uuid4 hex; one per top-level user submission, propagated unchanged across every hop. Cross-agent reconstruction is `grep <chain_id>` over each agent's `events.jsonl` plus `history.jsonl`.
 

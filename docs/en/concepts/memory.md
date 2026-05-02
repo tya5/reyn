@@ -67,7 +67,7 @@ If a description in the index is too vague to answer from, the LLM emits an `act
 
 The router phase has `file.write` permission for both layers. The LLM constructs paths from `chat_id` (= the agent's own name) and never writes into another agent's directory. There is no enforcement at the OS layer beyond the directory-prefix permission grant — the trust boundary is the LLM prompt, audited via the events log.
 
-After every body-file write the LLM emits a `file/regenerate_index` op (PR19). The op is fully parameterized — `output_path`, `entry_template`, and `header` are supplied by the caller — so the OS file runtime stays format-agnostic (no `MEMORY.md` filename or em-dash entry format embedded in OS code, per P7). The same parameterized helper is used by `reyn memory edit` / `delete` / `import` to keep the on-disk index in sync after CLI mutations.
+After every body-file write the LLM emits a `file/regenerate_index` op. The op is fully parameterized — `output_path`, `entry_template`, and `header` are supplied by the caller — so the OS file runtime stays format-agnostic (no `MEMORY.md` filename or em-dash entry format embedded in OS code, per P7). The same parameterized helper is used by `reyn memory edit` / `delete` / `import` to keep the on-disk index in sync after CLI mutations.
 
 ## Symmetry with docs
 
@@ -96,7 +96,7 @@ Events answer "what happened in this run?"; memory answers "what should I know g
 
 Memory is a snapshot in time. A "feedback" entry from six months ago may no longer apply; a "project" entry that names a file path may be wrong if the file moved. The router LLM is instructed to verify before acting on specifics.
 
-The system does not auto-decay or expire entries. Pruning is left to the user via `reyn memory delete` (which removes the body file and resyncs the index). PR19's mechanical regen makes a separate `gc` step unnecessary — the index can never drift from the on-disk body files.
+The system does not auto-decay or expire entries. Pruning is left to the user via `reyn memory delete` (which removes the body file and resyncs the index). The mechanical index regeneration makes a separate `gc` step unnecessary — the index can never drift from the on-disk body files.
 
 ## See also
 

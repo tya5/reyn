@@ -115,7 +115,7 @@ grep '"skill_spawn_refused"' .reyn/agents/researcher/events.jsonl
 
 **"The router LLM doesn't propose anything anymore."** Check the allowlist — `[]` is router-only by design. If you wanted a few skills, list them; if you wanted everything, remove the field entirely (or set it to `null`).
 
-**"I get `not in allowed_skills` errors but the LLM still picks the same skill."** That's PR15's defense path. The router-side filter should normally hide blocked skills from the LLM, so reaching this branch means the LLM hallucinated the skill name. Tighten the role prompt to discourage it, or add the skill to the allowlist if you actually want it.
+**"I get `not in allowed_skills` errors but the LLM still picks the same skill."** That's the defense-in-depth path. The router-side filter should normally hide blocked skills from the LLM, so reaching this branch means the LLM hallucinated the skill name. Tighten the role prompt to discourage it, or add the skill to the allowlist if you actually want it.
 
 **"I added a skill to the allowlist but the router still doesn't pick it."** Confirm the skill exists in the catalogue:
 

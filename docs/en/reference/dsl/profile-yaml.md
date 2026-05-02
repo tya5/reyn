@@ -30,7 +30,7 @@ Agent name. Must match `^[a-z0-9][a-z0-9_-]{0,31}$` and equal the parent directo
 
 ### `role` (string, default `""`)
 
-Free-form text injected into the agent's LLM system prompt as a `━━━ AGENT ROLE ━━━` block (PR10). Keep it short and behaviorally specific — this is what differentiates the agent from peers without changing skills.
+Free-form text injected into the agent's LLM system prompt as a `━━━ AGENT ROLE ━━━` block. Keep it short and behaviorally specific — this is what differentiates the agent from peers without changing skills.
 
 Empty role is fine; the agent then behaves like a generalist with no extra persona.
 
@@ -40,7 +40,7 @@ ISO-8601 UTC timestamp set when `reyn agent new` runs. Cosmetic; not consulted a
 
 ### `allowed_skills` (`list[str]` | `null`, default `null`)
 
-Skill allowlist (PR15). Three states with distinct meaning:
+Skill allowlist. Three states with distinct meaning:
 
 | Value | Meaning |
 |-------|---------|

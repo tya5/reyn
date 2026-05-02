@@ -34,7 +34,7 @@ The default of `3` allows `user → A → B → C` (= 3 hops) but stops `user �
 
 ## `chain_timeout_seconds` (float, default `60.0`)
 
-Wall-clock budget for a pending chain in a delegating agent (PR18). When a router decision emits `messages_to_agents`, the runtime registers a `_PendingChain` keyed by `chain_id` and arms a watchdog task. If every delegate responds, the watchdog is cancelled when the chain resolves; if not, after `chain_timeout_seconds` the runtime synthesizes an error response upstream:
+Wall-clock budget for a pending chain in a delegating agent. When a router decision emits `messages_to_agents`, the runtime registers a `_PendingChain` keyed by `chain_id` and arms a watchdog task. If every delegate responds, the watchdog is cancelled when the chain resolves; if not, after `chain_timeout_seconds` the runtime synthesizes an error response upstream:
 
 ```
 chain timeout: 1 delegate(s) (gamma) did not respond within 60s

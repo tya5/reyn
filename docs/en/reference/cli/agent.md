@@ -44,7 +44,7 @@ reyn agent new researcher --role "deep technical research, prefers primary sourc
 
 `<name>` must match the agent name regex: 1–32 characters of `[a-z0-9_-]` starting with `[a-z0-9]`.
 
-The `--role` text is injected into the agent's LLM system prompt (PR10) — keep it short and specific. To configure `allowed_skills` or any other profile field, edit `profile.yaml` directly after creation; see [profile-yaml reference](../dsl/profile-yaml.md).
+The `--role` text is injected into the agent's LLM system prompt — keep it short and specific. To configure `allowed_skills` or any other profile field, edit `profile.yaml` directly after creation; see [profile-yaml reference](../dsl/profile-yaml.md).
 
 ## `reyn agent show <name>`
 
@@ -88,7 +88,7 @@ Each agent owns `.reyn/agents/<name>/`:
 | `profile.yaml` | name / role / created_at / allowed_skills |
 | `history.jsonl` | append-only conversation + agent message log |
 | `events.jsonl` | runtime event audit log |
-| `memory/MEMORY.md` + body files | agent-scoped memory layer (PR15) |
+| `memory/MEMORY.md` + body files | agent-scoped memory layer |
 | `runs/<run_id>/` | per-skill-spawn workspace |
 
 ## See also

@@ -27,7 +27,7 @@ Three big buckets, plus a few smaller ones:
 - **LLM and context** — `context_built`, `llm_called`, `validation_error`, `normalization_error`.
 - **Control IR** — one event per op kind (`read_file`, `write_file`, `shell_started`, `run_skill_started`, etc.) plus `permission_denied`.
 - **Chat lifecycle** — `chat_started`, `chat_stopped`, `user_message_received`, `skill_run_spawned`, `skill_spawn_refused`.
-- **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused` (PR11/PR14). Each carries `chain_id` so a single user request can be traced across hops.
+- **Agent-to-agent messaging** — `agent_message_sent`, `agent_request_received`, `agent_response_received`, `agent_message_refused`. Each carries `chain_id` so a single user request can be traced across hops.
 
 The full taxonomy lives in the [events reference](../reference/runtime/events.md).
 

@@ -41,7 +41,7 @@ When a router decision emits `messages_to_agents: [{to, request}, ...]`, ChatSes
 {from_agent, request, depth, chain_id}
 ```
 
-The receiving agent's `session.run()` consumes it, runs its own router, and either replies immediately (`agent_response` back to the sender) or **defers** if it wants to delegate further (PR14).
+The receiving agent's `session.run()` consumes it, runs its own router, and either replies immediately (`agent_response` back to the sender) or **defers** if it wants to delegate further.
 
 ### Deferred reply
 

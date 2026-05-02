@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # Topology
 
-Topology declares **who-can-talk-to-whom** as structure. PR12 introduces three first-class kinds (`network`, `team`, `pipeline`); PR13 makes the empty-state ergonomic via an auto-managed `_default` topology. The result is a single permit rule that fits in a few lines of code.
+Topology declares **who-can-talk-to-whom** as structure. Three first-class kinds exist (`network`, `team`, `pipeline`); an auto-managed `_default` topology makes the empty state ergonomic. The result is a single permit rule that fits in a few lines of code.
 
 ## Why topology is first-class
 
@@ -52,7 +52,7 @@ members: [triage, drafter, publisher]
 
 The registry auto-synthesizes a `_default` network topology containing every agent that is **not** a member of any user-declared topology. It's in-memory, not persisted.
 
-This makes the empty state ergonomic — declare zero topologies and `_default` covers everyone, so the runtime behaves like PR11 (permissive). The moment you add an agent to a user-declared topology, it leaves `_default` and only the user-declared rule applies. Restriction is enforced the instant it's declared.
+This makes the empty state ergonomic — declare zero topologies and `_default` covers everyone, so the runtime is fully permissive. The moment you add an agent to a user-declared topology, it leaves `_default` and only the user-declared rule applies. Restriction is enforced the instant it's declared.
 
 `_default` shows up in `reyn topology list` for transparency:
 
