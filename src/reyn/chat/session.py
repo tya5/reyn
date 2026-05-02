@@ -2009,6 +2009,13 @@ class ChatSession:
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
         except SkillNotFoundError:
+            # P6 audit completeness: skill_run_spawned was emitted earlier; emit
+            # skill_run_failed for the error path so events log captures every
+            # state transition (dogfood S13b).
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"skill not found: {skill_name}",
+            )
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"skill not found: {skill_name}", meta=meta,
             ))
@@ -2016,6 +2023,11 @@ class ChatSession:
         try:
             skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
         except Exception as exc:
+            # P6 audit completeness: pair with skill_run_spawned above.
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"failed to load: {exc}",
+            )
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
             ))
@@ -2468,11 +2480,23 @@ class ChatSession:
         try:
             skill_dir, dsl_root = resolve_skill_path(skill_name)
         except SkillNotFoundError:
+            # P6 audit completeness: skill_run_spawned was emitted above; we must
+            # emit a corresponding skill_run_failed for the error path so the
+            # event log records every state transition (dogfood S13b).
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"skill not found: {skill_name}",
+            )
             return {"status": "error", "data": {"error": f"skill not found: {skill_name}"}}
 
         try:
             skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
         except Exception as exc:
+            # P6 audit completeness: pair with skill_run_spawned above.
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"failed to load: {exc}",
+            )
             return {"status": "error", "data": {"error": f"failed to load {skill_name}: {exc}"}}
 
         from reyn.chat.forwarder import ChatEventForwarder
