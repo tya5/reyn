@@ -74,6 +74,7 @@ class ReynTUIApp(App):
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
+        Binding("tab", "open_palette", "Commands", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette"),
     ]
 
@@ -367,6 +368,15 @@ class ReynTUIApp(App):
         self._close_palette()
         inputbar = self.query_one("#inputbar", InputBar)
         inputbar.focus_input()
+
+    def action_open_palette(self) -> None:
+        """Tab — open the slash command palette filtered by current input."""
+        try:
+            inp = self.query_one("#inputbar", InputBar).query_one("#input")
+            prefix = inp.value
+        except Exception:
+            prefix = ""
+        self._open_palette(prefix=prefix)
 
     # ── command palette ───────────────────────────────────────────────────────
 
