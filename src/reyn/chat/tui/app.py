@@ -82,7 +82,7 @@ class ReynTUIApp(App):
         Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
         Binding("ctrl+p", "palette_prev", "Prev", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
-        Binding("escape", "close_palette", "Close palette"),
+        Binding("escape", "close_palette", "Close palette", priority=True, show=False),
     ]
 
     def __init__(
@@ -419,11 +419,12 @@ class ReynTUIApp(App):
     def check_action(self, action: str, parameters):
         """Disable palette-only bindings when the palette is closed.
 
-        Backspace, Shift+Tab and Ctrl+P should fall through to the focused
+        Backspace, Shift+Tab, Ctrl+P, Esc should fall through to the focused
         Input widget when no palette is visible. Without this, the priority
-        bindings would swallow them and Backspace wouldn't delete characters.
+        bindings would swallow them — Backspace wouldn't delete characters,
+        Esc wouldn't reach prompt-toolkit-style chord handlers, etc.
         """
-        if action in {"palette_backspace", "palette_prev"}:
+        if action in {"palette_backspace", "palette_prev", "close_palette"}:
             return self._palette_visible
         return True
 
