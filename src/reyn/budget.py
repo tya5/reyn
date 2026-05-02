@@ -1,9 +1,14 @@
-"""Budget / cost / rate-limit enforcement (PR22).
+"""Budget / cost / rate-limit enforcement (PR22 + PR25).
 
 A process-shared `BudgetTracker` accumulates token + USD usage per agent,
 per-chain per-skill spawn counts, and per-model call rates. Hooked into
 LLM calls (pre-check refuses on hard cap, post-record updates counters)
 and into skill spawns (refuses on per-chain cap).
+
+PR25 adds persistent daily / monthly quota enforcement via a JSONL ledger
+(.reyn/state/budget_ledger.jsonl). On startup call `tracker.hydrate(path)`
+to re-aggregate today's / this month's usage from the ledger. Every
+`record_llm()` call appends a line to the ledger (fsync'd for durability).
 
 Hybrid cap behavior:
   - hard_limit: refuse the next operation (subsequent calls return
@@ -15,9 +20,12 @@ Per P7: this is OS-level generic infrastructure — the dimension names
 are not tied to any specific skill or domain.
 """
 from __future__ import annotations
+import json
+import os
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 from reyn.pricing import TokenUsage, estimate_cost
@@ -58,7 +66,7 @@ class CostLimitConfig:
 
 @dataclass
 class CostConfig:
-    """`cost:` — budget caps and rate limits (PR22)."""
+    """`cost:` — budget caps and rate limits (PR22 + PR25)."""
 
     per_agent_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     per_agent_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
@@ -66,6 +74,11 @@ class CostConfig:
     per_chain_skill_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     rate_limit_per_minute: dict[str, int] = field(default_factory=dict)
     rate_limit_warn_ratio: float = 0.8
+    # PR25: persistent daily / monthly quota (reset automatically at period boundary)
+    daily_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
+    daily_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
+    monthly_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
+    monthly_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
 
 
 # ── check result ────────────────────────────────────────────────────────────
@@ -80,6 +93,170 @@ class BudgetCheck:
     # Snapshot of current/limit values for the dimension that triggered
     # warn or hard. Used by formatters to build user-facing messages.
     context: dict = field(default_factory=dict)
+
+
+# ── period helpers ──────────────────────────────────────────────────────────
+
+
+def _period_key(ts: float, kind: str) -> tuple[str, str]:
+    """Return a period key tuple for the given POSIX timestamp.
+
+    kind="day"   → ("day",   "2026-05-02")
+    kind="month" → ("month", "2026-05")
+
+    Uses local time (time.localtime) — no external TZ config needed.
+    """
+    lt = time.localtime(ts)
+    if kind == "day":
+        return ("day", f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}")
+    if kind == "month":
+        return ("month", f"{lt.tm_year:04d}-{lt.tm_mon:02d}")
+    raise ValueError(f"unknown period kind: {kind!r}")
+
+
+def _current_period_key(kind: str) -> tuple[str, str]:
+    return _period_key(time.time(), kind)
+
+
+# ── persistent ledger ───────────────────────────────────────────────────────
+
+
+class BudgetLedger:
+    """Append-only JSONL ledger for per-LLM-call budget records (PR25).
+
+    One record per line:
+        {"ts": "2026-05-02T10:23:00+09:00", "agent": "alice",
+         "model": "...", "tokens": 300, "cost_usd": 0.0023}
+
+    Records are fsync'd on append so a process crash cannot roll back a
+    completed LLM call and under-count quota usage.
+
+    This class is synchronous and not asyncio-aware — all writes are tiny
+    and complete in microseconds.  The asyncio event loop is never blocked
+    meaningfully.
+    """
+
+    def __init__(self, path: Path) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    def append(
+        self,
+        *,
+        agent: str | None,
+        model: str,
+        tokens: int,
+        cost_usd: float,
+    ) -> None:
+        """Append one record and fsync."""
+        # Build ISO-8601 timestamp with local UTC offset.
+        now = time.time()
+        lt = time.localtime(now)
+        offset_sec = lt.tm_gmtoff  # seconds east of UTC
+        sign = "+" if offset_sec >= 0 else "-"
+        offset_abs = abs(offset_sec)
+        offset_str = f"{sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
+        ts_str = (
+            f"{lt.tm_year:04d}-{lt.tm_mon:02d}-{lt.tm_mday:02d}"
+            f"T{lt.tm_hour:02d}:{lt.tm_min:02d}:{lt.tm_sec:02d}"
+            f"{offset_str}"
+        )
+        record: dict = {
+            "ts": ts_str,
+            "agent": agent,
+            "model": model,
+            "tokens": tokens,
+            "cost_usd": cost_usd,
+        }
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        # Guard against partial writes from a previous crash (no trailing newline).
+        need_lead = self._needs_lead_newline()
+        with self._path.open("a", encoding="utf-8") as f:
+            if need_lead:
+                f.write("\n")
+            f.write(line)
+            f.flush()
+            os.fsync(f.fileno())
+
+    def _needs_lead_newline(self) -> bool:
+        if not self._path.is_file():
+            return False
+        try:
+            size = self._path.stat().st_size
+        except OSError:
+            return False
+        if size == 0:
+            return False
+        try:
+            with self._path.open("rb") as f:
+                f.seek(-1, 2)
+                return f.read(1) != b"\n"
+        except OSError:
+            return False
+
+    def iter_records(self):
+        """Yield parsed record dicts; skip broken / non-dict lines."""
+        if not self._path.is_file():
+            return
+        with self._path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                yield entry
+
+
+# ── ISO-8601 timestamp parser ───────────────────────────────────────────────
+
+
+def _parse_iso_ts(ts_str: str) -> float:
+    """Parse an ISO-8601 timestamp (with +HH:MM offset) → POSIX float.
+
+    Handles the format written by BudgetLedger.append:
+      "2026-05-02T10:23:00+09:00"
+
+    Raises ValueError on parse failure (caller should skip the record).
+    """
+    # datetime.fromisoformat supports timezone offsets in Python 3.7+.
+    from datetime import datetime, timezone
+    # Python 3.10 accepts "+09:00" directly; earlier versions need workaround.
+    # Use a simple manual parse to stay compatible with 3.8+.
+    if len(ts_str) >= 19:
+        # Try stdlib first (3.7+ handles +HH:MM in Python 3.11+)
+        try:
+            dt = datetime.fromisoformat(ts_str)
+            return dt.timestamp()
+        except ValueError:
+            pass
+    # Fallback: strip offset manually and apply it.
+    # Format: "2026-05-02T10:23:00+09:00" (25 chars)
+    import re
+    m = re.match(
+        r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})"
+        r"([+-])(\d{2}):(\d{2})$",
+        ts_str,
+    )
+    if not m:
+        raise ValueError(f"cannot parse ts: {ts_str!r}")
+    dt_naive_str, sign, hh, mm = m.groups()
+    from datetime import datetime, timedelta, timezone
+    dt_naive = datetime.strptime(dt_naive_str, "%Y-%m-%dT%H:%M:%S")
+    offset = timedelta(hours=int(hh), minutes=int(mm))
+    if sign == "-":
+        offset = -offset
+    tz = timezone(offset)
+    dt = dt_naive.replace(tzinfo=tz)
+    return dt.timestamp()
 
 
 # ── tracker ─────────────────────────────────────────────────────────────────
@@ -101,10 +278,70 @@ class BudgetTracker:
         self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
+        # PR25: persistent daily / monthly counters
+        self._daily_tokens: int = 0
+        self._daily_cost_usd: float = 0.0
+        self._monthly_tokens: int = 0
+        self._monthly_cost_usd: float = 0.0
+        self._day_key: tuple[str, str] | None = None    # ("day", "2026-05-02")
+        self._month_key: tuple[str, str] | None = None  # ("month", "2026-05")
+        self._ledger: BudgetLedger | None = None
 
     @property
     def config(self) -> CostConfig:
         return self._config
+
+    # ── PR25: persistent ledger hydration ───────────────────────────────
+
+    def hydrate(self, ledger_path: Path) -> None:
+        """Load today's / this month's counters from the persistent ledger.
+
+        Call once at startup after constructing the tracker. No-op if the
+        ledger file does not exist yet. Broken JSON lines are silently skipped
+        (same pattern as StateLog.iter_from).
+        """
+        self._ledger = BudgetLedger(ledger_path)
+        now = time.time()
+        day_key = _period_key(now, "day")
+        month_key = _period_key(now, "month")
+
+        daily_tokens = 0
+        daily_cost = 0.0
+        monthly_tokens = 0
+        monthly_cost = 0.0
+
+        for record in self._ledger.iter_records():
+            ts_str = record.get("ts")
+            if not isinstance(ts_str, str):
+                continue
+            try:
+                ts = _parse_iso_ts(ts_str)
+            except (ValueError, OSError):
+                continue
+            tokens = record.get("tokens", 0)
+            cost = record.get("cost_usd", 0.0)
+            if not isinstance(tokens, (int, float)):
+                tokens = 0
+            if not isinstance(cost, (int, float)):
+                cost = 0.0
+            tokens = int(tokens)
+            cost = float(cost)
+
+            rec_day = _period_key(ts, "day")
+            rec_month = _period_key(ts, "month")
+            if rec_day == day_key:
+                daily_tokens += tokens
+                daily_cost += cost
+            if rec_month == month_key:
+                monthly_tokens += tokens
+                monthly_cost += cost
+
+        self._daily_tokens = daily_tokens
+        self._daily_cost_usd = daily_cost
+        self._monthly_tokens = monthly_tokens
+        self._monthly_cost_usd = monthly_cost
+        self._day_key = day_key
+        self._month_key = month_key
 
     # ── pre-call checks ─────────────────────────────────────────────────
 
@@ -139,6 +376,12 @@ class BudgetTracker:
                         detail=f"agent {agent!r}: cost ${used:.2f}/${cap.hard_limit:.2f}",
                         context=self._agent_context(agent),
                     )
+
+        # 3. Daily / monthly caps (PR25) — check before call
+        day_check = self._check_daily_monthly()
+        if not day_check.allowed:
+            return day_check
+
         return rl_check  # may carry warn dims
 
     def check_pre_spawn(self, *, chain_id: str, skill: str) -> BudgetCheck:
@@ -226,6 +469,19 @@ class BudgetTracker:
                     key = f"{chain_id}/{skill}"
                     self._maybe_warn(warn_dims, "per_chain_skill_tokens", key)
 
+        # PR25: update daily / monthly counters and append to ledger
+        self._update_period_counters(usage.total_tokens, cost_usd)
+        if self._ledger is not None:
+            self._ledger.append(
+                agent=agent,
+                model=model,
+                tokens=usage.total_tokens,
+                cost_usd=cost_usd,
+            )
+
+        # Warn on daily / monthly thresholds
+        self._check_period_warn(warn_dims)
+
         return BudgetCheck(
             allowed=True,
             warn_dimensions=warn_dims,
@@ -238,8 +494,12 @@ class BudgetTracker:
     # ── reset / introspect ──────────────────────────────────────────────
 
     def reset_all(self) -> dict:
-        """Clear every counter. Returns a dict describing what was reset
-        (for `:budget reset` confirmation output)."""
+        """Clear per-agent / per-chain / rate-window counters.
+
+        PR25: daily / monthly counters are NOT reset here — they auto-reset
+        at period boundary and are backed by the persistent ledger. Returns
+        a dict describing what was reset (for `:budget reset` output).
+        """
         before = {
             "agent_tokens": dict(self._agent_tokens),
             "agent_cost_usd": dict(self._agent_cost_usd),
@@ -286,6 +546,13 @@ class BudgetTracker:
                 for m, q in self._call_window.items()
             },
             "config": self._config,
+            # PR25: persistent daily / monthly counters
+            "daily_tokens": self._daily_tokens,
+            "daily_cost_usd": round(self._daily_cost_usd, 6),
+            "monthly_tokens": self._monthly_tokens,
+            "monthly_cost_usd": round(self._monthly_cost_usd, 6),
+            "day_key": self._day_key[1] if self._day_key else None,
+            "month_key": self._month_key[1] if self._month_key else None,
         }
 
     # ── internals ───────────────────────────────────────────────────────
@@ -339,6 +606,102 @@ class BudgetTracker:
             "cost_hard": self._config.per_agent_cost_usd.hard_limit,
         }
 
+    # ── PR25: period counter helpers ─────────────────────────────────────
+
+    def _update_period_counters(self, tokens: int, cost_usd: float) -> None:
+        """Update daily / monthly counters, resetting if period changed."""
+        now = time.time()
+        new_day = _period_key(now, "day")
+        new_month = _period_key(now, "month")
+
+        if self._day_key is None or self._day_key != new_day:
+            self._daily_tokens = 0
+            self._daily_cost_usd = 0.0
+            self._day_key = new_day
+
+        if self._month_key is None or self._month_key != new_month:
+            self._monthly_tokens = 0
+            self._monthly_cost_usd = 0.0
+            self._month_key = new_month
+
+        self._daily_tokens += tokens
+        self._daily_cost_usd += cost_usd
+        self._monthly_tokens += tokens
+        self._monthly_cost_usd += cost_usd
+
+    def _check_daily_monthly(self) -> BudgetCheck:
+        """Return allowed=False if a daily or monthly hard limit is exceeded."""
+        # Daily tokens
+        cap = self._config.daily_tokens
+        if cap.is_active and self._daily_tokens >= cap.hard_limit:
+            label = self._day_key[1] if self._day_key else "today"
+            return BudgetCheck(
+                allowed=False,
+                hard_dimension="daily_tokens",
+                detail=f"daily token cap: {self._daily_tokens}/{int(cap.hard_limit)} (day: {label})",
+                context=self._period_context(),
+            )
+        # Daily cost
+        cap = self._config.daily_cost_usd
+        if cap.is_active and self._daily_cost_usd >= cap.hard_limit:
+            label = self._day_key[1] if self._day_key else "today"
+            return BudgetCheck(
+                allowed=False,
+                hard_dimension="daily_cost_usd",
+                detail=f"daily cost cap: ${self._daily_cost_usd:.4f}/${cap.hard_limit:.2f} (day: {label})",
+                context=self._period_context(),
+            )
+        # Monthly tokens
+        cap = self._config.monthly_tokens
+        if cap.is_active and self._monthly_tokens >= cap.hard_limit:
+            label = self._month_key[1] if self._month_key else "this month"
+            return BudgetCheck(
+                allowed=False,
+                hard_dimension="monthly_tokens",
+                detail=f"monthly token cap: {self._monthly_tokens}/{int(cap.hard_limit)} (month: {label})",
+                context=self._period_context(),
+            )
+        # Monthly cost
+        cap = self._config.monthly_cost_usd
+        if cap.is_active and self._monthly_cost_usd >= cap.hard_limit:
+            label = self._month_key[1] if self._month_key else "this month"
+            return BudgetCheck(
+                allowed=False,
+                hard_dimension="monthly_cost_usd",
+                detail=f"monthly cost cap: ${self._monthly_cost_usd:.4f}/${cap.hard_limit:.2f} (month: {label})",
+                context=self._period_context(),
+            )
+        return BudgetCheck(allowed=True)
+
+    def _check_period_warn(self, warn_dims: list[str]) -> None:
+        """Append warning dimension names for daily / monthly thresholds."""
+        for dim, used, cap_cfg in (
+            ("daily_tokens", self._daily_tokens, self._config.daily_tokens),
+            ("daily_cost_usd", self._daily_cost_usd, self._config.daily_cost_usd),
+            ("monthly_tokens", self._monthly_tokens, self._config.monthly_tokens),
+            ("monthly_cost_usd", self._monthly_cost_usd, self._config.monthly_cost_usd),
+        ):
+            if cap_cfg.is_active and cap_cfg.warn_threshold is not None:
+                if used >= cap_cfg.warn_threshold:
+                    key = self._day_key[1] if "daily" in dim else (
+                        self._month_key[1] if self._month_key else "month"
+                    )
+                    self._maybe_warn(warn_dims, dim, key or dim)
+
+    def _period_context(self) -> dict:
+        return {
+            "daily_tokens": self._daily_tokens,
+            "daily_cost_usd": round(self._daily_cost_usd, 6),
+            "monthly_tokens": self._monthly_tokens,
+            "monthly_cost_usd": round(self._monthly_cost_usd, 6),
+            "daily_tokens_hard": self._config.daily_tokens.hard_limit,
+            "daily_cost_hard": self._config.daily_cost_usd.hard_limit,
+            "monthly_tokens_hard": self._config.monthly_tokens.hard_limit,
+            "monthly_cost_hard": self._config.monthly_cost_usd.hard_limit,
+            "day_label": self._day_key[1] if self._day_key else None,
+            "month_label": self._month_key[1] if self._month_key else None,
+        }
+
 
 # ── user-visible formatters ─────────────────────────────────────────────────
 
@@ -389,6 +752,53 @@ def format_refusal_message(check: BudgetCheck, *, agent: Optional[str] = None) -
                 )
             else:
                 lines.append(f"  Also used:  {ctx.get('tokens')} tokens")
+    elif dim in ("daily_tokens", "daily_cost_usd", "monthly_tokens", "monthly_cost_usd"):
+        ctx = check.context
+        period = "daily" if dim.startswith("daily") else "monthly"
+        label = ctx.get("day_label") if period == "daily" else ctx.get("month_label")
+        label_str = f" ({label})" if label else ""
+        lines.append(f"[budget exceeded] {period} limit reached{label_str}.")
+        lines.append("")
+        if dim == "daily_tokens":
+            lines.append(
+                f"  Triggered:  daily_tokens "
+                f"({ctx.get('daily_tokens', 0):,}/{int(ctx.get('daily_tokens_hard') or 0):,})"
+            )
+            if ctx.get("daily_cost_hard") is not None:
+                lines.append(
+                    f"  Also used:  ${ctx.get('daily_cost_usd', 0):.4f} today"
+                    f" (limit: ${ctx.get('daily_cost_hard'):.2f})"
+                )
+        elif dim == "daily_cost_usd":
+            lines.append(
+                f"  Triggered:  daily_cost_usd "
+                f"(${ctx.get('daily_cost_usd', 0):.4f}/${ctx.get('daily_cost_hard', 0):.2f})"
+            )
+            if ctx.get("daily_tokens_hard") is not None:
+                lines.append(
+                    f"  Also used:  {ctx.get('daily_tokens', 0):,} tokens today"
+                    f" (limit: {int(ctx.get('daily_tokens_hard')):,})"
+                )
+        elif dim == "monthly_tokens":
+            lines.append(
+                f"  Triggered:  monthly_tokens "
+                f"({ctx.get('monthly_tokens', 0):,}/{int(ctx.get('monthly_tokens_hard') or 0):,})"
+            )
+            if ctx.get("monthly_cost_hard") is not None:
+                lines.append(
+                    f"  Also used:  ${ctx.get('monthly_cost_usd', 0):.4f} this month"
+                    f" (limit: ${ctx.get('monthly_cost_hard'):.2f})"
+                )
+        elif dim == "monthly_cost_usd":
+            lines.append(
+                f"  Triggered:  monthly_cost_usd "
+                f"(${ctx.get('monthly_cost_usd', 0):.4f}/${ctx.get('monthly_cost_hard', 0):.2f})"
+            )
+            if ctx.get("monthly_tokens_hard") is not None:
+                lines.append(
+                    f"  Also used:  {ctx.get('monthly_tokens', 0):,} tokens this month"
+                    f" (limit: {int(ctx.get('monthly_tokens_hard')):,})"
+                )
     else:
         lines.append(f"[budget exceeded] {check.detail}")
     lines.append("")
@@ -397,7 +807,10 @@ def format_refusal_message(check: BudgetCheck, *, agent: Optional[str] = None) -
     lines.append("What you can do:")
     lines.append("  • Raise the limit in `.reyn/config.yaml` (cost: section)")
     lines.append("  • Reset counters with `:budget reset`")
-    lines.append("  • Restart `reyn chat` (limits are per-process)")
+    if check.hard_dimension and check.hard_dimension.startswith(("daily_", "monthly_")):
+        lines.append("  • Daily / monthly limits reset automatically at period boundary")
+    else:
+        lines.append("  • Restart `reyn chat` (limits are per-process)")
     lines.append("  • See current usage with `:budget`")
     return "\n".join(lines)
 
@@ -427,6 +840,26 @@ def format_warn_message(dimension: str, ctx: dict) -> str:
         )
     if dimension == "per_chain_skill_tokens":
         return f"[budget warn] {dimension} approaching cap"
+    if dimension == "daily_tokens":
+        return (
+            f"[budget warn] daily token quota approaching: "
+            f"{ctx.get('daily_tokens', 0):,} / {int(ctx.get('daily_tokens_hard') or 0):,}"
+        )
+    if dimension == "daily_cost_usd":
+        return (
+            f"[budget warn] daily cost quota approaching: "
+            f"${ctx.get('daily_cost_usd', 0):.4f} / ${ctx.get('daily_cost_hard', 0):.2f}"
+        )
+    if dimension == "monthly_tokens":
+        return (
+            f"[budget warn] monthly token quota approaching: "
+            f"{ctx.get('monthly_tokens', 0):,} / {int(ctx.get('monthly_tokens_hard') or 0):,}"
+        )
+    if dimension == "monthly_cost_usd":
+        return (
+            f"[budget warn] monthly cost quota approaching: "
+            f"${ctx.get('monthly_cost_usd', 0):.4f} / ${ctx.get('monthly_cost_hard', 0):.2f}"
+        )
     return f"[budget warn] {dimension}"
 
 
@@ -441,6 +874,53 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
     """`:budget` full breakdown across all dimensions."""
     cfg: CostConfig = snapshot["config"]
     lines: list[str] = ["Usage (process invocation):", ""]
+
+    # PR25: Today / Month sections (shown first if any persistent data)
+    day_label = snapshot.get("day_key")
+    month_label = snapshot.get("month_key")
+    daily_tok = snapshot.get("daily_tokens", 0)
+    daily_cost = snapshot.get("daily_cost_usd", 0.0)
+    monthly_tok = snapshot.get("monthly_tokens", 0)
+    monthly_cost = snapshot.get("monthly_cost_usd", 0.0)
+
+    def _pct(used, limit) -> str:
+        if limit and limit > 0:
+            return f" ({int(used / limit * 100)}%)"
+        return ""
+
+    if day_label is not None or any([
+        cfg.daily_tokens.is_active,
+        cfg.daily_cost_usd.is_active,
+        cfg.monthly_tokens.is_active,
+        cfg.monthly_cost_usd.is_active,
+    ]):
+        if day_label:
+            tok_cap = cfg.daily_tokens
+            cost_cap = cfg.daily_cost_usd
+            tok_str = (
+                f"{daily_tok:,} / {int(tok_cap.hard_limit):,}{_pct(daily_tok, tok_cap.hard_limit)}"
+                if tok_cap.is_active else f"{daily_tok:,}"
+            )
+            cost_str = (
+                f"${daily_cost:.4f} / ${cost_cap.hard_limit:.2f}{_pct(daily_cost, cost_cap.hard_limit)}"
+                if cost_cap.is_active else f"${daily_cost:.4f}"
+            )
+            lines.append(f"  Today ({day_label}):   tokens {tok_str} | {cost_str}")
+
+        if month_label:
+            tok_cap = cfg.monthly_tokens
+            cost_cap = cfg.monthly_cost_usd
+            tok_str = (
+                f"{monthly_tok:,} / {int(tok_cap.hard_limit):,}{_pct(monthly_tok, tok_cap.hard_limit)}"
+                if tok_cap.is_active else f"{monthly_tok:,}"
+            )
+            cost_str = (
+                f"${monthly_cost:.4f} / ${cost_cap.hard_limit:.2f}{_pct(monthly_cost, cost_cap.hard_limit)}"
+                if cost_cap.is_active else f"${monthly_cost:.4f}"
+            )
+            lines.append(f"  Month ({month_label}): tokens {tok_str} | {cost_str}")
+
+        lines.append("")
 
     agents = sorted(set(snapshot["agent_tokens"]) | set(snapshot["agent_cost_usd"]))
     if not agents and attached is not None:

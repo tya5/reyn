@@ -452,6 +452,11 @@ def _build_cost_config(raw: object) -> CostConfig:
         per_chain_skill_tokens=_build_cost_limit(raw.get("per_chain_skill_tokens")),
         rate_limit_per_minute=rate,
         rate_limit_warn_ratio=warn_ratio,
+        # PR25: persistent daily / monthly quota
+        daily_tokens=_build_cost_limit(raw.get("daily_tokens")),
+        daily_cost_usd=_build_cost_limit(raw.get("daily_cost_usd")),
+        monthly_tokens=_build_cost_limit(raw.get("monthly_tokens")),
+        monthly_cost_usd=_build_cost_limit(raw.get("monthly_cost_usd")),
     )
 
 

@@ -49,6 +49,8 @@ def run(args: argparse.Namespace) -> None:
     # PR22: process-shared budget tracker. Defaults to all unlimited unless
     # `cost:` is configured.
     budget_tracker = BudgetTracker(session_cfg.config.cost)
+    # PR25: hydrate daily / monthly counters from the persistent ledger.
+    budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).

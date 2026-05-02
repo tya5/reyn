@@ -1845,6 +1845,10 @@ class ChatSession:
                 lines.append("  per-chain skill calls:        cleared")
             if before.get("rate_window_sizes"):
                 lines.append("  rate-limit window:            cleared")
+            lines.append(
+                "Note: daily / monthly counters are NOT reset — "
+                "they auto-reset at period boundary."
+            )
             lines.append("Use `:budget` to verify.")
             await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
             return
