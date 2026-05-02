@@ -34,6 +34,7 @@ def run(args: argparse.Namespace) -> None:
     from reyn.chat.repl import run_repl
     from reyn.config import _find_project_root, load_project_context
     from reyn.permissions import PermissionResolver
+    from reyn.state_log import StateLog
 
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
@@ -41,6 +42,9 @@ def run(args: argparse.Namespace) -> None:
     limits = session_cfg.limits_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
+    # PR21: process-shared WAL for crash recovery. Owned by AgentRegistry,
+    # injected into each ChatSession at construction.
+    state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).
@@ -71,11 +75,16 @@ def run(args: argparse.Namespace) -> None:
             chain_timeout_seconds=session_cfg.config.multi_agent.chain_timeout_seconds,
             allowed_skills=profile.allowed_skills,
             events_config=session_cfg.config.events,
+            state_log=state_log,
         )
         s.load_history()
         return s
 
-    registry = AgentRegistry(project_root=project_root, session_factory=_session_factory)
+    registry = AgentRegistry(
+        project_root=project_root,
+        session_factory=_session_factory,
+        state_log=state_log,
+    )
 
     name = args.agent_name or DEFAULT_AGENT_NAME
     if not registry.exists(name):
@@ -90,6 +99,10 @@ def run(args: argparse.Namespace) -> None:
     renderer = make_chat_renderer(rich=args.rich)
 
     async def _main() -> None:
+        # PR21: replay WAL into per-agent snapshots before any new state
+        # changes happen. Agents with restored state get their inbox /
+        # pending_chains repopulated and their main loop started here.
+        await registry.restore_all()
         await registry.attach(name)
         await run_repl(registry, renderer=renderer)
 

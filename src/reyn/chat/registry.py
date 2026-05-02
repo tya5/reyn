@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from reyn.agent_snapshot import AgentSnapshot
+from reyn.state_log import StateLog
 from .profile import AgentProfile, PROFILE_FILENAME
 from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
@@ -71,16 +73,23 @@ class AgentRegistry:
         project_root: Path,
         *,
         session_factory: Callable[[AgentProfile], "object"],
+        state_log: StateLog | None = None,
     ) -> None:
         """
         session_factory: returns a configured ChatSession given an AgentProfile.
             The factory captures CLI-derived defaults (model, resolver, permissions,
             limits, mcp config, …) — registry doesn't need to know them.
+        state_log: PR21 WAL for crash recovery. When None, persistence is
+            disabled (tests / non-chat invocation). Owned by the caller; the
+            registry just hands it to each constructed session and uses it
+            during `restore_all()`.
         """
         self._dir = project_root / ".reyn" / "agents"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._topology_dir = project_root / ".reyn" / TOPOLOGY_DIRNAME
         self._factory = session_factory
+        self._state_log = state_log
+        self._project_root = project_root
         self._agents: dict[str, "object"] = {}            # name -> ChatSession
         self._tasks: dict[str, asyncio.Task] = {}         # name -> session.run() task
         self._forward_tasks: dict[str, asyncio.Task] = {} # name -> outbox forwarder
@@ -98,6 +107,10 @@ class AgentRegistry:
         # yaml doesn't lock the user out of `reyn chat`.
         self._topologies: dict[str, Topology] = {}
         self._reload_topologies()
+
+    @property
+    def state_log(self) -> StateLog | None:
+        return self._state_log
 
     # ── persistence ──────────────────────────────────────────────────────────
 
@@ -170,6 +183,59 @@ class AgentRegistry:
         if not candidates:
             return None
         return datetime.fromtimestamp(max(candidates), tz=timezone.utc)
+
+    # ── PR21: crash recovery ─────────────────────────────────────────────────
+
+    async def restore_all(self) -> dict[str, AgentSnapshot]:
+        """Reconstruct each known agent's runtime state from snapshot + WAL.
+
+        Algorithm:
+        1. Load every agent's snapshot (or empty)
+        2. Find min(applied_seq); tail WAL from there
+        3. Apply each WAL entry to the matching agent's snapshot
+        4. Save the updated snapshot back (so next restart starts from the
+           more advanced point)
+        5. For agents with non-empty restored state, instantiate the session
+           and call `session.restore_state(snapshot)` to populate inbox /
+           pending_chains and re-arm chain timeout watchdogs
+
+        Idempotent: calling twice on a clean state is a no-op.
+        """
+        if self._state_log is None:
+            return {}
+
+        # 1. Load snapshots
+        snapshots: dict[str, AgentSnapshot] = {}
+        for name in self.list_names():
+            snap_path = self._dir / name / "state" / "snapshot.json"
+            if snap_path.is_file():
+                snapshots[name] = AgentSnapshot.load(name, snap_path)
+            else:
+                snapshots[name] = AgentSnapshot.empty(name)
+
+        if not snapshots:
+            return {}
+
+        # 2-3. WAL replay from min(applied_seq) + 1
+        min_seq = min(s.applied_seq for s in snapshots.values())
+        wal_entries = list(self._state_log.iter_from(min_seq + 1))
+        for snap in snapshots.values():
+            snap.apply_events(wal_entries)
+
+        # 4. Save the post-replay snapshots
+        for name, snap in snapshots.items():
+            snap_path = self._dir / name / "state" / "snapshot.json"
+            snap.save(snap_path)
+
+        # 5. Hand each non-empty snapshot to its session
+        for name, snap in snapshots.items():
+            if not snap.inbox and not snap.pending_chains:
+                continue
+            session = self.get_or_load(name)
+            session.restore_state(snap)
+            await self.ensure_running(name)
+
+        return snapshots
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 

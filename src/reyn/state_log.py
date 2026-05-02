@@ -1,0 +1,156 @@
+"""StateLog — append-only WAL for crash recovery (PR21).
+
+Records state-change events with monotonically increasing `seq`, fsync'd
+per append for durability. On restart, each AgentSnapshot's `applied_seq`
+identifies the last event already absorbed — replay starts from
+`min(applied_seq) + 1` across all known agents.
+
+Six event kinds are recorded (state-mutating only; processing internals
+like LLM calls live in the audit log under `.reyn/events/`):
+
+  inbox_put           — message put on agent X's inbox
+  inbox_consume       — message removed from agent X's inbox
+  chain_register      — new pending_chain created on agent X
+  chain_update        — pending_chain's waiting_on shrunk
+  chain_resolve       — pending_chain completed
+  chain_timeout_fired — PR18 watchdog fired
+
+Per P7: this is OS-level generic infrastructure — `kind` strings and
+field names live here, not in any skill/domain code.
+"""
+from __future__ import annotations
+import asyncio
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+from typing import Iterator
+
+
+WAL_EVENT_KINDS = (
+    "inbox_put",
+    "inbox_consume",
+    "chain_register",
+    "chain_update",
+    "chain_resolve",
+    "chain_timeout_fired",
+)
+
+
+class StateLog:
+    """Single-file WAL. Process-shared; ownership lives in AgentRegistry."""
+
+    def __init__(self, path: Path) -> None:
+        self._path = Path(path)
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = asyncio.Lock()
+        self._counter = self._scan_max_seq()
+
+    @property
+    def path(self) -> Path:
+        return self._path
+
+    @property
+    def current_seq(self) -> int:
+        return self._counter
+
+    async def append(self, kind: str, **fields) -> int:
+        """Append a new entry, fsync, return its seq.
+
+        `kind` must be one of WAL_EVENT_KINDS — caught at write time so a
+        typo doesn't silently fragment the recovery vocabulary.
+        """
+        if kind not in WAL_EVENT_KINDS:
+            raise ValueError(f"unknown WAL event kind: {kind!r}")
+        async with self._lock:
+            self._counter += 1
+            seq = self._counter
+            entry = {
+                "seq": seq,
+                "ts": datetime.now().isoformat(),
+                "kind": kind,
+                **fields,
+            }
+            payload = json.dumps(entry, ensure_ascii=False) + "\n"
+            # Defensive: if the previous run crashed mid-write, the file may
+            # end without a newline. Probe the last byte before appending so
+            # our new entry starts on its own line — the torn fragment still
+            # parses as garbage and gets skipped on replay.
+            need_lead_newline = self._needs_lead_newline()
+            with self._path.open("a", encoding="utf-8") as f:
+                if need_lead_newline:
+                    f.write("\n")
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+            return seq
+
+    def _needs_lead_newline(self) -> bool:
+        if not self._path.is_file():
+            return False
+        try:
+            size = self._path.stat().st_size
+        except OSError:
+            return False
+        if size == 0:
+            return False
+        try:
+            with self._path.open("rb") as f:
+                f.seek(-1, 2)
+                return f.read(1) != b"\n"
+        except OSError:
+            return False
+
+    def iter_from(self, min_seq: int) -> Iterator[dict]:
+        """Yield WAL entries with `seq >= min_seq`, in file order.
+
+        Bad lines (parse errors, partial writes from a crash) are skipped
+        silently — recovery should be best-effort from whatever survived.
+        """
+        if not self._path.is_file():
+            return
+        with self._path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(entry, dict):
+                    continue
+                seq = entry.get("seq")
+                if not isinstance(seq, int):
+                    continue
+                if seq < min_seq:
+                    continue
+                yield entry
+
+    def _scan_max_seq(self) -> int:
+        """Initialize the counter from the highest seq present in the WAL.
+
+        Read the whole file once at construction. Cheap for typical sizes
+        (millions of small lines = ~hundreds of MB), which we're nowhere
+        near. WAL truncation is OOS for PR21.
+        """
+        if not self._path.is_file():
+            return 0
+        max_seq = 0
+        try:
+            with self._path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict):
+                        seq = entry.get("seq")
+                        if isinstance(seq, int) and seq > max_seq:
+                            max_seq = seq
+        except OSError:
+            return 0
+        return max_seq

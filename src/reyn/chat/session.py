@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from reyn.agent import Agent
+from reyn.agent_snapshot import AgentSnapshot
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, LimitsConfig
@@ -18,6 +19,7 @@ from reyn.events import EventLog
 from reyn.model_resolver import ModelResolver
 from reyn.permissions import PermissionResolver
 from reyn.skill_paths import resolve_skill_path, stdlib_root
+from reyn.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
@@ -256,6 +258,7 @@ class ChatSession:
         chain_timeout_seconds: float = 60.0,
         allowed_skills: list[str] | None = None,
         events_config: EventsConfig | None = None,
+        state_log: StateLog | None = None,
     ) -> None:
         self.agent_name = agent_name
         self.model = model
@@ -288,6 +291,15 @@ class ChatSession:
 
         # PR20: per-chat rotation policy. Defaults match EventsConfig.
         self._events_config = events_config or EventsConfig()
+
+        # PR21: WAL + per-agent snapshot for crash recovery. state_log is
+        # process-shared (owned by AgentRegistry); when None, persistence
+        # is disabled (tests / non-chat invocation).
+        self._state_log = state_log
+        self._snapshot = AgentSnapshot.empty(self.agent_name)
+        self._snapshot_path = (
+            Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
+        )
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -401,26 +413,156 @@ class ChatSession:
         # PR14: every top-level user submission starts a fresh chain_id that
         # propagates through any agent_request / agent_response generated in
         # response. Logged in history meta + events.jsonl for cross-agent trace.
-        await self.inbox.put(("user", {"text": text, "chain_id": _new_chain_id()}))
+        await self._put_inbox(
+            "user", {"text": text, "chain_id": _new_chain_id()},
+        )
 
     async def submit_agent_request(
         self, *, from_agent: str, request: str, depth: int, chain_id: str,
     ) -> None:
-        await self.inbox.put(("agent_request", {
+        await self._put_inbox("agent_request", {
             "from_agent": from_agent, "request": request, "depth": depth,
             "chain_id": chain_id,
-        }))
+        })
 
     async def submit_agent_response(
         self, *, from_agent: str, response: str, depth: int, chain_id: str,
     ) -> None:
-        await self.inbox.put(("agent_response", {
+        await self._put_inbox("agent_response", {
             "from_agent": from_agent, "response": response, "depth": depth,
             "chain_id": chain_id,
-        }))
+        })
 
     async def shutdown(self) -> None:
+        # `shutdown` is a control signal, not recovery state — skip WAL/snapshot.
         await self.inbox.put(("shutdown", {}))
+
+    # ── PR21: state persistence helpers (WAL + snapshot) ─────────────────────
+
+    async def _put_inbox(self, kind: str, payload: dict) -> str:
+        """Append `inbox_put` to WAL, queue the message, update snapshot.
+
+        Returns the assigned message id. The id is also stored under
+        `_msg_id` in the payload so the consumer can look it up at consume
+        time without a separate channel.
+        """
+        msg_id = uuid.uuid4().hex[:8]
+        full_payload = {**payload, "_msg_id": msg_id}
+        if self._state_log is not None:
+            seq = await self._state_log.append(
+                "inbox_put", target=self.agent_name,
+                msg_id=msg_id, msg_kind=kind, payload=full_payload,
+            )
+            self._snapshot.applied_seq = seq
+            self._snapshot.inbox.append({
+                "id": msg_id, "kind": kind, "payload": full_payload,
+            })
+            self._save_snapshot()
+        await self.inbox.put((kind, full_payload))
+        return msg_id
+
+    async def _consume_inbox(self) -> tuple[str, dict]:
+        """Wait for next inbox message; on receive, append `inbox_consume`
+        to WAL and prune the snapshot."""
+        kind, payload = await self.inbox.get()
+        msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
+        if (
+            self._state_log is not None
+            and msg_id is not None
+            and kind != "shutdown"
+        ):
+            seq = await self._state_log.append(
+                "inbox_consume", agent=self.agent_name, msg_id=msg_id,
+            )
+            self._snapshot.applied_seq = seq
+            self._snapshot.inbox = [
+                m for m in self._snapshot.inbox if m.get("id") != msg_id
+            ]
+            self._save_snapshot()
+        return kind, payload
+
+    async def _record_chain_register(
+        self, *, chain_id: str, origin_agent: str, origin_depth: int,
+        original_request: str, waiting_on: list[str],
+    ) -> None:
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "chain_register", agent=self.agent_name, chain_id=chain_id,
+            origin_agent=origin_agent, origin_depth=origin_depth,
+            original_request=original_request, waiting_on=waiting_on,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.pending_chains[chain_id] = {
+            "chain_id": chain_id,
+            "origin_agent": origin_agent,
+            "origin_depth": origin_depth,
+            "original_request": original_request,
+            "waiting_on": list(waiting_on),
+        }
+        self._save_snapshot()
+
+    async def _record_chain_update(
+        self, chain_id: str, waiting_on: list[str],
+    ) -> None:
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "chain_update", agent=self.agent_name, chain_id=chain_id,
+            waiting_on=waiting_on,
+        )
+        self._snapshot.applied_seq = seq
+        chain = self._snapshot.pending_chains.get(chain_id)
+        if chain is not None:
+            chain["waiting_on"] = list(waiting_on)
+        self._save_snapshot()
+
+    async def _record_chain_resolve(self, chain_id: str) -> None:
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "chain_resolve", agent=self.agent_name, chain_id=chain_id,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.pending_chains.pop(chain_id, None)
+        self._save_snapshot()
+
+    async def _record_chain_timeout_fired(self, chain_id: str) -> None:
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "chain_timeout_fired", agent=self.agent_name, chain_id=chain_id,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.pending_chains.pop(chain_id, None)
+        self._save_snapshot()
+
+    def _save_snapshot(self) -> None:
+        if self._snapshot_path is not None:
+            self._snapshot.save(self._snapshot_path)
+
+    def restore_state(self, snapshot: AgentSnapshot) -> None:
+        """Adopt a recovered snapshot: populate inbox queue + pending_chains,
+        re-arm chain timeout watchdogs (PR18). Callable from async context
+        only — `_arm_chain_timeout` schedules an asyncio task."""
+        self._snapshot = snapshot
+        for msg in snapshot.inbox:
+            self.inbox.put_nowait((msg["kind"], msg["payload"]))
+        for cid, chain in snapshot.pending_chains.items():
+            self._pending_chains[cid] = _PendingChain(
+                chain_id=chain["chain_id"],
+                origin_agent=chain["origin_agent"],
+                origin_depth=int(chain["origin_depth"]),
+                original_request=chain["original_request"],
+                waiting_on=set(chain.get("waiting_on", [])),
+            )
+            self._arm_chain_timeout(cid)
+        self._chat_events.emit(
+            "session_restored",
+            applied_seq=snapshot.applied_seq,
+            inbox_size=len(snapshot.inbox),
+            pending_chains=len(snapshot.pending_chains),
+        )
 
     # ── main loop ───────────────────────────────────────────────────────────────
 
@@ -429,7 +571,7 @@ class ChatSession:
 
         try:
             while True:
-                kind, payload = await self.inbox.get()
+                kind, payload = await self._consume_inbox()
                 if kind == "shutdown":
                     break
                 if kind == "user":
@@ -1157,12 +1299,22 @@ class ChatSession:
             # synthesized after every delegate responds (see _handle_agent_response).
             # If reply_text was also produced it's discarded — the deferred
             # final answer takes the place of any interim narration.
+            waiting_on = {(m["to"] or "").strip() for m in messages_to_agents}
             self._pending_chains[chain_id] = _PendingChain(
                 chain_id=chain_id,
                 origin_agent=from_agent,
                 origin_depth=depth,
                 original_request=request,
-                waiting_on={(m["to"] or "").strip() for m in messages_to_agents},
+                waiting_on=waiting_on,
+            )
+            # PR21: persist chain creation to WAL + snapshot before arming
+            # the watchdog so a crash mid-arm still has the chain on disk.
+            await self._record_chain_register(
+                chain_id=chain_id,
+                origin_agent=from_agent,
+                origin_depth=depth,
+                original_request=request,
+                waiting_on=sorted(waiting_on),
             )
             # PR18: arm the timeout watchdog for this chain.
             self._arm_chain_timeout(chain_id)
@@ -1255,10 +1407,12 @@ class ChatSession:
         which keeps the chain pending).
         """
         pending.waiting_on.discard(from_agent)
+        chain_id = pending.chain_id
         if pending.waiting_on:
+            # Partial resolution — record the new waiting_on for recovery.
+            await self._record_chain_update(chain_id, sorted(pending.waiting_on))
             return  # still waiting on other delegates
 
-        chain_id = pending.chain_id
         try:
             decision = await self._invoke_router(pending.original_request)
         except Exception as exc:
@@ -1274,6 +1428,7 @@ class ChatSession:
             )
             self._pending_chains.pop(chain_id, None)
             self._cancel_chain_timeout(chain_id)
+            await self._record_chain_resolve(chain_id)
             return
 
         new_delegations = [
@@ -1286,6 +1441,9 @@ class ChatSession:
         if new_delegations:
             # Continue the chain with a fresh wave of delegations.
             pending.waiting_on = {(m["to"] or "").strip() for m in new_delegations}
+            await self._record_chain_update(
+                chain_id, sorted(pending.waiting_on),
+            )
             for msg in new_delegations:
                 await self._send_to_agent(
                     to=(msg["to"] or "").strip(),
@@ -1312,6 +1470,7 @@ class ChatSession:
         )
         self._pending_chains.pop(chain_id, None)
         self._cancel_chain_timeout(chain_id)
+        await self._record_chain_resolve(chain_id)
 
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
 
@@ -1350,6 +1509,10 @@ class ChatSession:
         self._pending_chain_timers.pop(chain_id, None)
         if pending is None:
             return  # resolved between sleep wake and pop — nothing to do
+        # PR21: persist the timeout firing so a crash mid-error-send doesn't
+        # leave the chain alive on disk. Idempotent if the chain was already
+        # removed (no-op record_chain_timeout_fired with missing pending).
+        await self._record_chain_timeout_fired(chain_id)
         waiting = sorted(pending.waiting_on)
         error_text = (
             f"chain timeout: {len(waiting)} delegate(s) "
