@@ -80,6 +80,7 @@ class ReynTUIApp(App):
         Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
         Binding("ctrl+p", "palette_prev", "Prev", priority=True, show=False),
+        Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette"),
     ]
 
@@ -413,6 +414,31 @@ class ReynTUIApp(App):
             return
         current = overlay.highlighted if overlay.highlighted is not None else -1
         overlay.highlighted = (current + delta) % count
+
+    def check_action(self, action: str, parameters):
+        """Disable palette-only bindings when the palette is closed.
+
+        Backspace, Shift+Tab and Ctrl+P should fall through to the focused
+        Input widget when no palette is visible. Without this, the priority
+        bindings would swallow them and Backspace wouldn't delete characters.
+        """
+        if action in {"palette_backspace", "palette_prev"}:
+            return self._palette_visible
+        return True
+
+    def action_palette_backspace(self) -> None:
+        """Backspace while palette is open: close + delete one char from input."""
+        self._close_palette()
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inp = inputbar.query_one("#input")
+            if inp.value:
+                # Drop the last character; cursor follows.
+                inp.value = inp.value[:-1]
+                inp.cursor_position = len(inp.value)
+            inputbar.focus_input()
+        except Exception:
+            pass
 
     # ── command palette ───────────────────────────────────────────────────────
 
