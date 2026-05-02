@@ -8,6 +8,7 @@ the input and output sides funnel through the registry.
 """
 from __future__ import annotations
 import asyncio
+import sys
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import run_in_terminal
@@ -24,10 +25,22 @@ async def _input_loop(
     prompt_session: PromptSession,
     renderer: ChatRenderer,
 ) -> None:
+    is_tty = sys.stdin.isatty()
     while True:
         try:
-            with patch_stdout():
-                text = await prompt_session.prompt_async(renderer.prompt_text())
+            if is_tty:
+                with patch_stdout():
+                    text = await prompt_session.prompt_async(renderer.prompt_text())
+            else:
+                # Piped / scripted stdin: skip prompt_toolkit entirely. It
+                # otherwise emits cursor-movement escapes (`\x1b[1A\x1b[K`)
+                # that clutter logs and confuse line-buffered drivers.
+                line = await asyncio.get_event_loop().run_in_executor(
+                    None, sys.stdin.readline,
+                )
+                if not line:
+                    raise EOFError
+                text = line
         except (EOFError, KeyboardInterrupt):
             await registry.shutdown()
             return
@@ -45,15 +58,16 @@ async def _input_loop(
 
 
 async def _output_loop(registry: AgentRegistry, renderer: ChatRenderer) -> None:
+    is_tty = sys.stdout.isatty()
     while True:
         msg = await registry.repl_outbox.get()
         if msg.kind == "__end__":
             return
-        # Wrap in run_in_terminal so the prompt is cleared before output and
-        # redrawn after — required for ANSI/Rich to render cleanly without
-        # corrupting the prompt. When no app is active (banner phase), the
-        # function runs synchronously without coordination.
-        if get_app_or_none() is not None:
+        # On a real terminal: wrap in run_in_terminal so the prompt is cleared
+        # before output and redrawn after — required for ANSI/Rich to render
+        # cleanly without corrupting the prompt.
+        # On a pipe: print plainly, no prompt redraw, no cursor escapes.
+        if is_tty and get_app_or_none() is not None:
             await run_in_terminal(lambda m=msg: renderer.message(m))
         else:
             renderer.message(msg)
