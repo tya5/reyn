@@ -41,9 +41,11 @@ class ReynHeader(Widget):
         width: 1fr;
     }
     ReynHeader #clock {
+        dock: right;
         color: #888888;
         padding: 0 1;
-        width: auto;
+        width: 21;
+        text-align: right;
     }
     """
 
