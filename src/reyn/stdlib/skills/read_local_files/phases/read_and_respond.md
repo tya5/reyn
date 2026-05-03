@@ -6,8 +6,6 @@ role: file_synthesiser
 can_finish: true
 allowed_ops: [mcp]
 max_act_turns: 3
-permissions:
-  mcp: [filesystem]
 ---
 
 Read each path in the plan via the `filesystem` MCP server, then compose

@@ -19,12 +19,6 @@ preprocessor:
         longest_line_chars: {type: integer, minimum: 0}
         estimated_tokens:  {type: integer, minimum: 1}
       required: [char_count, word_count, line_count, longest_line_chars, estimated_tokens]
-permissions:
-  python:
-    - module: ./stats.py
-      function: compute_text_stats
-      mode: pure
-      timeout: 5
 ---
 
 Write a short commentary on the user's text.

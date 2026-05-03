@@ -1133,6 +1133,7 @@ class OSRuntime:
         confidence: float,
         finish_artifact: dict | None = None,
         output_language: str = "ja",
+        resume_plan: object = None,
     ) -> RunResult:
         """Single source of truth for "the workflow ended cleanly".
 
@@ -1146,8 +1147,37 @@ class OSRuntime:
         the pre-postprocessor payload (used as fallback when no postprocessor
         runs). On postprocessor success ``data`` is replaced with the
         postprocessor output's "data" field.
+
+        ``resume_plan``: when mid-postprocessor resume is detected in
+        ``run()``, this is forwarded so PostprocessorExecutor can replay
+        already-committed steps via memo without re-executing.
+
+        Crash-recovery protocol (piece 1):
+          1. Persist the LLM finish artifact to workspace so it is durable.
+          2. Advance the per-skill snapshot to ``current_phase="__post__"``
+             so a crash mid-postprocessor is detectable on next startup.
+          3. Run the postprocessor (with resume_plan for memo on restart).
         """
         if self.skill.postprocessor is not None and finish_artifact is not None:
+            # ── Step 1: persist finish artifact before postprocessor starts ────
+            # This makes the postprocessor input durable so a crash between
+            # postprocessor steps leaves the artifact recoverable.
+            artifact_path: str | None = None
+            if not resume_plan:
+                # Only persist on a fresh (non-resumed) run. On resume we
+                # already have last_phase_artifact_path from the snapshot.
+                artifact_path = self.workspace.store_artifact(
+                    "__post__", finish_artifact,
+                    skill_name=self.skill.name, visit=1,
+                )
+                # ── Step 2: advance snapshot to __post__ ──────────────────────
+                if self._skill_registry:
+                    await self._skill_registry.advance_phase(
+                        run_id=self.run_id,
+                        next_phase="__post__",
+                        last_phase_artifact_path=artifact_path,
+                    )
+
             post_executor = PostprocessorExecutor(
                 skill=self.skill,
                 workspace=self.workspace,
@@ -1159,8 +1189,12 @@ class OSRuntime:
                 intervention_bus=self._intervention_bus,
                 max_phase_visits=self._max_phase_visits,
                 caller=self._caller,
+                state_log=self._state_log,
+                skill_run_id=self.run_id,
             )
-            post_artifact, post_usage = await post_executor.run(finish_artifact, output_language)
+            post_artifact, post_usage = await post_executor.run(
+                finish_artifact, output_language, resume_plan=resume_plan,
+            )
             self._token_usage += post_usage
             data = post_artifact.get("data", {})
 
@@ -1318,6 +1352,67 @@ class OSRuntime:
                 skill_input=initial_input,
                 parent_run_id=self._parent_run_id,
             )
+
+        # ── __post__ resume entry (piece 3) ───────────────────────────────────
+        # When a crash happened mid-postprocessor the snapshot's current_phase
+        # is "__post__". On resume the phase loop would try to enter a real
+        # phase named "__post__" (which doesn't exist) — instead we detect
+        # this sentinel, load the persisted finish artifact from
+        # last_phase_artifact_path, and jump straight to _finish_workflow with
+        # the resume_plan so completed steps are memoized.
+        if self._resume_plan is not None and current_phase == "__post__":
+            artifact_path_post = getattr(
+                self._resume_plan, "last_phase_artifact_path", None,
+            )
+            finish_artifact_post: dict | None = None
+            if artifact_path_post:
+                try:
+                    import json as _json
+                    p = Path(artifact_path_post)
+                    if p.is_file():
+                        finish_artifact_post = _json.loads(
+                            p.read_text(encoding="utf-8")
+                        )
+                except Exception as _e:  # noqa: BLE001 — defensive
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "__post__ resume: cannot load finish artifact %s: %s",
+                        artifact_path_post, _e,
+                    )
+
+            if finish_artifact_post is None:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "__post__ resume: no finish artifact found; "
+                    "using empty artifact — postprocessor will re-execute all steps",
+                )
+                finish_artifact_post = {"type": "unknown", "data": {}}
+
+            # _finish_workflow calls skill_registry.complete via the finally
+            # block so the snapshot is removed on success.
+            try:
+                return await self._finish_workflow(
+                    phase="__post__",
+                    data=finish_artifact_post.get("data", {}),
+                    reason="resumed from __post__ state",
+                    confidence=1.0,
+                    finish_artifact=finish_artifact_post,
+                    output_language=output_language,
+                    resume_plan=self._resume_plan,
+                )
+            finally:
+                if self._skill_registry:
+                    import sys as _sys
+                    exc_type, _, _ = _sys.exc_info()
+                    if exc_type is None or issubclass(exc_type, WorkflowAbortedError):
+                        await self._skill_registry.complete(run_id=self.run_id)
+                    else:
+                        self.events.emit(
+                            "skill_run_interrupted",
+                            run_id=self.run_id,
+                            exc_type=exc_type.__name__ if exc_type else "unknown",
+                            will_resume=True,
+                        )
 
         artifact_path: str | None = self.workspace.store_artifact(
             "_input", artifact, skill_name=self.skill.name, visit=1

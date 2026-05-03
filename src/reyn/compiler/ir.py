@@ -47,3 +47,7 @@ class SkillDef:
     # = skill has no postprocessor. Expander typechecks and converts to
     # `schemas.models.Postprocessor`.
     postprocessor: dict = field(default_factory=dict)
+    # Explicit skill-level permissions block — raw frontmatter shape.
+    # Non-empty → expander uses this directly (bypasses phase union).
+    # Empty / absent → expander falls back to _union_phase_permissions.
+    permissions: dict = field(default_factory=dict)

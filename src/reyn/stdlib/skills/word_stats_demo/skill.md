@@ -15,6 +15,12 @@ finish_criteria:
   - The LLM produced a commentary referring to the computed numbers
 graph:
   review: []
+permissions:
+  python:
+    - module: ./stats.py
+      function: compute_text_stats
+      mode: pure
+      timeout: 5
 ---
 
 ## Overview

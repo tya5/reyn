@@ -266,7 +266,11 @@ def expand_skill(
         final_output_name=final_output_name,
         final_output_description=skill_def.final_output_description,
         finish_criteria=skill_def.finish_criteria,
-        permissions=_union_phase_permissions(phase_objects),
+        permissions=(
+            PermissionDecl.from_dict(skill_def.permissions)
+            if skill_def.permissions
+            else _union_phase_permissions(phase_objects)
+        ),
         postprocessor=_expand_postprocessor(skill_def.postprocessor, artifact_defs),
         preprocessor_sub_skills=preprocessor_sub_skills or {},
     )

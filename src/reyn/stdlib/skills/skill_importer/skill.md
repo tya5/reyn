@@ -19,6 +19,10 @@ graph:
   search: [select]
   select: [convert]
   convert: []
+permissions:
+  file.write:
+    - path: reyn/local
+      scope: recursive
 routing:
   intents: [task]
   when_to_use:

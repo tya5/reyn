@@ -6,10 +6,6 @@ role: skill_converter
 can_finish: true
 max_act_turns: 6
 allowed_ops: [file, lint, web_fetch]
-permissions:
-  file.write:
-    - path: reyn/local
-      scope: recursive
 ---
 
 Fetch the chosen source markdown, decompose it into a multi-phase reyn

@@ -17,6 +17,8 @@ finish_criteria:
 graph:
   decide_files: [read_and_respond]
   read_and_respond: []
+permissions:
+  mcp: [filesystem]
 routing:
   intents: [task]
   priority: normal
