@@ -31,6 +31,7 @@ from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
 from reyn.skill.skill_paths import resolve_skill_path, stdlib_root, SkillNotFoundError
+from reyn.skill.skill_registry import SkillRegistry
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
@@ -341,6 +342,17 @@ class ChatSession:
             snapshot_path=self._snapshot_path,
             state_log=state_log,
         )
+        # Track state_log directly for skill resume (PR-skill-resume): the
+        # journal owns it for inbox / chain mutations, but skills launched
+        # from this session also need it so dispatch_tool can emit step
+        # events into the same WAL.
+        self._state_log = state_log
+        # Per-agent SkillRegistry — lazily constructed on first skill run.
+        # Tracks active skill_run_ids and emits skill lifecycle events.
+        # Truncation auto-trigger flows through registry.truncate_wal_if_eligible
+        # when an AgentRegistry back-reference is wired (production path);
+        # tests with registry=None see no truncation triggers (acceptable).
+        self._skill_registry: SkillRegistry | None = None
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
@@ -646,6 +658,41 @@ class ChatSession:
             self._compaction_task = asyncio.create_task(self._maybe_compact())
 
     # ── skill invocation helpers ────────────────────────────────────────────────
+
+    def _get_skill_registry(self) -> "SkillRegistry | None":
+        """Return the per-agent SkillRegistry, lazily constructed on first call.
+
+        Returns None when no state_log is wired (test / standalone mode) —
+        with no WAL to write to, the registry would be a no-op anyway.
+
+        The truncate-eligible hook closes over the back-reference to the
+        owning AgentRegistry; if `registry` is None (test fixtures that
+        don't construct a full process tree), the hook is None and
+        ``advance_phase`` / ``complete`` skip the truncation trigger. This
+        keeps truncation a production concern, not a test concern.
+        """
+        if self._state_log is None:
+            return None
+        if self._skill_registry is None:
+            agent_state_dir = (
+                Path(".reyn") / "agents" / self.agent_name / "state"
+            )
+            hook = None
+            if self._registry is not None:
+                # Bind self._registry into a hook that fires after every
+                # ``skill_phase_advanced`` / ``skill_completed``. Throttle
+                # + floor calc happen inside truncate_wal_if_eligible.
+                async def _truncate_hook() -> None:
+                    if self._registry is not None:
+                        await self._registry.truncate_wal_if_eligible()
+                hook = _truncate_hook
+            self._skill_registry = SkillRegistry(
+                agent_name=self.agent_name,
+                agent_state_dir=agent_state_dir,
+                state_log=self._state_log,
+                truncate_eligible_hook=hook,
+            )
+        return self._skill_registry
 
     def _build_agent(
         self,
@@ -1869,6 +1916,8 @@ class ChatSession:
                 skill, input_artifact,
                 output_language=self.output_language,
                 chain_id=chain_id,
+                skill_registry=self._get_skill_registry(),
+                state_log=self._state_log,
             )
         except asyncio.CancelledError:
             await self._put_outbox(OutboxMessage(
@@ -2337,6 +2386,8 @@ class ChatSession:
                 skill, input_artifact,
                 output_language=self.output_language,
                 chain_id=chain_id,
+                skill_registry=self._get_skill_registry(),
+                state_log=self._state_log,
             )
         except asyncio.CancelledError:
             return {"status": "error", "data": {"error": "cancelled"}}

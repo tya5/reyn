@@ -14,6 +14,7 @@ from reyn.events.event_store import EventStore
 
 if TYPE_CHECKING:
     from reyn.skill.skill_registry import SkillRegistry
+    from reyn.events.state_log import StateLog
 
 
 _CALLER_RE = re.compile(r"^(direct|agents/[A-Za-z0-9_\-]+)$")
@@ -78,6 +79,7 @@ class Agent:
         output_language: str = "ja",
         chain_id: str | None = None,
         skill_registry: "SkillRegistry | None" = None,
+        state_log: "StateLog | None" = None,
     ) -> RunResult:
         self.run_id = self._make_run_id(skill.name)
         # PR20: events live under
@@ -119,6 +121,7 @@ class Agent:
             budget_tracker=self._budget_tracker,
             skill_name=skill.name,
             skill_registry=skill_registry,
+            state_log=state_log,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 
