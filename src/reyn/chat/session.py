@@ -1093,8 +1093,16 @@ class ChatSession:
         only auto-announces the head intervention.
 
         Wraps `InterventionRegistry.dispatch` with the session-level
-        "awaiting answer (N queued)" UX hint.
+        "awaiting answer (N queued)" UX hint and the WAL persistence step
+        (PR-intervention-link L3) so a crash mid-await leaves the dispatch
+        on disk for resume to re-enqueue.
         """
+        # Persist BEFORE awaiting so a crash mid-await leaves the WAL
+        # with the dispatch event. UserIntervention.to_dict excludes the
+        # volatile future field.
+        await self._journal.record_intervention_dispatched(
+            intervention_id=iv.id, iv_dict=iv.to_dict(),
+        )
         # Pre-emit the queued-status hint when this iv won't be the head.
         if not self._interventions.is_empty():
             queued = self._interventions.queued_count()
@@ -1103,10 +1111,24 @@ class ChatSession:
                 text=f"awaiting answer ({queued} queued)",
                 meta=_iv_meta(iv),
             ))
-        return await self._interventions.dispatch(iv)
+        try:
+            return await self._interventions.dispatch(iv)
+        finally:
+            # Resolve event covers all exit paths (answered, cancelled,
+            # task abort). Idempotent in the journal so duplicate cleanup
+            # via _drop_interventions_for_run is safe.
+            await self._journal.record_intervention_resolved(
+                intervention_id=iv.id,
+            )
 
     def _drop_interventions_for_run(self, run_id: str | None) -> None:
-        """Cancel any pending interventions tagged with `run_id`."""
+        """Cancel any pending interventions tagged with `run_id`.
+
+        The registry's drop cancels the futures; ``_dispatch_intervention``'s
+        finally clause then fires ``intervention_resolved`` to the WAL for
+        each cancelled coroutine, so the snapshot's
+        ``outstanding_interventions`` is pruned correctly.
+        """
         self._interventions.drop_for_run(run_id)
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
