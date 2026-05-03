@@ -199,12 +199,26 @@ def run(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
 
+    # PR-resume-ux β U4: catch schema mismatch surfaced from restore_all
+    # to give the operator a clean error rather than a stack trace.
+    from reyn.events.agent_snapshot import SchemaVersionError
+
+    async def _safe_restore() -> bool:
+        """Returns True on success, False if the operator should retry."""
+        try:
+            await registry.restore_all()
+            return True
+        except SchemaVersionError as e:
+            print(f"\nSchema version mismatch: {e}\n", file=sys.stderr)
+            return False
+
     if use_tui:
         from reyn.chat.tui.app import run_tui
 
         async def _main_tui() -> None:
             if not skip_restore:
-                await registry.restore_all()
+                if not await _safe_restore():
+                    sys.exit(1)
             await registry.attach(name)
             await run_tui(
                 registry,
@@ -225,8 +239,10 @@ def run(args: argparse.Namespace) -> None:
             # changes happen. Agents with restored state get their inbox /
             # pending_chains repopulated and their main loop started here.
             # PR-resume-ux β U3: --no-restore skips this for debugging.
+            # PR-resume-ux β U4: clean exit on schema version mismatch.
             if not skip_restore:
-                await registry.restore_all()
+                if not await _safe_restore():
+                    sys.exit(1)
             await registry.attach(name)
             await run_repl(registry, renderer=renderer)
 
