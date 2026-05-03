@@ -203,10 +203,11 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 
     _run(run())
 
-    assert "chain-del-001" in session._pending_chains, (
-        f"_PendingChain not registered; chains: {list(session._pending_chains)}"
+    # PR-refactor-session-1 wave 2: pending chains live in ChainManager.
+    assert session._chains.has("chain-del-001"), (
+        f"_PendingChain not registered; chains: {session._chains.all_chain_ids()}"
     )
-    pc = session._pending_chains["chain-del-001"]
+    pc = session._chains.get("chain-del-001")
     assert isinstance(pc, _PendingChain)
     assert pc.origin_agent == "origin_agent"
     assert "peer_agent" in pc.waiting_on

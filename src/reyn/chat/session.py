@@ -18,6 +18,8 @@ from reyn.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.chat.services import ChainManager, InterventionRegistry, SnapshotJournal
+from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, LimitsConfig
@@ -75,6 +77,10 @@ class ChatInterventionBus:
         if not iv.skill_name:
             iv.skill_name = self._skill_name
         return await self._session._dispatch_intervention(iv)
+
+    # Note: _dispatch_intervention on session.py is now a thin wrapper around
+    # InterventionRegistry.dispatch (wave 2 of PR-refactor-session-1). Kept
+    # method-level call so the bus signature stays stable.
 
 
 @dataclass
@@ -169,23 +175,8 @@ def _strip_index_header(content: str) -> str:
     return "\n".join(lines).strip()
 
 
-@dataclass
-class _PendingChain:
-    """Multi-hop relay state held in a delegating agent.
-
-    Created when an agent receives an `agent_request` and decides to
-    further delegate (router emits `messages_to_agents`). The reply to
-    the upstream `origin_agent` is held back until every entry in
-    `waiting_on` has returned an `agent_response` for this chain_id.
-    On the final response, the agent re-runs its router so the LLM can
-    compose a synthesized answer with all delegate replies in history,
-    then sends that answer to `origin_agent` at `origin_depth`.
-    """
-    chain_id: str
-    origin_agent: str
-    origin_depth: int
-    original_request: str
-    waiting_on: set[str]
+# NOTE: `_PendingChain` lives in `reyn.chat.services.chain_manager` (PR-refactor-session-1
+# wave 2). Kept import at top of file for backward-compat references.
 
 
 def _iv_meta(iv: "UserIntervention") -> dict:
@@ -335,10 +326,17 @@ class ChatSession:
         # PR21: WAL + per-agent snapshot for crash recovery. state_log is
         # process-shared (owned by AgentRegistry); when None, persistence
         # is disabled (tests / non-chat invocation).
-        self._state_log = state_log
-        self._snapshot = AgentSnapshot.empty(self.agent_name)
+        # PR-refactor-session-1 wave 2: persistence now flows through
+        # SnapshotJournal (extracted service). The session keeps the
+        # snapshot_path here only because other init code references it
+        # for diagnostic logging — the journal owns the actual I/O.
         self._snapshot_path = (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
+        )
+        self._journal = SnapshotJournal(
+            agent_name=self.agent_name,
+            snapshot_path=self._snapshot_path,
+            state_log=state_log,
         )
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
@@ -387,19 +385,6 @@ class ChatSession:
         # agents don't accumulate display noise.
         self.is_attached: bool = False
 
-        # PR14: per-chain state for multi-hop relay. When this agent receives
-        # an agent_request and decides to delegate to other agents, the upstream
-        # reply is held back until every delegate replies. Keyed by chain_id;
-        # absent entry means the chain is either not multi-hop or originated
-        # locally (user-initiated chains live without a pending entry — their
-        # interim+final UX is handled in _handle_user_message).
-        self._pending_chains: dict[str, _PendingChain] = {}
-        # PR18: timeout watchdog tasks per pending chain, paired 1:1 with
-        # `_pending_chains`. Started at registration, cancelled on resolution
-        # or shutdown. Empty when timeouts are disabled (chain_timeout_seconds
-        # <= 0).
-        self._pending_chain_timers: dict[str, asyncio.Task] = {}
-
         from reyn.llm.pricing import TokenUsage
         self._total_usage: TokenUsage = TokenUsage()
         self._total_cost_usd: float = 0.0
@@ -414,11 +399,19 @@ class ChatSession:
         # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
         self.running_skills_started_at: dict[str, float] = {}
 
-        # User-intervention routing state. The deque preserves FIFO emission order;
-        # the dict gives O(1) lookup by intervention id. Untyped user lines answer
-        # the head of the deque (oldest still-pending intervention).
-        self._active_interventions: dict[str, UserIntervention] = {}
-        self._intervention_order: deque[str] = deque()
+        # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
+        # queue ownership extracted into services. The session orchestrates the
+        # callbacks (_announce_intervention, _on_chain_timeout_fire) but holds
+        # no state for them.
+        self._chains = ChainManager(
+            journal=self._journal,
+            events=self._chat_events,
+            chain_timeout_seconds=self._chain_timeout_seconds,
+            max_hop_depth=self._max_hop_depth,
+        )
+        self._interventions = InterventionRegistry(
+            on_announce=self._announce_intervention,
+        )
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before
         # calling RouterLoop.run(); send_to_agent appends dispatched targets.
@@ -511,125 +504,38 @@ class ChatSession:
         await self.inbox.put(("shutdown", {}))
 
     # ── PR21: state persistence helpers (WAL + snapshot) ─────────────────────
+    # PR-refactor-session-1 wave 2: WAL/snapshot ownership moved to
+    # SnapshotJournal; pending_chains lifecycle moved to ChainManager.
+    # The methods below are thin delegators kept for the session-internal
+    # call sites (inbox enqueue + dequeue, restoration orchestration).
 
     async def _put_inbox(self, kind: str, payload: dict) -> str:
-        """Append `inbox_put` to WAL, queue the message, update snapshot.
-
-        Returns the assigned message id. The id is also stored under
-        `_msg_id` in the payload so the consumer can look it up at consume
-        time without a separate channel.
-        """
-        msg_id = uuid.uuid4().hex[:8]
+        """Append `inbox_put` to WAL via journal, then queue on the async
+        inbox. Returns the assigned message id (also stamped into payload
+        as `_msg_id` so the consumer can look it up)."""
+        msg_id = await self._journal.append_inbox(kind=kind, payload=payload)
         full_payload = {**payload, "_msg_id": msg_id}
-        if self._state_log is not None:
-            seq = await self._state_log.append(
-                "inbox_put", target=self.agent_name,
-                msg_id=msg_id, msg_kind=kind, payload=full_payload,
-            )
-            self._snapshot.applied_seq = seq
-            self._snapshot.inbox.append({
-                "id": msg_id, "kind": kind, "payload": full_payload,
-            })
-            self._save_snapshot()
         await self.inbox.put((kind, full_payload))
         return msg_id
 
     async def _consume_inbox(self) -> tuple[str, dict]:
-        """Wait for next inbox message; on receive, append `inbox_consume`
-        to WAL and prune the snapshot."""
+        """Wait for next inbox message; on receive, record `inbox_consume`
+        via journal (skipped for shutdown signals which are out-of-band)."""
         kind, payload = await self.inbox.get()
         msg_id = payload.get("_msg_id") if isinstance(payload, dict) else None
-        if (
-            self._state_log is not None
-            and msg_id is not None
-            and kind != "shutdown"
-        ):
-            seq = await self._state_log.append(
-                "inbox_consume", agent=self.agent_name, msg_id=msg_id,
-            )
-            self._snapshot.applied_seq = seq
-            self._snapshot.inbox = [
-                m for m in self._snapshot.inbox if m.get("id") != msg_id
-            ]
-            self._save_snapshot()
+        if kind != "shutdown":
+            await self._journal.consume_inbox(msg_id=msg_id)
         return kind, payload
 
-    async def _record_chain_register(
-        self, *, chain_id: str, origin_agent: str, origin_depth: int,
-        original_request: str, waiting_on: list[str],
-    ) -> None:
-        if self._state_log is None:
-            return
-        seq = await self._state_log.append(
-            "chain_register", agent=self.agent_name, chain_id=chain_id,
-            origin_agent=origin_agent, origin_depth=origin_depth,
-            original_request=original_request, waiting_on=waiting_on,
-        )
-        self._snapshot.applied_seq = seq
-        self._snapshot.pending_chains[chain_id] = {
-            "chain_id": chain_id,
-            "origin_agent": origin_agent,
-            "origin_depth": origin_depth,
-            "original_request": original_request,
-            "waiting_on": list(waiting_on),
-        }
-        self._save_snapshot()
-
-    async def _record_chain_update(
-        self, chain_id: str, waiting_on: list[str],
-    ) -> None:
-        if self._state_log is None:
-            return
-        seq = await self._state_log.append(
-            "chain_update", agent=self.agent_name, chain_id=chain_id,
-            waiting_on=waiting_on,
-        )
-        self._snapshot.applied_seq = seq
-        chain = self._snapshot.pending_chains.get(chain_id)
-        if chain is not None:
-            chain["waiting_on"] = list(waiting_on)
-        self._save_snapshot()
-
-    async def _record_chain_resolve(self, chain_id: str) -> None:
-        if self._state_log is None:
-            return
-        seq = await self._state_log.append(
-            "chain_resolve", agent=self.agent_name, chain_id=chain_id,
-        )
-        self._snapshot.applied_seq = seq
-        self._snapshot.pending_chains.pop(chain_id, None)
-        self._save_snapshot()
-
-    async def _record_chain_timeout_fired(self, chain_id: str) -> None:
-        if self._state_log is None:
-            return
-        seq = await self._state_log.append(
-            "chain_timeout_fired", agent=self.agent_name, chain_id=chain_id,
-        )
-        self._snapshot.applied_seq = seq
-        self._snapshot.pending_chains.pop(chain_id, None)
-        self._save_snapshot()
-
-    def _save_snapshot(self) -> None:
-        if self._snapshot_path is not None:
-            self._snapshot.save(self._snapshot_path)
-
     def restore_state(self, snapshot: AgentSnapshot) -> None:
-        """Adopt a recovered snapshot: populate inbox queue + pending_chains,
-        re-arm chain timeout watchdogs (PR18). Callable from async context
-        only — `_arm_chain_timeout` schedules an asyncio task."""
-        self._snapshot = snapshot
+        """Adopt a recovered snapshot: install in journal, repopulate the
+        async inbox, restore pending chains via ChainManager (which re-arms
+        timeout watchdogs). Callable from async context only — restoration
+        schedules asyncio tasks."""
+        self._journal.install(snapshot)
         for msg in snapshot.inbox:
             self.inbox.put_nowait((msg["kind"], msg["payload"]))
-        for cid, chain in snapshot.pending_chains.items():
-            self._pending_chains[cid] = _PendingChain(
-                chain_id=chain["chain_id"],
-                origin_agent=chain["origin_agent"],
-                origin_depth=int(chain["origin_depth"]),
-                original_request=chain["original_request"],
-                waiting_on=set(chain.get("waiting_on", [])),
-            )
-            self._arm_chain_timeout(cid)
+        self._chains.restore(on_fire=self._on_chain_timeout_fire)
         self._chat_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,
@@ -678,14 +584,8 @@ class ChatSession:
         # PR18: cancel any pending chain-timeout watchdogs so they don't keep
         # the loop alive past shutdown. Late-firing timers swallow their work
         # (the pending entry is gone) but cancellation is cleaner.
-        for task in list(self._pending_chain_timers.values()):
-            if not task.done():
-                task.cancel()
-        if self._pending_chain_timers:
-            await asyncio.gather(
-                *self._pending_chain_timers.values(), return_exceptions=True
-            )
-        self._pending_chain_timers.clear()
+        # PR-refactor-session-1 wave 2: cancellation delegated to ChainManager.
+        await self._chains.shutdown()
 
         if self._compaction_task is not None and not self._compaction_task.done():
             try:
@@ -1058,51 +958,38 @@ class ChatSession:
 
     async def _maybe_answer_oldest_intervention(self, text: str) -> bool:
         """If any intervention is pending, deliver `text` to the oldest and
-        return True. Stale (already-resolved) entries are evicted transparently."""
-        # Evict stale heads.
-        while self._intervention_order:
-            head_id = self._intervention_order[0]
-            iv = self._active_interventions.get(head_id)
-            if iv is None or iv.future.done():
-                self._intervention_order.popleft()
-                self._active_interventions.pop(head_id, None)
-                continue
-            break
-
-        if not self._intervention_order:
+        return True. Stale heads are evicted by the registry on `head()`."""
+        head = self._interventions.head()
+        if head is None:
             return False
-
-        head_id = self._intervention_order[0]
-        iv = self._active_interventions[head_id]
-        return await self._deliver_answer_to(iv, text)
+        return await self._deliver_answer_to(head, text)
 
     async def _deliver_answer_to(self, iv: UserIntervention, text: str) -> bool:
-        """Resolve `iv` with `text` and append a user-history entry.
+        """Resolve `iv` with `text`, append a user-history entry, emit the
+        `user_answered_intervention` event.
 
-        Returns True when the intervention was consumed (answer set OR
-        unrecognized-choice hint emitted, both of which should suppress
-        a fresh router turn). Shared between oldest-intervention routing
-        and the targeted `/answer <id>` slash command.
+        Wraps `InterventionRegistry.deliver_answer` with the session-level
+        side effects (history + audit event + unknown-choice hint). Returns
+        True when the user input was consumed (answer set OR unrecognized
+        choice hint emitted, both of which suppress a fresh router turn).
         """
         if iv.future.done():
             return False
-        if iv.choices:
-            choice = match_choice(text, iv.choices)
-            if choice is None:
-                # Unrecognized choice — surface a status hint and don't resolve.
-                # The user can re-type the correct hotkey.
-                hint = " / ".join(c.label for c in iv.choices)
-                await self._put_outbox(OutboxMessage(
-                    kind="status",
-                    text=f"unknown choice; expected one of: {hint}",
-                    meta=_iv_meta(iv),
-                ))
-                return True  # consumed: don't fall through to a fresh router turn
-            answer = InterventionAnswer(text=text, choice_id=choice.id)
-        else:
-            answer = InterventionAnswer(text=text)
-
-        iv.future.set_result(answer)
+        resolved = await self._interventions.deliver_answer(iv, text)
+        if not resolved and iv.choices:
+            # No-match path: surface hint, but consume the input so the
+            # router doesn't run on a stray hotkey-attempt.
+            hint = " / ".join(c.label for c in iv.choices)
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text=f"unknown choice; expected one of: {hint}",
+                meta=_iv_meta(iv),
+            ))
+            return True
+        if not resolved:
+            return False
+        # Successfully resolved: append history + emit audit event.
+        choice = match_choice(text, iv.choices) if iv.choices else None
         self._append_history(ChatMessage(
             role="user", text=text, ts=_now_iso(),
             meta={
@@ -1118,7 +1005,7 @@ class ChatSession:
             kind=iv.kind,
             run_id=iv.run_id,
             skill=iv.skill_name,
-            choice_id=answer.choice_id,
+            choice_id=choice.id if choice else None,
             answer_text=text if not iv.choices else "",
         )
         return True
@@ -1148,66 +1035,26 @@ class ChatSession:
         ))
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
-        """Register an intervention in the queue, announce it (or signal queued
-        status), then await the user's response. Always cleans up on exit so a
-        cancelled skill doesn't leave dangling entries.
-        """
-        self._active_interventions[iv.id] = iv
-        self._intervention_order.append(iv.id)
-        try:
-            if len(self._intervention_order) == 1:
-                await self._announce_intervention(iv)
-            else:
-                queued = len(self._intervention_order) - 1
-                await self._put_outbox(OutboxMessage(
-                    kind="status",
-                    text=f"awaiting answer ({queued} queued)",
-                    meta=_iv_meta(iv),
-                ))
-            try:
-                return await iv.future
-            except asyncio.CancelledError:
-                return InterventionAnswer(text="")
-        finally:
-            self._active_interventions.pop(iv.id, None)
-            try:
-                self._intervention_order.remove(iv.id)
-            except ValueError:
-                pass
-            # If the head was cleared, announce the next pending intervention.
-            await self._maybe_announce_next()
+        """Register an intervention via the registry. Emits a "queued" status
+        when the registry already has pending entries — the registry itself
+        only auto-announces the head intervention.
 
-    async def _maybe_announce_next(self) -> None:
-        """Announce the new head intervention (if any) when the previous one
-        was resolved or cancelled. Skips already-announced heads."""
-        if not self._intervention_order:
-            return
-        head_id = self._intervention_order[0]
-        iv = self._active_interventions.get(head_id)
-        if iv is None or iv.future.done():
-            return
-        # We can't tell from state alone whether this head was already announced;
-        # _dispatch_intervention announces eagerly when len==1 on first push, so
-        # if we're here because the previous head finished, this head still
-        # needs an announcement.
-        await self._announce_intervention(iv)
+        Wraps `InterventionRegistry.dispatch` with the session-level
+        "awaiting answer (N queued)" UX hint.
+        """
+        # Pre-emit the queued-status hint when this iv won't be the head.
+        if not self._interventions.is_empty():
+            queued = self._interventions.queued_count()
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text=f"awaiting answer ({queued} queued)",
+                meta=_iv_meta(iv),
+            ))
+        return await self._interventions.dispatch(iv)
 
     def _drop_interventions_for_run(self, run_id: str | None) -> None:
         """Cancel any pending interventions tagged with `run_id`."""
-        if not run_id:
-            return
-        victims = [
-            iv_id for iv_id, iv in self._active_interventions.items()
-            if iv.run_id == run_id
-        ]
-        for iv_id in victims:
-            iv = self._active_interventions.pop(iv_id, None)
-            try:
-                self._intervention_order.remove(iv_id)
-            except ValueError:
-                pass
-            if iv is not None and not iv.future.done():
-                iv.future.cancel()
+        self._interventions.drop_for_run(run_id)
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
 
@@ -1387,27 +1234,23 @@ class ChatSession:
 
         if dispatched:
             # PR14 deferred path: RouterLoop called send_to_agent for one or
-            # more peers. Register _PendingChain so the reply is held until
-            # all delegates respond.
+            # more peers. Register a pending chain so the reply is held until
+            # all delegates respond. ChainManager persists via the journal +
+            # arms the timeout watchdog.
             waiting_on = {d["to"] for d in dispatched}
-            self._pending_chains[chain_id] = _PendingChain(
+            await self._chains.register(
                 chain_id=chain_id,
-                origin_agent=from_agent,
-                origin_depth=depth,
-                original_request=request,
+                from_user=False,
+                depth=depth,
+                original_text=request,
+                sender=from_agent,
                 waiting_on=waiting_on,
-            )
-            # PR21: persist chain creation to WAL + snapshot before arming
-            # the watchdog so a crash mid-arm still has the chain on disk.
-            await self._record_chain_register(
-                chain_id=chain_id,
                 origin_agent=from_agent,
                 origin_depth=depth,
-                original_request=request,
-                waiting_on=sorted(waiting_on),
             )
-            # PR18: arm the timeout watchdog for this chain.
-            self._arm_chain_timeout(chain_id)
+            self._chains.arm_timeout(
+                chain_id, on_fire=self._on_chain_timeout_fire,
+            )
             return
 
         # PR11-compatible single-hop reply path. RouterLoop emitted reply_text
@@ -1422,12 +1265,12 @@ class ChatSession:
         """Process an incoming agent_response.
 
         Two branches:
-        - chain_id ∈ self._pending_chains → multi-hop relay. Drop sender
+        - chain_id ∈ self._chains → multi-hop relay. Drop sender
           from waiting_on; when waiting_on becomes empty, re-invoke router
           and forward the synthesized reply (or fresh delegations) on the
           same chain. Reply goes to the chain's `origin_agent`, NOT
           `from_agent`.
-        - chain_id ∉ self._pending_chains → user-initiated chain (PR11
+        - chain_id ∉ self._chains → user-initiated chain (PR11
           compatibility). The router's reply_text is treated as a
           user-facing message (outbox + history); further delegations
           continue with depth+1 on the same chain_id.
@@ -1450,7 +1293,7 @@ class ChatSession:
             from_agent=from_agent, depth=depth, chain_id=chain_id,
         )
 
-        pending = self._pending_chains.get(chain_id)
+        pending = self._chains.get(chain_id)
         if pending is not None:
             await self._resolve_pending_chain(
                 pending, from_agent=from_agent,
@@ -1482,11 +1325,11 @@ class ChatSession:
         to compose a synthesized answer (or decide on more delegations,
         which keeps the chain pending).
         """
-        pending.waiting_on.discard(from_agent)
         chain_id = pending.chain_id
+        pending.waiting_on.discard(from_agent)
         if pending.waiting_on:
             # Partial resolution — record the new waiting_on for recovery.
-            await self._record_chain_update(chain_id, sorted(pending.waiting_on))
+            await self._chains.update(chain_id, waiting_on=pending.waiting_on)
             return  # still waiting on other delegates
 
         # Arm delegation and reply capture for the re-run.
@@ -1508,9 +1351,7 @@ class ChatSession:
                 to=pending.origin_agent, response="",
                 depth=pending.origin_depth, chain_id=chain_id,
             )
-            self._pending_chains.pop(chain_id, None)
-            self._cancel_chain_timeout(chain_id)
-            await self._record_chain_resolve(chain_id)
+            await self._chains.resolve(chain_id)
             return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
@@ -1523,9 +1364,7 @@ class ChatSession:
                 to=pending.origin_agent, response="",
                 depth=pending.origin_depth, chain_id=chain_id,
             )
-            self._pending_chains.pop(chain_id, None)
-            self._cancel_chain_timeout(chain_id)
-            await self._record_chain_resolve(chain_id)
+            await self._chains.resolve(chain_id)
             return
         finally:
             new_dispatched = list(self._router_loop_delegations or [])
@@ -1536,11 +1375,11 @@ class ChatSession:
         if new_dispatched:
             # Continue the chain with a fresh wave of delegations.
             pending.waiting_on = {d["to"] for d in new_dispatched}
-            await self._record_chain_update(
-                chain_id, sorted(pending.waiting_on),
-            )
+            await self._chains.update(chain_id, waiting_on=pending.waiting_on)
             # PR18: re-arm watchdog for the continued chain.
-            self._arm_chain_timeout(chain_id)
+            self._chains.arm_timeout(
+                chain_id, on_fire=self._on_chain_timeout_fire,
+            )
             return
 
         final_reply = agent_replies[0] if agent_replies else ""
@@ -1549,51 +1388,25 @@ class ChatSession:
             to=pending.origin_agent, response=final_reply,
             depth=pending.origin_depth, chain_id=chain_id,
         )
-        self._pending_chains.pop(chain_id, None)
-        self._cancel_chain_timeout(chain_id)
-        await self._record_chain_resolve(chain_id)
+        await self._chains.resolve(chain_id)
 
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
+    # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
+    # now owned by ChainManager. The session keeps the on-fire callback below
+    # so the upstream-error UX (synthesised response + chain_timeout event)
+    # stays out of the service layer.
 
-    def _arm_chain_timeout(self, chain_id: str) -> None:
-        """Start a watchdog task for `chain_id`. No-op when timeouts are
-        disabled (chain_timeout_seconds <= 0). Idempotent — replaces any
-        existing timer for the same chain_id."""
-        if self._chain_timeout_seconds <= 0:
-            return
-        existing = self._pending_chain_timers.pop(chain_id, None)
-        if existing is not None and not existing.done():
-            existing.cancel()
-        self._pending_chain_timers[chain_id] = asyncio.create_task(
-            self._chain_timeout_watch(chain_id)
-        )
+    async def _on_chain_timeout_fire(self, chain_id: str) -> None:
+        """ChainManager invokes this when a chain's timeout watchdog fires.
 
-    def _cancel_chain_timeout(self, chain_id: str) -> None:
-        timer = self._pending_chain_timers.pop(chain_id, None)
-        if timer is not None and not timer.done():
-            timer.cancel()
-
-    async def _chain_timeout_watch(self, chain_id: str) -> None:
-        """Watchdog: after `chain_timeout_seconds`, if `chain_id` is still
-        pending, synthesize an error response upstream and clear it.
-
-        Cancellation (when the chain resolves normally) raises CancelledError
-        out of the sleep — we just exit. shutdown() also cancels these tasks
-        and gathers them with `return_exceptions=True`, so a late firing
-        during teardown is harmless.
+        Pops the pending chain via `_chains.fire_timeout` (which also
+        records the WAL `chain_timeout_fired` event), emits the
+        `chain_timeout` audit event, and synthesises an error response
+        upstream so the parent chain doesn't hang.
         """
-        try:
-            await asyncio.sleep(self._chain_timeout_seconds)
-        except asyncio.CancelledError:
-            return
-        pending = self._pending_chains.pop(chain_id, None)
-        self._pending_chain_timers.pop(chain_id, None)
+        pending = await self._chains.fire_timeout(chain_id)
         if pending is None:
-            return  # resolved between sleep wake and pop — nothing to do
-        # PR21: persist the timeout firing so a crash mid-error-send doesn't
-        # leave the chain alive on disk. Idempotent if the chain was already
-        # removed (no-op record_chain_timeout_fired with missing pending).
-        await self._record_chain_timeout_fired(chain_id)
+            return  # resolved between sleep wake and fire — nothing to do
         waiting = sorted(pending.waiting_on)
         error_text = (
             f"chain timeout: {len(waiting)} delegate(s) "
@@ -1675,15 +1488,8 @@ class ChatSession:
         return (candidates[0] if len(candidates) == 1 else None), candidates
 
     def _resolve_intervention_id(self, prefix: str) -> tuple[str | None, list[str]]:
-        """Same shape as `_resolve_run_id` but over `_active_interventions`."""
-        prefix = prefix.strip()
-        if not prefix:
-            return None, []
-        candidates = [
-            iid for iid in self._active_interventions
-            if iid.startswith(prefix) or iid.endswith(prefix)
-        ]
-        return (candidates[0] if len(candidates) == 1 else None), candidates
+        """Same shape as `_resolve_run_id` but over the intervention registry."""
+        return self._interventions.resolve_id_prefix(prefix)
 
     async def _maybe_handle_slash(self, text: str) -> bool:
         """Dispatch `/command args...` lines. Returns True when consumed.
@@ -1737,13 +1543,13 @@ class ChatSession:
                 lines.append(f"  {short}  {skill_part:<24} {elapsed:>5}  (run_id={rid})")
         else:
             lines.append("running skills: (none)")
-        if self._active_interventions:
+        active_ivs = self._interventions.list_active()
+        if active_ivs:
             lines.append("pending interventions:")
-            for iid in self._intervention_order:
-                iv = self._active_interventions[iid]
+            for iv in active_ivs:
                 short = (iv.run_id[-4:] if iv.run_id else "----")
                 lines.append(
-                    f"  {iid[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
+                    f"  {iv.id[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
                 )
         await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
 
@@ -1802,7 +1608,13 @@ class ChatSession:
                     text=f"ambiguous prefix {prefix!r}; matches: {', '.join(c[:8] for c in candidates)}",
                 ))
             return
-        iv = self._active_interventions[iid]
+        iv = self._interventions.get(iid)
+        if iv is None:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"intervention {prefix!r} disappeared mid-resolution",
+            ))
+            return
         await self._deliver_answer_to(iv, text)
 
     async def _slash_agents(self, args: str) -> None:
