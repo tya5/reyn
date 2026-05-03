@@ -295,6 +295,10 @@ class BudgetTracker:
         self._state_path: Path | None = None
         self._save_throttle_secs: float = 1.0
         self._last_save_monotonic: float = 0.0  # 0 = never saved
+        # R-D8: True once load_state was called. The loaded state already
+        # includes every committed step's usage, so memo-hit forward-calc
+        # would double-count. Caller (runtime) checks this flag.
+        self._state_loaded: bool = False
 
     @property
     def config(self) -> CostConfig:
@@ -632,6 +636,10 @@ class BudgetTracker:
         ``reyn chat --reset`` if state is unrecoverable.
         """
         path = Path(path)
+        # Mark loaded regardless of file presence — the caller's intent
+        # is "use the persisted state as truth"; memo-hit forward-calc
+        # is suppressed accordingly.
+        self._state_loaded = True
         if not path.is_file():
             return
         try:

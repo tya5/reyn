@@ -674,11 +674,22 @@ class OSRuntime:
 
         On memo hit the LLM was not actually called, but cap enforcement
         across crash needs the tracker to reflect what the original run
-        spent. ``memo.usage`` (a dict from TokenUsage.to_dict) provides
-        the recorded counts. None usage (pre-R-D8 step) → log + skip
-        (graceful — no error, but cap accounting will undercount).
+        spent.
+
+        **Suppressed when the BudgetTracker has loaded its persisted state**
+        (R-D8 L4 + L5): the loaded state already includes every committed
+        step's usage, so re-crediting here would double-count. In
+        production both paths run (state load + forward calc); the flag
+        check resolves the overlap in favor of the persisted state.
+
+        ``memo.usage`` (a dict from TokenUsage.to_dict) provides the
+        recorded counts when forward calc is taken. None usage
+        (pre-R-D8 step) → log + skip (graceful undercount, no error).
         """
         if self._budget_tracker is None:
+            return
+        # Skip when persisted state is the source of truth
+        if getattr(self._budget_tracker, "_state_loaded", False):
             return
         usage_dict = getattr(memo, "usage", None)
         if not usage_dict:
