@@ -415,6 +415,7 @@ class RightPanel(Widget):
         self._event_tail_idx: int = 0
         self._docs_cursor: int = 0
         self._docs_files: list[Path] = []
+        self._docs_groups: dict[str, list[Path]] = {}
         self._preview_visible: bool = False
 
     # ── composition ──────────────────────────────────────────────────────────
@@ -564,6 +565,44 @@ class RightPanel(Widget):
         self._invalidate()
         if self._preview_visible:
             self._update_preview()
+        self._scroll_docs_into_view()
+
+    def _docs_cursor_y(self) -> int:
+        """Return the Y coordinate (VerticalScroll space) of the cursor line.
+
+        Structure of rendered lines:
+          0: header
+          1: blank
+          per section: [section_header, file0, file1, ..., blank]
+        #panel-content has padding-top:1, so add 1 for the scroll coordinate.
+        """
+        line = 2  # past header + blank
+        file_idx = 0
+        for section in sorted(self._docs_groups):
+            line += 1  # section header
+            for _md in self._docs_groups[section]:
+                if file_idx == self._docs_cursor:
+                    return 1 + line  # 1 = padding-top
+                line += 1
+                file_idx += 1
+            line += 1  # trailing blank per section
+        return 3  # fallback: near top
+
+    def _scroll_docs_into_view(self) -> None:
+        """Scroll #panel-scroll so the cursor line is visible."""
+        y = self._docs_cursor_y()
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception:
+            pass
 
     # ── render dispatch ───────────────────────────────────────────────────────
 
@@ -865,6 +904,7 @@ class RightPanel(Widget):
             rel = md.relative_to(docs_root)
             section = rel.parts[0] if len(rel.parts) > 1 else ""
             groups.setdefault(section, []).append(md)
+        self._docs_groups = groups
 
         # Build flat list in render order so cursor index matches visual position.
         ordered: list[Path] = []
