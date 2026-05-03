@@ -30,11 +30,17 @@ from reyn.config import (
 
 
 def test_skill_resume_default_values():
-    """Tier 2: default config has policy=prompt and empty per_skill."""
+    """Tier 2: default config has policy=retry and empty per_skill.
+
+    Default changed from ``prompt`` to ``retry`` in PR-resume-auto:
+    auto-resume never blocks on interactive prompt; ``retry`` is the
+    safest non-blocking default (paired with PR-memo-purity-fix's
+    world-op skip on resume to avoid flaky-result lock-in).
+    """
     cfg = SkillResumeConfig()
-    assert cfg.default == "prompt"
+    assert cfg.default == "retry"
     assert cfg.per_skill == {}
-    assert cfg.policy_for("anything") == "prompt"
+    assert cfg.policy_for("anything") == "retry"
 
 
 def test_skill_resume_policy_for_falls_back_to_default():
@@ -50,9 +56,9 @@ def test_skill_resume_policy_for_falls_back_to_default():
 
 def test_build_returns_default_when_raw_is_not_dict():
     """Tier 2: non-dict input (string, None, list) yields the defaults."""
-    assert _build_skill_resume_config(None).default == "prompt"
-    assert _build_skill_resume_config("retry").default == "prompt"
-    assert _build_skill_resume_config([]).default == "prompt"
+    assert _build_skill_resume_config(None).default == "retry"
+    assert _build_skill_resume_config("retry").default == "retry"
+    assert _build_skill_resume_config([]).default == "retry"
 
 
 def test_build_accepts_all_known_policy_values():
@@ -63,9 +69,9 @@ def test_build_accepts_all_known_policy_values():
 
 
 def test_build_rejects_unknown_default_with_fallback(caplog):
-    """Tier 2: an unknown default policy triggers a warning + fallback to 'prompt' (never crashes startup)."""
+    """Tier 2: an unknown default policy triggers a warning + fallback to 'retry' (never crashes startup)."""
     cfg = _build_skill_resume_config({"default": "auto_yolo"})
-    assert cfg.default == "prompt"  # fall-back
+    assert cfg.default == "retry"  # fall-back
 
 
 def test_build_per_skill_overrides_round_trip():
@@ -124,9 +130,9 @@ def test_load_config_picks_up_skill_resume_yaml(tmp_path, monkeypatch):
 
 
 def test_load_config_default_when_no_skill_resume_block(tmp_path, monkeypatch):
-    """Tier 2: a reyn.yaml without skill_resume gets the default (prompt) policy."""
+    """Tier 2: a reyn.yaml without skill_resume gets the default (retry) policy."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "reyn.yaml").write_text("model: standard\n", encoding="utf-8")
     cfg = load_config(cwd=tmp_path)
-    assert cfg.skill_resume.default == "prompt"
+    assert cfg.skill_resume.default == "retry"
     assert cfg.skill_resume.per_skill == {}

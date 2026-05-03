@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from reyn.schemas.models import Skill
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.budget.budget import BudgetTracker
@@ -80,8 +80,14 @@ class Agent:
         chain_id: str | None = None,
         skill_registry: "SkillRegistry | None" = None,
         state_log: "StateLog | None" = None,
+        resume_plan: "Any | None" = None,
+        run_id: str | None = None,
     ) -> RunResult:
-        self.run_id = self._make_run_id(skill.name)
+        # On resume, callers pass the original run_id so the WAL events
+        # stay scoped to the same skill run (= step events from before
+        # the crash are paired with new ones via shared run_id). On
+        # fresh starts, generate a new id.
+        self.run_id = run_id or self._make_run_id(skill.name)
         # PR20: events live under
         #   <state_dir>/events/<caller>/skill_runs/<YYYY-MM>/<start>_<skill>.jsonl
         # caller ∈ {"direct", "agents/<name>"}.
@@ -122,6 +128,7 @@ class Agent:
             skill_name=skill.name,
             skill_registry=skill_registry,
             state_log=state_log,
+            resume_plan=resume_plan,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

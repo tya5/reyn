@@ -137,11 +137,10 @@ class SkillResumeConfig:
     can decide what to do.
 
     Policies (one of ``SKILL_RESUME_POLICIES``):
-      - ``prompt``        — surface the step to the user for an
-                            interactive decision (default; safest).
-      - ``retry``         — re-execute the step. Safe for read-only ops
-                            and for skills the operator trusts to be
-                            idempotent. Risk: duplicate side effect.
+      - ``retry``         — re-execute the step (default). Safe for
+                            read-only ops and for skills the operator
+                            trusts to be idempotent. Risk: duplicate
+                            side effect.
       - ``skip``          — synthesize an empty / default completion.
                             The skill continues as if the op succeeded
                             without actually running it. Risk: missing
@@ -149,13 +148,24 @@ class SkillResumeConfig:
       - ``discard_skill`` — abort the entire skill run, drop the
                             checkpoint, surface a failure to the
                             originating chain.
+      - ``prompt``        — legacy/no-op under PR-resume-auto. Retained
+                            for config compatibility. Treated as
+                            ``retry`` by the auto-resume runtime
+                            (no interactive prompt is shown — see the
+                            R-D3 廃案 note in the active plan).
 
     ``per_skill`` overrides the default for specific skill names —
     operator declares which skills are safe to retry vs which require
     careful inspection.
+
+    Default changed from ``prompt`` to ``retry`` in PR-resume-auto: the
+    auto-resume design never blocks on interactive prompt; ``retry`` is
+    the safest non-blocking choice (correct for the common
+    flaky-read-API case after PR-memo-purity-fix invalidates world op
+    memos on resume).
     """
 
-    default: str = "prompt"
+    default: str = "retry"
     per_skill: dict[str, str] = field(default_factory=dict)
 
     def policy_for(self, skill_name: str) -> str:

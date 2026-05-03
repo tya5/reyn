@@ -20,7 +20,7 @@ agents.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Iterable, Literal
+from typing import TYPE_CHECKING, Callable, Iterable, Literal
 
 from reyn.skill.skill_resume_analyzer import (
     AmbiguousStep,
@@ -167,6 +167,44 @@ class SkillResumeCoordinator:
             action=action,
             ambiguous_steps=list(plan.ambiguous_steps),
         )
+
+    async def apply_decisions(
+        self,
+        decisions: Iterable[ResumeDecision],
+        *,
+        skill_registry: "SkillRegistry",
+        drop_interventions_for_run: Callable[[str], None] | None = None,
+    ) -> list[ResumeDecision]:
+        """Consume discard decisions; return decisions still requiring launch.
+
+        Side effects performed for ``discard``:
+          - ``SkillRegistry.complete(run_id, status='discarded')``
+            (emits ``skill_discarded`` to WAL + removes per-skill snapshot)
+          - ``drop_interventions_for_run(run_id)`` if provided
+            (drops any pending interventions for the discarded run)
+
+        All other actions (``resume`` / ``retry`` / ``skip`` /
+        ``prompt_required``) are returned in the result list for the
+        caller to launch via ``OSRuntime.run(resume_plan=decision.plan)``.
+        ``prompt_required`` is included even though PR-resume-auto does
+        not surface a prompt — the caller's launch path treats it
+        equivalently to ``retry`` (= ambiguous steps re-execute via
+        empty memo). This is documented at the SkillResumeConfig
+        ``prompt`` policy.
+
+        Returns the launchable subset preserving input order.
+        """
+        remaining: list[ResumeDecision] = []
+        for decision in decisions:
+            if decision.action == "discard":
+                await skill_registry.complete(
+                    run_id=decision.plan.run_id, status="discarded",
+                )
+                if drop_interventions_for_run is not None:
+                    drop_interventions_for_run(decision.plan.run_id)
+                continue
+            remaining.append(decision)
+        return remaining
 
     @staticmethod
     def summarize(decisions: Iterable[ResumeDecision]) -> dict[str, int]:

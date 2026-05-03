@@ -263,8 +263,10 @@ def test_discover_does_not_cross_pair_runs(tmp_path):
     # run_A: clean pair → resume, no ambiguity
     assert by_run["run_A"].action == "resume"
     assert by_run["run_A"].ambiguous_steps == []
-    # run_B: orphan started → ambiguous → prompt_required (default policy)
-    assert by_run["run_B"].action == "prompt_required"
+    # run_B: orphan started → ambiguous → retry (default policy under
+    # PR-resume-auto; auto-resume never blocks on prompt). Ambiguous
+    # steps are surfaced for inspection regardless.
+    assert by_run["run_B"].action == "retry"
     assert len(by_run["run_B"].ambiguous_steps) == 1
     assert by_run["run_B"].ambiguous_steps[0].op_kind == "mcp"
 

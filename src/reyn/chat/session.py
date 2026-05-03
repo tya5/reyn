@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 from collections import deque
+from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass, field
@@ -719,6 +720,135 @@ class ChatSession:
             self._compaction_task = asyncio.create_task(self._maybe_compact())
 
     # ── skill invocation helpers ────────────────────────────────────────────────
+
+    async def _auto_resume_active_skills(
+        self,
+        *,
+        coordinator: "SkillResumeCoordinator | None" = None,
+        config: "SkillResumeConfig | None" = None,
+        launcher: "Callable[[Any], Awaitable[None]] | None" = None,
+    ) -> list:
+        """Discover active skill runs, apply resume policy, launch tasks.
+
+        Headline UX of PR-resume-auto: after restore_state rehydrates
+        the agent's snapshot + WAL, this auto-launches resume tasks for
+        every still-active skill_run with no interactive prompt.
+
+        Algorithm:
+          1. Discover active runs via SkillResumeCoordinator
+             (per-skill SkillSnapshot files + WAL)
+          2. For each, build a ResumePlan and apply the operator's
+             ``reyn.yaml`` policy (default = retry)
+          3. ``discard`` decisions: call SkillRegistry.complete +
+             drop pending interventions (no task launched)
+          4. All other decisions: invoke ``launcher(decision)`` so
+             the caller (production = ``self._spawn_resumed_skill``)
+             can wire the actual asyncio task
+
+        ``launcher`` is dependency-injected so tests can inspect
+        decisions without launching real skill runtimes. Production
+        callers pass None to use the default launcher.
+
+        Returns the list of decisions that were launched (= decisions
+        minus discards).
+        """
+        from reyn.config import SkillResumeConfig as _Config
+        from reyn.skill.skill_resume_coordinator import (
+            SkillResumeCoordinator as _Coord,
+        )
+        coord = coordinator or _Coord()
+        cfg = config or _Config()
+        registry = self._get_skill_registry()
+        if registry is None or self._state_log is None:
+            return []
+        decisions = coord.discover_and_decide(
+            skill_registry=registry,
+            state_log=self._state_log,
+            policy=cfg,
+        )
+        if not decisions:
+            return []
+        remaining = await coord.apply_decisions(
+            decisions, skill_registry=registry,
+            drop_interventions_for_run=self._drop_interventions_for_run,
+        )
+        actual_launcher = launcher or self._spawn_resumed_skill
+        for decision in remaining:
+            await actual_launcher(decision)
+        return remaining
+
+    async def _spawn_resumed_skill(self, decision: "Any") -> None:
+        """Default launcher used by ``_auto_resume_active_skills``.
+
+        Loads the skill by name from the resume plan, builds an Agent,
+        and spawns ``Agent.run`` as a tracked asyncio task with the
+        resume_plan threaded in. Exists as a separate method so the
+        auto-resume hook can be tested with a stub launcher (see
+        ``tests/test_session_auto_resume.py``).
+        """
+        plan = decision.plan
+        skill_name = plan.skill_name
+        run_id = plan.run_id
+        meta = _run_meta(run_id, skill_name)
+        try:
+            skill_dir, dsl_root = resolve_skill_path(skill_name)
+            skill = load_dsl_skill(
+                str(skill_dir / "skill.md"), dsl_root=str(dsl_root),
+            )
+        except (SkillNotFoundError, Exception) as exc:
+            self._chat_events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"resume failed to load: {exc}",
+            )
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"resume failed: {exc}", meta=meta,
+            ))
+            return
+
+        from reyn.chat.forwarder import ChatEventForwarder
+        agent = self._build_agent(
+            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
+            mcp_servers=self._mcp_servers,
+            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
+        )
+
+        async def _runner():
+            try:
+                await agent.run(
+                    skill, plan.skill_input,
+                    output_language=self.output_language,
+                    skill_registry=self._get_skill_registry(),
+                    state_log=self._state_log,
+                    resume_plan=plan,
+                    run_id=run_id,
+                )
+            except asyncio.CancelledError:
+                await self._put_outbox(OutboxMessage(
+                    kind="status", text="cancelled", meta=meta,
+                ))
+                raise
+            except Exception as exc:  # noqa: BLE001 — surface to outbox
+                self._chat_events.emit(
+                    "skill_run_failed", run_id=run_id, skill=skill_name,
+                    error=str(exc),
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"resume failed: {exc}", meta=meta,
+                ))
+
+        self.running_skills_started_at[run_id] = time.monotonic()
+        await self._put_outbox(OutboxMessage(
+            kind="status", text="resuming…", meta=meta,
+        ))
+        task = asyncio.create_task(_runner())
+        self.running_skills[run_id] = task
+
+        def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
+            self.running_skills.pop(rid, None)
+            self.running_skills_started_at.pop(rid, None)
+            self._drop_interventions_for_run(rid)
+
+        task.add_done_callback(_cleanup)
 
     def _get_skill_registry(self) -> "SkillRegistry | None":
         """Return the per-agent SkillRegistry, lazily constructed on first call.
