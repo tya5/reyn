@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult, RenderResult
 from textual.widget import Widget
-from textual.widgets import Static, Tab, Tabs
+from textual.widgets import RichLog, Static, Tab, Tabs
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -237,6 +237,47 @@ class _PanelContent(Static):
         self.refresh(layout=True)
 
 
+class _PreviewPane(Widget):
+    """Lower-half preview pane toggled with 'f'.
+
+    Generic: any tab can populate it. Currently docs tab shows the focused
+    file's Markdown content. Other tabs may use it in future.
+    """
+
+    DEFAULT_CSS = """
+    _PreviewPane {
+        display: none;
+        height: 1fr;
+        border-top: tall #2a2a2a;
+    }
+    _PreviewPane.preview-visible {
+        display: block;
+    }
+    _PreviewPane RichLog {
+        background: transparent;
+        height: 100%;
+        padding: 0 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False)
+
+    def show_markdown(self, text: str) -> None:
+        from rich.markdown import Markdown as RichMarkdown
+        log = self.query_one("#preview-log", RichLog)
+        log.clear()
+        if text:
+            log.write(RichMarkdown(text))
+        log.scroll_home(animate=False)
+
+    def clear(self) -> None:
+        try:
+            self.query_one("#preview-log", RichLog).clear()
+        except Exception:
+            pass
+
+
 class RightPanel(Widget):
     """Swappable right-side panel with tab bar.
 
@@ -299,6 +340,9 @@ class RightPanel(Widget):
         self._panel_type = PANEL_TYPES[0]
         self._event_filter_idx: int = 0
         self._event_tail_idx: int = 0
+        self._docs_cursor: int = 0
+        self._docs_files: list[Path] = []
+        self._preview_visible: bool = False
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -308,6 +352,7 @@ class RightPanel(Widget):
             id="panel-tabs",
         )
         yield _PanelContent(self, id="panel-content")
+        yield _PreviewPane(id="preview-pane")
 
     def on_mount(self) -> None:
         self.set_interval(_REFRESH_INTERVAL, self._refresh_live)
@@ -353,11 +398,24 @@ class RightPanel(Widget):
             event.prevent_default()
             event.stop()
             self.cycle(-1)
+        elif event.key == "f":
+            event.prevent_default()
+            self._toggle_preview()
+        elif event.key in ("n", "j"):
+            if self._panel_type == "docs":
+                event.prevent_default()
+                self._docs_move(+1)
+        elif event.key in ("p", "k"):
+            if self._panel_type == "docs":
+                event.prevent_default()
+                self._docs_move(-1)
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
             self._panel_type = event.tab.id
             self._invalidate()
+            if self._preview_visible:
+                self._update_preview()
 
     # ── content refresh ──────────────────────────────────────────────────────
 
@@ -370,6 +428,41 @@ class RightPanel(Widget):
             self.query_one("#panel-content", _PanelContent).invalidate()
         except Exception:
             pass
+
+    # ── preview pane ─────────────────────────────────────────────────────────
+
+    def _toggle_preview(self) -> None:
+        self._preview_visible = not self._preview_visible
+        try:
+            pane = self.query_one("#preview-pane", _PreviewPane)
+            if self._preview_visible:
+                pane.add_class("preview-visible")
+                self._update_preview()
+            else:
+                pane.remove_class("preview-visible")
+        except Exception:
+            pass
+
+    def _update_preview(self) -> None:
+        try:
+            pane = self.query_one("#preview-pane", _PreviewPane)
+            if self._panel_type == "docs" and self._docs_files:
+                path = self._docs_files[self._docs_cursor]
+                pane.show_markdown(path.read_text(encoding="utf-8"))
+            else:
+                pane.clear()
+        except Exception:
+            pass
+
+    # ── docs navigation ───────────────────────────────────────────────────────
+
+    def _docs_move(self, delta: int) -> None:
+        if not self._docs_files:
+            return
+        self._docs_cursor = max(0, min(len(self._docs_files) - 1, self._docs_cursor + delta))
+        self._invalidate()
+        if self._preview_visible:
+            self._update_preview()
 
     # ── render dispatch ───────────────────────────────────────────────────────
 
@@ -655,23 +748,33 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_docs(self) -> str:
-        lines = ["[bold #C8553D]Docs[/]", ""]
+        nav_hint = "[#555555]n/j↓  p/k↑  f=preview[/]"
+        header = f"[bold #C8553D]Docs[/]  {nav_hint}"
 
         if self._project_root is None:
-            lines.append("[#555555]  (no project root)[/]")
-            return "\n".join(lines)
+            return header + "\n\n[#555555]  (no project root)[/]"
 
         docs_root = self._project_root / "docs" / "en"
         if not docs_root.is_dir():
-            lines.append("[#555555]  (docs/en/ not found)[/]")
-            return "\n".join(lines)
+            return header + "\n\n[#555555]  (docs/en/ not found)[/]"
 
+        # Build groups; files within each section retain sort order.
         groups: dict[str, list[Path]] = {}
         for md in sorted(docs_root.rglob("*.md")):
             rel = md.relative_to(docs_root)
             section = rel.parts[0] if len(rel.parts) > 1 else ""
             groups.setdefault(section, []).append(md)
 
+        # Build flat list in render order so cursor index matches visual position.
+        ordered: list[Path] = []
+        for section in sorted(groups):
+            ordered.extend(groups[section])
+        self._docs_files = ordered
+        if self._docs_cursor >= len(ordered):
+            self._docs_cursor = max(0, len(ordered) - 1)
+
+        lines = [header, ""]
+        file_idx = 0
         for section in sorted(groups):
             label = section.upper() if section else "ROOT"
             lines.append(f"[bold #aaaaaa]  \\[{_esc(label)}][/]")
@@ -679,7 +782,11 @@ class RightPanel(Widget):
                 rel = md.relative_to(docs_root)
                 depth = len(rel.parts) - 1
                 indent = "    " + "  " * max(0, depth - 1)
-                lines.append(f"[#666666]{indent}{_esc(md.stem)}[/]")
+                if file_idx == self._docs_cursor:
+                    lines.append(f"[bold #C8553D]{indent}▶ {_esc(md.stem)}[/]")
+                else:
+                    lines.append(f"[#666666]{indent}  {_esc(md.stem)}[/]")
+                file_idx += 1
             lines.append("")
 
         return "\n".join(lines)
