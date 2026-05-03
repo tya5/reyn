@@ -35,7 +35,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.widgets import Label
 
-from .widgets import ReynHeader, ConversationView, InputBar, RightPanel, PANEL_TYPES
+from .widgets import ReynHeader, ConversationView, InputBar, RightPanel
 from .widgets.input_bar import InputBar as _InputBar  # same, but alias for clarity
 
 if TYPE_CHECKING:
@@ -421,11 +421,11 @@ class ReynTUIApp(App):
         self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
     def action_panel_next_content(self) -> None:
-        """] — cycle to next panel content (gated: panel visible only)."""
+        """ctrl+o — cycle to next panel content (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(+1)
 
     def action_panel_prev_content(self) -> None:
-        """[ — cycle to previous panel content (gated: panel visible only)."""
+        """ctrl+shift+o — cycle to previous panel content (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(-1)
 
     def action_close_palette(self) -> None:
