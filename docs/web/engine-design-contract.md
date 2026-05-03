@@ -18,12 +18,33 @@ design becomes Reyn's most consequential external surface** — comparable
 in importance to the engine's internal principles (P1–P8) for the
 project's success.
 
-The killer feature this contract enables is **design swappability**:
-end users can drop a new design into a directory and `reyn web` shows
-it, without rebuilding anything. That is the user-facing impact.
+The headline product feature the web layer ships is **two co-existing
+UIs from one engine** — the **App / Studio split**:
 
-Designs and engine should evolve on independent release cadences, bound
-only by this contract.
+- **App view** — end-user surface. Conversational, hides engine
+  vocabulary ("phase", "artifact", "control IR"), shows progress in
+  domain language.
+- **Studio view** — operator / developer surface. Shows the engine in
+  full: phase graphs, control IR, WAL events, permissions.
+
+This split is the universal value proposition. We surveyed the
+adjacent landscape — LangGraph Studio, Temporal Web, Inngest dashboard
+are operator-only; LobeChat / OpenWebUI / AnythingLLM are user-only —
+and Reyn is the only system shipping both surfaces from a single
+engine state. That is the per-day-1 product win the contract is here
+to enable.
+
+**Design swappability** is a secondary capability that the layered
+contract makes possible: any design that targets `reyn-ui/v1` can be
+dropped in without a build step. This unlocks org branding (Acme runs
+their own design) and internal A/B exploration. We are deliberately
+deprioritising the "switch designs at runtime" tooling (`reyn design`
+CLI, multi-design directory layout, design distribution) until v1.x
+because the compelling end-user case for runtime swap is narrow
+compared to the App/Studio split that lands on day 1.
+
+Designs and engine evolve on independent release cadences, bound only
+by this contract.
 
 ---
 
@@ -87,11 +108,12 @@ event types. Real industry traction.
    the door open for the same UI host pattern to apply to non-agent
    tools (file managers, IDEs, CLI utilities). A locked-in agent
    protocol forecloses that.
-2. **The killer feature for end users is design swap, not backend
-   interop**. AG-UI optimises for "swap the LLM provider" /
-   "swap the frontend framework"; OpenUI optimises for "swap the
-   visual design". These are different axes — AG-UI doesn't
-   directly enable the latter.
+2. **The headline value for end users is the App/Studio split, not
+   backend interop**. AG-UI optimises for "swap the LLM provider" /
+   "swap the frontend framework"; OpenUI optimises for "two surfaces
+   (App + Studio) from one engine, with a swappable visual design as
+   a secondary axis". These are different goals — AG-UI doesn't
+   directly enable either.
 3. AG-UI **does not replace design work**. Even fully adopted, Reyn
    would still need custom designs for Today / Library / SkillGraph /
    RunTimeline / Permissions screens — CopilotKit covers only chat
@@ -107,9 +129,12 @@ event types. Real industry traction.
 ### MCP (Model Context Protocol)
 
 Adjacent, but solves a different problem (LLM ↔ external
-tool/resource). Not a UI host protocol. We borrow its **governance
-philosophy** (neutral name, spec-first, multi-vendor adoption from day 1)
-but not its surface.
+tool/resource). Not a UI host contract. We borrow its **layered
+contract style** (transport vs server protocol separation) but **not**
+its multi-vendor governance posture — that is earned by adoption, not
+claimed by writing it down. Until a second host or domain adopts our
+contract, "OpenUI" is shorthand for "the layered Reyn-web contract",
+not a published protocol.
 
 ### What we kept from AG-UI
 
@@ -121,7 +146,11 @@ OpenUI is informed by AG-UI even though we did not adopt it:
 - **Lifecycle event vocabulary** — `run.started` / `run.finished` /
   `phase.started` / `phase.finished` echo AG-UI's `RunStarted` /
   `StepStarted` directly.
-- **Spec-first, neutral naming** — same governance shape as MCP / LSP.
+- **Layered contract style** — Layer 0 (transport / globals) vs Layer 1
+  (domain schema) separation echoes MCP's transport vs server protocol
+  split. We do not claim parity with MCP's neutral-protocol governance;
+  that posture is reserved for a future point at which a second
+  independent adopter validates the abstraction.
 
 The full evaluation is in the project memory
 (`project_engine_design_contract_standard.md`); this document captures

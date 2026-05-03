@@ -1,15 +1,26 @@
 # Design Distribution
 
+> **Status**: **Deprioritised to v1.x.** Sits on top of the runtime
+> design-selection layer (also v1.x). The Reyn web v0 ships with one
+> bundled design (`reyn-default`). See
+> [engine-design-contract.md](engine-design-contract.md) for the
+> updated headline framing (App/Studio split is v0; runtime design
+> swap and distribution are post-v1).
+>
+> This document is preserved as forward design so the eventual
+> distribution pipeline can be built on a contract that already
+> anticipates it.
+
 > **Navigation**: this is the operational document for community design
 > distribution. The architecture (3-layer model + AG-UI evaluation) is in
-> [engine-design-contract.md](engine-design-contract.md). The protocol
+> [engine-design-contract.md](engine-design-contract.md). The contract
 > spec is in [docs/openui/](../openui/). The runtime selection mechanism
 > is in [multi-design-selection.md](multi-design-selection.md).
 
-> **Vision**: anyone with `claude.ai/design` access can author a Reyn
-> design (targeting `reyn-ui/v1`), publish it as open source, and other
-> users `reyn design add <source>` it to switch their UI without
-> rebuilding anything.
+> **Vision** (v1.x target): anyone with `claude.ai/design` access can
+> author a Reyn design (targeting `reyn-ui/v1`), publish it as open
+> source, and other users `reyn design add <source>` it to switch their
+> UI without rebuilding anything.
 
 This doc describes the publish / install pipeline that sits on top of
 the runtime selection layer. Selection answers "which design am I

@@ -1,78 +1,103 @@
-# OpenUI Protocol
+# OpenUI — Reyn's web UI contract
 
-A small, transport-light protocol for separating **how an application's state
-flows** from **how it is rendered**. It is the contract that lets a designer
-ship a web design, drop it into a host application's directory, and have the
-host's data drive that design — without either side knowing the other's
-implementation details.
+> **Scope** — this is the contract between Reyn (the agent runtime) and any
+> web design that wants to render Reyn's state. It is shipped inside the
+> Reyn repository because it exists to serve Reyn's web UI needs.
+>
+> The protocol is designed *as if* it could be reused by another host or
+> domain in the future, but **we make no claim that it is a neutral
+> multi-vendor protocol**. Calling it one without traction (a second host,
+> a second schema author) would be premature; protocols only become
+> protocols once independent adopters validate the abstraction. For now,
+> "OpenUI" is shorthand for "the layered Reyn-web contract".
+
+A small, transport-light contract for separating **how an application's
+state flows** from **how it is rendered**. Reyn ships with a default
+design and the contract that lets that design — and, in the future,
+any drop-in replacement — render the same state.
 
 OpenUI is split into three layers:
 
 ```
-Layer 0 — Host adapter protocol  ←  this directory's spec/
+Layer 0 — Host adapter contract
             window globals + invoke + listen + manifest
 
-Layer 1 — Domain schemas          ←  this directory's schemas/<schema-id>/
-            e.g. reyn-ui/v1, file-manager/v1, image-viewer/v1
-            each schema declares: data shape, action set, channel set,
+Layer 1 — Domain schemas
+            reyn-ui/v1 declares: data shape, action set, channel set,
             required component contracts
 
 Layer 2 — Implementation-specific extensions
-            e.g. Reyn's Skill / Phase / Workspace / Topology types,
+            Reyn's Skill / Phase / Workspace / Topology types,
             carried in Layer 1 data shape via opaque pass-through
 ```
 
-The killer feature is **design swappability**: any design that targets a
-schema can be dropped into a directory the host watches, and the user can
-switch between designs at runtime — `rm -rf <slug> && unzip new_design.zip`.
+## What's actually being delivered
 
----
+The headline experience Reyn builds on top of this contract is **two
+co-existing UIs from one engine**:
+
+- **App view** — end-user surface. Conversational, hides engine vocabulary
+  ("phase", "artifact", "control IR"), shows progress in domain language.
+- **Studio view** — operator / developer surface. Shows the engine in
+  its full glory: phase graphs, control IR, WAL events, permissions.
+
+This App/Studio split is the **primary product value** of the web layer.
+It exists in no other LLM agent stack we surveyed: LangGraph Studio is
+operator-only, LobeChat / OpenWebUI are user-only, Temporal Web is
+operator-only. Reyn ships both from the same engine state.
+
+**Design swappability** is a secondary capability that the layered
+contract makes possible: any design that targets `reyn-ui/v1` can be
+dropped in without a build step. This is useful for org branding and
+internal A/B exploration but is *not* the headline feature, and we are
+deliberately deprioritising the "switch designs at runtime" feature
+(`reyn design` CLI, multi-design directory layout) until v1.x.
 
 ## Status
 
-This is the canonical spec, maintained alongside the first reference host
-(Reyn). Once the spec stabilises and a second independent host or schema
-adopts it, the directory may be lifted into a standalone repository
-(`openui-spec`); names and file paths are chosen so a `git mv` is the only
-move needed.
+Pre-1.0 alpha. Reference host (Reyn shell) and reference design
+(`reyn-default`) are under active development. The contract may make
+breaking changes between minor versions until 1.0.
 
----
+If a second independent host or domain adopts this contract — at which
+point the "neutral protocol" claim becomes defensible — the directory
+can be lifted into a standalone repository (`openui-spec`); names and
+file paths are chosen so a `git mv` is the only structural move
+required. Until then, the path remains under `reyn/docs/openui/`.
 
-## Why "OpenUI" and not an existing protocol
+## Why this shape (not AG-UI, not custom RPC)
 
-Several adjacent protocols exist. We considered and intentionally did not
-adopt them as the single answer:
+We considered adjacent work and intentionally did not adopt them:
 
-- **AG-UI** (Agent-User Interaction Protocol) — well-designed but scoped
-  specifically to agent backends. Adopting it would constrain OpenUI to the
-  agent domain, while OpenUI's goal includes file managers, media players,
-  IDE-like tools, and any CLI application that wants a swappable web UI.
-  AG-UI compatibility may be added in the future as a Layer 1 schema
-  (`ag-ui/v1`) so an OpenUI host can be made AG-UI-compliant by routing.
+- **AG-UI** (Agent-User Interaction Protocol) — well-designed but
+  scoped specifically to agent backends. Adopting it would constrain
+  this contract to the agent domain, while we want headroom for
+  non-agent Reyn-adjacent CLI tools (file explorers, log viewers, etc.)
+  that may eventually share rendering primitives. AG-UI compatibility
+  may be added in the future as a Layer 1 schema (`ag-ui/v1`) so a
+  Reyn host can be made AG-UI-compliant by routing.
 - **MCP** (Model Context Protocol) — solves a different problem
-  (LLM ↔ external tool/resource). Excellent precedent for neutral
-  multi-vendor protocol design; we follow its naming and governance
-  philosophy.
-- **Tauri's `invoke` / `listen`** — desktop-app runtime, not a web protocol.
-  We borrow the API shape (`invoke` for RPC, `listen` for streams) because
-  it is well-tested and minimal.
+  (LLM ↔ external tool/resource). We borrow naming conventions but
+  not the transport.
+- **Tauri's `invoke` / `listen`** — desktop-app runtime, not a web
+  contract. We borrow the API shape (`invoke` for RPC, `listen` for
+  streams) because it is well-tested and minimal.
 
-OpenUI sits at the intersection: it is **transport-light** (`window`-based,
-no required network protocol), **domain-neutral** (a schema-tagged Layer 1
-selects the domain), and **design-swap-first** (the file structure and
-loading behaviour are designed so users can drop in new designs without a
-build step).
+The contract is **transport-light** (`window`-based, no required network
+protocol), **domain-neutral within Reyn's reach** (a schema-tagged Layer
+1 selects the domain), and **drop-in-friendly** (no build step required
+for a new design).
 
-For Reyn's specific evaluation that led to OpenUI rather than AG-UI, see
-the rationale section in `docs/web/engine-design-contract.md`.
+For Reyn's specific evaluation that led to this shape rather than AG-UI,
+see the rationale section in `docs/web/engine-design-contract.md`.
 
 ---
 
-## Layered specification
+## Layered contract
 
 | Layer | Defines | Document |
 |---|---|---|
-| **Layer 0** | Host adapter protocol — the four `window.OPENUI_*` globals, the `invoke` and `listen` functions, the manifest format that schemas extend, and the action / channel naming rules. Host- and design-agnostic. | [spec/layer-0.md](spec/layer-0.md) [spec/manifest.md](spec/manifest.md) [spec/action-channel-naming.md](spec/action-channel-naming.md) |
+| **Layer 0** | Host adapter contract — the four `window.OPENUI_*` globals, the `invoke` and `listen` functions, the manifest format that schemas extend, and the action / channel naming rules. Host- and design-agnostic. | [spec/layer-0.md](spec/layer-0.md) [spec/manifest.md](spec/manifest.md) [spec/action-channel-naming.md](spec/action-channel-naming.md) |
 | **Layer 1** | Domain schemas — each one declares an identifier (`<domain>/<version>`), a `Data` shape, a set of actions, a set of channels, and the components a design must export. Hosts implement one or more schemas; designs target one. | [schemas/reyn-ui-v1/](schemas/reyn-ui-v1/) — first reference schema |
 | **Layer 2** | Implementation-specific data inside Layer 1 — opaque pass-through values (e.g. Reyn's Skill / Phase / Workspace types). Layer 0 and 1 never interpret these; they flow through as JSON. | (no spec; carried inside Layer 1 data) |
 
@@ -119,7 +144,7 @@ That is the entire surface. Layer 1 schema fills in what `action` strings,
 
 ## Index
 
-- [spec/layer-0.md](spec/layer-0.md) — Host adapter protocol (the four
+- [spec/layer-0.md](spec/layer-0.md) — Host adapter contract (the four
   globals, `invoke`, `listen`, lifecycle, error semantics, state diff format)
 - [spec/manifest.md](spec/manifest.md) — Layer 1 schema descriptor format
 - [spec/action-channel-naming.md](spec/action-channel-naming.md) —
@@ -143,9 +168,11 @@ Several design choices are inspired by adjacent work:
 - **Lifecycle event vocabulary** (`run.started`, `phase.started`, …):
   AG-UI's RunStarted / StepStarted naming is the direct inspiration; the
   exact set of events is left to each Layer 1 schema.
-- **Neutral name + spec-first, implementation-second governance**: Anthropic's
-  Model Context Protocol set the precedent that worked.
+- **Layered contract style** (Layer 0 transport, Layer 1 domain): MCP's
+  separation of transport vs server protocol is the precedent. We do not
+  claim parity with MCP's neutral-protocol governance — that's a future
+  earned by adoption, not a current claim.
 
-The protocol itself is intentionally smaller than any of the above; OpenUI's
+The contract itself is intentionally smaller than any of the above; its
 job is to be the thinnest possible surface a design and a host can both
 target without fighting transport, framework, or domain assumptions.

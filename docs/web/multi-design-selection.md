@@ -1,8 +1,20 @@
 # Multi-design Selection
 
+> **Status**: **Deprioritised to v1.x.** The Reyn web v0 ships with
+> one bundled design (`reyn-default`). The headline product value is
+> the App/Studio split, not runtime design swap — see
+> [engine-design-contract.md](engine-design-contract.md) for the
+> updated framing.
+>
+> This document is preserved as forward design for the runtime selection
+> mechanism so we don't paint ourselves into a corner: the Layer 0
+> contract is designed *as if* swap will eventually work. But the
+> implementation work — `reyn design` CLI, multi-design directory
+> layout, runtime picker — is an explicit non-goal for v0.
+
 > **Navigation**: this is the operational document for runtime design
 > selection. The architecture (3-layer model + AG-UI evaluation) is in
-> [engine-design-contract.md](engine-design-contract.md). The protocol
+> [engine-design-contract.md](engine-design-contract.md). The contract
 > spec is in [docs/openui/](../openui/). The prompt template for
 > generating designs is in [claude-design-prompt.md](claude-design-prompt.md).
 > The publish / install pipeline is in
