@@ -73,6 +73,10 @@ class SkillSnapshot:
 
         ``run_id`` is used as the key if the file is missing or corrupt so
         callers can always get a usable object back.
+
+        PR-resume-ux β U4: when the file is parseable but has a mismatched
+        schema version, raises :class:`SchemaVersionError` so the caller
+        can refuse to resume rather than silently load stale fields.
         """
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -80,6 +84,16 @@ class SkillSnapshot:
             return cls.empty(run_id, "", {})
         if not isinstance(data, dict):
             return cls.empty(run_id, "", {})
+        # PR-resume-ux β U4: schema version refuse
+        from reyn.events.agent_snapshot import SchemaVersionError
+        version = data.get("version")
+        if version != SKILL_SNAPSHOT_VERSION:
+            raise SchemaVersionError(
+                f"SkillSnapshot at {path} has version {version!r}, "
+                f"expected {SKILL_SNAPSHOT_VERSION}. "
+                "Run `reyn chat --reset` to wipe in-flight skill state "
+                "(audit logs in .reyn/events/ are preserved)."
+            )
         return cls(
             skill_run_id=str(data.get("skill_run_id", run_id)),
             skill_name=str(data.get("skill_name", "")),

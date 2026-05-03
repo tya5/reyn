@@ -19,6 +19,17 @@ from typing import Iterable
 SNAPSHOT_VERSION = 1
 
 
+class SchemaVersionError(Exception):
+    """Raised when a snapshot file's schema version does not match the
+    current code's expected version.
+
+    Message includes a hint to run ``reyn chat --reset`` so operators have
+    a clear next-action. PR-resume-ux β U4: pre-1.0 we refuse to load
+    incompatible snapshots rather than silently corrupt state. Post-1.0
+    will add automated migration (R-D15).
+    """
+
+
 @dataclass
 class AgentSnapshot:
     """Recovery-critical state for one agent.
@@ -53,9 +64,22 @@ class AgentSnapshot:
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            # Corrupt / missing file → defensive empty (existing behavior;
+            # there is no version info to compare anyway).
             return cls.empty(agent_name)
         if not isinstance(data, dict):
             return cls.empty(agent_name)
+        # PR-resume-ux β U4: schema_version refuse. A missing version field
+        # or a mismatch is treated as incompatible — operator must
+        # explicitly --reset to wipe.
+        version = data.get("version")
+        if version != SNAPSHOT_VERSION:
+            raise SchemaVersionError(
+                f"AgentSnapshot at {path} has version {version!r}, "
+                f"expected {SNAPSHOT_VERSION}. "
+                "Run `reyn chat --reset` to wipe in-flight skill state "
+                "(audit logs in .reyn/events/ are preserved)."
+            )
         return cls(
             agent_name=agent_name,
             applied_seq=int(data.get("applied_seq", 0)),
