@@ -62,6 +62,10 @@ class CommittedStep:
     result: object = None
     error_kind: str | None = None
     error_message: str | None = None
+    # R-D8: usage data (TokenUsage dict for LLM steps; arbitrary metadata
+    # for other op kinds). Optional — pre-R-D8 WAL events lack this field
+    # and load with usage=None (memo hit logs warning + skips budget credit).
+    usage: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -162,6 +166,9 @@ class SkillResumeAnalyzer:
                     args_hash=str(event.get("args_hash", "")),
                     seq=int(event.get("seq", 0)),
                     result=event.get("result"),
+                    # R-D8: pass through optional usage. Pre-R-D8 events
+                    # have no usage key; missing → None (graceful).
+                    usage=event.get("usage"),
                 ))
             elif kind == "step_failed":
                 key = event.get("op_invocation_id") or ""
