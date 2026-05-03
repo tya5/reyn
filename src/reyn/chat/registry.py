@@ -338,21 +338,46 @@ class AgentRegistry:
         """
         seqs: list[int] = []
 
-        # Per-agent applied_seq from each agent's main snapshot. Agents
-        # without a snapshot file are treated as truly dormant (skipped).
+        # Per-agent applied_seq from each agent's main snapshot. Two skip
+        # paths for dormant agents (semantically equivalent — an agent that
+        # has never absorbed a WAL event):
+        #   1. snapshot file missing — fresh agent, never persisted
+        #   2. snapshot file present but ``applied_seq == 0`` — written by
+        #      ``restore_all`` for an agent with no events to absorb
+        #
+        # AgentSnapshot.load is defensive (returns empty on parse error),
+        # which would silently mask corruption as the dormant case. We
+        # parse explicitly here to distinguish: corruption returns
+        # floor=0 (fail closed, keep WAL intact); legitimate ``applied_seq
+        # == 0`` means dormant and can be skipped safely.
         for name in self.list_names():
             snap_path = self._dir / name / "state" / "snapshot.json"
             if not snap_path.is_file():
                 continue
             try:
-                snap = AgentSnapshot.load(name, snap_path)
-            except Exception as e:  # noqa: BLE001 — see returns 0 above
+                data = json.loads(snap_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as e:
                 logger.warning(
                     "WAL truncation: cannot read agent snapshot %s: %s",
                     snap_path, e,
                 )
                 return 0
-            seqs.append(int(snap.applied_seq))
+            if not isinstance(data, dict):
+                logger.warning(
+                    "WAL truncation: malformed agent snapshot %s "
+                    "(not an object)", snap_path,
+                )
+                return 0
+            try:
+                applied_seq = int(data.get("applied_seq", 0))
+            except (TypeError, ValueError):
+                return 0
+            if applied_seq == 0:
+                # Dormant — no WAL events have targeted this agent
+                # (SnapshotJournal would have bumped applied_seq above 0
+                # on first append). Skip from floor calc.
+                continue
+            seqs.append(applied_seq)
 
         # Per-active-skill last_phase_applied_seq. We do NOT load the full
         # SkillSnapshot dataclass here — only need one int field. Direct

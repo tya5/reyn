@@ -124,23 +124,37 @@ def test_compute_floor_zero_when_no_persistent_agents(tmp_path):
     assert floor == 0
 
 
-def test_compute_floor_handles_corrupt_agent_snapshot(tmp_path):
-    """Tier 2: AgentSnapshot.load is defensive (returns empty on parse error); corrupt agent snapshot degrades to applied_seq=0, pinning floor at 1.
+def test_compute_floor_zero_on_corrupt_agent_snapshot(tmp_path):
+    """Tier 2: corrupt agent snapshot returns floor=0 (fail closed — keep WAL intact).
 
-    Distinct from skill-snapshot corruption (which returns 0 = no truncation).
-    AgentSnapshot's defensive load was a PR21 design choice; truncation
-    inherits that conservatism.
+    Truncation parses agent snapshots explicitly (rather than going through
+    ``AgentSnapshot.load``'s defensive empty-fallback) so corruption is
+    distinguishable from the legitimate dormant case (``applied_seq == 0``).
     """
     registry = _make_registry(tmp_path)
     _seed_agent(registry, "alpha", applied_seq=5)
-    # Corrupt alpha's snapshot
     snap_path = registry._dir / "alpha" / "state" / "snapshot.json"
     snap_path.write_text("{not valid json", encoding="utf-8")
 
     floor = registry._compute_truncate_floor()
-    # AgentSnapshot.load returns empty (applied_seq=0) on parse error, so
-    # floor = 0 + 1 = 1.
-    assert floor == 1
+    assert floor == 0
+
+
+def test_compute_floor_skips_dormant_agent_with_zero_applied_seq(tmp_path):
+    """Tier 2: a snapshot-on-disk with applied_seq=0 (e.g. written by restore_all for an unused agent) is skipped from floor calc.
+
+    Semantically equivalent to "snapshot file missing" — the agent has
+    never absorbed a WAL event, so it doesn't constrain truncation. This
+    invariant matters because PR21 ``restore_all`` writes baseline
+    snapshots for every known agent at restart time.
+    """
+    registry = _make_registry(tmp_path)
+    _seed_agent(registry, "alpha", applied_seq=10)
+    _seed_agent(registry, "dormant", applied_seq=0)  # restore_all-style baseline
+
+    floor = registry._compute_truncate_floor()
+    # Dormant skipped → floor based on alpha alone
+    assert floor == 11
 
 
 def test_compute_floor_zero_on_corrupt_skill_snapshot(tmp_path):
