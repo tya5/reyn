@@ -477,9 +477,10 @@ class RightPanel(Widget):
             event.prevent_default()
             event.stop()
             self.cycle(-1)
-        elif event.key == "f":
-            event.prevent_default()
-            self._toggle_preview()
+        elif event.key == "enter":
+            if self._panel_type == "docs":
+                event.prevent_default()
+                self._toggle_preview()
         elif event.key in ("n", "j"):
             if self._panel_type == "docs":
                 event.prevent_default()
@@ -888,7 +889,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_docs(self) -> str:
-        nav_hint = "[#555555]n/j↓  p/k↑  f=preview[/]"
+        nav_hint = "[#555555]n/j↓  p/k↑  enter=open[/]"
         header = f"[bold #C8553D]Docs[/]  {nav_hint}"
 
         if self._project_root is None:
