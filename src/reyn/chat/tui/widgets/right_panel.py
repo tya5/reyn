@@ -343,6 +343,12 @@ class RightPanel(Widget):
 
     # ── tab activation ───────────────────────────────────────────────────────
 
+    def on_key(self, event) -> None:
+        if event.key == "tab":
+            event.prevent_default()
+            event.stop()
+            self.cycle(+1)
+
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
             self._panel_type = event.tab.id

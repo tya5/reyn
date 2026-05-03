@@ -510,6 +510,16 @@ class ReynTUIApp(App):
             return self._palette_visible
         if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
             return self._panel_visible
+        if action == "palette_next" and self._panel_visible:
+            focused = self.focused
+            try:
+                panel = self.query_one("#right_panel", RightPanel)
+                if focused is not None and any(
+                    a is panel for a in [focused, *focused.ancestors]
+                ):
+                    return False
+            except Exception:
+                pass
         if action in {"event_filter_cycle", "event_tail_cycle"}:
             if not self._panel_visible:
                 return False
