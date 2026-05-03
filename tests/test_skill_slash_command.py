@@ -18,23 +18,18 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.state_log import StateLog
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    wal_path = tmp_path / "state.wal"
-    session = ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via the public
+    ``snapshot_path`` constructor kwarg.
+    """
+    return ChatSession(
         agent_name=agent_name,
-        state_log=StateLog(wal_path),
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
-    session._snapshot_path = tmp_path / f"{agent_name}_snapshot.json"
-    session._journal = SnapshotJournal(
-        agent_name=agent_name,
-        snapshot_path=session._snapshot_path,
-        state_log=session._journal._state_log,
-    )
-    return session
 
 
 def _drain_outbox(session: ChatSession) -> list:

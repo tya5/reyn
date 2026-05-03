@@ -297,7 +297,15 @@ class ChatSession:
         events_config: EventsConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
+        snapshot_path: "Path | None" = None,
     ) -> None:
+        """
+        snapshot_path: optional override for the per-agent snapshot file
+            location. Default: ``.reyn/agents/<agent_name>/state/snapshot.json``
+            relative to the current working directory. Tests use this to
+            redirect snapshot I/O to a tmp_path without touching private
+            attributes.
+        """
         self.agent_name = agent_name
         self.model = model
         self._resolver = resolver or ModelResolver({})
@@ -343,7 +351,7 @@ class ChatSession:
         # SnapshotJournal (extracted service). The session keeps the
         # snapshot_path here only because other init code references it
         # for diagnostic logging — the journal owns the actual I/O.
-        self._snapshot_path = (
+        self._snapshot_path = snapshot_path or (
             Path(".reyn") / "agents" / self.agent_name / "state" / "snapshot.json"
         )
         self._journal = SnapshotJournal(

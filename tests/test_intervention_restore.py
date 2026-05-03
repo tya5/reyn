@@ -23,7 +23,6 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 
@@ -34,18 +33,12 @@ from reyn.events.state_log import StateLog
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    wal_path = tmp_path / "state.wal"
-    session = ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via public kwargs."""
+    return ChatSession(
         agent_name=agent_name,
-        state_log=StateLog(wal_path),
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
-    session._snapshot_path = tmp_path / f"{agent_name}_snapshot.json"
-    session._journal = SnapshotJournal(
-        agent_name=agent_name,
-        snapshot_path=session._snapshot_path,
-        state_log=session._journal._state_log,
-    )
-    return session
 
 
 def _snapshot_with_intervention(
@@ -185,8 +178,8 @@ async def test_restored_intervention_can_be_answered(tmp_path, monkeypatch):
     events = [e for e in log.iter_from(0) if e["kind"] == "intervention_resolved"]
     assert any(e["intervention_id"] == "iv_to_answer" for e in events)
 
-    # Snapshot pruned
-    snap_path = session._snapshot_path
+    # Snapshot pruned (path was the one passed to _make_session)
+    snap_path = tmp_path / "alpha_snapshot.json"
     raw = json.loads(snap_path.read_text())
     assert "iv_to_answer" not in raw.get("outstanding_interventions", {})
 

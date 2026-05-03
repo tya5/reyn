@@ -24,7 +24,6 @@ from typing import Any
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionChoice,
@@ -38,18 +37,12 @@ from reyn.user_intervention import (
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    wal_path = tmp_path / "state.wal"
-    session = ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via public kwargs."""
+    return ChatSession(
         agent_name=agent_name,
-        state_log=StateLog(wal_path),
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
-    session._snapshot_path = tmp_path / f"{agent_name}_snapshot.json"
-    session._journal = SnapshotJournal(
-        agent_name=agent_name,
-        snapshot_path=session._snapshot_path,
-        state_log=session._journal._state_log,
-    )
-    return session
 
 
 def _iv(*, run_id: str | None = None, choices: list[InterventionChoice] | None = None,
@@ -220,7 +213,8 @@ async def test_outstanding_interventions_in_snapshot_after_dispatch(tmp_path, mo
     await asyncio.sleep(0)
     await asyncio.sleep(0)
 
-    snap_path = session._snapshot_path
+    # Snapshot path is the one passed via the public kwarg in _make_session
+    snap_path = tmp_path / "alpha_snapshot.json"
     assert snap_path.is_file(), "snapshot must be persisted to disk"
     raw = json.loads(snap_path.read_text())
     outstanding = raw.get("outstanding_interventions", {})

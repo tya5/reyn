@@ -129,38 +129,14 @@ def _make_session(
     chain_timeout_seconds: float = 60.0,
     registry: _FakeRegistry | None = None,
 ) -> ChatSession:
-    """Build a ChatSession with WAL enabled, backed by tmp_path.
-
-    state_log=StateLog(wal_path) enables full WAL/snapshot persistence.
-    snapshot_path is under tmp_path so each test has isolated state.
-    """
-    wal_path = tmp_path / "state.wal"
-    session = ChatSession(
+    """Build a ChatSession with WAL + per-test snapshot path via public kwargs."""
+    return ChatSession(
         agent_name=agent_name,
-        state_log=StateLog(wal_path),
+        state_log=StateLog(tmp_path / "state.wal"),
         chain_timeout_seconds=chain_timeout_seconds,
         registry=registry,
+        snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
-    # Override _snapshot_path to keep artifacts isolated under tmp_path.
-    session._snapshot_path = tmp_path / f"{agent_name}_snapshot.json"
-    # Re-create the journal pointing at the new snapshot_path.
-    from reyn.chat.services.snapshot_journal import SnapshotJournal
-
-    session._journal = SnapshotJournal(
-        agent_name=agent_name,
-        snapshot_path=session._snapshot_path,
-        state_log=session._journal._state_log,
-    )
-    # Rebuild ChainManager so it references the new journal.
-    from reyn.chat.services.chain_manager import ChainManager
-
-    session._chains = ChainManager(
-        journal=session._journal,
-        events=session._chat_events,
-        chain_timeout_seconds=chain_timeout_seconds,
-        max_hop_depth=session._max_hop_depth,
-    )
-    return session
 
 
 def _wal_events(tmp_path: Path) -> list[dict]:

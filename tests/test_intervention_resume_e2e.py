@@ -36,7 +36,6 @@ from pathlib import Path
 import pytest
 
 from reyn.chat.session import ChatInterventionBus, ChatSession
-from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
@@ -52,18 +51,12 @@ from reyn.user_intervention import (
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    wal_path = tmp_path / "state.wal"
-    session = ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via public kwargs."""
+    return ChatSession(
         agent_name=agent_name,
-        state_log=StateLog(wal_path),
+        state_log=StateLog(tmp_path / "state.wal"),
+        snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
-    session._snapshot_path = tmp_path / f"{agent_name}_snapshot.json"
-    session._journal = SnapshotJournal(
-        agent_name=agent_name,
-        snapshot_path=session._snapshot_path,
-        state_log=session._journal._state_log,
-    )
-    return session
 
 
 def _snapshot_with_intervention(
