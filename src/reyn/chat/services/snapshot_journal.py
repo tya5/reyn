@@ -158,6 +158,52 @@ class SnapshotJournal:
         self._snapshot.pending_chains.pop(chain_id, None)
         self.save()
 
+    # ── intervention persistence (PR-intervention-link L2) ────────────────
+
+    async def record_intervention_dispatched(
+        self, *, intervention_id: str, iv_dict: dict,
+    ) -> None:
+        """Append ``intervention_dispatched`` to WAL + add to outstanding.
+
+        Called when a UserIntervention has been queued and announced to the
+        user. Crash between this call and the user answering means resume
+        will re-enqueue the intervention from the snapshot — the original
+        skill_run can then await the answer once it's delivered.
+
+        ``iv_dict`` should be the result of ``UserIntervention.to_dict()``
+        (excludes the volatile ``future`` field).
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "intervention_dispatched",
+            target=self._agent_name,
+            intervention_id=intervention_id,
+            iv_dict=iv_dict,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.outstanding_interventions[intervention_id] = iv_dict
+        self.save()
+
+    async def record_intervention_resolved(
+        self, *, intervention_id: str,
+    ) -> None:
+        """Append ``intervention_resolved`` to WAL + drop from outstanding.
+
+        Idempotent — pop is a no-op when the entry is already gone (e.g.
+        duplicate WAL replay during recovery).
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "intervention_resolved",
+            target=self._agent_name,
+            intervention_id=intervention_id,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.outstanding_interventions.pop(intervention_id, None)
+        self.save()
+
     # ── restore / persist ─────────────────────────────────────────────────
 
     def install(self, snapshot: AgentSnapshot) -> None:
