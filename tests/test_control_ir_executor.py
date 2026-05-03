@@ -62,6 +62,7 @@ def _run(coro) -> Any:
 
 
 def test_build_phase_tool_catalog_known_ops():
+    """Tier 2: OS invariant — _build_phase_tool_catalog produces entries with function.parameters for known op kinds (file, shell)."""
     catalog = _build_phase_tool_catalog({"file", "shell"})
     assert "file" in catalog
     assert "shell" in catalog
@@ -71,21 +72,21 @@ def test_build_phase_tool_catalog_known_ops():
 
 
 def test_build_phase_tool_catalog_kind_not_in_required():
-    """'kind' must be removed from required in the catalog schema."""
+    """Tier 2: OS invariant — 'kind' must be removed from required fields in the catalog schema so the LLM is not asked to supply a field the OS already knows."""
     catalog = _build_phase_tool_catalog({"file"})
     required = catalog["file"]["function"]["parameters"].get("required", [])
     assert "kind" not in required
 
 
 def test_build_phase_tool_catalog_kind_not_in_properties():
-    """'kind' must be removed from properties in the catalog schema."""
+    """Tier 2: OS invariant — 'kind' must be removed from properties in the catalog schema so it does not appear in the LLM-facing tool description."""
     catalog = _build_phase_tool_catalog({"file"})
     props = catalog["file"]["function"]["parameters"].get("properties", {})
     assert "kind" not in props
 
 
 def test_build_phase_tool_catalog_unknown_op_kind_gets_schema_less_entry():
-    """Op kinds with no IROp model get a schema-less catalog entry (no validation)."""
+    """Tier 2: OS invariant — op kinds with no IROp model get a schema-less catalog entry; unknown kinds are not silently dropped from the catalog."""
     catalog = _build_phase_tool_catalog({"totally_unknown_kind"})
     assert "totally_unknown_kind" in catalog
     assert "parameters" not in catalog["totally_unknown_kind"].get("function", {})
@@ -95,7 +96,7 @@ def test_build_phase_tool_catalog_unknown_op_kind_gets_schema_less_entry():
 
 
 def test_skill_op_emits_tool_called_and_returned(tmp_path: Path, monkeypatch):
-    """Success path: tool_called → tool_executed → tool_returned."""
+    """Tier 2: P6 invariant — successful file op emits tool_called → tool_executed → tool_returned in order."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hello.txt").write_text("hello world")
 
@@ -121,7 +122,7 @@ def test_skill_op_emits_tool_called_and_returned(tmp_path: Path, monkeypatch):
 
 
 def test_skill_op_emits_tool_called_event_with_correct_fields(tmp_path: Path, monkeypatch):
-    """tool_called event carries caller_kind, caller_id, tool, chain_id."""
+    """Tier 2: P6 invariant — tool_called event payload carries caller_kind, caller_id (skill.phase), tool name, and chain_id for audit traceability."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "hello.txt").write_text("hi")
 
@@ -142,7 +143,7 @@ def test_skill_op_emits_tool_called_event_with_correct_fields(tmp_path: Path, mo
 
 
 def test_skill_op_failure_emits_tool_failed(tmp_path: Path, monkeypatch):
-    """Permission denied: tool_called → tool_failed (no tool_returned).
+    """Tier 2: P6 invariant — permission denied path emits tool_called → tool_failed with no tool_returned; failure is always recorded in the event log.
 
     Trigger: write op to a path outside the default write zone (.reyn/, reyn/).
     """
@@ -168,7 +169,7 @@ def test_skill_op_failure_emits_tool_failed(tmp_path: Path, monkeypatch):
 
 
 def test_skill_op_failure_error_kind_is_permission_denied(tmp_path: Path, monkeypatch):
-    """dispatch_tool error_kind should be 'permission_denied' for PermissionError."""
+    """Tier 2: P6 invariant — tool_failed event carries error_kind=permission_denied for PermissionError; error classification is stable across refactors."""
     monkeypatch.chdir(tmp_path)
 
     executor, events = _make_executor(tmp_path)
@@ -184,7 +185,7 @@ def test_skill_op_failure_error_kind_is_permission_denied(tmp_path: Path, monkey
 
 
 def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
-    """Op kind absent from allowed_ops catalog yields unknown_tool error shape."""
+    """Tier 2: OS invariant — op kind absent from dispatch catalog yields status=error/kind=unknown_tool; dispatch_tool does not crash on unrecognised op names."""
     executor, events = _make_executor(tmp_path)
 
     # Synthesize an op with a kind that IS in allowed_ops but NOT in _IROP_MODEL_MAP
@@ -240,7 +241,7 @@ def test_unknown_op_kind_caught_by_dispatch_tool(tmp_path: Path):
 
 
 def test_not_allowed_in_phase_skip_no_dispatch_events(tmp_path: Path):
-    """Ops filtered by allowed_ops before dispatch must NOT emit tool_called/tool_returned."""
+    """Tier 2: OS invariant — ops filtered by allowed_ops before dispatch emit control_ir_skipped but not tool_called/tool_returned; pre-dispatch filtering is silent to the event audit trail."""
     executor, events = _make_executor(tmp_path)
     op = FileIROp(kind="file", op="read", path="anything.txt")
     decl = PermissionDecl()
@@ -256,7 +257,7 @@ def test_not_allowed_in_phase_skip_no_dispatch_events(tmp_path: Path):
 
 
 def test_multiple_ops_each_get_own_tool_called_returned(tmp_path: Path, monkeypatch):
-    """Two ops in the same execute() call each emit their own call/return bracket."""
+    """Tier 2: P6 invariant — each op in a batch execute() call gets its own tool_called/tool_returned bracket; events are not collapsed or shared across ops."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "a.txt").write_text("a")
     (tmp_path / "b.txt").write_text("b")

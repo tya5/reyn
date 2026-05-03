@@ -74,7 +74,9 @@ def _run(coro):
 # ---------------------------------------------------------------------------
 
 def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
-    """Minimal session: mock call_llm_tools to return text 'hi'.
+    """Tier 1 framework boundary: ChatSession→RouterLoop integration — user message produces kind=agent outbox entry. AsyncMock isolates from network for e2e path verification.
+
+    Minimal session: mock call_llm_tools to return text 'hi'.
     User message → router → assert outbox has kind='agent', text='hi'.
     """
     monkeypatch.chdir(tmp_path)
@@ -95,7 +97,7 @@ def test_user_message_chitchat_e2e(tmp_path, monkeypatch):
 
 
 def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
-    """Agent reply from RouterLoop is appended to session history."""
+    """Tier 1 framework boundary: agent reply from RouterLoop is appended to session history with role=agent. AsyncMock isolates from network for e2e path verification."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
@@ -117,7 +119,9 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Script: round 1 invoke_skill, round 2 text reply.
+    """Tier 1 framework boundary: ChatSession→RouterLoop skill invocation — round 1 invokes skill, round 2 produces text reply in outbox. AsyncMock required for multi-round e2e path.
+
+    Script: round 1 invoke_skill, round 2 text reply.
     Mock skill execution via _run_skill_awaitable.
     Assert skill ran and outbox has final text reply.
     """
@@ -161,7 +165,9 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
-    """Script: delegate_to_agent tool_call in _handle_agent_request context.
+    """Tier 2: OS invariant — delegate_to_agent in _handle_agent_request registers a PendingChain with correct origin_agent and waiting_on fields.
+
+    Script: delegate_to_agent tool_call in _handle_agent_request context.
     Assert _PendingChain registered with correct chain_id.
     """
     monkeypatch.chdir(tmp_path)
@@ -204,10 +210,11 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     _run(run())
 
     # PR-refactor-session-1 wave 2: pending chains live in ChainManager.
-    assert session._chains.has("chain-del-001"), (
-        f"_PendingChain not registered; chains: {session._chains.all_chain_ids()}"
-    )
+    # Observe via public ChainManager.get() — returns None if not registered.
     pc = session._chains.get("chain-del-001")
+    assert pc is not None, (
+        f"_PendingChain not registered; registered chains: {session._chains.all_chain_ids()}"
+    )
     assert isinstance(pc, _PendingChain)
     assert pc.origin_agent == "origin_agent"
     assert "peer_agent" in pc.waiting_on
@@ -218,7 +225,7 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
-    """Verify ChatSession exposes all RouterLoopHost required methods."""
+    """Tier 1: public contract — ChatSession exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
@@ -248,7 +255,7 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
-    """resolve_model('router') resolves through the ModelResolver."""
+    """Tier 1 framework boundary: resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
@@ -263,8 +270,11 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
-    """list_available_skills() must never return skill_router, chat_compactor,
-    or skill_narrator."""
+    """Tier 2: OS invariant — list_available_skills() must never expose skill_router, chat_compactor, or skill_narrator to the LLM tool catalog.
+
+    list_available_skills() must never return skill_router, chat_compactor,
+    or skill_narrator.
+    """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
@@ -280,7 +290,7 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_build_history_for_router_shape(tmp_path, monkeypatch):
-    """_build_history_for_router returns OpenAI-style dicts from session history."""
+    """Tier 1 framework boundary: _build_history_for_router returns OpenAI-style dicts with correct role mapping and ordering from session history."""
     monkeypatch.chdir(tmp_path)
     from reyn.chat.session import ChatMessage
     session = _make_session(tmp_path)

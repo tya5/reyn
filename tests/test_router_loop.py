@@ -211,7 +211,7 @@ def make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
 
 @pytest.mark.asyncio
 async def test_chitchat_no_tools():
-    """call_llm_tools returns text; assert put_outbox called once, no tools."""
+    """Tier 1 framework boundary: RouterLoop text-reply path puts one agent message in outbox. AsyncMock isolates from network without LLMReplay (single-iteration, no LLM contract assertion)."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -228,7 +228,7 @@ async def test_chitchat_no_tools():
 
 @pytest.mark.asyncio
 async def test_single_skill_round():
-    """Round 1: tool_call invoke_skill; round 2: text reply."""
+    """Tier 1 framework boundary: RouterLoop dispatches invoke_skill on round 1 and produces text reply on round 2. AsyncMock required for multi-round scripted control flow."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
 
@@ -255,7 +255,7 @@ async def test_single_skill_round():
 
 @pytest.mark.asyncio
 async def test_two_round_sequential():
-    """Round 1: read_file; round 2: invoke_skill (uses read content); round 3: text."""
+    """Tier 1 framework boundary: multi-round message accumulation — tool results from round 1 and 2 appear in round 3 messages. AsyncMock required for message-capture across 3 scripted rounds."""
     host = FakeRouterHost(
         file_permissions={"read": ["/docs"], "write": []},
         skills=[{"name": "skill_a", "category": "general"}],
@@ -291,7 +291,7 @@ async def test_two_round_sequential():
 
 @pytest.mark.asyncio
 async def test_parallel_tool_calls_executed():
-    """Round 1 returns 2 tool_calls; assert both executed concurrently."""
+    """Tier 1 framework boundary: RouterLoop executes all tool_calls from a single round concurrently. AsyncMock required for scripted multi-tool round."""
     host = FakeRouterHost(
         skills=[
             {"name": "skill_a", "category": "general"},
@@ -322,7 +322,7 @@ async def test_parallel_tool_calls_executed():
 
 @pytest.mark.asyncio
 async def test_max_iterations_exhausted():
-    """call_llm_tools always returns tool_calls; error outbox after max_iterations."""
+    """Tier 2: OS invariant — RouterLoop emits error outbox message after exceeding max_iterations cap. Loop never runs more iterations than configured."""
     host = FakeRouterHost()
     loop = make_loop(host, max_iterations=3)
 
@@ -342,7 +342,7 @@ async def test_max_iterations_exhausted():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_returns_error_in_result():
-    """tool_call with unknown name; assert tool result contains 'unknown tool', loop continues."""
+    """Tier 1 framework boundary: unknown tool name produces error tool result with kind=unknown_tool; loop continues to next round. AsyncMock required for message-capture of tool result content."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -375,7 +375,7 @@ async def test_unknown_tool_returns_error_in_result():
 
 @pytest.mark.asyncio
 async def test_remember_shared_writes_file_and_regenerates_index():
-    """invoke remember_shared; assert host.file_write + file_regenerate_index called."""
+    """Tier 1 framework boundary: remember_shared tool writes memory file with correct frontmatter and triggers index regeneration. AsyncMock required for scripted tool-call round."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     loop = make_loop(host)
 
@@ -417,7 +417,7 @@ async def test_remember_shared_writes_file_and_regenerates_index():
 
 @pytest.mark.asyncio
 async def test_list_skills_empty_path_returns_categories():
-    """_list_skills('') groups by category and returns category+count entries."""
+    """Tier 1 framework boundary: list_skills('') returns category+count entries grouped by category. Tests tool API output shape without LLM involvement."""
     skills = [
         {"name": "write_blog", "category": "write"},
         {"name": "write_email", "category": "write"},
@@ -435,7 +435,7 @@ async def test_list_skills_empty_path_returns_categories():
 
 @pytest.mark.asyncio
 async def test_list_skills_with_category_returns_items():
-    """_list_skills('write') returns the 2 write skills."""
+    """Tier 1 framework boundary: list_skills('write') returns only skills in the write category. Tests tool API output shape without LLM involvement."""
     skills = [
         {"name": "write_blog", "description": "Writes blog posts", "category": "write"},
         {"name": "write_email", "description": "Writes emails", "category": "write"},
@@ -453,7 +453,7 @@ async def test_list_skills_with_category_returns_items():
 
 @pytest.mark.asyncio
 async def test_list_memory_top_level():
-    """_list_memory('') returns [{path: 'shared', count}, {path: 'agent', count}]."""
+    """Tier 1 framework boundary: list_memory('') returns layer+count entries from memory index. Tests tool API output shape without LLM involvement."""
     memory_content = (
         "# Memory Index (shared)\n\n"
         "- [User Role](user_role.md) — Developer\n"
@@ -476,8 +476,7 @@ async def test_list_memory_top_level():
 
 @pytest.mark.asyncio
 async def test_delegate_to_agent():
-    """invoke delegate_to_agent; loop exits immediately so pending_chain
-    can resume the conversation when the peer's async reply arrives.
+    """Tier 2: OS invariant — RouterLoop exits after first delegate_to_agent dispatch and emits awaiting-peer-reply status; does not iterate further in the same turn.
 
     Earlier (pre-PR-tui-4-followup) the loop continued and the LLM
     re-delegated each iteration until the cap was exhausted. Fix:
@@ -517,8 +516,7 @@ async def test_delegate_to_agent():
 
 @pytest.mark.asyncio
 async def test_delegate_does_not_re_delegate_in_same_turn():
-    """Regression: even if call_llm_tools is mocked to keep emitting
-    delegate calls, RouterLoop.run() must exit after the first dispatch.
+    """Tier 2: OS invariant — RouterLoop.run() exits after first delegate dispatch even if LLM keeps emitting delegate calls; exactly one dispatch occurs regardless of max_iterations.
 
     Real LLM behavior (dogfood verify): with the old code the LLM saw
     `{status: dispatched}`, didn't realize the peer reply would arrive
@@ -548,7 +546,7 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
 
 @pytest.mark.asyncio
 async def test_forget_memory_deletes_file_and_regenerates_index():
-    """invoke forget_memory; assert file_delete + file_regenerate_index called."""
+    """Tier 1 framework boundary: forget_memory tool deletes the memory file and triggers index regeneration. AsyncMock required for scripted tool-call round."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     host._files["/memory/shared/user_role.md"] = "# old memory"
     loop = make_loop(host)
@@ -572,7 +570,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
 
 @pytest.mark.asyncio
 async def test_history_appended_to_messages():
-    """Prior history turns appear in the messages before the user utterance."""
+    """Tier 1 framework boundary: prior history turns appear in LLM messages before the current user utterance, in correct role order. AsyncMock required for message-capture."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -603,10 +601,9 @@ async def test_history_appended_to_messages():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_name_returns_error_not_dispatched():
-    """LLM emits tool_call with name='read_file' (not in catalog for no-file host).
+    """Tier 2: OS invariant — tool_call for a name absent from the current catalog returns status=error/kind=unknown_tool; underlying host method is never called.
 
-    Assert: returned tool_result has status='error' and kind='unknown_tool',
-    and host.file_read is never called.
+    LLM emits tool_call with name='read_file' (not in catalog for no-file host).
     """
     # Host with no file_permissions → read_file not in catalog
     host = FakeRouterHost(
@@ -649,7 +646,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
 
 @pytest.mark.asyncio
 async def test_tool_names_populated_per_run():
-    """_tool_names reflects the host's configuration on each run() call.
+    """Tier 1 framework boundary: tool catalog reflects host configuration — file tools absent without file_permissions, present with it. Tests catalog-build contract without LLM involvement.
 
     First run: no file permissions, no MCP → file/mcp tools absent.
     Second run: with file permissions → file tools present.
@@ -682,7 +679,7 @@ async def test_tool_names_populated_per_run():
 
 @pytest.mark.asyncio
 async def test_known_tool_still_dispatches():
-    """Sanity check: a valid catalog tool (list_skills) dispatches normally."""
+    """Tier 1 framework boundary: valid catalog tool (list_skills) dispatches and returns status=ok with list data. Sanity check that tool name validation does not block legitimate tools."""
     host = FakeRouterHost(
         skills=[{"name": "my_skill", "category": "general"}],
     )
@@ -720,7 +717,7 @@ async def test_known_tool_still_dispatches():
 
 @pytest.mark.asyncio
 async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
-    """dispatch_tool emits tool_called and tool_returned events on success."""
+    """Tier 2: P6 invariant — dispatch_tool emits tool_called and tool_returned events on successful skill invocation."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
 
@@ -743,7 +740,7 @@ async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
 
 @pytest.mark.asyncio
 async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
-    """dispatch_tool emits tool_failed on unknown_tool error."""
+    """Tier 2: P6 invariant — dispatch_tool emits tool_failed event with error_kind=unknown_tool when tool name is not in catalog."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -769,7 +766,7 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
 
 @pytest.mark.asyncio
 async def test_invoke_skill_with_unknown_skill_name_rejected():
-    """invoke_skill with a hallucinated skill name is rejected.
+    """Tier 2: OS invariant — invoke_skill with a hallucinated skill name is rejected (invalid_args or exception); no skill spawned regardless of validation layer.
 
     Layer A (enum) catches it via jsonschema validation → invalid_args.
     If somehow enum is bypassed, Layer B raises ValueError → exception kind.
@@ -814,7 +811,7 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
 
 @pytest.mark.asyncio
 async def test_invoke_skill_with_known_name_dispatches():
-    """invoke_skill with a valid skill name runs successfully (happy path)."""
+    """Tier 1 framework boundary: invoke_skill with a valid skill name dispatches and produces text reply. Happy-path sanity check for skill name validation."""
     host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
     loop = make_loop(host)
 
@@ -837,8 +834,7 @@ async def test_invoke_skill_with_known_name_dispatches():
 
 @pytest.mark.asyncio
 async def test_invoke_skill_layer_b_catches_bypass():
-    """Layer B defense: even if enum validation is skipped (no skills in enum),
-    an unknown skill name raises ValueError → exception error kind.
+    """Tier 2: OS invariant — Layer B defense raises ValueError for unknown skill name even when enum validation is bypassed; skill name validation is enforced at dispatch time.
 
     Simulate by calling _invoke_router_tool directly with a name not in skills.
     """
@@ -860,7 +856,7 @@ async def test_invoke_skill_layer_b_catches_bypass():
 
 @pytest.mark.asyncio
 async def test_no_events_attribute_needed_for_unknown_tool_path():
-    """Regression: unknown tool error still uses events from host.events via dispatch_tool."""
+    """Tier 2: P6 invariant — unknown tool error emits tool_failed via host.events through dispatch_tool; event routing is not bypassed on the error path."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
