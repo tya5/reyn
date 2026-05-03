@@ -80,6 +80,15 @@ class ChatInterventionBus:
             iv.run_id = self._run_id
         if not iv.skill_name:
             iv.skill_name = self._skill_name
+        # PR-intervention-link L6: short-circuit if a previous (crashed-then-
+        # restored) run's intervention was already answered post-restart.
+        # The L5 watcher buffered the answer keyed by run_id; the resuming
+        # skill's first ask_user picks it up here without dispatching a
+        # duplicate prompt.
+        if iv.run_id is not None:
+            buffered = self._session._consume_buffered_intervention_answer(iv.run_id)
+            if buffered is not None:
+                return buffered
         return await self._session._dispatch_intervention(iv)
 
     # Note: _dispatch_intervention on session.py is now a thin wrapper around
@@ -347,6 +356,13 @@ class ChatSession:
         # from this session also need it so dispatch_tool can emit step
         # events into the same WAL.
         self._state_log = state_log
+        # PR-intervention-link L6: in-memory buffer of answers from
+        # restored-then-resolved interventions, keyed by run_id. The first
+        # bus.request from the resuming skill at that run_id consumes the
+        # entry and returns it without re-dispatching. Persistence across
+        # the (user_answered → process_crashed → skill_not_yet_resumed)
+        # window is R-D12 follow-up.
+        self._buffered_intervention_answers: dict[str, "InterventionAnswer"] = {}
         # Per-agent SkillRegistry — lazily constructed on first skill run.
         # Tracks active skill_run_ids and emits skill lifecycle events.
         # Truncation auto-trigger flows through registry.truncate_wal_if_eligible
@@ -567,10 +583,19 @@ class ChatSession:
 
             async def _on_restored_resolved(iv: UserIntervention) -> None:
                 # Restored interventions DON'T re-emit ``intervention_dispatched``
-                # (that event is already in the WAL from the original run); they
-                # only need to emit ``intervention_resolved`` when the user
-                # answers, so the snapshot's outstanding_interventions entry
-                # gets pruned.
+                # (that event is already in the WAL from the original run).
+                # We do TWO things here:
+                #   1. Buffer the user's answer keyed by run_id so the
+                #      resuming skill's first ask_user picks it up (L6).
+                #   2. Emit ``intervention_resolved`` to prune the snapshot's
+                #      outstanding_interventions entry.
+                if iv.future.done() and iv.run_id:
+                    try:
+                        answer = iv.future.result()
+                    except (asyncio.CancelledError, Exception):
+                        answer = None
+                    if answer is not None:
+                        self._buffered_intervention_answers[iv.run_id] = answer
                 await self._journal.record_intervention_resolved(
                     intervention_id=iv.id,
                 )
@@ -1158,6 +1183,21 @@ class ChatSession:
         ``outstanding_interventions`` is pruned correctly.
         """
         self._interventions.drop_for_run(run_id)
+        # Also clear any buffered answer for this run — the run is gone,
+        # nothing should consume the answer (L6).
+        if run_id is not None:
+            self._buffered_intervention_answers.pop(run_id, None)
+
+    def _consume_buffered_intervention_answer(
+        self, run_id: str,
+    ) -> "InterventionAnswer | None":
+        """Pop and return the buffered answer for ``run_id`` if any.
+
+        PR-intervention-link L6 — used by ChatInterventionBus.request to
+        short-circuit dispatch when a previous (crashed-then-restored)
+        run's intervention was already answered post-restart.
+        """
+        return self._buffered_intervention_answers.pop(run_id, None)
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
 
