@@ -147,6 +147,105 @@ class StateLog:
                     continue
                 yield entry
 
+    async def truncate_below(self, min_keep_seq: int) -> dict:
+        """Atomically rewrite the WAL keeping only entries with ``seq >= min_keep_seq``.
+
+        Drop policy: ``seq < min_keep_seq`` entries are dropped. Caller computes
+        ``min_keep_seq`` as ``min(全 agent applied_seq, 全 active skill
+        last_phase_applied_seq) + 1`` (i.e. drop everything strictly below the
+        last universally-absorbed seq).
+
+        Atomic strategy (mirrors per-snapshot atomic save):
+          1. Stream-read current ``wal.jsonl``, write surviving entries to
+             ``wal.jsonl.tmp``.
+          2. ``fsync(tmp)`` then ``rename(tmp, wal.jsonl)``.
+          3. A mid-rewrite crash leaves the original ``wal.jsonl`` intact
+             — incomplete ``.tmp`` is ignored at next startup.
+
+        Returns a stats dict ``{"dropped": int, "kept": int, "min_kept_seq":
+        int|None, "max_kept_seq": int|None}``. ``min_keep_seq <= 1`` is a
+        no-op (everything would be kept).
+
+        Crash safety: holds ``self._lock`` for the duration so concurrent
+        ``append`` calls are serialized — the rename is safe even on
+        platforms where ``rename`` over an open handle would fail (we don't
+        keep the destination open).
+        """
+        if min_keep_seq <= 1:
+            return {"dropped": 0, "kept": 0,
+                    "min_kept_seq": None, "max_kept_seq": None}
+        async with self._lock:
+            if not self._path.is_file():
+                return {"dropped": 0, "kept": 0,
+                        "min_kept_seq": None, "max_kept_seq": None}
+            # Two-pass: first pass identifies the highest seq actually present
+            # so we never drop *all* entries (next-startup ``_scan_max_seq``
+            # would reset the counter and re-issue already-used seqs into the
+            # audit log). Second pass writes survivors + the watermark entry.
+            highest_seq: int | None = None
+            with self._path.open("r", encoding="utf-8") as src:
+                for line in src:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entry = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    seq = entry.get("seq")
+                    if not isinstance(seq, int):
+                        continue
+                    if highest_seq is None or seq > highest_seq:
+                        highest_seq = seq
+            # Effective floor: never drop the highest seq present, even if
+            # caller asked us to. This preserves the counter watermark.
+            effective_floor = min_keep_seq
+            if highest_seq is not None and effective_floor > highest_seq:
+                effective_floor = highest_seq
+
+            tmp = self._path.with_suffix(self._path.suffix + ".tmp")
+            dropped = 0
+            kept = 0
+            min_kept: int | None = None
+            max_kept: int | None = None
+            with self._path.open("r", encoding="utf-8") as src, \
+                    tmp.open("w", encoding="utf-8") as dst:
+                for line in src:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entry = json.loads(raw)
+                    except json.JSONDecodeError:
+                        # Torn fragment from prior crash — drop on rewrite.
+                        dropped += 1
+                        continue
+                    if not isinstance(entry, dict):
+                        dropped += 1
+                        continue
+                    seq = entry.get("seq")
+                    if not isinstance(seq, int):
+                        dropped += 1
+                        continue
+                    if seq < effective_floor:
+                        dropped += 1
+                        continue
+                    dst.write(raw + "\n")
+                    kept += 1
+                    if min_kept is None or seq < min_kept:
+                        min_kept = seq
+                    if max_kept is None or seq > max_kept:
+                        max_kept = seq
+                dst.flush()
+                os.fsync(dst.fileno())
+            tmp.replace(self._path)
+            # Counter (next-seq source) must remain ≥ max seq ever issued;
+            # truncation does NOT reset it (would re-issue dropped seqs).
+            return {"dropped": dropped, "kept": kept,
+                    "min_kept_seq": min_kept, "max_kept_seq": max_kept}
+
     def _scan_max_seq(self) -> int:
         """Initialize the counter from the highest seq present in the WAL.
 
