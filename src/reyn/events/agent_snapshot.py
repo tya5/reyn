@@ -52,6 +52,14 @@ class AgentSnapshot:
     active_skill_run_ids: list[str] = field(default_factory=list)
     # Outstanding (unresolved) interventions keyed by intervention_id.
     outstanding_interventions: dict[str, dict] = field(default_factory=dict)
+    # R-D12: durable buffered intervention answers keyed by skill_run_id.
+    # Populated when the user answers an intervention post-restart but
+    # before the resuming skill consumes it. Survives a *second* crash
+    # so the answer is replayed when the skill finally resumes (the
+    # in-memory ``_buffered_intervention_answers`` dict in ChatSession
+    # is the runtime cache; this field is its on-disk durable form).
+    # Each value is ``{"text": str, "choice_id": str | None}``.
+    buffered_intervention_answers: dict[str, dict] = field(default_factory=dict)
 
     # ── persistence ─────────────────────────────────────────────────────
 
@@ -91,6 +99,9 @@ class AgentSnapshot:
             outstanding_interventions=dict(
                 data.get("outstanding_interventions", {}) or {}
             ),
+            buffered_intervention_answers=dict(
+                data.get("buffered_intervention_answers", {}) or {}
+            ),
         )
 
     def save(self, path: Path) -> None:
@@ -104,6 +115,7 @@ class AgentSnapshot:
             "pending_chains": self.pending_chains,
             "active_skill_run_ids": self.active_skill_run_ids,
             "outstanding_interventions": self.outstanding_interventions,
+            "buffered_intervention_answers": self.buffered_intervention_answers,
         }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -181,6 +193,18 @@ class AgentSnapshot:
             iv_id = event.get("intervention_id")
             if iv_id:
                 self.outstanding_interventions.pop(iv_id, None)
+        # ── R-D12: durable buffered answer ──────────────────────────────
+        elif kind == "intervention_answer_buffered":
+            run_id = event.get("run_id")
+            if run_id:
+                self.buffered_intervention_answers[run_id] = {
+                    "text": event.get("text", ""),
+                    "choice_id": event.get("choice_id"),
+                }
+        elif kind == "intervention_answer_consumed":
+            run_id = event.get("run_id")
+            if run_id:
+                self.buffered_intervention_answers.pop(run_id, None)
         # skill_phase_advanced, step_started/completed/failed, skill_resumed
         # mutate per-skill snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)

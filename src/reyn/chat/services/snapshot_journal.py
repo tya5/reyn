@@ -204,6 +204,55 @@ class SnapshotJournal:
         self._snapshot.outstanding_interventions.pop(intervention_id, None)
         self.save()
 
+    async def record_intervention_answer_buffered(
+        self, *, run_id: str, text: str, choice_id: str | None,
+    ) -> None:
+        """Append ``intervention_answer_buffered`` to WAL + add to buffer (R-D12).
+
+        Called when the user answers a restored intervention post-restart
+        but before the resuming skill consumes the answer. Persisting
+        this to the WAL+snapshot lets the answer survive a second crash
+        (the buffer would otherwise be lost since it lives in
+        ChatSession's in-memory dict).
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "intervention_answer_buffered",
+            target=self._agent_name,
+            run_id=run_id,
+            text=text,
+            choice_id=choice_id,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.buffered_intervention_answers[run_id] = {
+            "text": text, "choice_id": choice_id,
+        }
+        self.save()
+
+    async def record_intervention_answer_consumed(
+        self, *, run_id: str,
+    ) -> None:
+        """Append ``intervention_answer_consumed`` to WAL + drop from buffer (R-D12).
+
+        Called when the resuming skill consumes a buffered answer, OR
+        when ``_drop_interventions_for_run`` clears the run's state. The
+        consumed event prunes the durable buffer entry so a future
+        restart doesn't see a stale answer.
+
+        Idempotent: pop is a no-op if already gone.
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "intervention_answer_consumed",
+            target=self._agent_name,
+            run_id=run_id,
+        )
+        self._snapshot.applied_seq = seq
+        self._snapshot.buffered_intervention_answers.pop(run_id, None)
+        self.save()
+
     # ── restore / persist ─────────────────────────────────────────────────
 
     def install(self, snapshot: AgentSnapshot) -> None:

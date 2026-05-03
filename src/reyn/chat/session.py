@@ -579,6 +579,17 @@ class ChatSession:
         for msg in snapshot.inbox:
             self.inbox.put_nowait((msg["kind"], msg["payload"]))
         self._chains.restore(on_fire=self._on_chain_timeout_fire)
+        # R-D12: rehydrate the durable buffered intervention answers from
+        # the snapshot. If a previous restart had buffered an answer (user
+        # answered a restored intervention) and a SECOND crash hit before
+        # the resuming skill consumed it, we still have the answer here.
+        for run_id, ans in snapshot.buffered_intervention_answers.items():
+            if not isinstance(ans, dict):
+                continue
+            self._buffered_intervention_answers[run_id] = InterventionAnswer(
+                text=ans.get("text", ""),
+                choice_id=ans.get("choice_id"),
+            )
         # Re-enqueue interventions in FIFO insertion order (dict preserves
         # insertion order in py3.7+). Each restored iv gets a fresh future
         # and a watcher task so dispatch's finally clause fires
@@ -596,6 +607,10 @@ class ChatSession:
                 # We do TWO things here:
                 #   1. Buffer the user's answer keyed by run_id so the
                 #      resuming skill's first ask_user picks it up (L6).
+                #      R-D12: buffer is also durably persisted via
+                #      ``record_intervention_answer_buffered`` so the
+                #      answer survives a second crash before the skill
+                #      resumes.
                 #   2. Emit ``intervention_resolved`` to prune the snapshot's
                 #      outstanding_interventions entry.
                 if iv.future.done() and iv.run_id:
@@ -605,6 +620,11 @@ class ChatSession:
                         answer = None
                     if answer is not None:
                         self._buffered_intervention_answers[iv.run_id] = answer
+                        await self._journal.record_intervention_answer_buffered(
+                            run_id=iv.run_id,
+                            text=answer.text,
+                            choice_id=answer.choice_id,
+                        )
                 await self._journal.record_intervention_resolved(
                     intervention_id=iv.id,
                 )
@@ -1332,12 +1352,32 @@ class ChatSession:
         finally clause then fires ``intervention_resolved`` to the WAL for
         each cancelled coroutine, so the snapshot's
         ``outstanding_interventions`` is pruned correctly.
+
+        R-D12: also clears any durable buffered answer for this run — the
+        run is gone, nothing should consume the answer. Both the
+        in-memory dict AND the on-disk buffer are dropped.
         """
         self._interventions.drop_for_run(run_id)
-        # Also clear any buffered answer for this run — the run is gone,
-        # nothing should consume the answer (L6).
         if run_id is not None:
-            self._buffered_intervention_answers.pop(run_id, None)
+            had_buffered = (
+                self._buffered_intervention_answers.pop(run_id, None) is not None
+            )
+            # If we cleared an in-memory buffered answer, also fire the
+            # consumed event so the durable copy in the snapshot gets
+            # pruned. Fire-and-forget; if the loop is gone (teardown),
+            # the durable entry persists harmlessly until next restart.
+            if had_buffered:
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+                if loop is not None:
+                    loop.create_task(
+                        self._journal.record_intervention_answer_consumed(
+                            run_id=run_id,
+                        ),
+                        name=f"buffered-answer-dropped-{run_id}",
+                    )
 
     def _consume_buffered_intervention_answer(
         self, run_id: str,
@@ -1347,8 +1387,32 @@ class ChatSession:
         PR-intervention-link L6 — used by ChatInterventionBus.request to
         short-circuit dispatch when a previous (crashed-then-restored)
         run's intervention was already answered post-restart.
+
+        R-D12: when an answer is consumed, fire the durable
+        ``intervention_answer_consumed`` event so the on-disk buffer
+        also drops. Async-fire-and-forget keeps the consume path sync
+        for the bus to call from request().
         """
-        return self._buffered_intervention_answers.pop(run_id, None)
+        answer = self._buffered_intervention_answers.pop(run_id, None)
+        if answer is not None:
+            # Schedule the durable consume on the running loop. Outside
+            # an async context (test teardown, sync helpers), no loop
+            # is available — the in-memory buffer is already cleared,
+            # and a future restart's stale snapshot entry is corrected
+            # at restore time when the buffered answer is actually
+            # consumed by a resumed skill.
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(
+                    self._journal.record_intervention_answer_consumed(
+                        run_id=run_id,
+                    ),
+                    name=f"buffered-answer-consumed-{run_id}",
+                )
+        return answer
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
 

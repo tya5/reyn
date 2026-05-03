@@ -56,6 +56,10 @@ WAL_EVENT_KINDS = (
     "skill_completed",
     # NEW (PR-resume-ux β U1) — skill discarded by user via prompt or /skill discard
     "skill_discarded",
+    # NEW (R-D12) — durable buffered intervention answer that survives a
+    # second crash before the resuming skill consumes it
+    "intervention_answer_buffered",
+    "intervention_answer_consumed",
 )
 
 
