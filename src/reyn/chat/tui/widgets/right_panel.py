@@ -349,6 +349,10 @@ class RightPanel(Widget):
             event.prevent_default()
             event.stop()
             self.cycle(+1)
+        elif event.key == "shift+tab":
+            event.prevent_default()
+            event.stop()
+            self.cycle(-1)
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
