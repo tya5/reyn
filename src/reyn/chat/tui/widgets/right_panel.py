@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult, RenderResult
+from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, Static, Tab, Tabs
 
@@ -244,6 +245,8 @@ class _PreviewPane(Widget):
     file's Markdown content. Other tabs may use it in future.
     """
 
+    can_focus = True
+
     DEFAULT_CSS = """
     _PreviewPane {
         display: none;
@@ -264,6 +267,7 @@ class _PreviewPane(Widget):
         background: transparent;
         height: 1fr;
         padding: 0 1;
+        overflow-x: auto;
     }
     """
 
@@ -276,12 +280,24 @@ class _PreviewPane(Widget):
         yield Label("", id="preview-header")
         yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False, wrap=False)
 
+    def on_key(self, event) -> None:
+        if event.key == "w":
+            event.prevent_default()
+            self.toggle_wrap()
+        elif event.key == "up":
+            event.prevent_default()
+            self.scroll_line(-1)
+        elif event.key == "down":
+            event.prevent_default()
+            self.scroll_line(+1)
+
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
         self._current_path = path
         try:
             log = self.query_one("#preview-log", RichLog)
             log.wrap = self._wrap
+            log.styles.overflow_x = "hidden" if self._wrap else "auto"
             log.clear()
             log.write(RichMarkdown(path.read_text(encoding="utf-8")))
             log.scroll_home(animate=False)
@@ -295,7 +311,9 @@ class _PreviewPane(Widget):
             self.show_markdown(self._current_path)
         else:
             try:
-                self.query_one("#preview-log", RichLog).wrap = self._wrap
+                log = self.query_one("#preview-log", RichLog)
+                log.wrap = self._wrap
+                log.styles.overflow_x = "hidden" if self._wrap else "auto"
             except Exception:
                 pass
             self._update_header()
@@ -371,8 +389,12 @@ class RightPanel(Widget):
         color: #2a2a2a;
     }
 
-    RightPanel #panel-content {
+    RightPanel #panel-scroll {
         height: 1fr;
+    }
+
+    RightPanel #panel-content {
+        height: auto;
         color: #666666;
         padding: 1 1;
     }
@@ -402,7 +424,8 @@ class RightPanel(Widget):
             *[Tab(_PANEL_LABELS[t], id=t) for t in PANEL_TYPES],
             id="panel-tabs",
         )
-        yield _PanelContent(self, id="panel-content")
+        with VerticalScroll(id="panel-scroll"):
+            yield _PanelContent(self, id="panel-content")
         yield _PreviewPane(id="preview-pane")
 
     def on_mount(self) -> None:
@@ -413,6 +436,10 @@ class RightPanel(Widget):
     @property
     def panel_type(self) -> str:
         return self._panel_type
+
+    @property
+    def preview_visible(self) -> bool:
+        return self._preview_visible
 
     def cycle(self, delta: int) -> None:
         """Advance (delta=+1) or retreat (delta=-1) through tabs."""

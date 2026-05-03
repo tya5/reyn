@@ -420,13 +420,27 @@ class ReynTUIApp(App):
         self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
     def action_focus_toggle_panel(self) -> None:
-        """ctrl+o — toggle focus between panel tabs and palette-or-input."""
+        """ctrl+o — cycle focus: input → panel tabs → preview pane → input."""
         panel = self.query_one("#right_panel", RightPanel)
         focused = self.focused
-        in_panel = focused is not None and any(
-            a is panel for a in [focused, *focused.ancestors]
-        )
-        if in_panel:
+        ancestors = [focused, *focused.ancestors] if focused else []
+        in_panel = any(a is panel for a in ancestors)
+
+        if not in_panel:
+            # Not in panel at all → move to panel tabs
+            panel.focus_tabs()
+            return
+
+        # Determine whether focus is inside the preview pane specifically
+        in_preview = False
+        try:
+            preview = panel.query_one("#preview-pane")
+            in_preview = any(a is preview for a in ancestors)
+        except Exception:
+            pass
+
+        if in_preview:
+            # Preview pane → go back to input (or palette)
             if self._palette_visible:
                 try:
                     self.query_one("#palette", CommandPaletteOverlay).focus()
@@ -435,7 +449,20 @@ class ReynTUIApp(App):
                     pass
             self.query_one("#inputbar", InputBar).focus_input()
         else:
-            panel.focus_tabs()
+            # Panel tabs → go to preview pane (if open) else input
+            if panel.preview_visible:
+                try:
+                    panel.query_one("#preview-pane").focus()
+                    return
+                except Exception:
+                    pass
+            if self._palette_visible:
+                try:
+                    self.query_one("#palette", CommandPaletteOverlay).focus()
+                    return
+                except Exception:
+                    pass
+            self.query_one("#inputbar", InputBar).focus_input()
 
     def action_panel_next_content(self) -> None:
         """ctrl+w — cycle to next panel tab (gated: panel visible only)."""
