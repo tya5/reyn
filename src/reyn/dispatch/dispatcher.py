@@ -400,11 +400,20 @@ def _compute_args_hash(args: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
-# Volatile fields that must not contribute to the LLM args_hash. They are
-# deliberately set fresh by the LLM call path (current_datetime by
-# ContextFrame, see schemas/models.py) and would silently break memo lookup
-# on resume if hashed verbatim.
+# Top-level frame fields excluded from the LLM args_hash. ``current_datetime``
+# is non-deterministic by design (datetime.now() in ContextFrame) and would
+# silently break memo lookup on resume if hashed verbatim.
 _LLM_VOLATILE_FRAME_FIELDS: frozenset[str] = frozenset({"current_datetime"})
+
+# Sub-fields excluded when canonicalizing nested objects in the frame. Format
+# is "<top_field>.<sub_field>". ``execution.path`` is excluded because the
+# runtime restores ``_history`` from ``snap.history`` on resume — but
+# ``snap.history`` records phase names while normal operation appends
+# transition strings ("draft → review"). The two formats can't be reconciled
+# without a SkillSnapshot schema extension; until R-D11 lands a proper
+# ``transition_history`` field, ``execution.path`` is treated as informational
+# (it shows in the LLM context but does not affect memo determinism).
+_LLM_VOLATILE_NESTED_FIELDS: frozenset[str] = frozenset({"execution.path"})
 
 
 def _compute_llm_args_hash(
@@ -419,19 +428,30 @@ def _compute_llm_args_hash(
 
     Hashes over the inputs that actually drive ``call_llm`` deterministic
     output: model, frame (= ContextFrame.model_dump), retry chain, rollback
-    context, and system-prompt inputs. Strips ``current_datetime`` (and any
-    other volatile fields listed in ``_LLM_VOLATILE_FRAME_FIELDS``) from the
-    frame before hashing — those fields exist for LLM context but are
-    non-deterministic across runs and would cause silent memo miss.
+    context, and system-prompt inputs. Volatile fields (current_datetime,
+    execution.path) are stripped before hashing — see
+    ``_LLM_VOLATILE_FRAME_FIELDS`` / ``_LLM_VOLATILE_NESTED_FIELDS`` for the
+    list and rationale. Without this, every resume would silently miss memo.
 
     SHA-256 truncated to 16 hex chars, matching ``_compute_args_hash``.
     """
     import hashlib
     import json
 
-    canonical_frame = {
-        k: v for k, v in frame.items() if k not in _LLM_VOLATILE_FRAME_FIELDS
-    }
+    canonical_frame = {}
+    for k, v in frame.items():
+        if k in _LLM_VOLATILE_FRAME_FIELDS:
+            continue
+        # Strip nested volatile fields (e.g. "execution.path").
+        if isinstance(v, dict):
+            cleaned = {
+                sub_k: sub_v for sub_k, sub_v in v.items()
+                if f"{k}.{sub_k}" not in _LLM_VOLATILE_NESTED_FIELDS
+            }
+            canonical_frame[k] = cleaned
+        else:
+            canonical_frame[k] = v
+
     payload = {
         "model": model,
         "frame": canonical_frame,

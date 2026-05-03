@@ -1120,6 +1120,15 @@ class OSRuntime:
                 current_phase = self._resume_plan.current_phase
             self._visit_counts = dict(self._resume_plan.visit_counts)
             self._history = list(self._resume_plan.phases_visited)
+            # R-D2: pre-decrement visit_count for the resumed phase so that
+            # the upcoming `_enter_phase` increment lands on the SAME count
+            # the original run had at the time the LLM was called. Without
+            # this, the in-flight phase's first LLM call sees visit_count =
+            # recorded + 1, the args_hash differs from what was recorded,
+            # and memo lookup misses every time (silent cost duplication).
+            if current_phase in self._visit_counts and \
+                    self._visit_counts[current_phase] > 0:
+                self._visit_counts[current_phase] -= 1
             # Restore the last completed phase's artifact as the input
             # to current_phase. Falls back to initial_input when the
             # plan has no recorded artifact path (e.g. the entry phase
