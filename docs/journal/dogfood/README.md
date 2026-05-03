@@ -1,0 +1,88 @@
+# Dogfood Journal
+
+> Reyn を Reyn 自身で使う記録。 自分で書いた skill router が自分のリクエストを
+> 無視する瞬間を、 自分の目で見る場所。
+
+## なぜ dogfood か
+
+Reyn は LLM ドリブンの workflow engine です。 test suite は green (今 642 passed)
+ですが、 user 視点で「会話として成立してるか」 は test では分かりません。
+
+> 現状人間視点だと chat の会話は使い物にならないです。
+
+— user (2026-05-04)
+
+このたった 1 行の指摘が、 開発者 (= test 越しでしか chat を見ていなかった
+assistant) と user (= 毎日触る側) の認識ギャップを浮き彫りにしました。
+test 観点の「invariant green」 と user 観点の「使えてる」 は別物。
+dogfood はその溝を埋めるための定点観測です。
+
+## 進め方
+
+```
+A1: 私 (assistant) がシナリオリスト初版を書く
+    ↓
+A2: user がレビュー
+    ↓
+A3: 私が実 LLM 経由で実行 (cost 削減のため Sonnet sub-agent に委託)
+    ↓
+A4: findings を共有、 user が「私の感覚との差」 を share
+    ↓
+A5: HIGH/MED/LOW に分類、 HIGH bug は即 PR
+    ↓
+[初回 OK なら] バッチ拡大して反復
+```
+
+shadow しても見えないものを見るための iterative loop。
+
+## Batch 一覧
+
+| Batch | Date | Scenarios | Headline finding |
+|---|---|---|---|
+| [batch-1-practice](2026-05-04-batch-1-practice/) | 2026-05-04 | 3 (text_summarizer / multi-agent delegate / read_local_files perm gating) | **skill_router 起動 0/3** + 起動時 AttributeError + multi-agent 経路で 4 件の bug |
+
+## こちらの心境
+
+最初は「練習 batch なのでサクッと回して process 検証」 のつもりでした。
+始まる前の私の事前仮説は控えめなもので:
+
+> skill router の意図解釈は LLM 次第で揺れやすい
+> narrator の応答品質はぼちぼち
+> multi-agent delegate は user に滲んでるかも
+
+— assistant の事前 prediction (`tmp/dogfood_scenarios_v1.md`)
+
+蓋を開けたら **chat が起動しない** ところからのスタートで、 修正してから
+動かしたら **skill_router が 3 連続で発火しない** という結果になり、
+multi-agent では **delegate が同じリクエストを 2 回送る** ことが判明し、
+いつの間にか練習 batch のはずが本格的な事件記録になっていました。
+
+> dogfood が現実を教えてくれる、 とはこういうことか。
+
+— assistant の internal state、 batch 1 完了直後
+
+## 関連 doc
+
+- [test policy (testing.md)](../../en/contributing/testing.md) — dogfood とは別軸の品質保証
+- [principles (P1-P8)](../../en/concepts/principles.md) — 設計の不変条件
+- [development plan](../../en/) — 直近の roadmap
+- ADR-0011 〜 0020 — 直近設計の決定記録 (`../../en/decisions/`)
+
+## このディレクトリの構造
+
+```
+docs/journal/dogfood/
+├── README.md                       ← このファイル
+└── YYYY-MM-DD-batch-N-{label}/
+    ├── prelude.md                  ← 前夜 (= 当時の reyn 状態 + 経緯)
+    ├── scenarios.md                ← 何を試したか
+    ├── findings.md                 ← 事件記録
+    └── retrospective.md            ← user との対話振り返り
+```
+
+各 batch は完結した 1 章として書きます。 後から読み返したとき、
+「何が壊れていて、 どう直したか」 が物語として追える状態を目指す。
+
+推奨読み順: **prelude → scenarios → findings → retrospective**。
+prelude が当時の文脈を、 scenarios が試行内容を、 findings が事件を、
+retrospective が学びを担当します。
