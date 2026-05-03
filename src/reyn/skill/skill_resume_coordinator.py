@@ -19,11 +19,12 @@ agents.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterable, Literal
 
 from reyn.skill.skill_resume_analyzer import (
     AmbiguousStep,
+    CommittedStep,
     ResumePlan,
     SkillResumeAnalyzer,
 )
@@ -137,8 +138,32 @@ class SkillResumeCoordinator:
             # Defensive: unknown policy → safest (prompt). Should not
             # happen under normal config-load path.
             action = "prompt_required"
+
+        # PR-resume-ux U1: when action=skip, augment the plan's
+        # committed_steps with synthetic empty-result entries for each
+        # ambiguous step. On resume, dispatch_tool memo lookup will hit
+        # these and return ``{"status": "ok", "data": {}}`` without
+        # re-executing the (possibly already-committed) op.
+        result_plan = plan
+        if action == "skip" and plan.ambiguous_steps:
+            synthetic = [
+                CommittedStep(
+                    op_invocation_id=amb.op_invocation_id,
+                    op_kind=amb.op_kind,
+                    phase=amb.phase,
+                    args_hash=amb.args_hash,
+                    seq=amb.started_seq,
+                    result={"status": "skipped"},
+                )
+                for amb in plan.ambiguous_steps
+            ]
+            result_plan = replace(
+                plan,
+                committed_steps=list(plan.committed_steps) + synthetic,
+            )
+
         return ResumeDecision(
-            plan=plan,
+            plan=result_plan,
             action=action,
             ambiguous_steps=list(plan.ambiguous_steps),
         )
