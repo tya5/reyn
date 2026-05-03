@@ -400,6 +400,54 @@ def _compute_args_hash(args: dict) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+# Volatile fields that must not contribute to the LLM args_hash. They are
+# deliberately set fresh by the LLM call path (current_datetime by
+# ContextFrame, see schemas/models.py) and would silently break memo lookup
+# on resume if hashed verbatim.
+_LLM_VOLATILE_FRAME_FIELDS: frozenset[str] = frozenset({"current_datetime"})
+
+
+def _compute_llm_args_hash(
+    *,
+    model: str,
+    frame: dict,
+    prior_attempts: list[dict[str, str]] | None = None,
+    rollback_context: dict | None = None,
+    system_inputs: dict | None = None,
+) -> str:
+    """Stable hash for LLM call args. Used as a memoization key on resume.
+
+    Hashes over the inputs that actually drive ``call_llm`` deterministic
+    output: model, frame (= ContextFrame.model_dump), retry chain, rollback
+    context, and system-prompt inputs. Strips ``current_datetime`` (and any
+    other volatile fields listed in ``_LLM_VOLATILE_FRAME_FIELDS``) from the
+    frame before hashing — those fields exist for LLM context but are
+    non-deterministic across runs and would cause silent memo miss.
+
+    SHA-256 truncated to 16 hex chars, matching ``_compute_args_hash``.
+    """
+    import hashlib
+    import json
+
+    canonical_frame = {
+        k: v for k, v in frame.items() if k not in _LLM_VOLATILE_FRAME_FIELDS
+    }
+    payload = {
+        "model": model,
+        "frame": canonical_frame,
+        "prior_attempts": prior_attempts or [],
+        "rollback_context": rollback_context,
+        "system_inputs": system_inputs or {},
+    }
+    try:
+        canonical = json.dumps(
+            payload, sort_keys=True, default=str, ensure_ascii=False,
+        )
+    except Exception:  # noqa: BLE001 — fall back to repr for unhashable values
+        canonical = repr(payload)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def _error(ctx: DispatchContext, name: str, kind: str, message: str) -> dict:
     """Emit tool_failed event and return uniform error dict."""
     ctx.events.emit(
