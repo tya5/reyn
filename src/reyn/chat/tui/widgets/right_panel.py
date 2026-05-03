@@ -263,6 +263,12 @@ class _PreviewPane(Widget):
         background: #1a1a1a;
         padding: 0 1;
     }
+    _PreviewPane:focus {
+        border-top: tall #C8553D;
+    }
+    _PreviewPane:focus #preview-header {
+        color: #C8553D;
+    }
     _PreviewPane RichLog {
         background: transparent;
         height: 1fr;
