@@ -97,6 +97,14 @@ class MCPClient:
 
     # ── public API ──────────────────────────────────────────────────────────
 
+    def is_initialized(self) -> bool:
+        """Return True if the MCP session is currently open.
+
+        Read-only query used by tests to assert lifecycle state without
+        accessing private attributes directly.
+        """
+        return self._initialized
+
     async def initialize(self) -> None:
         """Open the transport and complete the MCP handshake.
 

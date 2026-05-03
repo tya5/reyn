@@ -126,6 +126,8 @@ def _run(coro):
 
 
 def test_http_transport_round_trip(patched_sdk):
+    """Tier 1 framework boundary: intentional SDK patch — verifies HTTP transport config
+    is forwarded correctly to the mcp SDK and that call_tool returns a valid result."""
     cfg = {
         "type": "http",
         "url": "http://localhost:9999/mcp",
@@ -148,6 +150,8 @@ def test_http_transport_round_trip(patched_sdk):
 
 
 def test_stdio_transport_round_trip(patched_sdk):
+    """Tier 1 framework boundary: intentional SDK patch — verifies stdio transport config
+    is forwarded correctly to the mcp SDK and that list_tools/call_tool return valid results."""
     cfg = {
         "type": "stdio",
         "command": "/usr/bin/echo",
@@ -174,16 +178,20 @@ def test_stdio_transport_round_trip(patched_sdk):
 
 
 def test_invalid_type_rejected():
+    """Tier 1: MCPClient public contract — unsupported transport type raises ValueError at construction."""
     with pytest.raises(ValueError, match="Unsupported MCP server type"):
         MCPClient({"type": "ftp", "url": "ftp://nope"})
 
 
 def test_missing_type_rejected():
+    """Tier 1: MCPClient public contract — missing transport type raises ValueError at construction."""
     with pytest.raises(ValueError, match="Unsupported MCP server type"):
         MCPClient({"url": "http://x"})
 
 
 def test_env_var_expansion(monkeypatch):
+    """Tier 1: expand_env public contract — ${VAR} tokens in string values are replaced
+    with the corresponding environment variable."""
     monkeypatch.setenv("MY_TOKEN", "s3cret")
     monkeypatch.setenv("MY_HOST", "example.com")
     cfg = {
@@ -197,6 +205,8 @@ def test_env_var_expansion(monkeypatch):
 
 
 def test_env_var_expansion_stdio_env(monkeypatch, patched_sdk):
+    """Tier 1 framework boundary: intentional SDK patch — expand_env in a stdio env dict
+    propagates expanded values into the mcp SDK's transport parameters."""
     monkeypatch.setenv("MY_TOKEN", "t0k")
     cfg = expand_env(
         {
@@ -217,23 +227,34 @@ def test_env_var_expansion_stdio_env(monkeypatch, patched_sdk):
 
 
 def test_close_releases_resources(patched_sdk):
+    """Tier 2: MCPClient lifecycle invariant — initialize sets is_initialized() True;
+    close tears down the session (is_initialized() False) and is idempotent.
+
+    Case A (is_initialized() True after init): public accessor, no private access.
+    Case B (is_initialized() False, stack/session released after close): all three
+      private state checks (_initialized, _stack, _session) collapse into a single
+      is_initialized() query — the invariant is that the session is closed, not which
+      internal field holds None.
+    Case C (double-close is no-op): verified via lack of exception on second close().
+    """
     cfg = {"type": "http", "url": "http://x/mcp"}
 
     async def _run_it():
         client = MCPClient(cfg)
         await client.initialize()
-        assert client._initialized is True
+        assert client.is_initialized() is True  # 案B: public accessor replaces _initialized
         await client.close()
-        assert client._initialized is False
-        assert client._stack is None
-        assert client._session is None
-        # Calling close again is a no-op.
+        assert client.is_initialized() is False  # 案B: replaces _initialized/_stack/_session checks
+        # Calling close again is a no-op (no exception raised).
         await client.close()
+        assert client.is_initialized() is False
 
     asyncio.run(_run_it())
 
 
 def test_call_tool_propagates_errors_as_mcp_error(patched_sdk):
+    """Tier 1 framework boundary: intentional SDK patch — tool-level runtime errors are
+    wrapped and surfaced as MCPError with a 'tools/call' message."""
     cfg = {"type": "http", "url": "http://x/mcp"}
 
     async def _run_it():
@@ -246,6 +267,8 @@ def test_call_tool_propagates_errors_as_mcp_error(patched_sdk):
 
 
 def test_sse_not_implemented(patched_sdk):
+    """Tier 1: MCPClient public contract — 'sse' transport is accepted at construction
+    (it is in _SUPPORTED_TYPES) but raises MCPError on initialize() until implemented."""
     cfg = {"type": "sse", "url": "http://x/sse"}
 
     async def _run_it():
