@@ -86,7 +86,6 @@ class ReynTUIApp(App):
         Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("tab", "palette_next", "Commands / next", priority=True, show=False),
         Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
-        Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
         Binding("n", "palette_next_only", "Next", priority=True, show=False),
         Binding("p", "palette_prev", "Prev", priority=True, show=False),
         Binding("j", "palette_next_only", "Next", priority=True, show=False),
