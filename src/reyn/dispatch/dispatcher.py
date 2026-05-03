@@ -56,6 +56,16 @@ class DispatchContext:
             None.
         phase: name of the phase whose ops are being dispatched. Embedded
             in step events so resume scans can scope to a phase boundary.
+
+    Skill-resume memoization field (PR-skill-resume part D3b):
+        resume_plan: optional ``ResumePlan`` from ``SkillResumeAnalyzer``.
+            When set, dispatch_tool consults ``resume_plan.committed_steps``
+            before invoking — a matching (op_invocation_id + args_hash)
+            triggers memoization (return the recorded result without
+            invoking). Drives forward-replay resume; ``args_hash``
+            mismatch falls through to fresh execution (drift detection).
+            ``None`` means normal execution (no memoization), which is
+            the default for fresh starts.
     """
 
     caller_kind: Literal["router", "skill_phase"]
@@ -67,6 +77,9 @@ class DispatchContext:
     state_log: Any = None       # has async .append(kind, **fields) -> int
     skill_run_id: str | None = None
     phase: str | None = None
+    # Resume memoization (PR-skill-resume D3b). Optional ResumePlan with
+    # the committed_steps list dispatch_tool consults before invoking.
+    resume_plan: Any = None     # has .committed_steps: list[CommittedStep]
 
 
 async def dispatch_tool(
@@ -132,6 +145,35 @@ async def dispatch_tool(
     # multiple op kinds). For chat-router callers, fall back to side_effect.
     purity = get_op_purity(name) if ctx.caller_kind == "skill_phase" else OpPurity.side_effect
     args_hash = _compute_args_hash(args)
+
+    # 2.5. Resume memoization (PR-skill-resume D3b-1c).
+    # If a ResumePlan is wired in and we find a CommittedStep matching the
+    # current call (op_invocation_id + phase + args_hash), reproduce the
+    # recorded outcome without invoking. This prevents:
+    #   - duplicate side effects on resume (the canonical SSD-FW concern)
+    #   - wasted LLM costs (when llm calls memoize through the same path)
+    # args_hash mismatch falls through deliberately — the LLM may have
+    # emitted a structurally different op shape this resume, in which
+    # case the recorded result no longer applies (drift detection).
+    memo = _lookup_memoized_step(
+        ctx.resume_plan, op_invocation_id, ctx.phase, args_hash,
+    )
+    if memo is not None:
+        ctx.events.emit(
+            "step_memoized",
+            caller_kind=ctx.caller_kind,
+            caller_id=ctx.caller_id,
+            tool=name,
+            chain_id=ctx.chain_id,
+            op_invocation_id=op_invocation_id,
+            args_hash=args_hash,
+            recorded_seq=memo.seq,
+        )
+        if memo.error_kind is not None:
+            return {"status": "error",
+                    "error": {"kind": memo.error_kind,
+                              "message": memo.error_message or ""}}
+        return {"status": "ok", "data": memo.result}
 
     # Step-event emission gate (PR-skill-resume part A).
     # Step events go to the WAL (durable, drives forward-replay resume);
@@ -302,6 +344,43 @@ async def _wal_step_failed(
             "WAL step_failed emission failed (run=%s op=%s): %s",
             ctx.skill_run_id, op_kind, e,
         )
+
+
+def _lookup_memoized_step(
+    resume_plan: Any,
+    op_invocation_id: str | None,
+    phase: str | None,
+    args_hash: str,
+) -> Any:
+    """Find a CommittedStep matching the current call, or return None.
+
+    Match criteria (all must hold for a hit):
+      - op_invocation_id equal (phase-relative ID)
+      - phase equal (same phase visit context)
+      - args_hash equal (drift detection — different args = re-execute)
+
+    The last-write-wins semantic: if multiple CommittedSteps match
+    (theoretically possible if the WAL has duplicates from a buggy
+    earlier run), the *most recently appended* one wins (highest seq).
+    This handles the edge case of a botched truncation that left two
+    completions for the same step.
+
+    ``resume_plan`` is typed Any to keep the dispatch module decoupled
+    from skill module imports — duck-typed access via ``committed_steps``.
+    """
+    if resume_plan is None or op_invocation_id is None:
+        return None
+    committed = getattr(resume_plan, "committed_steps", None)
+    if not committed:
+        return None
+    best = None
+    for step in committed:
+        if (step.op_invocation_id == op_invocation_id
+                and step.phase == (phase or "")
+                and step.args_hash == args_hash):
+            if best is None or step.seq > best.seq:
+                best = step
+    return best
 
 
 def _compute_args_hash(args: dict) -> str:
