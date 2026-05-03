@@ -33,20 +33,51 @@ Tests in `tests/` belong to exactly one tier. The tier determines what the test 
 
 ### Tier 2 — OS invariant
 
-**Pins**: P1–P8 derived invariants of the OS itself.
+**Pins**: invariants of the OS architecture and its subsystems.
 
-- LLM output contract (`type=transition` ⇒ `next_phase` non-null; `type=finish` ⇒ `next_phase` null)
-- **P1**: a phase that includes its own output schema is rejected by the OS
-- **P5**: data passed between phases outside the workspace channel is not honored as input to the next phase
-- **P6**: state mutations that bypass the events log are detected (= every state mutation produces an event)
+Two sub-categories:
+
+- **Tier 2a — Core principle invariants** (P1–P8 directly):
+  - LLM output contract (`type=transition` ⇒ `next_phase` non-null; `type=finish` ⇒ `next_phase` null)
+  - **P1**: a phase that includes its own output schema is rejected by the OS
+  - **P5**: data passed between phases outside the workspace channel is not honored as input to the next phase
+  - **P6**: state mutations that bypass the events log are detected (= every state mutation produces an event)
+
+- **Tier 2b — Subsystem invariants**: derived contracts of major subsystems
+  (resume / persistence / dispatch / scheduling). Examples:
+  - "WAL `step_completed` event lets resume memoize without re-execution"
+  - "Restored intervention's answer routes to the resuming skill"
+  - "BudgetTracker survives crash via `save_state` / `load_state`"
+  - "Schema version mismatch refuses load with `--reset` hint"
+
+  The contract is real and worth pinning, even though it's not a direct
+  P1–P8 derivation.
+
+- **Tier 2c — Multi-component integration (e2e)**: a single test exercises
+  several modules to verify end-to-end behavior of an invariant. Uses
+  real instances throughout; LLM is faked via a stub real callable
+  (NOT via `LLMReplay` — that path is Tier 3). Examples:
+  - "Crash mid-skill → restart → resume → completes" (`test_resume_e2e.py`)
+  - "Schema mismatch → CLI exits cleanly with `--reset` hint"
+  - "BudgetTracker cap enforced across crash + restart"
 
 **Granularity**: invariants. The test must fail when the invariant is violated, regardless of *how* it was violated.
 
-**Target count**: 1–2 cases per principle, total 5–10. More than that suggests the policy is being used as a place to dump implementation tests.
+**Target count**: 1–2 cases per invariant. Total grows organically with the
+number of subsystems and integration points worth pinning. Do not interpret
+this as a license to dump implementation tests — the [decision flow](#decision-flow)
+filters those out.
 
-### Tier 3 — Behavior tests (deterministic, fake LLM)
+### Tier 3 — LLM-replay tests (deterministic, fake LLM)
 
-**Pins**: behavior of LLM-dependent OS paths, exercised through a *fake* LLM (not a mock) at the `litellm.acompletion` boundary. **Mocks are forbidden — see [Mock vs Fake](#mock-vs-fake) below.**
+**Pins**: behavior of LLM-dependent OS paths, exercised through the
+`LLMReplay` Fake at the `litellm.acompletion` boundary. **Mocks are
+forbidden — see [Mock vs Fake](#mock-vs-fake) below.**
+
+Note on terminology: a Tier 3 test specifically uses `LLMReplay` (recorded
+fixture replay against the real `litellm` API surface). End-to-end
+integration tests that fake the LLM via a simpler stub callable belong
+in **Tier 2c** above, not Tier 3.
 
 #### Tier 3a — Single-call replay (current scope)
 
@@ -69,6 +100,17 @@ Multi-phase sessions, asserting on final state of workspace + events store. Curr
 Tests that fall in this list are **not** added to the suite, even when they would technically pass:
 
 - **Direct assertions on private state** (`tracker._daily_tokens == 100`). Use `snapshot()` / public API instead.
+- **Setup that mutates private state to bypass real flow** (e.g.
+  `session._buffered[key] = value` to pre-populate a cache that the
+  test then queries). If reaching the desired state via public API is
+  too expensive, the API surface should expose what's needed — the
+  test should not bypass. Setup-via-private is the same anti-pattern as
+  assert-on-private; it just shifts the brittleness from the assertion
+  to the setup phase.
+- **Internal coordination flags** (`_state_loaded`, `_initialized`,
+  `_cache_dirty`). Test the resulting *behavior*, not the flag.
+  Implementation-detail flags are by definition internal; pinning them
+  freezes the design.
 - **Algorithm pinning** (sort order, dict iteration order, internal cache structure)
 - **Per-commit regression duplicates**. The fix is the commit; the description in the PR is the record. Don't add a test for "this specific bug" unless it represents a genuine invariant that should hold forever.
 - **LLM output quality / semantic correctness** ("is this answer useful?"). This belongs to the `eval` skill (LLM-as-judge), not the test suite — see [Out of policy](#out-of-policy).
@@ -129,6 +171,36 @@ This bypasses the real API contract. When `litellm` changes its signature or res
 
 A fake routes through the real API surface. `LLMReplay` patches `litellm.acompletion`, but reconstructs a real `litellm.ModelResponse` from recorded data. Signature drift is detected at the call site (TypeError, AttributeError) or at lookup time (`MissingFixture`).
 
+#### `monkeypatch.setattr` with a real callable — allowed
+
+pytest's `monkeypatch.setattr(target, real_callable)` is **acceptable**
+when the replacement is a real callable: a function defined in the test,
+a concrete class with `__call__`, or another already-existing function.
+The hazard the policy targets is `MagicMock`/`AsyncMock` returning
+auto-spec'd Mock objects that bypass the real signature/contract.
+
+Example (allowed):
+
+```python
+class _ScriptedLLM:
+    def __init__(self, script):
+        self.script = script
+        self.calls = 0
+    async def __call__(self, model, frame, *args, **kwargs):
+        self.calls += 1
+        return LLMCallResult(data=self.script[self.calls - 1], usage=None)
+
+monkeypatch.setattr(runtime_mod, "call_llm", _ScriptedLLM(script))
+```
+
+The replacement here is a real class with a typed `__call__`; signature
+drift in `call_llm` raises `TypeError` at invocation, just like a real
+implementation would.
+
+For LLM-dependent paths, prefer `LLMReplay` (Tier 3) — it preserves the
+full litellm boundary. Stub callables are appropriate for Tier 2c
+integration tests where the LLM is incidental rather than under test.
+
 ### How
 
 ```python
@@ -161,6 +233,43 @@ Industry literature aligns: see Coulman, *Snapshot Testing: Use With Care* (2016
 A narrow exception exists in the [Annex](#annex-scaffolding-tests) for legacy refactor characterization, following Coulman's original framing.
 
 ---
+
+## Setup discipline
+
+Reaching a particular state in a test sometimes requires a non-trivial
+sequence of public-API calls. The temptation is to shortcut this by
+mutating private state directly:
+
+```python
+# Tier 4 — DO NOT do this in setup
+session._buffered_intervention_answers["run_id"] = some_answer
+result = bus.request(iv)
+assert result == some_answer
+```
+
+The test "works" but is brittle: any rename or refactor of
+`_buffered_intervention_answers` breaks the test, even though the
+public contract ("buffered answers from a previous run are returned by
+bus.request") is unchanged.
+
+The disciplined alternative is to populate the buffer via the real flow:
+
+```python
+# Acceptable — the buffer arrives via the real path
+session.restore_state(snapshot_with_outstanding_intervention)
+await session._maybe_answer_oldest_intervention("Charlie")
+# now bus.request will see the buffered answer through the real flow
+result = await bus.request(iv)
+```
+
+If the real-flow setup feels expensive, that is a *signal*, not a
+problem to bypass. The signal often points to a missing public method
+on the subject (e.g. `BudgetTracker.is_state_loaded()` instead of
+`_state_loaded`) or to a subsystem that needs better integration
+fixtures.
+
+Rule of thumb: if the test's setup section uses `_` private attributes
+to inject state, it's pinning implementation. Refactor.
 
 ## Annex: Scaffolding tests
 
