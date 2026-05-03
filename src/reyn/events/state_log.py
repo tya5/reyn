@@ -54,6 +54,8 @@ WAL_EVENT_KINDS = (
     "intervention_resolved",
     "skill_resumed",
     "skill_completed",
+    # NEW (PR-resume-ux β U1) — skill discarded by user via prompt or /skill discard
+    "skill_discarded",
 )
 
 

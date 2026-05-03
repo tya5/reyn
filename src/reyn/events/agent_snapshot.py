@@ -142,7 +142,10 @@ class AgentSnapshot:
             run_id = event.get("run_id")
             if run_id and run_id not in self.active_skill_run_ids:
                 self.active_skill_run_ids.append(run_id)
-        elif kind == "skill_completed":
+        elif kind in ("skill_completed", "skill_discarded"):
+            # PR-resume-ux β: skill_discarded prunes active_skill_run_ids
+            # the same way skill_completed does — both are terminal states
+            # from the agent-snapshot perspective.
             run_id = event.get("run_id")
             if run_id and run_id in self.active_skill_run_ids:
                 self.active_skill_run_ids.remove(run_id)

@@ -177,19 +177,38 @@ class SkillRegistry:
         self._save(snap)
         await self._fire_truncate_hook(trigger="skill_phase_advanced")
 
-    async def complete(self, *, run_id: str) -> None:
+    async def complete(
+        self,
+        *,
+        run_id: str,
+        status: str = "completed",
+    ) -> None:
         """Mark a skill run as finished and remove its snapshot.
+
+        ``status`` controls the lifecycle event kind:
+          - ``"completed"`` (default): normal end-of-skill, emits ``skill_completed``
+          - ``"discarded"``: user-driven abort via PR-resume-ux flow,
+            emits ``skill_discarded``
 
         Deletion order (WAL append before file unlink) means a crash
         between the two leaves the snapshot file orphaned but
-        recoverable: next startup sees ``skill_completed`` in the WAL,
+        recoverable: next startup sees the lifecycle event in the WAL,
         replays it onto AgentSnapshot (which removes run_id from
         ``active_skill_run_ids``), and the orphan is garbage-collected
         by ``load_active()``.
         """
+        if status == "completed":
+            kind = "skill_completed"
+        elif status == "discarded":
+            kind = "skill_discarded"
+        else:
+            raise ValueError(
+                f"complete: invalid status {status!r}; "
+                f"expected 'completed' or 'discarded'",
+            )
         if self._state_log is not None:
             await self._state_log.append(
-                "skill_completed",
+                kind,
                 target=self._agent_name,
                 agent=self._agent_name,
                 run_id=run_id,
@@ -203,7 +222,7 @@ class SkillRegistry:
                 snap_path, e,
             )
         self._snapshots.pop(run_id, None)
-        await self._fire_truncate_hook(trigger="skill_completed")
+        await self._fire_truncate_hook(trigger=kind)
 
     # ── read access ──────────────────────────────────────────────────────
 
