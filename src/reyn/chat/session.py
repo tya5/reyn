@@ -438,6 +438,13 @@ class ChatSession:
         self.running_skills: dict[str, asyncio.Task] = {}
         # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
         self.running_skills_started_at: dict[str, float] = {}
+        # R-D14: per-run chain_id tracking. When a skill_run was spawned to
+        # process an agent_request (or any chain-tagged invocation), the
+        # chain_id is recorded here so /skill discard can notify the
+        # upstream waiting agent without having to wait for chain_timeout.
+        # ``None`` value means the run is not chain-tagged (e.g. user-
+        # initiated invocations that don't participate in a chain).
+        self.running_skills_chain: dict[str, str | None] = {}
 
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
@@ -870,6 +877,11 @@ class ChatSession:
                 ))
 
         self.running_skills_started_at[run_id] = time.monotonic()
+        # R-D14: resumed skill_run is generally not chain-tagged (the
+        # original chain has long-since either completed or been wedged
+        # by the timeout watchdog). If a future re-issue path needs to
+        # carry chain_id across resume, plumb it through ``decision``.
+        self.running_skills_chain[run_id] = None
         await self._put_outbox(OutboxMessage(
             kind="status", text="resuming…", meta=meta,
         ))
@@ -879,6 +891,7 @@ class ChatSession:
         def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
             self.running_skills.pop(rid, None)
             self.running_skills_started_at.pop(rid, None)
+            self.running_skills_chain.pop(rid, None)
             self._drop_interventions_for_run(rid)
 
         task.add_done_callback(_cleanup)
@@ -1795,6 +1808,51 @@ class ChatSession:
                 meta={"chain_id": chain_id},
             ))
 
+    async def _on_chain_peer_discarded(
+        self, *, chain_id: str, peer: str, reason: str,
+    ) -> None:
+        """R-D14: AgentRegistry calls this when a peer agent's
+        skill_run for ``chain_id`` was discarded by the user.
+
+        Mirrors ``_on_chain_timeout_fire`` but for the discard path:
+        force-resolves the pending chain immediately, emits a
+        ``chain_peer_discarded`` audit event, and sends a synthesised
+        agent_response upstream so the user-visible reply doesn't
+        hang waiting for the (now-dead) peer.
+
+        Idempotent: returns silently if the chain has already been
+        resolved (by a parallel agent_response or earlier timeout).
+        """
+        pending = await self._chains.resolve(chain_id)
+        if pending is None:
+            return
+        waiting = sorted(pending.waiting_on)
+        error_text = (
+            f"chain interrupted: peer agent {peer!r} discarded its "
+            f"skill_run ({reason}); waiting_on={waiting}"
+        )
+        self._chat_events.emit(
+            "chain_peer_discarded",
+            chain_id=chain_id,
+            peer=peer,
+            reason=reason,
+            waiting_on=waiting,
+            origin_agent=pending.origin_agent,
+        )
+        try:
+            await self._send_agent_response(
+                to=pending.origin_agent,
+                response=error_text,
+                depth=pending.origin_depth,
+                chain_id=chain_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — never wedge the loop
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"chain peer discarded: failed to notify upstream: {exc}",
+                meta={"chain_id": chain_id},
+            ))
+
     async def _dispatch_routing_decision_for_user(
         self, decision: dict, *, chain_id: str, depth: int,
     ) -> None:
@@ -2157,6 +2215,10 @@ class ChatSession:
         self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
         # Track elapsed time for `:list` and provenance for outbox messages
         self.running_skills_started_at[run_id] = time.monotonic()
+        # R-D14: stash chain_id so /skill discard can notify the upstream
+        # waiting agent (chain_id is None for user-initiated invocations
+        # that don't participate in a chain).
+        self.running_skills_chain[run_id] = chain_id
         await self._put_outbox(OutboxMessage(
             kind="status", text="starting…",
             meta=_run_meta(run_id, skill_name),
@@ -2170,6 +2232,7 @@ class ChatSession:
         def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
             self.running_skills.pop(rid, None)
             self.running_skills_started_at.pop(rid, None)
+            self.running_skills_chain.pop(rid, None)
             self._drop_interventions_for_run(rid)
 
         task.add_done_callback(_cleanup)

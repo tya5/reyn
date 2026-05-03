@@ -368,6 +368,71 @@ class AgentRegistry:
             return None
         return await self.truncate_wal_if_eligible(bypass_throttle=True)
 
+    # ── R-D14: cross-agent chain discard notification ──────────────────────
+
+    async def notify_chain_discarded(
+        self,
+        *,
+        chain_id: str,
+        by_agent_name: str,
+        reason: str = "peer_discarded",
+    ) -> bool:
+        """Find the upstream waiter agent and force-resolve their chain.
+
+        When a user runs ``/skill discard <run_id>`` on agent B, and that
+        run was processing a chain registered on agent A's side, A would
+        otherwise stay stuck on ``waiting_on={B}`` until the watchdog
+        fires (chain_timeout_seconds, often minutes-to-hours in real
+        use). This method bridges the gap by scanning every other agent's
+        ChainManager for ``chain_id`` and invoking the matching
+        session's ``_on_chain_peer_discarded`` handler so the chain
+        resolves immediately.
+
+        Parameters:
+          chain_id: the chain that was being processed by the discarded run
+          by_agent_name: name of the agent doing the discard (= B in
+            the example); excluded from the scan to prevent self-notify
+          reason: short tag stored on the chain_resolve audit event
+
+        Returns True if a waiter was found and notified, False otherwise
+        (no other agent tracks this chain).
+
+        Defensive: a session whose ``_chains`` attribute is missing or
+        whose handler raises is logged and skipped — never blocks the
+        discard path.
+        """
+        notified = False
+        for name, session in self._agents.items():
+            if name == by_agent_name:
+                continue
+            chain_mgr = getattr(session, "_chains", None)
+            if chain_mgr is None:
+                continue
+            try:
+                pending = chain_mgr.find_chain(chain_id)
+            except Exception as e:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "notify_chain_discarded: find_chain raised on agent %s: %s",
+                    name, e,
+                )
+                continue
+            if pending is None:
+                continue
+            handler = getattr(session, "_on_chain_peer_discarded", None)
+            if handler is None:
+                continue
+            try:
+                await handler(
+                    chain_id=chain_id, peer=by_agent_name, reason=reason,
+                )
+                notified = True
+            except Exception as e:  # noqa: BLE001 — defensive
+                logger.warning(
+                    "notify_chain_discarded: handler raised on agent %s: %s",
+                    name, e,
+                )
+        return notified
+
     def _compute_truncate_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL.
 

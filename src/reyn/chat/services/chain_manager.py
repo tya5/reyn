@@ -214,6 +214,19 @@ class ChainManager:
         await self._journal.record_chain_resolve(chain_id=chain_id)
         return chain
 
+    def find_chain(self, chain_id: str) -> _PendingChain | None:
+        """Return the in-memory _PendingChain for ``chain_id``, or None.
+
+        Read-only public API for cross-agent chain lookup (R-D14): the
+        AgentRegistry's ``notify_chain_discarded`` scans every session's
+        ChainManager via this method to find the upstream waiter for a
+        chain whose downstream skill_run was discarded.
+
+        Distinct from ``resolve``: this does NOT mutate state nor emit
+        WAL events — it just answers "do you track this chain_id?".
+        """
+        return self._chains.get(chain_id)
+
     async def fire_timeout(self, chain_id: str) -> _PendingChain | None:
         """Remove and return a timed-out pending chain, persist timeout event.
 

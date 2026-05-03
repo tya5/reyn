@@ -134,4 +134,24 @@ async def _discard_skill_run(session: "ChatSession", args: str) -> None:
     # 3. Mark as discarded (WAL append + per-skill snapshot unlink)
     await reg.complete(run_id=run_id, status="discarded")
 
+    # 4. R-D14: notify the upstream chain waiter (if any) so they don't
+    # stay stuck for chain_timeout_seconds. Look up the chain_id we
+    # stashed when this skill_run was spawned; if present, the
+    # AgentRegistry's notify_chain_discarded scans every other agent's
+    # ChainManager and force-resolves the matching pending chain.
+    chain_id = session.running_skills_chain.pop(run_id, None)
+    if chain_id and getattr(session, "_registry", None) is not None:
+        try:
+            await session._registry.notify_chain_discarded(
+                chain_id=chain_id,
+                by_agent_name=session.agent_name,
+                reason="user_discarded_skill_run",
+            )
+        except Exception:  # noqa: BLE001 — defensive; discard succeeds anyway
+            import logging
+            logging.getLogger(__name__).warning(
+                "notify_chain_discarded failed for chain %s", chain_id,
+                exc_info=True,
+            )
+
     await reply(session, f"discarded skill run: {run_id}")
