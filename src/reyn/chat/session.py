@@ -2,9 +2,12 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import time
 import uuid
 from collections import deque
+
+logger = logging.getLogger(__name__)
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -590,8 +593,9 @@ class ChatSession:
         if self._compaction_task is not None and not self._compaction_task.done():
             try:
                 await self._compaction_task
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("compaction task failed during shutdown: %s", exc)
+                self._chat_events.emit("compaction_failed", error=str(exc), phase="shutdown")
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
         # Slash commands (`/list`, `/cancel <id>`, `/answer <id> <text>`) take
@@ -947,7 +951,9 @@ class ChatSession:
                 NARRATOR_SKILL_NAME, input_artifact, state_subdir=state_subdir,
                 forward_events=False,  # narrator is one phase, no need to surface
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("narrator skill failed for %r (%s): %s", skill_name, status, exc)
+            self._chat_events.emit("narrator_failed", skill=skill_name, status=status, error=str(exc))
             return None
         if not run_result.ok:
             return None

@@ -1,10 +1,13 @@
 import asyncio
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Coroutine, TypeVar
 import litellm
+
+logger = logging.getLogger(__name__)
 from reyn.schemas.models import ContextFrame
 from reyn.llm.pricing import TokenUsage
 
@@ -520,8 +523,8 @@ async def call_llm_tools(
     finish_reason = None
     try:
         finish_reason = response.choices[0].finish_reason
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("finish_reason unavailable — budget tracking may be affected: %s", exc)
 
     return LLMToolCallResult(
         content=msg.content,

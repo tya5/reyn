@@ -23,10 +23,13 @@ contract is:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
@@ -361,8 +364,8 @@ class AgentRegistry:
         for name, agent in list(self._agents.items()):
             try:
                 await agent.shutdown()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("agent shutdown failed for %r: %s", name, exc)
         # Cancel forwarders so they don't block on a queue that won't refill
         for t in self._forward_tasks.values():
             if not t.done():
@@ -386,7 +389,8 @@ class AgentRegistry:
                 continue
             try:
                 profile = self.load_profile(name)
-            except Exception:
+            except Exception as exc:
+                logger.warning("profile load failed for agent %r — excluded from routing: %s", name, exc)
                 continue
             role_lines = (profile.role or "").strip().splitlines()
             role_excerpt = role_lines[0].strip() if role_lines else ""
