@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 from reyn.schemas.models import Skill
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.budget.budget import BudgetTracker
@@ -11,6 +11,9 @@ from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
 from reyn.user_intervention import InterventionBus
 from reyn.events.event_store import EventStore
+
+if TYPE_CHECKING:
+    from reyn.skill.skill_registry import SkillRegistry
 
 
 _CALLER_RE = re.compile(r"^(direct|agents/[A-Za-z0-9_\-]+)$")
@@ -74,6 +77,7 @@ class Agent:
         initial_input: dict,
         output_language: str = "ja",
         chain_id: str | None = None,
+        skill_registry: "SkillRegistry | None" = None,
     ) -> RunResult:
         self.run_id = self._make_run_id(skill.name)
         # PR20: events live under
@@ -114,6 +118,7 @@ class Agent:
             chain_id=chain_id,
             budget_tracker=self._budget_tracker,
             skill_name=skill.name,
+            skill_registry=skill_registry,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

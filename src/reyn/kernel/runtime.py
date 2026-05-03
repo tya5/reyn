@@ -10,6 +10,7 @@ from reyn.budget.budget import BudgetExceeded, format_refusal_message, format_wa
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.events.state_log import StateLog
+    from reyn.skill.skill_registry import SkillRegistry
 from reyn.events.events import EventLog
 from reyn.workspace.workspace import Workspace
 from reyn.config import LimitsConfig
@@ -208,6 +209,7 @@ class OSRuntime:
         budget_tracker: "BudgetTracker | None" = None,
         skill_name: str = "",
         state_log: "StateLog | None" = None,
+        skill_registry: "SkillRegistry | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -242,6 +244,7 @@ class OSRuntime:
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
         self._state_log = state_log
+        self._skill_registry = skill_registry
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -976,12 +979,25 @@ class OSRuntime:
             default_model=self._resolver.resolve(self.model),
         )
 
+        if self._skill_registry:
+            await self._skill_registry.start(
+                run_id=self.run_id,
+                skill_name=self.skill.name,
+                skill_input=initial_input,
+            )
+
         artifact_path: str | None = self.workspace.store_artifact(
             "_input", artifact, skill_name=self.skill.name, visit=1
         )
 
         try:
             self._enter_phase(current_phase, artifact)
+            if self._skill_registry:
+                await self._skill_registry.advance_phase(
+                    run_id=self.run_id,
+                    next_phase=current_phase,
+                    last_phase_artifact_path=artifact_path,
+                )
 
             while True:
                 rollback_context = self._rollback.take_pending_ctx()
@@ -1040,6 +1056,12 @@ class OSRuntime:
                     )
                     artifact_path = None
                     self._enter_phase(current_phase, artifact)
+                    if self._skill_registry:
+                        await self._skill_registry.advance_phase(
+                            run_id=self.run_id,
+                            next_phase=current_phase,
+                            last_phase_artifact_path=artifact_path,
+                        )
                     continue
 
                 # No-progress detection: if this phase was just re-run after a rollback
@@ -1108,6 +1130,12 @@ class OSRuntime:
                     current_phase = next_node
                     artifact = output.artifact
                 self._enter_phase(current_phase, artifact)
+                if self._skill_registry:
+                    await self._skill_registry.advance_phase(
+                        run_id=self.run_id,
+                        next_phase=current_phase,
+                        last_phase_artifact_path=artifact_path,
+                    )
 
         except LoopLimitExceededError as exc:
             final_output = self._fallback_final_output()
@@ -1154,3 +1182,7 @@ class OSRuntime:
                 total_phase_count=sum(self._visit_counts.values()),
             )
             raise
+
+        finally:
+            if self._skill_registry:
+                await self._skill_registry.complete(run_id=self.run_id)
