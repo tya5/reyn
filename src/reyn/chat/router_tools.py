@@ -15,6 +15,39 @@ Gemini-safe schema rules enforced throughout:
 from __future__ import annotations
 
 
+# ── dispatch_kind sidecar registry ──────────────────────────────────────────
+#
+# Each tool is intrinsically either:
+#   - "sync"  — invoker awaits a result that's available in this RouterLoop
+#               turn; the LLM sees the tool_result and decides next step.
+#   - "async" — invoker dispatches work whose result arrives via a separate
+#               channel in a future router invocation (e.g. delegate_to_agent
+#               result comes through PR14 pending_chain). The current loop
+#               cannot wait for the answer; RouterLoop must exit after
+#               dispatch and rely on the future invocation to resume.
+#
+# Default: any tool not listed here is treated as "sync".
+#
+# Future: when more async tools appear (long-running skill modes, scheduled
+# tasks, webhooks), this registry can grow; the formalization candidate is
+# the `ToolSpec` dataclass in the residuals (residuals → OS abstraction
+# 拡張 → ToolSpec dataclass formalize).
+_DISPATCH_KIND: dict[str, str] = {
+    "delegate_to_agent": "async",
+}
+
+
+def get_dispatch_kind(tool_name: str) -> str:
+    """Return "sync" or "async" for the given tool name.
+
+    Used by RouterLoop to decide whether to continue the loop after a
+    tool dispatch (sync — result is in the tool_result, LLM can act on it)
+    or to exit immediately and wait for a deferred result via a separate
+    channel (async — pending_chain or equivalent).
+    """
+    return _DISPATCH_KIND.get(tool_name, "sync")
+
+
 def build_tools(
     available_skills: list[dict],  # [{name, description, routing?}, ...]
     available_agents: list[dict],  # [{name, role}, ...]

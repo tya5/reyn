@@ -322,8 +322,12 @@ async def test_delegate_to_agent():
     assert host.agent_sends[0]["chain_id"] == "chain-test"
     assert isinstance(host.agent_sends[0]["request"], str)
 
+    # After delegate dispatch, RouterLoop exits with an "awaiting peer
+    # reply" status note; the peer's actual response comes back later via
+    # pending_chain (PR14) which re-invokes the router.
     assert len(host.outbox) == 1
-    assert host.outbox[0]["kind"] == "agent"
+    assert host.outbox[0]["kind"] == "status"
+    assert "awaiting peer reply" in host.outbox[0]["text"]
 
 
 @pytest.mark.replay("fixtures/llm/router/memory_recall.jsonl")

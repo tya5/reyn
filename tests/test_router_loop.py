@@ -476,7 +476,15 @@ async def test_list_memory_top_level():
 
 @pytest.mark.asyncio
 async def test_delegate_to_agent():
-    """invoke delegate_to_agent; assert host.send_to_agent called correctly."""
+    """invoke delegate_to_agent; loop exits immediately so pending_chain
+    can resume the conversation when the peer's async reply arrives.
+
+    Earlier (pre-PR-tui-4-followup) the loop continued and the LLM
+    re-delegated each iteration until the cap was exhausted. Fix:
+    after a successful delegate dispatch, RouterLoop emits a status
+    note and returns; PR14 pending_chain re-invokes router with the
+    peer reply later.
+    """
     host = FakeRouterHost(agents=[{"name": "peer_agent", "role": "data agent"}])
     loop = make_loop(host)
 
@@ -485,7 +493,9 @@ async def test_delegate_to_agent():
             "name": "delegate_to_agent",
             "args": {"to": "peer_agent", "request": "please process the data"},
         }]),
-        text_result("Delegated."),
+        # Subsequent rounds intentionally not consumed — loop must exit
+        # after the delegate dispatch.
+        text_result("Should not reach this round."),
     ]
 
     with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
@@ -496,7 +506,44 @@ async def test_delegate_to_agent():
     assert host.agent_sends[0]["to"] == "peer_agent"
     assert host.agent_sends[0]["request"] == "please process the data"
     assert host.agent_sends[0]["chain_id"] == "chain-test"
-    assert host.outbox[0]["text"] == "Delegated."
+    # Only the first LLM call ran; the second round was never consumed.
+    assert mock_llm.await_count == 1
+    # Outbox shows the "awaiting peer reply" status, not a text reply.
+    assert any(
+        m["kind"] == "status" and "awaiting peer reply" in m["text"]
+        for m in host.outbox
+    ), f"Expected awaiting-peer-reply status; got: {host.outbox}"
+
+
+@pytest.mark.asyncio
+async def test_delegate_does_not_re_delegate_in_same_turn():
+    """Regression: even if call_llm_tools is mocked to keep emitting
+    delegate calls, RouterLoop.run() must exit after the first dispatch.
+
+    Real LLM behavior (dogfood verify): with the old code the LLM saw
+    `{status: dispatched}`, didn't realize the peer reply would arrive
+    asynchronously, and re-delegated each iteration until the cap fired.
+    Now we exit after the first delegate so pending_chain can take over.
+    """
+    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+    loop = make_loop(host, max_iterations=5)
+
+    # If the loop kept iterating it would call delegate 5 times.
+    delegate_round = tool_result([{
+        "name": "delegate_to_agent",
+        "args": {"to": "peer", "request": "do work"},
+    }])
+
+    with patch(
+        "reyn.chat.router_loop.call_llm_tools",
+        new_callable=AsyncMock,
+    ) as mock_llm:
+        mock_llm.side_effect = [delegate_round] * 5
+        await loop.run("delegate", [])
+
+    # Exactly one delegate dispatch; loop exited after the first iteration.
+    assert len(host.agent_sends) == 1
+    assert mock_llm.await_count == 1
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,7 @@ import functools
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.chat.router_tools import build_tools
+from reyn.chat.router_tools import build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
@@ -168,13 +168,36 @@ class RouterLoop:
                 tool_results = await asyncio.gather(*[
                     self._execute_tool(tc) for tc in result.tool_calls
                 ])
-                # append assistant message with tool_calls
+                # Detect async-deferred dispatches via dispatch_kind
+                # registry (router_tools._DISPATCH_KIND). Async tools'
+                # results arrive via a separate channel (e.g.
+                # delegate_to_agent → PR14 pending_chain re-invokes router
+                # in a future turn). The current loop can't wait for the
+                # result; if we continue, the LLM would see only "dispatched"
+                # status and re-dispatch (per dogfood verify_lead repro).
+                # Exit after the dispatch; the future invocation resumes.
+                async_count = sum(
+                    1
+                    for tc in result.tool_calls
+                    if get_dispatch_kind(tc["function"]["name"]) == "async"
+                )
+                if async_count:
+                    plural = "s" if async_count > 1 else ""
+                    await self.host.put_outbox(
+                        kind="status",
+                        text=(
+                            f"dispatched {async_count} async request{plural}; "
+                            f"awaiting peer reply"
+                        ),
+                        meta={"chain_id": self.chain_id},
+                    )
+                    return
+                # No delegation — accumulate messages for next iteration.
                 messages.append({
                     "role": "assistant",
                     "content": result.content or "",
                     "tool_calls": result.tool_calls,
                 })
-                # append tool results
                 for tc, r in zip(result.tool_calls, tool_results):
                     messages.append({
                         "role": "tool",
@@ -275,7 +298,19 @@ class RouterLoop:
                 depth=0,
                 chain_id=self.chain_id,
             )
-            return {"status": "dispatched", "to": args["to"]}
+            # 案 f-1: clear note that the reply arrives asynchronously and
+            # the LLM should wait for it. RouterLoop also exits after
+            # detecting any async dispatch (defense in depth via
+            # router_tools.get_dispatch_kind); if the loop ever did
+            # continue, this message tells the LLM what state we're in.
+            return {
+                "status": "dispatched",
+                "to": args["to"],
+                "note": (
+                    "Peer's reply will arrive in a future router invocation; "
+                    "please wait for it."
+                ),
+            }
         if name in ("remember_shared", "remember_agent"):
             layer = "shared" if name == "remember_shared" else "agent"
             return await self._remember(layer=layer, **args)
