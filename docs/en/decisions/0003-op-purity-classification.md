@@ -94,6 +94,6 @@ attribute. Dispatcher reads it to decide what to emit.
 ## References
 
 - Commit `5efa568` — `op_runtime/registry.py` unified op kind registry
-- Plan file section "Op purity 分類による event skip"
+- Plan file section "Op purity classification for event skip"
 - ADR-0001 (state model — what consumes these events)
 - ADR-0002 (forward-replay resume — why ambiguity matters)

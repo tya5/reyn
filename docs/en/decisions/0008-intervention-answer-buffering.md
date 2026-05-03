@@ -1,7 +1,13 @@
 # ADR-0008: Intervention answer in-memory buffering (MVP)
 
-**Status**: Accepted (2026-05-03)
+**Status**: Superseded by [ADR-0016](0016-durable-answer-buffer.md) (2026-05-04)
 **Track**: PR-intervention-link L6 + L7
+
+> The in-memory buffer landed as PR-intervention-link L6. R-D12 (durability
+> follow-up) landed in commit `01c29b7`, replacing the in-memory buffer
+> with a WAL-durable variant that handles state 3 correctly. ADR-0016
+> records the durable design. This ADR is preserved for the trade-off
+> analysis between the three states.
 
 ## Context
 

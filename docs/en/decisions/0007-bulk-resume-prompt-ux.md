@@ -1,7 +1,14 @@
 # ADR-0007: Bulk 2-choice resume prompt UX
 
-**Status**: Accepted (2026-05-03), pending implementation in PR-resume-prompt
-**Track**: R-D3 (deferred from PR-resume-ux β to separate PR)
+**Status**: Superseded by [ADR-0012](0012-auto-resume-default.md) (2026-05-04)
+**Track**: R-D3 (originally deferred from PR-resume-ux β; later discarded)
+
+> The 2-choice bulk prompt was discarded before implementation. Subsequent
+> design analysis (see ADR-0012 + discussion-log Phase 11) showed that the
+> "all stop" path solved no real problem the auto-resume path doesn't, so
+> the interactive prompt was removed entirely in favour of unconditional
+> auto-resume. This ADR is preserved for the design rationale it captured
+> (= the iteration history of choice-count vs. cognitive load).
 
 ## Context
 
@@ -40,29 +47,30 @@ Rejected: too many choices for non-expert users; each option carries
 implications they're unlikely to weigh correctly. "Inspect" isn't an
 action — it's a separate diagnostic flow.
 
-### Iteration 2: 3-choice with structured "不利益 / 後でやること"
+### Iteration 2: 3-choice with structured "downside / follow-up action"
 
 ```
-[1] 続ける — 完了したものとして次へ進む
-    不利益: 実際は失敗していた場合、結果に反映されません
-    後でやること: 送信先 (Notion) で実際に作成されたか確認
+[1] Continue — treat as completed and move on
+    Downside: if it actually failed, the failure won't show in results
+    Follow-up: confirm in the destination (Notion) whether it was created
 ...
 ```
 
-Rejected: structure leaks through ("不利益:" labels). User has to ask
-clarifying questions ("blog_writer って何?", "どうやって確認するの?").
-Wording is too long; the structure encourages over-explanation.
+Rejected: the structure leaks through ("Downside:" labels in the UI).
+The user has to ask clarifying questions ("what is `blog_writer`?",
+"how do I confirm?"). Wording is too long; the structure encourages
+over-explanation.
 
 ### Iteration 3 (adopted): 2-choice bulk view with description
 
 ```
-3 件の skill が前回の中断から復元できます:
+3 skills can be restored from the previous interruption:
 
-  alpha / blog_writer — Notion にブログ記事を投稿する
-  alpha / image_picker — 画像を選択する
-  beta / eval_runner — テスト評価を実行する
+  alpha / blog_writer — post a blog article to Notion
+  alpha / image_picker — pick an image
+  beta / eval_runner — run a test evaluation
 
-  [すべて続ける]  [すべてやめる]
+  [Continue all]  [Abort all]
 ```
 
 ## Decision
@@ -72,8 +80,8 @@ context.**
 
 Design rules:
 
-- **2 choices in the prompt**: `[すべて続ける]` (= internal `skip` for
-  ambiguous) and `[すべてやめる]` (= internal `discard`). `retry` is
+- **2 choices in the prompt**: `[Continue all]` (= internal `skip` for
+  ambiguous) and `[Abort all]` (= internal `discard`). `retry` is
   removed from interactive prompts; available only via `reyn.yaml`
   policy for power users.
 - **Bulk view**: list all interrupted skill_runs in one prompt, not N
@@ -84,10 +92,10 @@ Design rules:
     deferred to R-D13 follow-up.
   - `description` from `Skill.description` field (skill author writes
     it, framework displays as-is). Empty → omit.
-- **No op-specific text**: avoid trying to auto-generate "Notion へ
-  の書き込み" from op args. Skill description carries the context.
-- **No special-case for N=1**: same wording "N 件の skill が..."
-  regardless of count. Avoids edge-case branching.
+- **No op-specific text**: avoid trying to auto-generate "writing to
+  Notion" from op args. Skill description carries the context.
+- **No special-case for N=1**: same wording "N skills can be
+  restored..." regardless of count. Avoids edge-case branching.
 - **Selective scenarios**: handled via `/skill discard <id>` slash
   before answering the prompt, not in the prompt itself.
 
@@ -119,8 +127,8 @@ Design rules:
 
 - Per-skill granular prompts. Documented as out-of-scope; revisit if
   user feedback demands it.
-- Op-specific prompt text generation (e.g. "外部 API への書き込み
-  中"). Tried in iteration 2; rejected as fragile and noisy.
+- Op-specific prompt text generation (e.g. "writing to external API").
+  Tried in iteration 2; rejected as fragile and noisy.
 
 ## References
 

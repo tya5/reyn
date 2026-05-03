@@ -24,6 +24,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0001](0001-state-model-wal-snapshot.md) | WAL + snapshot cache (transactional event-sourced replay) |
 | [0002](0002-forward-replay-resume.md) | Forward-replay resume (no phase-head re-execution) |
 | [0003](0003-op-purity-classification.md) | Op purity classification for step events |
+| [0014](0014-wal-size-safety-net.md) | WAL size safety net trigger |
 
 ### Memoization
 
@@ -32,6 +33,8 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0004](0004-memoization-key-design.md) | Memoization key: (op_invocation_id, phase, args_hash) |
 | [0005](0005-volatile-field-stripping.md) | Volatile field stripping for memo stability |
 | [0009](0009-visit-count-decrement-on-resume.md) | Pre-decrement visit_count on resume |
+| [0011](0011-world-purity-memo-invalidation.md) | World-purity memo invalidation on resume |
+| [0015](0015-llm-result-workspace-ref.md) | LLM result workspace ref threshold |
 
 ### Schema and lifecycle
 
@@ -39,13 +42,34 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0006](0006-schema-version-refuse-policy.md) | Schema version refuse + --reset (pre-1.0 policy) |
 | [0010](0010-restore-cli-flags.md) | --no-restore / --reset CLI flag semantics |
+| [0013](0013-exception-aware-crash-lifecycle.md) | Exception-aware skill completion in finally clause |
+
+### Resume UX and policy
+
+| ADR | Topic |
+|---|---|
+| [0007](0007-bulk-resume-prompt-ux.md) | ~~Bulk 2-choice resume prompt UX~~ — superseded by [0012](0012-auto-resume-default.md) |
+| [0012](0012-auto-resume-default.md) | Auto-resume default + retry policy |
 
 ### User intervention
 
 | ADR | Topic |
 |---|---|
-| [0007](0007-bulk-resume-prompt-ux.md) | Bulk 2-choice resume prompt UX |
-| [0008](0008-intervention-answer-buffering.md) | Intervention answer in-memory buffering (MVP) |
+| [0008](0008-intervention-answer-buffering.md) | ~~In-memory answer buffer (MVP)~~ — superseded by [0016](0016-durable-answer-buffer.md) |
+| [0016](0016-durable-answer-buffer.md) | Durable intervention answer buffer |
+
+### Multi-agent and nested skills
+
+| ADR | Topic |
+|---|---|
+| [0017](0017-parent-run-id-nested-skill-path.md) | parent_run_id for nested skill path display |
+| [0018](0018-cross-agent-discard-notify.md) | Cross-agent discard chain notification |
+
+### Web UI scope
+
+| ADR | Topic |
+|---|---|
+| [0019](0019-openui-reyn-internal-framing.md) | OpenUI reframed as Reyn-internal contract |
 
 ## Format
 

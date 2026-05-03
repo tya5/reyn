@@ -174,23 +174,24 @@ The hardest design phase, mostly because user experience is subjective.
 Rejected: too much for non-experts. "Inspect" isn't an action; it's
 a separate diagnostic flow.
 
-### Iteration 8.2: 3-choice with structured "不利益 / 後でやること"
+### Iteration 8.2: 3-choice with structured "downside / follow-up action"
 
 Tried showing each choice with its disadvantage and follow-up action.
-Rejected: the structure leaks ("不利益:" labels). User asks questions
-the structure can't answer ("blog_writer って何?", "どうやって確認?").
-Adding more text makes it worse.
+Rejected: the structure leaks ("Downside:" labels in the UI). The
+user asks questions the structure can't answer ("what is
+`blog_writer`?", "how do I confirm?"). Adding more text makes it
+worse.
 
 ### Iteration 8.3: 2-choice bulk view (adopted)
 
 ```
-3 件の skill が前回の中断から復元できます:
+3 skills can be restored from the previous interruption:
 
-  alpha / blog_writer — Notion にブログ記事を投稿する
-  alpha / image_picker — 画像を選択する
-  beta / eval_runner — テスト評価を実行する
+  alpha / blog_writer — post a blog article to Notion
+  alpha / image_picker — pick an image
+  beta / eval_runner — run a test evaluation
 
-  [すべて続ける]  [すべてやめる]
+  [Continue all]  [Abort all]
 ```
 
 - 2 choices in the prompt
@@ -248,9 +249,9 @@ Late thought: "is discard 100% safe?" — surfaced four risks:
 4. **Pending interventions**: handled by existing
    `_drop_interventions_for_run`.
 
-This audit was the user's contribution — the framing "ゾンビになったり要求元
-をブロッキングするリスクはある？" forced explicit consideration of edge
-cases that would have been bugs in production.
+This audit was the user's contribution — the framing "is there a risk
+of zombie tasks, or of blocking the upstream caller?" forced explicit
+consideration of edge cases that would have been bugs in production.
 
 ## Cross-cutting: test policy
 
@@ -265,6 +266,161 @@ Not a single decision but a thread through every PR:
 Documented in `CLAUDE.md` and `docs/en/contributing/testing.md`. The
 discipline produced a regression-free sequence of 26+ commits across
 5 PRs (490 passed / 2 xfailed).
+
+## Phase 11: the bulk prompt was discarded before implementation
+
+ADR-0007 had committed to a 2-choice bulk prompt
+(`[continue all] / [abort all]`). Before PR-resume-prompt was
+written, a review pass asked the simple question: "what is the
+`[abort all]` button actually for?"
+
+The carried-forward justifications were:
+
+1. *Stale memo result locks the skill into a wrong answer.* True for
+   `world` purity ops — but solvable structurally by invalidating
+   `world` memos at run boundary. That fix became
+   PR-memo-purity-fix and **ADR-0011**.
+2. *Prior LLM responses bias the retry.* This is a property of LLM
+   inference, not of crash recovery; the same anchoring exists when
+   the user re-runs a skill in a fresh process. Reyn's state model
+   has no act_turn-level rollback — adding "wipe this turn's LLM
+   context" would require deeper machinery than (2) deserves. The
+   user's escape is `/skill discard <id>` followed by re-invocation,
+   which the prompt's "all stop" branch was offering only as a side
+   effect.
+3. *Nested chain disconnection.* Orthogonal to resume; future
+   PR-discard-cascade-reissue work.
+
+With (1) structurally fixed and (2)/(3) not really stop-equals-restart
+problems, the prompt was offering a binary the user didn't need to
+answer. Auto-resume became the default. **ADR-0012** records the
+pivot; **ADR-0007** is marked superseded.
+
+The lesson worth keeping: a UX prompt that doesn't carry a real
+decision is cognitive load without payoff. Two iterations of "what
+exactly does the user gain by being asked?" survived to land.
+
+## Phase 12: filling the resume infrastructure gaps
+
+Once auto-resume was the default, three latent issues that the
+manual-prompt design hid surfaced quickly.
+
+### `OSRuntime.run()` finally clause (R-D1)
+
+The teardown was unconditional `complete()`, which deleted the
+snapshot regardless of how the process exited. Production
+interruptions (Ctrl-C, transient `RuntimeError`, OOM) all hit the
+finally and silently lost the resume capability.
+
+Test fixtures had been masking this — `test_resume_e2e.py` raised
+`RuntimeError` to simulate crash, then *manually re-saved the
+snapshot* before continuing. That re-save was hiding the production
+bug.
+
+Fix: classify exception types via `sys.exc_info()` in the finally;
+only normal return and `WorkflowAbortedError` complete; everything
+else preserves snapshot and emits a `skill_run_interrupted` event.
+**ADR-0013**.
+
+### WAL size safety net (R-D4)
+
+The truncation triggers in ADR-0001 fired on phase advance + skill
+complete, with a 5 s throttle to avoid rewrite thrashing. Two quiet
+patterns broke this: long-idle sessions and ask_user-blocked skills.
+Either could grow the WAL unboundedly because the semantic events
+never fired.
+
+Fix: a chat-turn-boundary size check (`>= 1 MB` triggers force
+truncate with throttle bypass). Aligns with user activity; no idle
+loop overhead. **ADR-0014**.
+
+External review during the same period surfaced a deeper related
+issue (R-D16): a single long-await skill pins the truncation floor
+at its `last_phase_applied_seq`, blocking even the size-driven path.
+Tracked as a future ADR; the planned fix is "wait-aware floor"
+calculation.
+
+### LLM result workspace ref (R-D10)
+
+Recording LLM responses inline in `step_completed` events meant a
+phase with several act_turns could carry MB of payload that the
+in-flight phase couldn't truncate. Solved by mirroring the workspace
+artifact pattern: large payloads off-load to
+`<agent>/skills/<run_id>/llm_results/<seq>.json`, the WAL event
+carries `{"_ref": "<path>"}`. 32 KB threshold; cleanup bound to
+`SkillRegistry.complete`. **ADR-0015**.
+
+## Phase 13: durability and multi-agent housekeeping
+
+### State 3 race finally fixed (R-D12)
+
+ADR-0008 documented the in-memory answer buffer's state-3 gap (user
+answers, second crash, answer lost) as accepted MVP debt. With the
+rest of the resume machinery stable, R-D12 promoted the buffer to
+WAL-durable: two new event kinds (`intervention_answer_buffered` /
+`intervention_answer_consumed`), a snapshot field, restore on
+session start. **ADR-0016** supersedes ADR-0008.
+
+### Nested skill path display (R-D13)
+
+`/skill list` had been showing parent and child skills as flat,
+unrelated entries. R-D13 added a forward `parent_run_id` link on the
+child's snapshot, plumbed through six layers from
+`ControlIRExecutor` down to `SkillRegistry.start`. Lineage display
+is O(1) per entry, survives WAL truncation. **ADR-0017**.
+
+The plumbing depth (six layers) felt heavy for one field, but the
+conduit unlocks the future cascade-reissue work without further
+plumbing.
+
+### Cross-agent discard notification (R-D14)
+
+`/skill discard B-456` aborted B's run but left agent A's
+`pending_chain` waiting on the watchdog timeout. With realistic
+production `chain_timeout_seconds` values (minutes to hours), A
+could hang for an hour after the operator already pressed
+discard.
+
+Before designing R-D14, the multi-process question came up: should
+discard notifications survive process boundaries? User direction was
+clear: cross-process is the future A2A protocol's job;
+multi-process inside one workspace is not a goal. R-D14 simplified
+to in-process only, which let the implementation be a direct
+cross-session method on `AgentRegistry`. Five layers
+(`running_skills_chain` map → `find_chain` API →
+`notify_chain_discarded` orchestration → `_on_chain_peer_discarded`
+handler → slash wiring). **ADR-0018**.
+
+## Phase 14: external review and Web UI reframing
+
+The `tmp/external-review-*.md` series (Claude Cowork, 2026-05-03)
+delivered two related framing critiques on the web UI layer:
+
+1. **Premature protocol claim.** OpenUI was documented with neutral
+   multi-vendor protocol language despite having one host (Reyn) and
+   one schema author. Compared unfavourably with MCP, which earned
+   its protocol status from cross-vendor adoption first.
+2. **Wrong headline value.** The actually-differentiating product
+   experience is the **App / Studio split** (two co-existing UIs
+   from one engine state). Design swappability is a useful capability
+   the layered model enables but isn't the differentiator we'd been
+   marketing.
+
+The reframe (commit `b98272d`):
+
+- README and engine-design-contract reordered: App / Studio split is
+  headline, swap is secondary capability.
+- Governance language ("spec-first, neutral naming", "lifted into
+  standalone repo") removed; replaced with "this is Reyn's web UI
+  contract, the protocol claim is earned not claimed".
+- `multi-design-selection.md` and `design-distribution.md` marked
+  **Deprioritised to v1.x**: v0 ships one bundled design, no `reyn
+  design` CLI, no picker UI. The Layer 0 contract stays
+  swap-friendly so the path forward isn't blocked.
+
+**ADR-0019** records the framing pivot. The lesson worth keeping:
+when documentation language outpaces what's been built and adopted,
+external readers will (correctly) discount the rest.
 
 ## What this log is not
 
