@@ -90,8 +90,6 @@ class ReynTUIApp(App):
         Binding("j", "palette_next_only", "Next", priority=True, show=False),
         Binding("k", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
-        Binding("ctrl+w", "panel_next_content", "Next tab", priority=True, show=False),
-        Binding("ctrl+shift+w", "panel_prev_content", "Prev tab", priority=False, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
