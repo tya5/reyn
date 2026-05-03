@@ -6,6 +6,7 @@ instances; switching agents mid-REPL via `/attach <name>` happens through it.
 """
 from __future__ import annotations
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -30,8 +31,77 @@ def register(sub) -> None:
             "Useful for piping output, debugging, or headless environments."
         ),
     )
+    p.add_argument(
+        "--no-restore",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip restoring in-flight skill state from disk this run. "
+            "Useful for debugging or starting a clean session without "
+            "discarding the persisted state (it will be loaded on next run)."
+        ),
+    )
+    p.add_argument(
+        "--reset",
+        action="store_true",
+        default=False,
+        help=(
+            "Wipe in-flight skill state (snapshots + WAL) before starting. "
+            "Audit logs in .reyn/events/ are preserved. "
+            "Asks for confirmation before deleting."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
+
+
+def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
+    """Wipe in-flight skill state under ``project_root/.reyn/``.
+
+    Removes:
+      - ``.reyn/state/wal.jsonl`` (process WAL)
+      - ``.reyn/agents/<name>/state/snapshot.json`` (per-agent snapshots)
+      - ``.reyn/agents/<name>/state/skills/`` (per-skill snapshots)
+
+    Preserves:
+      - ``.reyn/events/`` (audit log, P6 truth — must not be wiped)
+      - profile.yaml, MEMORY.md, etc. (non-runtime state)
+
+    Returns:
+      ``True`` if the reset proceeded (or no state existed); ``False`` if
+      the user declined the confirmation prompt.
+    """
+    if confirm:
+        try:
+            answer = input(
+                "This will delete all in-flight skill state "
+                "(snapshots + WAL). Audit logs are preserved.\n"
+                "Continue? [yes/no]: "
+            ).strip().lower()
+        except EOFError:
+            answer = "no"
+        if answer not in ("yes", "y"):
+            return False
+
+    # Delete WAL
+    wal_path = project_root / ".reyn" / "state" / "wal.jsonl"
+    wal_path.unlink(missing_ok=True)
+
+    # Delete per-agent snapshots + per-skill snapshots dir
+    agents_dir = project_root / ".reyn" / "agents"
+    if agents_dir.is_dir():
+        for agent_dir in agents_dir.iterdir():
+            if not agent_dir.is_dir():
+                continue
+            state_dir = agent_dir / "state"
+            if not state_dir.is_dir():
+                continue
+            (state_dir / "snapshot.json").unlink(missing_ok=True)
+            skills_dir = state_dir / "skills"
+            if skills_dir.is_dir():
+                shutil.rmtree(skills_dir, ignore_errors=True)
+
+    return True
 
 
 def run(args: argparse.Namespace) -> None:
@@ -50,6 +120,16 @@ def run(args: argparse.Namespace) -> None:
     limits = session_cfg.limits_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
+
+    # PR-resume-ux β U3: handle --reset before constructing state_log so
+    # we don't open a freshly-written WAL just to delete it.
+    if getattr(args, "reset", False):
+        proceeded = _reset_project_state(project_root, confirm=True)
+        if not proceeded:
+            print("Reset aborted.", file=sys.stderr)
+            sys.exit(0)
+        print("State reset. Starting with empty session.", file=sys.stderr)
+
     # PR21: process-shared WAL for crash recovery. Owned by AgentRegistry,
     # injected into each ChatSession at construction.
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
@@ -111,12 +191,20 @@ def run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     use_tui = not getattr(args, "cui", False) and sys.stdin.isatty()
+    skip_restore = getattr(args, "no_restore", False)
+    if skip_restore:
+        print(
+            "⚠ --no-restore: skill state on disk is NOT loaded this run. "
+            "Rerun without --no-restore to resume in-flight skills.",
+            file=sys.stderr,
+        )
 
     if use_tui:
         from reyn.chat.tui.app import run_tui
 
         async def _main_tui() -> None:
-            await registry.restore_all()
+            if not skip_restore:
+                await registry.restore_all()
             await registry.attach(name)
             await run_tui(
                 registry,
@@ -136,7 +224,9 @@ def run(args: argparse.Namespace) -> None:
             # PR21: replay WAL into per-agent snapshots before any new state
             # changes happen. Agents with restored state get their inbox /
             # pending_chains repopulated and their main loop started here.
-            await registry.restore_all()
+            # PR-resume-ux β U3: --no-restore skips this for debugging.
+            if not skip_restore:
+                await registry.restore_all()
             await registry.attach(name)
             await run_repl(registry, renderer=renderer)
 
