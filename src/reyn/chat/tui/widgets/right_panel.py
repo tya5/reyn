@@ -394,7 +394,7 @@ class RightPanel(Widget):
     # ── panel renderers ──────────────────────────────────────────────────────
 
     def _render_keys(self) -> str:
-        lines = ["[bold #C8553D]Key Bindings[/]\n"]
+        lines = ["[bold #C8553D]Key Bindings[/]", ""]
         bindings = self.app.active_bindings
         seen: set[str] = set()
         for _key, ab in bindings.items():
@@ -478,7 +478,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_agents(self) -> str:
-        lines = ["[bold #C8553D]Agents[/]\n"]
+        lines = ["[bold #C8553D]Agents[/]", ""]
 
         if self._registry is None:
             lines.append("[#555555]  (no registry)[/]")
@@ -515,7 +515,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_memory(self) -> str:
-        lines = ["[bold #C8553D]Memory[/]\n"]
+        lines = ["[bold #C8553D]Memory[/]", ""]
 
         if self._project_root is None:
             lines.append("[#555555]  (no project root)[/]")
@@ -559,7 +559,7 @@ class RightPanel(Widget):
         import datetime
         from collections import defaultdict
 
-        lines = ["[bold #C8553D]Cost[/]\n"]
+        lines = ["[bold #C8553D]Cost[/]", ""]
 
         if self._project_root is None:
             lines.append("[#555555]  (no project root)[/]")
@@ -655,7 +655,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_docs(self) -> str:
-        lines = ["[bold #C8553D]Docs[/]\n"]
+        lines = ["[bold #C8553D]Docs[/]", ""]
 
         if self._project_root is None:
             lines.append("[#555555]  (no project root)[/]")
