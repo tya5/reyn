@@ -32,6 +32,150 @@ _TYPE_COLORS: dict[str, str] = {
 _LIVE_PANELS = {"events", "agents"}
 _REFRESH_INTERVAL = 2.0
 
+# ── events tab constants ──────────────────────────────────────────────────────
+
+_EVENT_COLORS: dict[str, str] = {
+    "phase_started":               "#44cc88",
+    "phase_completed":             "#44cc88",
+    "control_decided":             "#88ddaa",
+    "context_built":               "#335544",
+    "llm_called":                  "#ffcc66",
+    "llm_response_received":       "#ffcc66",
+    "artifact_created":            "#88aaff",
+    "artifact_validated":          "#88aaff",
+    "validation_error":            "#ff6644",
+    "phase_retry":                 "#ff6644",
+    "permission_denied":           "#ff4444",
+    "router_retry_exhausted":      "#ff4444",
+    "tool_failed":                 "#ff6644",
+    "tool_called":                 "#cc88ff",
+    "tool_returned":               "#cc88ff",
+    "mcp_called":                  "#cc88ff",
+    "mcp_completed":               "#cc88ff",
+    "act_executed":                "#cc88ff",
+    "skill_run_spawned":           "#88aaff",
+    "skill_run_completed":         "#88aaff",
+    "workflow_started":            "#88aaff",
+    "workflow_finished":           "#88aaff",
+    "agent_message_sent":          "#aaaaaa",
+    "agent_request_received":      "#aaaaaa",
+    "agent_response_received":     "#aaaaaa",
+    "user_message_received":       "#dddddd",
+    "chat_started":                "#dddddd",
+    "chat_stopped":                "#dddddd",
+    "user_intervention_requested": "#ffcc88",
+    "user_intervention_received":  "#ffcc88",
+    "preprocessor_step_started":   "#555555",
+    "preprocessor_step_completed": "#555555",
+    "python_step_started":         "#555555",
+    "python_step_completed":       "#555555",
+    "web_fetch_started":           "#888888",
+    "web_fetch_completed":         "#888888",
+    "web_search_started":          "#888888",
+    "web_search_completed":        "#888888",
+    "workspace_updated":           "#555555",
+    "compaction_check":            "#555555",
+}
+_DEFAULT_EVENT_COLOR = "#666666"
+
+# Each tuple is (label, frozenset-of-types). Empty set = show all.
+_FILTER_GROUPS: list[tuple[str, frozenset]] = [
+    ("all",   frozenset()),
+    ("phase", frozenset({
+        "phase_started", "phase_completed", "control_decided", "context_built",
+        "artifact_created", "artifact_validated",
+    })),
+    ("llm",   frozenset({"llm_called", "llm_response_received"})),
+    ("tool",  frozenset({
+        "tool_called", "tool_returned", "tool_failed",
+        "mcp_called", "mcp_completed", "act_executed",
+    })),
+    ("skill", frozenset({
+        "skill_run_spawned", "skill_run_completed",
+        "workflow_started", "workflow_finished",
+        "agent_message_sent", "agent_request_received", "agent_response_received",
+    })),
+    ("error", frozenset({
+        "validation_error", "phase_retry", "permission_denied",
+        "router_retry_exhausted", "tool_failed",
+    })),
+]
+
+_TAIL_CYCLE: list[int] = [30, 50, 100, 200]
+
+
+def _event_hint(ev: dict) -> str:
+    """Return a short plain-text annotation of the most useful data fields."""
+    t = ev.get("type", "")
+    d = ev.get("data") or {}
+
+    if t == "phase_started":
+        return d.get("phase", "")
+    if t == "phase_completed":
+        nxt = d.get("next") or "finish"
+        conf = d.get("confidence", 0)
+        return f"{d.get('phase', '')} → {nxt} ({conf:.0%})"
+    if t == "control_decided":
+        nxt = d.get("next_phase") or ""
+        suffix = f" → {nxt}" if nxt else ""
+        return f"{d.get('phase', '')}: {d.get('decision', '')}{suffix}"
+    if t == "llm_called":
+        return f"{d.get('phase', '')} [{d.get('model', '')}]"
+    if t == "llm_response_received":
+        pt = d.get("prompt_tokens", 0)
+        ct = d.get("completion_tokens", 0)
+        cost = d.get("cost_usd", 0)
+        return f"{pt}+{ct}t ${cost:.4f}"
+    if t == "artifact_created":
+        return f"{d.get('artifact_type', '')} @ {d.get('phase', '')}"
+    if t == "artifact_validated":
+        errors = d.get("errors") or []
+        at = d.get("artifact_type", "")
+        return f"{at} ✗ {len(errors)} err" if errors else f"{at} ✓"
+    if t == "validation_error":
+        return f"{d.get('phase', '')}: {str(d.get('error', ''))[:35]}"
+    if t == "phase_retry":
+        return f"attempt {d.get('attempt', '?')}/{d.get('max_retries', '?')}: {str(d.get('error', ''))[:25]}"
+    if t == "permission_denied":
+        return f"{d.get('kind', '')} {d.get('path', '')}"
+    if t in ("tool_called", "tool_returned"):
+        return d.get("tool", "")
+    if t == "tool_failed":
+        return f"{d.get('tool', '')}: {str(d.get('message', ''))[:25]}"
+    if t in ("mcp_called", "mcp_completed"):
+        suffix = " ✗" if d.get("is_error") else ""
+        return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"
+    if t == "workflow_started":
+        run_id = str(d.get("run_id", ""))[:8]
+        return f"{d.get('skill', '')} [{run_id}]"
+    if t == "workflow_finished":
+        conf = d.get("confidence", 0)
+        return f"{d.get('skill', '')} ({conf:.0%})"
+    if t == "skill_run_spawned":
+        return d.get("skill", "")
+    if t == "skill_run_completed":
+        return f"{d.get('skill', '')} [{d.get('status', '')}]"
+    if t == "agent_message_sent":
+        return f"{d.get('from_agent', '')} → {d.get('to_agent', '')}"
+    if t in ("agent_request_received", "agent_response_received"):
+        return d.get("from_agent", "")
+    if t == "user_message_received":
+        text = str(d.get("text", ""))
+        return text[:40] + ("…" if len(text) > 40 else "")
+    if t == "user_intervention_requested":
+        return str(d.get("question", ""))[:40]
+    if t == "user_intervention_received":
+        return str(d.get("answer", ""))[:40]
+    if t == "web_fetch_started":
+        return str(d.get("url", ""))[:45]
+    if t == "web_fetch_completed":
+        return f"HTTP {d.get('status_code', '')} {d.get('content_length', '')}b"
+    if t == "web_search_started":
+        return str(d.get("query", ""))[:40]
+    if t == "web_search_completed":
+        return f"{d.get('result_count', '')} results"
+    return ""
+
 
 def _esc(s: str) -> str:
     """Escape Rich markup brackets in plain strings."""
@@ -122,6 +266,8 @@ class RightPanel(Widget):
         self._registry = registry
         self._project_root = project_root
         self._panel_type = PANEL_TYPES[0]
+        self._event_filter_idx: int = 0
+        self._event_tail_idx: int = 0
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -148,6 +294,16 @@ class RightPanel(Widget):
             tabs.action_next_tab()
         else:
             tabs.action_previous_tab()
+
+    def cycle_event_filter(self) -> None:
+        """Rotate through event filter groups; only meaningful on events tab."""
+        self._event_filter_idx = (self._event_filter_idx + 1) % len(_FILTER_GROUPS)
+        self._invalidate()
+
+    def cycle_event_tail(self) -> None:
+        """Rotate through tail-N values; only meaningful on events tab."""
+        self._event_tail_idx = (self._event_tail_idx + 1) % len(_TAIL_CYCLE)
+        self._invalidate()
 
     # ── tab activation ───────────────────────────────────────────────────────
 
@@ -205,38 +361,59 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_events(self) -> str:
-        lines = ["[bold #C8553D]Recent Events[/]\n"]
-
         if self._project_root is None:
-            lines.append("[#555555]  (no project root)[/]")
-            return "\n".join(lines)
+            return "[bold #C8553D]Recent Events[/]\n\n[#555555]  (no project root)[/]"
 
         events_root = self._project_root / ".reyn" / "events"
         if not events_root.is_dir():
-            lines.append("[#555555]  (no events yet)[/]")
-            return "\n".join(lines)
+            return "[bold #C8553D]Recent Events[/]\n\n[#555555]  (no events yet)[/]"
 
         all_events: list[dict] = []
         for jsonl in sorted(events_root.rglob("*.jsonl")):
             try:
-                for line in jsonl.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if line:
+                for raw in jsonl.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if raw:
                         try:
-                            all_events.append(json.loads(line))
+                            all_events.append(json.loads(raw))
                         except Exception:
                             pass
             except Exception:
                 pass
 
-        if not all_events:
-            lines.append("[#555555]  (no events yet)[/]")
-            return "\n".join(lines)
+        filter_name, filter_set = _FILTER_GROUPS[self._event_filter_idx]
+        tail = _TAIL_CYCLE[self._event_tail_idx]
 
-        for ev in all_events[-30:][::-1]:
+        if filter_set:
+            visible = [ev for ev in all_events if ev.get("type") in filter_set]
+        else:
+            visible = all_events
+
+        filter_label = (
+            f"[bold #C8553D]{filter_name}[/]" if filter_name != "all"
+            else "[#555555]all[/]"
+        )
+        header = (
+            f"[bold #C8553D]Recent Events[/]"
+            f"  [#555555]filter:[/] {filter_label}"
+            f"  [#555555]tail:[/] [#aaaaaa]{tail}[/]"
+            f"  [#555555]({len(visible)}/{len(all_events)})[/]"
+            f"  [#555555]f=filter  t=tail[/]"
+        )
+
+        if not visible:
+            return header + "\n\n[#555555]  (no matching events)[/]"
+
+        lines = [header, ""]
+        for ev in visible[-tail:][::-1]:
             ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
-            ev_type = _esc(str(ev.get("type", "?")))
-            lines.append(f"[#555555]  {ts}[/]  [#aaaaaa]{ev_type}[/]")
+            ev_type = ev.get("type", "?")
+            color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
+            hint = _esc(_event_hint(ev))
+            hint_part = f"  [#555555]{hint}[/]" if hint else ""
+            lines.append(
+                f"[#444444]  {ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
+            )
 
         return "\n".join(lines)
 

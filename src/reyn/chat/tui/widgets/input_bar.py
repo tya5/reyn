@@ -190,7 +190,7 @@ class InputBar(Widget):
 
     def _build_hint(self, current: str) -> str:
         if not current:
-            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O next panel"
+            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O next panel  │  f/t filter/tail (events)"
         return ""
 
     def _update_hint(self, current: str) -> None:

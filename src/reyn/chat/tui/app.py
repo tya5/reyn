@@ -93,6 +93,8 @@ class ReynTUIApp(App):
         Binding("k", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+o", "panel_next_content", "Next panel", priority=True, show=False),
         Binding("ctrl+shift+o", "panel_prev_content", "Prev panel", priority=False, show=False),
+        Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
+        Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette", priority=True, show=False),
     ]
@@ -428,6 +430,14 @@ class ReynTUIApp(App):
         """ctrl+shift+o — cycle to previous panel content (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(-1)
 
+    def action_event_filter_cycle(self) -> None:
+        """f — rotate event filter (gated: events tab visible)."""
+        self.query_one("#right_panel", RightPanel).cycle_event_filter()
+
+    def action_event_tail_cycle(self) -> None:
+        """t — rotate event tail count (gated: events tab visible)."""
+        self.query_one("#right_panel", RightPanel).cycle_event_tail()
+
     def action_close_palette(self) -> None:
         self._close_palette()
         inputbar = self.query_one("#inputbar", InputBar)
@@ -489,6 +499,13 @@ class ReynTUIApp(App):
             return self._palette_visible
         if action in {"panel_next_content", "panel_prev_content"}:
             return self._panel_visible
+        if action in {"event_filter_cycle", "event_tail_cycle"}:
+            if not self._panel_visible:
+                return False
+            try:
+                return self.query_one("#right_panel", RightPanel).panel_type == "events"
+            except Exception:
+                return False
         return True
 
     def action_palette_backspace(self) -> None:
