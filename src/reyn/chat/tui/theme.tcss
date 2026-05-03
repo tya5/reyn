@@ -29,8 +29,13 @@ ReynHeader #status {
     padding: 0 1;
 }
 
-ConversationView {
+#content {
     height: 1fr;
+}
+
+ConversationView {
+    width: 1fr;
+    height: 100%;
     border: tall #2a2a2a;
     padding: 0 1;
     overflow-y: scroll;

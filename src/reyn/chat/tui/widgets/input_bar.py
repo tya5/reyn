@@ -189,16 +189,8 @@ class InputBar(Widget):
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self, current: str) -> str:
-        if current.startswith("/"):
-            prefix = current[1:]
-            matches = [n for n in self._slash_names if n.startswith(prefix)]
-            if matches:
-                return "  " + "  ".join(f"/{n}" for n in matches[:8])
-            return "  (no matching command)"
         if not current:
-            sample = self._slash_names[:6]
-            hints = "  ".join(f"/{n}" for n in sample)
-            return f"  {hints}  │  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel"
+            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O next panel"
         return ""
 
     def _update_hint(self, current: str) -> None:

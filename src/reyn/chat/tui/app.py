@@ -3,11 +3,14 @@
 Layout:
   ┌─ ReynHeader ─────────────────────────────────────────────────────┐  dock=top h=1
   │                                                                   │
-  │  ConversationView (RichLog + inline widgets)          1fr         │
+  │  ConversationView (RichLog + inline widgets)  1fr  │  RightPanel │  dock=right (hidden by default)
   │                                                                   │
   ├───────────────────────────────────────────────────────────────────┤
   │  InputBar (Input + hint label)                        dock=bottom │
   └───────────────────────────────────────────────────────────────────┘
+
+RightPanel (ctrl+b to toggle, ] / [ to cycle content):
+  keys · events · agents · memory · docs
 
 ChatSession integration (phase 3+):
   - subscribe_outbox():    coroutine draining registry.repl_outbox → render
@@ -29,9 +32,10 @@ from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.widgets import Label
 
-from .widgets import ReynHeader, ConversationView, InputBar
+from .widgets import ReynHeader, ConversationView, InputBar, RightPanel, PANEL_TYPES
 from .widgets.input_bar import InputBar as _InputBar  # same, but alias for clarity
 
 if TYPE_CHECKING:
@@ -73,26 +77,22 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
-    # Textual's built-in command palette stays on its default Ctrl+P. It
-    # surfaces system actions (Keys, Quit, Screenshot, …) and complements
-    # the Reyn slash palette (Tab — surfaces /list, /budget, /help, …).
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
+        Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("tab", "palette_next", "Commands / next", priority=True, show=False),
         Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
         Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
-        # ctrl+p is reserved for Textual's built-in command palette;
-        # Reyn's own slash-palette nav uses Shift+Tab / k / p when open.
-        # Plain-letter shortcuts only work while the palette is visible
-        # (gated via check_action). Otherwise typing "n" into a message
-        # would silently navigate.
         Binding("n", "palette_next_only", "Next", priority=True, show=False),
         Binding("p", "palette_prev", "Prev", priority=True, show=False),
         Binding("j", "palette_next_only", "Next", priority=True, show=False),
         Binding("k", "palette_prev", "Prev", priority=True, show=False),
+        Binding("ctrl+o", "panel_next_content", "Next panel", priority=True, show=False),
+        Binding("ctrl+shift+o", "panel_prev_content", "Prev panel", priority=False, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette", priority=True, show=False),
     ]
@@ -112,6 +112,7 @@ class ReynTUIApp(App):
         self._budget_tracker = budget_tracker
         self._outbox_task: asyncio.Task | None = None
         self._palette_visible = False
+        self._panel_visible = False
         self._all_slash_names: list[str] = []
         self._cancel_event: asyncio.Event = asyncio.Event()
 
@@ -123,7 +124,19 @@ class ReynTUIApp(App):
             model=self._model,
             id="header",
         )
-        yield ConversationView(id="conversation")
+        project_root: Path | None = None
+        if self._agent_registry is not None:
+            try:
+                project_root = self._agent_registry._project_root
+            except Exception:
+                pass
+        with Horizontal(id="content"):
+            yield ConversationView(id="conversation")
+            yield RightPanel(
+                registry=self._agent_registry,
+                project_root=project_root,
+                id="right_panel",
+            )
         yield InputBar(id="inputbar")
 
     def on_mount(self) -> None:
@@ -402,6 +415,19 @@ class ReynTUIApp(App):
             if not task.done():
                 task.cancel()
 
+    def action_toggle_panel(self) -> None:
+        """ctrl+b — open or close the right panel."""
+        self._panel_visible = not self._panel_visible
+        self.query_one("#right_panel", RightPanel).display = self._panel_visible
+
+    def action_panel_next_content(self) -> None:
+        """] — cycle to next panel content (gated: panel visible only)."""
+        self.query_one("#right_panel", RightPanel).cycle(+1)
+
+    def action_panel_prev_content(self) -> None:
+        """[ — cycle to previous panel content (gated: panel visible only)."""
+        self.query_one("#right_panel", RightPanel).cycle(-1)
+
     def action_close_palette(self) -> None:
         self._close_palette()
         inputbar = self.query_one("#inputbar", InputBar)
@@ -460,11 +486,9 @@ class ReynTUIApp(App):
             "palette_next_only",
             "close_palette",
         }:
-            # Plain-letter palette nav (n/p/j/k), Backspace, Esc must only
-            # fire while the palette is open — otherwise typing those into
-            # a message would silently navigate / delete. Tab keeps using
-            # `palette_next` (un-gated) so it can still open the palette.
             return self._palette_visible
+        if action in {"panel_next_content", "panel_prev_content"}:
+            return self._panel_visible
         return True
 
     def action_palette_backspace(self) -> None:
