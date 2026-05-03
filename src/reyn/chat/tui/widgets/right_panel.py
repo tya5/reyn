@@ -310,10 +310,7 @@ class _PreviewPane(Widget):
     def scroll_line(self, delta: int) -> None:
         try:
             log = self.query_one("#preview-log", RichLog)
-            if delta > 0:
-                log.scroll_down(1, animate=False)
-            else:
-                log.scroll_up(1, animate=False)
+            log.scroll_to(y=log.scroll_y + delta, animate=False)
         except Exception:
             pass
 
