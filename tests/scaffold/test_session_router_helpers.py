@@ -1,12 +1,28 @@
-"""Tests for Wave 3 F1 — ChatSession router helper methods.
+# scaffold: triggered_by="ChatSession から BudgetGateway / MemoryService /
+#                          RouterHostAdapter を抽出する follow-up PR"
+# scaffold: removed_by="抽出 PR が session-level Tier 2 を再エンコード後、
+#                       同 PR で削除"
+"""Scaffolding tests for ChatSession internal router helpers.
+
+These tests were Tier 4 in the steady state per the testing policy
+(`docs/ja/contributing/testing.md`):
+- Use `unittest.mock.patch.object()` to fake `_build_agent`, `_invoke_narrator`,
+  and other private session methods.
+- Assert directly on private state and helper return values
+  (`_get_file_permissions_for_router`, `_get_mcp_servers_for_router`).
+
+They exist as bounded-life characterisation tests during the ChatSession
+refactor sequence (PR-refactor-session-1 wave 1+2 already landed; future
+extracts of BudgetGateway / MemoryService / RouterHostAdapter will replace
+this coverage with public-surface Tier 2 tests, at which point this file
+is removed in the same PR as the extraction).
+
+Original docstring (preserved for context):
+Tests for Wave 3 F1 — ChatSession router helper methods.
 
 These helpers are added to ChatSession for RouterLoop to consume.
 They wrap existing op_runtime file/MCP handlers and expose skill invocation
 in an awaitable form.
-
-Test isolation: each test chdir's into tmp_path so .reyn/ paths are
-relative to the temp directory. Session construction follows the same
-minimal pattern as test_router_cap.py.
 """
 from __future__ import annotations
 
