@@ -20,9 +20,8 @@ from typing import Any
 
 from reyn.schemas.models import (
     ControlIROp, ControlIROpSpec,
-    FileIROp, MCPIROp, RunSkillIROp, ShellIROp, LintIROp,
-    AskUserIROp, WebFetchIROp, WebSearchIROp,
 )
+from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
 from reyn.workspace.workspace import Workspace
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
@@ -33,17 +32,9 @@ from reyn.user_intervention import InterventionBus
 from reyn.dispatch import DispatchContext, dispatch_tool
 
 
-# Map: op kind -> IROp Pydantic model (used to derive tool parameter schemas)
-_IROP_MODEL_MAP: dict[str, type] = {
-    "file": FileIROp,
-    "mcp": MCPIROp,
-    "run_skill": RunSkillIROp,
-    "shell": ShellIROp,
-    "lint": LintIROp,
-    "ask_user": AskUserIROp,
-    "web_fetch": WebFetchIROp,
-    "web_search": WebSearchIROp,
-}
+# Map: op kind -> IROp Pydantic model (used to derive tool parameter schemas).
+# Single source of truth lives in reyn.op_runtime.registry.OP_KIND_MODEL_MAP.
+_IROP_MODEL_MAP = OP_KIND_MODEL_MAP
 
 
 def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
