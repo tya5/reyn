@@ -102,13 +102,19 @@ def test_happy_path_emits_called_then_returned():
         assert result == {"status": "ok", "data": {"items": []}}
         types = [e[0] for e in ev.events]
         assert types == ["tool_called", "tool_returned"]
-        # Pre-event includes args_keys
+        # Pre-event includes args + args_hash (skill resume design,
+        # PR-step-events: args_keys → args + hash for replay memoization)
         called_data = ev.events[0][1]
-        assert called_data["args_keys"] == ["path"]
+        assert called_data["args"] == {"path": ""}
+        assert called_data["args_hash"]  # non-empty
         assert called_data["caller_kind"] == "router"
         assert called_data["caller_id"] == "test_agent"
         assert called_data["chain_id"] == "c1"
         assert called_data["tool"] == "list_skills"
+        # Post-event includes result + args_hash for replay memoization.
+        returned_data = ev.events[1][1]
+        assert returned_data["result"] == {"items": []}
+        assert returned_data["args_hash"] == called_data["args_hash"]
     asyncio.run(main())
 
 

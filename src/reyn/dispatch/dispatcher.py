@@ -73,14 +73,24 @@ async def dispatch_tool(
         - "exception": invoker raised any other Exception
 
     Events emitted (via ctx.events.emit):
-        - tool_called (caller_kind, caller_id, tool, chain_id, args_keys)
-        - tool_returned (caller_kind, caller_id, tool, chain_id) on success
-        - tool_failed (caller_kind, caller_id, tool, chain_id, error_kind, message) on error
+        - tool_called (caller_kind, caller_id, tool, chain_id, args, args_hash)
+            Skipped for ``pure`` op kinds (no side effect to disambiguate)
+            and for ``world`` / ``llm`` purity (no side effect ambiguity).
+        - tool_returned (caller_kind, caller_id, tool, chain_id, result, args_hash)
+            on success.  Skipped for ``pure``.
+        - tool_failed (caller_kind, caller_id, tool, chain_id, error_kind, message)
+            on error.
+
+    The ``result`` and ``args_hash`` fields are part of the skill resume
+    transactional-replay design: on resume, these events let the runtime
+    use the recorded result instead of re-executing a side-effecting op.
 
     The invoker callable receives the validated args dict and returns the
     raw result (any JSON-serializable value). PermissionError raised
     inside invoker becomes a "permission_denied" error result.
     """
+    from reyn.op_runtime.registry import OpPurity, get_op_purity
+
     # 1. Name validation
     if name not in ctx.tool_catalog:
         return _error(ctx, name, "unknown_tool",
@@ -98,15 +108,24 @@ async def dispatch_tool(
         except InvalidArgsError as e:
             return _error(ctx, name, "invalid_args", str(e))
 
-    # 3. Pre-event
-    ctx.events.emit(
-        "tool_called",
-        caller_kind=ctx.caller_kind,
-        caller_id=ctx.caller_id,
-        tool=name,
-        chain_id=ctx.chain_id,
-        args_keys=sorted(args.keys()),
-    )
+    # Determine purity (controls event emission; defaults to side_effect).
+    # Note: tool catalog entries from the chat router are not "ops" in the
+    # IR-op sense (memory/file/mcp tool entries here are wrappers around
+    # multiple op kinds). For chat-router callers, fall back to side_effect.
+    purity = get_op_purity(name) if ctx.caller_kind == "skill_phase" else OpPurity.side_effect
+    args_hash = _compute_args_hash(args)
+
+    # 3. Pre-event (skip for pure / world / llm — no side-effect ambiguity)
+    if purity in (OpPurity.side_effect, OpPurity.external):
+        ctx.events.emit(
+            "tool_called",
+            caller_kind=ctx.caller_kind,
+            caller_id=ctx.caller_id,
+            tool=name,
+            chain_id=ctx.chain_id,
+            args=args,
+            args_hash=args_hash,
+        )
 
     # 4. Invoke (with structured error handling)
     try:
@@ -118,6 +137,7 @@ async def dispatch_tool(
             caller_id=ctx.caller_id,
             tool=name,
             chain_id=ctx.chain_id,
+            args_hash=args_hash,
             error_kind="permission_denied",
             message=str(e),
         )
@@ -130,6 +150,7 @@ async def dispatch_tool(
             caller_id=ctx.caller_id,
             tool=name,
             chain_id=ctx.chain_id,
+            args_hash=args_hash,
             error_kind="exception",
             message=f"{type(e).__name__}: {e}",
         )
@@ -137,15 +158,36 @@ async def dispatch_tool(
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
 
-    # 5. Post-event
-    ctx.events.emit(
-        "tool_returned",
-        caller_kind=ctx.caller_kind,
-        caller_id=ctx.caller_id,
-        tool=name,
-        chain_id=ctx.chain_id,
-    )
+    # 5. Post-event with result (skipped for ``pure``: re-execution is safe
+    #    and cheap, no need to record).
+    if purity != OpPurity.pure:
+        ctx.events.emit(
+            "tool_returned",
+            caller_kind=ctx.caller_kind,
+            caller_id=ctx.caller_id,
+            tool=name,
+            chain_id=ctx.chain_id,
+            args_hash=args_hash,
+            result=result,
+        )
     return {"status": "ok", "data": result}
+
+
+def _compute_args_hash(args: dict) -> str:
+    """Stable hash for args.  Used as a memoization key on resume.
+
+    SHA-256 of canonical JSON; safe across Python runs (unlike Python's
+    builtin hash() which is randomized).  First 16 hex chars are kept
+    (64 bits) — collision risk is acceptable for resume memoization
+    within a single skill run.
+    """
+    import hashlib
+    import json
+    try:
+        canonical = json.dumps(args, sort_keys=True, default=str)
+    except Exception:  # noqa: BLE001 — fall back to repr for unhashable args
+        canonical = repr(sorted(args.items()))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _error(ctx: DispatchContext, name: str, kind: str, message: str) -> dict:
