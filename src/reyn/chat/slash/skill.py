@@ -43,7 +43,15 @@ async def skill_cmd(session: "ChatSession", args: str) -> None:
 
 
 async def _list_skill_runs(session: "ChatSession") -> None:
-    """Emit a status message listing active skill runs."""
+    """Emit a status message listing active skill runs.
+
+    R-D13: when a child run was spawned via ``run_skill`` and the parent
+    is still active, the display walks the parent_run_id chain to show
+    the lineage as ``parent_skill / child_skill``. Roots (no parent)
+    show ``skill_name`` only. Orphaned children (parent not in active
+    list) display as roots — the parent has either completed or this
+    is a stale snapshot.
+    """
     reg = session._get_skill_registry()
     if reg is None:
         await reply(session, "(no active skills — state log not configured)")
@@ -52,14 +60,44 @@ async def _list_skill_runs(session: "ChatSession") -> None:
     if not run_ids:
         await reply(session, "(no active skills)")
         return
+    # Build a lookup of run_id → snapshot for parent walks. Skipping
+    # missing snapshots keeps the display robust when a child outlives
+    # its parent's snapshot file (= parent completed, child still running).
+    by_run: dict = {}
+    for rid in run_ids:
+        snap = reg.get(rid)
+        if snap is not None:
+            by_run[rid] = snap
+
+    def _lineage_label(snap) -> str:
+        """Walk parent_run_id chain, return ``A_skill / B_skill / C_skill``.
+
+        Defensive against cycles (cap at 8 hops) — though SkillRegistry
+        creates IDs uniquely so cycles shouldn't form in practice.
+        """
+        parts = [snap.skill_name or "?"]
+        seen = {snap.skill_run_id}
+        cur = snap
+        for _ in range(8):
+            parent_id = getattr(cur, "parent_run_id", None)
+            if not parent_id or parent_id in seen:
+                break
+            parent_snap = by_run.get(parent_id)
+            if parent_snap is None:
+                break
+            seen.add(parent_id)
+            parts.insert(0, parent_snap.skill_name or "?")
+            cur = parent_snap
+        return " / ".join(parts)
+
     lines = [f"{len(run_ids)} active skill run(s):"]
     for run_id in run_ids:
-        snap = reg.get(run_id)
+        snap = by_run.get(run_id)
         if snap is None:
             lines.append(f"  {run_id}  (snapshot missing)")
             continue
         phase = snap.current_phase or "(unknown)"
-        lines.append(f"  {run_id}  {snap.skill_name}  @ {phase}")
+        lines.append(f"  {run_id}  {_lineage_label(snap)}  @ {phase}")
     await reply(session, "\n".join(lines))
 
 

@@ -41,6 +41,7 @@ async def invoke_sub_skill(
     output_language: str = "ja",
     max_phase_visits: int = 25,
     caller: str = "direct",
+    parent_run_id: str | None = None,
 ) -> SubSkillResult:
     """Run a sub-app and return a SubSkillResult.
 
@@ -49,6 +50,11 @@ async def invoke_sub_skill(
 
     `caller` is propagated from the parent so the sub-skill's events land
     under the same `events/<caller>/skill_runs/...` tree (PR20).
+
+    ``parent_run_id`` (R-D13) is recorded on the child run's
+    SkillSnapshot so the parent / child tree can be reconstructed by
+    ``/skill list`` and resume bookkeeping. ``None`` = top-level
+    (preprocessor / standalone invocation).
     """
     from reyn.agent import Agent
 
@@ -60,7 +66,11 @@ async def invoke_sub_skill(
         intervention_bus=intervention_bus,
         caller=caller,
     )
-    run_result = await agent.run(sub_skill, input_artifact, output_language=output_language)
+    run_result = await agent.run(
+        sub_skill, input_artifact,
+        output_language=output_language,
+        parent_run_id=parent_run_id,
+    )
     return SubSkillResult(
         data=run_result.data,
         token_usage=run_result.token_usage,

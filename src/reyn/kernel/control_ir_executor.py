@@ -254,6 +254,10 @@ class ControlIRExecutor:
             intervention_bus=self._intervention_bus,
             current_phase=current_phase,
             caller=self._caller,
+            # R-D13: propagate the running skill's run_id so nested
+            # ``run_skill`` invocations can stamp ``parent_run_id`` on
+            # the child skill's snapshot.
+            parent_skill_run_id=self._skill_run_id,
         )
 
     async def execute(

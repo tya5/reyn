@@ -129,10 +129,17 @@ class SpyRegistry(SkillRegistry):
     def _save(self, snap: Any) -> None:  # type: ignore[override]
         """No-op: tests don't need disk persistence."""
 
-    async def start(self, *, run_id: str, skill_name: str, skill_input: dict) -> Any:
-        self.calls.append(_Call("start", {"run_id": run_id, "skill_name": skill_name}))
+    async def start(
+        self, *, run_id: str, skill_name: str, skill_input: dict,
+        parent_run_id: str | None = None,
+    ) -> Any:
+        self.calls.append(_Call("start", {
+            "run_id": run_id, "skill_name": skill_name,
+            "parent_run_id": parent_run_id,
+        }))
         return await super().start(
             run_id=run_id, skill_name=skill_name, skill_input=skill_input,
+            parent_run_id=parent_run_id,
         )
 
     async def advance_phase(

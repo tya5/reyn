@@ -47,6 +47,14 @@ class SkillSnapshot:
     history: list[str] = field(default_factory=list)
     awaiting_intervention_id: str | None = None
     last_committed_step_id: str | None = None  # forward-replay anchor
+    # R-D13: when this run was spawned by another skill via the
+    # ``run_skill`` op, ``parent_run_id`` records the parent's run_id.
+    # ``None`` = top-level skill (user-invoked). The parent / child
+    # tree is used for ``/skill list`` display, debug logs, and future
+    # cascade-discard semantics. Optional / additive — old snapshots
+    # without this field load with ``parent_run_id=None`` (= treated
+    # as root, backward compatible).
+    parent_run_id: str | None = None
 
     SCHEMA_VERSION: ClassVar[int] = SKILL_SNAPSHOT_VERSION
 
@@ -106,6 +114,7 @@ class SkillSnapshot:
             history=list(data.get("history", []) or []),
             awaiting_intervention_id=data.get("awaiting_intervention_id"),
             last_committed_step_id=data.get("last_committed_step_id"),
+            parent_run_id=data.get("parent_run_id"),
         )
 
     def save(self, path: Path) -> None:
@@ -129,6 +138,7 @@ class SkillSnapshot:
             "history": self.history,
             "awaiting_intervention_id": self.awaiting_intervention_id,
             "last_committed_step_id": self.last_committed_step_id,
+            "parent_run_id": self.parent_run_id,
         }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)

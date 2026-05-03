@@ -61,3 +61,13 @@ class OpContext:
     # invocations land under the same `events/<caller>/skill_runs/...` tree.
     # Format: "direct" or "agents/<name>" (validated in Agent).
     caller: str = "direct"
+
+    # R-D13: nested skill lineage. The currently-running OSRuntime sets
+    # this to its own ``run_id`` when constructing OpContext for control
+    # IR execution. ``run_skill`` handlers propagate it to the spawned
+    # child run as ``parent_run_id``, so the per-skill snapshot tree
+    # records the parent / child relationship for ``/skill list``,
+    # debug logs, and future cascade-discard semantics. ``None`` means
+    # "no parent visible" (e.g. preprocessor-spawned sub-skills, or
+    # OSRuntime invocations that don't track a run_id).
+    parent_skill_run_id: str | None = None

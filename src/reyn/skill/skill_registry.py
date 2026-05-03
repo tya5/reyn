@@ -113,6 +113,7 @@ class SkillRegistry:
         run_id: str,
         skill_name: str,
         skill_input: dict,
+        parent_run_id: str | None = None,
     ) -> SkillSnapshot:
         """Begin a new skill run.
 
@@ -125,8 +126,15 @@ class SkillRegistry:
         Idempotent on the in-memory cache: starting the same run_id twice
         is a logical error, but for robustness we overwrite the existing
         cache entry (a real implementation would warn at the call site).
+
+        ``parent_run_id`` (R-D13) records the parent skill_run when this
+        run was spawned via ``run_skill``. ``None`` = top-level / user-
+        invoked. The parent / child tree drives nested-aware display in
+        ``/skill list`` and is the foundation for future
+        cascade-discard semantics.
         """
         snap = SkillSnapshot.empty(run_id, skill_name, skill_input)
+        snap.parent_run_id = parent_run_id
         if self._state_log is not None:
             seq = await self._state_log.append(
                 "skill_started",
@@ -135,6 +143,7 @@ class SkillRegistry:
                 run_id=run_id,
                 skill_name=skill_name,
                 skill_input=skill_input,
+                parent_run_id=parent_run_id,
             )
             snap.applied_seq = seq
             # Stamp the phase-window watermark too: anything before this

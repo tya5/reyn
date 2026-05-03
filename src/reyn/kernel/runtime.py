@@ -212,6 +212,7 @@ class OSRuntime:
         state_log: "StateLog | None" = None,
         skill_registry: "SkillRegistry | None" = None,
         resume_plan: Any = None,
+        parent_run_id: str | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -258,6 +259,11 @@ class OSRuntime:
         # the plan into ControlIRExecutor so dispatch_tool memoizes
         # against committed_steps. None means fresh start (default).
         self._resume_plan = resume_plan
+        # R-D13: parent skill_run_id for nested skill spawned via
+        # ``run_skill``. Recorded on the per-skill snapshot via
+        # SkillRegistry.start so the parent / child tree survives crash.
+        # ``None`` = top-level (user-invoked, or preprocessor sub-skill).
+        self._parent_run_id = parent_run_id
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -1277,6 +1283,7 @@ class OSRuntime:
                 run_id=self.run_id,
                 skill_name=self.skill.name,
                 skill_input=initial_input,
+                parent_run_id=self._parent_run_id,
             )
 
         artifact_path: str | None = self.workspace.store_artifact(

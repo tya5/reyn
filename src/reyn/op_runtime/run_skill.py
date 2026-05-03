@@ -60,6 +60,9 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         output_language=op.output_language or ctx.output_language,
         max_phase_visits=ctx.max_phase_visits,
         caller=ctx.caller,
+        # R-D13: stamp parent_run_id on the child snapshot so
+        # /skill list and future cascade-discard can walk the tree.
+        parent_run_id=ctx.parent_skill_run_id,
     )
 
     # PR20: per-run events live at
