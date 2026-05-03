@@ -210,6 +210,7 @@ class OSRuntime:
         skill_name: str = "",
         state_log: "StateLog | None" = None,
         skill_registry: "SkillRegistry | None" = None,
+        resume_plan: Any = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -245,6 +246,12 @@ class OSRuntime:
         self._intervention_bus = intervention_bus
         self._state_log = state_log
         self._skill_registry = skill_registry
+        # PR-skill-resume D3b-3: optional ResumePlan for forward-replay
+        # resume. When set, ``run()`` fast-forwards to the plan's
+        # current_phase, restores visit_counts / history, and threads
+        # the plan into ControlIRExecutor so dispatch_tool memoizes
+        # against committed_steps. None means fresh start (default).
+        self._resume_plan = resume_plan
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -258,6 +265,7 @@ class OSRuntime:
             chain_id=chain_id,
             state_log=state_log,
             skill_run_id=run_id,
+            resume_plan=resume_plan,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
@@ -978,6 +986,45 @@ class OSRuntime:
             input_type=artifact.get("type"),
             default_model=self._resolver.resolve(self.model),
         )
+
+        # PR-skill-resume D3b-3: forward-replay fast-forward.
+        # When a ResumePlan is supplied, jump straight to the
+        # plan's current_phase (the phase that was in flight at crash
+        # time) and restore visit_counts + history so loop-limit checks
+        # and transition logging continue from the prior run's state.
+        # The plan's last_phase_artifact_path is used as the input
+        # artifact when present so the new current_phase sees the same
+        # input it would have seen had the prior run not crashed.
+        if self._resume_plan is not None:
+            if self._resume_plan.current_phase:
+                current_phase = self._resume_plan.current_phase
+            self._visit_counts = dict(self._resume_plan.visit_counts)
+            self._history = list(self._resume_plan.phases_visited)
+            # Restore the last completed phase's artifact as the input
+            # to current_phase. Falls back to initial_input when the
+            # plan has no recorded artifact path (e.g. the entry phase
+            # was the one in flight).
+            artifact_path = getattr(
+                self._resume_plan, "last_phase_artifact_path", None,
+            )
+            if artifact_path:
+                try:
+                    import json as _json
+                    p = Path(artifact_path)
+                    if p.is_file():
+                        artifact = _json.loads(p.read_text(encoding="utf-8"))
+                except Exception as e:  # noqa: BLE001 — defensive
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "resume: cannot load last_phase_artifact_path %s: %s",
+                        artifact_path, e,
+                    )
+            self.events.emit(
+                "skill_resumed",
+                run_id=self.run_id,
+                resume_phase=current_phase,
+                visit_counts=dict(self._visit_counts),
+            )
 
         if self._skill_registry:
             await self._skill_registry.start(
