@@ -5,7 +5,7 @@ A misclassification here would cause the runtime to either:
   - skip a step that did NOT commit (lose work), or
   - re-execute a step that DID commit (duplicate side effects).
 
-Both are unrecoverable in the SSD-FW pattern, so this layer is
+Both are unrecoverable in the transactional-replay pattern, so this layer is
 heavily tested.
 
 Observation flows through:
@@ -145,7 +145,7 @@ def test_failed_step_is_committed_with_error_kind():
 
 
 # ---------------------------------------------------------------------------
-# Ambiguous detection — the SSD-FW intermediate-state case
+# Ambiguous detection — the intermediate-state case
 # ---------------------------------------------------------------------------
 
 

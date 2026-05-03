@@ -68,7 +68,7 @@ class CommittedStep:
 class AmbiguousStep:
     """A ``step_started`` event with no matching completion.
 
-    The op may have committed externally (the canonical SSD-FW
+    The op may have committed externally (the canonical transactional-replay
     intermediate-state case). Only the operator can decide whether to
     retry, skip, or discard the run. Surfaced by the analyzer for the
     runtime / UX layer to act on.

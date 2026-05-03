@@ -150,7 +150,7 @@ async def dispatch_tool(
     # If a ResumePlan is wired in and we find a CommittedStep matching the
     # current call (op_invocation_id + phase + args_hash), reproduce the
     # recorded outcome without invoking. This prevents:
-    #   - duplicate side effects on resume (the canonical SSD-FW concern)
+    #   - duplicate side effects on resume (the canonical resume concern)
     #   - wasted LLM costs (when llm calls memoize through the same path)
     # args_hash mismatch falls through deliberately — the LLM may have
     # emitted a structurally different op shape this resume, in which

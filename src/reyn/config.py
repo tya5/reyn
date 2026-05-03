@@ -133,7 +133,7 @@ class SkillResumeConfig:
 
     An *ambiguous step* is a ``step_started`` WAL event with no matching
     ``step_completed`` / ``step_failed``. The op may have committed
-    externally (canonical SSD-FW intermediate-state); only the operator
+    externally (canonical intermediate-state); only the operator
     can decide what to do.
 
     Policies (one of ``SKILL_RESUME_POLICIES``):
