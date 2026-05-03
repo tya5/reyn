@@ -541,7 +541,7 @@ class RightPanel(Widget):
             if not group:
                 continue
             color = _TYPE_COLORS[type_key]
-            lines.append(f"[bold {color}]  [{type_key.upper()}][/]")
+            lines.append(f"[bold {color}]  \\[{type_key.upper()}][/]")
             for e in group:
                 lines.append(f"[#dddddd]    {_esc(e.name)}[/]")
                 if e.description:
@@ -549,7 +549,7 @@ class RightPanel(Widget):
             lines.append("")
 
         if other:
-            lines.append("[bold #888888]  [OTHER][/]")
+            lines.append("[bold #888888]  \\[OTHER][/]")
             for e in other:
                 lines.append(f"[#dddddd]    {_esc(e.name)}[/]")
 
@@ -674,7 +674,7 @@ class RightPanel(Widget):
 
         for section in sorted(groups):
             label = section.upper() if section else "ROOT"
-            lines.append(f"[bold #aaaaaa]  [{_esc(label)}][/]")
+            lines.append(f"[bold #aaaaaa]  \\[{_esc(label)}][/]")
             for md in groups[section]:
                 rel = md.relative_to(docs_root)
                 depth = len(rel.parts) - 1
