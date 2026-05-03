@@ -16,6 +16,7 @@ from reyn.workspace.workspace import Workspace
 from reyn.config import LimitsConfig
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.kernel.validation import validate_output, ValidationError
+from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.llm.llm import call_llm
 from reyn.llm.pricing import TokenUsage, estimate_cost
 from reyn.kernel.normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
@@ -286,6 +287,10 @@ class OSRuntime:
         self._total_cost_usd: float = 0.0
         self._prev_phase: str | None = None          # phase that transitioned to current
         self._rollback = RollbackState()
+        # R-D2: per-phase counter for LLM op_invocation_id. Each `_call_llm_and_record`
+        # uses the current value as `{phase}.llm.{idx}` then increments. Resets on
+        # `_enter_phase` so resume reproduces the original sequence.
+        self._llm_call_idx_in_phase: int = 0
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -301,6 +306,11 @@ class OSRuntime:
         # Reset wall-clock timer for this visit. Soft budget checks at retry/turn boundaries
         # compare elapsed against limits.phase.max_wall_seconds (0 = unlimited).
         self._phase_started_at = time.monotonic()
+        # R-D2: reset the per-phase LLM invocation counter. Resume relies on
+        # this resetting deterministically — the in-flight phase is re-entered
+        # from the start, so its first LLM call must look up `{phase}.llm.0`
+        # (matching what the original run recorded).
+        self._llm_call_idx_in_phase = 0
         self.events.emit(
             "phase_started", phase=phase_name,
             visit_count=count + 1, input_artifact_type=artifact.get("type"),
@@ -543,9 +553,56 @@ class OSRuntime:
     ) -> dict:
         self._check_phase_budget(phase)
         resolved_model = self._resolver.resolve(self._effective_model(phase))
+        phase_def = self.skill.phases.get(phase)
+
+        # R-D2: per-phase LLM op_invocation_id + memoization. The counter is
+        # per-phase-visit (reset in `_enter_phase`) so resume reproduces the
+        # original call sequence deterministically.
+        op_invocation_id = f"{phase}.llm.{self._llm_call_idx_in_phase}"
+        self._llm_call_idx_in_phase += 1
+
+        # Compute args_hash regardless of resume_plan presence — when state_log
+        # is configured, every call writes a step_completed so a future resume
+        # can hit. The hash is also the memo key on resume.
+        args_hash = _compute_llm_args_hash(
+            model=resolved_model,
+            frame=frame.model_dump(mode="json"),
+            prior_attempts=prior_attempts,
+            rollback_context=rollback_context,
+            system_inputs={
+                "skill_name": self.skill.name,
+                "skill_description": self.skill.description,
+                "phase_role": phase_def.role if phase_def else None,
+                "project_context": self._project_context,
+                "agent_role": self._agent_role,
+            },
+        )
+
+        # Memo lookup (resume only). On hit, return the recorded LLM result
+        # without invoking call_llm — saves cost + preserves determinism.
+        if self._resume_plan is not None:
+            memo = _lookup_memoized_step(
+                self._resume_plan, op_invocation_id, phase, args_hash,
+            )
+            if memo is not None:
+                memoized = self._extract_memoized_llm_result(
+                    memo, phase=phase, op_invocation_id=op_invocation_id,
+                )
+                if memoized is not None:
+                    self.events.emit(
+                        "step_memoized",
+                        run_id=self.run_id,
+                        phase=phase,
+                        op_invocation_id=op_invocation_id,
+                        op_kind="llm",
+                        args_hash=args_hash,
+                    )
+                    return memoized
+                # else: corrupt memo result → fall through to fresh call
+
+        # Normal call path
         self._check_budget_pre_llm(resolved_model)
         self.events.emit("llm_called", phase=phase, model=resolved_model)
-        phase_def = self.skill.phases.get(phase)
         llm_result = await call_llm(
             resolved_model, frame,
             prior_attempts=prior_attempts or None,
@@ -578,7 +635,70 @@ class OSRuntime:
             cost_usd=cost_usd,
             pricing_snapshot=pricing_snapshot,
         )
+
+        # R-D2: emit step_completed so a future resume can memo-hit. Defensive
+        # try/except — never fail the dispatch on a WAL emit failure (parallel
+        # to dispatch_tool's _wal_step_completed pattern).
+        await self._wal_step_completed_for_llm(
+            phase=phase,
+            op_invocation_id=op_invocation_id,
+            args_hash=args_hash,
+            result=raw,
+        )
+
         return raw
+
+    def _extract_memoized_llm_result(
+        self,
+        memo: object,
+        *,
+        phase: str,
+        op_invocation_id: str,
+    ) -> dict | None:
+        """Return the recorded LLM response dict, or None on schema mismatch.
+
+        Schema versioning gate: a CommittedStep.result that's not a dict is
+        treated as corrupt (e.g. version skew where the format changed). We
+        log a warning and let the caller fall through to a fresh call_llm.
+        """
+        result = getattr(memo, "result", None)
+        if not isinstance(result, dict):
+            import logging
+            logging.getLogger(__name__).warning(
+                "LLM memo result is not a dict (run=%s phase=%s id=%s); "
+                "falling through to fresh call",
+                self.run_id, phase, op_invocation_id,
+            )
+            return None
+        return result
+
+    async def _wal_step_completed_for_llm(
+        self,
+        *,
+        phase: str,
+        op_invocation_id: str,
+        args_hash: str,
+        result: dict,
+    ) -> None:
+        """Append step_completed for an LLM call. Defensive: log + swallow."""
+        if self._state_log is None or self.run_id is None:
+            return
+        try:
+            await self._state_log.append(
+                "step_completed",
+                run_id=self.run_id,
+                phase=phase,
+                op_invocation_id=op_invocation_id,
+                op_kind="llm",
+                args_hash=args_hash,
+                result=result,
+            )
+        except Exception as e:  # noqa: BLE001 — never fail the dispatch
+            import logging
+            logging.getLogger(__name__).warning(
+                "WAL step_completed (llm) emission failed (run=%s phase=%s id=%s): %s",
+                self.run_id, phase, op_invocation_id, e,
+            )
 
     # ── Budget hooks (PR22) ─────────────────────────────────────────────
 
