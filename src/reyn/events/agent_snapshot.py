@@ -36,6 +36,11 @@ class AgentSnapshot:
     # field set serialized as a dict ({chain_id, origin_agent, origin_depth,
     # original_request, waiting_on: list}).
     pending_chains: dict[str, dict] = field(default_factory=dict)
+    # NEW (skill resume design — PR-state-foundation):
+    # run_ids of skills currently executing under this agent.
+    active_skill_run_ids: list[str] = field(default_factory=list)
+    # Outstanding (unresolved) interventions keyed by intervention_id.
+    outstanding_interventions: dict[str, dict] = field(default_factory=dict)
 
     # ── persistence ─────────────────────────────────────────────────────
 
@@ -56,6 +61,12 @@ class AgentSnapshot:
             applied_seq=int(data.get("applied_seq", 0)),
             inbox=list(data.get("inbox", []) or []),
             pending_chains=dict(data.get("pending_chains", {}) or {}),
+            active_skill_run_ids=list(
+                data.get("active_skill_run_ids", []) or []
+            ),
+            outstanding_interventions=dict(
+                data.get("outstanding_interventions", {}) or {}
+            ),
         )
 
     def save(self, path: Path) -> None:
@@ -67,6 +78,8 @@ class AgentSnapshot:
             "applied_seq": self.applied_seq,
             "inbox": self.inbox,
             "pending_chains": self.pending_chains,
+            "active_skill_run_ids": self.active_skill_run_ids,
+            "outstanding_interventions": self.outstanding_interventions,
         }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -124,4 +137,23 @@ class AgentSnapshot:
                 chain["waiting_on"] = list(event.get("waiting_on", []))
         elif kind in ("chain_resolve", "chain_timeout_fired"):
             self.pending_chains.pop(event.get("chain_id"), None)
+        # ── skill resume kinds (PR-state-foundation) ────────────────────
+        elif kind == "skill_started":
+            run_id = event.get("run_id")
+            if run_id and run_id not in self.active_skill_run_ids:
+                self.active_skill_run_ids.append(run_id)
+        elif kind == "skill_completed":
+            run_id = event.get("run_id")
+            if run_id and run_id in self.active_skill_run_ids:
+                self.active_skill_run_ids.remove(run_id)
+        elif kind == "intervention_dispatched":
+            iv_id = event.get("intervention_id")
+            if iv_id:
+                self.outstanding_interventions[iv_id] = event.get("iv_dict", {})
+        elif kind == "intervention_resolved":
+            iv_id = event.get("intervention_id")
+            if iv_id:
+                self.outstanding_interventions.pop(iv_id, None)
+        # skill_phase_advanced, step_started/completed/failed, skill_resumed
+        # mutate per-skill snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)

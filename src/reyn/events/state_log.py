@@ -5,7 +5,7 @@ per append for durability. On restart, each AgentSnapshot's `applied_seq`
 identifies the last event already absorbed — replay starts from
 `min(applied_seq) + 1` across all known agents.
 
-Six event kinds are recorded (state-mutating only; processing internals
+Event kinds recorded (state-mutating only; processing internals
 like LLM calls live in the audit log under `.reyn/events/`):
 
   inbox_put           — message put on agent X's inbox
@@ -14,6 +14,15 @@ like LLM calls live in the audit log under `.reyn/events/`):
   chain_update        — pending_chain's waiting_on shrunk
   chain_resolve       — pending_chain completed
   chain_timeout_fired — PR18 watchdog fired
+  skill_started       — skill execution begun; creates per-skill snapshot
+  skill_phase_advanced — skill transitioned to next phase
+  step_started        — a step within a phase has begun
+  step_completed      — a step completed successfully (result stored)
+  step_failed         — a step failed (error stored)
+  intervention_dispatched — ask_user / permission request emitted
+  intervention_resolved   — intervention answered
+  skill_resumed       — audit marker; no agent-level state mutation
+  skill_completed     — skill execution finished; deletes per-skill snapshot
 
 Per P7: this is OS-level generic infrastructure — `kind` strings and
 field names live here, not in any skill/domain code.
@@ -28,12 +37,23 @@ from typing import Iterator
 
 
 WAL_EVENT_KINDS = (
+    # Existing PR21 — inbox and chain lifecycle
     "inbox_put",
     "inbox_consume",
     "chain_register",
     "chain_update",
     "chain_resolve",
     "chain_timeout_fired",
+    # NEW (skill resume design — PR-state-foundation)
+    "skill_started",
+    "skill_phase_advanced",
+    "step_started",
+    "step_completed",
+    "step_failed",
+    "intervention_dispatched",
+    "intervention_resolved",
+    "skill_resumed",
+    "skill_completed",
 )
 
 
