@@ -116,7 +116,7 @@ class PreprocessorExecutor:
         return OpContext(
             workspace=self._workspace,
             events=self._events,
-            permission_decl=phase.permissions,
+            permission_decl=self._skill.permissions,
             permission_resolver=self._perm,
             skill_name=self._skill.name,
             skill=self._skill,
@@ -394,7 +394,7 @@ class PreprocessorExecutor:
                 )
             try:
                 perm = await self._perm.require_python(
-                    phase.permissions, step.module, step.function,
+                    self._skill.permissions, step.module, step.function,
                     self._intervention_bus,
                     skill_name=self._skill.name,
                 )

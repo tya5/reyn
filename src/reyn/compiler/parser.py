@@ -111,6 +111,13 @@ def parse_skill(path: Path) -> SkillDef:
     else:
         finish_criteria = list(fc_raw)
 
+    postprocessor_raw = fm.get("postprocessor") or {}
+    if not isinstance(postprocessor_raw, dict):
+        raise ValueError(
+            f"skill.md '{path}': 'postprocessor' must be a mapping, got "
+            f"{type(postprocessor_raw).__name__}"
+        )
+
     return SkillDef(
         name=fm["name"],
         description=str(fm.get("description") or "").strip(),
@@ -121,4 +128,5 @@ def parse_skill(path: Path) -> SkillDef:
         final_output=fm.get("final_output", ""),
         final_output_description=str(fm.get("final_output_description") or "").strip(),
         finish_criteria=finish_criteria,
+        postprocessor=postprocessor_raw,
     )

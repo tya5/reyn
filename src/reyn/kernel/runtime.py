@@ -26,6 +26,7 @@ from reyn.permissions.permissions import PermissionResolver
 from reyn.context_builder import build_frame
 from reyn.skill.skill_node_runner import execute_skill_node
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.kernel.postprocessor_executor import PostprocessorExecutor, PostprocessorError
 from reyn.user_intervention import InterventionBus
 
 
@@ -972,7 +973,7 @@ class OSRuntime:
                 continue
 
             phase_def = self.skill.phases.get(phase)
-            phase_decl = phase_def.permissions if phase_def is not None else None
+            phase_decl = self.skill.permissions
             allowed_ops = set(phase_def.allowed_ops) if phase_def is not None else None
             ir_results = await self.control_ir_executor.execute(
                 act.ops, phase=phase, decl=phase_decl, allowed_ops=allowed_ops,
@@ -1124,15 +1125,45 @@ class OSRuntime:
 
     # ── Workflow termination ──────────────────────────────────────────────────
 
-    def _finish_workflow(
-        self, phase: str, data: dict, reason: str, confidence: float,
+    async def _finish_workflow(
+        self,
+        phase: str,
+        data: dict,
+        reason: str,
+        confidence: float,
+        finish_artifact: dict | None = None,
+        output_language: str = "ja",
     ) -> RunResult:
         """Single source of truth for "the workflow ended cleanly".
 
         Both the normal end-of-graph path and the skill_node terminal path
         go through here so observers see consistent event shape and the
         RunResult is constructed identically.
+
+        When skill.postprocessor is set, the LLM's finish artifact is passed
+        through the postprocessor chain before the caller receives it.
+        ``finish_artifact`` is the full {type, data} artifact; ``data`` is
+        the pre-postprocessor payload (used as fallback when no postprocessor
+        runs). On postprocessor success ``data`` is replaced with the
+        postprocessor output's "data" field.
         """
+        if self.skill.postprocessor is not None and finish_artifact is not None:
+            post_executor = PostprocessorExecutor(
+                skill=self.skill,
+                workspace=self.workspace,
+                events=self.events,
+                model=self.model,
+                resolver=self._resolver,
+                subscribers=self.events.subscribers,
+                permission_resolver=self._perm,
+                intervention_bus=self._intervention_bus,
+                max_phase_visits=self._max_phase_visits,
+                caller=self._caller,
+            )
+            post_artifact, post_usage = await post_executor.run(finish_artifact, output_language)
+            self._token_usage += post_usage
+            data = post_artifact.get("data", {})
+
         self.events.emit(
             "workflow_finished",
             phase=phase,
@@ -1173,11 +1204,13 @@ class OSRuntime:
             )
             data = adapted.get("data", {})
             self._history.append(f"{current_phase} → {node_id} → END")
-            return self._finish_workflow(
+            return await self._finish_workflow(
                 phase=node_id,
                 data=data,
                 reason="app node produced final output",
                 confidence=1.0,
+                finish_artifact=adapted,
+                output_language=output_language,
             )
         next_after = post_nodes[0]
         next_phase_obj = self.skill.phases[next_after]
@@ -1334,7 +1367,7 @@ class OSRuntime:
                 )
 
                 current_def = self.skill.phases.get(current_phase)
-                current_decl = current_def.permissions if current_def is not None else None
+                current_decl = self.skill.permissions
                 current_allowed = set(current_def.allowed_ops) if current_def is not None else None
                 decide_results = await self.control_ir_executor.execute(
                     output.ops, phase=current_phase, decl=current_decl,
@@ -1404,11 +1437,13 @@ class OSRuntime:
                 if output.next_phase == "end":
                     data = output.artifact.get("data", {})
                     self._history.append(f"{current_phase} → END")
-                    return self._finish_workflow(
+                    return await self._finish_workflow(
                         phase=current_phase,
                         data=data,
                         reason=result.control.reason.summary,
                         confidence=result.control.confidence,
+                        finish_artifact=output.artifact,
+                        output_language=output_language,
                     )
 
                 next_node = output.next_phase

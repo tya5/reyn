@@ -82,6 +82,12 @@ PreprocessorStep = Annotated[
     Field(discriminator="type"),
 ]
 
+# Postprocessor uses the same step set as preprocessor (`RunOpStep` /
+# `IterateStep` / `ValidateStep` / `LintPlanStep` / `PythonStep`). The alias
+# below keeps callsites readable when they're operating in postprocessor
+# context, while the discriminated union itself is shared.
+ProcessorStep = PreprocessorStep
+
 # IterateStep / RunOpStep both use forward refs that resolve only after
 # ControlIROp is defined further down. The rebuild is performed at the
 # bottom of this file once all referenced types are in scope.
@@ -126,6 +132,27 @@ class SkillGraph(BaseModel):
     skill_nodes: dict[str, SkillNodeSpec] = Field(default_factory=dict)
 
 
+class Postprocessor(BaseModel):
+    """Skill-level postprocessor block — fires after the LLM finishes.
+
+    Symmetric to the phase-level preprocessor (Phase.preprocessor), but lives
+    at the **skill** boundary. The LLM is contracted against the skill's
+    existing `final_output_schema`; postprocessor receives that artifact and
+    transforms it into a (potentially richer) caller-facing artifact whose
+    schema lives here.
+
+    The step set, executable op set, on_error semantics, and permission gate
+    are all identical to preprocessor — the only differences are fire
+    position and the input/output schema source. See
+    `docs/en/decisions/0017-...` family for the design rationale.
+    """
+    # Caller-facing output (what the skill returns to its invoker).
+    output_schema: dict[str, Any]
+    output_name: str = "artifact"
+    output_description: str = ""
+    steps: list[PreprocessorStep] = Field(default_factory=list)
+
+
 class Skill(BaseModel):
     name: str
     description: str = ""
@@ -138,6 +165,18 @@ class Skill(BaseModel):
     final_output_description: str = ""
     # criteria the LLM must satisfy before the OS allows finish
     finish_criteria: list[str] = Field(default_factory=list)
+    # Skill-level permissions. Holds the upper-bound permission scope used by
+    # skill-level hooks (= postprocessor, future skill-wide steps) and as the
+    # canonical aggregate for the startup_guard. Populated by the expander
+    # from the union of declared phase permissions; once stdlib skills migrate
+    # to declaring permissions: at the skill frontmatter, this becomes the
+    # source of truth and Phase.permissions becomes derivative.
+    permissions: PermissionDecl = Field(default_factory=PermissionDecl)
+    # Skill-level postprocessor. None = no postprocessor (the LLM's
+    # `final_output_schema`-conformant artifact is returned as-is to the
+    # caller). Non-None = postprocessor steps run after LLM finish, and the
+    # caller receives an artifact conforming to `postprocessor.output_schema`.
+    postprocessor: "Postprocessor | None" = None
     # Sub-apps referenced by preprocessor steps; pre-loaded at compile time.
     preprocessor_sub_skills: dict[str, "Skill"] = Field(default_factory=dict)
     # On-disk directory containing skill.md / phases/ / artifacts/. Populated by

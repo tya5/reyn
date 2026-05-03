@@ -410,66 +410,65 @@ class PermissionResolver:
         write_seen: set[tuple] = set()
         read_seen: set[tuple] = set()
 
-        for phase_name, phase in skill.phases.items():
-            for entry in phase.permissions.file_write:
-                path = entry.get("path", "")
-                scope = entry.get("scope", "just_path")
-                if not path:
-                    continue
-                if _in_default_write_zone(path):
-                    continue
-                if self._is_config_approved("file.write"):
-                    continue
-                if self._is_path_approved_for(path, skill_name, "file.write"):
-                    continue
-                key = (path, scope)
-                if key not in write_seen:
-                    write_seen.add(key)
-                    write_requests.append({"path": path, "scope": scope, "phase": phase_name})
+        decl = skill.permissions  # aggregated upper bound across all phases
+        for entry in decl.file_write:
+            path = entry.get("path", "")
+            scope = entry.get("scope", "just_path")
+            if not path:
+                continue
+            if _in_default_write_zone(path):
+                continue
+            if self._is_config_approved("file.write"):
+                continue
+            if self._is_path_approved_for(path, skill_name, "file.write"):
+                continue
+            key = (path, scope)
+            if key not in write_seen:
+                write_seen.add(key)
+                write_requests.append({"path": path, "scope": scope})
 
-            for entry in phase.permissions.file_read:
-                path = entry.get("path", "")
-                scope = entry.get("scope", "just_path")
-                if not path:
-                    continue
-                if _in_default_read_zone(path):
-                    continue
-                if self._is_config_approved("file.read"):
-                    continue
-                if self._is_path_approved_for(path, skill_name, "file.read"):
-                    continue
-                key = (path, scope)
-                if key not in read_seen:
-                    read_seen.add(key)
-                    read_requests.append({"path": path, "scope": scope, "phase": phase_name})
+        for entry in decl.file_read:
+            path = entry.get("path", "")
+            scope = entry.get("scope", "just_path")
+            if not path:
+                continue
+            if _in_default_read_zone(path):
+                continue
+            if self._is_config_approved("file.read"):
+                continue
+            if self._is_path_approved_for(path, skill_name, "file.read"):
+                continue
+            key = (path, scope)
+            if key not in read_seen:
+                read_seen.add(key)
+                read_requests.append({"path": path, "scope": scope})
 
         # Python preprocessor steps — both pure and trusted require approval.
         # Trusted additionally needs trusted_python_allowed (checked here so the
         # user is told why their startup is being aborted before any prompts fire).
         python_requests: list[dict] = []
         python_seen: set[tuple] = set()
-        for phase_name, phase in skill.phases.items():
-            for entry in phase.permissions.python:
-                key = (entry.module, entry.function)
-                if key in python_seen:
-                    continue
-                python_seen.add(key)
-                kind = "python.trusted" if entry.mode == "trusted" else "python.pure"
-                if self._is_config_approved(kind):
-                    continue
-                approval_key = f"{skill_name}/{kind}/{entry.module}:{entry.function}"
-                if approval_key in self._saved or approval_key in self._session:
-                    continue
-                python_requests.append({
-                    "module": entry.module, "function": entry.function,
-                    "mode": entry.mode, "phase": phase_name,
-                })
+        for entry in decl.python:
+            key = (entry.module, entry.function)
+            if key in python_seen:
+                continue
+            python_seen.add(key)
+            kind = "python.trusted" if entry.mode == "trusted" else "python.pure"
+            if self._is_config_approved(kind):
+                continue
+            approval_key = f"{skill_name}/{kind}/{entry.module}:{entry.function}"
+            if approval_key in self._saved or approval_key in self._session:
+                continue
+            python_requests.append({
+                "module": entry.module, "function": entry.function,
+                "mode": entry.mode,
+            })
 
         # Hard-fail before prompting if a trusted step appears without the flag.
         for req in python_requests:
             if req["mode"] == "trusted" and not self._trusted_python_allowed:
                 raise PermissionError(
-                    f"Skill '{skill_name}' phase '{req['phase']}' declares a trusted "
+                    f"Skill '{skill_name}' declares a trusted "
                     f"python step ({req['module']}:{req['function']}) but "
                     f"--allow-untrusted-python was not provided. Re-run with the flag "
                     f"to enable trusted-mode Python preprocessor steps."

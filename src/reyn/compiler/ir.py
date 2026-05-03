@@ -43,3 +43,7 @@ class SkillDef:
     final_output: str                    # artifact name for final_output_schema
     final_output_description: str
     finish_criteria: list[str]
+    # Postprocessor block — raw frontmatter shape. Empty dict (the default)
+    # = skill has no postprocessor. Expander typechecks and converts to
+    # `schemas.models.Postprocessor`.
+    postprocessor: dict = field(default_factory=dict)
