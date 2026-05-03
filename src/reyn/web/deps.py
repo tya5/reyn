@@ -97,6 +97,11 @@ def _get_budget_tracker():
         root = _get_project_root()
         tracker = BudgetTracker(config.cost)
         tracker.hydrate(root / ".reyn" / "state" / "budget_ledger.jsonl")
+        # R-D8: restore in-memory counters (per-agent / per-chain-skill)
+        # for cap enforcement across crash.
+        budget_state_path = root / ".reyn" / "state" / "budget_state.json"
+        tracker.load_state(budget_state_path)
+        tracker.set_state_path(budget_state_path)
         _budget_tracker = tracker
     return _budget_tracker
 

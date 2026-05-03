@@ -138,6 +138,12 @@ def run(args: argparse.Namespace) -> None:
     budget_tracker = BudgetTracker(session_cfg.config.cost)
     # PR25: hydrate daily / monthly counters from the persistent ledger.
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
+    # R-D8: restore in-memory counters (per-agent / per-chain-skill) from
+    # the state snapshot written by the previous run. Together with PR25
+    # ledger hydration, this makes cap enforcement survive crash + restart.
+    budget_state_path = project_root / ".reyn" / "state" / "budget_state.json"
+    budget_tracker.load_state(budget_state_path)
+    budget_tracker.set_state_path(budget_state_path)
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).

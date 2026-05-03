@@ -291,6 +291,10 @@ class BudgetTracker:
         self._day_key: tuple[str, str] | None = None    # ("day", "2026-05-02")
         self._month_key: tuple[str, str] | None = None  # ("month", "2026-05")
         self._ledger: BudgetLedger | None = None
+        # R-D8: auto-save state path + throttle. None path = no auto-save.
+        self._state_path: Path | None = None
+        self._save_throttle_secs: float = 1.0
+        self._last_save_monotonic: float = 0.0  # 0 = never saved
 
     @property
     def config(self) -> CostConfig:
@@ -487,6 +491,9 @@ class BudgetTracker:
         # Warn on daily / monthly thresholds
         self._check_period_warn(warn_dims)
 
+        # R-D8: persist state for crash recovery (throttled)
+        self._maybe_auto_save()
+
         return BudgetCheck(
             allowed=True,
             warn_dimensions=warn_dims,
@@ -495,6 +502,7 @@ class BudgetTracker:
 
     def record_spawn(self, *, chain_id: str, skill: str) -> None:
         self._chain_skill_calls[(chain_id, skill)] += 1
+        self._maybe_auto_save()
 
     # ── reset / introspect ──────────────────────────────────────────────
 
@@ -534,6 +542,46 @@ class BudgetTracker:
         }
 
     # ── R-D8: state persistence ─────────────────────────────────────────
+
+    def set_state_path(
+        self, path: Path, *, throttle_secs: float = 1.0,
+    ) -> None:
+        """Enable auto-save: every record_llm / record_spawn after this call
+        writes the state file (subject to throttle).
+
+        ``throttle_secs`` collapses rapid consecutive writes (LLM call paths
+        are hot in multi-skill scenarios — a per-call fsync would dominate).
+        Default 1 second. Set to 0 in tests for deterministic save semantics.
+        """
+        self._state_path = Path(path)
+        self._save_throttle_secs = float(throttle_secs)
+        # Reset throttle clock so the first record after set_state_path
+        # always writes (otherwise the very first save would be skipped if
+        # ``set_state_path`` happens close to a prior save).
+        self._last_save_monotonic = 0.0
+
+    def _maybe_auto_save(self) -> None:
+        """Save state if path is configured and throttle has elapsed.
+
+        Defensive: any I/O error is logged + swallowed (auto-save is a
+        best-effort cache write; the in-memory state is the source of
+        truth until save lands).
+        """
+        if self._state_path is None:
+            return
+        now = time.monotonic()
+        if (self._last_save_monotonic > 0
+                and now - self._last_save_monotonic < self._save_throttle_secs):
+            return
+        try:
+            self.save_state(self._state_path)
+            self._last_save_monotonic = now
+        except Exception as e:  # noqa: BLE001 — never fail record on save failure
+            import logging
+            logging.getLogger(__name__).warning(
+                "BudgetTracker auto-save to %s failed: %s",
+                self._state_path, e,
+            )
 
     def save_state(self, path: Path) -> None:
         """Persist in-memory counters to ``path`` (atomic write).
