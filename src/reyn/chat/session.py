@@ -684,6 +684,19 @@ class ChatSession:
         if await self._maybe_answer_oldest_intervention(text):
             return
 
+        # R-D4: chat turn boundary — opportunistically check WAL size and
+        # truncate if it has grown past the safety-net threshold. Long-idle
+        # skills (1 phase + LLM-only loop) and multi-agent / multi-chain
+        # idle sessions don't fire phase-completion events, so without this
+        # the WAL would grow unboundedly between turns. The check is cheap
+        # (one stat() call); the rewrite only fires on bloat. Fire-and-
+        # forget so a slow rewrite doesn't block the user's turn.
+        if self._registry is not None:
+            asyncio.create_task(
+                self._registry.maybe_truncate_for_size(),
+                name="wal-size-safety-net",
+            )
+
         self._append_history(ChatMessage(
             role="user", text=text, ts=_now_iso(),
             meta={"chain_id": chain_id},

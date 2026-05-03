@@ -272,8 +272,15 @@ class AgentRegistry:
     # would force the WAL to know about agent / skill layout.
 
     _TRUNCATION_THROTTLE_SECS: float = 5.0
+    # R-D4: size safety net default. ChatSession's chat-turn-boundary
+    # call uses this threshold. Long-idle skills with no semantic
+    # boundary events (= no phase_advanced / skill_completed) would
+    # otherwise let the WAL grow unboundedly between turns.
+    _SIZE_SAFETY_NET_BYTES: int = 1_000_000
 
-    async def truncate_wal_if_eligible(self) -> dict | None:
+    async def truncate_wal_if_eligible(
+        self, *, bypass_throttle: bool = False,
+    ) -> dict | None:
         """Compute floor across all agents + active skill snapshots, then
         truncate the WAL if eligible.
 
@@ -282,9 +289,16 @@ class AgentRegistry:
 
         Skip conditions:
           - no StateLog wired (test / non-chat)
-          - last truncation was within ``_TRUNCATION_THROTTLE_SECS``
+          - last truncation was within ``_TRUNCATION_THROTTLE_SECS`` —
+            unless ``bypass_throttle=True`` (R-D4: size safety net)
           - computed floor is 0 (no snapshots, or any snapshot read failed
             — conservative: don't truncate when we can't trust the floor)
+
+        ``bypass_throttle`` is for size-driven calls
+        (``maybe_truncate_for_size``): if the WAL is bloated, the
+        throttle's burst-protection rationale doesn't apply — we
+        should truncate now even if a semantic-boundary truncate just
+        happened.
 
         On computation or rewrite failure, the exception is caught and
         logged; the next trigger naturally retries. We never let truncation
@@ -294,7 +308,8 @@ class AgentRegistry:
         if self._state_log is None:
             return None
         now = time.monotonic()
-        if (self._last_truncation_ts is not None
+        if (not bypass_throttle
+                and self._last_truncation_ts is not None
                 and now - self._last_truncation_ts < self._TRUNCATION_THROTTLE_SECS):
             return None
         try:
@@ -313,6 +328,45 @@ class AgentRegistry:
         # on dropped==0 — even a no-op rewrite resets the throttle window.)
         self._last_truncation_ts = now
         return stats
+
+    async def maybe_truncate_for_size(
+        self, *, threshold_bytes: int | None = None,
+    ) -> dict | None:
+        """Size-driven WAL truncation safety net (R-D4).
+
+        Called from places that don't naturally fire phase-completion
+        events but still want to bound WAL growth — primarily the
+        ChatSession chat-turn boundary (each user message handled).
+
+        Behavior:
+          - If WAL file size <= threshold (default 1 MB): no-op, no
+            throttle reset, no rewrite.
+          - If WAL file size > threshold: call
+            ``truncate_wal_if_eligible(bypass_throttle=True)``. The
+            throttle is bypassed because a bloated WAL means waiting
+            another 5 seconds doesn't help; the rewrite needs to
+            happen now to reclaim disk + replay time.
+
+        Returns the truncate stats dict on a successful rewrite, or
+        ``None`` if skipped (state log absent, WAL small, floor not
+        advanced, etc.).
+        """
+        if self._state_log is None:
+            return None
+        threshold = (
+            threshold_bytes if threshold_bytes is not None
+            else self._SIZE_SAFETY_NET_BYTES
+        )
+        try:
+            size = self._state_log.path.stat().st_size
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            logger.warning("WAL size check failed: %s", e)
+            return None
+        if size <= threshold:
+            return None
+        return await self.truncate_wal_if_eligible(bypass_throttle=True)
 
     def _compute_truncate_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL.
