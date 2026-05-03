@@ -1,4 +1,20 @@
-"""Unit tests for InterventionRegistry (wave 1C extraction)."""
+# scaffold: triggered_by="PR-refactor-session-1 wave 1 extracted
+#                          InterventionRegistry out of ChatSession
+#                          (commit 41ec4cb)"
+# scaffold: removed_by="follow-up PR that adds Tier 2 / Tier 3 coverage for
+#                       intervention announce / deliver flows via the public
+#                       ChatSession surface, at which point the
+#                       implementation-level coverage here is redundant"
+"""Scaffolding tests for InterventionRegistry (wave 1C extraction).
+
+These tests reach directly into private state (`_active`, `_order`) to
+construct preconditions and to assert post-conditions. Per the testing
+policy they qualify as Tier 4 in the steady state — they exist purely to
+give the extraction a fast-feedback safety net during refactor and will be
+removed once the public ChatSession surface has enough Tier 2 invariants
+and Tier 3 replay coverage to make this implementation-level pinning
+unnecessary.
+"""
 from __future__ import annotations
 
 import asyncio

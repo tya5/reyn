@@ -1,4 +1,17 @@
-"""Unit tests for ChainManager (wave 1B extraction).
+# scaffold: triggered_by="PR-refactor-session-1 wave 1 extracted ChainManager
+#                          out of ChatSession (commit 41ec4cb)"
+# scaffold: removed_by="follow-up PR that adds Tier 2 / Tier 3 coverage for
+#                       chain-relay paths via the public ChatSession surface,
+#                       at which point the implementation-level coverage here
+#                       is redundant"
+"""Scaffolding tests for ChainManager (wave 1B extraction).
+
+These tests use unittest.mock spies and assert directly on private state
+(`_timers`, `_chains`). Per the testing policy they qualify as Tier 4 in
+the steady state — they exist purely to give the extraction a fast-feedback
+safety net during refactor and will be removed once the public ChatSession
+surface has enough Tier 2 invariants and Tier 3 replay coverage to make
+this implementation-level pinning unnecessary.
 
 Journal interactions are verified via AsyncMock spies; the snapshot is backed
 by a MagicMock so no real WAL or filesystem is needed.

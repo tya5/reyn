@@ -90,6 +90,32 @@ Single format for all phases:
 - ALWAYS validate LLM output (Transition + Finish above)
 - ALWAYS emit events for state changes (P6)
 
+## Testing policy (READ BEFORE WRITING TESTS)
+
+The testing policy is at **`docs/ja/contributing/testing.md`** (English:
+`docs/en/contributing/testing.md`). It is normative — read it before adding
+or modifying tests.
+
+Key constraints (full rationale in the doc):
+
+- Each test belongs to exactly one Tier (1: Contract / 2: OS invariant /
+  3: LLM-replay behavior). Anything that doesn't fit a Tier is **Tier 4 —
+  do not write**.
+- NEVER use `unittest.mock.MagicMock` / `AsyncMock` / `patch` to fake
+  collaborators. Use real instances or the `LLMReplay` Fake. Mocks bypass
+  real API contracts and silently rot.
+- NEVER assert on private state (`tracker._daily_tokens == 100`,
+  `mgr._timers["c1"]`, `reg._active[id]`). Use the public surface or a
+  `snapshot()`-style read.
+- NEVER pin algorithm-level behavior (sort order, dict iteration order,
+  internal cache structure, exact whitespace / formatting).
+- NEVER add snapshot / golden-file tests outside `tests/scaffold/`.
+- Tests for an extracted refactor belong in `tests/scaffold/` with
+  `triggered_by` / `removed_by` metadata, and are **deleted in the PR
+  that lands the refactor**.
+- Each test docstring's first line must declare its Tier:
+  `"""Tier 3a: ..."""`.
+
 ## Skill resolution order
 
 1. `reyn/project/<name>/skill.md` — checked-in project skills
