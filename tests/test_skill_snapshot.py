@@ -1,4 +1,11 @@
-"""Tests for SkillSnapshot — per-skill crash-recovery state dataclass."""
+"""Tier 2: OS invariant — SkillSnapshot per-skill crash-recovery state dataclass.
+
+The skill snapshot is the on-disk cache for ``current_phase``,
+``last_phase_applied_seq``, ``visit_counts`` and friends — derived state
+that the resume runtime keys off. These tests pin the dataclass surface
+(``empty()`` / round-trip serialization / schema_version refuse) that
+other OS-level code (``SkillRegistry``, ``OSRuntime``) depends on.
+"""
 import json
 from pathlib import Path
 

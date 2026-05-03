@@ -1,18 +1,23 @@
-"""Tests for the per-turn skill_router invocation cap (S4 dogfood follow-up).
+"""Tier 4 (scaffold candidate): per-turn skill_router invocation cap (S4 dogfood follow-up).
 
 Background: Pre-OSS dogfood S4 Run 3 logged 16 router invocations / 245k
 prompt tokens for a single user paste — runaway loop with no upper bound.
 ChatSession now enforces a configurable cap (default 3) on consecutive
 `skill_router` invocations within one user turn (or one fresh
-agent_request). Reset happens at the top of each fresh turn; in-chain
-re-invocations (`agent_response`, `_resolve_pending_chain`) accumulate
-against the same budget.
+agent_request).
 
-These tests bypass real LLM calls by patching `ChatSession._run_stdlib_skill`
-so each invocation increments a counter and returns a canned router result.
-The cap-check itself lives entirely in OS-level chat code — no skill
-content is involved — so a unit test against `_handle_user_message` is the
-right altitude.
+**Tier classification (R-D6 audit)**: these tests inject private state
+(``session._router_invocations_this_turn = 3``,
+``_router_last_reason = ...``) and monkeypatch a private method
+(``_reset_router_turn_counter``). Per
+``docs/ja/contributing/testing.md`` this is Tier 4 — the test couples
+to internals rather than the public surface.
+
+Migration path: rewrite as a Tier 3 LLM-replay test that drives the cap
+via real router invocations until it fires naturally. Until then,
+these tests are kept (the cap is a security-relevant boundary that
+shouldn't be left untested) but tagged as scaffold candidates for
+removal once the replay-based test lands.
 """
 from __future__ import annotations
 
