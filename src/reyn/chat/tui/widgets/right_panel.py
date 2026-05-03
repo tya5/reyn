@@ -325,6 +325,12 @@ class RightPanel(Widget):
         else:
             tabs.action_previous_tab()
 
+    def focus_tabs(self) -> None:
+        try:
+            self.query_one("#panel-tabs", Tabs).focus()
+        except Exception:
+            pass
+
     def cycle_event_filter(self) -> None:
         """Rotate through event filter groups; only meaningful on events tab."""
         self._event_filter_idx = (self._event_filter_idx + 1) % len(_FILTER_GROUPS)

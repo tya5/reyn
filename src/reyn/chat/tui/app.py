@@ -9,7 +9,7 @@ Layout:
   │  InputBar (Input + hint label)                        dock=bottom │
   └───────────────────────────────────────────────────────────────────┘
 
-RightPanel (ctrl+b to toggle, ] / [ to cycle content):
+RightPanel (ctrl+b to toggle, ctrl+o to focus, ctrl+w to cycle tabs):
   keys · events · agents · memory · docs
 
 ChatSession integration (phase 3+):
@@ -91,8 +91,9 @@ class ReynTUIApp(App):
         Binding("p", "palette_prev", "Prev", priority=True, show=False),
         Binding("j", "palette_next_only", "Next", priority=True, show=False),
         Binding("k", "palette_prev", "Prev", priority=True, show=False),
-        Binding("ctrl+o", "panel_next_content", "Next panel", priority=True, show=False),
-        Binding("ctrl+shift+o", "panel_prev_content", "Prev panel", priority=False, show=False),
+        Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        Binding("ctrl+w", "panel_next_content", "Next tab", priority=True, show=False),
+        Binding("ctrl+shift+w", "panel_prev_content", "Prev tab", priority=False, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
@@ -422,12 +423,24 @@ class ReynTUIApp(App):
         self._panel_visible = not self._panel_visible
         self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
+    def action_focus_toggle_panel(self) -> None:
+        """ctrl+o — toggle focus between input and panel tabs (gated: panel visible)."""
+        panel = self.query_one("#right_panel", RightPanel)
+        focused = self.focused
+        in_panel = focused is not None and any(
+            a is panel for a in [focused, *focused.ancestors]
+        )
+        if in_panel:
+            self.query_one("#inputbar", InputBar).focus_input()
+        else:
+            panel.focus_tabs()
+
     def action_panel_next_content(self) -> None:
-        """ctrl+o — cycle to next panel content (gated: panel visible only)."""
+        """ctrl+w — cycle to next panel tab (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(+1)
 
     def action_panel_prev_content(self) -> None:
-        """ctrl+shift+o — cycle to previous panel content (gated: panel visible only)."""
+        """ctrl+shift+w — cycle to previous panel tab (gated: panel visible only)."""
         self.query_one("#right_panel", RightPanel).cycle(-1)
 
     def action_event_filter_cycle(self) -> None:
@@ -497,7 +510,7 @@ class ReynTUIApp(App):
             "close_palette",
         }:
             return self._palette_visible
-        if action in {"panel_next_content", "panel_prev_content"}:
+        if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
             return self._panel_visible
         if action in {"event_filter_cycle", "event_tail_cycle"}:
             if not self._panel_visible:
