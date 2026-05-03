@@ -37,9 +37,9 @@ shadow しても見えないものを見るための iterative loop。
 
 ## Batch 一覧
 
-| Batch | Date | Scenarios | Headline finding |
-|---|---|---|---|
-| [batch-1-practice](2026-05-04-batch-1-practice/) | 2026-05-04 | 3 (text_summarizer / multi-agent delegate / read_local_files perm gating) | **skill_router 起動 0/3** + 起動時 AttributeError + multi-agent 経路で 4 件の bug |
+| Batch | Date | Scenarios | 一言で | 主要 finding |
+|---|---|---|---|---|
+| [batch-1-practice](2026-05-04-batch-1-practice/) | 2026-05-04 | 3 件 (text_summarizer / multi-agent delegate / read_local_files perm gating) | 練習バッチのはずが、 chat は起動できず、 直したら router が誰の言うことも聞かず、 multi-agent は連鎖 bug で全壊した話 | **skill_router 起動 0/3**、 起動時 `AttributeError` (修正済 `f5b3281`)、 `delegate_to_agent` の inbox 二重送信、 specialist の早期空 reply、 英語 fallback、 etc. |
 
 ## こちらの心境
 

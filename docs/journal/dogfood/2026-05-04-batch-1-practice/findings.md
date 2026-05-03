@@ -5,21 +5,23 @@
 
 ## 概要
 
-| ID | 重要度 | タイトル | 状態 |
-|---|---|---|---|
-| F1 | HIGH | chat 起動時の AttributeError (regression) | **fixed** at `f5b3281` |
-| F2 | LOW | reyn.local.yaml の load が docstring に未記載 | deferred to Wave B |
-| F3 | HIGH | skill_router が implicit summarization request で起動しない | open |
-| F4 | LOW | LiteLLM proxy 経由で cost が 0/0/0 表示 | open |
-| F5 | HIGH | `delegate_to_agent` が 1 呼び出しで inbox_put × 2 | open |
-| F6 | HIGH | specialist が空の `agent_response` を早期送出 | open |
-| F7 | MED | default router が空 reply を「失敗」 と解釈して再 delegate | open |
-| F8 | MED | retry 枯渇エラーが英語かつ non-actionable | open |
-| F9 | HIGH | skill 名を明示しても skill_router が無視する (Scenario 1 と同根) | open |
-| F10 | HIGH | filesystem MCP server 未設定 — startup_guard test 不能 | open |
-| F11 | MED | router fallback が日本語 user に英語応答を返す | open |
+> 「で、 何が起きたの?」 の一行サマリ。 詳細は各 section へ。
 
-**skill_router の起動成功率: 0/3。**
+| ID | 重要度 | 一行で言うと | 状態 |
+|---|---|---|---|
+| [F1](#f1-chat-に話しかけたかったのに-chat-が起動を拒否した話) | HIGH | reyn chat を起動した瞬間 `AttributeError`。 「Did you mean」 まで親切な Python だが起動はしない | **fixed** at `f5b3281` |
+| [F2](#f2-reynlocalyaml-は-loaded-されているが-docs-はそれを知らない) | LOW | `reyn.local.yaml` は実際 load されているのに、 `config.py` の docstring には「そんな file 知らん」 と書いてある | deferred (Wave B) |
+| [F3](#f3-skill_router-仕事しない大将) | HIGH | 「要約して」 とお願いしたのに `text_summarizer` skill は呼ばれず、 LLM が「自分でやれます」 と直答 | open |
+| [F4](#f4-cost-永遠の-0) | LOW | LLM 応答は来てるのに `cost -- prompt=0 completion=0 total=0`。 永遠の 0 円 | open |
+| [F5](#f5-high-delegate-言ってないのに-2-回送る) | HIGH | LLM が `delegate_to_agent` を 1 回呼んだのに、 specialist の inbox には同じ依頼が **2 件** 届く | open |
+| [F6](#f6-high-specialist-まだ答えてないのに答えましたを送る) | HIGH | specialist 側、 LLM がまだ考え中なのに「答えました (中身: 空)」 を default に送りつける | open |
+| [F7](#f7-med-default-空-reply-を聞いてダメだったかと判断する) | MED | default、 specialist の空 reply を「失敗」 と判定して再 delegate。 retry budget 即枯渇 | open |
+| [F8](#f8-med-諦めるときくらい日本語で謝ってほしい) | MED | 諦めるときに出るエラー文が英語。 user は日本語で話してた。 内容も「rephrase してね」 で誤誘導 | open |
+| [F9](#f9-skill-名を明示してもなお-router-は応えない) | HIGH | `read_local_files skill で〜` と skill 名を本文に直書きしても router は無視。 routing 0/3 | open |
+| [F10](#f10-filesystem-mcp-は箱の中で寝ている) | HIGH | `read_local_files` は filesystem MCP を要求するが、 そんな MCP server はどこにも設定されていない | open |
+| [F11](#f11-router-日本語が苦手) | MED | router の fallback / clarifying path だけ英語固定。 ja 設定しても抜けてくる | open |
+
+**skill_router の起動成功率: 0/3。** これが batch 1 の headline。
 
 ---
 
