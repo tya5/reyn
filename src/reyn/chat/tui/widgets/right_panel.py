@@ -99,6 +99,11 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "validation_error", "phase_retry", "permission_denied",
         "router_retry_exhausted", "tool_failed",
     })),
+    ("user", frozenset({
+        "user_message_received",
+        "user_intervention_requested", "user_intervention_received",
+        "chat_started", "chat_stopped",
+    })),
 ]
 
 _TAIL_CYCLE: list[int] = [30, 50, 100, 200]
@@ -446,10 +451,10 @@ class RightPanel(Widget):
                 if cid:
                     reply = chain_replies.get(cid)
                     if reply is None:
-                        lines.append("[#444444]              ↳ [/][#555555](awaiting…)[/]")
+                        lines.append("[#444444]       ↳ [/][#555555](awaiting…)[/]")
                     else:
                         short = _esc(reply[:72]) + ("…" if len(reply) > 72 else "")
-                        lines.append(f"[#444444]              ↳ [/][#777777]{short}[/]")
+                        lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
         return "\n".join(lines)
 
