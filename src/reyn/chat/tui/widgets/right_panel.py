@@ -294,6 +294,14 @@ class _PreviewPane(Widget):
             event.prevent_default()
             event.stop()
             self.scroll_line(-1)
+        elif event.key == "l":
+            event.prevent_default()
+            event.stop()
+            self.scroll_col(+1)
+        elif event.key == "h":
+            event.prevent_default()
+            event.stop()
+            self.scroll_col(-1)
 
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
@@ -314,6 +322,13 @@ class _PreviewPane(Widget):
         except Exception:
             pass
 
+    def scroll_col(self, delta: int) -> None:
+        try:
+            log = self.query_one("#preview-log", RichLog)
+            log.scroll_to(x=log.scroll_x + delta, animate=False)
+        except Exception:
+            pass
+
     def clear(self) -> None:
         self._current_path = None
         try:
@@ -326,7 +341,7 @@ class _PreviewPane(Widget):
         name = _esc(self._current_path.name) if self._current_path else "—"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  n/j↓  p/k↑"
+                f"  {name}  │  n/j↓  p/k↑  h/l←→"
             )
         except Exception:
             pass
