@@ -155,8 +155,21 @@ async def dispatch_tool(
     # args_hash mismatch falls through deliberately — the LLM may have
     # emitted a structurally different op shape this resume, in which
     # case the recorded result no longer applies (drift detection).
-    memo = _lookup_memoized_step(
-        ctx.resume_plan, op_invocation_id, ctx.phase, args_hash,
+    #
+    # ``world`` purity bypass (PR-memo-purity-fix M2). World ops read
+    # external state (web_fetch, web_search, future read-only mcp /
+    # file/read with sub-op refinement) — their recorded result may be
+    # transient or stale (e.g. a flaky API returning 0 results would
+    # lock in forever). Skipping memo for world ops on resume forces
+    # re-execution, paying the read-cost for fresh truth. Side effect
+    # / external / llm purity still memoize (the cost of duplicating
+    # those is much higher than re-reading external state).
+    memo = (
+        None
+        if purity is OpPurity.world
+        else _lookup_memoized_step(
+            ctx.resume_plan, op_invocation_id, ctx.phase, args_hash,
+        )
     )
     if memo is not None:
         ctx.events.emit(
