@@ -286,12 +286,14 @@ class _PreviewPane(Widget):
         yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False)
 
     def on_key(self, event) -> None:
-        if event.key == "up":
+        if event.key in ("n", "j"):
             event.prevent_default()
-            self.scroll_line(-1)
-        elif event.key == "down":
-            event.prevent_default()
+            event.stop()
             self.scroll_line(+1)
+        elif event.key in ("p", "k"):
+            event.prevent_default()
+            event.stop()
+            self.scroll_line(-1)
 
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
@@ -327,7 +329,7 @@ class _PreviewPane(Widget):
         name = _esc(self._current_path.name) if self._current_path else "—"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  ↑/↓=scroll"
+                f"  {name}  │  n/j↓  p/k↑"
             )
         except Exception:
             pass
@@ -475,14 +477,7 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._docs_move(-1)
-        elif event.key == "up":
-            if self._preview_visible:
-                event.prevent_default()
-                self._scroll_preview(-1)
-        elif event.key == "down":
-            if self._preview_visible:
-                event.prevent_default()
-                self._scroll_preview(+1)
+
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
@@ -524,12 +519,6 @@ class RightPanel(Widget):
                 pane.show_markdown(self._docs_files[self._docs_cursor])
             else:
                 pane.clear()
-        except Exception:
-            pass
-
-    def _scroll_preview(self, delta: int) -> None:
-        try:
-            self.query_one("#preview-pane", _PreviewPane).scroll_line(delta)
         except Exception:
             pass
 
