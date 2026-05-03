@@ -19,5 +19,6 @@ improver_state.json
 .DS_Store
 .vscode/
 .idea/
+.claude/
 site/
 tmp/
