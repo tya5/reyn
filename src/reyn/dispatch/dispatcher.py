@@ -43,6 +43,19 @@ class DispatchContext:
         events: callable matching events.emit signature
             (def emit(self, event_type: str, **data) -> None).
         chain_id is included as an event field automatically.
+
+    Skill-resume fields (PR-skill-resume part A):
+        state_log: optional WAL for crash recovery. When set together with
+            ``skill_run_id`` and ``caller_kind == 'skill_phase'``, dispatch
+            emits ``step_started``/``step_completed``/``step_failed``
+            events to the WAL alongside the audit-log events. Decoupled
+            from audit emission: step events drive forward-replay resume,
+            audit events drive forensics. Same OpPurity gating applies.
+        skill_run_id: identifier of the currently-executing skill run.
+            Required for step-event emission; ignored if ``state_log`` is
+            None.
+        phase: name of the phase whose ops are being dispatched. Embedded
+            in step events so resume scans can scope to a phase boundary.
     """
 
     caller_kind: Literal["router", "skill_phase"]
@@ -50,6 +63,10 @@ class DispatchContext:
     chain_id: str | None
     tool_catalog: dict[str, dict]
     events: Any  # has .emit(type: str, **data) -> None
+    # Skill-resume fields (optional; only meaningful for skill_phase caller).
+    state_log: Any = None       # has async .append(kind, **fields) -> int
+    skill_run_id: str | None = None
+    phase: str | None = None
 
 
 async def dispatch_tool(
@@ -58,6 +75,7 @@ async def dispatch_tool(
     args: dict,
     ctx: DispatchContext,
     invoker: Callable[[dict], Awaitable[Any]],
+    op_invocation_id: str | None = None,
 ) -> dict:
     """Dispatch a tool call with shared cross-cutting concerns.
 
@@ -115,6 +133,16 @@ async def dispatch_tool(
     purity = get_op_purity(name) if ctx.caller_kind == "skill_phase" else OpPurity.side_effect
     args_hash = _compute_args_hash(args)
 
+    # Step-event emission gate (PR-skill-resume part A).
+    # Step events go to the WAL (durable, drives forward-replay resume);
+    # audit events go to ctx.events (forensics). Only emit step events for
+    # skill-phase callers with a state_log + skill_run_id wired in.
+    emit_step = (
+        ctx.caller_kind == "skill_phase"
+        and ctx.state_log is not None
+        and ctx.skill_run_id is not None
+    )
+
     # 3. Pre-event (skip for pure / world / llm — no side-effect ambiguity)
     if purity in (OpPurity.side_effect, OpPurity.external):
         ctx.events.emit(
@@ -126,6 +154,10 @@ async def dispatch_tool(
             args=args,
             args_hash=args_hash,
         )
+        if emit_step:
+            await _wal_step_started(
+                ctx, name, args, args_hash, op_invocation_id,
+            )
 
     # 4. Invoke (with structured error handling)
     try:
@@ -141,6 +173,11 @@ async def dispatch_tool(
             error_kind="permission_denied",
             message=str(e),
         )
+        if emit_step and purity != OpPurity.pure:
+            await _wal_step_failed(
+                ctx, name, args_hash, op_invocation_id,
+                "permission_denied", str(e),
+            )
         return {"status": "error",
                 "error": {"kind": "permission_denied", "message": str(e)}}
     except Exception as e:  # noqa: BLE001 — caller errors are normalized
@@ -154,6 +191,11 @@ async def dispatch_tool(
             error_kind="exception",
             message=f"{type(e).__name__}: {e}",
         )
+        if emit_step and purity != OpPurity.pure:
+            await _wal_step_failed(
+                ctx, name, args_hash, op_invocation_id,
+                "exception", f"{type(e).__name__}: {e}",
+            )
         return {"status": "error",
                 "error": {"kind": "exception",
                           "message": f"{type(e).__name__}: {e}"}}
@@ -170,7 +212,96 @@ async def dispatch_tool(
             args_hash=args_hash,
             result=result,
         )
+        if emit_step:
+            await _wal_step_completed(
+                ctx, name, args_hash, op_invocation_id, result,
+            )
     return {"status": "ok", "data": result}
+
+
+async def _wal_step_started(
+    ctx: DispatchContext,
+    op_kind: str,
+    args: dict,
+    args_hash: str,
+    op_invocation_id: str | None,
+) -> None:
+    """Append a ``step_started`` WAL entry. Defensive: log + swallow on failure.
+
+    Truncation correctness depends on WAL durability, not on every step
+    event landing — a missing step_started just means resume must treat the
+    op as unknown (and prompt). Swallowing here protects the hot path.
+    """
+    try:
+        await ctx.state_log.append(
+            "step_started",
+            run_id=ctx.skill_run_id,
+            phase=ctx.phase,
+            op_invocation_id=op_invocation_id,
+            op_kind=op_kind,
+            args=args,
+            args_hash=args_hash,
+        )
+    except Exception as e:  # noqa: BLE001 — never fail the dispatch
+        import logging
+        logging.getLogger(__name__).warning(
+            "WAL step_started emission failed (run=%s op=%s): %s",
+            ctx.skill_run_id, op_kind, e,
+        )
+
+
+async def _wal_step_completed(
+    ctx: DispatchContext,
+    op_kind: str,
+    args_hash: str,
+    op_invocation_id: str | None,
+    result: Any,
+) -> None:
+    """Append a ``step_completed`` WAL entry with the recorded result."""
+    try:
+        await ctx.state_log.append(
+            "step_completed",
+            run_id=ctx.skill_run_id,
+            phase=ctx.phase,
+            op_invocation_id=op_invocation_id,
+            op_kind=op_kind,
+            args_hash=args_hash,
+            result=result,
+        )
+    except Exception as e:  # noqa: BLE001 — never fail the dispatch
+        import logging
+        logging.getLogger(__name__).warning(
+            "WAL step_completed emission failed (run=%s op=%s): %s",
+            ctx.skill_run_id, op_kind, e,
+        )
+
+
+async def _wal_step_failed(
+    ctx: DispatchContext,
+    op_kind: str,
+    args_hash: str,
+    op_invocation_id: str | None,
+    error_kind: str,
+    message: str,
+) -> None:
+    """Append a ``step_failed`` WAL entry."""
+    try:
+        await ctx.state_log.append(
+            "step_failed",
+            run_id=ctx.skill_run_id,
+            phase=ctx.phase,
+            op_invocation_id=op_invocation_id,
+            op_kind=op_kind,
+            args_hash=args_hash,
+            error_kind=error_kind,
+            message=message,
+        )
+    except Exception as e:  # noqa: BLE001 — never fail the dispatch
+        import logging
+        logging.getLogger(__name__).warning(
+            "WAL step_failed emission failed (run=%s op=%s): %s",
+            ctx.skill_run_id, op_kind, e,
+        )
 
 
 def _compute_args_hash(args: dict) -> str:

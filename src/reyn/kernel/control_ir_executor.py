@@ -88,6 +88,8 @@ class ControlIRExecutor:
         mcp_servers: dict | None = None,
         caller: str = "direct",
         chain_id: str | None = None,
+        state_log: Any = None,
+        skill_run_id: str | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -101,6 +103,14 @@ class ControlIRExecutor:
         self._mcp_clients: dict = {}  # cached across ops
         self._caller = caller
         self._chain_id = chain_id
+        # PR-skill-resume part A: WAL plumbing for step-event emission.
+        # When ``state_log`` and ``skill_run_id`` are wired, ``execute()``
+        # threads them into DispatchContext so dispatch_tool emits
+        # step_started / step_completed / step_failed alongside audit
+        # events. CLI / standalone runs leave these unset → no step
+        # events (no resume context anyway).
+        self._state_log = state_log
+        self._skill_run_id = skill_run_id
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -274,9 +284,12 @@ class ControlIRExecutor:
             chain_id=self._chain_id,
             tool_catalog=tool_catalog,
             events=self.events,
+            state_log=self._state_log,
+            skill_run_id=self._skill_run_id,
+            phase=phase or None,
         )
 
-        for op in ops:
+        for op_idx, op in enumerate(ops):
             if allowed_ops is not None and op.kind not in allowed_ops:
                 self.events.emit(
                     "control_ir_skipped",
@@ -302,11 +315,17 @@ class ControlIRExecutor:
                     raise PermissionError(result.get("error", "permission denied"))
                 return result
 
+            # op_invocation_id scopes the WAL step events to a phase-relative
+            # sequence number. Combined with ``run_id`` and the WAL ``seq``,
+            # forward-replay can disambiguate retries / repeated visits.
+            # Format: ``<phase>.<index>`` — index resets per execute() call.
+            op_invocation_id = f"{phase or 'phase'}.{op_idx}"
             dispatch_result = await dispatch_tool(
                 name=op.kind,
                 args=op_args,
                 ctx=dctx,
                 invoker=_invoker,
+                op_invocation_id=op_invocation_id,
             )
 
             if dispatch_result["status"] == "ok":

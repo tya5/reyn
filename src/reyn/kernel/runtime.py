@@ -9,6 +9,7 @@ from reyn.schemas.models import ActOutput, Skill, CandidateOutput, ContextFrame,
 from reyn.budget.budget import BudgetExceeded, format_refusal_message, format_warn_message
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
+    from reyn.events.state_log import StateLog
 from reyn.events.events import EventLog
 from reyn.workspace.workspace import Workspace
 from reyn.config import LimitsConfig
@@ -206,6 +207,7 @@ class OSRuntime:
         chain_id: str | None = None,
         budget_tracker: "BudgetTracker | None" = None,
         skill_name: str = "",
+        state_log: "StateLog | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -239,6 +241,7 @@ class OSRuntime:
         self._skill_input: dict | None = None
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
+        self._state_log = state_log
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -250,6 +253,8 @@ class OSRuntime:
             mcp_servers=mcp_servers,
             caller=caller,
             chain_id=chain_id,
+            state_log=state_log,
+            skill_run_id=run_id,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
