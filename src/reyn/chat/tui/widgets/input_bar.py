@@ -97,7 +97,7 @@ class InputBar(Widget):
         self._history_idx: int = -1  # -1 = not browsing
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Type a message… (Tab: commands, Ctrl+D: quit)", id="input")
+        yield Input(placeholder="Type a message… (Tab: commands)", id="input")
         yield Label(self._build_hint(""), id="hints")
 
     # ── keybinding actions ────────────────────────────────────────────────────
@@ -190,7 +190,7 @@ class InputBar(Widget):
 
     def _build_hint(self, current: str) -> str:
         if not current:
-            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel  │  Ctrl+W next tab  │  f/t filter/tail (events)"
+            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel"
         return ""
 
     def _update_hint(self, current: str) -> None:
