@@ -23,8 +23,10 @@ contract is:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -97,6 +99,9 @@ class AgentRegistry:
         self._tasks: dict[str, asyncio.Task] = {}         # name -> session.run() task
         self._forward_tasks: dict[str, asyncio.Task] = {} # name -> outbox forwarder
         self._attached: str | None = None
+        # WAL truncation throttle (skill resume design). monotonic ts of last
+        # successful truncation attempt; ``None`` means no throttle is active.
+        self._last_truncation_ts: float | None = None
         # Single queue the REPL drains; registry routes each attached agent's
         # outbox into here.
         self.repl_outbox: asyncio.Queue = asyncio.Queue()
@@ -239,6 +244,146 @@ class AgentRegistry:
             await self.ensure_running(name)
 
         return snapshots
+
+    # ── WAL truncation (skill resume design) ────────────────────────────────
+    #
+    # Trigger policy: semantic boundary — call this after appending a
+    # `skill_phase_advanced` or `skill_completed` event to the WAL. Throttled
+    # to avoid thrashing on bursty phase completions. Size-based safety net
+    # (long-idle skills) is intentionally deferred until we have real WAL
+    # size telemetry from dogfood.
+    #
+    # Floor calculation: `min(全 agent applied_seq, 全 active skill
+    # last_phase_applied_seq) + 1` — everything strictly below this seq is
+    # universally absorbed and droppable. Replaying from `floor - 1` would
+    # be a no-op for every snapshot, so dropping below it is safe.
+    #
+    # Owner rationale: AgentRegistry is the only layer that has both
+    # (a) the StateLog handle, and (b) visibility into all agents' snapshots
+    # + every active skill snapshot under each agent's `state/skills/`
+    # directory. Pushing this into entry points (`reyn chat`, `reyn web`)
+    # would duplicate the orchestration; pushing it into StateLog itself
+    # would force the WAL to know about agent / skill layout.
+
+    _TRUNCATION_THROTTLE_SECS: float = 5.0
+
+    async def truncate_wal_if_eligible(self) -> dict | None:
+        """Compute floor across all agents + active skill snapshots, then
+        truncate the WAL if eligible.
+
+        Returns the truncate stats dict, or ``None`` if skipped (no state
+        log, throttled, or floor not advanced).
+
+        Skip conditions:
+          - no StateLog wired (test / non-chat)
+          - last truncation was within ``_TRUNCATION_THROTTLE_SECS``
+          - computed floor is 0 (no snapshots, or any snapshot read failed
+            — conservative: don't truncate when we can't trust the floor)
+
+        On computation or rewrite failure, the exception is caught and
+        logged; the next trigger naturally retries. We never let truncation
+        bubble up to disturb the caller's hot path (phase advance / skill
+        completion).
+        """
+        if self._state_log is None:
+            return None
+        now = time.monotonic()
+        if (self._last_truncation_ts is not None
+                and now - self._last_truncation_ts < self._TRUNCATION_THROTTLE_SECS):
+            return None
+        try:
+            floor = self._compute_truncate_floor()
+        except Exception as e:  # noqa: BLE001 — defensive; never fail caller
+            logger.warning("WAL truncation: floor computation failed: %s", e)
+            return None
+        if floor <= 0:
+            return None
+        try:
+            stats = await self._state_log.truncate_below(floor)
+        except Exception as e:  # noqa: BLE001 — defensive; never fail caller
+            logger.warning("WAL truncation: rewrite failed (floor=%d): %s", floor, e)
+            return None
+        # Stamp success so throttle gates the next attempt. (We don't gate
+        # on dropped==0 — even a no-op rewrite resets the throttle window.)
+        self._last_truncation_ts = now
+        return stats
+
+    def _compute_truncate_floor(self) -> int:
+        """Return the lowest seq that MUST remain in the WAL.
+
+        ``floor = min(全 持続 agent applied_seq, 全 active skill
+        last_phase_applied_seq) + 1``
+
+        Truly dormant agents (no snapshot file on disk) are *excluded*
+        from the floor calculation. The invariant that justifies this
+        skip:
+
+          A dormant agent has no live ``ChatSession``. WAL events are
+          only appended through a session's ``SnapshotJournal``, which
+          targets the session's own agent. Therefore no WAL event can
+          target an agent whose session has never been instantiated
+          this run, and dropping events older than the dormant agent's
+          (zero) applied_seq cannot orphan messages.
+
+          When the dormant agent later receives its first event, the
+          ``SnapshotJournal`` assigns ``applied_seq`` to the freshly
+          allocated WAL seq — effectively a "starts here" stamp — so
+          the agent never gets stuck below the truncation floor.
+
+        Returns 0 when:
+          - no persistent agents found on disk (no constraint anywhere
+            in the system → don't truncate)
+          - any snapshot file is malformed (conservative — keep WAL
+            bloated rather than risk dropping needed entries)
+        """
+        seqs: list[int] = []
+
+        # Per-agent applied_seq from each agent's main snapshot. Agents
+        # without a snapshot file are treated as truly dormant (skipped).
+        for name in self.list_names():
+            snap_path = self._dir / name / "state" / "snapshot.json"
+            if not snap_path.is_file():
+                continue
+            try:
+                snap = AgentSnapshot.load(name, snap_path)
+            except Exception as e:  # noqa: BLE001 — see returns 0 above
+                logger.warning(
+                    "WAL truncation: cannot read agent snapshot %s: %s",
+                    snap_path, e,
+                )
+                return 0
+            seqs.append(int(snap.applied_seq))
+
+        # Per-active-skill last_phase_applied_seq. We do NOT load the full
+        # SkillSnapshot dataclass here — only need one int field. Direct
+        # JSON read sidesteps any future schema bumps from breaking
+        # truncation just to extract a number.
+        for name in self.list_names():
+            skills_dir = self._dir / name / "state" / "skills"
+            if not skills_dir.is_dir():
+                continue
+            for snap_file in skills_dir.glob("*.snapshot.json"):
+                try:
+                    data = json.loads(snap_file.read_text(encoding="utf-8"))
+                except Exception as e:  # noqa: BLE001 — see returns 0 above
+                    logger.warning(
+                        "WAL truncation: cannot read skill snapshot %s: %s",
+                        snap_file, e,
+                    )
+                    return 0
+                if isinstance(data, dict):
+                    val = data.get("last_phase_applied_seq", 0)
+                    try:
+                        seqs.append(int(val))
+                    except (TypeError, ValueError):
+                        return 0
+
+        if not seqs:
+            return 0
+        # Drop entries strictly below the lowest absorbed seq. The +1 makes
+        # the boundary exclusive: the seq itself remains as a watermark
+        # (StateLog.truncate_below additionally guards the highest seq).
+        return min(seqs) + 1
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
