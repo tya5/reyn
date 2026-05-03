@@ -589,6 +589,18 @@ class OSRuntime:
                     memo, phase=phase, op_invocation_id=op_invocation_id,
                 )
                 if memoized is not None:
+                    # R-D8 L3: forward-calc the budget. Memo hit means the
+                    # LLM was NOT actually called (cost = $0), but for cap
+                    # enforcement to track total intended spend across crash
+                    # boundaries, we still credit the recorded usage to the
+                    # tracker. No pre-check (memo hits don't refuse — they
+                    # already happened in the original run).
+                    self._credit_budget_from_memo(
+                        memo,
+                        resolved_model=resolved_model,
+                        phase=phase,
+                        op_invocation_id=op_invocation_id,
+                    )
                     self.events.emit(
                         "step_memoized",
                         run_id=self.run_id,
@@ -639,14 +651,53 @@ class OSRuntime:
         # R-D2: emit step_completed so a future resume can memo-hit. Defensive
         # try/except — never fail the dispatch on a WAL emit failure (parallel
         # to dispatch_tool's _wal_step_completed pattern).
+        # R-D8 L2: record usage so future resume's memo hit can re-credit budget.
         await self._wal_step_completed_for_llm(
             phase=phase,
             op_invocation_id=op_invocation_id,
             args_hash=args_hash,
             result=raw,
+            usage=llm_result.usage.to_dict() if llm_result.usage else None,
         )
 
         return raw
+
+    def _credit_budget_from_memo(
+        self,
+        memo: object,
+        *,
+        resolved_model: str,
+        phase: str,
+        op_invocation_id: str,
+    ) -> None:
+        """R-D8 L3: re-credit the budget tracker from a memoized LLM step.
+
+        On memo hit the LLM was not actually called, but cap enforcement
+        across crash needs the tracker to reflect what the original run
+        spent. ``memo.usage`` (a dict from TokenUsage.to_dict) provides
+        the recorded counts. None usage (pre-R-D8 step) → log + skip
+        (graceful — no error, but cap accounting will undercount).
+        """
+        if self._budget_tracker is None:
+            return
+        usage_dict = getattr(memo, "usage", None)
+        if not usage_dict:
+            import logging
+            logging.getLogger(__name__).debug(
+                "memo hit (run=%s phase=%s id=%s) has no usage data; "
+                "skipping budget credit (pre-R-D8 step or LLM returned "
+                "no usage)",
+                self.run_id, phase, op_invocation_id,
+            )
+            return
+        usage = TokenUsage.from_dict(usage_dict)
+        # Update local accumulators (mirror the fresh-call path)
+        self._token_usage += usage
+        cost_usd, _ = estimate_cost(resolved_model, usage)
+        if cost_usd is not None:
+            self._total_cost_usd += cost_usd
+        # Credit the shared BudgetTracker
+        self._record_budget_post_llm(resolved_model, usage)
 
     def _extract_memoized_llm_result(
         self,
@@ -679,8 +730,15 @@ class OSRuntime:
         op_invocation_id: str,
         args_hash: str,
         result: dict,
+        usage: dict | None = None,
     ) -> None:
-        """Append step_completed for an LLM call. Defensive: log + swallow."""
+        """Append step_completed for an LLM call. Defensive: log + swallow.
+
+        ``usage`` (R-D8 L2) records the TokenUsage so a future resume's
+        memo hit can re-credit the budget tracker via record_llm. None
+        when the LLM call returned no usage info (rare; most providers
+        always include tokens).
+        """
         if self._state_log is None or self.run_id is None:
             return
         try:
@@ -692,6 +750,7 @@ class OSRuntime:
                 op_kind="llm",
                 args_hash=args_hash,
                 result=result,
+                usage=usage,
             )
         except Exception as e:  # noqa: BLE001 — never fail the dispatch
             import logging

@@ -39,6 +39,18 @@ class TokenUsage:
             "total_tokens": self.total_tokens,
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "TokenUsage":
+        """Reconstruct from a dict produced by ``to_dict``.
+
+        Resilient to missing fields (defaults to 0) — useful for
+        backward-compat reading of older WAL records.
+        """
+        return cls(
+            prompt_tokens=int(data.get("prompt_tokens", 0)),
+            completion_tokens=int(data.get("completion_tokens", 0)),
+        )
+
 
 def estimate_cost(
     model: str,
