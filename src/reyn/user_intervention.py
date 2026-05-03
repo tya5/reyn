@@ -18,6 +18,27 @@ from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 
+def _make_placeholder_future() -> asyncio.Future:
+    """Create a Future that the intervention can hold until awaited.
+
+    Prefers the running loop's future. Falls back to a fresh event loop
+    when none is running (tests / sync construction paths). The placeholder
+    is replaced on first await; the loop affinity matters only when the
+    Future is actually awaited.
+    """
+    try:
+        return asyncio.get_running_loop().create_future()
+    except RuntimeError:
+        pass
+    # No running loop. Use the thread's existing or new loop.
+    try:
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.create_future()
+
+
 @dataclass(frozen=True)
 class InterventionChoice:
     """One option in a closed-set prompt (e.g. yes / always / no)."""
@@ -46,11 +67,55 @@ class UserIntervention:
 
     def __post_init__(self) -> None:
         if self.future is None:
-            try:
-                self.future = asyncio.get_running_loop().create_future()
-            except RuntimeError:
-                # No running loop (e.g. tests). Caller will set a future explicitly.
-                self.future = asyncio.Future()
+            self.future = _make_placeholder_future()
+
+    def to_dict(self) -> dict:
+        """Serialize persistent fields for crash-recovery storage.
+
+        ``future`` is excluded — it's volatile and the restored intervention
+        gets a fresh future on from_dict (the original waiter has gone away
+        with the crashed process). The output is JSON-safe so it flows
+        unchanged through ``AgentSnapshot.outstanding_interventions`` and
+        the WAL ``intervention_dispatched.iv_dict`` field.
+        """
+        return {
+            "kind": self.kind,
+            "prompt": self.prompt,
+            "detail": self.detail,
+            "choices": [
+                {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                for c in self.choices
+            ],
+            "suggestions": list(self.suggestions),
+            "run_id": self.run_id,
+            "skill_name": self.skill_name,
+            "id": self.id,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "UserIntervention":
+        """Deserialize an intervention from a snapshot / WAL record.
+
+        Resilient to missing optional fields (forward compat — older snapshots
+        may pre-date newer fields). The ``future`` is reset to a fresh
+        unresolved Future ready to await again.
+        """
+        choices = [
+            InterventionChoice(
+                id=c["id"], label=c["label"], hotkey=c.get("hotkey"),
+            )
+            for c in data.get("choices") or []
+        ]
+        return cls(
+            kind=data["kind"],
+            prompt=data["prompt"],
+            detail=data.get("detail", ""),
+            choices=choices,
+            suggestions=list(data.get("suggestions") or []),
+            run_id=data.get("run_id"),
+            skill_name=data.get("skill_name"),
+            id=data.get("id") or uuid.uuid4().hex,
+        )
 
 
 @dataclass(frozen=True)
