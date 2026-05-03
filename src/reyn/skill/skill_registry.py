@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from reyn.skill.skill_snapshot import SkillSnapshot
 
@@ -57,14 +57,43 @@ class SkillRegistry:
         agent_name: str,
         agent_state_dir: Path,
         state_log: "StateLog | None" = None,
+        truncate_eligible_hook: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
+        """
+        truncate_eligible_hook: optional async callback fired *after* each
+            ``skill_phase_advanced`` or ``skill_completed`` WAL append.
+            Used to trigger ``AgentRegistry.truncate_wal_if_eligible()``
+            on semantic boundaries (the recommended trigger pattern from
+            the skill-resume design). Hook exceptions are caught and
+            logged — truncation is opportunistic, never a reason to fail
+            a phase advance. Hook is invoked even when ``state_log`` is
+            None so test setups that observe the trigger don't depend on
+            WAL wiring.
+        """
         self._agent_name = agent_name
         self._state_dir = Path(agent_state_dir)
         self._skills_dir = self._state_dir / "skills"
         self._state_log = state_log
+        self._truncate_hook = truncate_eligible_hook
         # In-memory cache: run_id → SkillSnapshot. Populated on start() /
         # load_active(); cleared on complete().
         self._snapshots: dict[str, SkillSnapshot] = {}
+
+    async def _fire_truncate_hook(self, *, trigger: str) -> None:
+        """Fire the optional truncate-eligible hook. Defensive: never raise.
+
+        ``trigger`` identifies the WAL event that motivated the call, used
+        only for logging. The hook itself is opaque — typically wired to
+        AgentRegistry.truncate_wal_if_eligible.
+        """
+        if self._truncate_hook is None:
+            return
+        try:
+            await self._truncate_hook()
+        except Exception as e:  # noqa: BLE001 — never fail caller
+            logger.warning(
+                "truncate_eligible_hook (%s) raised: %s", trigger, e,
+            )
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -146,6 +175,7 @@ class SkillRegistry:
         snap.visit_counts[next_phase] = snap.visit_counts.get(next_phase, 0) + 1
         snap.last_phase_artifact_path = last_phase_artifact_path
         self._save(snap)
+        await self._fire_truncate_hook(trigger="skill_phase_advanced")
 
     async def complete(self, *, run_id: str) -> None:
         """Mark a skill run as finished and remove its snapshot.
@@ -173,6 +203,7 @@ class SkillRegistry:
                 snap_path, e,
             )
         self._snapshots.pop(run_id, None)
+        await self._fire_truncate_hook(trigger="skill_completed")
 
     # ── read access ──────────────────────────────────────────────────────
 

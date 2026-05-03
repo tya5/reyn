@@ -269,6 +269,80 @@ def test_load_active_no_skills_dir_returns_empty(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_truncate_hook_fires_after_phase_advance(tmp_path):
+    """Tier 2: ``advance_phase`` invokes the truncate-eligible hook after the WAL append."""
+    state_dir = tmp_path / ".reyn" / "agents" / "alpha" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    fired: list[str] = []
+
+    async def hook():
+        fired.append("called")
+
+    reg = SkillRegistry(
+        agent_name="alpha", agent_state_dir=state_dir, state_log=log,
+        truncate_eligible_hook=hook,
+    )
+
+    async def go():
+        await reg.start(run_id="r", skill_name="s", skill_input={})
+        # start() does NOT fire the hook (skill_started isn't a truncation
+        # trigger — it makes the WAL longer, not shorter).
+        assert fired == []
+        await reg.advance_phase(run_id="r", next_phase="draft")
+        await reg.advance_phase(run_id="r", next_phase="review")
+
+    asyncio.run(go())
+    assert fired == ["called", "called"]
+
+
+def test_truncate_hook_fires_after_skill_completed(tmp_path):
+    """Tier 2: ``complete`` invokes the truncate-eligible hook after the WAL append."""
+    state_dir = tmp_path / ".reyn" / "agents" / "alpha" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    fired: list[str] = []
+
+    async def hook():
+        fired.append("called")
+
+    reg = SkillRegistry(
+        agent_name="alpha", agent_state_dir=state_dir, state_log=log,
+        truncate_eligible_hook=hook,
+    )
+
+    async def go():
+        await reg.start(run_id="r", skill_name="s", skill_input={})
+        await reg.complete(run_id="r")
+
+    asyncio.run(go())
+    assert fired == ["called"]
+
+
+def test_truncate_hook_exception_does_not_propagate(tmp_path):
+    """Tier 2: a raising hook is logged + swallowed; advance_phase still succeeds."""
+    state_dir = tmp_path / ".reyn" / "agents" / "alpha" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+
+    async def hook():
+        raise RuntimeError("bad hook")
+
+    reg = SkillRegistry(
+        agent_name="alpha", agent_state_dir=state_dir, state_log=log,
+        truncate_eligible_hook=hook,
+    )
+
+    async def go():
+        await reg.start(run_id="r", skill_name="s", skill_input={})
+        # Must not raise even though hook does.
+        await reg.advance_phase(run_id="r", next_phase="draft")
+        return reg.get("r")
+
+    snap = asyncio.run(go())
+    assert snap.current_phase == "draft"  # advance_phase still completed
+
+
 def test_lifecycle_works_without_state_log(tmp_path):
     """Tier 2: start/advance/complete are all no-ops on the WAL when state_log is None, but the in-memory cache and snapshot file still update.
 
