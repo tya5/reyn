@@ -422,13 +422,19 @@ class ReynTUIApp(App):
         self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
     def action_focus_toggle_panel(self) -> None:
-        """ctrl+o — toggle focus between input and panel tabs (gated: panel visible)."""
+        """ctrl+o — toggle focus between panel tabs and palette-or-input."""
         panel = self.query_one("#right_panel", RightPanel)
         focused = self.focused
         in_panel = focused is not None and any(
             a is panel for a in [focused, *focused.ancestors]
         )
         if in_panel:
+            if self._palette_visible:
+                try:
+                    self.query_one("#palette", CommandPaletteOverlay).focus()
+                    return
+                except Exception:
+                    pass
             self.query_one("#inputbar", InputBar).focus_input()
         else:
             panel.focus_tabs()
