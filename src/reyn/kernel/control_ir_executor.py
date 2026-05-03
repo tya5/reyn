@@ -90,6 +90,7 @@ class ControlIRExecutor:
         chain_id: str | None = None,
         state_log: Any = None,
         skill_run_id: str | None = None,
+        resume_plan: Any = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -111,6 +112,12 @@ class ControlIRExecutor:
         # events (no resume context anyway).
         self._state_log = state_log
         self._skill_run_id = skill_run_id
+        # PR-skill-resume D3b-2: optional ResumePlan from
+        # SkillResumeAnalyzer. Threaded into DispatchContext so
+        # dispatch_tool memoizes against committed_steps (D3b-1).
+        # ``None`` means normal execution (no memoization), which is
+        # the default for fresh starts.
+        self._resume_plan = resume_plan
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -287,6 +294,7 @@ class ControlIRExecutor:
             state_log=self._state_log,
             skill_run_id=self._skill_run_id,
             phase=phase or None,
+            resume_plan=self._resume_plan,
         )
 
         for op_idx, op in enumerate(ops):
