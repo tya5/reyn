@@ -1435,5 +1435,32 @@ class OSRuntime:
             raise
 
         finally:
+            # R-D1: exception-aware completion. The finally clause must
+            # distinguish between "this run is finished" and "this run was
+            # interrupted and may need to resume on the next startup".
+            #
+            # complete() is called when the run reached its end state:
+            #   - normal return (success / loop_limit / phase_budget /
+            #     budget_exceeded — all caught above and returned as
+            #     RunResult, so exc_type is None at this point)
+            #   - WorkflowAbortedError — the skill itself decided to abort.
+            #     Resume would just re-decide-to-abort.
+            #
+            # complete() is SKIPPED so the snapshot survives for resume on:
+            #   - asyncio.CancelledError (Ctrl-C, /skill discard, parent
+            #     task cancelled)
+            #   - KeyboardInterrupt
+            #   - generic Exception (transient blip / bug — auto-resume
+            #     can retry; user can ``/skill discard <id>`` to give up)
             if self._skill_registry:
-                await self._skill_registry.complete(run_id=self.run_id)
+                import sys as _sys
+                exc_type, _exc_val, _exc_tb = _sys.exc_info()
+                if exc_type is None or issubclass(exc_type, WorkflowAbortedError):
+                    await self._skill_registry.complete(run_id=self.run_id)
+                else:
+                    self.events.emit(
+                        "skill_run_interrupted",
+                        run_id=self.run_id,
+                        exc_type=exc_type.__name__,
+                        will_resume=True,
+                    )

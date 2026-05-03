@@ -227,37 +227,22 @@ def test_e2e_crash_during_phase2_then_resume_to_completion(tmp_path, monkeypatch
     with pytest.raises(RuntimeError, match="simulated crash"):
         asyncio.run(rt1.run({"type": "input", "data": {"x": 1}}))
 
-    # WAL invariants post-crash:
+    # WAL invariants post-crash (R-D1):
+    #   - skill_started + skill_phase_advanced are in the WAL
+    #   - skill_completed is NOT (the unrecovered RuntimeError triggers
+    #     the preserve-snapshot path in OSRuntime's finally clause)
+    #   - the per-skill snapshot file remains on disk so the next
+    #     startup's auto-resume can pick it up naturally
     kinds = [e["kind"] for e in state_log.iter_from(0)]
     assert "skill_started" in kinds
     assert "skill_phase_advanced" in kinds
-    # complete() runs in OSRuntime's finally clause even on exception.
-    # That's a deliberate part of the lifecycle: a synthetic crash in
-    # ``_execute_phase`` is more controlled than a real process kill —
-    # see `test_simulated_kill_does_not_emit_skill_completed` below for
-    # the harder case.
-    # For this test, we re-create the snapshot manually to simulate
-    # the harsher crash-during-execution scenario:
-
-    # Simulate that the snapshot file remained on disk (per-skill snapshot
-    # was written by advance_phase before the crash; complete() then
-    # removed it). We forcibly recreate it to model a real process kill
-    # where complete() never ran.
-    from reyn.skill.skill_snapshot import SkillSnapshot
-    surviving_snap = SkillSnapshot(
-        skill_run_id="run_e2e_001",
-        skill_name="resume_demo",
-        skill_input={"type": "input", "data": {"x": 1}},
-        applied_seq=10,
-        last_phase_applied_seq=10,
-        current_phase="review",
-        last_phase_artifact_path=None,
-        history=["draft", "review"],
-        visit_counts={"draft": 1, "review": 1},
+    assert "skill_completed" not in kinds, (
+        "R-D1: unrecovered RuntimeError must NOT emit skill_completed"
     )
     snap_path = state_dir / "skills" / "run_e2e_001.snapshot.json"
-    snap_path.parent.mkdir(parents=True, exist_ok=True)
-    surviving_snap.save(snap_path)
+    assert snap_path.exists(), (
+        "R-D1: per-skill snapshot must survive an unrecovered crash"
+    )
 
     # ── Resume: discover, decide, replay ──────────────────────────────
     state_log2 = StateLog(tmp_path / ".reyn" / "wal.jsonl")
