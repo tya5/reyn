@@ -286,11 +286,11 @@ class _PreviewPane(Widget):
         yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False)
 
     def on_key(self, event) -> None:
-        if event.key in ("n", "j"):
+        if event.key == "j":
             event.prevent_default()
             event.stop()
             self.scroll_line(+1)
-        elif event.key in ("p", "k"):
+        elif event.key == "k":
             event.prevent_default()
             event.stop()
             self.scroll_line(-1)
@@ -341,7 +341,7 @@ class _PreviewPane(Widget):
         name = _esc(self._current_path.name) if self._current_path else "—"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  n/j↓  p/k↑  h/l←→"
+                f"  {name}  │  j↓  k↑  h←  l→"
             )
         except Exception:
             pass
@@ -481,11 +481,11 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._toggle_preview()
-        elif event.key in ("n", "j"):
+        elif event.key == "j":
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._docs_move(+1)
-        elif event.key in ("p", "k"):
+        elif event.key == "k":
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._docs_move(-1)
@@ -866,7 +866,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_docs(self) -> str:
-        nav_hint = "[#555555]n/j↓  p/k↑  enter=open[/]"
+        nav_hint = "[#555555]j↓  k↑  enter=open[/]"
         header = f"[bold #C8553D]Docs[/]  {nav_hint}"
 
         if self._project_root is None:
