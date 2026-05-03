@@ -235,9 +235,15 @@ class AgentRegistry:
             snap_path = self._dir / name / "state" / "snapshot.json"
             snap.save(snap_path)
 
-        # 5. Hand each non-empty snapshot to its session
+        # 5. Hand each non-empty snapshot to its session.
+        # PR-intervention-link L4: outstanding_interventions also triggers
+        # restore — without it, an agent whose only stranded state is an
+        # in-flight ask_user would be skipped here and the user could not
+        # clear the queued intervention after restart.
         for name, snap in snapshots.items():
-            if not snap.inbox and not snap.pending_chains:
+            if (not snap.inbox
+                    and not snap.pending_chains
+                    and not snap.outstanding_interventions):
                 continue
             session = self.get_or_load(name)
             session.restore_state(snap)

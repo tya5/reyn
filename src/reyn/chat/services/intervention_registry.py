@@ -190,6 +190,64 @@ class InterventionRegistry:
                 iv.future.cancel()
         return victims
 
+    # ── Restore (PR-intervention-link L5) ────────────────────────────────────
+
+    def restore(
+        self,
+        interventions: list[UserIntervention],
+        *,
+        watcher: Callable[[UserIntervention], Awaitable[None]] | None = None,
+    ) -> list[asyncio.Task]:
+        """Re-enqueue interventions recovered from a crash snapshot.
+
+        Each restored intervention is added to the queue and a watcher
+        coroutine is spawned that awaits its future until the user resolves
+        it. The default watcher is a no-op consumer of the answer (it
+        merely keeps the dispatch finally clause alive for cleanup); the
+        session can supply a different watcher when L6 lands skill-resume
+        answer routing.
+
+        Returns the spawned watcher tasks (so the caller can keep references
+        alive and avoid task GC warnings). FIFO order matches the input list.
+
+        Synchronous (not async) so callers from sync context — like
+        ``ChatSession.restore_state`` — don't have to wrap in
+        ``asyncio.ensure_future`` (which would add a task layer that delays
+        when the children become visible in the queue).
+        """
+        tasks: list[asyncio.Task] = []
+        for iv in interventions:
+            t = asyncio.ensure_future(self._restore_one(iv, watcher))
+            tasks.append(t)
+        return tasks
+
+    async def _restore_one(
+        self,
+        iv: UserIntervention,
+        watcher: Callable[[UserIntervention], Awaitable[None]] | None,
+    ) -> None:
+        """Background task per restored intervention.
+
+        Hands the iv to ``dispatch`` (which announces, awaits, cleans up).
+        On answer, optionally calls the watcher with the resolved iv.
+        """
+        try:
+            answer = await self.dispatch(iv)
+        except asyncio.CancelledError:
+            return
+        if watcher is not None:
+            try:
+                await watcher(iv)
+            except Exception:  # noqa: BLE001 — watcher errors must not poison restore
+                import logging
+                logging.getLogger(__name__).warning(
+                    "intervention restore watcher for %s raised", iv.id,
+                    exc_info=True,
+                )
+        # answer is intentionally unused at this layer; L6 wires it through
+        # to the resuming skill via the watcher.
+        del answer
+
     # ── Slash-command id-prefix lookup ───────────────────────────────────────
 
     def resolve_id_prefix(self, prefix: str) -> tuple[str | None, list[str]]:

@@ -545,17 +545,45 @@ class ChatSession:
     def restore_state(self, snapshot: AgentSnapshot) -> None:
         """Adopt a recovered snapshot: install in journal, repopulate the
         async inbox, restore pending chains via ChainManager (which re-arms
-        timeout watchdogs). Callable from async context only — restoration
-        schedules asyncio tasks."""
+        timeout watchdogs), and re-enqueue outstanding interventions
+        (PR-intervention-link L5) so the user can clear them after restart.
+
+        Callable from async context only — restoration schedules asyncio
+        tasks."""
         self._journal.install(snapshot)
         for msg in snapshot.inbox:
             self.inbox.put_nowait((msg["kind"], msg["payload"]))
         self._chains.restore(on_fire=self._on_chain_timeout_fire)
+        # Re-enqueue interventions in FIFO insertion order (dict preserves
+        # insertion order in py3.7+). Each restored iv gets a fresh future
+        # and a watcher task so dispatch's finally clause fires
+        # ``intervention_resolved`` to prune the snapshot when the user
+        # answers.
+        if snapshot.outstanding_interventions:
+            restored = [
+                UserIntervention.from_dict(iv_dict)
+                for iv_dict in snapshot.outstanding_interventions.values()
+            ]
+
+            async def _on_restored_resolved(iv: UserIntervention) -> None:
+                # Restored interventions DON'T re-emit ``intervention_dispatched``
+                # (that event is already in the WAL from the original run); they
+                # only need to emit ``intervention_resolved`` when the user
+                # answers, so the snapshot's outstanding_interventions entry
+                # gets pruned.
+                await self._journal.record_intervention_resolved(
+                    intervention_id=iv.id,
+                )
+
+            self._restore_intervention_tasks = self._interventions.restore(
+                restored, watcher=_on_restored_resolved,
+            )
         self._chat_events.emit(
             "session_restored",
             applied_seq=snapshot.applied_seq,
             inbox_size=len(snapshot.inbox),
             pending_chains=len(snapshot.pending_chains),
+            outstanding_interventions=len(snapshot.outstanding_interventions),
         )
 
     # ── main loop ───────────────────────────────────────────────────────────────
