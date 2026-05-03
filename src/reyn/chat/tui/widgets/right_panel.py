@@ -273,18 +273,14 @@ class _PreviewPane(Widget):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._wrap: bool = False
         self._current_path: Path | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("", id="preview-header")
-        yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False, wrap=False)
+        yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False)
 
     def on_key(self, event) -> None:
-        if event.key == "w":
-            event.prevent_default()
-            self.toggle_wrap()
-        elif event.key == "up":
+        if event.key == "up":
             event.prevent_default()
             self.scroll_line(-1)
         elif event.key == "down":
@@ -296,27 +292,12 @@ class _PreviewPane(Widget):
         self._current_path = path
         try:
             log = self.query_one("#preview-log", RichLog)
-            log.wrap = self._wrap
-            log.styles.overflow_x = "hidden" if self._wrap else "auto"
             log.clear()
             log.write(RichMarkdown(path.read_text(encoding="utf-8")))
             log.scroll_home(animate=False)
             self._update_header()
         except Exception:
             pass
-
-    def toggle_wrap(self) -> None:
-        self._wrap = not self._wrap
-        if self._current_path:
-            self.show_markdown(self._current_path)
-        else:
-            try:
-                log = self.query_one("#preview-log", RichLog)
-                log.wrap = self._wrap
-                log.styles.overflow_x = "hidden" if self._wrap else "auto"
-            except Exception:
-                pass
-            self._update_header()
 
     def scroll_line(self, delta: int) -> None:
         try:
@@ -338,10 +319,9 @@ class _PreviewPane(Widget):
 
     def _update_header(self) -> None:
         name = _esc(self._current_path.name) if self._current_path else "—"
-        wrap_str = "on" if self._wrap else "off"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  wrap:{wrap_str}  │  w=toggle  ↑/↓=scroll"
+                f"  {name}  │  ↑/↓=scroll"
             )
         except Exception:
             pass
@@ -497,10 +477,6 @@ class RightPanel(Widget):
             if self._preview_visible:
                 event.prevent_default()
                 self._scroll_preview(+1)
-        elif event.key == "w":
-            if self._preview_visible:
-                event.prevent_default()
-                self._toggle_preview_wrap()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
@@ -548,12 +524,6 @@ class RightPanel(Widget):
     def _scroll_preview(self, delta: int) -> None:
         try:
             self.query_one("#preview-pane", _PreviewPane).scroll_line(delta)
-        except Exception:
-            pass
-
-    def _toggle_preview_wrap(self) -> None:
-        try:
-            self.query_one("#preview-pane", _PreviewPane).toggle_wrap()
         except Exception:
             pass
 
