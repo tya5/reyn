@@ -533,6 +533,83 @@ class BudgetTracker:
             if not w[1].startswith(f"{chain_id}/")
         }
 
+    # ── R-D8: state persistence ─────────────────────────────────────────
+
+    def save_state(self, path: Path) -> None:
+        """Persist in-memory counters to ``path`` (atomic write).
+
+        R-D8: closes the gap left by PR25 (which only persists daily /
+        monthly via ``budget_ledger.jsonl``). On restart, ``load_state``
+        restores ``agent_tokens`` / ``agent_cost_usd`` /
+        ``chain_skill_calls`` / ``chain_skill_tokens`` so cap enforcement
+        continues across crash.
+
+        Volatile state is NOT persisted:
+          - rate-limit window (60-second time-based; entries older than
+            the window are invalid anyway)
+          - warning state (operational dedup; OK to re-warn after restart)
+          - daily / monthly (PR25 owns these via ledger)
+
+        Atomic write: tmp file → fsync → rename. Mid-write crash leaves
+        the previous state file intact.
+        """
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        payload = {
+            "version": 1,
+            "agent_tokens": dict(self._agent_tokens),
+            "agent_cost_usd": dict(self._agent_cost_usd),
+            "chain_skill_calls": [
+                [cid, sk, v]
+                for (cid, sk), v in self._chain_skill_calls.items()
+            ],
+            "chain_skill_tokens": [
+                [cid, sk, v]
+                for (cid, sk), v in self._chain_skill_tokens.items()
+            ],
+        }
+        import os
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        tmp.replace(path)
+
+    def load_state(self, path: Path) -> None:
+        """Restore in-memory counters from ``path``.
+
+        Defensive on failure: missing file → silent no-op (fresh start);
+        corrupt JSON → silent no-op + log warning. Operator can use
+        ``reyn chat --reset`` if state is unrecoverable.
+        """
+        path = Path(path)
+        if not path.is_file():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            import logging
+            logging.getLogger(__name__).warning(
+                "BudgetTracker.load_state: cannot read %s: %s; starting fresh",
+                path, e,
+            )
+            return
+        if not isinstance(data, dict):
+            return
+        # agent counters
+        for k, v in (data.get("agent_tokens") or {}).items():
+            self._agent_tokens[str(k)] = int(v)
+        for k, v in (data.get("agent_cost_usd") or {}).items():
+            self._agent_cost_usd[str(k)] = float(v)
+        # chain_skill counters (list of [cid, sk, v] entries)
+        for entry in (data.get("chain_skill_calls") or []):
+            if isinstance(entry, list) and len(entry) >= 3:
+                self._chain_skill_calls[(str(entry[0]), str(entry[1]))] = int(entry[2])
+        for entry in (data.get("chain_skill_tokens") or []):
+            if isinstance(entry, list) and len(entry) >= 3:
+                self._chain_skill_tokens[(str(entry[0]), str(entry[1]))] = int(entry[2])
+
     def snapshot(self) -> dict:
         """Return a structured view used by `:cost` / `:budget` formatters."""
         return {
