@@ -104,7 +104,6 @@ class Phase(BaseModel):
     instructions: str
     max_act_turns: int = 10  # per-phase override; 0 = use system default
     model_class: str = ""   # "light"|"standard"|"strong"|custom; "" = inherit from runtime
-    permissions: PermissionDecl = Field(default_factory=PermissionDecl)
     preprocessor: list[PreprocessorStep] = Field(default_factory=list)
     # Control IR op kinds the phase may use. Filters available_control_ops in the
     # ContextFrame and is enforced at executor dispatch (defense in depth). The
@@ -165,12 +164,11 @@ class Skill(BaseModel):
     final_output_description: str = ""
     # criteria the LLM must satisfy before the OS allows finish
     finish_criteria: list[str] = Field(default_factory=list)
-    # Skill-level permissions. Holds the upper-bound permission scope used by
-    # skill-level hooks (= postprocessor, future skill-wide steps) and as the
-    # canonical aggregate for the startup_guard. Populated by the expander
-    # from the union of declared phase permissions; once stdlib skills migrate
-    # to declaring permissions: at the skill frontmatter, this becomes the
-    # source of truth and Phase.permissions becomes derivative.
+    # Skill-level permissions. The single source of truth for all permission
+    # gating in this skill (startup_guard, postprocessor hooks, future
+    # skill-wide steps). Populated by the expander directly from the skill.md
+    # frontmatter `permissions:` block. Phase-level `permissions:` is
+    # hard-rejected at parse time (ADR-0020).
     permissions: PermissionDecl = Field(default_factory=PermissionDecl)
     # Skill-level postprocessor. None = no postprocessor (the LLM's
     # `final_output_schema`-conformant artifact is returned as-is to the

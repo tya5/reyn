@@ -40,7 +40,12 @@ def parse_phase(path: Path) -> PhaseDef:
     inputs_raw = fm.get("input", "")
     inputs = [i.strip() for i in str(inputs_raw).split("|")] if inputs_raw else []
 
-    permissions_raw = fm.get("permissions") or {}
+    if "permissions" in fm:
+        raise ValueError(
+            f"Phase '{name}': phase-level 'permissions:' was removed; "
+            f"declare permissions at the skill.md frontmatter instead. "
+            f"See docs/en/reference/dsl/skill-md.md"
+        )
     preprocessor_raw = fm.get("preprocessor") or []
     if not isinstance(preprocessor_raw, list):
         raise ValueError(
@@ -66,7 +71,6 @@ def parse_phase(path: Path) -> PhaseDef:
         instructions=body,
         max_act_turns=int(fm.get("max_act_turns", 0)),
         model_class=str(fm.get("model_class") or "").strip(),
-        permissions=permissions_raw if isinstance(permissions_raw, dict) else {},
         preprocessor=list(preprocessor_raw),
         allowed_ops=allowed_ops,
     )

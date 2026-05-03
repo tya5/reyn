@@ -1,11 +1,11 @@
 """
-Phase-level permission declarations and approval resolution.
+Skill-level permission declarations and approval resolution.
 
 Default grants (no declaration needed):
   file read/glob/grep  — any path within the project root (CWD)
   file write/edit/delete — under project/.reyn/ or project/reyn/ only
 
-Outside the defaults → the phase must declare the path AND the user must approve:
+Outside the defaults → the skill must declare the path AND the user must approve:
   file.read:  [{path: <path>, scope: just_path|recursive}]   (paths outside CWD)
   file.write: [{path: <path>, scope: just_path|recursive}]
   shell      — declare permissions.shell: true
@@ -100,7 +100,7 @@ def _in_default_read_zone(path_str: str) -> bool:
 class PythonPermission:
     """Per-(module, function) permission for a python preprocessor step.
 
-    Declared in a phase's frontmatter `permissions.python: [{...}]` block.
+    Declared in a skill's frontmatter `permissions.python: [{...}]` block.
     `pure` mode is sandboxed (AST + restricted builtins, see _python_harness);
     `trusted` requires --allow-untrusted-python at runtime AND startup-guard
     approval. `timeout` is wall-clock seconds; the parent SIGKILLs the child
@@ -114,7 +114,7 @@ class PythonPermission:
 
 @dataclass
 class PermissionDecl:
-    """Permissions declared in a phase's frontmatter `permissions:` block."""
+    """Permissions declared in a skill's frontmatter `permissions:` block."""
 
     shell: bool = False
     mcp: list[str] = field(default_factory=list)
@@ -532,7 +532,7 @@ class PermissionResolver:
             return
         raise PermissionError(
             f"read from '{path}' was not approved. "
-            f"Declare it in the phase frontmatter:\n"
+            f"Declare it in the skill.md frontmatter:\n"
             f"  permissions:\n"
             f"    file.read:\n"
             f"      - path: {path}\n"
@@ -554,7 +554,7 @@ class PermissionResolver:
             return
         raise PermissionError(
             f"write to '{path}' was not approved. "
-            f"Declare it in the phase frontmatter:\n"
+            f"Declare it in the skill.md frontmatter:\n"
             f"  permissions:\n"
             f"    file.write:\n"
             f"      - path: {path}\n"
@@ -595,8 +595,8 @@ class PermissionResolver:
     ) -> None:
         if not decl.shell:
             raise PermissionError(
-                f"shell access not declared in phase permissions. "
-                f"Add `permissions:\\n  shell: true` to the phase frontmatter."
+                f"shell access not declared in skill permissions. "
+                f"Add `permissions:\\n  shell: true` to the skill.md frontmatter."
                 f" (cmd: {cmd!r})"
             )
         if not await self._approve("shell", f"shell command: {cmd!r}", bus):
@@ -614,8 +614,8 @@ class PermissionResolver:
             )
         if server not in decl.mcp:
             raise PermissionError(
-                f"MCP server {server!r} not declared in phase permissions. "
-                f"Add `permissions:\\n  mcp: [{server}]` to the phase frontmatter."
+                f"MCP server {server!r} not declared in skill permissions. "
+                f"Add `permissions:\\n  mcp: [{server}]` to the skill.md frontmatter."
             )
         if not await self._approve(f"mcp.{server}", f"MCP server: {server!r}", bus):
             raise PermissionError(f"MCP server {server!r} access denied")
@@ -638,8 +638,8 @@ class PermissionResolver:
         ]
         if not matching:
             raise PermissionError(
-                f"python step {module}:{function} is not declared in phase permissions. "
-                f"Add to the phase frontmatter:\n"
+                f"python step {module}:{function} is not declared in skill permissions. "
+                f"Add to the skill.md frontmatter:\n"
                 f"  permissions:\n"
                 f"    python:\n"
                 f"      - module: {module}\n"
@@ -674,8 +674,8 @@ class PermissionResolver:
     ) -> None:
         if tool not in decl.tool:
             raise PermissionError(
-                f"tool {tool!r} not declared in phase permissions. "
-                f"Add `permissions:\\n  tool: [{tool}]` to the phase frontmatter."
+                f"tool {tool!r} not declared in skill permissions. "
+                f"Add `permissions:\\n  tool: [{tool}]` to the skill.md frontmatter."
             )
         if not await self._approve(f"tool.{tool}", f"tool: {tool!r}", bus):
             raise PermissionError(f"tool {tool!r} access denied")

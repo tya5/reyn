@@ -65,92 +65,11 @@ def expand_phase(
         instructions=phase_def.instructions,
         max_act_turns=phase_def.max_act_turns,
         model_class=phase_def.model_class,
-        permissions=PermissionDecl.from_dict(phase_def.permissions),
         preprocessor=preprocessor,
     )
     if phase_def.allowed_ops is not None:
         phase_kwargs["allowed_ops"] = phase_def.allowed_ops
     return Phase(**phase_kwargs)
-
-
-def _union_phase_permissions(phases: dict[str, Phase]) -> PermissionDecl:
-    """Aggregate every phase's PermissionDecl into a single skill-level decl.
-
-    Used by `expand_skill` to populate `Skill.permissions` from the union of
-    declared phase permissions during the migration to skill-level permission
-    declarations. Once skills declare permissions at the skill frontmatter
-    directly, this function takes the explicit declaration as the base and
-    layers the phase union on top (caller controls the merge order).
-
-    Merge rules:
-      - shell:        any phase True → union True
-      - mcp / tool:   set-union of values (de-duplicated, order preserved
-                      by first appearance)
-      - file_read /
-        file_write:  list-union by (path, scope) tuple
-      - python:       list-union by (module, function, mode); first-seen
-                      timeout wins (consistent with stdlib's typical
-                      uniformity within a skill)
-      - allowed_mcp:  inherits from any phase's allowed_mcp list (PR37 sidecar);
-                      None on every phase → None at skill level
-    """
-    shell = False
-    mcp_seen: set[str] = set()
-    mcp: list[str] = []
-    tool_seen: set[str] = set()
-    tool: list[str] = []
-    fr_seen: set[tuple[str, str]] = set()
-    file_read: list[dict] = []
-    fw_seen: set[tuple[str, str]] = set()
-    file_write: list[dict] = []
-    py_seen: set[tuple[str, str, str]] = set()
-    python: list = []
-    allowed_mcp: list[str] | None = None
-
-    for phase in phases.values():
-        d = phase.permissions
-        if d.shell:
-            shell = True
-        for s in d.mcp:
-            if s not in mcp_seen:
-                mcp_seen.add(s)
-                mcp.append(s)
-        for t in d.tool:
-            if t not in tool_seen:
-                tool_seen.add(t)
-                tool.append(t)
-        for entry in d.file_read:
-            key = (entry.get("path", ""), entry.get("scope", "just_path"))
-            if key not in fr_seen:
-                fr_seen.add(key)
-                file_read.append(dict(entry))
-        for entry in d.file_write:
-            key = (entry.get("path", ""), entry.get("scope", "just_path"))
-            if key not in fw_seen:
-                fw_seen.add(key)
-                file_write.append(dict(entry))
-        for p in d.python:
-            key = (p.module, p.function, p.mode)
-            if key not in py_seen:
-                py_seen.add(key)
-                python.append(p)
-        if d.allowed_mcp is not None:
-            if allowed_mcp is None:
-                allowed_mcp = list(d.allowed_mcp)
-            else:
-                for s in d.allowed_mcp:
-                    if s not in allowed_mcp:
-                        allowed_mcp.append(s)
-
-    return PermissionDecl(
-        shell=shell,
-        mcp=mcp,
-        tool=tool,
-        file_read=file_read,
-        file_write=file_write,
-        python=python,
-        allowed_mcp=allowed_mcp,
-    )
 
 
 def _expand_postprocessor(
@@ -266,11 +185,7 @@ def expand_skill(
         final_output_name=final_output_name,
         final_output_description=skill_def.final_output_description,
         finish_criteria=skill_def.finish_criteria,
-        permissions=(
-            PermissionDecl.from_dict(skill_def.permissions)
-            if skill_def.permissions
-            else _union_phase_permissions(phase_objects)
-        ),
+        permissions=PermissionDecl.from_dict(skill_def.permissions),
         postprocessor=_expand_postprocessor(skill_def.postprocessor, artifact_defs),
         preprocessor_sub_skills=preprocessor_sub_skills or {},
     )

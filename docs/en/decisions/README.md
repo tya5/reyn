@@ -71,6 +71,12 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0019](0019-openui-reyn-internal-framing.md) | OpenUI reframed as Reyn-internal contract |
 
+### Permissions
+
+| ADR | Topic |
+|---|---|
+| [0020](0020-skill-only-permissions.md) | Skill-only permissions — Phase.permissions field removed (案 2) |
+
 ## Format
 
 ```markdown

@@ -46,6 +46,8 @@ preprocessor:                  # optional; deterministic pre-LLM steps
 - **`preprocessor`** — chain of deterministic steps that run before the LLM call. See `reference/dsl/preprocessor.md` (Phase 2).
 - **`allowed_ops`** — list of Control IR op kinds this phase may emit (e.g. `[file, lint]`). The OS filters the `available_control_ops` advertised to the LLM down to this set, *and* rejects any out-of-set op the LLM emits anyway with `control_ir_skipped: not_allowed_in_phase`. Default: `["file", "ask_user"]` — file I/O plus user clarification, the common case. An explicit empty list (`[]`) means "no ops" (use this for pure routing/judging phases). The narrower the list, the less context spent on op descriptions and the less room the LLM has to drift outside the phase's intent. Meta-skills (`skill_builder`, `skill_improver`, `skill_importer`) consult the ContextFrame's `op_catalog` field — a reference list of every op kind the OS supports — to choose `allowed_ops` values for the phases they generate.
 
+> **Note:** Phase-level `permissions:` was removed in the skill-only permissions migration. Declare permissions at the skill-md frontmatter instead — see [skill-md.md](skill-md.md) and [permission-model.md](../../concepts/permission-model.md).
+
 ## What MUST NOT appear
 
 - Output schema of any kind. Output is determined by the next phase's input or the skill's `final_output` ([P1](../../concepts/principles.md#p1-phase-is-stateless-and-reusable)).

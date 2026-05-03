@@ -30,6 +30,10 @@ This is what makes phases like `revise` reusable across skills: nothing in `revi
 
 A Skill says "from `entry`, the graph allows these transitions, and the final output looks like this." It does not run code itself. A skill is data the OS reads.
 
+#### Postprocessor: a skill-level finish hook
+
+A Skill may optionally declare a `postprocessor` block — a deterministic transformation that runs at skill finish, between the LLM's final output (which conforms to the skill's `final_output` schema) and the artifact returned to the caller (which conforms to `postprocessor.output_schema`). Postprocessor mirrors the phase preprocessor structurally — same step types, same op set, same `on_error` policy — differing only in fire position (phase entry vs. skill finish). Like the skill graph, the postprocessor block is declared in `skill.md` and is invisible to both the OS's generic runtime logic and to individual phases. See [Concepts: postprocessor](postprocessor.md) and [Reference: postprocessor](../reference/dsl/postprocessor.md).
+
 ### OS: skill-agnostic
 
 The OS reads the skill's graph, builds the LLM context, validates the result, and dispatches Control IR. It contains zero string literals naming a specific phase, artifact, or field. When a new skill appears, OS code is untouched.
