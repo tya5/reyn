@@ -124,6 +124,51 @@ class MultiAgentConfig:
     chain_timeout_seconds: float = 60.0
 
 
+SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
+
+
+@dataclass
+class SkillResumeConfig:
+    """`skill_resume:` — policy for handling ambiguous steps on resume.
+
+    An *ambiguous step* is a ``step_started`` WAL event with no matching
+    ``step_completed`` / ``step_failed``. The op may have committed
+    externally (canonical SSD-FW intermediate-state); only the operator
+    can decide what to do.
+
+    Policies (one of ``SKILL_RESUME_POLICIES``):
+      - ``prompt``        — surface the step to the user for an
+                            interactive decision (default; safest).
+      - ``retry``         — re-execute the step. Safe for read-only ops
+                            and for skills the operator trusts to be
+                            idempotent. Risk: duplicate side effect.
+      - ``skip``          — synthesize an empty / default completion.
+                            The skill continues as if the op succeeded
+                            without actually running it. Risk: missing
+                            data downstream.
+      - ``discard_skill`` — abort the entire skill run, drop the
+                            checkpoint, surface a failure to the
+                            originating chain.
+
+    ``per_skill`` overrides the default for specific skill names —
+    operator declares which skills are safe to retry vs which require
+    careful inspection.
+    """
+
+    default: str = "prompt"
+    per_skill: dict[str, str] = field(default_factory=dict)
+
+    def policy_for(self, skill_name: str) -> str:
+        """Return the resume policy for a given skill name.
+
+        Falls back to ``default`` when no per_skill override exists.
+        Caller may further inspect / validate the value (already
+        validated to be in ``SKILL_RESUME_POLICIES`` at config-load
+        time).
+        """
+        return self.per_skill.get(skill_name, self.default)
+
+
 @dataclass
 class ReynConfig:
     model: str = "standard"
@@ -161,6 +206,9 @@ class ReynConfig:
     events: EventsConfig = field(default_factory=EventsConfig)
     # Budget / rate-limit policy (PR22).
     cost: CostConfig = field(default_factory=CostConfig)
+    # Skill resume policy (PR-skill-resume) — how to handle ambiguous
+    # steps on restart.
+    skill_resume: SkillResumeConfig = field(default_factory=SkillResumeConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -397,7 +445,40 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         multi_agent=_build_multi_agent_config(merged.get("multi_agent")),
         events=_build_events_config(merged.get("events")),
         cost=_build_cost_config(merged.get("cost")),
+        skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
     )
+
+
+def _build_skill_resume_config(raw: object) -> SkillResumeConfig:
+    """Parse `skill_resume:` block; reject unknown policy values up front."""
+    defaults = SkillResumeConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    default = str(raw.get("default", defaults.default))
+    if default not in SKILL_RESUME_POLICIES:
+        # Unknown policy → fall back to default (safe). Don't raise — config
+        # parse failures should never block startup; logger.warning is the
+        # convention used elsewhere for "bad config keys".
+        import logging
+        logging.getLogger(__name__).warning(
+            "skill_resume.default %r is not one of %s; using %r",
+            default, SKILL_RESUME_POLICIES, defaults.default,
+        )
+        default = defaults.default
+    per_skill_raw = raw.get("per_skill") or {}
+    per_skill: dict[str, str] = {}
+    if isinstance(per_skill_raw, dict):
+        for k, v in per_skill_raw.items():
+            v_str = str(v)
+            if v_str not in SKILL_RESUME_POLICIES:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "skill_resume.per_skill[%r] = %r is not one of %s; "
+                    "skipping", k, v_str, SKILL_RESUME_POLICIES,
+                )
+                continue
+            per_skill[str(k)] = v_str
+    return SkillResumeConfig(default=default, per_skill=per_skill)
 
 
 def _build_multi_agent_config(raw: object) -> MultiAgentConfig:
