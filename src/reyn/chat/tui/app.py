@@ -417,9 +417,7 @@ class ReynTUIApp(App):
                 task.cancel()
 
     def action_toggle_panel(self) -> None:
-        """ctrl+b — close palette if open, then toggle the right panel."""
-        if self._palette_visible:
-            self._close_palette()
+        """ctrl+b — open or close the right panel."""
         self._panel_visible = not self._panel_visible
         self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
