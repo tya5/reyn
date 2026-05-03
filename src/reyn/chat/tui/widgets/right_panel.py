@@ -12,13 +12,14 @@ from textual.widgets import Static, Tab, Tabs
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
 
-PANEL_TYPES: list[str] = ["keys", "events", "agents", "memory", "docs"]
+PANEL_TYPES: list[str] = ["keys", "events", "agents", "memory", "cost", "docs"]
 
 _PANEL_LABELS: dict[str, str] = {
     "keys":    "Keys",
     "events":  "Events",
     "agents":  "Agents",
     "memory":  "Memory",
+    "cost":    "Cost",
     "docs":    "Docs",
 }
 
@@ -29,7 +30,7 @@ _TYPE_COLORS: dict[str, str] = {
     "reference": "#cc88ff",
 }
 
-_LIVE_PANELS = {"events", "agents"}
+_LIVE_PANELS = {"events", "agents", "cost"}
 _REFRESH_INTERVAL = 2.0
 
 # ── events tab constants ──────────────────────────────────────────────────────
@@ -378,6 +379,8 @@ class RightPanel(Widget):
                 return self._render_agents()
             if self._panel_type == "memory":
                 return self._render_memory()
+            if self._panel_type == "cost":
+                return self._render_cost()
             if self._panel_type == "docs":
                 return self._render_docs()
         except Exception as e:
@@ -545,6 +548,105 @@ class RightPanel(Widget):
             lines.append("[bold #888888]  [OTHER][/]")
             for e in other:
                 lines.append(f"[#dddddd]    {_esc(e.name)}[/]")
+
+        return "\n".join(lines)
+
+    def _render_cost(self) -> str:
+        import datetime
+        from collections import defaultdict
+
+        lines = ["[bold #C8553D]Cost[/]\n"]
+
+        if self._project_root is None:
+            lines.append("[#555555]  (no project root)[/]")
+            return "\n".join(lines)
+
+        events_root = self._project_root / ".reyn" / "events"
+        if not events_root.is_dir():
+            lines.append("[#555555]  (no events yet)[/]")
+            return "\n".join(lines)
+
+        today_str = datetime.date.today().isoformat()
+        today = {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
+        total = {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
+        by_model: dict[str, dict] = defaultdict(
+            lambda: {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
+        )
+
+        for jsonl in sorted(events_root.rglob("*.jsonl")):
+            try:
+                pending_model: str = "unknown"
+                for raw in jsonl.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = json.loads(raw)
+                        ev_type = ev.get("type")
+                        d = ev.get("data") or {}
+                        if ev_type == "llm_called":
+                            pending_model = str(d.get("model", "unknown"))
+                            continue
+                        if ev_type != "llm_response_received":
+                            continue
+                        pt = int(d.get("prompt_tokens", 0) or 0)
+                        ct = int(d.get("completion_tokens", 0) or 0)
+                        raw_cost = d.get("cost_usd")
+                        cost = float(raw_cost) if raw_cost is not None else 0.0
+                        has_cost = raw_cost is not None
+                        model = pending_model
+                        ts = str(ev.get("timestamp", ""))
+                        for bucket in (total, by_model[model]):
+                            bucket["p"] += pt; bucket["c"] += ct
+                            bucket["cost"] += cost; bucket["calls"] += 1
+                            if has_cost:
+                                bucket["has_cost"] = True
+                        if ts.startswith(today_str):
+                            today["p"] += pt; today["c"] += ct
+                            today["cost"] += cost; today["calls"] += 1
+                            if has_cost:
+                                today["has_cost"] = True
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def _cost_str(bucket: dict) -> str:
+            if not bucket["has_cost"]:
+                return "[#555555]N/A[/]"
+            return f"[#44cc88]${bucket['cost']:.4f}[/]"
+
+        def _tok(p: int, c: int) -> str:
+            return f"[#dddddd]{p + c:,}[/] [#555555]({p:,}p + {c:,}c)[/]"
+
+        lines.append("[bold #aaaaaa]  TODAY[/]")
+        if today["calls"] == 0:
+            lines.append("[#555555]    (no calls today)[/]")
+        else:
+            lines.append(f"[#555555]    tokens  [/]{_tok(today['p'], today['c'])}")
+            lines.append(f"[#555555]    cost    [/]{_cost_str(today)}")
+            lines.append(f"[#555555]    calls   [/][#dddddd]{today['calls']}[/]")
+        lines.append("")
+
+        lines.append("[bold #aaaaaa]  ALL TIME[/]")
+        if total["calls"] == 0:
+            lines.append("[#555555]    (no LLM calls)[/]")
+        else:
+            lines.append(f"[#555555]    tokens  [/]{_tok(total['p'], total['c'])}")
+            lines.append(f"[#555555]    cost    [/]{_cost_str(total)}")
+            lines.append(f"[#555555]    calls   [/][#dddddd]{total['calls']}[/]")
+        lines.append("")
+
+        if by_model:
+            lines.append("[bold #aaaaaa]  BY MODEL[/]")
+            for model in sorted(by_model):
+                m = by_model[model]
+                cost_part = f"  {_cost_str(m)}" if m["has_cost"] else ""
+                lines.append(
+                    f"[#dddddd]    {_esc(model)}[/]\n"
+                    f"[#555555]      {m['p'] + m['c']:,} tok"
+                    f"{cost_part}  {m['calls']} calls[/]"
+                )
 
         return "\n".join(lines)
 
