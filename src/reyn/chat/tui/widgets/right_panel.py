@@ -177,6 +177,31 @@ def _event_hint(ev: dict) -> str:
     return ""
 
 
+def _load_chain_replies(project_root: Path) -> dict[str, str]:
+    """Return {chain_id: last_agent_reply_text} from all agents' history files."""
+    replies: dict[str, str] = {}
+    agents_dir = project_root / ".reyn" / "agents"
+    if not agents_dir.is_dir():
+        return replies
+    for hist in agents_dir.glob("*/history.jsonl"):
+        try:
+            for raw in hist.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    m = json.loads(raw)
+                    if m.get("role") == "agent":
+                        cid = (m.get("meta") or {}).get("chain_id")
+                        if cid:
+                            replies[cid] = m.get("text", "")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    return replies
+
+
 def _esc(s: str) -> str:
     """Escape Rich markup brackets in plain strings."""
     return s.replace("[", "\\[").replace("]", "\\]")
@@ -404,6 +429,8 @@ class RightPanel(Widget):
         if not visible:
             return header + "\n\n[#555555]  (no matching events)[/]"
 
+        chain_replies = _load_chain_replies(self._project_root)
+
         lines = [header, ""]
         for ev in visible[-tail:][::-1]:
             ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
@@ -414,6 +441,15 @@ class RightPanel(Widget):
             lines.append(
                 f"[#444444]  {ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
             )
+            if ev_type == "user_message_received":
+                cid = (ev.get("data") or {}).get("chain_id")
+                if cid:
+                    reply = chain_replies.get(cid)
+                    if reply is None:
+                        lines.append("[#444444]              ↳ [/][#555555](awaiting…)[/]")
+                    else:
+                        short = _esc(reply[:72]) + ("…" if len(reply) > 72 else "")
+                        lines.append(f"[#444444]              ↳ [/][#777777]{short}[/]")
 
         return "\n".join(lines)
 
