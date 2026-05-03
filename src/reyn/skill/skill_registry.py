@@ -79,6 +79,16 @@ class SkillRegistry:
         # load_active(); cleared on complete().
         self._snapshots: dict[str, SkillSnapshot] = {}
 
+    @property
+    def state_dir(self) -> Path:
+        """Public view of the per-agent state directory (R-D10).
+
+        Used by callers (runtime) that need to write workspace-backed
+        side files (e.g. ``llm_results/<args_hash>.json`` for large LLM
+        responses) under the same directory tree the registry owns.
+        """
+        return self._state_dir
+
     async def _fire_truncate_hook(self, *, trigger: str) -> None:
         """Fire the optional truncate-eligible hook. Defensive: never raise.
 
@@ -221,6 +231,12 @@ class SkillRegistry:
                 "complete: cannot remove skill snapshot %s: %s",
                 snap_path, e,
             )
+        # R-D10: also remove the per-run llm_results/ side directory, if
+        # any large LLM responses were written to disk during this run.
+        # Lifecycle is bound to the snapshot — deleting them together
+        # keeps the state directory tidy and avoids orphaned files.
+        from reyn.skill import llm_result_ref
+        llm_result_ref.cleanup_for_run(self._state_dir, run_id)
         self._snapshots.pop(run_id, None)
         await self._fire_truncate_hook(trigger=kind)
 

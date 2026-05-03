@@ -727,6 +727,12 @@ class OSRuntime:
         Schema versioning gate: a CommittedStep.result that's not a dict is
         treated as corrupt (e.g. version skew where the format changed). We
         log a warning and let the caller fall through to a fresh call_llm.
+
+        R-D10: when the recorded result is a ``{"_ref": "<file>"}``
+        placeholder, transparently resolve it by reading the file under
+        ``<agent_state_dir>/skills/<run_id>_llm_results/``. A missing
+        or malformed ref returns None, which triggers fall-through to
+        a fresh LLM call (= memo unavailable, retry).
         """
         result = getattr(memo, "result", None)
         if not isinstance(result, dict):
@@ -737,6 +743,26 @@ class OSRuntime:
                 self.run_id, phase, op_invocation_id,
             )
             return None
+        # R-D10: resolve ref placeholders to their full payload.
+        if (self._skill_registry is not None and self.run_id is not None
+                and list(result.keys()) == ["_ref"]):
+            from reyn.skill import llm_result_ref
+            resolved = llm_result_ref.resolve(
+                agent_state_dir=self._skill_registry.state_dir,
+                run_id=self.run_id,
+                value=result,
+            )
+            if resolved is None:
+                # ref file missing / malformed → treat as memo miss
+                return None
+            if not isinstance(resolved, dict):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "LLM memo ref resolved to non-dict (run=%s phase=%s id=%s)",
+                    self.run_id, phase, op_invocation_id,
+                )
+                return None
+            return resolved
         return result
 
     async def _wal_step_completed_for_llm(
@@ -754,9 +780,25 @@ class OSRuntime:
         memo hit can re-credit the budget tracker via record_llm. None
         when the LLM call returned no usage info (rare; most providers
         always include tokens).
+
+        R-D10: large results (> 32 KB serialized) are off-loaded to
+        ``<agent_state_dir>/skills/<run_id>_llm_results/<args_hash>.json``
+        and the WAL stores ``{"_ref": "<args_hash>.json"}``. Memo
+        lookup transparently resolves the ref. Avoids MB-class inline
+        payloads from accumulating in the WAL between phase truncations.
         """
         if self._state_log is None or self.run_id is None:
             return
+        # R-D10: maybe off-load large result to a workspace ref file.
+        wal_result = result
+        if self._skill_registry is not None:
+            from reyn.skill import llm_result_ref
+            wal_result = llm_result_ref.write_if_large(
+                agent_state_dir=self._skill_registry.state_dir,
+                run_id=self.run_id,
+                args_hash=args_hash,
+                result=result,
+            )
         try:
             await self._state_log.append(
                 "step_completed",
@@ -765,7 +807,7 @@ class OSRuntime:
                 op_invocation_id=op_invocation_id,
                 op_kind="llm",
                 args_hash=args_hash,
-                result=result,
+                result=wal_result,
                 usage=usage,
             )
         except Exception as e:  # noqa: BLE001 — never fail the dispatch
