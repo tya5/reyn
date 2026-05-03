@@ -110,9 +110,9 @@ def _build_args_hash_for(rt: OSRuntime, phase: str) -> str:
     Mirrors the runtime's hashing inputs (model resolved, frame, no priors,
     no rollback, system_inputs from skill metadata).
     """
-    resolved_model = rt._resolver.resolve(rt._effective_model(phase))  # type: ignore[attr-defined]
+    resolved_model = rt._resolver.resolve(rt._effective_model(phase))
     phase_def = rt.skill.phases.get(phase)
-    frame = rt._build_frame(  # type: ignore[attr-defined]
+    frame = rt.build_frame(
         phase, {"type": "input", "data": {}}, [], "en",
     )
     return _compute_llm_args_hash(
@@ -124,8 +124,8 @@ def _build_args_hash_for(rt: OSRuntime, phase: str) -> str:
             "skill_name": rt.skill.name,
             "skill_description": rt.skill.description,
             "phase_role": phase_def.role if phase_def else None,
-            "project_context": rt._project_context,  # type: ignore[attr-defined]
-            "agent_role": rt._agent_role,  # type: ignore[attr-defined]
+            "project_context": rt._project_context,
+            "agent_role": rt._agent_role,
         },
     )
 
@@ -175,10 +175,10 @@ def test_memo_hit_skips_call_llm_and_emits_step_memoized(tmp_path, monkeypatch):
     )
     rt = _runtime(state_log=state_log, resume_plan=plan)
 
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     raw = asyncio.run(go())
 
@@ -217,10 +217,10 @@ def test_memo_miss_falls_through_and_emits_step_completed(tmp_path, monkeypatch)
         ],
     )
     rt = _runtime(state_log=state_log, resume_plan=plan)
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     asyncio.run(go())
 
@@ -245,10 +245,10 @@ def test_no_resume_plan_invokes_call_llm_normally(tmp_path, monkeypatch):
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     rt = _runtime(state_log=state_log, resume_plan=None)
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     asyncio.run(go())
 
@@ -271,12 +271,12 @@ def test_op_invocation_id_increments_per_call(tmp_path, monkeypatch):
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     rt = _runtime(state_log=state_log, resume_plan=None)
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     asyncio.run(go())
 
@@ -320,10 +320,10 @@ def test_memo_hit_with_corrupt_result_falls_through_gracefully(tmp_path, monkeyp
         ],
     )
     rt = _runtime(state_log=state_log, resume_plan=plan)
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        return await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     raw = asyncio.run(go())
 
@@ -346,14 +346,14 @@ def test_op_invocation_id_resets_on_phase_re_entry(tmp_path, monkeypatch):
 
     state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
     rt = _runtime(state_log=state_log, resume_plan=None)
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")  # type: ignore[attr-defined]
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
 
     async def go():
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
         # Simulate phase re-entry (runtime.py calls _enter_phase on each entry)
-        rt._enter_phase("draft", {"type": "input", "data": {}})  # type: ignore[attr-defined]
-        await rt._call_llm_and_record("draft", frame, prior_attempts=None)  # type: ignore[attr-defined]
+        rt._enter_phase("draft", {"type": "input", "data": {}})
+        await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     asyncio.run(go())
 

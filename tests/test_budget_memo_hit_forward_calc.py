@@ -71,7 +71,7 @@ async def test_wal_step_completed_for_llm_records_usage(tmp_path, monkeypatch):
         )
     monkeypatch.setattr(runtime_mod, "call_llm", stub_call_llm)
 
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
     await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     completed = [e for e in state_log.iter_from(0) if e["kind"] == "step_completed"]
@@ -89,21 +89,34 @@ async def test_wal_step_completed_for_llm_records_usage(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _build_args_hash_for(rt: OSRuntime, phase: str = "draft") -> str:
-    resolved_model = rt._resolver.resolve(rt._effective_model(phase))
-    phase_def = rt.skill.phases.get(phase)
-    frame = rt._build_frame(phase, {"type": "input", "data": {}}, [], "en")
+def _expected_args_hash(skill: Skill, phase: str = "draft", *,
+                        model: str = "stub/model",
+                        project_context: str = "",
+                        agent_role: str = "") -> str:
+    """Compute the args_hash an OSRuntime would produce for this phase's
+    first LLM call.
+
+    Uses a temporary OSRuntime to invoke ``build_frame`` (public method).
+    All inputs are explicit so the helper doesn't depend on private
+    attributes of the runtime under test.
+    """
+    rt_tmp = OSRuntime(
+        skill, model=model, run_id="_hash_tmp",
+        project_context=project_context, agent_role=agent_role,
+    )
+    frame = rt_tmp.build_frame(phase, {"type": "input", "data": {}}, [], "en")
+    phase_def = skill.phases.get(phase)
     return _compute_llm_args_hash(
-        model=resolved_model,
+        model=model,
         frame=frame.model_dump(mode="json"),
         prior_attempts=None,
         rollback_context=None,
         system_inputs={
-            "skill_name": rt.skill.name,
-            "skill_description": rt.skill.description,
+            "skill_name": skill.name,
+            "skill_description": skill.description,
             "phase_role": phase_def.role if phase_def else None,
-            "project_context": rt._project_context,
-            "agent_role": rt._agent_role,
+            "project_context": project_context,
+            "agent_role": agent_role,
         },
     )
 
@@ -127,16 +140,8 @@ async def test_memo_hit_with_usage_credits_budget(tmp_path, monkeypatch):
     cost_cfg = CostConfig(per_agent_tokens=CostLimitConfig(hard_limit=10000))
     budget = BudgetTracker(cost_cfg)
 
-    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    rt = OSRuntime(
-        _one_phase_skill(),
-        model="stub/model", run_id="run_memo_credit",
-        state_log=state_log,
-        budget_tracker=budget,
-        caller="agents/alpha",
-    )
-    args_hash = _build_args_hash_for(rt)
-
+    skill = _one_phase_skill()
+    args_hash = _expected_args_hash(skill)
     plan = ResumePlan(
         run_id="run_memo_credit",
         skill_name="memo_budget",
@@ -159,9 +164,18 @@ async def test_memo_hit_with_usage_credits_budget(tmp_path, monkeypatch):
             ),
         ],
     )
-    rt._resume_plan = plan
 
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    rt = OSRuntime(
+        skill,
+        model="stub/model", run_id="run_memo_credit",
+        state_log=state_log,
+        budget_tracker=budget,
+        caller="agents/alpha",
+        resume_plan=plan,
+    )
+
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
     raw = await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     # Memo hit — call_llm not invoked
@@ -188,16 +202,8 @@ async def test_memo_hit_without_usage_skips_credit_gracefully(tmp_path, monkeypa
 
     budget = BudgetTracker(CostConfig(per_agent_tokens=CostLimitConfig(hard_limit=10000)))
 
-    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    rt = OSRuntime(
-        _one_phase_skill(),
-        model="stub/model", run_id="run_no_usage",
-        state_log=state_log,
-        budget_tracker=budget,
-        caller="agents/alpha",
-    )
-    args_hash = _build_args_hash_for(rt)
-
+    skill = _one_phase_skill()
+    args_hash = _expected_args_hash(skill)
     plan = ResumePlan(
         run_id="run_no_usage",
         skill_name="memo_budget",
@@ -220,9 +226,18 @@ async def test_memo_hit_without_usage_skips_credit_gracefully(tmp_path, monkeypa
             ),
         ],
     )
-    rt._resume_plan = plan
 
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    rt = OSRuntime(
+        skill,
+        model="stub/model", run_id="run_no_usage",
+        state_log=state_log,
+        budget_tracker=budget,
+        caller="agents/alpha",
+        resume_plan=plan,
+    )
+
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
     raw = await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     # Memo hit still proceeds (graceful)
@@ -242,15 +257,9 @@ async def test_memo_hit_with_no_budget_tracker_is_noop(tmp_path, monkeypatch):
         return LLMCallResult(data={}, usage=None)
     monkeypatch.setattr(runtime_mod, "call_llm", stub_call_llm)
 
-    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
-    rt = OSRuntime(
-        _one_phase_skill(),
-        model="stub/model", run_id="run_no_budget",
-        state_log=state_log,
-        budget_tracker=None,  # no tracker
-    )
-    args_hash = _build_args_hash_for(rt)
-    rt._resume_plan = ResumePlan(
+    skill = _one_phase_skill()
+    args_hash = _expected_args_hash(skill)
+    plan = ResumePlan(
         run_id="run_no_budget", skill_name="memo_budget", skill_input={},
         current_phase="draft", last_phase_artifact_path=None,
         awaiting_intervention_id=None,
@@ -266,8 +275,16 @@ async def test_memo_hit_with_no_budget_tracker_is_noop(tmp_path, monkeypatch):
             ),
         ],
     )
+    state_log = StateLog(tmp_path / ".reyn" / "wal.jsonl")
+    rt = OSRuntime(
+        skill,
+        model="stub/model", run_id="run_no_budget",
+        state_log=state_log,
+        budget_tracker=None,  # no tracker
+        resume_plan=plan,
+    )
 
-    frame = rt._build_frame("draft", {"type": "input", "data": {}}, [], "en")
+    frame = rt.build_frame("draft", {"type": "input", "data": {}}, [], "en")
     # Must not raise
     raw = await rt._call_llm_and_record("draft", frame, prior_attempts=None)
     assert raw["type"] == "finish"

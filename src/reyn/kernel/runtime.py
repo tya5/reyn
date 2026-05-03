@@ -234,6 +234,11 @@ class OSRuntime:
         self._llm_timeout = self._limits.llm.timeout
         self._llm_max_retries = self._limits.llm.max_retries
         self._prompt_cache_enabled = prompt_cache_enabled
+        # Public attributes — readable by tests / introspection. Treated as
+        # immutable post-construction.
+        self.project_context = project_context
+        self.agent_role = agent_role
+        # Private aliases retained so existing internal call sites stay stable.
         self._project_context = project_context
         self._agent_role = agent_role
         self._phase_started_at: float | None = None
@@ -380,7 +385,7 @@ class OSRuntime:
         phase = self.skill.phases.get(phase_name)
         return phase.model_class if phase and phase.model_class else self.model
 
-    def _build_frame(
+    def build_frame(
         self,
         current_phase: str,
         artifact: dict,
@@ -858,7 +863,7 @@ class OSRuntime:
             # the LLM structurally cannot emit another act turn — it has no ops
             # to call and must produce a decide turn.
             force_decide = remaining is not None and remaining <= 0
-            frame = self._build_frame(
+            frame = self.build_frame(
                 phase, artifact, candidates, output_language,
                 control_ir_results=control_ir_results,
                 artifact_path=artifact_path,
@@ -977,7 +982,7 @@ class OSRuntime:
                     attempt=len(prior_attempts), max_retries=max_phase_retries,
                     error=prior_attempts[-1]["error"],
                 )
-                frame = self._build_frame(phase, artifact, candidates, output_language)
+                frame = self.build_frame(phase, artifact, candidates, output_language)
                 # rollback_context already injected in act loop's first call; retries don't repeat it
                 raw = await self._call_llm_and_record(phase, frame, prior_attempts)
 

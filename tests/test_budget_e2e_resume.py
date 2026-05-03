@@ -78,16 +78,17 @@ def test_e2e_cap_enforced_across_crash_and_restart(tmp_path):
     assert check2.hard_dimension is not None
 
 
-def test_e2e_state_loaded_flag_suppresses_memo_hit_forward_calc(tmp_path):
-    """Tier 3: memo-hit forward-calc is suppressed once state is loaded.
+def test_e2e_loaded_state_does_not_double_count_on_subsequent_records(tmp_path):
+    """Tier 2c: after load_state, subsequent record_llm doesn't replay the
+    loaded counts on top of themselves.
 
-    Defends against the double-count regression: if both load_state +
-    forward-calc were credited, the post-resume tracker would over-count
-    the in-flight phase's tokens, refusing legitimate calls.
+    Defends the cap-bypass-on-resume invariant: if load_state's contribution
+    were counted twice (once by load, once by re-credit somewhere), the
+    post-resume tracker would over-count and refuse legitimate calls. The
+    behavior verified here is what user-visible cap enforcement depends on.
     """
     bt = BudgetTracker(_cap300())
     state_path = tmp_path / "budget_state.json"
-    # Seed with a saved state representing 250 tokens used pre-crash
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps({
         "version": 1,
@@ -99,28 +100,10 @@ def test_e2e_state_loaded_flag_suppresses_memo_hit_forward_calc(tmp_path):
     bt.load_state(state_path)
     assert bt.snapshot()["agent_tokens"]["alpha"] == 250
 
-    # Sentinel for the forward-calc suppression: _state_loaded must be True
-    assert bt._state_loaded is True
-
-    # If memo-hit forward calc DID run (= no suppression), it would call
-    # record_llm and push the tracker over 250. With suppression, the
-    # tracker stays at 250 and a fresh 60-token call lands at 310.
+    # A fresh 60-token call lands at exactly 310 (250 + 60), not 560
+    # (which would indicate double-count via re-credit).
     bt.record_llm(model="gpt-4", agent="alpha", usage=TokenUsage(40, 20))
     assert bt.snapshot()["agent_tokens"]["alpha"] == 310
 
     check = bt.check_pre_llm(model="gpt-4", agent="alpha")
     assert not check.allowed
-
-
-def test_e2e_no_state_persistence_test_path_still_works():
-    """Tier 3: tests that don't load_state get the original forward-calc.
-
-    Key for L3 tests / paths that exercise memo hit alone — the
-    forward-calc behavior is the safety net when state persistence is
-    not configured.
-    """
-    bt = BudgetTracker(_cap300())
-    # No load_state call
-    assert bt._state_loaded is False
-    # Suppressed flag is off — memo-hit forward calc would run as normal
-    # (tested elsewhere in test_budget_memo_hit_forward_calc.py)

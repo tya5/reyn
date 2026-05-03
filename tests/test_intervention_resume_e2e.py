@@ -91,34 +91,49 @@ def _snapshot_with_intervention(
 
 @pytest.mark.asyncio
 async def test_bus_returns_buffered_answer_without_dispatching(tmp_path, monkeypatch):
-    """Tier 2: ChatInterventionBus.request returns buffer hit if present.
+    """Tier 2c: ChatInterventionBus.request returns buffer hit if present.
 
-    When a previous (crashed) run's intervention was answered post-restart,
-    the answer is buffered keyed by run_id. The next bus.request from the
-    resuming skill (same run_id) must short-circuit the dispatch path.
+    Setup uses the real restore + answer flow (snapshot → restore_state →
+    user answer through the registry) so the buffer gets populated by
+    the production watcher path. Verification is purely behavioral: a
+    fresh bus.request short-circuits dispatch and returns the recorded
+    answer.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    # Pre-populate buffer (simulating what the L5 watcher does after the
-    # user answers a restored intervention)
-    session._buffered_intervention_answers["rResume"] = InterventionAnswer(
-        text="Charlie", choice_id=None,
+    # Real flow: a prior-run intervention is in the snapshot; restore it,
+    # answer it via the slash path, watcher buffers the answer.
+    snap = _snapshot_with_intervention(
+        agent_name="alpha", iv_id="iv_prior", run_id="rResume",
+        prompt="Prior question",
     )
+    session.restore_state(snap)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    consumed = await session._maybe_answer_oldest_intervention("Charlie")
+    assert consumed is True
+    for _ in range(3):
+        await asyncio.sleep(0)
+    # Drain outbox of restore-time intervention announces; we'll verify
+    # the bus.request path makes NO new announcements below.
+    while not session.outbox.empty():
+        session.outbox.get_nowait()
 
+    # Now the actual contract under test:
     bus = ChatInterventionBus(session, run_id="rResume", skill_name="demo")
     iv = UserIntervention(kind="ask_user", prompt="Fresh Q?")
     iv.future = asyncio.get_running_loop().create_future()
     answer = await bus.request(iv)
 
     assert answer.text == "Charlie"
-    # No dispatch happened — outbox should not have an intervention message
+    # No new dispatch — outbox should not have a fresh intervention message
     msgs = []
     while not session.outbox.empty():
         msgs.append(session.outbox.get_nowait())
     assert all(m.kind != "intervention" for m in msgs), (
-        "buffered answer must NOT trigger announce/dispatch path"
+        f"buffered answer must NOT trigger announce/dispatch path; got {msgs}"
     )
 
 
@@ -147,14 +162,22 @@ async def test_bus_falls_through_to_dispatch_when_no_buffer(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_buffer_is_single_use(tmp_path, monkeypatch):
-    """Tier 2: a buffered answer is consumed once; second request gets fresh dispatch."""
+    """Tier 2c: a buffered answer is consumed once; second request goes through dispatch."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    session._buffered_intervention_answers["rOnce"] = InterventionAnswer(
-        text="first", choice_id=None,
+    # Setup: real flow populates the buffer (restore + answer)
+    snap = _snapshot_with_intervention(
+        agent_name="alpha", iv_id="iv_once", run_id="rOnce",
+        prompt="Prior question",
     )
+    session.restore_state(snap)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    await session._maybe_answer_oldest_intervention("first")
+    for _ in range(3):
+        await asyncio.sleep(0)
 
     bus = ChatInterventionBus(session, run_id="rOnce", skill_name="demo")
     iv1 = UserIntervention(kind="ask_user", prompt="Q1?")
@@ -162,7 +185,7 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
     a1 = await bus.request(iv1)
     assert a1.text == "first"
 
-    # Buffer cleared — second request goes through dispatch
+    # Buffer cleared — second request goes through real dispatch
     iv2 = UserIntervention(kind="ask_user", prompt="Q2?")
     iv2.future = asyncio.get_running_loop().create_future()
     task = asyncio.ensure_future(bus.request(iv2))
@@ -180,7 +203,13 @@ async def test_buffer_is_single_use(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkeypatch):
-    """Tier 2: restoring + answering populates the buffer for skill resume."""
+    """Tier 2c: restore + user-answer makes the answer reachable via bus.request.
+
+    The watcher mechanism is verified by behavior — after restore + answer,
+    a bus.request for the same run_id returns the recorded text. If the
+    watcher had not buffered, the bus would dispatch a fresh intervention
+    instead and block.
+    """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
@@ -193,16 +222,17 @@ async def test_watcher_buffers_answer_when_restored_iv_resolves(tmp_path, monkey
     for _ in range(3):
         await asyncio.sleep(0)
 
-    # User answers
     consumed = await session._maybe_answer_oldest_intervention("hello world")
     assert consumed is True
     for _ in range(3):
         await asyncio.sleep(0)
 
-    # Buffer populated
-    buffered = session._buffered_intervention_answers.get("rW")
-    assert buffered is not None
-    assert buffered.text == "hello world"
+    # Bus.request reaches the answer without dispatching
+    bus = ChatInterventionBus(session, run_id="rW", skill_name="demo")
+    fresh_iv = UserIntervention(kind="ask_user", prompt="Skill resumes")
+    fresh_iv.future = asyncio.get_running_loop().create_future()
+    answer = await bus.request(fresh_iv)
+    assert answer.text == "hello world"
 
 
 # ---------------------------------------------------------------------------
@@ -253,8 +283,21 @@ async def test_e2e_skill_resume_picks_up_user_answer(tmp_path, monkeypatch):
     assert answer.text == "Reyn", (
         f"resuming skill must receive the user's previous answer; got {answer}"
     )
-    # Buffer cleared after consumption
-    assert "rE2E" not in session._buffered_intervention_answers
+    # Buffer cleared after consumption — verified by behavior: a SECOND
+    # bus.request for the same run_id falls through to dispatch (which
+    # would block awaiting a new answer; we kick it off and verify it
+    # blocks rather than returning the same recorded text).
+    second_iv = UserIntervention(kind="ask_user", prompt="Another?")
+    second_iv.future = asyncio.get_running_loop().create_future()
+    second_task = asyncio.ensure_future(bus.request(second_iv))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not second_task.done(), (
+        "second bus.request must block on dispatch (= buffer cleared)"
+    )
+    # Clean up: cancel the dangling task
+    second_task.cancel()
+    await asyncio.gather(second_task, return_exceptions=True)
 
 
 @pytest.mark.asyncio
