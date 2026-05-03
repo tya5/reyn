@@ -596,7 +596,9 @@ class AgentRegistry:
         # `_announce_intervention` already put the original message on the
         # session outbox, but the forwarder dropped it (detached). On attach
         # we replay each pending iv so the user sees what's waiting.
-        for iv in list(new_session._active_interventions.values()):
+        # (Post-refactor: the active intervention queue lives on the
+        # InterventionRegistry service; reach via `_interventions.list_active()`.)
+        for iv in new_session._interventions.list_active():
             if not iv.future.done():
                 await new_session._announce_intervention(iv)
         return new_session
