@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult, RenderResult
 from textual.widget import Widget
-from textual.widgets import RichLog, Static, Tab, Tabs
+from textual.widgets import Label, RichLog, Static, Tab, Tabs
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -249,31 +249,82 @@ class _PreviewPane(Widget):
         display: none;
         height: 1fr;
         border-top: tall #2a2a2a;
+        layout: vertical;
     }
     _PreviewPane.preview-visible {
         display: block;
     }
+    _PreviewPane #preview-header {
+        height: 1;
+        color: #555555;
+        background: #1a1a1a;
+        padding: 0 1;
+    }
     _PreviewPane RichLog {
         background: transparent;
-        height: 100%;
+        height: 1fr;
         padding: 0 1;
     }
     """
 
-    def compose(self) -> ComposeResult:
-        yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._wrap: bool = False
+        self._current_path: Path | None = None
 
-    def show_markdown(self, text: str) -> None:
+    def compose(self) -> ComposeResult:
+        yield Label("", id="preview-header")
+        yield RichLog(id="preview-log", markup=False, highlight=False, auto_scroll=False, wrap=False)
+
+    def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
-        log = self.query_one("#preview-log", RichLog)
-        log.clear()
-        if text:
-            log.write(RichMarkdown(text))
-        log.scroll_home(animate=False)
+        self._current_path = path
+        try:
+            log = self.query_one("#preview-log", RichLog)
+            log.wrap = self._wrap
+            log.clear()
+            log.write(RichMarkdown(path.read_text(encoding="utf-8")))
+            log.scroll_home(animate=False)
+            self._update_header()
+        except Exception:
+            pass
+
+    def toggle_wrap(self) -> None:
+        self._wrap = not self._wrap
+        if self._current_path:
+            self.show_markdown(self._current_path)
+        else:
+            try:
+                self.query_one("#preview-log", RichLog).wrap = self._wrap
+            except Exception:
+                pass
+            self._update_header()
+
+    def scroll_line(self, delta: int) -> None:
+        try:
+            log = self.query_one("#preview-log", RichLog)
+            if delta > 0:
+                log.scroll_down(1, animate=False)
+            else:
+                log.scroll_up(1, animate=False)
+        except Exception:
+            pass
 
     def clear(self) -> None:
+        self._current_path = None
         try:
             self.query_one("#preview-log", RichLog).clear()
+            self._update_header()
+        except Exception:
+            pass
+
+    def _update_header(self) -> None:
+        name = _esc(self._current_path.name) if self._current_path else "—"
+        wrap_str = "on" if self._wrap else "off"
+        try:
+            self.query_one("#preview-header", Label).update(
+                f"  {name}  │  wrap:{wrap_str}  │  w=toggle  ↑/↓=scroll"
+            )
         except Exception:
             pass
 
@@ -409,6 +460,18 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._docs_move(-1)
+        elif event.key == "up":
+            if self._preview_visible:
+                event.prevent_default()
+                self._scroll_preview(-1)
+        elif event.key == "down":
+            if self._preview_visible:
+                event.prevent_default()
+                self._scroll_preview(+1)
+        elif event.key == "w":
+            if self._preview_visible:
+                event.prevent_default()
+                self._toggle_preview_wrap()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         if event.tab and event.tab.id in PANEL_TYPES:
@@ -447,10 +510,21 @@ class RightPanel(Widget):
         try:
             pane = self.query_one("#preview-pane", _PreviewPane)
             if self._panel_type == "docs" and self._docs_files:
-                path = self._docs_files[self._docs_cursor]
-                pane.show_markdown(path.read_text(encoding="utf-8"))
+                pane.show_markdown(self._docs_files[self._docs_cursor])
             else:
                 pane.clear()
+        except Exception:
+            pass
+
+    def _scroll_preview(self, delta: int) -> None:
+        try:
+            self.query_one("#preview-pane", _PreviewPane).scroll_line(delta)
+        except Exception:
+            pass
+
+    def _toggle_preview_wrap(self) -> None:
+        try:
+            self.query_one("#preview-pane", _PreviewPane).toggle_wrap()
         except Exception:
             pass
 
