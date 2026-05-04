@@ -642,14 +642,15 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
 
 
 @pytest.mark.asyncio
-async def test_dedupe_does_not_apply_to_sync_tool_calls():
-    """Tier 2: OS invariant — duplicate SYNC tool_calls in same round are
-    NOT deduped (F5 scope guard).
+async def test_dedupe_does_not_apply_to_non_invoke_sync_tool_calls():
+    """Tier 2: OS invariant — duplicate SYNC tool_calls (other than
+    invoke_skill) in same round are NOT deduped.
 
     Sync tool dupes are wasteful but correctness-preserving (same args →
     same result), and deduping them risks tool_call_id mismatches in the
-    follow-up assistant message. Only async tools (delegate_to_agent)
-    get the dedupe treatment.
+    follow-up assistant message. Only async tools (delegate_to_agent) and
+    invoke_skill (G3) get the dedupe treatment; describe_skill and other
+    pure-sync tools do not.
     """
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
@@ -668,12 +669,133 @@ async def test_dedupe_does_not_apply_to_sync_tool_calls():
     with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("describe", [])
 
-    # No dedupe events for sync tools.
+    # No dedupe events for non-invoke_skill sync tools.
     deduped_events = [
         e for e in host.events.emitted  # type: ignore[attr-defined]
         if e["type"] == "tool_call_deduped"
     ]
     assert len(deduped_events) == 0
+
+
+# ---------------------------------------------------------------------------
+# G3 fix (dogfood batch 5 B5-M1): dedupe duplicate invoke_skill in same round
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_dedupe_duplicate_invoke_skill_in_same_round():
+    """Tier 2: OS invariant — duplicate invoke_skill calls with identical
+    name+input in one LLM round are deduplicated before dispatch (G3 fix).
+
+    Weak models (observed in B5-M1) emit `invoke_skill` three times in
+    the same tool_calls list with identical args, causing 333k tokens /
+    51 LLM calls for a single review request. After dedupe, exactly one
+    skill invocation runs and a `tool_call_deduped` audit event is emitted
+    for each suppressed call.
+    """
+    host = FakeRouterHost(skills=[
+        {"name": "skill_improver", "category": "general"},
+    ])
+    loop = make_loop(host)
+
+    # Three identical invoke_skill calls in the same round (B5-M1 pattern).
+    duplicate_round = tool_result([
+        {"id": "tc_a", "name": "invoke_skill",
+         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
+        {"id": "tc_b", "name": "invoke_skill",
+         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
+        {"id": "tc_c", "name": "invoke_skill",
+         "args": {"name": "skill_improver", "input": {"type": "T", "data": {}}}},
+    ])
+    scripted = _ScriptedLLM([duplicate_round, text_result("done")])
+
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
+        await loop.run("improve the skill", [])
+
+    # Only one skill invocation — two duplicates suppressed.
+    assert len(host.skill_calls) == 1
+    assert host.skill_calls[0]["skill"] == "skill_improver"
+
+    # Two audit events for the two suppressed calls.
+    deduped_events = [
+        e for e in host.events.emitted
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 2
+    for evt in deduped_events:
+        assert evt["name"] == "invoke_skill"
+        assert evt["reason"] == "duplicate_invoke_skill_in_round"
+
+
+@pytest.mark.asyncio
+async def test_dedupe_does_not_collapse_distinct_invoke_skill_args():
+    """Tier 2: OS invariant — invoke_skill calls with different args in
+    the same round are NOT deduped (G3 false-positive guard).
+
+    Two invoke_skill calls for different skills (or same skill with
+    different inputs) must both execute — they are legitimately distinct
+    work items.
+    """
+    host = FakeRouterHost(skills=[
+        {"name": "skill_a", "category": "general"},
+        {"name": "skill_b", "category": "general"},
+    ])
+    loop = make_loop(host)
+
+    distinct_round = tool_result([
+        {"id": "tc_a", "name": "invoke_skill",
+         "args": {"name": "skill_a", "input": {"type": "T", "data": {"x": 1}}}},
+        {"id": "tc_b", "name": "invoke_skill",
+         "args": {"name": "skill_b", "input": {"type": "T", "data": {"x": 2}}}},
+    ])
+    scripted = _ScriptedLLM([distinct_round, text_result("done")])
+
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
+        await loop.run("run two skills", [])
+
+    # Both skills executed — different args, no collapse.
+    assert len(host.skill_calls) == 2
+    called = {c["skill"] for c in host.skill_calls}
+    assert called == {"skill_a", "skill_b"}
+
+    # No dedupe events.
+    deduped_events = [
+        e for e in host.events.emitted
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_call_deduped_event_emitted_for_invoke_skill():
+    """Tier 2: P6 invariant — deduped invoke_skill calls emit
+    `tool_call_deduped` events with correct name and reason fields,
+    making the dedupe visible in the audit log (P6).
+    """
+    host = FakeRouterHost(skills=[
+        {"name": "my_skill", "category": "general"},
+    ])
+    loop = make_loop(host)
+
+    duplicate_round = tool_result([
+        {"id": "tc_a", "name": "invoke_skill",
+         "args": {"name": "my_skill", "input": {"type": "T", "data": {}}}},
+        {"id": "tc_b", "name": "invoke_skill",
+         "args": {"name": "my_skill", "input": {"type": "T", "data": {}}}},
+    ])
+    scripted = _ScriptedLLM([duplicate_round, text_result("done")])
+
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
+        await loop.run("run skill", [])
+
+    deduped_events = [
+        e for e in host.events.emitted
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 1
+    evt = deduped_events[0]
+    assert evt["name"] == "invoke_skill"
+    assert evt["reason"] == "duplicate_invoke_skill_in_round"
+    assert evt["chain_id"] == "chain-test"
 
 
 @pytest.mark.asyncio

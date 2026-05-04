@@ -188,10 +188,14 @@ class RouterLoop:
                 # tool_calls within the same round. Weak models
                 # occasionally emit `delegate_to_agent` twice in one
                 # tool_calls list, which would inbox_put the same
-                # request twice and double-charge the peer. Sync tool
-                # dupes are wasteful but correctness-preserving (same
-                # args → same result), so we only dedupe async tools.
-                tool_calls = self._dedupe_async_tool_calls(result.tool_calls)
+                # request twice and double-charge the peer.
+                # G3 fix (dogfood batch 5 B5-M1): extend dedupe to
+                # invoke_skill — same skill + same args in one round
+                # spawns redundant runs (333k tokens / 51 LLM calls
+                # observed). invoke_skill is sync but NOT idempotent
+                # from a cost perspective; deduping is safe because
+                # same args → same deterministic result.
+                tool_calls = self._dedupe_tool_calls_round(result.tool_calls)
                 # parallel execute all tool calls (deduped)
                 tool_results = await asyncio.gather(*[
                     self._execute_tool(tc) for tc in tool_calls
@@ -256,35 +260,62 @@ class RouterLoop:
     # Tool dispatch
     # -----------------------------------------------------------------------
 
-    def _dedupe_async_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
-        """Dedupe duplicate async tool_calls within the same round (F5).
+    def _dedupe_tool_calls_round(self, tool_calls: list[dict]) -> list[dict]:
+        """Dedupe duplicate tool_calls within the same round (F5 + G3).
 
-        Weak models sometimes emit `delegate_to_agent` twice in the same
-        tool_calls list, which would inbox_put the same request twice and
-        double-charge the peer. Sync tool duplicates are wasteful but
-        correctness-preserving (same args → same result), so we only
-        dedupe async tools — keyed on (name, arguments_json).
+        Covers two categories of duplicates that weak models emit:
 
-        Emits a `tool_call_deduped` audit event for each skipped call so
-        the dedupe is visible in the events log.
+        1. Async tools (e.g. `delegate_to_agent`) — F5 fix (batch 1).
+           Duplicates would inbox_put the same request twice, doubling
+           peer cost and confusing the chain.
+
+        2. `invoke_skill` — G3 fix (batch 5 B5-M1).
+           Three identical invoke_skill calls in one round caused 333k
+           tokens / 51 LLM calls. Same skill + same args → same result;
+           only the first call is needed.
+
+        Keyed on (tool_name, arguments_json). The original tool_call_id
+        is preserved for the kept copy so the assistant/tool message
+        alignment downstream stays intact.
+
+        Emits a `tool_call_deduped` audit event per suppressed call.
         """
+        # Tools that are dedupe candidates: async tools (by dispatch kind)
+        # and invoke_skill (sync but non-idempotent from a cost standpoint).
+        # Other sync tools (describe_skill, list_skills, read_file, …) are
+        # deliberately excluded — dupes there are wasteful but
+        # correctness-preserving and the tool_call_id count must stay
+        # consistent with what the LLM emitted.
+        _DEDUPE_SYNC_TOOLS: frozenset[str] = frozenset({"invoke_skill"})
+
         deduped: list[dict] = []
-        seen_async: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str]] = set()
         for tc in tool_calls:
             name = tc["function"]["name"]
-            if get_dispatch_kind(name) == "async":
+            is_async = get_dispatch_kind(name) == "async"
+            is_dedupe_sync = name in _DEDUPE_SYNC_TOOLS
+            if is_async or is_dedupe_sync:
                 key = (name, tc["function"].get("arguments", ""))
-                if key in seen_async:
+                if key in seen:
+                    reason = (
+                        "duplicate_async_in_round"
+                        if is_async
+                        else "duplicate_invoke_skill_in_round"
+                    )
                     self.host.events.emit(
                         "tool_call_deduped",
                         name=name,
                         chain_id=self.chain_id,
-                        reason="duplicate_async_in_round",
+                        reason=reason,
                     )
                     continue
-                seen_async.add(key)
+                seen.add(key)
             deduped.append(tc)
         return deduped
+
+    # Keep backward-compat alias (tests and callers that reference the old name
+    # will still work; the alias delegates to the unified implementation).
+    _dedupe_async_tool_calls = _dedupe_tool_calls_round
 
     async def _execute_tool(self, tc: dict) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).
