@@ -54,10 +54,14 @@ B2-H1 (specialist の describe→invoke attractor) と B2-H2 (default の
 
 ```bash
 rm -rf .reyn/
-reyn chat default --cui --no-restore
+reyn agent new specialist   # specialist agent を作成 (_default topology に自動参加)
+reyn topology show _default # members: default, specialist が出ることを確認
+reyn chat default --cui --no-restore --output-language ja
 ```
 
-specialist agent が `_default` topology に存在することを topology で確認してから実行。
+`rm -rf .reyn/` で state を完全 flush すると specialist agent も消えるため、
+`reyn agent new specialist` で再作成が必要。 最小構成の profile は自動生成される
+(追加の profile.yaml 編集は不要)。 topology 確認後に chat を起動する。
 
 ### Action
 
