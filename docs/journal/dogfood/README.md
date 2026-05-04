@@ -76,7 +76,11 @@ docs/journal/dogfood/
 └── YYYY-MM-DD-batch-N-{label}/
     ├── prelude.md                  ← 前夜 (= 当時の reyn 状態 + 経緯)
     ├── scenarios.md                ← 何を試したか
-    ├── findings.md                 ← 事件記録
+    ├── findings.md                 ← 事件記録 index (summary table + narrative)
+    ├── findings/                   ← 1 finding = 1 file (詳細)
+    │   ├── F01-<slug>.md
+    │   ├── F02-<slug>.md
+    │   └── ...
     └── retrospective.md            ← user との対話振り返り
 ```
 
@@ -86,3 +90,20 @@ docs/journal/dogfood/
 推奨読み順: **prelude → scenarios → findings → retrospective**。
 prelude が当時の文脈を、 scenarios が試行内容を、 findings が事件を、
 retrospective が学びを担当します。
+
+### findings.md と findings/ の役割分担
+
+`findings.md` は index で、 概要 / summary table / narrative を含む
+比較的小さい file (= 常時 load される)。 各 finding の詳細は
+`findings/F0N-<slug>.md` に分割し、 必要なときに 1 file だけ読む形に。
+
+理由は **読み出しコスト削減**: 11 finding を 1 file に詰めると 22+KB に
+膨れ、 status 更新で毎回全読みになる。 batch を重ねるほど雪だるま式に
+増えるので、 早い段階で per-finding split に移行。
+
+新しい finding を追加する手順:
+
+1. `findings/F0N-<slug>.md` に詳細を書く (severity / status / scenario
+   メタ + 観測 + 原因 + 修正 + 教訓)
+2. `findings.md` の summary table に行追加 (link 付き)
+3. narrative section の関連 round に 1-2 行で要旨追記
