@@ -1,26 +1,55 @@
 # Batch 5 Retest 2 — Findings Index
 
-**Date**: 2026-05-04  
-**HEAD**: `ca116f3` + `fe91321` (B5-H1 + B5-H2 both applied)  
+**Date**: 2026-05-04
+**HEAD at run**: `ca116f3` + `fe91321` (B5-H1 + B5-H2 applied)
+**Important caveat**: 本 retest は **G2 fix (`763c86c`、 copy_to_work preprocessor 化) が
+landing する前** に走った。 B5R2-H2 (= copy_to_work 0-byte write) は
+LLM-driven 版の最後の症状であり、 **G2 fix で構造的に解消されている見込み** —
+batch 6 で再 verify が必要。
 **Scenarios**: A (curry/specialist) + B (skill_improver eval cascade)
 
 ## Fix verification summary
 
 | Fix | Target bug | Status | Evidence |
 |-----|-----------|--------|----------|
-| B5-H1 (`ca116f3`) | specialist stops after list_skills | partial | specialist now reaches describe_skill but not invoke_skill |
-| B5-H2 (`fe91321`) | eval run_target KeyError 'name' | partial | prompt fix confirmed; error persists from different root cause |
-| B4-H1 (narrator reply) | skill result not reaching user | confirmed | narrator delivered score=0.0 summary to user |
+| B5-H1 (`ca116f3`) | specialist stops after list_skills | partial | specialist now reaches describe_skill but **not invoke_skill** — 新たな describe→stop attractor が露呈 |
+| B5-H2 (`fe91321`) | eval run_target KeyError 'name' | confirmed (prompt side) | run_target が `skill:` field 使うようになった ✅、 ただし下流で別 root cause により同 error 観測 → B5R2-H2 |
+| B4-H1 (narrator reply) | skill result not reaching user | **confirmed** ✅ | narrator が score=0.0 summary を user に届けた |
+| G2 (`763c86c`) | copy_to_work LLM-driven attractor | **未検証** (本 retest 時点で未 landing) | batch 6 で post-G2 retest 必要 |
 
 ## New findings
 
-| ID | Severity | Description |
-|----|----------|-------------|
-| B5R2-H1 | HIGH | describe_skill stop: gemini-2.5-flash-lite exits after describe_skill without invoking. B5-H1 added one step but invoke_skill still unreached. |
-| B5R2-H2 | HIGH | copy_to_work writes 0-byte files: reads source correctly but LLM omits content in write op. Empty workspace files cause parse failure and score 0.0. |
+| ID | Severity | Description | Status |
+|----|----------|-------------|--------|
+| B5R2-H1 | HIGH | **describe_skill→stop attractor**: gemini-2.5-flash-lite が `describe_skill` 後に `invoke_skill` 呼ばず exit。 B5-H1 fix で「list 後 describe」 までは到達するも、 「describe 後 invoke」 の MUST bullet が honor されない | open — 新規 attractor、 prompt 強化または code-side gate を batch 6 で検討 |
+| B5R2-H2 | HIGH | copy_to_work が source を read するが write op で content を省略 → 0-byte file → parse_skill 失敗 → score 0.0 | **likely fixed by G2** (`763c86c`、 preprocessor 化で write content の LLM 経由判断を排除) — batch 6 で確認 |
+
+## 観測上の note
+
+- **infrastructure**: piped input で `reyn chat` を回す場合、 `/quit` 前に
+  sleep が必要 (= 非同期 peer agent の routing 完了を待つ)。 dogfood rig の
+  pexpect timing 改善余地
+- **B5-M1 (parallel invoke)**: 再現確認、 [giveup G3](../../giveup-tracker.md) で
+  managed
+- **B4-H1 fix の effectiveness が証明された**: B5R2 で narrator reply が
+  agent_replies → default → user に到達する経路を観測
 
 ## Scenario files
 
 - `prelude.md`
-- `B5R2-A.md`
-- `B5R2-B.md`
+- `B5R2-A.md` (= curry recipe scenario raw observation)
+- `B5R2-B.md` (= skill_improver scenario raw observation)
+
+## 教訓
+
+- **B5R2-H1** は B3-H1 (list→stop) と同 family の variant: 「discovery step
+  間の commit obligation が weak LLM では各段階で漏れる」 — single bullet
+  単位で対処を続けると bullet 数が線形増加 (= G1 / [feedback_prompt_design](../../../../../.claude/projects/-Users-yasudatetsuya-Workspace-junk-claude-sandbox-sandbox-2/memory/feedback_prompt_design.md) の bloat 警告と直結)。 構造的解は code-side で
+  「discovery 後の状態遷移を OS が gate」 する設計
+- **B5R2-H2 → G2 連動**: 「同じ error message を 2 つの root cause が共有」
+  していたため、 fe91321 fix だけで解消したと誤認しかけた。 error message
+  の specificity を上げる (= `'name'` でなく context 含む) と root cause
+  分離が早まる
+- **fix wave と検証 wave の HEAD 整合性**: 並列で fix と retest を回すと、
+  retest が古い HEAD で実行され「fix 効果未検証」 のまま残る。 sequential
+  運用 (= fix landing 後に retest dispatch) を batch 6 で徹底
