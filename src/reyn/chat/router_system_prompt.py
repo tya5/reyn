@@ -147,44 +147,31 @@ def build_system_prompt(
         "  - First decide intent (Action / Recall / Save / Forget / Reply),"
     )
     parts.append("    then pick tools from that group.")
-    # F3 + F9 (dogfood batch 1): with the gemini-2.5-flash-lite default
-    # the router tends to reply directly even when a domain task or an
-    # explicit skill-name reference would warrant invoke_skill. The two rules
-    # below are minimal disambiguation hints — concrete, not exhaustive.
-    # Strategy: tighten the system on flash-lite first, then revisit with
-    # stronger models later. Avoid prompt bloat / verb-list overfitting.
+    # Behaviour rules — consolidation refactor (post B2-H1 + B3-H1 chain).
+    # History: F3+F9 (batch 1) added reply restriction + explicit-skill hint;
+    # B2-H1 (batch 2) added post-describe_skill commit obligation;
+    # B3-H1+M3 (batch 3) added post-list_skills commit obligation.
+    # Four rules shared the same list→describe→invoke chain with 3× MUST,
+    # causing priority-signal flooding and prompt bloat.
+    # Consolidated to 2 rules (Option B): discovery path + commit obligation.
+    #
+    # Rule 1 (covers F3 + F9 + B3-H1+M3 discovery path):
     parts.append(
         "  - Reply directly only for chitchat, questions about yourself,"
     )
     parts.append(
         "    and clarifications back to the user. Domain tasks → Action."
+        " For Action or explicit-skill requests: list_skills → invoke_skill"
+        " (use describe_skill in between only when you need to inspect)."
+        " If the user names a skill, use list_skills + invoke_skill"
+        " rather than paraphrasing the request as a Reply."
+        " After list_skills reveals at least one matching skill, Do NOT reply"
+        " directly when a relevant skill is available; engage the skill ecosystem."
     )
+    # Rule 2 (covers B2-H1 + B3-H1 commit obligation):
     parts.append(
-        "  - If the user names a skill, use list_skills + invoke_skill"
-    )
-    parts.append("    rather than paraphrasing the request as a Reply.")
-    parts.append(
-        "  - For Action, browse list_skills (then describe_skill if needed)"
-    )
-    parts.append("    before invoke_skill.")
-    parts.append(
-        "  - After describe_skill, you MUST call invoke_skill or explain in text"
-    )
-    parts.append("    why not; never stop silently after investigation.")
-    # B3-H1 + B3-M3 (dogfood batch 3): two attractors where list_skills result
-    # is NOT acted on — specialist stops after list_skills (B3-H1) and default
-    # router replies directly after finding a matching skill (B3-M3). Both are
-    # the same family: list_skills result ignored. Rule: matching skill found →
-    # MUST engage the skill ecosystem (describe_skill or invoke_skill).
-    parts.append(
-        "  - After list_skills reveals at least one matching skill, you MUST call"
-    )
-    parts.append(
-        "    describe_skill (to inspect) or invoke_skill (to execute)."
-        " Do NOT reply"
-    )
-    parts.append(
-        "    directly when a relevant skill is available; engage the skill ecosystem."
+        "  - Never stop after list_skills or After describe_skill without acting."
+        " invoke_skill or explain in text why not; never go silent."
     )
     parts.append(
         "  - For Recall, answer from the Memory section's inlined descriptions;"
