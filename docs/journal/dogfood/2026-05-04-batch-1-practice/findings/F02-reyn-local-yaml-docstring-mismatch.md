@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | LOW |
-| Status | **fixed** at `<COMMIT>` |
+| Status | **fixed** at `5fc120e` |
 | Scenario | scenario 1 (config 設定中に発見) |
 | Found | 2026-05-04 |
 
