@@ -52,15 +52,19 @@ generate it — the OS will handle path resolution.
 
 **Simplified approach**: Issue a `run_skill` op for `eval_builder` unconditionally only if
 you have clear evidence the eval.md does not exist. Otherwise first attempt a file read. If
-the read fails (status != "ok"), generate via `eval_builder`:
+the read fails (status != "ok"), generate via `eval_builder`.
+
+Pass a structured `eval_builder_request` artifact — do NOT use a natural-language
+`user_message`. This prevents the eval_builder from needing to parse a path out of text,
+and ensures the OS can resolve the skill path directly:
 
 ```
 {
   "kind": "run_skill",
   "skill": "eval_builder",
   "input": {
-    "type": "user_message",
-    "data": {"text": "Generate an eval.md for the skill named <target_skill>."}
+    "type": "eval_builder_request",
+    "data": {"target_skill": "<target_skill>"}
   },
   "model": session.model,
   "workspace": "isolated"

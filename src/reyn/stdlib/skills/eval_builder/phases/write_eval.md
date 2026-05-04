@@ -11,15 +11,12 @@ Generate the eval.md content, write it to the workspace, and report the result.
 
 ## Output path
 
-Derive `skill_dir` from `skill_dsl_path` by removing the trailing `/skill.md`.
+Use `skill_analysis.eval_output_path` directly — the OS preprocessor has already
+resolved the correct write destination (including the stdlib redirect to
+`reyn/local/<name>/eval.md`). Do NOT re-derive the path from `skill_dsl_path`.
 
-**If `skill_dir` starts with `src/` or any path outside `reyn/` and `.reyn/`** (e.g. stdlib skills), you cannot write there — the runtime denies it. Instead write to `reyn/local/<skill_name>/eval.md` where `skill_name` is the last path component of `skill_dir`.
-
-**Otherwise** write to `{skill_dir}/eval.md` directly.
-
-Examples:
-- `skill_dsl_path` = `"reyn/local/article_generator/skill.md"` → write to `reyn/local/article_generator/eval.md`
-- `skill_dsl_path` = `"src/stdlib/skills/word_stats_demo/skill.md"` → write to `reyn/local/word_stats_demo/eval.md`
+Do NOT apply any path-derivation logic here. The preprocessor in `analyze_skill`
+called `resolve_skill_path` and stored the result; this phase is a pure formatter.
 
 ## eval.md format
 
@@ -28,8 +25,8 @@ Generate the file content exactly in this format:
 ```
 ---
 type: eval
-skill: {skill_dsl_path}
-dsl_root: {dsl_root}
+skill: {skill_analysis.skill_dsl_path}
+dsl_root: {skill_analysis.dsl_root}
 ---
 
 ## case: {case.name}
@@ -66,7 +63,7 @@ If you receive `[denied]` on a write op, do NOT retry the same path. Abort immed
 
 Compute the result fields directly from `skill_analysis`:
 
-- `eval_md_path`: the workspace path you wrote.
+- `eval_md_path`: `skill_analysis.eval_output_path` (the path you just wrote).
 - `case_count`: `len(test_cases)`.
 - `criterion_count`: total quality criteria across all cases × phases (= `case_count × sum(len(d.quality) for d in phase_eval_designs if d.quality)`).
 - `summary`: one sentence describing what was generated and how to run it. Include the `reyn eval <eval_md_path>` command.

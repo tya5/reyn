@@ -5,10 +5,13 @@ schema:
   properties:
     skill_dsl_path:
       type: string
-      description: Path to the target skill's skill.md as given by the user.
+      description: Path to the target skill's skill.md. Derived by the OS preprocessor via resolve_skill_path — MUST be passed through verbatim from data._resolved.skill_dsl_path, never re-derived by the LLM.
     dsl_root:
       type: string
-      description: DSL root inferred from skill_dsl_path, e.g. "reyn/" or "reyn/local/".
+      description: DSL root for this skill (e.g. "reyn/" or "src/reyn/stdlib"). Derived by the OS preprocessor — MUST be passed through verbatim from data._resolved.dsl_root.
+    eval_output_path:
+      type: string
+      description: Canonical write destination for eval.md. Derived by the OS preprocessor — MUST be passed through verbatim from data._resolved.eval_output_path. For stdlib skills this redirects to reyn/local/<name>/eval.md.
     skill_name:
       type: string
       description: The skill's name from its skill.md frontmatter.
@@ -52,4 +55,4 @@ schema:
                     `[aspirational]` to mark a criterion as informational (excluded from pass/fail).
               required: [phase, quality]
         required: [name, input, rationale, phase_criteria]
-  required: [skill_dsl_path, dsl_root, skill_name, phase_order, test_cases]
+  required: [skill_dsl_path, dsl_root, eval_output_path, skill_name, phase_order, test_cases]

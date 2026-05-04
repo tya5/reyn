@@ -1,25 +1,79 @@
 ---
 type: phase
 name: analyze_skill
-input: user_message
+input: user_message | eval_builder_request
 role: eval_designer
 max_act_turns: 7
 allowed_ops: [file]
+preprocessor:
+  # Step 1: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
+  # target_skill is a short skill name extracted from the input artifact.
+  # For eval_builder_request: data.target_skill directly.
+  # For user_message: regex extraction from data.text.
+  # Runs in trusted mode (analyze_skill_resolver.py) because resolve_skill_path does
+  # filesystem existence checks. Pure-mode functions live in analyze_skill.py.
+  - type: python
+    module: ./analyze_skill_resolver.py
+    function: compute_paths
+    into: data._prep
+    output_schema:
+      type: object
+      properties:
+        skill_dir:          {type: string}
+        dsl_root:           {type: string}
+        target_skill:       {type: string}
+        skill_dsl_path:     {type: string}
+        phases_glob:        {type: string}
+        artifacts_glob:     {type: string}
+        existing_eval_path: {type: string}
+        eval_output_path:   {type: string}
+      required: [skill_dir, dsl_root, target_skill, skill_dsl_path, phases_glob,
+                 artifacts_glob, existing_eval_path, eval_output_path]
+
+  # Step 2: inject resolved paths from data._prep into data._resolved for LLM use
+  - type: python
+    module: ./analyze_skill.py
+    function: inject_resolved_paths
+    into: data._resolved
+    output_schema:
+      type: object
+      properties:
+        skill_dir:          {type: string}
+        dsl_root:           {type: string}
+        target_skill:       {type: string}
+        skill_dsl_path:     {type: string}
+        phases_glob:        {type: string}
+        artifacts_glob:     {type: string}
+        existing_eval_path: {type: string}
+        eval_output_path:   {type: string}
+      required: [skill_dir, dsl_root, target_skill, skill_dsl_path, phases_glob,
+                 artifacts_glob, existing_eval_path, eval_output_path]
 ---
 
 Read the target skill's DSL files and design per-phase quality criteria.
 
-## Step 1 — Extract skill path from user_message
+## Step 1 — Path resolution (OS preprocessor — already complete)
 
-- `skill_dsl_path`: the path to the target skill's skill.md (e.g. "reyn/project/writing_review_app/skill.md")
-- `dsl_root`: infer from the path (e.g. "reyn/" if path starts with "reyn/project/" or "reyn/local/")
-- If the path is missing or cannot be inferred, emit `control.type="abort"` with a reason explaining what was missing. Do NOT use ask_user — eval environments are non-interactive and ask_user will always fail with EOF.
+The OS preprocessor has resolved all paths. Do NOT construct or derive paths yourself
+(that would be a P3 violation — the OS is the runtime engine). Use only the values
+injected into `data._resolved`:
+
+- `data._resolved.skill_dsl_path` — path to the target skill's skill.md
+- `data._resolved.skill_dir`      — the skill's directory (no trailing slash)
+- `data._resolved.dsl_root`       — the DSL root for this skill
+- `data._resolved.artifacts_glob` — glob pattern for artifact yaml files
+- `data._resolved.existing_eval_path` — where an existing eval.md would be
+- `data._resolved.eval_output_path`   — canonical write destination for eval.md
+
+Proceed immediately to Step 2 using these values.
 
 ## Step 2 — Read skill.md AND derive phase_order from graph
 
-Read `{skill_dsl_path}`. Extract `entry`, `graph`, and `final_output` from its frontmatter.
+Read `data._resolved.skill_dsl_path`. Extract `entry`, `graph`, and `final_output`
+from its frontmatter.
 
-**The graph is the SINGLE source of truth for which phases run.** Files on disk under `phases/` that are not referenced by the graph are dead code and MUST be ignored.
+**The graph is the SINGLE source of truth for which phases run.** Files on disk under
+`phases/` that are not referenced by the graph are dead code and MUST be ignored.
 
 Compute `phase_order` by graph traversal:
 
@@ -35,21 +89,27 @@ while queue:
     queue.append(next_p)
 ```
 
-Equivalently: BFS from `entry`, follow outgoing transitions, emit each phase the first time it appears.
+Equivalently: BFS from `entry`, follow outgoing transitions, emit each phase the first
+time it appears.
 
-Worked example — text_summarizer with `graph: {generate_summary: [review_summary]}` and `entry: generate_summary`:
+Worked example — text_summarizer with `graph: {generate_summary: [review_summary]}` and
+`entry: generate_summary`:
 - Start: phase_order=[], queue=[generate_summary]
 - Pop generate_summary → seen={generate_summary}, order=[generate_summary], queue=[review_summary]
 - Pop review_summary → seen={generate_summary, review_summary}, order=[generate_summary, review_summary], queue=[]
 - Result: `phase_order = ["generate_summary", "review_summary"]`
 
-Even if `phases/preprocess_text.md` and `phases/summarize_text.md` exist on disk, they are NOT in the graph and are NOT included in phase_order.
+Even if `phases/preprocess_text.md` and `phases/summarize_text.md` exist on disk, they
+are NOT in the graph and are NOT included in phase_order.
 
 ## Step 3 — Read phase files (only those in phase_order)
 
-For each phase name in `phase_order`, read `{skill_dir}/phases/{phase_name}.md`. Do NOT read or glob other `.md` files in `phases/`.
+For each phase name in `phase_order`, read
+`data._resolved.skill_dir` + `/phases/` + `{phase_name}.md`.
+Do NOT read or glob other `.md` files in `phases/`.
 
-While reading each phase, **note whether it has a `preprocessor` block**, and if any step has `type: python`, record:
+While reading each phase, **note whether it has a `preprocessor` block**, and if any
+step has `type: python`, record:
 
 - the python step's `into` path (e.g. `data.stats`)
 - the names of the fields it injects (read its `output_schema.properties`)
@@ -60,59 +120,79 @@ This information shapes the criteria you write in Step 6 — see the
 
 ## Step 3.5 — Read existing eval.md if present (preserves user-curated cases)
 
-Before designing new cases, attempt `file.read({skill_dir}/eval.md)`. If the file
-is found, parse its `## case:` blocks to extract the existing case names AND
-their `input:` strings — these are the canonical case identities. Any new
-criteria you write MUST reuse those `case_name` values verbatim. Do not rename
-existing cases (`narrator output conciseness` ≠ `typical_finished_skill`) — the
-downstream eval/improver loop joins on case_name.
+Before designing new cases, attempt `file.read(data._resolved.existing_eval_path)`.
+If the file is found, parse its `## case:` blocks to extract the existing case names
+AND their `input:` strings — these are the canonical case identities. Any new criteria
+you write MUST reuse those `case_name` values verbatim. Do not rename existing cases
+(`narrator output conciseness` ≠ `typical_finished_skill`) — the downstream
+eval/improver loop joins on case_name.
 
-If the file is not found (`[denied]`, `not_found`, or any error), proceed with
-fresh case design grounded in `phase_order` from Step 2.
+If the file is not found (`[denied]`, `not_found`, or any error), proceed with fresh
+case design grounded in `phase_order` from Step 2.
 
-When extending an existing eval.md, you MAY add NEW cases for branches not yet
-covered, but the existing case names stay as they are. Phase names referenced
-in any case's `phase_criteria` MUST be members of `phase_order` — never invent
-phase names like `improve_skill` if the graph contains only `narrate`.
+When extending an existing eval.md, you MAY add NEW cases for branches not yet covered,
+but the existing case names stay as they are. Phase names referenced in any case's
+`phase_criteria` MUST be members of `phase_order` — never invent phase names like
+`improve_skill` if the graph contains only `narrate`.
 
 ## Step 4 — Read artifact files
 
-Issue a glob op for `{skill_dir}/artifacts/*.yaml` using the `path` field:
-`{"kind": "file", "op": "glob", "path": "{skill_dir}/artifacts/*.yaml"}`
+Issue a glob op using the pattern from `data._resolved.artifacts_glob`:
+`{"kind": "file", "op": "glob", "path": data._resolved.artifacts_glob}`
 
-Then read every file returned. Artifact files do NOT have an "orphan" problem — read them all for context.
+Then read every file returned. Artifact files do NOT have an "orphan" problem — read
+them all for context.
 
-For artifact types referenced by phases but not found locally, check `{dsl_root}shared/artifacts/{name}.yaml`.
+For artifact types referenced by phases but not found locally, check
+`data._resolved.dsl_root` + `/shared/artifacts/{name}.yaml`.
 
-**CRITICAL**: You MUST read every artifact file referenced by phases in `phase_order` before designing criteria. Quality criteria reference artifact field semantics.
+**CRITICAL**: You MUST read every artifact file referenced by phases in `phase_order`
+before designing criteria. Quality criteria reference artifact field semantics.
 
 ## Step 5 — Design test cases WITH per-case criteria
 
-Design 2–3 test cases. For each case, design its `phase_criteria` at the same time — criteria must reflect what THAT specific case is testing, not generic criteria copied across all cases.
+Design 2–3 test cases. For each case, design its `phase_criteria` at the same time —
+criteria must reflect what THAT specific case is testing, not generic criteria copied
+across all cases.
 
 **Case types to cover:**
 - Case 1 (always): typical, well-formed input the skill is designed to handle.
-- Case 2 (if the skill has review/revision loops): an input where the first draft is likely to be **rejected** — make it deliberately ambiguous, underspecified, or contradictory. Criteria should test that the review phase actually rejects (e.g. "the review verdict is 'reject' and cites a specific flaw").
-- Case 3 (if any phase has a python preprocessor): an **edge case for the python step** — empty, minimal, or unusually large input. Criteria should test that the LLM handles boundary values from the preprocessor (e.g. "when char_count=0, the commentary acknowledges the empty input rather than fabricating statistics").
+- Case 2 (if the skill has review/revision loops): an input where the first draft is
+  likely to be **rejected** — make it deliberately ambiguous, underspecified, or
+  contradictory. Criteria should test that the review phase actually rejects (e.g.
+  "the review verdict is 'reject' and cites a specific flaw").
+- Case 3 (if any phase has a python preprocessor): an **edge case for the python step**
+  — empty, minimal, or unusually large input. Criteria should test that the LLM handles
+  boundary values from the preprocessor (e.g. "when char_count=0, the commentary
+  acknowledges the empty input rather than fabricating statistics").
 
-The goal is branch coverage: if the skill has a rollback path, at least one case should exercise it.
+The goal is branch coverage: if the skill has a rollback path, at least one case should
+exercise it.
 
-Each test case `input` must be a **plain text string** — the raw message the user would type. Do NOT wrap it in `{"type":"user_message",...}` JSON. Write just the text, e.g. `"Hello world"`, not `"{\"type\":\"user_message\",\"data\":{\"text\":\"Hello world\"}}"`.
+Each test case `input` must be a **plain text string** — the raw message the user would
+type. Do NOT wrap it in `{"type":"user_message",...}` JSON. Write just the text, e.g.
+`"Hello world"`, not `"{\"type\":\"user_message\",\"data\":{\"text\":\"Hello world\"}}"`.
 
 
 ### Criteria rules (apply per case)
 
-For each case's `phase_criteria`, write 1–4 `quality` criteria per phase as plain sentences. Each criterion must:
+For each case's `phase_criteria`, write 1–4 `quality` criteria per phase as plain
+sentences. Each criterion must:
 
-- Describe a semantic property **observable for this specific input** — not a generic property true for all inputs.
+- Describe a semantic property **observable for this specific input** — not a generic
+  property true for all inputs.
 - Refer to fields that actually exist in the artifact (do not invent field names).
 - Be evaluable by reading the artifact alone.
 
-**`[aspirational]` tag**: prefix when the criterion represents a model capability ceiling (subjective judgments, gold-standard bars, or branch-dependent checks). These are tracked but excluded from pass/fail.
+**`[aspirational]` tag**: prefix when the criterion represents a model capability ceiling
+(subjective judgments, gold-standard bars, or branch-dependent checks). These are tracked
+but excluded from pass/fail.
 
 ### Phases with a python preprocessor
 
-If a phase has a `type: python` preprocessor step, the python computation is deterministic. Write criteria that test the LLM's **integration** with the python output. Reference **numeric values**, not internal field paths:
+If a phase has a `type: python` preprocessor step, the python computation is
+deterministic. Write criteria that test the LLM's **integration** with the python output.
+Reference **numeric values**, not internal field paths:
 
 - DO: "The commentary cites the exact character count computed by the preprocessor (e.g. states '156 characters')."
 - DO: "For empty input, the commentary acknowledges that there is no text rather than fabricating statistics."
@@ -120,13 +200,34 @@ If a phase has a `type: python` preprocessor step, the python computation is det
 - DON'T: ~~"The commentary cites `data.stats.char_count` verbatim."~~ — The commentary should cite the NUMBER, not the Python field path. Users see values, not field names.
 - DON'T: ~~"`char_count` is the correct number."~~ — Python guarantees this; useless signal.
 
+## Output (skill_analysis artifact)
+
+When emitting the `skill_analysis` artifact, pass through these fields from the
+OS-resolved values — do NOT re-derive or reconstruct them:
+
+- `skill_dsl_path`: use `data._resolved.skill_dsl_path` verbatim
+- `dsl_root`:       use `data._resolved.dsl_root` verbatim
+- `eval_output_path`: use `data._resolved.eval_output_path` verbatim
+
+The LLM MUST NOT re-derive path strings. Transparent passthrough of preprocessor-
+resolved values is required (P3: OS is the runtime engine).
+
 ## Final checklist (apply before emitting skill_analysis)
 
-- [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of phase files in the directory.
-- [ ] Every `phase_criteria[*].phase` value is a member of `phase_order`. No invented phase names (e.g. if the graph only has `narrate`, `phase` MUST be `narrate` — never `improve_skill`, `revise`, etc.).
-- [ ] If an existing eval.md was found in Step 3.5, every test case I emit either reuses one of its case names verbatim or is a clearly-marked NEW case that doesn't collide with existing ones.
+- [ ] `phase_order` is the BFS traversal from `entry` through `graph` — NOT a list of
+      phase files in the directory.
+- [ ] Every `phase_criteria[*].phase` value is a member of `phase_order`. No invented
+      phase names (e.g. if the graph only has `narrate`, `phase` MUST be `narrate` —
+      never `improve_skill`, `revise`, etc.).
+- [ ] If an existing eval.md was found in Step 3.5, every test case I emit either reuses
+      one of its case names verbatim or is a clearly-marked NEW case that doesn't collide
+      with existing ones.
 - [ ] Every test case has a `phase_criteria` array with at least one phase entry.
-- [ ] Criteria differ meaningfully between cases — no verbatim copies from one case to another.
-- [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I read — no invented fields.
+- [ ] Criteria differ meaningfully between cases — no verbatim copies from one case to
+      another.
+- [ ] Every artifact field referenced in a criterion exists in the artifact `.yaml` I
+      read — no invented fields.
 - [ ] Criteria that depend on a specific runtime branch firing are tagged `[aspirational]`.
 - [ ] At most 4 criteria per phase per case.
+- [ ] `skill_dsl_path`, `dsl_root`, and `eval_output_path` in the emitted artifact are
+      copied verbatim from `data._resolved.*` — NOT re-derived.

@@ -1,0 +1,9 @@
+name: eval_builder_request
+description: Structured request to generate an eval spec for a target skill. Used by callers (e.g. skill_improver) to invoke eval_builder without natural-language path extraction.
+schema:
+  type: object
+  properties:
+    target_skill:
+      type: string
+      description: Short skill name only (no path, no .md). Examples - "direct_llm", "my_app". OS resolves to filesystem path via resolve_skill_path.
+  required: [target_skill]

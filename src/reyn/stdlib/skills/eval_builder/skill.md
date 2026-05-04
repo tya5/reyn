@@ -8,7 +8,7 @@ final_output_description: |
   Path to the generated eval.md plus case/criterion counts and a brief summary.
   The user runs the spec separately with `reyn eval <eval_md_path>`.
 finish_criteria:
-  - eval.md has been written next to the target skill's skill.md
+  - eval.md has been written at the eval_output_path resolved by the OS
   - eval_spec_result captures the path, case count, and criterion count
 graph:
   analyze_skill: [write_eval]
@@ -32,9 +32,13 @@ routing:
 
 ## Overview
 
-Reads a target skill's DSL files and generates a per-phase, LLM-judged quality-criteria `eval.md` spec. Does not run the spec — invoke `reyn eval` separately.
+Reads a target skill's DSL files and generates a per-phase, LLM-judged quality-criteria
+`eval.md` spec. Does not run the spec — invoke `reyn eval` separately.
 
-`analyze_skill` reads every phase and artifact file in the target skill, designs 1–2 representative test cases (typical input, plus a rollback case if the skill has a review loop), and writes 1–4 quality criteria per phase. `write_eval` formats the result into `eval.md` and writes it alongside the target's `skill.md`.
+`analyze_skill` reads every phase and artifact file in the target skill, designs 2–3
+representative test cases (typical input, plus a rollback case if the skill has a
+review loop), and writes 1–4 quality criteria per phase. `write_eval` formats the
+result into `eval.md` and writes it to the OS-resolved output path.
 
 ## Phase flow
 
@@ -45,15 +49,24 @@ analyze_skill  →  write_eval
 | Phase | Role | Responsibility |
 |-------|------|----------------|
 | `analyze_skill` | eval_designer | Reads the skill's DSL files; designs test cases and per-phase quality criteria |
-| `write_eval`  | spec_writer   | Formats the criteria into `eval.md` and writes it next to the target skill |
+| `write_eval`  | spec_writer   | Formats the criteria into `eval.md` and writes it to the resolved output path |
 
 ## Input
 
-A natural-language sentence including the target skill's `skill.md` path. The path must be present in the message — if it cannot be inferred, the skill aborts rather than asking interactively.
+Pass the **skill name** (not a path). The OS resolves the path via `resolve_skill_path`.
 
+**Natural-language form** (preferred for CLI):
 ```
-reyn run eval_builder "Generate an eval.md for reyn/local/my_skill/skill.md"
+reyn run eval_builder "Generate spec for skill named my_skill"
 ```
+
+**Structured form** (used by callers such as skill_improver):
+```
+reyn run eval_builder '{"type":"eval_builder_request","data":{"target_skill":"my_skill"}}'
+```
+
+Both forms work end-to-end. The `analyze_skill` preprocessor accepts either artifact
+type and extracts the skill name without requiring the LLM to construct paths.
 
 ## Generated eval.md structure
 
@@ -77,14 +90,20 @@ quality:
 - Verdict matches the issues listed in the analysis
 ```
 
-Each criterion is an LLM-judged sentence describing a semantic property of the phase's output artifact. Required (default) criteria count against the score; `[aspirational]` criteria are tracked but excluded from pass/fail. The judge model is set in `judge_phase` (the `model_class` of its `judge` phase) — not configurable per-spec.
+Each criterion is an LLM-judged sentence describing a semantic property of the phase's
+output artifact. Required (default) criteria count against the score; `[aspirational]`
+criteria are tracked but excluded from pass/fail. The judge model is set in `judge_phase`
+(the `model_class` of its `judge` phase) — not configurable per-spec.
 
 ## Output
 
-`eval_spec_result` reports the path of the generated `eval.md`, the case count, the total criterion count, and a brief summary including the next-step command:
+`eval_spec_result` reports the path of the generated `eval.md`, the case count, the
+total criterion count, and a brief summary including the next-step command:
 
 ```
 reyn eval reyn/local/my_skill/eval.md --model standard
 ```
 
-Combine with `skill_improver` for a tight quality-improvement cycle: build a spec with `eval_builder` → improve with `skill_improver` → measure with `reyn eval`. `skill_improver` will auto-invoke `eval_builder` if the spec is missing.
+Combine with `skill_improver` for a tight quality-improvement cycle: build a spec with
+`eval_builder` → improve with `skill_improver` → measure with `reyn eval`.
+`skill_improver` will auto-invoke `eval_builder` if the spec is missing.
