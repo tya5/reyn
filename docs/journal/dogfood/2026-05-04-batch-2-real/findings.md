@@ -28,36 +28,77 @@
 **HIGH 3 件全て fixed** (B2-H1: `83bad83`、 B2-H2: `e9216f6`、 B2-H3: `a75587d`)。
 MED / LOW は Wave B coverage audit へ deferred。
 
-**batch 1 HIGH bug regression net**: 全 8 件 ✅ (F1-F11 の修正が S1-S5 で機能確認)。
-ただし新 HIGH 3 件が浮上。
+**batch 1 fix の機能確認 (11 件)**: 直接観測 **6** / 間接 **2** / 後追い
+verification で **3** 件補完 → 全 11 件カバー完了。 後追いの中で **F4 residual
+bug** (= 70194d5 後も cost が 0 のまま) を新規発見、 commit `d9e5fce` で修正。
+当初の「全 8 件 ✅」 は過大表現で、 後追いで埋めた経緯を以下に明記。
+ただし新 HIGH 3 件 (B2-H1/H2/H3) が浮上 → 全 fixed。
 
 ---
 
 ## ハイライト narrative
 
-### regression net 確認 — 8 件全員出席 (S1, S2, S3, S5)
+### regression net 確認 — 直接観測 6 / 間接 2 / 後追い 3 (合計 11)
 
 batch 1 の A5 wave (commit `e59cead` + `9e8126c`) が狙い通り機能しているか、
-batch 2 の 5 scenario で照合した。
+batch 2 の 5 scenario + 後追い verification で照合した。
+
+#### A. 5 scenario 内で直接観測できた件 (6 件)
 
 **F3** (router attractor): S1 で router は `invoke_skill` を呼んだ ✅。 呼んだ先が
 幻覚 skill だったのは B2-M1 だが、 「呼ばない」 状態からは確実に前進。
 
-**F5-F8** (「16 秒の悲劇」 cascade): S3 で `tool_call_deduped` × 2 を確認 (= F5 dedupe
-動作中 ✅)、 cascade retry はゼロ件 ✅、 retry budget 枯渇エラーは出ず ✅。
-cascade は消えた。 ただしレシピは届いていない — 理由は B2-H1+H2。
+**F5** (duplicate async tool_call): S3 で `tool_call_deduped` × 2 を確認 ✅。
+
+**F7** (16 秒 cascade): S3 で cascade retry ゼロ件 ✅。
 
 **F9** (explicit skill name 無視): S2 で router が `read_local_files` を確実に invoke ✅。
 
 **F10** (filesystem MCP 未設定): S2 Run 2 (permission 事前承認) で README.md 読取り ✅。
 ただし B2-H3 (Agent H fix) により `with-mcp.yaml` の permission 行追加が必要だった。
 
-**F11** (fallback 英語): S5 の正常経路で日本語 reply 確認 ✅。
-tool_failed 後の回復経路が英語になる新問題は B2-M2 として分離。
+**F11** (fallback 英語、 正常経路): S5 で日本語 reply 確認 ✅。 tool_failed 後の
+回復経路が英語になる新問題は B2-M2 として分離。
 
-**memory (S5)**: core の remember+recall は機能 ✅。 B2-L1/L2 は polish 課題。
+#### B. 間接的に確認できた件 (2 件)
 
-batch 1 で「使い物にならない」 と言われた根本部分は **全 8 件改善確認**。
+**F1** (chat 起動 AttributeError): 5 scenario 全 chat 起動成功 = 起きてない、
+ただし AttributeError 再現条件を **直接踏んではいない** (= 間接保証)。
+
+**F6** (specialist 空 reply): `_no_reply_marker` 発火は確認 ✅、 ただし default 側で
+飲まれる別問題に発展 → B2-H2 で `e9216f6` 修正済。 半分カバー。
+
+#### C. 後追い verification で確認した件 (3 件、 当初 scenario 設計外)
+
+**F2** (`reyn.local.yaml` 読み込み): 後追いで Sonnet sub-agent が config 読み込み
+パスを検証 ✅ — `reyn.local.yaml` が `reyn.yaml` を上書き、 空文字 / 削除で
+`None` 返却、 `reyn.yaml` のみで fallback。 全 3 ケース pass。
+
+**F4** (cost 永遠の 0): 後追い 1 turn 実 LLM dogfood で **residual bug 発見**:
+`70194d5` 後も `_total_cost_usd=0` が続いていた。 原因は
+`self._resolver.resolve("router")` が文字列 `"router"` を literal で返し
+mapping に無いため prefix strip 条件を満たさず `estimate_cost("router", ...)`
+が None を返していた。 Sonnet sub-agent が `d9e5fce` で
+`resolve(loop.router_model)` (= `resolve("light")`) に修正、
+1 turn dogfood で `cost $0.0002 prompt=1601 completion=11` を確認 ✅。
+
+**F8** (retry budget 枯渇英語 fallback): 該当 scenario が batch 2 に無かったので
+test 経由で structural 保証を確認。 `tests/test_chat_router_i18n.py` 12/12 pass、
+`test_retry_exhausted_fallback_is_english_when_output_language_is_none` 含む。
+`output_language=None` で en、 `=ja` で ja、 unknown code で en fallback、
+全件 ✅。
+
+#### D. memory (S5)
+core の remember+recall は機能 ✅。 B2-L1/L2 は polish 課題。
+
+#### 集計
+- 直接観測: 6
+- 間接 / 半分: 2
+- 後追い verification: 3 (うち F4 で residual bug 1 件発見 → `d9e5fce` 修正)
+- **batch 1 fix の機能確認: 11/11 (= 8 元の F1-F11)**
+
+「全 8 件 ✅」 と書いてた旧表現は過大表現でした。 後追いで 3 件 (F2/F4/F8)
+を埋めた結果、 全件カバーに到達 + F4 の residual を新規発見・修正。
 
 ### specialist 側でも router attractor — B2-H1
 

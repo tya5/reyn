@@ -40,7 +40,7 @@ shadow しても見えないものを見るための iterative loop。
 | Batch | Date | Scenarios | 一言で | 主要 finding |
 |---|---|---|---|---|
 | [batch-1-practice](2026-05-04-batch-1-practice/) | 2026-05-04 | 3 件 (text_summarizer / multi-agent delegate / read_local_files perm gating) | 練習バッチのはずが、 chat は起動できず、 直したら router が誰の言うことも聞かず、 multi-agent は連鎖 bug で全壊した話 | **skill_router 起動 0/3**、 起動時 `AttributeError` (修正済 `f5b3281`)、 `delegate_to_agent` の inbox 二重送信、 specialist の早期空 reply、 英語 fallback、 etc. |
-| [batch-2-real](2026-05-04-batch-2-real/) | 2026-05-04 | 5 件 (text 要約 / MCP / multi-agent / ask_user / memory) | regression net 全 8 件 ✅ 動作確認、 だが multi-agent で specialist の describe→invoke 失敗 + default の marker silent 吸収という新 HIGH 2 件が露呈 | B2-H1〜H3 (HIGH×3) / B2-M1〜M4 (MED×4) / B2-L1〜L3 (LOW×3) |
+| [batch-2-real](2026-05-04-batch-2-real/) | 2026-05-04 | 5 件 (text 要約 / MCP / multi-agent / ask_user / memory) | regression net 直接観測 6 + 間接 2 + 後追い 3 = 全 11 件カバー (後追いで F4 residual `d9e5fce` 発見・修正)、 だが multi-agent で specialist の describe→invoke 失敗 + default の marker silent 吸収という新 HIGH 2 件が露呈 | B2-H1〜H3 (HIGH×3) / B2-M1〜M4 (MED×4) / B2-L1〜L3 (LOW×3) |
 
 ## こちらの心境
 
