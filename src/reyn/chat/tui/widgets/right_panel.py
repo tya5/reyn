@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from rich.console import Group as RichGroup
+from rich.text import Text as RichText
+from rich.tree import Tree as RichTree
 from textual.app import ComposeResult, RenderResult
 from textual.binding import Binding
 from textual.containers import VerticalScroll
@@ -696,7 +699,7 @@ class RightPanel(Widget):
             )
         return ""
 
-    def _panel_markup(self) -> str:
+    def _panel_markup(self) -> Any:
         try:
             if self._panel_type == "keys":
                 return self._render_keys()
@@ -798,38 +801,39 @@ class RightPanel(Widget):
 
         return "\n".join(lines)
 
-    def _render_agents(self) -> str:
+    def _render_agents(self) -> Any:
         import time as _time
 
-        lines: list[str] = []
-
         if self._registry is None:
-            lines.append("[#555555]  (no registry)[/]")
-            return "\n".join(lines)
+            return "[#555555]  (no registry)[/]"
 
         names = self._registry.list_names()
         if not names:
-            lines.append("[#555555]  (no agents)[/]")
-            return "\n".join(lines)
+            return "[#555555]  (no agents)[/]"
 
         attached = self._registry.attached_name
         loaded = set(self._registry.loaded_names())
         now = _time.monotonic()
 
+        agent_trees: list[Any] = []
+
         for name in names:
             is_attached = name == attached
-            prefix = "▶ " if is_attached else "  "
-            name_style = "bold #C8553D" if is_attached else "#dddddd"
-            status = "running" if name in loaded else "idle"
-            status_style = "#44cc88" if name in loaded else "#555555"
-            name_col = f"{_esc(name):<20}"
-            lines.append(
-                f"[#555555]  {prefix}[/]"
-                f"[{name_style}]{name_col}[/]"
-                f"  [{status_style}]{status}[/]"
+            in_loaded = name in loaded
+
+            # ── agent label ────────────────────────────────────────────
+            label = RichText()
+            label.append("▶ " if is_attached else "  ", style="#555555")
+            label.append(name, style="bold #C8553D" if is_attached else "#dddddd")
+            label.append("  ")
+            label.append(
+                "● running" if in_loaded else "○ idle",
+                style="#44cc88" if in_loaded else "#555555",
             )
 
-            # Running skills for this agent
+            tree = RichTree(label, guide_style="#333333")
+
+            # ── running skills ─────────────────────────────────────────
             agent_skills = [
                 (rid, info)
                 for rid, info in self._exec_state.items()
@@ -837,43 +841,36 @@ class RightPanel(Widget):
             ]
 
             if agent_skills:
-                for i, (run_id, info) in enumerate(agent_skills):
+                for run_id, info in agent_skills:
                     elapsed = int(now - info.get("start_time", now))
-                    skill_name = _esc(info.get("skill_name", "?"))
-                    phase = _esc(info.get("phase", ""))
-                    visits = info.get("phase_visits", 0)
-                    elapsed_str = f"{elapsed:3d}s"
-                    is_last = i == len(agent_skills) - 1
-                    tree_ch = "└" if is_last else "├"
-
-                    line = (
-                        f"  [#555555]  {tree_ch} [[/]"
-                        f"[#888888]{elapsed_str}[/]"
-                        f"[#555555]][/]"
-                        f" [#dddddd]{skill_name}[/]"
+                    skill_label = RichText()
+                    skill_label.append(f"[{elapsed:3d}s] ", style="#888888")
+                    skill_label.append(
+                        info.get("skill_name", "?"), style="#dddddd"
                     )
+                    skill_node = tree.add(skill_label)
+
+                    phase = info.get("phase", "")
                     if phase:
-                        line += f"  [#555555]{phase}[/]"
+                        visits = info.get("phase_visits", 1)
+                        phase_label = RichText()
+                        phase_label.append(phase, style="#555555")
                         if visits > 1:
-                            line += f" [#444444]v{visits}[/]"
-                    lines.append(line)
+                            phase_label.append(f"  v{visits}", style="#444444")
+                        skill_node.add(phase_label)
             else:
-                # Idle — show last activity timestamp
+                # idle: last activity
                 try:
                     last = self._registry.last_activity_at(name)
                     if last:
-                        ts = _esc(last.strftime("%Y-%m-%d %H:%M"))
-                        lines.append(f"[#555555]    last: {ts}[/]")
+                        ts = last.strftime("%Y-%m-%d %H:%M")
+                        tree.add(RichText(f"last: {ts}", style="#555555"))
                 except Exception:
                     pass
 
-            lines.append("")  # blank line between agents
+            agent_trees.append(tree)
 
-        # Trim trailing blank
-        while lines and lines[-1] == "":
-            lines.pop()
-
-        return "\n".join(lines)
+        return RichGroup(*agent_trees)
 
     def _render_memory(self) -> str:
         if self._project_root is None:
@@ -944,14 +941,37 @@ class RightPanel(Widget):
             return "\n".join(lines)
 
         today_str = datetime.date.today().isoformat()
-        today = {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
-        total = {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
-        by_model: dict[str, dict] = defaultdict(
-            lambda: {"p": 0, "c": 0, "cost": 0.0, "calls": 0, "has_cost": False}
+
+        def _new_bucket() -> dict:
+            return {"p": 0, "c": 0, "cost": 0.0, "calls": 0,
+                    "has_cost": False, "call_costs": []}
+
+        today = _new_bucket()
+        total = _new_bucket()
+        # agent → skill → bucket
+        by_agent_skill: dict[str, dict[str, dict]] = defaultdict(
+            lambda: defaultdict(_new_bucket)
         )
 
         for jsonl in sorted(events_root.rglob("*.jsonl")):
             try:
+                rel = jsonl.relative_to(events_root)
+                parts = rel.parts
+                # agent attribution from path: agents/<name>/skill_runs/...
+                if parts[0] == "agents" and len(parts) >= 2:
+                    agent = parts[1]
+                elif parts[0] == "direct":
+                    agent = "direct"
+                else:
+                    agent = "?"
+                # skill name from filename suffix (only for skill_runs files)
+                is_skill_run = "skill_runs" in parts
+                if is_skill_run:
+                    stem = jsonl.stem  # e.g. "2026-05-04T120000_skill_router"
+                    skill = stem.split("_", 1)[1] if "_" in stem else stem
+                else:
+                    skill = "(chat)"
+
                 pending_model: str = "unknown"
                 for raw in jsonl.read_text(encoding="utf-8").splitlines():
                     raw = raw.strip()
@@ -971,18 +991,21 @@ class RightPanel(Widget):
                         raw_cost = d.get("cost_usd")
                         cost = float(raw_cost) if raw_cost is not None else 0.0
                         has_cost = raw_cost is not None
-                        model = pending_model
                         ts = str(ev.get("timestamp", ""))
-                        for bucket in (total, by_model[model]):
+
+                        for bucket in (total, by_agent_skill[agent][skill]):
                             bucket["p"] += pt; bucket["c"] += ct
                             bucket["cost"] += cost; bucket["calls"] += 1
                             if has_cost:
                                 bucket["has_cost"] = True
+                            bucket["call_costs"].append(cost)
+
                         if ts.startswith(today_str):
                             today["p"] += pt; today["c"] += ct
                             today["cost"] += cost; today["calls"] += 1
                             if has_cost:
                                 today["has_cost"] = True
+                            today["call_costs"].append(cost)
                     except Exception:
                         pass
             except Exception:
@@ -996,6 +1019,16 @@ class RightPanel(Widget):
         def _tok(p: int, c: int) -> str:
             return f"[#dddddd]{p + c:,}[/] [#555555]({p:,}p + {c:,}c)[/]"
 
+        def _sparkline(values: list[float], width: int = 32) -> str:
+            if not values:
+                return ""
+            recent = values[-width:]
+            max_v = max(recent) or 1
+            blocks = "▁▂▃▄▅▆▇█"
+            bar = "".join(blocks[min(7, int(v / max_v * 8))] for v in recent)
+            return f"[#C8553D]{bar}[/]"
+
+        # ── TODAY ────────────────────────────────────────────────────────
         lines.append("[bold #aaaaaa]  TODAY[/]")
         if today["calls"] == 0:
             lines.append("[#555555]    (no calls today)[/]")
@@ -1003,8 +1036,12 @@ class RightPanel(Widget):
             lines.append(f"[#555555]    tokens  [/]{_tok(today['p'], today['c'])}")
             lines.append(f"[#555555]    cost    [/]{_cost_str(today)}")
             lines.append(f"[#555555]    calls   [/][#dddddd]{today['calls']}[/]")
+            spark = _sparkline(today["call_costs"])
+            if spark:
+                lines.append(f"[#555555]    trend   [/]{spark}")
         lines.append("")
 
+        # ── ALL TIME ──────────────────────────────────────────────────────
         lines.append("[bold #aaaaaa]  ALL TIME[/]")
         if total["calls"] == 0:
             lines.append("[#555555]    (no LLM calls)[/]")
@@ -1012,18 +1049,31 @@ class RightPanel(Widget):
             lines.append(f"[#555555]    tokens  [/]{_tok(total['p'], total['c'])}")
             lines.append(f"[#555555]    cost    [/]{_cost_str(total)}")
             lines.append(f"[#555555]    calls   [/][#dddddd]{total['calls']}[/]")
+            spark = _sparkline(total["call_costs"])
+            if spark:
+                lines.append(f"[#555555]    trend   [/]{spark}")
         lines.append("")
 
-        if by_model:
-            lines.append("[bold #aaaaaa]  BY MODEL[/]")
-            for model in sorted(by_model):
-                m = by_model[model]
-                cost_part = f"  {_cost_str(m)}" if m["has_cost"] else ""
-                lines.append(
-                    f"[#dddddd]    {_esc(model)}[/]\n"
-                    f"[#555555]      {m['p'] + m['c']:,} tok"
-                    f"{cost_part}  {m['calls']} calls[/]"
-                )
+        # ── BY AGENT / SKILL ──────────────────────────────────────────────
+        if by_agent_skill:
+            lines.append("[bold #aaaaaa]  BY AGENT / SKILL[/]")
+            for agent in sorted(by_agent_skill):
+                lines.append(f"[bold #dddddd]  {_esc(agent)}[/]")
+                skills = by_agent_skill[agent]
+                for skill in sorted(skills):
+                    m = skills[skill]
+                    tok_total = m["p"] + m["c"]
+                    cost_part = (
+                        f"  [#44cc88]${m['cost']:.4f}[/]"
+                        if m["has_cost"] else ""
+                    )
+                    lines.append(
+                        f"[#555555]    {_esc(skill):<24}[/]"
+                        f"[#888888]{tok_total:>7,} tok[/]"
+                        f"{cost_part}"
+                        f"  [#555555]{m['calls']}c[/]"
+                    )
+                lines.append("")
 
         return "\n".join(lines)
 
