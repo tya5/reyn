@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -28,11 +27,26 @@ def _make_resolver(tmp_path: Path, *, config: dict | None = None) -> PermissionR
     )
 
 
+class _AutoDenyInterventionBus:
+    """Real InterventionBus that auto-denies every prompt with choice_id="no".
+
+    These tests construct PermissionDecl with config["allow"|"deny"] explicitly,
+    so the resolver never reaches the interactive path. The bus is required as
+    a constructor argument but is structurally never invoked. Recording calls
+    lets a test assert the no-prompt invariant if it wants.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[UserIntervention] = []
+
+    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+        self.requests.append(iv)
+        return InterventionAnswer(choice_id="no")
+
+
 def _make_bus() -> InterventionBus:
-    """Stub bus that auto-denies any prompt (non-interactive tests don't need it)."""
-    bus = AsyncMock(spec=InterventionBus)
-    bus.request = AsyncMock(return_value=InterventionAnswer(choice_id="no"))
-    return bus
+    """Real auto-denying bus (non-interactive tests never trigger it)."""
+    return _AutoDenyInterventionBus()
 
 
 def _run(coro):
