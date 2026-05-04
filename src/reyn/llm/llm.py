@@ -3,7 +3,9 @@ import json
 import logging
 import os
 import re
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, UTC
 from typing import TYPE_CHECKING, Coroutine, TypeVar
 import litellm
 
@@ -15,6 +17,53 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
 
 T = TypeVar("T")
+
+# ---------------------------------------------------------------------------
+# Payload trace dump (opt-in via REYN_LLM_TRACE_DUMP env var)
+# ---------------------------------------------------------------------------
+
+_LLM_TRACE_DUMP_PATH: str | None = os.environ.get("REYN_LLM_TRACE_DUMP") or None
+
+
+def _dump_llm_request(payload: dict) -> str | None:
+    """If REYN_LLM_TRACE_DUMP is set, append a request record to that file.
+
+    Returns request_id (str) so the response can be paired, or None when
+    tracing is disabled (env var not set). Completely no-op when disabled.
+    """
+    if not _LLM_TRACE_DUMP_PATH:
+        return None
+    request_id = str(uuid.uuid4())
+    record = {
+        "kind": "request",
+        "request_id": request_id,
+        "timestamp": datetime.now(UTC).isoformat(),
+        **payload,
+    }
+    try:
+        with open(_LLM_TRACE_DUMP_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:  # never crash the main path
+        logger.warning("llm trace dump write failed: %s", exc)
+        return None
+    return request_id
+
+
+def _dump_llm_response(request_id: str | None, payload: dict) -> None:
+    """If REYN_LLM_TRACE_DUMP is set and request_id is non-None, append response record."""
+    if not _LLM_TRACE_DUMP_PATH or not request_id:
+        return
+    record = {
+        "kind": "response",
+        "request_id": request_id,
+        "timestamp": datetime.now(UTC).isoformat(),
+        **payload,
+    }
+    try:
+        with open(_LLM_TRACE_DUMP_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("llm trace dump write failed: %s", exc)
 
 
 async def shutdown_logging() -> None:
@@ -289,6 +338,7 @@ async def call_llm(
     agent_role: str = "",
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
+    trace_caller: str | None = None,
 ) -> LLMCallResult:
     """
     Call the LLM and return a parsed JSON dict.
@@ -362,6 +412,7 @@ async def call_llm(
     last_exc: Exception | None = None
     last_raw: str = ""
     attempt0_raw: str = ""
+    _trace_rid: str | None = None  # request_id for paired response dump
 
     for attempt in range(2):  # attempt 0 = first call, attempt 1 = JSON-repair retry
         if attempt == 1:
@@ -386,6 +437,19 @@ async def call_llm(
         # the proxy receives the bare model name it registered under.
         effective_model = model.split("/", 1)[1] if extra and "/" in model else model
         common_kwargs = {"timeout": timeout, "num_retries": max_retries}
+
+        # Payload trace dump — dump once per attempt (only attempt 0 creates a
+        # new request_id; attempt 1 re-uses the same id so the pair is linked).
+        if attempt == 0:
+            _trace_rid = _dump_llm_request({
+                "model": effective_model,
+                "caller_hint": trace_caller or "unknown",
+                "messages": messages,
+                "tools": None,
+                "tool_choice": None,
+                "sampling_params": {"timeout": timeout, "max_retries": max_retries},
+            })
+
         try:
             response = await litellm.acompletion(
                 model=effective_model,
@@ -423,6 +487,22 @@ async def call_llm(
                 last_exc = exc
                 continue  # retry
 
+        # Dump response before returning
+        finish_reason: str | None = None
+        try:
+            finish_reason = response.choices[0].finish_reason
+        except Exception:
+            pass
+        _dump_llm_response(_trace_rid, {
+            "content": last_raw,
+            "tool_calls": [],
+            "finish_reason": finish_reason,
+            "usage": {
+                "prompt_tokens": usage.prompt_tokens if usage else None,
+                "completion_tokens": usage.completion_tokens if usage else None,
+            },
+        })
+
         result = LLMCallResult(data=parsed, usage=usage)
         # Budget post-record — after successful parse.
         # Use effective_model (proxy prefix stripped) so estimate_cost inside
@@ -455,6 +535,7 @@ async def call_llm_tools(
     prompt_cache_enabled: bool = True,
     budget: "BudgetTracker | None" = None,
     budget_agent: str | None = None,
+    trace_caller: str | None = None,
 ) -> LLMToolCallResult:
     """Tool-use variant of call_llm. Returns raw assistant message.
 
@@ -496,6 +577,19 @@ async def call_llm_tools(
         call_kwargs["timeout"] = timeout
     call_kwargs["num_retries"] = max_retries
 
+    # Payload trace dump (request)
+    _trace_rid = _dump_llm_request({
+        "model": effective_model,
+        "caller_hint": trace_caller or "unknown",
+        "messages": messages,
+        "tools": tools,
+        "tool_choice": tool_choice,
+        "sampling_params": {
+            "timeout": timeout,
+            "max_retries": max_retries,
+        },
+    })
+
     response = await litellm.acompletion(**call_kwargs)
 
     msg = response.choices[0].message
@@ -529,6 +623,17 @@ async def call_llm_tools(
         finish_reason = response.choices[0].finish_reason
     except Exception as exc:
         logger.warning("finish_reason unavailable — budget tracking may be affected: %s", exc)
+
+    # Payload trace dump (response)
+    _dump_llm_response(_trace_rid, {
+        "content": msg.content,
+        "tool_calls": tool_calls,
+        "finish_reason": finish_reason,
+        "usage": {
+            "prompt_tokens": usage.prompt_tokens,
+            "completion_tokens": usage.completion_tokens,
+        },
+    })
 
     return LLMToolCallResult(
         content=msg.content,

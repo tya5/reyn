@@ -640,6 +640,7 @@ class OSRuntime:
             phase_role=phase_def.role if phase_def else None,
             project_context=self._project_context,
             agent_role=self._agent_role,
+            trace_caller=f"phase:{phase}",
         )
         raw = llm_result.data
         cost_usd: float | None = None

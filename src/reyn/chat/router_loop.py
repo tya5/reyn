@@ -181,6 +181,7 @@ class RouterLoop:
                 skill_name="router",
                 budget=self.budget,
                 budget_agent=host.agent_name,
+                trace_caller="router",
             )
             if result.usage:
                 self._total_usage += result.usage

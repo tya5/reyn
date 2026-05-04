@@ -273,7 +273,7 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
     captured_prompts: list[str] = []
 
     async def fake_llm_tools(*, model, messages, tools, tool_choice,
-                              skill_name, budget, budget_agent):
+                              skill_name, budget, budget_agent, **kwargs):
         # Capture the system message (first in messages list).
         for msg in messages:
             if msg.get("role") == "system":
