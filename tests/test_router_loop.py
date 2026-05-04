@@ -986,6 +986,72 @@ async def test_invoke_skill_layer_b_catches_bypass():
         )
 
 
+# ---------------------------------------------------------------------------
+# B3-M2 fix: _list_skills name-lookup fallback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_skills_name_lookup_fallback():
+    """Tier 2: OS invariant — _list_skills returns a 1-item list when path matches a skill name but no category.
+
+    Covers the B3-M2 bug: LLM calls list_skills(path="read_local_files")
+    but all skills have no category set (defaulting to "general"), so
+    the category filter returns 0 results. The name-lookup fallback must
+    return the matching skill entry instead of an empty list.
+    """
+    skills = [
+        {"name": "read_local_files", "description": "Read files from local FS"},
+        {"name": "write_blog", "description": "Write a blog post", "category": "write"},
+    ]
+    host = FakeRouterHost(skills=skills)
+    loop = make_loop(host)
+
+    result = loop._list_skills("read_local_files")
+
+    assert len(result) == 1
+    assert result[0]["name"] == "read_local_files"
+    assert result[0]["description"] == "Read files from local FS"
+
+
+@pytest.mark.asyncio
+async def test_list_skills_unknown_path_returns_empty():
+    """Tier 2: OS invariant — _list_skills returns empty list when path matches neither a category nor a skill name.
+
+    Regression guard: unknown path must still return [] (existing contract).
+    """
+    skills = [
+        {"name": "read_local_files", "description": "Read files"},
+        {"name": "write_blog", "description": "Write blog", "category": "write"},
+    ]
+    host = FakeRouterHost(skills=skills)
+    loop = make_loop(host)
+
+    result = loop._list_skills("nonexistent_category_or_skill")
+
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_list_skills_empty_path_returns_all_categories():
+    """Tier 2: OS invariant — _list_skills('') groups all skills by category and returns [{category, count}] entries.
+
+    Regression guard for existing empty-path behaviour: skills without an
+    explicit category fall into "general".
+    """
+    skills = [
+        {"name": "read_local_files"},           # no category → "general"
+        {"name": "write_blog", "category": "write"},
+        {"name": "write_email", "category": "write"},
+    ]
+    host = FakeRouterHost(skills=skills)
+    loop = make_loop(host)
+
+    result = loop._list_skills("")
+
+    by_cat = {r["category"]: r["count"] for r in result}
+    assert by_cat == {"general": 1, "write": 2}
+
+
 @pytest.mark.asyncio
 async def test_no_events_attribute_needed_for_unknown_tool_path():
     """Tier 2: P6 invariant — unknown tool error emits tool_failed via host.events through dispatch_tool; event routing is not bypassed on the error path."""

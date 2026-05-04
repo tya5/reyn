@@ -426,11 +426,21 @@ class RouterLoop:
             ]
 
         # Return skills in the given category
-        return [
+        by_category = [
             {"name": s["name"], "description": s.get("description", "")}
             for s in skills
             if (s.get("category") or "general") == path
         ]
+        if by_category:
+            return by_category
+
+        # path didn't match any category — try as a skill name (fallback)
+        by_name = [
+            {"name": s["name"], "description": s.get("description", "")}
+            for s in skills
+            if s.get("name") == path
+        ]
+        return by_name
 
     def _describe_skill(self, name: str) -> dict:
         """Return full entry for one skill, or error dict."""
