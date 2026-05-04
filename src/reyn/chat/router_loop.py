@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from reyn.chat.router_tools import build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
@@ -224,6 +225,42 @@ class RouterLoop:
                         meta={"chain_id": self.chain_id},
                     )
                     return self._total_usage
+                # G10 / B2-M2 fix: intercept invoke_skill tool_failed results and
+                # emit a deterministic i18n message instead of letting the LLM
+                # generate an English fallback reply. Checked before accumulating
+                # messages so the LLM is never called for this error path.
+                for tc, r in zip(tool_calls, tool_results):
+                    if (
+                        tc["function"]["name"] == "invoke_skill"
+                        and isinstance(r, dict)
+                        and r.get("status") == "error"
+                    ):
+                        try:
+                            args = json.loads(tc["function"].get("arguments", "{}"))
+                        except (json.JSONDecodeError, KeyError):
+                            args = {}
+                        tool_name = args.get("name", "invoke_skill")
+                        err_info = r.get("error", {})
+                        error_msg = (
+                            err_info.get("message", str(r))
+                            if isinstance(err_info, dict)
+                            else str(err_info)
+                        )
+                        lang = getattr(host, "output_language", None)
+                        tmpl = _TOOL_FAILED_FALLBACK_MSG.get(
+                            lang,
+                            _TOOL_FAILED_FALLBACK_MSG["en"],
+                        )
+                        fallback = tmpl.format(
+                            tool_name=tool_name, error=error_msg
+                        )
+                        await host.put_outbox(
+                            kind="agent",
+                            text=fallback,
+                            meta={"chain_id": self.chain_id},
+                        )
+                        return self._total_usage
+
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).

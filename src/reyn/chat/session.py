@@ -131,6 +131,21 @@ _PEER_REPLY_FAILED_MSG: dict[str, str] = {
     ),
 }
 
+# Localized user-facing message when an invoke_skill tool call fails (G10 / B2-M2).
+# Deterministic i18n replaces LLM-generated fallback on the tool_failed path so
+# output_language is always honoured regardless of LLM default behaviour.
+# "en" is the global-safe default. Placeholders: {tool_name}, {error}.
+_TOOL_FAILED_FALLBACK_MSG: dict[str, str] = {
+    "ja": (
+        "ツール呼び出しに失敗しました ({tool_name}: {error})。"
+        " 別の方法を試すか、リクエストを言い換えてください。"
+    ),
+    "en": (
+        "Tool call failed ({tool_name}: {error})."
+        " Please try a different approach or rephrase the request."
+    ),
+}
+
 
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more

@@ -1020,11 +1020,13 @@ async def test_dispatch_tool_emits_tool_failed_on_unknown_tool():
 
 @pytest.mark.asyncio
 async def test_invoke_skill_with_unknown_skill_name_rejected():
-    """Tier 2: OS invariant — invoke_skill with a hallucinated skill name is rejected (invalid_args or exception); no skill spawned regardless of validation layer.
+    """Tier 2: OS invariant — invoke_skill with a hallucinated skill name is rejected
+    and emits a deterministic i18n error message; no skill spawned (G10 / B2-M2 fix).
 
     Layer A (enum) catches it via jsonschema validation → invalid_args.
     If somehow enum is bypassed, Layer B raises ValueError → exception kind.
-    Either way, no skill spawn occurs.
+    Either way, no skill spawn occurs. G10 fix: the router short-circuits and emits
+    a deterministic i18n message instead of passing the error back to the LLM.
     """
     host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
     loop = make_loop(host)
@@ -1034,7 +1036,7 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
             "name": "ai_article_writer.write_article",  # hallucinated name
             "input": {"type": "T", "data": {}},
         }}]),
-        text_result("Ok, trying differently."),
+        text_result("Ok, trying differently."),  # must NOT be reached after G10 fix
     ]
 
     messages_captured: list[list[dict]] = []
@@ -1049,18 +1051,20 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
     # No skill should have been spawned
     assert len(host.skill_calls) == 0, "No skill must be spawned for unknown name"
 
-    # Tool result must be an error (either invalid_args from enum or exception from Layer B)
-    round2_messages = messages_captured[1]
-    tool_msgs = [m for m in round2_messages if m.get("role") == "tool"]
-    assert len(tool_msgs) == 1
-    result_data = json.loads(tool_msgs[0]["content"])
-    assert result_data.get("status") == "error"
-    error_kind = result_data.get("error", {}).get("kind", "")
-    assert error_kind in ("invalid_args", "exception"), (
-        f"Expected invalid_args or exception, got {error_kind!r}"
+    # G10: router exits after the failed tool call — only 1 LLM call (no second round).
+    assert len(messages_captured) == 1, (
+        "G10 fix: LLM must NOT be called a second time after invoke_skill error; "
+        f"got {len(messages_captured)} call(s)"
     )
 
-    assert host.outbox[0]["text"] == "Ok, trying differently."
+    # Outbox must contain a deterministic error message (not the LLM-generated fallback).
+    assert host.outbox, "Expected at least one outbox message"
+    agent_msgs = [m for m in host.outbox if m.get("kind") == "agent"]
+    assert agent_msgs, f"Expected agent-kind outbox message; got: {host.outbox}"
+    text = agent_msgs[0]["text"]
+    assert "Tool call failed" in text, (
+        f"Expected deterministic English error message; got: {text!r}"
+    )
 
 
 @pytest.mark.asyncio

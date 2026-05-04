@@ -1,4 +1,4 @@
-"""Tier 2: OS invariant — chat router i18n for fallback messages (F8 + F11).
+"""Tier 2: OS invariant — chat router i18n for fallback messages (F8 + F11 + G10).
 
 F8: when the per-turn router retry budget is exhausted, the user-facing fallback
     message must be in the configured output_language, not hardcoded English.
@@ -7,6 +7,10 @@ F11: the system prompt built by router_system_prompt must include an explicit
     language instruction matching the configured output_language, so LLM-generated
     clarifying questions and direct replies land in the right language.
 
+G10: when an invoke_skill tool call fails (tool_failed event), the router must
+    emit a deterministic i18n message in output_language instead of letting the
+    LLM generate an English fallback reply (B2-M2 fix).
+
 Policy: no MagicMock / AsyncMock on collaborators. Real ChatSession and
 build_system_prompt instances. RouterLoop.run() is patched only where strictly
 necessary to avoid network calls (Tier 3 LLM-replay tests are separate).
@@ -14,6 +18,7 @@ necessary to avoid network calls (Tier 3 LLM-replay tests are separate).
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -24,6 +29,7 @@ from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import (
     ChatSession,
     _ROUTER_RETRY_EXHAUSTED_MSG,
+    _TOOL_FAILED_FALLBACK_MSG,
 )
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
@@ -388,3 +394,132 @@ def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
     )
     # Specifically NOT the ja message.
     assert agent_msgs[0]["text"] != _ROUTER_RETRY_EXHAUSTED_MSG["ja"]
+
+
+# ---------------------------------------------------------------------------
+# G10 tests — tool_failed fallback message language (B2-M2 fix)
+# ---------------------------------------------------------------------------
+
+def _tool_call_result(skill_name: str, tc_id: str = "tc-001") -> LLMToolCallResult:
+    """Return a fake LLMToolCallResult that requests invoke_skill(name=skill_name)."""
+    return LLMToolCallResult(
+        content=None,
+        tool_calls=[
+            {
+                "id": tc_id,
+                "type": "function",
+                "function": {
+                    "name": "invoke_skill",
+                    "arguments": json.dumps({"name": skill_name, "input": {}}),
+                },
+            }
+        ],
+        finish_reason="tool_calls",
+        usage=_EMPTY_USAGE,
+    )
+
+
+def _run_tool_failed_scenario(
+    tmp_path: Path,
+    monkeypatch,
+    *,
+    output_language: str | None,
+    target_skill: str = "nonexistent.skill",
+) -> list:
+    """Drive RouterLoop through one invoke_skill tool_failed round.
+
+    Fakes call_llm_tools to return a single invoke_skill tool call whose
+    target skill does not exist (triggering the ValueError → error dict path
+    in dispatch_tool). Returns list of outbox messages emitted.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, cap=5, output_language=output_language)
+    session.is_attached = True
+
+    call_count = 0
+    _target = target_skill  # capture for closure (avoids shadowing by kwarg)
+
+    async def fake_llm_tools(*, model, messages, tools, tool_choice,
+                              skill_name, budget, budget_agent, **kw):
+        nonlocal call_count
+        call_count += 1
+        # First call: return invoke_skill tool call (will fail).
+        # If a second LLM call somehow fires, return a text reply.
+        if call_count == 1:
+            return _tool_call_result(_target)
+        return _text_result("fallback")
+
+    delivered: list = []
+
+    async def run():
+        with patch("reyn.chat.router_loop.call_llm_tools", side_effect=fake_llm_tools):
+            await session._handle_user_message("テスト", chain_id="chain-g10")
+        # drain outbox
+        while not session.outbox.empty():
+            delivered.append(session.outbox.get_nowait())
+
+    asyncio.run(run())
+    return delivered
+
+
+def test_tool_failed_fallback_is_japanese_when_output_language_ja(tmp_path, monkeypatch):
+    """Tier 2: when output_language=ja and invoke_skill fails (tool_failed),
+    the router emits a Japanese error message without calling the LLM again (G10).
+    """
+    msgs = _run_tool_failed_scenario(tmp_path, monkeypatch, output_language="ja")
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, f"Expected agent outbox message; got: {msgs}"
+    text = agent_msgs[0].text
+    assert "ツール呼び出しに失敗しました" in text, (
+        f"Expected Japanese tool_failed message; got: {text!r}"
+    )
+    assert "Tool call failed" not in text, (
+        f"English leak in ja tool_failed fallback: {text!r}"
+    )
+
+
+def test_tool_failed_fallback_is_english_when_output_language_en(tmp_path, monkeypatch):
+    """Tier 2: when output_language=en and invoke_skill fails, the router emits
+    an English error message deterministically (G10).
+    """
+    msgs = _run_tool_failed_scenario(tmp_path, monkeypatch, output_language="en")
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, f"Expected agent outbox message; got: {msgs}"
+    text = agent_msgs[0].text
+    assert "Tool call failed" in text, (
+        f"Expected English tool_failed message; got: {text!r}"
+    )
+
+
+def test_tool_failed_fallback_is_english_when_output_language_none(tmp_path, monkeypatch):
+    """Tier 2: when output_language is None (unset), the tool_failed fallback
+    defaults to English — same as the retry-exhausted path (G10).
+    """
+    msgs = _run_tool_failed_scenario(tmp_path, monkeypatch, output_language=None)
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, f"Expected agent outbox message; got: {msgs}"
+    text = agent_msgs[0].text
+    assert "Tool call failed" in text, (
+        f"Expected English fallback when output_language=None; got: {text!r}"
+    )
+    assert "ツール呼び出しに失敗しました" not in text, (
+        f"Japanese should not appear when output_language=None: {text!r}"
+    )
+
+
+def test_tool_failed_fallback_includes_tool_name_and_error(tmp_path, monkeypatch):
+    """Tier 2: the tool_failed fallback message includes the skill name and the
+    error description so the user has actionable context (G10).
+    """
+    skill = "my.broken_skill"
+    msgs = _run_tool_failed_scenario(
+        tmp_path, monkeypatch, output_language="en", target_skill=skill
+    )
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, f"Expected agent outbox message; got: {msgs}"
+    text = agent_msgs[0].text
+    assert skill in text, (
+        f"Tool name '{skill}' not found in fallback message: {text!r}"
+    )
+    # Error description should be present (error kind or message fragment).
+    assert text.strip(), "Fallback message must not be empty"
