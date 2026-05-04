@@ -1,21 +1,19 @@
 """InputBar — bottom input area with slash hint footer.
 
-Design decision (recorded per design doc):
-  - Uses `Input` widget (not TextArea). TextArea supports multi-line but
-    its Shift+Enter newline handling and keybinding interactions were
-    inconsistent across Textual 0.50 versions tested. `Input` is simpler
-    and the primary use case is single-line prompts. Multi-line pasting
-    still works via the paste handler.
-  - Footer hints are a single static Label that updates when input is
-    empty (shows all commands) or starts with "/" (shows matching commands).
+Design decision:
+  - Uses `TextArea` for multi-line input. Enter submits; Shift+Enter inserts
+    a newline. This matches standard chat UX (Slack / Discord style).
+  - Footer hints update when input is empty or starts with "/".
 
 Keybindings (all handled here):
   Enter          → Submit (when input non-empty)
+  Shift+Enter    → Insert newline
   Tab            → Open slash command palette
   Escape         → Close palette; if none, no-op
   Ctrl+L         → Clear conversation pane (fires ClearConversation message)
   Ctrl+D         → Quit (fires QuitRequested message)
-  Up / Down      → Input history when input is empty
+  Up             → Input history (only when cursor is on the first row)
+  Down           → Input history (only when cursor is on the last row)
   Ctrl+C         → Cancel in-flight task (fires CancelInFlight message)
 """
 from __future__ import annotations
@@ -23,18 +21,22 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Input, Label
+from textual.widgets import TextArea, Label
 from textual import on
 from textual.binding import Binding
 
 
 class InputBar(Widget):
-    """The bottom input row: Input field + footer hint label + palette."""
+    """The bottom input row: TextArea + footer hint label + palette."""
 
     BINDINGS = [
         Binding("ctrl+l", "clear_conversation", "Clear", show=False),
         Binding("ctrl+d", "quit_app", "Quit", show=False),
         Binding("escape", "close_palette", "Close palette", show=False),
+        Binding("enter", "submit", "Submit", show=False, priority=True),
+        Binding("shift+enter", "newline", "Newline", show=False, priority=True),
+        Binding("tab", "open_palette", "Commands", show=False, priority=True),
+        Binding("ctrl+c", "cancel", "Cancel", show=False, priority=True),
     ]
 
     DEFAULT_CSS = """
@@ -45,12 +47,13 @@ class InputBar(Widget):
         background: #111111;
         border-top: tall #2a2a2a;
     }
-    InputBar Input {
+    InputBar TextArea {
         background: transparent;
         border: none;
         color: #ffffff;
         padding: 0 1;
-        height: 1;
+        height: auto;
+        max-height: 10;
     }
     InputBar #hints {
         height: 1;
@@ -81,7 +84,7 @@ class InputBar(Widget):
     class OpenPalette(Message):
         def __init__(self, prefix: str) -> None:
             super().__init__()
-            self.prefix = prefix  # current "/" prefix for filtering
+            self.prefix = prefix
 
     # ── lifecycle ─────────────────────────────────────────────────────────────
 
@@ -94,11 +97,24 @@ class InputBar(Widget):
         super().__init__(id=id)
         self._slash_names = slash_names or []
         self._history: list[str] = []
-        self._history_idx: int = -1  # -1 = not browsing
+        self._history_idx: int = -1
 
     def compose(self) -> ComposeResult:
-        yield Input(placeholder="Type a message… (Tab: commands)", id="input")
+        yield TextArea(
+            id="input",
+            language=None,
+            show_line_numbers=False,
+            soft_wrap=True,
+        )
         yield Label(self._build_hint(""), id="hints")
+
+    def on_mount(self) -> None:
+        try:
+            ta = self.query_one("#input", TextArea)
+            # Disable the line-number gutter and syntax highlighting chrome.
+            ta.show_line_numbers = False
+        except Exception:
+            pass
 
     # ── keybinding actions ────────────────────────────────────────────────────
 
@@ -109,88 +125,101 @@ class InputBar(Widget):
         self.post_message(self.QuitRequested())
 
     def action_close_palette(self) -> None:
-        # Palette is managed in app.py; just focus back to input
         try:
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", TextArea).focus()
         except Exception:
             pass
 
-    # ── input events ─────────────────────────────────────────────────────────
-
-    @on(Input.Submitted, "#input")
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+    def action_submit(self) -> None:
+        try:
+            ta = self.query_one("#input", TextArea)
+        except Exception:
+            return
+        text = ta.text.strip()
         if not text:
             return
-        # Add to history
         if not self._history or self._history[-1] != text:
             self._history.append(text)
         self._history_idx = -1
-        # Clear input
-        inp = self.query_one("#input", Input)
-        inp.value = ""
+        ta.clear()
         self._update_hint("")
         self.post_message(self.UserSubmitted(text))
 
-    @on(Input.Changed, "#input")
-    def on_input_changed(self, event: Input.Changed) -> None:
-        self._update_hint(event.value)
+    def action_newline(self) -> None:
+        try:
+            self.query_one("#input", TextArea).insert("\n")
+        except Exception:
+            pass
+
+    def action_open_palette(self) -> None:
+        try:
+            ta = self.query_one("#input", TextArea)
+            prefix = ta.text
+        except Exception:
+            prefix = ""
+        self.post_message(self.OpenPalette(prefix=prefix))
+
+    def action_cancel(self) -> None:
+        self.post_message(self.CancelInFlight())
+
+    # ── input events ─────────────────────────────────────────────────────────
+
+    @on(TextArea.Changed, "#input")
+    def on_textarea_changed(self, event: TextArea.Changed) -> None:
+        self._update_hint(event.text_area.text)
 
     def on_key(self, event) -> None:
-        """Handle Tab (palette), Up/Down (history), Ctrl+C (cancel)."""
-        inp = self.query_one("#input", Input)
-        current = inp.value
+        """Up/Down history — only when cursor is at the edge row."""
+        if event.key not in ("up", "down"):
+            return
+        try:
+            ta = self.query_one("#input", TextArea)
+        except Exception:
+            return
 
-        if event.key == "tab":
+        row, _ = ta.cursor_location
+
+        if event.key == "up" and row == 0:
             event.prevent_default()
-            self.post_message(self.OpenPalette(prefix=current))
-            return
-
-        if event.key == "ctrl+c":
-            event.prevent_default()
-            self.post_message(self.CancelInFlight())
-            return
-
-        if event.key == "up":
-            if not current or self._history_idx > 0:
+            self._history_up(ta)
+        elif event.key == "down":
+            last_row = ta.text.count("\n")
+            if row >= last_row:
                 event.prevent_default()
-                self._history_up(inp)
-            return
-
-        if event.key == "down":
-            if self._history_idx >= 0:
-                event.prevent_default()
-                self._history_down(inp)
-            return
+                self._history_down(ta)
 
     # ── history navigation ────────────────────────────────────────────────────
 
-    def _history_up(self, inp: Input) -> None:
+    def _history_up(self, ta: TextArea) -> None:
         if not self._history:
             return
         if self._history_idx == -1:
             self._history_idx = len(self._history) - 1
         elif self._history_idx > 0:
             self._history_idx -= 1
-        inp.value = self._history[self._history_idx]
-        inp.cursor_position = len(inp.value)
+        self._load_history_entry(ta, self._history[self._history_idx])
 
-    def _history_down(self, inp: Input) -> None:
+    def _history_down(self, ta: TextArea) -> None:
         if self._history_idx < 0:
             return
         self._history_idx += 1
         if self._history_idx >= len(self._history):
             self._history_idx = -1
-            inp.value = ""
+            ta.clear()
         else:
-            inp.value = self._history[self._history_idx]
-            inp.cursor_position = len(inp.value)
+            self._load_history_entry(ta, self._history[self._history_idx])
+
+    def _load_history_entry(self, ta: TextArea, text: str) -> None:
+        ta.load_text(text)
+        lines = text.split("\n")
+        last_row = len(lines) - 1
+        ta.move_cursor((last_row, len(lines[last_row])))
 
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self, current: str) -> str:
-        if not current:
-            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel"
+        if not current.strip():
+            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel  │  Ctrl+\\ shot"
         return ""
 
     def _update_hint(self, current: str) -> None:
@@ -204,13 +233,13 @@ class InputBar(Widget):
         """Update the known slash command names (called after registry loads)."""
         self._slash_names = names
         try:
-            inp = self.query_one("#input", Input)
-            self._update_hint(inp.value)
+            ta = self.query_one("#input", TextArea)
+            self._update_hint(ta.text)
         except Exception:
             pass
 
     def focus_input(self) -> None:
         try:
-            self.query_one("#input", Input).focus()
+            self.query_one("#input", TextArea).focus()
         except Exception:
             pass

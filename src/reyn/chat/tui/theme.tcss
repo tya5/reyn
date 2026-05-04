@@ -61,12 +61,13 @@ InputBar.palette-open #hints {
     display: none;
 }
 
-InputBar Input {
+InputBar TextArea {
     background: transparent;
     border: none;
     color: #ffffff;
     padding: 0 1;
-    height: 1;
+    height: auto;
+    max-height: 10;
 }
 
 InputBar #hints {

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult, RenderResult
+from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, Static, Tab, Tabs
@@ -214,6 +215,33 @@ def _esc(s: str) -> str:
     return s.replace("[", "\\[").replace("]", "\\]")
 
 
+class _PanelHeader(Static):
+    """Fixed header strip — 1 line of text + symmetric padding = natural 3 rows."""
+
+    DEFAULT_CSS = """
+    _PanelHeader {
+        background: #1a1a1a;
+        color: #aaaaaa;
+        padding: 0 2;
+        border-bottom: solid #333333;
+    }
+    """
+
+    def __init__(self, panel: "RightPanel", **kwargs) -> None:
+        super().__init__("", **kwargs)
+        self._panel = panel
+
+    def render(self) -> RenderResult:
+        try:
+            return self._panel._panel_header_markup()
+        except Exception:
+            return ""
+
+    def invalidate(self) -> None:
+        self._layout_cache.clear()
+        self.refresh()
+
+
 class _PanelContent(Static):
     """Static subclass that delegates render() to the parent RightPanel.
 
@@ -347,6 +375,17 @@ class _PreviewPane(Widget):
             pass
 
 
+class _TabContent(Widget):
+    """Container below the tab bar: header + scroll area + preview pane."""
+
+    DEFAULT_CSS = """
+    _TabContent {
+        height: 1fr;
+        layout: vertical;
+    }
+    """
+
+
 class RightPanel(Widget):
     """Swappable right-side panel with tab bar.
 
@@ -358,8 +397,6 @@ class RightPanel(Widget):
     RightPanel {
         display: none;
         width: 33%;
-        min-width: 30;
-        max-width: 60;
         border-left: tall #2a2a2a;
         background: #111111;
         layout: vertical;
@@ -368,7 +405,7 @@ class RightPanel(Widget):
 
     RightPanel Tabs {
         background: #1a1a1a;
-        height: 2;
+        height: 3;
     }
 
     RightPanel Tab {
@@ -417,6 +454,7 @@ class RightPanel(Widget):
         self._docs_files: list[Path] = []
         self._docs_groups: dict[str, list[Path]] = {}
         self._preview_visible: bool = False
+        self._panel_width: int = 0  # 0 = use CSS default (33%); set on first resize
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -425,9 +463,11 @@ class RightPanel(Widget):
             *[Tab(_PANEL_LABELS[t], id=t) for t in PANEL_TYPES],
             id="panel-tabs",
         )
-        with VerticalScroll(id="panel-scroll"):
-            yield _PanelContent(self, id="panel-content")
-        yield _PreviewPane(id="preview-pane")
+        with _TabContent(id="tab-content"):
+            yield _PanelHeader(self, id="panel-header")
+            with VerticalScroll(id="panel-scroll"):
+                yield _PanelContent(self, id="panel-content")
+            yield _PreviewPane(id="preview-pane")
 
     def on_mount(self) -> None:
         self.set_interval(_REFRESH_INTERVAL, self._refresh_live)
@@ -455,6 +495,15 @@ class RightPanel(Widget):
             self.query_one("#panel-tabs", Tabs).focus()
         except Exception:
             pass
+
+    def resize(self, delta: int) -> None:
+        self._panel_resize(delta)
+
+    def _panel_resize(self, delta: int) -> None:
+        if self._panel_width == 0:
+            self._panel_width = self.size.width or 40
+        self._panel_width = max(24, min(80, self._panel_width + delta))
+        self.styles.width = self._panel_width
 
     def cycle_event_filter(self) -> None:
         """Rotate through event filter groups; only meaningful on events tab."""
@@ -489,6 +538,12 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._docs_move(-1)
+        elif event.key == "l":
+            event.prevent_default()
+            self._panel_resize(-2)
+        elif event.key == "h":
+            event.prevent_default()
+            self._panel_resize(+2)
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -505,6 +560,10 @@ class RightPanel(Widget):
             self._invalidate()
 
     def _invalidate(self) -> None:
+        try:
+            self.query_one("#panel-header", _PanelHeader).invalidate()
+        except Exception:
+            pass
         try:
             self.query_one("#panel-content", _PanelContent).invalidate()
         except Exception:
@@ -584,6 +643,35 @@ class RightPanel(Widget):
 
     # ── render dispatch ───────────────────────────────────────────────────────
 
+    def _panel_header_markup(self) -> str:
+        if self._panel_type == "keys":
+            return "[bold #C8553D]Key Bindings[/]"
+        if self._panel_type == "agents":
+            return "[bold #C8553D]Agents[/]"
+        if self._panel_type == "memory":
+            return "[bold #C8553D]Memory[/]"
+        if self._panel_type == "cost":
+            return "[bold #C8553D]Cost[/]"
+        if self._panel_type == "docs":
+            return "[bold #C8553D]Docs[/]  [#555555]j↓  k↑  enter=open[/]"
+        if self._panel_type == "events":
+            filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
+            tail = _TAIL_CYCLE[self._event_tail_idx]
+            filter_label = (
+                f"[bold #C8553D]{filter_name}[/]" if filter_name != "all"
+                else "[#555555]all[/]"
+            )
+            lbr = "[#555555]\\[[/]"
+            rbr = "[#555555]][/]"
+            kf = f"{lbr}[#C8553D]f[/]{rbr}"
+            kt = f"{lbr}[#C8553D]t[/]{rbr}"
+            return (
+                f"[bold #C8553D]Events[/]"
+                f"  {kf}[#555555]ilter:[/]{filter_label}"
+                f"  {kt}[#555555]ail:[/][#aaaaaa]{tail}[/]"
+            )
+        return ""
+
     def _panel_markup(self) -> str:
         try:
             if self._panel_type == "keys":
@@ -605,28 +693,27 @@ class RightPanel(Widget):
     # ── panel renderers ──────────────────────────────────────────────────────
 
     def _render_keys(self) -> str:
-        lines = ["[bold #C8553D]Key Bindings[/]", ""]
-        bindings = self.app.active_bindings
+        lines: list[str] = []
         seen: set[str] = set()
-        for _key, ab in bindings.items():
-            b = ab.binding
+        for raw in self.app.BINDINGS:
+            b = raw if isinstance(raw, Binding) else Binding(*raw)
             if b.key in seen or not b.description:
                 continue
             seen.add(b.key)
             key_col = f"{_esc(b.key):<18}"
             desc_col = _esc(b.description)
             lines.append(f"[#aaaaaa]  {key_col}[/]  [#dddddd]{desc_col}[/]")
-        if len(lines) == 1:
+        if not lines:
             lines.append("[#555555]  (no bindings)[/]")
         return "\n".join(lines)
 
     def _render_events(self) -> str:
         if self._project_root is None:
-            return "[bold #C8553D]Recent Events[/]\n\n[#555555]  (no project root)[/]"
+            return "[#555555]  (no project root)[/]"
 
         events_root = self._project_root / ".reyn" / "events"
         if not events_root.is_dir():
-            return "[bold #C8553D]Recent Events[/]\n\n[#555555]  (no events yet)[/]"
+            return "[#555555]  (no events yet)[/]"
 
         all_events: list[dict] = []
         for jsonl in sorted(events_root.rglob("*.jsonl")):
@@ -660,13 +747,12 @@ class RightPanel(Widget):
             f"  [#555555]({len(visible)}/{len(all_events)})[/]"
             f"  [#555555]f=filter  t=tail[/]"
         )
-
         if not visible:
-            return header + "\n\n[#555555]  (no matching events)[/]"
+            return "[#555555]  (no matching events)[/]"
 
         chain_replies = _load_chain_replies(self._project_root)
 
-        lines = [header, ""]
+        lines: list[str] = []
         for ev in visible[-tail:][::-1]:
             ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
             ev_type = ev.get("type", "?")
@@ -689,7 +775,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_agents(self) -> str:
-        lines = ["[bold #C8553D]Agents[/]", ""]
+        lines: list[str] = []
 
         if self._registry is None:
             lines.append("[#555555]  (no registry)[/]")
@@ -726,7 +812,7 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_memory(self) -> str:
-        lines = ["[bold #C8553D]Memory[/]", ""]
+        lines: list[str] = []
 
         if self._project_root is None:
             lines.append("[#555555]  (no project root)[/]")
@@ -770,7 +856,7 @@ class RightPanel(Widget):
         import datetime
         from collections import defaultdict
 
-        lines = ["[bold #C8553D]Cost[/]", ""]
+        lines: list[str] = []
 
         if self._project_root is None:
             lines.append("[#555555]  (no project root)[/]")
@@ -866,15 +952,12 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_docs(self) -> str:
-        nav_hint = "[#555555]j↓  k↑  enter=open[/]"
-        header = f"[bold #C8553D]Docs[/]  {nav_hint}"
-
         if self._project_root is None:
-            return header + "\n\n[#555555]  (no project root)[/]"
+            return "[#555555]  (no project root)[/]"
 
         docs_root = self._project_root / "docs" / "en"
         if not docs_root.is_dir():
-            return header + "\n\n[#555555]  (docs/en/ not found)[/]"
+            return "[#555555]  (docs/en/ not found)[/]"
 
         # Build groups; files within each section retain sort order.
         groups: dict[str, list[Path]] = {}
@@ -892,15 +975,14 @@ class RightPanel(Widget):
         if self._docs_cursor >= len(ordered):
             self._docs_cursor = max(0, len(ordered) - 1)
 
-        lines = [header, ""]
+        lines: list[str] = []
         file_idx = 0
         for section in sorted(groups):
             label = section.upper() if section else "ROOT"
             lines.append(f"[bold #aaaaaa]  \\[{_esc(label)}][/]")
             for md in groups[section]:
                 rel = md.relative_to(docs_root)
-                depth = len(rel.parts) - 1
-                indent = "    " + "  " * max(0, depth - 1)
+                indent = "    "
                 if file_idx == self._docs_cursor:
                     lines.append(f"[bold #C8553D]{indent}▶ {_esc(md.stem)}[/]")
                 else:

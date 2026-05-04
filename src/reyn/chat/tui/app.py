@@ -6,7 +6,7 @@ Layout:
   │  ConversationView (RichLog + inline widgets)  1fr  │  RightPanel │  dock=right (hidden by default)
   │                                                                   │
   ├───────────────────────────────────────────────────────────────────┤
-  │  InputBar (Input + hint label)                        dock=bottom │
+  │  InputBar (TextArea + hint label)                     dock=bottom │
   └───────────────────────────────────────────────────────────────────┘
 
 RightPanel (ctrl+b to toggle, ctrl+o to focus, ctrl+w to cycle tabs):
@@ -94,6 +94,7 @@ class ReynTUIApp(App):
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
         Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
         Binding("escape", "close_palette", "Close palette", priority=True, show=False),
+        Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
 
     def __init__(
@@ -404,6 +405,28 @@ class ReynTUIApp(App):
         conv = self.query_one("#conversation", ConversationView)
         conv.clear()
 
+    def action_screenshot(self) -> None:
+        """Ctrl+\\ — save an SVG screenshot, open it, and log the path."""
+        filename = self.save_screenshot()
+        try:
+            from pathlib import Path
+            from rich.text import Text
+            import sys, subprocess
+            abs_path = Path(filename).resolve()
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(abs_path)])
+            elif sys.platform == "win32":
+                import os
+                os.startfile(str(abs_path))
+            else:
+                subprocess.Popen(["xdg-open", str(abs_path)])
+            t = Text()
+            t.append("screenshot → ", style="dim")
+            t.append(str(abs_path), style="bold")
+            self.query_one("#conversation", ConversationView)._write_log(t)
+        except Exception:
+            pass
+
     def action_cancel_inflight(self) -> None:
         """Cancel the in-flight skill/model call on the attached session."""
         session = self._get_session()
@@ -488,8 +511,9 @@ class ReynTUIApp(App):
     def action_open_palette(self) -> None:
         """Tab — open the slash command palette filtered by current input."""
         try:
-            inp = self.query_one("#inputbar", InputBar).query_one("#input")
-            prefix = inp.value
+            from textual.widgets import TextArea
+            ta = self.query_one("#inputbar", InputBar).query_one("#input", TextArea)
+            prefix = ta.text
         except Exception:
             prefix = ""
         self._open_palette(prefix=prefix)
@@ -564,12 +588,11 @@ class ReynTUIApp(App):
         """Backspace while palette is open: close + delete one char from input."""
         self._close_palette()
         try:
+            from textual.widgets import TextArea
             inputbar = self.query_one("#inputbar", InputBar)
-            inp = inputbar.query_one("#input")
-            if inp.value:
-                # Drop the last character; cursor follows.
-                inp.value = inp.value[:-1]
-                inp.cursor_position = len(inp.value)
+            ta = inputbar.query_one("#input", TextArea)
+            if ta.text:
+                ta.action_delete_left()
             inputbar.focus_input()
         except Exception:
             pass
@@ -631,12 +654,13 @@ class ReynTUIApp(App):
         if event.option.id:
             cmd_name = event.option.id
             inputbar = self.query_one("#inputbar", InputBar)
-            # Set input to the slash command
             try:
-                inp = inputbar.query_one("#input")
-                inp.value = f"/{cmd_name} "
-                inp.cursor_position = len(inp.value)
-                inp.focus()
+                from textual.widgets import TextArea
+                ta = inputbar.query_one("#input", TextArea)
+                text = f"/{cmd_name} "
+                ta.load_text(text)
+                ta.move_cursor((0, len(text)))
+                ta.focus()
             except Exception:
                 pass
         self._close_palette()
