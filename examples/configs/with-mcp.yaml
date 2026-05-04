@@ -10,6 +10,13 @@ models:
 
 permissions:
   python.pure: allow
+  # Pre-approve MCP server calls so the skill runs without a TTY prompt.
+  # Required in headless / non-interactive mode (CI, piped stdin, dogfood
+  # scripts): without this line every MCP call returns permission_denied.
+  # Remove or comment these lines to get interactive per-call prompts instead.
+  mcp.filesystem: allow
+  mcp.git: allow
+  mcp.fetch: allow
 
 mcp:
   servers:

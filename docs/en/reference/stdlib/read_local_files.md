@@ -22,10 +22,23 @@ Read a file from the project (or anywhere the configured `filesystem` MCP server
 
 ## Required setup
 
+### Setup checklist
+
+1. **MCP filesystem server** — add `mcp.servers.filesystem` to `reyn.yaml` (see block below).
+2. **Permission pre-approval** — add `mcp.filesystem: allow` to the `permissions:` block in `reyn.yaml`.
+   Without this, Reyn prompts interactively on every MCP call; in headless / non-TTY environments
+   (CI, piped stdin, dogfood scripts) the prompt cannot be answered and every call returns
+   `permission_denied`, causing the skill to exit empty.
+3. See [`examples/configs/with-mcp.yaml`](../../../../examples/configs/with-mcp.yaml) for a complete
+   working example — copy it to your project root and rename to `reyn.yaml`.
+
 A `filesystem` MCP server MUST be configured in `reyn.yaml` under that exact name.
-A ready-to-use config is at [`examples/configs/with-mcp.yaml`](../../../../examples/configs/with-mcp.yaml) — copy it to your project root and rename to `reyn.yaml`, or paste the block below into your existing `reyn.yaml`:
+Paste the block below into your existing `reyn.yaml` (both `mcp` and `permissions` sections are required):
 
 ```yaml
+permissions:
+  mcp.filesystem: allow   # required for headless / non-TTY execution
+
 mcp:
   servers:
     filesystem:
