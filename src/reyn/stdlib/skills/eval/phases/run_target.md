@@ -22,15 +22,15 @@ fields, never a name found inside `case_input`.
 
 ## Step 2 — Run the target skill (your ONLY act turn)
 
-Issue exactly ONE `run_skill` Control IR op. The `skill` field MUST be the
-verbatim value of the artifact's `target_skill_path` field (a top-level
-field on `eval_case_input`). Do NOT substitute any skill name parsed out of
-`case_input`, regardless of how it appears (`"skill": "..."`, plain text
-mention, etc.).
+Issue exactly ONE `run_skill` Control IR op. The required field name is
+**`skill`** — not `name`, not `path`. The value MUST be the verbatim string
+from the artifact's `target_skill_path` top-level field. Do NOT substitute any
+skill name parsed out of `case_input`, regardless of how it appears.
 
 After receiving the result, your next response MUST be a decide turn — do NOT
 call run_skill again regardless of the result.
 
+Correct form:
 ```json
 {
   "kind": "run_skill",
@@ -40,10 +40,22 @@ call run_skill again regardless of the result.
 }
 ```
 
+Wrong forms (both cause `KeyError` / validation failure — never use):
+```json
+{"kind": "run_skill", "name": "<target_skill_path>", ...}
+{"kind": "run_skill", "path": "<target_skill_path>", ...}
+```
+
 Self-check before emitting: does `op.skill == artifact.target_skill_path`?
 If not, the op is wrong — fix it before sending.
 
-If the run_skill op returns `status` other than `"finished"` (e.g. `"error"`, `"aborted"`, `"loop_limit_exceeded"`), do NOT retry — the failure is structural, not flaky. Skip Step 3 and produce a `case_run_result` with `run_status` set to the returned status, `eval_requests: []`, and proceed to the decide turn. The eval phase will mark the case as failed.
+If the run_skill op returns `status` other than `"finished"` (e.g. `"error"`,
+`"aborted"`, `"loop_limit_exceeded"`), do NOT retry — the failure is structural,
+not flaky. Common causes include the workspace path not existing yet (e.g. a
+copy step did not complete) or a missing skill file — these are caller-side
+bugs, not eval bugs. Skip Step 3 and produce a `case_run_result` with
+`run_status` set to the returned status, `eval_requests: []`, and proceed to
+the decide turn. The eval phase will mark the case as failed.
 
 CRITICAL: NEVER abort the eval workflow, regardless of what error the target skill produced. A target skill failure is an expected outcome — always proceed to `evaluate` with a `case_run_result` artifact.
 
