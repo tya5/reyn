@@ -438,3 +438,24 @@ class TestBehaviourRulesAfterF3F9Fix:
         assert "Action" in prompt
         # The old too-permissive phrasing must be gone
         assert "stable knowledge" not in prompt
+
+    def test_post_describe_commit_or_explain(self):
+        """B2-H1 fix: after describe_skill, the LLM must commit by calling
+        invoke_skill or explicitly explain in text — never stop silently
+        mid-investigation. Without this rule, gemini-2.5-flash-lite enters
+        a 'research complete, synthesise' state after describe_skill and
+        emits an empty text turn, which triggers the F6 _no_reply_marker
+        upstream and surfaces no value to the user.
+        """
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[{"name": "summarize", "category": "general"}],
+            available_agents=[],
+            memory_index={"status": "not_found", "content": ""},
+        )
+        # Rule must mention both branches: commit (invoke_skill) and explain.
+        assert "After describe_skill" in prompt
+        assert "invoke_skill" in prompt
+        # The "or explain" half must be present too.
+        assert "explain" in prompt.lower()

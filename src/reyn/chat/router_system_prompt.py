@@ -168,6 +168,10 @@ def build_system_prompt(
     )
     parts.append("    before invoke_skill.")
     parts.append(
+        "  - After describe_skill, you MUST call invoke_skill or explain in text"
+    )
+    parts.append("    why not; never stop silently after investigation.")
+    parts.append(
         "  - For Recall, answer from the Memory section's inlined descriptions;"
     )
     parts.append(
