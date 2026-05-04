@@ -502,8 +502,16 @@ class RightPanel(Widget):
     def _panel_resize(self, delta: int) -> None:
         if self._panel_width == 0:
             self._panel_width = self.size.width or 40
-        self._panel_width = max(24, min(80, self._panel_width + delta))
+        max_width = max(40, int((self.app.size.width or 120) * 0.66))
+        self._panel_width = max(24, min(max_width, self._panel_width + delta))
         self.styles.width = self._panel_width
+
+    def _scroll_panel(self, delta: int) -> None:
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            vs.scroll_to(y=vs.scroll_y + delta, animate=False)
+        except Exception:
+            pass
 
     def cycle_event_filter(self) -> None:
         """Rotate through event filter groups; only meaningful on events tab."""
@@ -531,13 +539,17 @@ class RightPanel(Widget):
                 event.prevent_default()
                 self._toggle_preview()
         elif event.key == "j":
+            event.prevent_default()
             if self._panel_type == "docs":
-                event.prevent_default()
                 self._docs_move(+1)
+            else:
+                self._scroll_panel(+1)
         elif event.key == "k":
+            event.prevent_default()
             if self._panel_type == "docs":
-                event.prevent_default()
                 self._docs_move(-1)
+            else:
+                self._scroll_panel(-1)
         elif event.key == "l":
             event.prevent_default()
             self._panel_resize(-2)
@@ -812,43 +824,55 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_memory(self) -> str:
-        lines: list[str] = []
-
         if self._project_root is None:
-            lines.append("[#555555]  (no project root)[/]")
-            return "\n".join(lines)
+            return "[#555555]  (no project root)[/]"
 
         from reyn.memory.memory import list_entries
-        entries = list_entries(self._project_root / ".reyn" / "memory")
 
-        if not entries:
-            lines.append("[#555555]  (no memories)[/]")
-            return "\n".join(lines)
+        lines: list[str] = []
 
-        groups: dict[str, list] = {t: [] for t in ("user", "feedback", "project", "reference")}
-        other: list = []
-        for e in entries:
-            if e.type in groups:
-                groups[e.type].append(e)
-            else:
-                other.append(e)
-
-        for type_key in ("user", "feedback", "project", "reference"):
-            group = groups[type_key]
-            if not group:
-                continue
-            color = _TYPE_COLORS[type_key]
-            lines.append(f"[bold {color}]  \\[{type_key.upper()}][/]")
-            for e in group:
-                lines.append(f"[#dddddd]    {_esc(e.name)}[/]")
-                if e.description:
-                    lines.append(f"[#555555]      {_esc(e.description)}[/]")
+        def _render_scope(entries: list, label: str, label_color: str) -> None:
+            lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
+            if not entries:
+                lines.append("[#555555]    (empty)[/]")
+                lines.append("")
+                return
+            groups: dict[str, list] = {t: [] for t in ("user", "feedback", "project", "reference")}
+            other: list = []
+            for e in entries:
+                if e.type in groups:
+                    groups[e.type].append(e)
+                else:
+                    other.append(e)
+            for type_key in ("user", "feedback", "project", "reference"):
+                group = groups[type_key]
+                if not group:
+                    continue
+                color = _TYPE_COLORS[type_key]
+                lines.append(f"[bold {color}]    \\[{type_key.upper()}][/]")
+                for e in group:
+                    lines.append(f"[#dddddd]      {_esc(e.name)}[/]")
+                    if e.description:
+                        lines.append(f"[#555555]        {_esc(e.description)}[/]")
+            if other:
+                lines.append("[bold #888888]    \\[OTHER][/]")
+                for e in other:
+                    lines.append(f"[#dddddd]      {_esc(e.name)}[/]")
             lines.append("")
 
-        if other:
-            lines.append("[bold #888888]  \\[OTHER][/]")
-            for e in other:
-                lines.append(f"[#dddddd]    {_esc(e.name)}[/]")
+        # Shared memory
+        shared = list_entries(self._project_root / ".reyn" / "memory")
+        _render_scope(shared, "SHARED", "#C8553D")
+
+        # Per-agent memory
+        agents_dir = self._project_root / ".reyn" / "agents"
+        if agents_dir.exists():
+            for agent_dir in sorted(agents_dir.iterdir()):
+                mem_dir = agent_dir / "memory"
+                if not mem_dir.exists():
+                    continue
+                agent_entries = list_entries(mem_dir)
+                _render_scope(agent_entries, f"AGENT  {agent_dir.name}", "#7a9fc7")
 
         return "\n".join(lines)
 

@@ -34,7 +34,7 @@ class InputBar(Widget):
         Binding("ctrl+d", "quit_app", "Quit", show=False),
         Binding("escape", "close_palette", "Close palette", show=False),
         Binding("enter", "submit", "Submit", show=False, priority=True),
-        Binding("shift+enter", "newline", "Newline", show=False, priority=True),
+        Binding("ctrl+j", "newline", "Newline", show=False, priority=True),
         Binding("tab", "open_palette", "Commands", show=False, priority=True),
         Binding("ctrl+c", "cancel", "Cancel", show=False, priority=True),
     ]
@@ -218,9 +218,7 @@ class InputBar(Widget):
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self, current: str) -> str:
-        if not current.strip():
-            return "  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel  │  Ctrl+\\ shot"
-        return ""
+        return "  Enter send  │  Ctrl+J newline  │  Ctrl+D quit  │  Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  Ctrl+O focus panel  │  Ctrl+\\ shot"
 
     def _update_hint(self, current: str) -> None:
         try:
