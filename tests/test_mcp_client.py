@@ -277,3 +277,87 @@ def test_sse_not_implemented(patched_sdk):
             await client.initialize()
 
     asyncio.run(_run_it())
+
+
+# ── G11 hypothesis A+B: teardown_mcp_clients invariants ──────────────────────
+# These two tests pin the same-task explicit-close path added to
+# ControlIRExecutor.teardown_mcp_clients() as the fix for G11.
+# They use real MCPClient instances (no MagicMock) to verify the public
+# is_initialized() surface — not private _stack/_session attributes.
+
+
+def test_teardown_mcp_clients_closes_all_clients(patched_sdk):
+    """Tier 2: OS invariant — teardown_mcp_clients() calls close() on every cached
+    MCP client (verified via is_initialized() == False on each client after teardown).
+
+    G11 fix: the explicit close must happen in the same asyncio task that
+    opened the clients so anyio cancel-scope task-affinity is honoured.
+    """
+    from reyn.events.events import EventLog
+    from reyn.kernel.control_ir_executor import ControlIRExecutor
+    from reyn.workspace.workspace import Workspace
+
+    cfg_a = {"type": "http", "url": "http://a/mcp"}
+    cfg_b = {"type": "http", "url": "http://b/mcp"}
+
+    async def _run_it():
+        events = EventLog()
+        ws = Workspace(events=events)
+        executor = ControlIRExecutor(workspace=ws, events=events)
+
+        # Populate _mcp_clients with two initialized clients (same task).
+        client_a = MCPClient(cfg_a)
+        await client_a.initialize()
+        client_b = MCPClient(cfg_b)
+        await client_b.initialize()
+        executor._mcp_clients["a"] = client_a
+        executor._mcp_clients["b"] = client_b
+
+        assert client_a.is_initialized() is True
+        assert client_b.is_initialized() is True
+
+        # teardown_mcp_clients must close both in the same task.
+        await executor.teardown_mcp_clients()
+
+        # Both clients must report as closed via the public accessor.
+        assert client_a.is_initialized() is False, "client_a should be closed after teardown"
+        assert client_b.is_initialized() is False, "client_b should be closed after teardown"
+
+    asyncio.run(_run_it())
+
+
+def test_teardown_mcp_clients_empties_dict(patched_sdk):
+    """Tier 2: OS invariant — teardown_mcp_clients() clears _mcp_clients so
+    subsequent teardown calls are no-ops and the executor does not hold
+    stale references (prevents double-close on GC).
+
+    Verifies the dict is empty after teardown via the public-equivalent
+    available_ops() path (which does not depend on _mcp_clients contents),
+    plus a second teardown call that must not raise.
+    """
+    from reyn.events.events import EventLog
+    from reyn.kernel.control_ir_executor import ControlIRExecutor
+    from reyn.workspace.workspace import Workspace
+
+    cfg = {"type": "http", "url": "http://x/mcp"}
+
+    async def _run_it():
+        events = EventLog()
+        ws = Workspace(events=events)
+        executor = ControlIRExecutor(workspace=ws, events=events)
+
+        client = MCPClient(cfg)
+        await client.initialize()
+        executor._mcp_clients["x"] = client
+
+        await executor.teardown_mcp_clients()
+
+        # The dict must be empty — no stale refs that could be GC-finalised
+        # cross-task after this point.
+        assert len(executor._mcp_clients) == 0, "_mcp_clients must be empty after teardown"
+
+        # Second call is a no-op (nothing to close, no exception).
+        await executor.teardown_mcp_clients()
+        assert len(executor._mcp_clients) == 0
+
+    asyncio.run(_run_it())

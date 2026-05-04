@@ -1627,6 +1627,12 @@ class OSRuntime:
             raise
 
         finally:
+            # G11 fix (hypothesis A+B): close MCP clients in the same asyncio
+            # task that opened them.  Deferring to GC lets the AsyncExitStack
+            # be finalised from an unrelated context, which causes anyio
+            # cancel-scope task-affinity RuntimeErrors in stderr.
+            await self.control_ir_executor.teardown_mcp_clients()
+
             # R-D1: exception-aware completion. The finally clause must
             # distinguish between "this run is finished" and "this run was
             # interrupted and may need to resume on the next startup".

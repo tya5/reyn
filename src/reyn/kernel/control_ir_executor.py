@@ -260,6 +260,26 @@ class ControlIRExecutor:
             parent_skill_run_id=self._skill_run_id,
         )
 
+    async def teardown_mcp_clients(self) -> None:
+        """Close all cached MCP clients in the **same asyncio task** as the caller.
+
+        Must be called from the same task that ran ``execute()``.  Calling
+        ``close()`` here — rather than letting the ``AsyncExitStack`` be
+        finalised by the GC — prevents anyio cancel-scope task-affinity
+        violations (G11 hypothesis A+B): the stack's context managers
+        (``stdio_client`` / ``ClientSession``) were entered in this task and
+        must be exited in this task.
+        """
+        import logging
+        _log = logging.getLogger(__name__)
+        clients = list(self._mcp_clients.items())
+        self._mcp_clients.clear()
+        for name, client in clients:
+            try:
+                await client.close()
+            except Exception as exc:  # noqa: BLE001
+                _log.warning("MCP client %s close error: %s", name, exc)
+
     async def execute(
         self,
         ops: list[ControlIROp],
