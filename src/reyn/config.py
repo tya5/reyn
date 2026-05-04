@@ -5,7 +5,8 @@ Priority (lowest → highest):
   built-in defaults
   ~/.reyn/config.yaml         user global
   <project>/reyn.yaml         project (git managed)
-  <project>/.reyn/config.yaml local overrides (gitignored)
+  <project>/reyn.local.yaml   local developer overrides (gitignored)
+  <project>/.reyn/config.yaml override of overrides (gitignored)
   CLI flags                   per-invocation
 
 Scalars: higher priority wins outright.

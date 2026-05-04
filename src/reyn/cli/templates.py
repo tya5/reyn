@@ -4,7 +4,7 @@ from __future__ import annotations
 
 REYN_YAML_TEMPLATE = """\
 # Reyn project configuration — commit this file.
-# Local overrides belong in .reyn/config.yaml (gitignored) — never commit secrets here.
+# Local overrides belong in reyn.local.yaml or .reyn/config.yaml (both gitignored) — never commit secrets here.
 
 # Default model class when --model is not specified.
 model: standard

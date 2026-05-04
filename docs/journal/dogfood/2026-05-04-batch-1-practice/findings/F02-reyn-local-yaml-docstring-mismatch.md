@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | LOW |
-| Status | deferred (Wave B coverage audit で実施) |
+| Status | **fixed** at `<COMMIT>` |
 | Scenario | scenario 1 (config 設定中に発見) |
 | Found | 2026-05-04 |
 
@@ -55,10 +55,17 @@ Priority (lowest → highest):
 dogfood の主観点 (= chat 会話 UX) と独立。 Wave B coverage audit で docs
 / config 系 finding をまとめて整理。
 
-## 提案修正 (Wave B で実施)
+## 修正内容
 
-- `config.py` docstring に `reyn.local.yaml` 行を追加
-- `cli/templates.py` のコメントも整える
+- `src/reyn/config.py` module docstring の priority list に
+  `<project>/reyn.local.yaml` 行を追加 (実際の load 順序と一致させた)
+- `src/reyn/cli/templates.py` の `REYN_YAML_TEMPLATE` コメントを
+  「Local overrides belong in `reyn.local.yaml` or `.reyn/config.yaml`」 に更新
+
+設計方針の変更 (「2 段を 1 段に」) は out of scope。
+
+## 旧・提案修正メモ (参考)
+
 - 一段方針: 「project レベル override 2 段持つ」 を docs で明示するか、
   さもなくば `reyn.local.yaml` を deprecated にして 1 段にするか
-  (個人的には後者の方が単純)
+  (個人的には後者の方が単純) — 設計議論として別 issue で検討
