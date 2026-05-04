@@ -13,6 +13,8 @@ Invariants tested:
   - eval_output_path redirects stdlib skills to reyn/local/<name>/eval.md
   - eval_output_path for reyn/local/ skills stays alongside skill.md
   - inject_resolved_paths mirrors _prep into _resolved for LLM use
+  - eval_builder skill.md declares compute_paths as trusted python step (B8-NEW-2)
+  - eval_builder permissions.python contains a trusted entry for analyze_skill_resolver
 
 Testing policy (docs/ja/contributing/testing.md):
   - No mocks (real instances only)
@@ -25,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from reyn.compiler.loader import load_dsl_skill
 from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path
 from reyn.stdlib.skills.eval_builder.analyze_skill import inject_resolved_paths
 from reyn.stdlib.skills.eval_builder.analyze_skill_resolver import compute_paths
@@ -216,3 +219,54 @@ def test_inject_resolved_paths_mirrors_prep_into_resolved(tmp_path, monkeypatch)
         assert resolved[key] == prep_result[key], (
             f"data._resolved.{key} must equal data._prep.{key} — no re-derivation"
         )
+
+
+# ── B8-NEW-2: trusted mode declaration (PureModeViolation fix) ────────────────
+
+
+def _load_eval_builder_skill() -> object:
+    """Load the eval_builder Skill object from its installed stdlib path."""
+    skill_dir, _ = resolve_skill_path("eval_builder")
+    skill_md = Path(skill_dir) / "skill.md"
+    return load_dsl_skill(skill_md)
+
+
+def test_eval_builder_permissions_python_has_trusted_compute_paths():
+    """Tier 2: eval_builder skill.md declares compute_paths as mode=trusted (B8-NEW-2 fix).
+
+    Without this declaration the OS falls back to pure mode, causing
+    PureModeViolation when analyze_skill_resolver.py imports reyn.skill.skill_paths.
+    Guards that the permissions.python block is present and correct.
+    """
+    skill = _load_eval_builder_skill()
+
+    trusted_entries = [
+        p for p in skill.permissions.python
+        if p.module == "./analyze_skill_resolver.py"
+        and p.function == "compute_paths"
+        and p.mode == "trusted"
+    ]
+    assert trusted_entries, (
+        "eval_builder skill.md must declare "
+        "./analyze_skill_resolver.py:compute_paths with mode=trusted in permissions.python"
+    )
+
+
+def test_eval_builder_permissions_python_inject_resolved_paths_is_pure():
+    """Tier 2: eval_builder skill.md declares inject_resolved_paths as mode=pure.
+
+    The pure-mode helper must remain pure (no reyn imports, no I/O).
+    Guards that the permissions block does not accidentally escalate it to trusted.
+    """
+    skill = _load_eval_builder_skill()
+
+    pure_entries = [
+        p for p in skill.permissions.python
+        if p.module == "./analyze_skill.py"
+        and p.function == "inject_resolved_paths"
+        and p.mode == "pure"
+    ]
+    assert pure_entries, (
+        "eval_builder skill.md must declare "
+        "./analyze_skill.py:inject_resolved_paths with mode=pure in permissions.python"
+    )

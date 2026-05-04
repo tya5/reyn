@@ -28,6 +28,16 @@ routing:
     negative:
       - "eval ってなに？"
       - "skill X を eval して"   # this is run, use eval skill instead
+permissions:
+  python:
+    - module: ./analyze_skill_resolver.py
+      function: compute_paths
+      mode: trusted
+      timeout: 5
+    - module: ./analyze_skill.py
+      function: inject_resolved_paths
+      mode: pure
+      timeout: 5
 ---
 
 ## Overview
