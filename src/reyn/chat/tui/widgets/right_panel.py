@@ -870,7 +870,13 @@ class RightPanel(Widget):
 
             agent_trees.append(tree)
 
-        return RichGroup(*agent_trees)
+        # interleave blank lines between agent blocks
+        items: list[Any] = []
+        for i, tree in enumerate(agent_trees):
+            if i > 0:
+                items.append(RichText(""))
+            items.append(tree)
+        return RichGroup(*items)
 
     def _render_memory(self) -> str:
         if self._project_root is None:
@@ -1066,8 +1072,9 @@ class RightPanel(Widget):
                     f"  [bold #44cc88]${ag['cost']:.4f}[/]"
                     if ag["has_cost"] else ""
                 )
+                # name col = 26 chars (2 indent + 24) to align with skill rows (4 + 22)
                 lines.append(
-                    f"[bold #dddddd]  {_esc(agent):<20}[/]"
+                    f"[bold #dddddd]  {_esc(agent):<24}[/]"
                     f"[#aaaaaa]{ag_tok:>7,} tok[/]"
                     f"{ag_cost}"
                     f"  [#777777]{ag['calls']}c[/]"
