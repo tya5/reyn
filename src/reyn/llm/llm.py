@@ -22,7 +22,15 @@ T = TypeVar("T")
 # Payload trace dump (opt-in via REYN_LLM_TRACE_DUMP env var)
 # ---------------------------------------------------------------------------
 
-_LLM_TRACE_DUMP_PATH: str | None = os.environ.get("REYN_LLM_TRACE_DUMP") or None
+
+def _get_trace_dump_path() -> str | None:
+    """Read trace dump path from env var at call time (allows runtime toggling).
+
+    Evaluated on every call so that the env var can be set or cleared while
+    the process is running (e.g. toggling debug tracing without restart).
+    Returns None when the env var is absent or empty — completely no-op.
+    """
+    return os.environ.get("REYN_LLM_TRACE_DUMP") or None
 
 
 def _dump_llm_request(payload: dict) -> str | None:
@@ -31,7 +39,8 @@ def _dump_llm_request(payload: dict) -> str | None:
     Returns request_id (str) so the response can be paired, or None when
     tracing is disabled (env var not set). Completely no-op when disabled.
     """
-    if not _LLM_TRACE_DUMP_PATH:
+    path = _get_trace_dump_path()
+    if not path:
         return None
     request_id = str(uuid.uuid4())
     record = {
@@ -41,7 +50,7 @@ def _dump_llm_request(payload: dict) -> str | None:
         **payload,
     }
     try:
-        with open(_LLM_TRACE_DUMP_PATH, "a", encoding="utf-8") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:  # never crash the main path
         logger.warning("llm trace dump write failed: %s", exc)
@@ -51,7 +60,8 @@ def _dump_llm_request(payload: dict) -> str | None:
 
 def _dump_llm_response(request_id: str | None, payload: dict) -> None:
     """If REYN_LLM_TRACE_DUMP is set and request_id is non-None, append response record."""
-    if not _LLM_TRACE_DUMP_PATH or not request_id:
+    path = _get_trace_dump_path()
+    if not path or not request_id:
         return
     record = {
         "kind": "response",
@@ -60,7 +70,7 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
         **payload,
     }
     try:
-        with open(_LLM_TRACE_DUMP_PATH, "a", encoding="utf-8") as f:
+        with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception as exc:
         logger.warning("llm trace dump write failed: %s", exc)

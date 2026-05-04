@@ -3,6 +3,15 @@
 Tier 2: OS invariant — verifies the dump infrastructure's public behaviour:
 file creation, JSONL parseability, record structure, caller_hint routing,
 and complete no-op when the env var is absent.
+
+Design notes (testing policy alignment):
+- Dump path controlled exclusively via monkeypatch.setenv (public API).
+  No monkeypatch.setattr on private module constants.
+- Unit tests for _dump_llm_request / _dump_llm_response verify dump logic
+  directly without any LLM call (option iii: pure function unit test).
+- Integration tests use a real callable stub for litellm.acompletion
+  (allowed by testing policy: "monkeypatch.setattr with a real callable
+  is acceptable when the replacement is a real callable, not MagicMock").
 """
 from __future__ import annotations
 
@@ -67,9 +76,137 @@ def _minimal_tools():
 
 MODEL = "gemini-2.5-flash-lite"
 
+_DECIDE_JSON = (
+    '{"type":"decide","control":{"type":"finish","decision":"finish",'
+    '"next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},'
+    '"artifact":{"type":"t","data":{}},"ops":[]}'
+)
+
 
 # ---------------------------------------------------------------------------
-# Tier 2 invariants
+# Tier 2 unit tests: _dump_llm_request and _dump_llm_response directly
+# (No LLM call needed — dump logic is a pure deterministic function)
+# ---------------------------------------------------------------------------
+
+class TestDumpRequestUnit:
+    """Tier 2: unit tests for _dump_llm_request via env var (public API)."""
+
+    def test_dump_request_writes_jsonl_when_env_set(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_request appends a JSON line when env var is set."""
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        payload = {"model": "test-model", "messages": [{"role": "user", "content": "hi"}]}
+        request_id = llm_mod._dump_llm_request(payload)
+
+        assert request_id is not None, "Must return a request_id when dump is enabled"
+        assert trace_file.exists(), "Trace file must be created"
+
+        lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert len(lines) == 1
+        record = json.loads(lines[0])
+        assert record["kind"] == "request"
+        assert record["request_id"] == request_id
+        assert record["model"] == "test-model"
+        assert "timestamp" in record
+        assert "messages" in record
+
+    def test_dump_request_returns_none_when_env_absent(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_request returns None and creates no file when env var is absent."""
+        import reyn.llm.llm as llm_mod
+
+        monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
+
+        payload = {"model": "test-model", "messages": []}
+        request_id = llm_mod._dump_llm_request(payload)
+
+        assert request_id is None, "Must return None when dump is disabled"
+
+    def test_dump_request_appends_multiple_records(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_request appends each call as a new line (no overwrite)."""
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        payload = {"model": "m", "messages": []}
+        rid1 = llm_mod._dump_llm_request(payload)
+        rid2 = llm_mod._dump_llm_request(payload)
+
+        assert rid1 != rid2, "Each call must produce a distinct request_id"
+        lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert len(lines) == 2, "Each call appends one line"
+        ids = {json.loads(l)["request_id"] for l in lines}
+        assert ids == {rid1, rid2}
+
+
+class TestDumpResponseUnit:
+    """Tier 2: unit tests for _dump_llm_response via env var (public API)."""
+
+    def test_dump_response_writes_paired_record(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_response appends a response record paired by request_id."""
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        rid = llm_mod._dump_llm_request({"model": "m", "messages": []})
+        llm_mod._dump_llm_response(rid, {"content": "ok", "finish_reason": "stop", "usage": {}})
+
+        lines = [l for l in trace_file.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert len(lines) == 2
+        kinds = [json.loads(l)["kind"] for l in lines]
+        assert "request" in kinds
+        assert "response" in kinds
+
+        req = next(json.loads(l) for l in lines if json.loads(l)["kind"] == "request")
+        resp = next(json.loads(l) for l in lines if json.loads(l)["kind"] == "response")
+        assert req["request_id"] == resp["request_id"] == rid
+
+    def test_dump_response_noop_when_env_absent(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_response is a no-op when env var is absent."""
+        import reyn.llm.llm as llm_mod
+
+        monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
+        # Should not raise; returns nothing
+        llm_mod._dump_llm_response("fake-id", {"content": "x", "finish_reason": "stop", "usage": {}})
+
+    def test_dump_response_noop_when_request_id_is_none(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: _dump_llm_response is a no-op when request_id is None (tracing disabled path)."""
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace.jsonl"
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+
+        # request_id=None means the request dump was skipped (env was absent at request time)
+        llm_mod._dump_llm_response(None, {"content": "x", "finish_reason": "stop", "usage": {}})
+
+        assert not trace_file.exists(), "No file should be created when request_id is None"
+
+    def test_runtime_env_toggle(self, tmp_path: Path, monkeypatch) -> None:
+        """Tier 2: dump respects env var at call time — toggling mid-process works."""
+        import reyn.llm.llm as llm_mod
+
+        trace_file = tmp_path / "trace.jsonl"
+
+        # Env absent → no dump
+        monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
+        rid_off = llm_mod._dump_llm_request({"model": "m", "messages": []})
+        assert rid_off is None
+
+        # Env set → dump enabled
+        monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
+        rid_on = llm_mod._dump_llm_request({"model": "m", "messages": []})
+        assert rid_on is not None
+        assert trace_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Tier 2 integration tests: full call_llm / call_llm_tools path
+# litellm.acompletion replaced by real callable stub (policy-allowed)
+# Dump path controlled by monkeypatch.setenv (public API, no private setattr)
 # ---------------------------------------------------------------------------
 
 class TestTraceDumpDisabledByDefault:
@@ -79,15 +216,11 @@ class TestTraceDumpDisabledByDefault:
         """Tier 2: call_llm with env var absent leaves no trace file."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
-        # Ensure env var is absent
         monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
 
-        # Reload llm module so _LLM_TRACE_DUMP_PATH picks up the cleared env var
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", None)
-
-        stub = _ScriptedLLM('{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"t","data":{}},"ops":[]}')
+        stub = _ScriptedLLM(_DECIDE_JSON)
         monkeypatch.setattr(litellm, "acompletion", stub)
 
         dummy_trace = tmp_path / "should_not_exist.jsonl"
@@ -101,11 +234,9 @@ class TestTraceDumpDisabledByDefault:
         """Tier 2: call_llm_tools with env var absent leaves no trace file."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
-
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", None)
 
         stub = _ScriptedLLM()
         monkeypatch.setattr(litellm, "acompletion", stub)
@@ -130,14 +261,12 @@ class TestTraceDumpEnabled:
         """Tier 2: call_llm writes 1 request + 1 response entry when env var is set."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
 
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
-
-        stub = _ScriptedLLM('{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"t","data":{}},"ops":[]}')
+        stub = _ScriptedLLM(_DECIDE_JSON)
         monkeypatch.setattr(litellm, "acompletion", stub)
 
         frame = _minimal_frame()
@@ -170,12 +299,10 @@ class TestTraceDumpEnabled:
         """Tier 2: call_llm_tools includes tools schema in request record."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_tools.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
 
         stub = _ScriptedLLM()
         monkeypatch.setattr(litellm, "acompletion", stub)
@@ -205,14 +332,12 @@ class TestCallerHint:
         """Tier 2: trace_caller kwarg arrives as caller_hint in the request record."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_caller.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
 
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
-
-        stub = _ScriptedLLM('{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"t","data":{}},"ops":[]}')
+        stub = _ScriptedLLM(_DECIDE_JSON)
         monkeypatch.setattr(litellm, "acompletion", stub)
 
         frame = _minimal_frame()
@@ -228,14 +353,12 @@ class TestCallerHint:
         """Tier 2: when trace_caller is not passed, caller_hint defaults to 'unknown'."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_default.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
 
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
-
-        stub = _ScriptedLLM('{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"t","data":{}},"ops":[]}')
+        stub = _ScriptedLLM(_DECIDE_JSON)
         monkeypatch.setattr(litellm, "acompletion", stub)
 
         frame = _minimal_frame()
@@ -252,12 +375,10 @@ class TestCallerHint:
         """Tier 2: trace_caller kwarg arrives as caller_hint in call_llm_tools request record."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_caller_tools.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
-
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
 
         stub = _ScriptedLLM()
         monkeypatch.setattr(litellm, "acompletion", stub)
@@ -283,14 +404,12 @@ class TestMultipleCallsAccumulate:
         """Tier 2: 2 consecutive call_llm calls produce 4 records (2 req + 2 resp) with distinct request_ids."""
         import asyncio
         import litellm
+        import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_multi.jsonl"
         monkeypatch.setenv("REYN_LLM_TRACE_DUMP", str(trace_file))
 
-        import reyn.llm.llm as llm_mod
-        monkeypatch.setattr(llm_mod, "_LLM_TRACE_DUMP_PATH", str(trace_file))
-
-        stub = _ScriptedLLM('{"type":"decide","control":{"type":"finish","decision":"finish","next_phase":null,"confidence":0.9,"reason":{"summary":"ok"}},"artifact":{"type":"t","data":{}},"ops":[]}')
+        stub = _ScriptedLLM(_DECIDE_JSON)
         monkeypatch.setattr(litellm, "acompletion", stub)
 
         frame = _minimal_frame()
