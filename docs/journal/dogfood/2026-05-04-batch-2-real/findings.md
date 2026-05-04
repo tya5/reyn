@@ -16,13 +16,13 @@
 | [B2-H1](findings/B2-H1-specialist-describe-invoke-fail.md) | HIGH | specialist の RouterLoop が `describe_skill` まで来て `invoke_skill` せず沈黙 — F3 の亡霊が specialist 側に宿る | **fixed** at `83bad83` (parallel race: commit message は B2-H2 ラベル、 中身は B2-H1) |
 | [B2-H2](findings/B2-H2-default-silent-absorption-marker.md) | HIGH | default が `_no_reply_marker` を飲み込んで「かしこまりました」 — 失敗が user に届かない | **fixed** at `e9216f6` |
 | [B2-H3](findings/B2-H3-mcp-permission-missing.md) | HIGH | `with-mcp.yaml` に `mcp.filesystem: allow` が無く headless 実行が必ず permission_denied | **fixed** at `a75587d` |
-| [B2-M1](findings/B2-M1-router-hallucinates-skill-name.md) | MED | router が invoke_skill は呼んだが skill 名を `general.summarize` と hallucinate | open |
-| [B2-M2](findings/B2-M2-tool-failed-fallback-english.md) | MED | tool_failed 後の fallback reply が英語 — F11 は正常経路のみカバー | open |
-| [B2-M3](findings/B2-M3-mcp-teardown-cancel-scope.md) | MED | MCP teardown で anyio cancel scope 違反 RuntimeError が stderr に残る | open |
-| [B2-M4](findings/B2-M4-narrator-generic-completion.md) | MED | narrator の reply が「完了しました」のみで skill 出力が含まれず 2-turn 体験 | open |
+| [B2-M1](findings/B2-M1-router-hallucinates-skill-name.md) | MED | router が invoke_skill は呼んだが skill 名を `general.summarize` と hallucinate | partial fix at `ca116f3` (batch 3+5 で hallucination 自体は解消、 attractor 再発時は monitoring) |
+| [B2-M2](findings/B2-M2-tool-failed-fallback-english.md) | MED | tool_failed 後の fallback reply が英語 — F11 は正常経路のみカバー | open → tracked as **G10** in [giveup-tracker](../giveup-tracker.md) |
+| [B2-M3](findings/B2-M3-mcp-teardown-cancel-scope.md) | MED | MCP teardown で anyio cancel scope 違反 RuntimeError が stderr に残る | open → tracked as **G11** in [giveup-tracker](../giveup-tracker.md) (batch 3/4 で再現) |
+| [B2-M4](findings/B2-M4-narrator-generic-completion.md) | MED | narrator の reply が「完了しました」のみで skill 出力が含まれず 2-turn 体験 | **resolved** in batch 3 S4 (= 自然改善、 1 turn で内容届く)、 batch 3 [B3-INFO-B](../2026-05-04-batch-3-ask-user-and-nested/findings/B3-S4-observation.md) 参照 |
 | [B2-L1](findings/B2-L1-sync-tool-duplicate-call.md) | LOW | `remember_shared` が同一 args で 2 回 fire — F5 dedupe は async 専用 | open |
 | [B2-L2](findings/B2-L2-recall-path-redundant-write.md) | LOW | recall turn で `remember_shared` を不要に再 call → frontmatter drift | open |
-| [B2-L3](findings/B2-L3-dogfood-rig-history-cache.md) | LOW | dogfood rig reset が `history.jsonl` を残す — 正しくは `rm -rf .reyn/` | open |
+| [B2-L3](findings/B2-L3-dogfood-rig-history-cache.md) | LOW | dogfood rig reset が `history.jsonl` を残す — 正しくは `rm -rf .reyn/` | resolved (= scenarios.md で `rm -rf .reyn/` 必須注記、 batch 3+ 適用) |
 | [B2-INFO](findings/B2-INFO-ask-user-not-observed.md) | INFO | S4 ask_user 経路: skill が起動前に router が pre-skill clarification → IR op 非発火。 bug ではない | batch 3 再設計 |
 
 **HIGH 3 件全て fixed** (B2-H1: `83bad83`、 B2-H2: `e9216f6`、 B2-H3: `a75587d`)。
