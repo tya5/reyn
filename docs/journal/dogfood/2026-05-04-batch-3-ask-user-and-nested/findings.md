@@ -13,10 +13,10 @@
 
 | ID | 重要度 | 一行で言うと | 状態 |
 |---|---|---|---|
-| [B3-H1](findings/B3-S1-observation.md) | HIGH | specialist の RouterLoop が `list_skills` 後に空 reply で停止 — B2-H1 fix の variant attractor | open |
-| [B3-M1](findings/B3-S1-observation.md) | MED | scenarios.md の S1 に specialist agent 作成手順が抜け、 setup 段階で fail (= scenario 設計の不備) | open |
-| [B3-M2](findings/B3-S2-observation.md) | MED | router が `read_local_files` 明示 + 4 turn 全てで `list_skills` / `invoke_skill` 呼ばず direct reply (B2-M1 family の再発) | open |
-| [B3-M3](findings/B3-S5-observation.md) | MED | `list_skills` で matching skill 発見後に `invoke_skill` skip して direct reply の attractor (B3-H1 と同 family、 default 側) | open |
+| [B3-H1](findings/B3-S1-observation.md) | HIGH | specialist の RouterLoop が `list_skills` 後に空 reply で停止 — B2-H1 fix の variant attractor | **fixed** at `48676ad` |
+| [B3-M1](findings/B3-S1-observation.md) | MED | scenarios.md の S1 に specialist agent 作成手順が抜け、 setup 段階で fail (= scenario 設計の不備) | **fixed** at `d8328b2` |
+| [B3-M2](findings/B3-S2-observation.md) | MED | router が `read_local_files` 明示 + 4 turn 全てで `list_skills` / `invoke_skill` 呼ばず direct reply (B2-M1 family の再発) | likely fixed by `48676ad` (batch 4 で再確認) |
+| [B3-M3](findings/B3-S5-observation.md) | MED | `list_skills` で matching skill 発見後に `invoke_skill` skip して direct reply の attractor (B3-H1 と同 family、 default 側) | **fixed** at `48676ad` |
 | [B3-INFO-A](findings/B3-S3-observation.md) | INFO | `eval_builder` が `run_skill` 未使用設計 → S3 setup 不可。 stdlib で `run_skill` を使うのは `eval` / `skill_improver` / `judge_phase` のみ | batch 4 再設計 |
 | [B3-INFO-B](findings/B3-S4-observation.md) | INFO | B2-M4 (narrator 「完了しました」 のみ) は **自然改善** で 1 turn に内容が届く | resolved |
 | [B3-L1](findings/B3-S1-observation.md) | LOW | `:cost` slash の pexpect capture 失敗 — CUI mode で `/quit` のみ slash 認識 | open |
@@ -24,6 +24,11 @@
 | [B3-L3](findings/B3-S4-observation.md) | LOW | B2-M3 (MCP teardown anyio cancel scope RuntimeError) 再現 | open |
 
 **HIGH 1 件 / MED 3 件 / INFO 2 件 / LOW 3 件** (合計 9)。
+**HIGH 1 件 + MED 2 件 fixed**: B3-H1 と B3-M3 を `48676ad` で同時解消
+(`router_system_prompt.py` の Behaviour に「list_skills 後に matching skill が
+あれば describe_skill か invoke_skill を呼ぶ」 ルール追加)、 B3-M1 を
+`d8328b2` で解消 (specialist setup 手順を scenarios.md に追記)。 B3-M2 は
+B3-H1 と同 family なので `48676ad` で likely 解消、 batch 4 で実 LLM 再確認。
 
 **B2 fix 効果検証**:
 
