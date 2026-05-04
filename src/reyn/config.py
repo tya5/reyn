@@ -182,7 +182,14 @@ class SkillResumeConfig:
 @dataclass
 class ReynConfig:
     model: str = "standard"
-    output_language: str = "ja"
+    # Optional. None = user did not configure; downstream callers decide
+    # how to handle (chat router skips the language directive in its
+    # system prompt; phase / skill paths default to "ja" preserving the
+    # Japanese-enterprise default for skill artifacts). Setting an
+    # explicit value (e.g. "ja", "en") forces a strict directive in the
+    # chat router prompt — see `_ROUTER_RETRY_EXHAUSTED_MSG` and
+    # `build_system_prompt(output_language=...)`.
+    output_language: str | None = None
     shell_allowed: bool = False
     models: dict[str, str] = field(default_factory=dict)
     # LiteLLM proxy: non-secret base URL only.
@@ -419,8 +426,12 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
+    # `output_language` intentionally omitted from merged defaults so we
+    # can distinguish "user did not configure" (= None, chat router will
+    # skip the language directive) from "user explicitly set it" (= str,
+    # router prompt enforces it strictly). See `ReynConfig.output_language`.
     merged: dict = {"model": "standard",
-                    "output_language": "ja", "shell_allowed": False, "models": {}, "permissions": {},
+                    "shell_allowed": False, "models": {}, "permissions": {},
                     "limits": {}, "mcp": {}}
 
     # User global
@@ -441,9 +452,18 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         _migrate_legacy_keys(local, str(project_root / ".reyn" / "config.yaml"))
         merged = _merge(merged, local)
 
+    raw_ol = merged.get("output_language")
+    output_language: str | None
+    if isinstance(raw_ol, str) and raw_ol.strip():
+        output_language = raw_ol.strip()
+    else:
+        # Includes the case where the key is missing entirely AND the
+        # case where the user explicitly set output_language to "" or
+        # null in yaml (= "I want the OS to not pin a language").
+        output_language = None
     return ReynConfig(
         model=str(merged.get("model", "standard")),
-        output_language=str(merged.get("output_language", "ja")),
+        output_language=output_language,
         shell_allowed=bool(merged.get("shell_allowed", False)),
         models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
         api_base=str(merged.get("api_base") or ""),

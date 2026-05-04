@@ -75,6 +75,8 @@ def run(args: argparse.Namespace) -> None:
 
     # Eval has its own model precedence: CLI > spec > config
     model = args.model or spec.model or session.config.model
+    # output_language is Optional[str]; None means "no language directive
+    # in LLM prompts, infer from user input". No silent regional default.
     output_language = session.output_language_for(args)
     resolved_model = session.resolver.resolve(model)
     model_display = f"{model} → {resolved_model}" if resolved_model != model else model

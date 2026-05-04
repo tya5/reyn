@@ -76,7 +76,7 @@ class Agent:
         self,
         skill: Skill,
         initial_input: dict,
-        output_language: str = "ja",
+        output_language: str | None = None,
         chain_id: str | None = None,
         skill_registry: "SkillRegistry | None" = None,
         state_log: "StateLog | None" = None,

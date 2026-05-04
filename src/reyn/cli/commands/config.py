@@ -61,7 +61,7 @@ def _show() -> None:
         "model":           config.model,
         "models":          config.models,
         "api_base":        config.api_base or "(not set)",
-        "output_language": config.output_language,
+        "output_language": config.output_language or "(not set — chat router skips language directive; phase paths default to ja)",
         "shell_allowed":   config.shell_allowed,
         "permissions":     config.permissions,
         "mcp":             config.mcp if config.mcp else "(not configured)",

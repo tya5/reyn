@@ -32,7 +32,11 @@ class RouterLoopHost(Protocol):
     chat_id: str
     agent_name: str
     agent_role: str
-    output_language: str  # BCP-47 code, e.g. "ja" or "en"
+    # BCP-47 code (e.g. "ja", "en") when the user explicitly configured
+    # output_language; None when unset, in which case build_system_prompt
+    # skips the language directive entirely so the LLM picks based on
+    # the user's input language naturally.
+    output_language: str | None
 
     @property
     def events(self) -> Any:

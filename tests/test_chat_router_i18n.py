@@ -37,9 +37,13 @@ def _make_session(
     tmp_path: Path,
     *,
     cap: int = 3,
-    output_language: str = "ja",
+    output_language: str | None = "ja",
 ) -> ChatSession:
-    """Minimal ChatSession with a real BudgetTracker and configurable language."""
+    """Minimal ChatSession with a real BudgetTracker and configurable language.
+
+    output_language=None tests the unset-user behavior (= no language
+    directive in router prompt; fallback messages use English).
+    """
     cost = CostConfig(router_invocations_per_turn=cap)
     bt = BudgetTracker(cost)
     return ChatSession(
@@ -207,9 +211,11 @@ def test_system_prompt_contains_explicit_en_instruction():
     )
 
 
-def test_system_prompt_default_output_language_is_en():
-    """Tier 2: build_system_prompt defaults to English when output_language is
-    omitted — callers that haven't been updated yet get a safe English default.
+def test_system_prompt_omits_language_directive_when_output_language_is_none():
+    """Tier 2: when output_language is None (= user did not configure),
+    build_system_prompt does NOT emit any 'Always reply in language: <code>'
+    directive. The LLM picks the reply language based on user input
+    naturally instead of being forced into a Reyn default. (Q2 follow-up.)
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -217,9 +223,33 @@ def test_system_prompt_default_output_language_is_en():
         available_skills=[],
         available_agents=[],
         memory_index={"status": "not_found", "content": ""},
-        # output_language intentionally omitted
+        output_language=None,
     )
-    assert "language: en" in prompt
+    # No "Always reply in language" line at all.
+    assert "Always reply in language" not in prompt, (
+        f"Expected no language directive when output_language=None, "
+        f"but got:\n"
+        + "\n".join(l for l in prompt.splitlines() if "language" in l.lower())
+    )
+    # Behaviour section still exists (just without the language line).
+    assert "## Behaviour" in prompt
+
+
+def test_system_prompt_default_output_language_is_none():
+    """Tier 2: build_system_prompt defaults to None when output_language is
+    omitted — same as explicit None (= no language directive). Prior behavior
+    forced 'language: en' as a hardcoded default; that masked the unset-user
+    case, so we now treat omitted == None.
+    """
+    prompt = build_system_prompt(
+        agent_name="chat",
+        agent_role="assistant",
+        available_skills=[],
+        available_agents=[],
+        memory_index={"status": "not_found", "content": ""},
+        # output_language intentionally omitted → defaults to None
+    )
+    assert "Always reply in language" not in prompt
 
 
 def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypatch):
@@ -257,3 +287,104 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
         f"Prompt lines with 'language':\n"
         + "\n".join(l for l in system_prompt.splitlines() if "language" in l.lower())
     )
+
+
+# ---------------------------------------------------------------------------
+# Q2: Optional[str] propagation — unset = no directive, no regional default
+# ---------------------------------------------------------------------------
+
+
+def test_config_output_language_default_is_none(tmp_path, monkeypatch):
+    """Tier 2: when no config file sets output_language, ReynConfig loads
+    with output_language=None (= unset). Reyn explicitly does not silently
+    default to a regional language; the chat router treats None as "no
+    directive, LLM picks based on user input".
+    """
+    from reyn.config import load_config
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))  # avoid reading ~/.reyn
+
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.output_language is None
+
+
+def test_config_output_language_explicit_value_preserved(tmp_path, monkeypatch):
+    """Tier 2: when reyn.yaml sets output_language=ja, ReynConfig
+    preserves the explicit value (= no normalization to None for set
+    values; only the unset case yields None).
+    """
+    from reyn.config import load_config
+
+    (tmp_path / "reyn.yaml").write_text("output_language: ja\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.output_language == "ja"
+
+
+def test_config_output_language_empty_string_treated_as_unset(
+    tmp_path, monkeypatch
+):
+    """Tier 2: yaml `output_language: ""` (= explicit empty) is treated as
+    unset (= None). Allows users to opt out of any language pinning even
+    when a project-level reyn.yaml sets a value, by overriding to "" in
+    reyn.local.yaml.
+    """
+    from reyn.config import load_config
+
+    (tmp_path / "reyn.yaml").write_text("output_language: ja\n", encoding="utf-8")
+    (tmp_path / "reyn.local.yaml").write_text(
+        'output_language: ""\n', encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.output_language is None
+
+
+def test_retry_exhausted_fallback_is_english_when_output_language_is_none(
+    tmp_path, monkeypatch
+):
+    """Tier 2: when output_language is None (= user did not configure),
+    the router retry-exhausted fallback message is English (= the safe
+    global default for an internal error string when the user has not
+    expressed a language preference). Regional languages like ja are
+    NOT silently chosen as fallback.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path, cap=3, output_language=None)
+    session.is_attached = True
+
+    delivered: list[dict] = []
+
+    async def fake_put_outbox(msg):
+        delivered.append({
+            "kind": msg.kind,
+            "text": msg.text,
+            "meta": msg.meta,
+        })
+
+    session._put_outbox = fake_put_outbox  # type: ignore[assignment]
+
+    from reyn.chat.session import RouterCapExceeded
+
+    async def run():
+        await session._emit_router_cap_exhausted_user(
+            RouterCapExceeded(count=3, cap=3, last_reason="loop"),
+            chain_id="chain-test",
+        )
+
+    _run(run())
+
+    # The agent reply should be the English fallback, not the Japanese one.
+    agent_msgs = [m for m in delivered if m["kind"] == "agent"]
+    assert agent_msgs, f"no agent reply emitted; got: {delivered}"
+    assert agent_msgs[0]["text"] == _ROUTER_RETRY_EXHAUSTED_MSG["en"], (
+        f"Expected English fallback when output_language=None; got: "
+        f"{agent_msgs[0]['text']!r}"
+    )
+    # Specifically NOT the ja message.
+    assert agent_msgs[0]["text"] != _ROUTER_RETRY_EXHAUSTED_MSG["ja"]

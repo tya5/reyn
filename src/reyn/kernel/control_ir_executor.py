@@ -244,7 +244,7 @@ class ControlIRExecutor:
             model="standard",
             resolver=self._resolver,
             subscribers=self.events.subscribers,
-            output_language="ja",
+            output_language=None,
             max_phase_visits=self._max_phase_visits,
             sub_state_dir_override=None,
             state_dir_strategy="control_ir",

@@ -57,3 +57,38 @@ Do NOT switch language even for error messages or clarifying questions.
 - hardcoded English がまだ残ってないか grep audit
 - 多言語 (= en / ja 以外) 対応の設計判断 — full BCP-47 サポートか、
   enterprise-targeted な ja/en 限定か
+
+## Q2 follow-up (= F11 修正の上位互換、 user 指摘 2026-05-04)
+
+F11 修正後 user 指摘:
+
+> output_language はユーザの設定がなければ llm へのプロンプトから外す方が
+> 良いのかもね
+
+> 言語のフォールバックは禁止じゃないの？ja へのフォールバックは最悪だよ。
+> 世界中の人に使ってもらいたいんだから。
+
+つまり F11 の修正で `Always reply in language: ja` を出すようにしたが、
+**user が config で output_language を設定していないとき** にも ja default が
+prompt に baked される → 英語 user に Japanese forced で UX 破綻 risk。
+global 化を目指す project では「設定しなければ言語強制しない」 が正解。
+
+修正内容 (= Q2 wave):
+
+- `ReynConfig.output_language: str | None = None` に変更 (= 「未設定」 を None で signal)
+- 全 LLM-facing path (chat router / phase / skill / sub_skill / preprocessor /
+  postprocessor / control_ir_executor / RunSkillIROp / ContextFrame) を
+  Optional[str] 透過対応
+- `build_system_prompt`: None なら `Always reply in language: ...` directive を
+  完全 omit (= LLM が user input 言語で自然推論)
+- `_ROUTER_RETRY_EXHAUSTED_MSG`: None なら en fallback (= internal error
+  string の安全 default、 ja/en 以外への regional default は禁止)
+- `or "ja"` 形式の silent fallback を user-facing flow から全廃 (CLI run /
+  eval / chat session の skill spawn 経路 4 箇所)
+
+5 件の Tier 2 test 追加 (Q2):
+- config: 未設定 → None
+- config: 明示値 → そのまま
+- config: 空文字列 → None (= override で「言語固定外したい」 を表現可能)
+- system prompt: None → directive 無し
+- retry exhausted: None → en fallback (regional default に滑り込まない)

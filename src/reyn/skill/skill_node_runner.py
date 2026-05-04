@@ -23,7 +23,7 @@ async def _adapt_artifact(
     target_schema: dict,
     target_type: str,
     node_id: str,
-    output_language: str,
+    output_language: str | None,
     model: str,
     resolver: ModelResolver,
     events: EventLog,
@@ -37,16 +37,24 @@ async def _adapt_artifact(
     """
     import litellm
 
-    prompt = (
-        f"Convert the following data to the target schema.\n\n"
-        f"Source (type: {source_type}):\n"
-        f"{json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
-        f"Target schema:\n"
-        f"{json.dumps(target_schema, ensure_ascii=False, indent=2)}\n\n"
+    prompt_lines = [
+        "Convert the following data to the target schema.\n",
+        f"Source (type: {source_type}):",
+        json.dumps(data, ensure_ascii=False, indent=2),
+        "",
+        "Target schema:",
+        json.dumps(target_schema, ensure_ascii=False, indent=2),
+        "",
         f'Produce a JSON object with "type" set to "{target_type}" and '
-        f'"data" populated from the source, mapped to the target schema fields.\n'
-        f"Output language: {output_language}"
-    )
+        f'"data" populated from the source, mapped to the target schema fields.',
+    ]
+    # Only emit the output-language directive when the caller (or top-level
+    # config) actually specified one; otherwise the LLM picks language
+    # based on the source data naturally. Reyn does not silently default
+    # to a regional language for users who haven't configured one.
+    if output_language:
+        prompt_lines.append(f"Output language: {output_language}")
+    prompt = "\n".join(prompt_lines)
     response = await litellm.acompletion(
         model=resolver.resolve(model),
         messages=[{"role": "user", "content": prompt}],
@@ -77,7 +85,7 @@ async def execute_skill_node(
     input_artifact: dict,
     target_schema: dict,
     target_type: str,
-    output_language: str,
+    output_language: str | None,
     *,
     model: str,
     strict: bool,

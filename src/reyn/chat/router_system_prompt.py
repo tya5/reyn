@@ -23,7 +23,7 @@ def build_system_prompt(
     memory_index: dict,
     file_permissions: dict | None = None,
     mcp_servers: list[dict] | None = None,
-    output_language: str = "en",
+    output_language: str | None = None,
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -42,10 +42,15 @@ def build_system_prompt(
             When non-empty (either list), a Files section is rendered.
         mcp_servers: optional list of ``{"name": ..., "description": ...}``.
             When non-empty, an MCP servers section is rendered.
-        output_language: BCP-47-style language code (e.g. "ja", "en").
-            When set, the Behaviour section instructs the LLM to reply in
-            that specific language rather than just "the user's language".
-            Defaults to "en" so callers that omit it get deterministic English.
+        output_language: BCP-47-style language code (e.g. "ja", "en"),
+            or None when unset. When set, the Behaviour section emits a
+            strict "Always reply in language: <code>" directive so the
+            LLM stays in that language even on clarifying / error paths.
+            When None (= user did not configure output_language), no
+            language directive is emitted — the LLM picks the reply
+            language based on the user's input naturally. This avoids
+            forcing a default (= "ja") onto users who haven't expressed
+            a preference.
     """
     skill_section = _render_skills(available_skills)
     agent_section = _render_agents(available_agents)
@@ -126,13 +131,18 @@ def build_system_prompt(
             parts.append(f"  {line}")
         parts.append("")
     parts.append("## Behaviour")
-    # Explicit language instruction: a concrete language tag is stronger than
-    # "match the user's language" — the LLM must produce text in this language
-    # even on clarifying-question and error fallback paths (F11).
-    parts.append(
-        f"  - Always reply in language: {output_language}."
-        "  Do NOT switch language even for error messages or clarifying questions."
-    )
+    # Explicit language instruction (only when the user configured one):
+    # a concrete language tag is stronger than "match the user's language"
+    # — the LLM stays in this language even on clarifying-question and
+    # error fallback paths (F11). When output_language is None (= user did
+    # not configure), we omit the directive entirely so the LLM can pick
+    # the reply language based on the user's input naturally instead of
+    # being forced into a Reyn default. (Q2 follow-up to F11 fix.)
+    if output_language:
+        parts.append(
+            f"  - Always reply in language: {output_language}."
+            "  Do NOT switch language even for error messages or clarifying questions."
+        )
     parts.append(
         "  - First decide intent (Action / Recall / Save / Forget / Reply),"
     )

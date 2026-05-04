@@ -123,7 +123,7 @@ class PreprocessorExecutor:
             model=self._model,
             resolver=self._resolver,
             subscribers=self._subscribers,
-            output_language="ja",  # set by caller-supplied param when needed
+            output_language=None,  # set by caller-supplied param when needed
             max_phase_visits=self._max_phase_visits,
             sub_state_dir_override=None,
             state_dir_strategy="preprocessor",
@@ -138,7 +138,7 @@ class PreprocessorExecutor:
         )
 
     async def run(
-        self, phase: "Phase", artifact: dict, output_language: str,
+        self, phase: "Phase", artifact: dict, output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
         """Apply all preprocessor steps; return (enriched_artifact, accumulated_token_usage)."""
         if not phase.preprocessor:
@@ -183,7 +183,7 @@ class PreprocessorExecutor:
 
     async def _apply_step(
         self, step: "PreprocessorStep", artifact: dict, index: int,
-        phase: "Phase", output_language: str,
+        phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
         from reyn.schemas.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
         phase_name = phase.name
@@ -219,7 +219,7 @@ class PreprocessorExecutor:
 
     async def _apply_run_op(
         self, step: Any, artifact: dict, index: int,
-        phase: "Phase", output_language: str,
+        phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
         from reyn.op_runtime import execute_op
         ctx = self._build_op_ctx(phase, index)
@@ -287,7 +287,7 @@ class PreprocessorExecutor:
 
     async def _apply_iterate(
         self, step: Any, artifact: dict, index: int,
-        phase: "Phase", output_language: str,
+        phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
         from reyn.schemas.models import RunOpStep
         from reyn.op_runtime import execute_op

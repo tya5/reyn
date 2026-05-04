@@ -38,7 +38,7 @@ async def invoke_sub_skill(
     subscribers: list,
     resolver: "ModelResolver",
     intervention_bus: "InterventionBus | None" = None,
-    output_language: str = "ja",
+    output_language: str | None = None,
     max_phase_visits: int = 25,
     caller: str = "direct",
     parent_run_id: str | None = None,

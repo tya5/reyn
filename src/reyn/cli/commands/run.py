@@ -82,6 +82,11 @@ def run(args: argparse.Namespace) -> None:
     initial_input = _parse_cli_input(raw_input)
 
     model, resolved_model = session.model_for(args)
+    # output_language is Optional[str]. None propagates all the way down
+    # to the LLM prompt builders, which skip the language directive so
+    # the LLM picks the reply language based on the user's input
+    # naturally. Reyn explicitly does not fall back to a regional default
+    # (= no silent "ja" default) — the project targets a global audience.
     output_language = session.output_language_for(args)
     shell_allowed = session.shell_allowed_for(args)
     limits = session.limits_for(args)

@@ -397,7 +397,7 @@ class OSRuntime:
         current_phase: str,
         artifact: dict,
         candidates: list[CandidateOutput],
-        output_language: str,
+        output_language: str | None,
         control_ir_results: list[dict] | None = None,
         artifact_path: str | None = None,
         remaining_act_turns: int | None = None,
@@ -884,7 +884,7 @@ class OSRuntime:
         phase: str,
         artifact: dict,
         candidates: list[CandidateOutput],
-        output_language: str,
+        output_language: str | None,
         max_act_turns: int,
         max_phase_retries: int,
         artifact_path: str | None,
@@ -997,7 +997,7 @@ class OSRuntime:
         phase: str,
         artifact: dict,
         candidates: list[CandidateOutput],
-        output_language: str,
+        output_language: str | None,
         prior_attempts: list[dict[str, str]],
         max_phase_retries: int,
     ) -> tuple[NormalizationResult, LLMOutput, int]:
@@ -1040,7 +1040,7 @@ class OSRuntime:
         current_phase: str,
         artifact: dict,
         candidates: list[CandidateOutput],
-        output_language: str,
+        output_language: str | None,
         max_phase_retries: int,
         artifact_path: str | None = None,
         rollback_context: dict | None = None,
@@ -1077,7 +1077,7 @@ class OSRuntime:
         input_artifact: dict,
         target_schema: dict,
         target_type: str,
-        output_language: str,
+        output_language: str | None,
     ) -> dict:
         node_spec = self.skill.graph.skill_nodes[node_id]
         adapted, usage = await execute_skill_node(
@@ -1132,7 +1132,7 @@ class OSRuntime:
         reason: str,
         confidence: float,
         finish_artifact: dict | None = None,
-        output_language: str = "ja",
+        output_language: str | None = None,
         resume_plan: object = None,
     ) -> RunResult:
         """Single source of truth for "the workflow ended cleanly".
@@ -1219,7 +1219,7 @@ class OSRuntime:
         node_id: str,
         current_phase: str,
         output_artifact: dict,
-        output_language: str,
+        output_language: str | None,
     ) -> "RunResult | tuple[str, dict]":
         """Run a skill_node and decide whether the workflow ends here.
 
@@ -1261,7 +1261,7 @@ class OSRuntime:
     async def run(
         self,
         initial_input: dict,
-        output_language: str = "ja",
+        output_language: str | None = None,
         max_phase_retries: int = 2,
     ) -> RunResult:
         """

@@ -176,7 +176,7 @@ class PostprocessorExecutor:
     async def run(
         self,
         finish_artifact: dict,
-        output_language: str,
+        output_language: str | None,
         resume_plan: Any = None,
     ) -> tuple[dict, TokenUsage]:
         """Apply skill.postprocessor.steps; return (caller_artifact, usage).

@@ -33,8 +33,19 @@ class Session:
         m = getattr(args, "model", None) or self.config.model
         return m, self.resolver.resolve(m)
 
-    def output_language_for(self, args: argparse.Namespace) -> str:
-        return getattr(args, "output_language", None) or self.config.output_language
+    def output_language_for(self, args: argparse.Namespace) -> str | None:
+        """Resolve output_language with CLI > config priority.
+
+        Returns None when neither CLI flag nor config provides a value —
+        callers that need a concrete string for skill / phase paths
+        should fall back to a domain-appropriate default (typically
+        "ja"); the chat router uses None to skip the language directive
+        in its system prompt entirely (= LLM picks based on user input).
+        """
+        cli = getattr(args, "output_language", None)
+        if isinstance(cli, str) and cli.strip():
+            return cli.strip()
+        return self.config.output_language
 
     def limits_for(self, args: argparse.Namespace) -> LimitsConfig:
         """Resolve effective LimitsConfig with CLI flags layered over config."""

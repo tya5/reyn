@@ -271,7 +271,12 @@ class RunSkillIROp(BaseModel):
     input: dict               # input artifact to pass to the sub-skill
     model: str = ""           # model class or LiteLLM string; "" = inherit from runtime
     workspace: str = "isolated"  # "isolated" | "shared"
-    output_language: str = "ja"
+    # None = inherit caller's output_language (which may itself be None
+    # = no language directive in LLM prompts; the LLM picks based on
+    # user input). Reyn explicitly avoids regional-default fallbacks
+    # (e.g. silently defaulting to "ja") because the project targets
+    # a global audience.
+    output_language: str | None = None
 
 
 class WebFetchIROp(BaseModel):
@@ -389,7 +394,10 @@ class ContextFrame(BaseModel):
     # consult it — they need to choose `allowed_ops` values for the phase
     # frontmatter they generate. Normal phases ignore this list.
     op_catalog: list[ControlIROpSpec] = Field(default_factory=list)
-    output_language: str = "ja"
+    # None = no explicit language directive in the LLM prompt; the LLM
+    # picks the reply / artifact-text language based on user input
+    # naturally. See `_system_prompt` in llm.py for how this is rendered.
+    output_language: str | None = None
     model: str = ""        # model class name (or raw LiteLLM string) for this phase
     model_resolved: str = ""  # resolved LiteLLM string actually used for LLM calls
     input_artifact: dict[str, Any]

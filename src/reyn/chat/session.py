@@ -317,7 +317,7 @@ class ChatSession:
         permission_resolver: PermissionResolver | None = None,
         limits: LimitsConfig | None = None,
         mcp_servers: dict | None = None,
-        output_language: str = "ja",
+        output_language: str | None = None,
         prompt_cache_enabled: bool = True,
         project_context: str = "",
         agent_role: str = "",
@@ -1037,7 +1037,10 @@ class ChatSession:
             mcp_servers=mcp_servers,
             subscribers=subscribers,
         )
-        result = await agent.run(skill, input_artifact, output_language=self.output_language)
+        result = await agent.run(
+            skill, input_artifact,
+            output_language=self.output_language,
+        )
         self._accumulate(result)
         return result
 
