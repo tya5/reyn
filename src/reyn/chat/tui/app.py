@@ -188,6 +188,7 @@ class ReynTUIApp(App):
                 rt.append(val, style="#dddddd")
             conv._write_log(rt)
         conv._write_log(Text("  — counsels you to hold the reins.", style="dim #555555"))
+        conv._write_log(Text("─" * 38, style="#2a2a2a"))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
@@ -348,10 +349,10 @@ class ReynTUIApp(App):
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
         from reyn.chat.outbox import OutboxMessage
-        user_t = Text()
-        user_t.append("you    ", style="bold")
-        user_t.append(text)
-        conv._write_log(user_t)
+        from reyn.chat.tui.widgets.conversation import _msg_header
+        conv._write_log(_msg_header("you", "bold #4abbb5", "#1f5856"))
+        conv._write_log(Text(text))
+        conv._write_log(Text(""))
 
         # Close palette if open
         self._close_palette()
