@@ -110,7 +110,7 @@ preprocessor:
   - type: python
     module: ./copy_to_work.py
     function: validate_copy
-    into: data._validation
+    into: data.validation
     output_schema:
       type: object
       properties:
