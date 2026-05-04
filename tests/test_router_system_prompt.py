@@ -165,8 +165,14 @@ class TestIntentAxisSectionAlwaysPresent:
         assert intent_fragment in prompt
 
 
-class TestSizeIsO1InItems:
-    def test_size_independent_of_item_count(self):
+class TestSizeIsLinearInItems:
+    """RETRO-H1+H2 design change: the system prompt now injects a flat skill
+    list so the LLM knows exact skill names (prevents zero-shot hallucination).
+    Size is intentionally O(N) in skill count. The old O(1) invariant no longer
+    applies after this fix."""
+
+    def test_size_grows_with_skill_count(self):
+        """Tier 2: prompt with more skills is larger (flat list injected)."""
         skills_3 = [_make_skill(f"skill_{i}", "general") for i in range(3)]
         skills_30 = [_make_skill(f"skill_{i}", "general") for i in range(30)]
 
@@ -184,11 +190,18 @@ class TestSizeIsO1InItems:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        # The only difference should be the count digit(s): "general (3)" vs
-        # "general (30)" — at most 1 extra character.
-        size_diff = abs(len(prompt_30) - len(prompt_3))
-        assert size_diff < 5, (
-            f"Prompt grew by {size_diff} chars — not O(1) in item count."
+        # 30-skill prompt must be larger than 3-skill prompt
+        assert len(prompt_30) > len(prompt_3), (
+            "Expected 30-skill prompt to be larger than 3-skill prompt "
+            "(flat skill list grows linearly with skill count)"
+        )
+        # Growth should be approximately linear (not O(N²) or constant)
+        # 27 extra skills, each adding roughly the same number of chars
+        size_diff = len(prompt_30) - len(prompt_3)
+        # Each extra skill adds at least 5 chars (e.g. "  - skill_X\n")
+        assert size_diff >= 27 * 5, (
+            f"Expected at least {27 * 5} chars growth for 27 extra skills, "
+            f"got {size_diff}"
         )
 
 

@@ -105,10 +105,25 @@ def build_system_prompt(
         parts.append("           tools: forget_memory")
     parts.append("- Reply — answer directly (no tool)")
     parts.append("")
+    # RETRO-H1+H2 fix: inject flat skill list so the LLM knows actual skill
+    # names and can't zero-shot hallucinate them. Paired with enum constraint
+    # in build_tools (schema layer) for defense in depth (P4).
+    skill_count = len(available_skills)
     parts.append(
-        "## Skills (resource axis, categories — use list_skills(path) to drill)"
+        f"## Available skills ({skill_count}) — use these exact names with invoke_skill"
     )
-    parts.append(f"  {skill_section}")
+    if available_skills:
+        for skill in available_skills:
+            name = skill.get("name", "")
+            desc = skill.get("description") or ""
+            # One-liner per skill: name + description (keeps prompt scannable)
+            if desc:
+                parts.append(f"  - {name}: {desc}")
+            else:
+                parts.append(f"  - {name}")
+    else:
+        parts.append("  (none)")
+    parts.append(f"  Categories: {skill_section}")
     parts.append("")
     parts.append("## Agents (resource axis, clusters)")
     parts.append(f"  {agent_section}")

@@ -88,16 +88,33 @@ def build_tools(
         ``description``). None or [] → MCP tools omitted. Otherwise all 3
         MCP tools (D1–D3) are included.
     """
-    # PR37 wave 2D added enum for invoke_skill.name / delegate_to_agent.to
-    # to close the S13b hallucination gap at the schema layer. Post-2D dogfood
-    # showed an attractor side-effect: surfacing skill names directly in the
-    # tool schema made the LLM too eager to pick a skill for any prompt
-    # ("hello" → ai_article_writer was the regression). Roll Layer A back
-    # to plain string; defense relies on Layer B (invoker-side catalog check
-    # in router_loop._invoke_router_tool) which catches hallucinated names
-    # without tempting the LLM with a visible menu.
-    _invoke_skill_name_schema: dict = {"type": "string"}
-    _delegate_to_schema: dict = {"type": "string"}
+    # RETRO-H1+H2 fix: dynamic enum injection for invoke_skill.name and
+    # delegate_to_agent.to closes the schema-level hallucination gap (P4
+    # alignment — LLM picks only from OS-provided candidates).
+    #
+    # History: PR37 wave 2D added enum; post-2D dogfood showed an attractor
+    # side-effect ("hello" → ai_article_writer). That regression was caused by
+    # surfacing skill names *only* in the schema without a flat list in the
+    # system prompt — the LLM saw names but lacked context to judge relevance.
+    # RETRO fix pairs enum (schema layer) with a flat list + one-line
+    # description in the system prompt (context layer), giving the LLM both
+    # constraint and context to resist the attractor.
+    #
+    # When available_skills is empty, invoke_skill is omitted from the tools
+    # list to avoid an empty-enum schema that some providers reject.
+    # Same strategy for available_agents / delegate_to_agent.
+    skill_names = [s["name"] for s in available_skills]
+    agent_names = [a["name"] for a in available_agents]
+    _invoke_skill_name_schema: dict = (
+        {"type": "string", "enum": skill_names}
+        if skill_names
+        else {"type": "string"}
+    )
+    _delegate_to_schema: dict = (
+        {"type": "string", "enum": agent_names}
+        if agent_names
+        else {"type": "string"}
+    )
     # fmt: off
     tools: list[dict] = [
         # ── A1: list_skills ──────────────────────────────────────────────
@@ -228,34 +245,46 @@ def build_tools(
             },
         },
         # ── B1: invoke_skill ─────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "invoke_skill",
-                "description": (
-                    "Run a skill. "
-                    "Construct input matching the skill's artifact schema "
-                    "(call describe_skill first if unsure)."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {
-                            **_invoke_skill_name_schema,
-                            "description": "Skill name as listed by list_skills.",
-                        },
-                        "input": {
+        *(
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "invoke_skill",
+                        "description": (
+                            "Run a skill from the registered list. "
+                            "The 'name' parameter MUST be one of the skills "
+                            "listed in the system prompt's \"Available skills\" "
+                            "section, used verbatim (no dots, no slashes, "
+                            "no namespace prefixes). "
+                            "If unsure of input format, call describe_skill first."
+                        ),
+                        "parameters": {
                             "type": "object",
-                            "description": (
-                                "Skill input artifact: "
-                                "{type: <artifact_type>, data: {...}}"
-                            ),
+                            "properties": {
+                                "name": {
+                                    **_invoke_skill_name_schema,
+                                    "description": (
+                                        "Skill name — choose exactly one from "
+                                        "the enum (verbatim, no dots or slashes)."
+                                    ),
+                                },
+                                "input": {
+                                    "type": "object",
+                                    "description": (
+                                        "Skill input artifact: "
+                                        "{type: <artifact_type>, data: {...}}"
+                                    ),
+                                },
+                            },
+                            "required": ["name", "input"],
                         },
                     },
-                    "required": ["name", "input"],
-                },
-            },
-        },
+                }
+            ]
+            if skill_names
+            else []
+        ),
         # ── B2: delegate_to_agent ────────────────────────────────────────
         {
             "type": "function",
