@@ -446,6 +446,8 @@ class TestBehaviourRulesAfterF3F9Fix:
         a 'research complete, synthesise' state after describe_skill and
         emits an empty text turn, which triggers the F6 _no_reply_marker
         upstream and surfaces no value to the user.
+        B5-H1 re-balance: rule is now an individual bullet with its own MUST
+        so weak LLMs treat it as a first-class obligation (1 bullet = 1 MUST).
         """
         prompt = build_system_prompt(
             agent_name="chat",
@@ -454,9 +456,9 @@ class TestBehaviourRulesAfterF3F9Fix:
             available_agents=[],
             memory_index={"status": "not_found", "content": ""},
         )
-        # Rule must mention both branches: commit (invoke_skill) and explain.
+        # Rule must be its own bullet with MUST signal.
         assert "After describe_skill" in prompt
-        assert "invoke_skill" in prompt
+        assert "you MUST call invoke_skill" in prompt
         # The "or explain" half must be present too.
         assert "explain" in prompt.lower()
 
@@ -465,7 +467,9 @@ class TestBehaviourRulesAfterF3F9Fix:
         skill, the LLM must commit to describe_skill or invoke_skill and must
         not reply directly.  Both bugs share the same attractor: list_skills
         result ignored.  The rule targets the obligation post list_skills,
-        complementing the B2-H1 post-describe_skill rule."""
+        complementing the B2-H1 post-describe_skill rule.
+        B5-H1 re-balance: rule is its own bullet with MUST; "engage the skill
+        ecosystem" jargon removed (too abstract for weak LLMs)."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
@@ -475,9 +479,12 @@ class TestBehaviourRulesAfterF3F9Fix:
         )
         # Rule must reference the trigger (list_skills reveals a skill)
         assert "After list_skills" in prompt
+        # Must be its own bullet with MUST signal (1 bullet = 1 MUST)
+        assert "you MUST" in prompt
         # Must mention both commitment paths
         assert "describe_skill" in prompt
         assert "invoke_skill" in prompt
         # Must prohibit direct reply when a skill is available
         assert "Do NOT reply" in prompt
-        assert "skill ecosystem" in prompt
+        # "skill ecosystem" jargon removed — too abstract for weak LLMs
+        assert "skill ecosystem" not in prompt

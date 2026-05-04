@@ -147,32 +147,46 @@ def build_system_prompt(
         "  - First decide intent (Action / Recall / Save / Forget / Reply),"
     )
     parts.append("    then pick tools from that group.")
-    # Behaviour rules — consolidation refactor (post B2-H1 + B3-H1 chain).
+    # Behaviour rules — re-balanced from B5-H1 partial revert of e90c0f2.
     # History: F3+F9 (batch 1) added reply restriction + explicit-skill hint;
     # B2-H1 (batch 2) added post-describe_skill commit obligation;
     # B3-H1+M3 (batch 3) added post-list_skills commit obligation.
-    # Four rules shared the same list→describe→invoke chain with 3× MUST,
-    # causing priority-signal flooding and prompt bloat.
-    # Consolidated to 2 rules (Option B): discovery path + commit obligation.
+    # e90c0f2 over-consolidated to 2 rules; weak LLM (gemini-2.5-flash-lite)
+    # de-prioritised multi-sentence MUSTs inside a single bullet → B5-H1
+    # regression (specialist empty reply after list_skills).
+    # Fix: restore individual bullets (1 bullet = 1 MUST) per feedback_prompt_design.
+    # "engage the skill ecosystem" jargon removed; duplicate list+invoke hints merged.
     #
-    # Rule 1 (covers F3 + F9 + B3-H1+M3 discovery path):
+    # Bullet 1 (F3+F9 — chitchat restriction, domain → Action):
     parts.append(
         "  - Reply directly only for chitchat, questions about yourself,"
     )
     parts.append(
         "    and clarifications back to the user. Domain tasks → Action."
-        " For Action or explicit-skill requests: list_skills → invoke_skill"
-        " (use describe_skill in between only when you need to inspect)."
-        " If the user names a skill, use list_skills + invoke_skill"
-        " rather than paraphrasing the request as a Reply."
-        " After list_skills reveals at least one matching skill, Do NOT reply"
-        " directly when a relevant skill is available; engage the skill ecosystem."
     )
-    # Rule 2 (covers B2-H1 + B3-H1 commit obligation):
+    # Bullet 2 (F3+F9+B3-H1+M3 — explicit-skill / Action discovery path):
     parts.append(
-        "  - Never stop after list_skills or After describe_skill without acting."
-        " invoke_skill or explain in text why not; never go silent."
+        "  - For Action or explicit-skill requests, call list_skills first,"
     )
+    parts.append(
+        "    then invoke_skill (use describe_skill in between only when you need to inspect)."
+    )
+    parts.append(
+        "  - If the user names a skill, use list_skills + invoke_skill"
+    )
+    parts.append("    rather than paraphrasing the request as a Reply.")
+    # Bullet 3 (B3-H1+M3 — post-list_skills MUST):
+    parts.append(
+        "  - After list_skills reveals at least one matching skill, you MUST"
+    )
+    parts.append(
+        "    call describe_skill or invoke_skill. Do NOT reply directly."
+    )
+    # Bullet 4 (B2-H1 — post-describe_skill MUST):
+    parts.append(
+        "  - After describe_skill, you MUST call invoke_skill or explain in text"
+    )
+    parts.append("    why not; never stop silently after investigation.")
     parts.append(
         "  - For Recall, answer from the Memory section's inlined descriptions;"
     )
