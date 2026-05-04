@@ -3248,9 +3248,11 @@ class ChatSession:
         if router_usage is not None and router_usage.total_tokens > 0:
             self._total_usage += router_usage
             # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
+            # Use loop.router_model ("light") — not "router" — so the resolver
+            # finds the actual model string (e.g. "openai/gemini-2.5-flash-lite").
             from reyn.llm.pricing import estimate_cost
             from reyn.llm.llm import proxy_kwargs
-            resolved = self._resolver.resolve("router")
+            resolved = self._resolver.resolve(loop.router_model)
             pricing_model = (
                 resolved.split("/", 1)[1]
                 if "/" in resolved and proxy_kwargs()
