@@ -11,17 +11,21 @@
 |---|---|---|---|
 | [F1](#f1-chat-に話しかけたかったのに-chat-が起動を拒否した話) | HIGH | reyn chat を起動した瞬間 `AttributeError`。 「Did you mean」 まで親切な Python だが起動はしない | **fixed** at `f5b3281` |
 | [F2](#f2-reynlocalyaml-は-loaded-されているが-docs-はそれを知らない) | LOW | `reyn.local.yaml` は実際 load されているのに、 `config.py` の docstring には「そんな file 知らん」 と書いてある | deferred (Wave B) |
-| [F3](#f3-skill_router-仕事しない大将) | HIGH | 「要約して」 とお願いしたのに `text_summarizer` skill は呼ばれず、 LLM が「自分でやれます」 と直答 | open |
-| [F4](#f4-cost-永遠の-0) | LOW | LLM 応答は来てるのに `cost -- prompt=0 completion=0 total=0`。 永遠の 0 円 | open |
-| [F5](#f5-high-delegate-言ってないのに-2-回送る) | HIGH | LLM が `delegate_to_agent` を 1 回呼んだのに、 specialist の inbox には同じ依頼が **2 件** 届く | open |
-| [F6](#f6-high-specialist-まだ答えてないのに答えましたを送る) | HIGH | specialist 側、 LLM がまだ考え中なのに「答えました (中身: 空)」 を default に送りつける | open |
-| [F7](#f7-med-default-空-reply-を聞いてダメだったかと判断する) | MED | default、 specialist の空 reply を「失敗」 と判定して再 delegate。 retry budget 即枯渇 | open |
-| [F8](#f8-med-諦めるときくらい日本語で謝ってほしい) | MED | 諦めるときに出るエラー文が英語。 user は日本語で話してた。 内容も「rephrase してね」 で誤誘導 | open |
-| [F9](#f9-skill-名を明示してもなお-router-は応えない) | HIGH | `read_local_files skill で〜` と skill 名を本文に直書きしても router は無視。 routing 0/3 | open |
-| [F10](#f10-filesystem-mcp-は箱の中で寝ている) | HIGH | `read_local_files` は filesystem MCP を要求するが、 そんな MCP server はどこにも設定されていない | open |
-| [F11](#f11-router-日本語が苦手) | MED | router の fallback / clarifying path だけ英語固定。 ja 設定しても抜けてくる | open |
+| [F3](#f3-skill_router-仕事しない大将) | HIGH | 「要約して」 とお願いしたのに `text_summarizer` skill は呼ばれず、 LLM が「自分でやれます」 と直答 | **fixed** at `e59cead` |
+| [F4](#f4-cost-永遠の-0) | LOW | LLM 応答は来てるのに `cost -- prompt=0 completion=0 total=0`。 永遠の 0 円 | deferred (Wave B) |
+| [F5](#f5-high-delegate-言ってないのに-2-回送る) | HIGH | LLM が `delegate_to_agent` を 1 回呼んだのに、 specialist の inbox には同じ依頼が **2 件** 届く | **fixed** at `9e8126c` |
+| [F6](#f6-high-specialist-まだ答えてないのに答えましたを送る) | HIGH | specialist 側、 LLM がまだ考え中なのに「答えました (中身: 空)」 を default に送りつける | **fixed** at `9e8126c` |
+| [F7](#f7-med-default-空-reply-を聞いてダメだったかと判断する) | MED | default、 specialist の空 reply を「失敗」 と判定して再 delegate。 retry budget 即枯渇 | **fixed** at `9e8126c` |
+| [F8](#f8-med-諦めるときくらい日本語で謝ってほしい) | MED | 諦めるときに出るエラー文が英語。 user は日本語で話してた。 内容も「rephrase してね」 で誤誘導 | **fixed** at `e59cead` |
+| [F9](#f9-skill-名を明示してもなお-router-は応えない) | HIGH | `read_local_files skill で〜` と skill 名を本文に直書きしても router は無視。 routing 0/3 | **fixed** at `e59cead` |
+| [F10](#f10-filesystem-mcp-は箱の中で寝ている) | HIGH | `read_local_files` は filesystem MCP を要求するが、 そんな MCP server はどこにも設定されていない | **fixed** at `e59cead` |
+| [F11](#f11-router-日本語が苦手) | MED | router の fallback / clarifying path だけ英語固定。 ja 設定しても抜けてくる | **fixed** at `e59cead` |
 
 **skill_router の起動成功率: 0/3。** これが batch 1 の headline。
+
+**A5 完了状況** (2026-05-04 commit `e59cead` + `9e8126c`):
+HIGH 6 件 + MED 2 件 = **8 件 fixed**、 LOW 2 件 (F2 / F4) は **Wave B
+coverage audit に deferred**。 Batch 2 は HIGH bug fix 後に予定通り実施。
 
 ---
 
