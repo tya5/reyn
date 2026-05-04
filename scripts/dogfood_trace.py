@@ -3,6 +3,11 @@
 Usage:
     python scripts/dogfood_trace.py [--root .reyn] [--mode summary|full|chain|cost]
                                     [--filter <event_kind>]
+
+    # LLM payload trace modes (requires REYN_LLM_TRACE_DUMP to have been set during dogfood):
+    python scripts/dogfood_trace.py --mode llm-payloads --trace .reyn/llm_trace.jsonl
+    python scripts/dogfood_trace.py --mode llm-detail <request_id> --trace .reyn/llm_trace.jsonl [--full]
+    python scripts/dogfood_trace.py --mode llm-tools-schema <request_id> --trace .reyn/llm_trace.jsonl
 """
 from __future__ import annotations
 
@@ -10,6 +15,7 @@ import argparse
 import json
 import sys
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -229,13 +235,252 @@ def mode_summary(root: Path) -> None:
     mode_cost(root)
 
 
+# ---------------------------------------------------------------------------
+# LLM payload trace modes
+# ---------------------------------------------------------------------------
+
+def _load_llm_trace(trace_path: Path) -> list[dict]:
+    """Load JSONL records from an LLM trace file."""
+    return _load_jsonl(trace_path)
+
+
+def _pair_llm_records(records: list[dict]) -> list[tuple[dict, dict | None]]:
+    """Pair request records with their response by request_id.
+
+    Returns list of (request, response_or_None) in timestamp order.
+    """
+    requests: dict[str, dict] = {}
+    responses: dict[str, dict] = {}
+    order: list[str] = []
+
+    for rec in records:
+        rid = rec.get("request_id", "")
+        kind = rec.get("kind", "")
+        if kind == "request":
+            requests[rid] = rec
+            order.append(rid)
+        elif kind == "response":
+            responses[rid] = rec
+
+    return [(requests[rid], responses.get(rid)) for rid in order if rid in requests]
+
+
+def _rel_seconds(base_ts: str | None, ts: str | None) -> str:
+    """Return relative seconds from base_ts as 'T+Xs' string."""
+    if not base_ts or not ts:
+        return ts[:19] if ts else "?"
+    try:
+        from datetime import timezone
+
+        def _p(s: str) -> datetime:
+            s_clean = s.replace("Z", "+00:00")
+            try:
+                return datetime.fromisoformat(s_clean)
+            except Exception:
+                return datetime.strptime(s_clean[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+
+        delta = _p(ts) - _p(base_ts)
+        return f"T+{delta.total_seconds():.1f}s"
+    except Exception:
+        return ts[:19] if ts else "?"
+
+
+def mode_llm_payloads(trace_path: Path) -> None:
+    """List all LLM request/response pairs from a trace file in time order."""
+    if not trace_path.exists():
+        print(f"trace file not found: {trace_path}")
+        sys.exit(1)
+
+    records = _load_llm_trace(trace_path)
+    pairs = _pair_llm_records(records)
+
+    if not pairs:
+        print("no LLM request records found in trace file")
+        return
+
+    # Determine base timestamp from first request
+    base_ts = pairs[0][0].get("timestamp") if pairs else None
+
+    for req, resp in pairs:
+        rid = req.get("request_id", "?")[:8]  # short id
+        rid_full = req.get("request_id", "?")
+        model = req.get("model", "?")
+        caller = req.get("caller_hint", "unknown")
+        msgs = req.get("messages", [])
+        tools = req.get("tools")
+        ts_req = req.get("timestamp")
+        rel_req = _rel_seconds(base_ts, ts_req)
+
+        tool_count = len(tools) if tools else 0
+        print(
+            f"[{rel_req}] request_id={rid_full}  model={model}  "
+            f"caller={caller}  msgs={len(msgs)}  tools={tool_count}"
+        )
+
+        if resp is not None:
+            ts_resp = resp.get("timestamp")
+            rel_resp = _rel_seconds(base_ts, ts_resp)
+            finish = resp.get("finish_reason", "?")
+            tcs = resp.get("tool_calls", [])
+            usage = resp.get("usage", {})
+            tokens_in = (usage.get("prompt_tokens") or "?") if usage else "?"
+            tokens_out = (usage.get("completion_tokens") or "?") if usage else "?"
+            print(
+                f"[{rel_resp}] response_id={rid_full}  finish={finish}  "
+                f"tool_calls={len(tcs)}  tokens_in={tokens_in}  tokens_out={tokens_out}"
+            )
+        else:
+            print(f"         response_id={rid_full}  (no response record)")
+
+
+def _truncate_content(content: str | None, full: bool, head: int = 200, tail: int = 200) -> str:
+    """Truncate content for display unless --full is set."""
+    if content is None:
+        return "(null)"
+    if full or len(content) <= head + tail:
+        return content
+    return f"{content[:head]}\n... [{len(content) - head - tail} chars omitted] ...\n{content[-tail:]}"
+
+
+def mode_llm_detail(trace_path: Path, request_id: str, full: bool = False) -> None:
+    """Pretty-print full payload for a single request_id."""
+    if not trace_path.exists():
+        print(f"trace file not found: {trace_path}")
+        sys.exit(1)
+
+    records = _load_llm_trace(trace_path)
+    req: dict | None = None
+    resp: dict | None = None
+
+    for rec in records:
+        if rec.get("request_id") == request_id:
+            if rec.get("kind") == "request":
+                req = rec
+            elif rec.get("kind") == "response":
+                resp = rec
+
+    if req is None:
+        print(f"request_id not found: {request_id}")
+        sys.exit(1)
+
+    print(f"=== LLM Call Detail: {request_id} ===")
+    print(f"  model:       {req.get('model', '?')}")
+    print(f"  caller_hint: {req.get('caller_hint', 'unknown')}")
+    print(f"  timestamp:   {req.get('timestamp', '?')}")
+
+    sampling = req.get("sampling_params", {})
+    if sampling:
+        print(f"  sampling:    {json.dumps(sampling, ensure_ascii=False)}")
+
+    tool_choice = req.get("tool_choice")
+    if tool_choice is not None:
+        print(f"  tool_choice: {tool_choice}")
+
+    tools = req.get("tools")
+    if tools:
+        names = [t.get("function", {}).get("name", "?") for t in tools if isinstance(t, dict)]
+        print(f"  tools ({len(tools)}): {', '.join(names)}" + ("  (use llm-tools-schema for full schema)" if not full else ""))
+        if full:
+            print("  --- tools schema ---")
+            print(json.dumps(tools, indent=2, ensure_ascii=False))
+            print("  --- end tools schema ---")
+    else:
+        print("  tools: (none)")
+
+    print(f"\n  --- messages ({len(req.get('messages', []))}) ---")
+    for i, msg in enumerate(req.get("messages", [])):
+        role = msg.get("role", "?")
+        content = msg.get("content")
+        if isinstance(content, list):
+            # Anthropic-style multi-block content
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    print(f"  [{i}] {role}: {_truncate_content(text, full)}")
+        elif isinstance(content, str):
+            print(f"  [{i}] {role}: {_truncate_content(content, full)}")
+        else:
+            print(f"  [{i}] {role}: (non-text content)")
+
+    if resp is not None:
+        print(f"\n  --- response ---")
+        print(f"  timestamp:    {resp.get('timestamp', '?')}")
+        print(f"  finish_reason: {resp.get('finish_reason', '?')}")
+        usage = resp.get("usage", {})
+        if usage:
+            print(f"  usage:        prompt_tokens={usage.get('prompt_tokens','?')}  completion_tokens={usage.get('completion_tokens','?')}")
+        content = resp.get("content")
+        if content:
+            print(f"  content: {_truncate_content(content, full)}")
+        tool_calls = resp.get("tool_calls", [])
+        if tool_calls:
+            print(f"  tool_calls ({len(tool_calls)}):")
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                print(f"    - {fn.get('name','?')}  args={fn.get('arguments','?')[:120]}")
+    else:
+        print("\n  (no response record found)")
+
+
+def mode_llm_tools_schema(trace_path: Path, request_id: str) -> None:
+    """Pretty-print the full tools schema for a single request_id."""
+    if not trace_path.exists():
+        print(f"trace file not found: {trace_path}")
+        sys.exit(1)
+
+    records = _load_llm_trace(trace_path)
+    req: dict | None = None
+
+    for rec in records:
+        if rec.get("request_id") == request_id and rec.get("kind") == "request":
+            req = rec
+            break
+
+    if req is None:
+        print(f"request_id not found: {request_id}")
+        sys.exit(1)
+
+    tools = req.get("tools")
+    if not tools:
+        print(f"no tools in request {request_id}")
+        return
+
+    print(json.dumps(tools, indent=2, ensure_ascii=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="dogfood_trace — consolidated Reyn batch observation tool")
     parser.add_argument("--root", default=".reyn", help="Path to .reyn directory (default: .reyn)")
-    parser.add_argument("--mode", choices=["summary", "full", "chain", "cost"], default="summary")
+    parser.add_argument("--mode", choices=["summary", "full", "chain", "cost", "llm-payloads", "llm-detail", "llm-tools-schema"], default="summary")
     parser.add_argument("--filter", dest="filter_kind", default=None, help="Filter by event kind (for --mode full)")
+    parser.add_argument("--trace", default=None, help="Path to LLM trace JSONL file (for llm-* modes)")
+    parser.add_argument("--full", action="store_true", default=False, help="Show full messages/tools (for llm-detail)")
+    parser.add_argument("request_id", nargs="?", default=None, help="request_id for llm-detail / llm-tools-schema")
     args = parser.parse_args()
 
+    # LLM trace modes
+    if args.mode == "llm-payloads":
+        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
+        mode_llm_payloads(trace)
+        return
+
+    if args.mode == "llm-detail":
+        if not args.request_id:
+            print("llm-detail requires a request_id argument")
+            sys.exit(1)
+        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
+        mode_llm_detail(trace, args.request_id, full=args.full)
+        return
+
+    if args.mode == "llm-tools-schema":
+        if not args.request_id:
+            print("llm-tools-schema requires a request_id argument")
+            sys.exit(1)
+        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
+        mode_llm_tools_schema(trace, args.request_id)
+        return
+
+    # Event-based modes
     root = Path(args.root)
     if not root.exists():
         print(f"no events found (root not found: {root})")
