@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 
+from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -115,7 +117,14 @@ def build_system_prompt(
     if available_skills:
         for skill in available_skills:
             name = skill.get("name", "")
-            desc = skill.get("description") or ""
+            raw_desc = skill.get("description") or ""
+            # Truncate to MAX_DESC_LEN_FOR_LISTING chars to mitigate the G12
+            # empty-stop attractor (B7 finding — Pattern C: system prompt
+            # inline skill list verbosity triggers the attractor — a947255e).
+            if len(raw_desc) > MAX_DESC_LEN_FOR_LISTING:
+                desc = raw_desc[:MAX_DESC_LEN_FOR_LISTING] + "..."
+            else:
+                desc = raw_desc
             # One-liner per skill: name + description (keeps prompt scannable)
             if desc:
                 parts.append(f"  - {name}: {desc}")

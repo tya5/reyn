@@ -15,6 +15,20 @@ Gemini-safe schema rules enforced throughout:
 from __future__ import annotations
 
 
+# ── G12 attractor mitigation (B7 finding: skill description verbosity trigger) ──
+#
+# Empty-stop attractor root cause: skill description verbosity.  B7 finding
+# B7-G12-context-root-cause.md (commit a62a9dad) confirmed that truncating
+# descriptions to ≤80 chars in list_skills tool_response reduced empty-stop
+# rate from 100% → 0% (H-b verification).  B7-G12-cross-attractor-pattern.md
+# (commit a947255e) confirmed two trigger paths:
+#   Pattern A: via list_skills tool_response
+#   Pattern C: via system prompt inline skill list
+# Both paths must truncate to the same threshold.  describe_skill returns the
+# full description (details on demand — list is summary only).
+MAX_DESC_LEN_FOR_LISTING: int = 80
+
+
 # ── dispatch_kind sidecar registry ──────────────────────────────────────────
 #
 # Each tool is intrinsically either:

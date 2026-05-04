@@ -11,7 +11,7 @@ import functools
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.chat.router_tools import build_tools, get_dispatch_kind
+from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
@@ -552,10 +552,20 @@ class RouterLoop:
         ``input_artifact`` and ``input_fields`` when present so the LLM
         sees the correct input field names before calling ``invoke_skill``
         (RETRO-H2 fix — plan D: pre-call structural context provision).
+
+        Description is truncated to MAX_DESC_LEN_FOR_LISTING chars + "..."
+        to mitigate the G12 empty-stop attractor (B7 finding: skill
+        description verbosity triggers the attractor — a62a9dad / a947255e).
+        describe_skill returns the full description (details on demand).
         """
+        raw_desc = s.get("description", "")
+        if len(raw_desc) > MAX_DESC_LEN_FOR_LISTING:
+            desc = raw_desc[:MAX_DESC_LEN_FOR_LISTING] + "..."
+        else:
+            desc = raw_desc
         item: dict = {
             "name": s["name"],
-            "description": s.get("description", ""),
+            "description": desc,
         }
         if "input_artifact" in s:
             item["input_artifact"] = s["input_artifact"]
