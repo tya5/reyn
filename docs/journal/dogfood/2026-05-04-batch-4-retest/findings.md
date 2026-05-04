@@ -8,7 +8,7 @@
 | ID | 重要度 | 一行で言うと | 状態 |
 |---|---|---|---|
 | [B4-H1](findings/B4-retest-S1-S2.md) | HIGH | `_run_skill_awaitable` が narrator 結果を private `_put_outbox` 経由で push → `_router_loop_agent_replies` に捕捉されず specialist reply が user に届かない | **fixed** at `ffc9b4a` |
-| [B4-H2](findings/B4-S3-skill-improver-nested.md) | HIGH | `copy_to_work` skill の `max_act_turns: 3` overflow → workspace dir 未作成 → eval cascade が score 0.0 で失敗 (= skill_improver 改善 chain が常に崩壊) | **partial fix** at `d9787cb` (3→6 + glob scope) → batch 5 で write skip 再現 → 真の解 = preprocessor 化、 tracked as **G2** in [giveup-tracker](../giveup-tracker.md) |
+| [B4-H2](findings/B4-S3-skill-improver-nested.md) | HIGH | `copy_to_work` skill の `max_act_turns: 3` overflow → workspace dir 未作成 → eval cascade が score 0.0 で失敗 (= skill_improver 改善 chain が常に崩壊) | partial fix at `d9787cb` (3→6 + glob scope) → batch 5 で write skip 再現 → **真の解 fixed** at `763c86c` (Phase Preprocessor 化、 LLM call 完全削除、 [giveup G2](../giveup-tracker.md) resolved) |
 | [B4-M1](findings/B4-S3-skill-improver-nested.md) | MED | `eval.md` path mismatch: `eval_builder` が `reyn/local/<slug>/eval.md` に書き、 `prepare` は `<target_dsl_root>/eval.md` を先に探す → 4 回 failed read 後に正しい path | open |
 | [B4-L1](findings/B4-S3-skill-improver-nested.md) | LOW | `copy_to_work` が `src/reyn/stdlib/skills/**/*.md` で全 39 skill を glob (target slug のみすべき) → token 浪費 | **fixed** at `d9787cb` (`<original_dsl_root>` prefix 強制) |
 | [B4-INFO-A](findings/B4-S3-skill-improver-nested.md) | INFO | nested skill 階層は **3 layer** (skill_improver → eval_builder/eval → direct_llm)、 `judge_phase` は iterate preprocessor で run_skill 層ではない | resolved |
