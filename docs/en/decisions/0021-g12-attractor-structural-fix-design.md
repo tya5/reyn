@@ -70,6 +70,9 @@ Batch 7 delivered the trace / replay / attractor-detection infra:
 
 These tools change the design space: several options that previously required
 "fire and hope" can now be evaluated quantitatively with < 1 day of effort.
+The G12 empty-stop frequency was measured at 5/10 (50%) on a fixed payload
+(`B7-G12-empty-stop-frequency.md`), confirming the probabilistic nature of
+the attractor and directly informing the Option B vs Option F trade-off.
 
 ## Considered options
 
@@ -335,6 +338,10 @@ into explicit failure UX with audit trail.
 **User principle confirmed (2026-05-04)**: "コンテキストに問題がないのに空文字だった場合のケース、
 これは llm の問題であって、 reyn で過剰ケアすべきではない。 retry すべきでない"
 
+The decision aligns with the Reyn care boundary principle
+(`docs/en/concepts/care-boundary.md`): post-call observable failure UX is
+Reyn's responsibility, but auto-rescue (retry, escalation) is not.
+
 **Option B (retry) — REJECTED**: Even with a 50% rescue rate (B7-G12
 measurement), retry violates the user principle that LLM glitches are the
 LLM's problem. Reyn must not silently absorb failures by re-invoking the
@@ -476,3 +483,11 @@ All empty-stop runs returned `completion_tokens=0, content=null`.
 - [ADR-0020](0020-skill-only-permissions.md) — precedent ADR format
 - `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
   — empty-stop frequency measurement (n=10, rate=50%, probabilistic verdict)
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H1-fix-verify.md`
+  — `--patch` replay verification pattern (different attractor, same
+  observation methodology; hallucination rate 57% → 0% confirmed)
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-S1-fresh-retest.md`
+  — Option F e2e behavior post-implementation (chain advances, empty stop
+  surfaces clean failure UX)
+- `docs/en/concepts/care-boundary.md` — Reyn の care 範囲 (structural /
+  behavioral / gray) framework、 Option F 採用の design philosophy 根拠
