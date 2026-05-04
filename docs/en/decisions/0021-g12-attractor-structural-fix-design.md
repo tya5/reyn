@@ -1,6 +1,6 @@
 # ADR-0021: G12 attractor — structural fix design options
 
-**Status**: Proposed — with empty-stop frequency measurement (2026-05-04)
+**Status**: Accepted (Option F) — detect + explicit failure UX, no auto-rescue (2026-05-04)
 **Track**: G12 (giveup-tracker.md) — attractor variant family
 
 ## Context
@@ -289,107 +289,130 @@ D-track extension).
 complexity; Option E adds an async restart path that is unlikely to resolve
 the deterministic attractor without a model change.
 
+---
+
+### Option F — Detect + explicit failure UX (no auto-rescue) — ADOPTED 2026-05-04
+
+Surface the empty-stop as an explicit, user-visible failure without any
+retry, context modification, or model escalation.
+
+**Mechanism**: After `call_llm_tools`, check `_is_empty_router_response()`:
+`finish_reason=="stop"` AND `content` empty AND `tool_calls` empty.
+
+On match:
+1. Emit `router_empty_response_detected` audit event (P6 compliance) with
+   `finish_reason`, `completion_tokens`, `prompt_tokens`, `caller_hint`,
+   `model` — all P7-clean (no skill/tool names in payload).
+2. Put a localized failure message in the outbox (kind="agent") and return.
+   No retry. No context change. No model switch.
+
+**User principle alignment**: "これは llm の問題であって、 reyn で過剰ケアすべきで
+はない。 retry すべきでない" (2026-05-04). Reyn's responsibility is observation
+and surfacing — not absorption.
+
+**P7 analysis**: Trigger condition (`finish_reason=stop AND content empty`)
+is a provider-level API property, not a skill concept. Failure message and
+event payload contain no skill/tool names. P7-clean.
+
+**G4 signal**: Option F preserves the full attractor signal — every event
+is audit-visible and countable. Option B would have suppressed 50% of events
+via retry. Option F makes all events visible.
+
+**Frequency measurement (B7-G12)**: 50% of identical payloads produce
+empty-stop (probabilistic, not deterministic). Option F means ~50% of
+attractor sessions produce a visible failure. This is the correct behavior
+— LLM glitches are the LLM's problem; the user chooses remediation.
+
+**Effort**: 0.5 day (predicate + event emit + i18n dict + Tier 2 tests).
+**Effect**: Zero rescue, full observation. Converts silent blank-reply UX
+into explicit failure UX with audit trail.
+**ROI**: High for the Reyn principle. Low for short-term attractor mitigation.
+
 ## Decision
 
-**Proposed sequencing:**
+### Short term — Adopted: Option F (detect + explicit failure UX, no auto-rescue)
 
-### Short term (within 1–2 weeks, no proxy prerequisite)
+**User principle confirmed (2026-05-04)**: "コンテキストに問題がないのに空文字だった場合のケース、
+これは llm の問題であって、 reyn で過剰ケアすべきではない。 retry すべきでない"
 
-**Adopt Option B (attractor detection + retry) with mandatory event emission.**
+**Option B (retry) — REJECTED**: Even with a 50% rescue rate (B7-G12
+measurement), retry violates the user principle that LLM glitches are the
+LLM's problem. Reyn must not silently absorb failures by re-invoking the
+model. The G4 trigger signal must not be suppressed.
 
-Rationale: The `detect_attractor.py` `stop_with_must_rule` heuristic is
-already implemented and tested. Wiring it into `RouterLoop.run()` with a
-single retry and a `router_attractor_retry` event emission is a contained
-change with no P7 risk (the trigger is a structural API property, not a skill
-concept). The event emission is non-negotiable: the retry must remain
-observable so the G4 trigger signal is not suppressed.
+**Option C (hybrid escalation) — REJECTED**: Subsumes Option B's retry
+violation. Additionally blocked by the same proxy prerequisite as Option A.
 
-Constraint: The retry injection message must not reference skill-specific tool
-names. A generic "please call one of the available tools to proceed" is
-sufficient and P7-clean.
+**Option F — Adopted** (shipped 2026-05-04):
 
-This change converts the current silent-blank-reply UX into a one-retry path
-with a named audit event. It does not fix the deterministic attractor, but it
-rescues the transient variant (model glitch, not true attractor) and surfaces
-the true attractor via the event log.
+Detect the `finish_reason=stop, content empty, tool_calls empty` signature
+in `RouterLoop.run()` and respond with:
 
-### Mid term (within 1 month, after proxy is ready)
+1. **Audit event** `router_empty_response_detected` (P6 compliance) with
+   payload: `finish_reason`, `completion_tokens`, `prompt_tokens`,
+   `caller_hint="router"`, `model`. Payload is P7-clean (no skill/tool names).
 
-**Adopt Option C (hybrid weak + strong-model escalation).**
+2. **User-visible explicit failure message** in the outbox (kind="agent"):
+   - English: "The model returned an empty response. Please try rephrasing
+     your request or check your configuration."
+   - Japanese (output_language=ja): "モデルが空の応答を返しました。
+     別の表現で再入力するか、設定を確認してください。"
+   - Unknown language: falls back to English.
 
-Rationale: Once the LiteLLM proxy has `claude-sonnet` or `gemini-2.5-pro`
-registered and the G4 spike (Option A) has measured the attractor rate on the
-strong model, Option C becomes implementable. The Option B retry path is the
-foundation; the only change is substituting `resolve_model("strong")` for the
-second call instead of repeating the same model.
+3. **No retry** — `call_llm_tools` is invoked exactly once per turn.
+   No context modification. No model switch.
 
-The G4 spike should be run before Option C lands, both to confirm the strong
-model eliminates the attractor and to establish the cost baseline. If the
-spike shows the strong model has a similar attractor rate, Option C should not
-be adopted — the root cause is elsewhere (prompt structure, not model
-capability), and a different investigation is needed.
+User-side remediation: rephrase the request, change model configuration,
+or abort. Reyn's responsibility ends at observation.
 
-### Deferred
+Implementation: `_is_empty_router_response()` + `_EMPTY_RESPONSE_MSG` dict
+in `src/reyn/chat/router_loop.py`. Tier 2 tests in
+`tests/test_router_empty_response.py` (16 tests).
 
-**Option D (tool_choice="required")**: The unknown provider behaviour under
-`required` with a model that has already demonstrated degenerate output
-introduces unquantified risk of new failure modes. The investigation
-needed (live runs or `llm_replay.py --patch tool_choice=required --n 10`)
-is best done as part of the G4 spike session, not as a standalone change.
-Defer until the spike data is available.
+### Mid term — unchanged
 
-**Option E (per-session auto-resume)**: Dominated by Option B for the
-synchronous case. As an async variant of Option C it may become relevant for
-long-running session recovery, but the D-track extension cost is not
-justified until the simpler options are exhausted.
+**Option C (hybrid weak + strong-model escalation)**: Remains deferred until
+proxy exposes a strong model and G4 spike data confirms the attractor rate.
+Option C would be evaluated as a user-configurable opt-in, not a default.
 
-**Option A (flat strong-model substitution)**: Not adopted as a default-path
-change. The Reyn vision is weak-model-first; strong-model usage should be
-adaptive (Option C), not unconditional. The G4 spike uses Option A as a
-measurement instrument, not as a permanent deployment configuration.
+### Deferred — unchanged
+
+**Option D (tool_choice="required")**: Defer to G4 spike session for
+measurement.
+
+**Option E (per-session auto-resume)**: Scope deferred indefinitely.
+
+**Option A (flat strong-model substitution)**: Not adopted as default.
 
 ## Consequences
 
-**Positive (Option B, short term):**
+**Positive (Option F, adopted):**
 
-- G12 attractor events become audit-visible via `router_attractor_retry`
-  events, queryable from `reyn events`.
-- The transient-variant attractor (model glitch, not deterministic) is rescued
-  without user-visible blank reply.
-- `detect_attractor.py` Heuristic 1 logic is reused in production code,
-  reducing the gap between infra tooling and runtime behaviour.
-- No OS architecture change; no P7 risk if the retry message stays generic.
+- G12 attractor events are audit-visible via `router_empty_response_detected`,
+  queryable from the event log. G4 trigger signal is fully preserved.
+- User receives an explicit, actionable failure message instead of a blank
+  reply or silent hang. The F6/F7 invariant (no empty upstream reply) is
+  also preserved for the multi-agent path — the failure message propagates
+  upstream as a non-empty agent reply.
+- Zero extra LLM calls. No cost delta per attractor event.
+- P7-clean: no skill/tool names in event payload or failure message.
+- Simple: `_is_empty_router_response()` is a 5-line predicate; no state
+  machine, no retry budget, no model resolution overhead.
 
-**Negative (Option B, short term):**
+**Negative (Option F):**
 
-- Does not fix the deterministic attractor. A session where the model
-  consistently produces `completion_tokens=0` will exhaust the one-retry
-  budget and still emit a blank reply.
-- Adds one extra LLM call per attractor event (cost: < $0.001/event at
-  flash-lite pricing).
-- The retry message wording requires careful review to avoid P7 drift.
-
-**Positive (Option C, mid term):**
-
-- Adaptive cost: strong-model call only on confirmed attractor events.
-- Deterministic attractor variant is rescued if the strong model handles the
-  context correctly.
-- G4 spike data provides quantitative justification rather than hypothesis.
-
-**Negative (Option C, mid term):**
-
-- Requires proxy maintenance (strong model registered, monitored for cost).
-- Dual-model path adds complexity to `RouterLoop.run()` and
-  `call_llm_tools` invocation.
-- Strong-model API cost per rescued attractor event: estimated $0.02–$0.10.
-  For production traffic with 10% attractor rate, this scales.
+- Attractor events are NOT rescued. User must re-input or change model.
+  ~50% of turns affected by the G12 attractor (B7-G12 measurement) result
+  in a visible failure message. This is intentional.
+- Does not reduce the attractor rate — the G4 spike remains the primary
+  long-term fix path.
 
 **Precluded:**
 
-- Silent blank-reply UX (Option B lands): any attractor event is logged.
-- Flat strong-model-default for the router (not adopted; vision alignment).
-- D-track integration for router attractor (Option E): scope deferred
-  indefinitely unless a concrete user need surfaces.
+- Silent blank-reply UX: any empty-stop event is now visible to the user.
+- Auto-retry (Option B): explicitly rejected by user principle.
+- Auto-escalation (Option C): rejected for same reason; remains deferred.
+- D-track integration for router attractor (Option E): deferred indefinitely.
 
 ## Empty-stop frequency measurement (ADR 0021 follow-up)
 
