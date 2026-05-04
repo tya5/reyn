@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections import deque
@@ -77,6 +78,58 @@ def _no_reply_marker(agent_name: str, reason: str) -> str:
     in the user's `output_language`, not forward it verbatim.
     """
     return f"[{agent_name}: could not produce a reply — {reason}]"
+
+
+# B2-H2 fix: detect and parse the structured peer-failure marker deterministically
+# so the OS can surface the failure to the user without consulting the LLM (which
+# tends to silently absorb the marker as a polite conversational reply).
+
+_NO_REPLY_MARKER_RE = re.compile(
+    r"^\s*\[([^:]+):\s*could not produce a reply\s*[—\-]\s*(.+?)\s*\]\s*$",
+    re.DOTALL,
+)
+
+
+def _is_no_reply_marker(text: str) -> bool:
+    """Detect whether `text` is a `_no_reply_marker(...)`-formatted
+    failure signal from a peer agent (B2-H2 fix).
+
+    The format produced by `_no_reply_marker` is
+    `[<agent_name>: could not produce a reply — <reason>]`. We detect
+    by structural signature (leading `[`, contains the canonical
+    "could not produce a reply" substring) rather than parsing the
+    full string — minor format drift in `<reason>` should still match.
+    """
+    if not isinstance(text, str):
+        return False
+    stripped = text.strip()
+    return stripped.startswith("[") and "could not produce a reply" in stripped
+
+
+def _parse_no_reply_marker(text: str) -> tuple[str, str] | None:
+    """Parse `_no_reply_marker(...)` text into (peer, reason).
+
+    Returns None if the text does not match the expected format.
+    """
+    m = _NO_REPLY_MARKER_RE.match(text or "")
+    if not m:
+        return None
+    return m.group(1).strip(), m.group(2).strip()
+
+
+# Localized user-facing message when a peer agent's reply signals failure (B2-H2).
+# "en" is the global-safe default (no regional fallback to "ja" per the Q2
+# i18n principle). Placeholders: {peer} = peer agent name, {reason} = failure reason.
+_PEER_REPLY_FAILED_MSG: dict[str, str] = {
+    "ja": (
+        "エージェント '{peer}' から処理結果が得られませんでした"
+        " (理由: {reason})。"
+    ),
+    "en": (
+        "Could not get a result from agent '{peer}' "
+        "(reason: {reason})."
+    ),
+}
 
 
 class RouterCapExceeded(Exception):
@@ -1724,11 +1777,38 @@ class ChatSession:
         pending = self._chains.get(chain_id)
         if pending is not None:
             await self._resolve_pending_chain(
-                pending, from_agent=from_agent,
+                pending, from_agent=from_agent, last_response=response,
             )
             return
 
         # User-initiated chain: PR11 path, reply goes to user.
+
+        # B2-H2 fix: if the peer's reply is a no-reply marker, bypass the LLM
+        # entirely and surface the failure deterministically. Without this,
+        # gemini-2.5-flash-lite interprets the marker as a polite conversational
+        # reply (e.g. "かしこまりました") and the user never learns that the peer
+        # failed.
+        if _is_no_reply_marker(response):
+            parsed = _parse_no_reply_marker(response)
+            peer = parsed[0] if parsed else from_agent or "<unknown>"
+            reason = parsed[1] if parsed else "no reply produced"
+            msg_template = _PEER_REPLY_FAILED_MSG.get(
+                self.output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
+            )
+            user_text = msg_template.format(peer=peer, reason=reason)
+            await self._put_outbox(OutboxMessage(
+                kind="agent",
+                text=user_text,
+                meta={"chain_id": chain_id, "peer_failure": True},
+            ))
+            self._chat_events.emit(
+                "peer_reply_failed_surfaced",
+                chain_id=chain_id,
+                peer=peer,
+                reason=reason,
+            )
+            return
+
         try:
             await self._run_router_loop(response, chain_id)
         except RouterCapExceeded as exc:
@@ -1742,7 +1822,7 @@ class ChatSession:
             return
 
     async def _resolve_pending_chain(
-        self, pending: "_PendingChain", *, from_agent: str,
+        self, pending: "_PendingChain", *, from_agent: str, last_response: str = "",
     ) -> None:
         """Drive a multi-hop pending chain forward by one delegate response.
 
@@ -1759,6 +1839,38 @@ class ChatSession:
             # Partial resolution — record the new waiting_on for recovery.
             await self._chains.update(chain_id, waiting_on=pending.waiting_on)
             return  # still waiting on other delegates
+
+        # B2-H2 fix: if the peer's reply (the last incoming response) is a
+        # no-reply marker, bypass the LLM and surface the failure deterministically.
+        # Without this, weak models like gemini-2.5-flash-lite interpret the marker
+        # as a normal conversational reply and emit a polite close (e.g.
+        # "かしこまりました") while the user never learns the peer failed.
+        if _is_no_reply_marker(last_response):
+            parsed = _parse_no_reply_marker(last_response)
+            peer = parsed[0] if parsed else from_agent
+            reason = parsed[1] if parsed else "no reply produced"
+            msg_template = _PEER_REPLY_FAILED_MSG.get(
+                self.output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
+            )
+            user_text = msg_template.format(peer=peer, reason=reason)
+            # Forward the failure upstream — the pending chain always has an
+            # origin_agent (chains from user requests don't reach _resolve_pending_chain;
+            # they are handled by the `chain_id ∉ self._chains` branch above).
+            await self._send_agent_response(
+                to=pending.origin_agent,
+                response=user_text,
+                depth=pending.origin_depth,
+                chain_id=chain_id,
+            )
+            self._chat_events.emit(
+                "peer_reply_failed_surfaced",
+                chain_id=chain_id,
+                peer=peer,
+                reason=reason,
+                from_user=False,
+            )
+            await self._chains.resolve(chain_id)
+            return
 
         # Arm delegation and reply capture for the re-run.
         self._router_loop_delegations = []

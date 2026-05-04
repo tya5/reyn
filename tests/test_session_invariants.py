@@ -931,3 +931,178 @@ async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
     assert "router retry budget exhausted" in resp["response"].lower(), (
         f"Expected cap-exhausted reason in marker; got: {resp['response']!r}"
     )
+
+
+# B2-H2 fix: peer _no_reply_marker silently absorbed by LLM → deterministic surfacing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_peer_no_reply_marker_surfaced_to_user_not_absorbed(
+    tmp_path, monkeypatch
+):
+    """Tier 2: when a peer agent returns a `_no_reply_marker`-formatted
+    response on a user-initiated chain, the receiving agent must surface the
+    failure to the user explicitly via OS-level deterministic message — NOT
+    silently absorb it into a polite close like "かしこまりました..." (B2-H2).
+
+    This is the inverse safety: the F6 marker mechanism produces a clear
+    failure signal from the OS, but B2-H2 dogfood found that weak LLMs
+    read the marker as conversational reply and ignore the failure. We bypass
+    the LLM for this specific case.
+
+    Path exercised: `_handle_agent_response` → `chain_id ∉ self._chains`
+    branch (user-initiated chain, PR11 path).
+    """
+    monkeypatch.chdir(tmp_path)
+    from reyn.chat.session import _no_reply_marker
+
+    session = _make_session(tmp_path, agent_name="default_agent")
+    session.is_attached = True
+
+    # Inject a no-reply marker as if a specialist peer sent it.
+    marker = _no_reply_marker("specialist", "router completed without producing a text reply")
+
+    # _run_router_loop must NOT be called — we verify by patching it to raise.
+    router_called = []
+
+    async def _should_not_call(*args, **kwargs):
+        router_called.append(True)
+        raise AssertionError("_run_router_loop should NOT be called for a no-reply marker")
+
+    session._run_router_loop = _should_not_call  # type: ignore[assignment]
+
+    await session._handle_agent_response({
+        "from_agent": "specialist",
+        "response": marker,
+        "depth": 1,
+        "chain_id": "chain-b2h2-user-001",
+    })
+
+    # Must NOT have called the router loop.
+    assert not router_called, "B2-H2 regression: _run_router_loop was called for a marker"
+
+    # Outbox must contain a kind=agent failure message.
+    msgs = _drain_outbox(session)
+    agent_msgs = [m for m in msgs if m.kind == "agent"]
+    assert agent_msgs, (
+        "B2-H2 regression: outbox has no 'agent' message; user was not notified of peer failure"
+    )
+    # The message must reference the failing peer.
+    combined_text = " ".join(m.text for m in agent_msgs)
+    assert "specialist" in combined_text, (
+        f"B2-H2: expected peer name 'specialist' in user message; got: {combined_text!r}"
+    )
+    # meta must carry peer_failure=True.
+    peer_failure_msgs = [m for m in agent_msgs if m.meta.get("peer_failure")]
+    assert peer_failure_msgs, (
+        f"B2-H2: no message with meta.peer_failure=True; msgs: {agent_msgs!r}"
+    )
+
+    # Chat event log must contain peer_reply_failed_surfaced event (P6 audit).
+    chat_event_types = [e.type for e in session._chat_events.all()]
+    assert "peer_reply_failed_surfaced" in chat_event_types, (
+        f"B2-H2: expected 'peer_reply_failed_surfaced' chat event; got: {chat_event_types!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
+    tmp_path, monkeypatch
+):
+    """Tier 2: when a peer returns a `_no_reply_marker`-formatted response
+    and the receiving agent has a *pending chain* (multi-hop relay path),
+    the failure is forwarded upstream deterministically without consulting
+    the LLM (B2-H2, `_resolve_pending_chain` path).
+
+    Path exercised: `_handle_agent_response` → `chain_id ∈ self._chains`
+    branch → `_resolve_pending_chain`.
+    """
+    monkeypatch.chdir(tmp_path)
+    from reyn.chat.session import _no_reply_marker
+
+    # Set up upstream origin agent to capture the forwarded response.
+    origin_session = ChatSession(agent_name="origin_agent")
+    upstream_received: list[dict] = []
+
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+        upstream_received.append({
+            "from_agent": from_agent,
+            "response": response,
+            "chain_id": chain_id,
+        })
+
+    origin_session.submit_agent_response = _fake_submit_agent_response
+
+    registry = _FakeRegistry()
+    registry.register("origin_agent", origin_session)
+
+    session = _make_session(
+        tmp_path, agent_name="relay_agent", registry=registry
+    )
+    session.is_attached = True
+
+    # Manually register a pending chain: relay_agent is waiting on "specialist"
+    # for a request that came from "origin_agent".
+    chain_id = "chain-b2h2-relay-001"
+    await session._chains.register(
+        chain_id=chain_id,
+        from_user=False,
+        depth=2,
+        original_text="what is the recipe?",
+        sender="origin_agent",
+        waiting_on={"specialist"},
+        origin_agent="origin_agent",
+        origin_depth=1,
+    )
+
+    # Confirm the chain exists.
+    assert session._chains.get(chain_id) is not None
+
+    # _run_router_loop must NOT be called.
+    router_called = []
+
+    async def _should_not_call(*args, **kwargs):
+        router_called.append(True)
+        raise AssertionError("_run_router_loop should NOT be called for a marker in pending chain")
+
+    session._run_router_loop = _should_not_call  # type: ignore[assignment]
+
+    # Simulate specialist sending a no-reply marker.
+    marker = _no_reply_marker("specialist", "router completed without producing a text reply")
+
+    await session._handle_agent_response({
+        "from_agent": "specialist",
+        "response": marker,
+        "depth": 2,
+        "chain_id": chain_id,
+    })
+
+    # Must NOT have called the router.
+    assert not router_called, "B2-H2 relay regression: _run_router_loop was called for a marker"
+
+    # Chain must be resolved.
+    assert session._chains.get(chain_id) is None, (
+        "B2-H2 relay: chain should be resolved after marker detection, but it is still pending"
+    )
+
+    # Origin agent must have received a forwarded failure message.
+    assert upstream_received, (
+        "B2-H2 relay: origin_agent received no forwarded response"
+    )
+    fwd = upstream_received[0]
+    assert fwd["chain_id"] == chain_id
+    # Forwarded message should mention the failing peer name.
+    assert "specialist" in fwd["response"], (
+        f"B2-H2 relay: expected 'specialist' in forwarded failure; got: {fwd['response']!r}"
+    )
+    # Should NOT be a raw marker anymore (the OS translates it to a user-facing message).
+    assert "could not produce a reply" not in fwd["response"], (
+        f"B2-H2 relay: raw marker was forwarded verbatim; should be localized: {fwd['response']!r}"
+    )
+
+    # Chat event log must contain peer_reply_failed_surfaced event (P6 audit).
+    chat_event_types = [e.type for e in session._chat_events.all()]
+    assert "peer_reply_failed_surfaced" in chat_event_types, (
+        f"B2-H2 relay: expected 'peer_reply_failed_surfaced' chat event; got: {chat_event_types!r}"
+    )
