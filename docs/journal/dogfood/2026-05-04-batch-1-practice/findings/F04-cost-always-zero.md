@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | LOW |
-| Status | **fixed** at `<F4-commit>` |
+| Status | **fixed** at `70194d5` |
 | Scenario | scenario 1 (= 全 scenario で同様) |
 | Found | 2026-05-04 |
 | Fixed | 2026-05-04 |
