@@ -1,14 +1,17 @@
 """Unit tests for RouterLoop (PR35 wave-2 task D).
 
-Uses FakeRouterHost and monkeypatches call_llm_tools to return scripted
+Uses FakeRouterHost and a scripted callable (_ScriptedLLM) to return scripted
 LLMToolCallResult sequences without hitting the network.
+
+No unittest.mock.AsyncMock / MagicMock / patch(new_callable=AsyncMock) are
+used. patch() is only called with real callables (policy: Mock vs Fake).
 """
 from __future__ import annotations
 
 import asyncio
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -206,30 +209,48 @@ def make_loop(host: FakeRouterHost, max_iterations: int = 5) -> RouterLoop:
     return RouterLoop(host=host, chain_id="chain-test", max_iterations=max_iterations)
 
 
+class _ScriptedLLM:
+    """Real callable replacing call_llm_tools with a scripted sequence.
+
+    Allowed by policy (Mock vs Fake section): a real class with __call__
+    that raises TypeError on signature drift, unlike AsyncMock.
+    """
+
+    def __init__(self, script: list[LLMToolCallResult]) -> None:
+        self._script = list(script)
+        self.call_count: int = 0
+
+    async def __call__(self, **kwargs: Any) -> LLMToolCallResult:
+        result = self._script[self.call_count]
+        self.call_count += 1
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_chitchat_no_tools():
-    """Tier 1 framework boundary: RouterLoop text-reply path puts one agent message in outbox. AsyncMock isolates from network without LLMReplay (single-iteration, no LLM contract assertion)."""
+    """Tier 1: RouterLoop text-reply path puts one agent message in outbox."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = text_result("hello")
+    scripted = _ScriptedLLM([text_result("hello")])
+
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("hi", [])
 
     assert len(host.outbox) == 1
     assert host.outbox[0]["kind"] == "agent"
     assert host.outbox[0]["text"] == "hello"
     assert len(host.skill_calls) == 0
-    mock_llm.assert_awaited_once()
+    assert scripted.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_single_skill_round():
-    """Tier 1 framework boundary: RouterLoop dispatches invoke_skill on round 1 and produces text reply on round 2. AsyncMock required for multi-round scripted control flow."""
+    """Tier 1: RouterLoop dispatches invoke_skill on round 1 and produces text reply on round 2."""
     host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
     loop = make_loop(host)
 
@@ -240,9 +261,9 @@ async def test_single_skill_round():
         }}]),
         text_result("Done!"),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run my skill", [])
 
     assert len(host.skill_calls) == 1
@@ -251,12 +272,12 @@ async def test_single_skill_round():
 
     assert len(host.outbox) == 1
     assert host.outbox[0]["text"] == "Done!"
-    assert mock_llm.await_count == 2
+    assert scripted.call_count == 2
 
 
 @pytest.mark.asyncio
 async def test_two_round_sequential():
-    """Tier 1 framework boundary: multi-round message accumulation — tool results from round 1 and 2 appear in round 3 messages. AsyncMock required for message-capture across 3 scripted rounds."""
+    """Tier 1: multi-round message accumulation — tool results from round 1 and 2 appear in round 3 messages."""
     host = FakeRouterHost(
         file_permissions={"read": ["/docs"], "write": []},
         skills=[{"name": "skill_a", "category": "general"}],
@@ -292,7 +313,7 @@ async def test_two_round_sequential():
 
 @pytest.mark.asyncio
 async def test_parallel_tool_calls_executed():
-    """Tier 1 framework boundary: RouterLoop executes all tool_calls from a single round concurrently. AsyncMock required for scripted multi-tool round."""
+    """Tier 1: RouterLoop executes all tool_calls from a single round concurrently."""
     host = FakeRouterHost(
         skills=[
             {"name": "skill_a", "category": "general"},
@@ -310,9 +331,9 @@ async def test_parallel_tool_calls_executed():
         ]),
         text_result("Both done."),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run both", [])
 
     assert len(host.skill_calls) == 2
@@ -329,12 +350,12 @@ async def test_max_iterations_exhausted():
 
     # Always return a tool call (unknown tool to avoid side effects)
     always_tool = tool_result([{"name": "bogus_tool", "args": {}}])
+    scripted = _ScriptedLLM([always_tool] * 3)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = always_tool
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("do stuff", [])
 
-    assert mock_llm.await_count == 3
+    assert scripted.call_count == 3
     assert len(host.outbox) == 1
     assert host.outbox[0]["kind"] == "error"
     assert "max iterations" in host.outbox[0]["text"]
@@ -343,7 +364,7 @@ async def test_max_iterations_exhausted():
 
 @pytest.mark.asyncio
 async def test_unknown_tool_returns_error_in_result():
-    """Tier 1 framework boundary: unknown tool name produces error tool result with kind=unknown_tool; loop continues to next round. AsyncMock required for message-capture of tool result content."""
+    """Tier 1: unknown tool name produces error tool result with kind=unknown_tool; loop continues to next round."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -376,7 +397,7 @@ async def test_unknown_tool_returns_error_in_result():
 
 @pytest.mark.asyncio
 async def test_remember_shared_writes_file_and_regenerates_index():
-    """Tier 1 framework boundary: remember_shared tool writes memory file with correct frontmatter and triggers index regeneration. AsyncMock required for scripted tool-call round."""
+    """Tier 1: remember_shared tool writes memory file with correct frontmatter and triggers index regeneration."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     loop = make_loop(host)
 
@@ -393,9 +414,9 @@ async def test_remember_shared_writes_file_and_regenerates_index():
         }]),
         text_result("Saved."),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("remember: I'm a developer", [])
 
     # file_write should have been called with the right path
@@ -418,7 +439,7 @@ async def test_remember_shared_writes_file_and_regenerates_index():
 
 @pytest.mark.asyncio
 async def test_list_skills_empty_path_returns_categories():
-    """Tier 1 framework boundary: list_skills('') returns category+count entries grouped by category. Tests tool API output shape without LLM involvement."""
+    """Tier 1: list_skills('') returns category+count entries grouped by category. Tests tool API output shape without LLM involvement."""
     skills = [
         {"name": "write_blog", "category": "write"},
         {"name": "write_email", "category": "write"},
@@ -436,7 +457,7 @@ async def test_list_skills_empty_path_returns_categories():
 
 @pytest.mark.asyncio
 async def test_list_skills_with_category_returns_items():
-    """Tier 1 framework boundary: list_skills('write') returns only skills in the write category. Tests tool API output shape without LLM involvement."""
+    """Tier 1: list_skills('write') returns only skills in the write category. Tests tool API output shape without LLM involvement."""
     skills = [
         {"name": "write_blog", "description": "Writes blog posts", "category": "write"},
         {"name": "write_email", "description": "Writes emails", "category": "write"},
@@ -454,7 +475,7 @@ async def test_list_skills_with_category_returns_items():
 
 @pytest.mark.asyncio
 async def test_list_memory_top_level():
-    """Tier 1 framework boundary: list_memory('') returns layer+count entries from memory index. Tests tool API output shape without LLM involvement."""
+    """Tier 1: list_memory('') returns layer+count entries from memory index. Tests tool API output shape without LLM involvement."""
     memory_content = (
         "# Memory Index (shared)\n\n"
         "- [User Role](user_role.md) — Developer\n"
@@ -497,9 +518,9 @@ async def test_delegate_to_agent():
         # after the delegate dispatch.
         text_result("Should not reach this round."),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("send to peer", [])
 
     assert len(host.agent_sends) == 1
@@ -507,7 +528,7 @@ async def test_delegate_to_agent():
     assert host.agent_sends[0]["request"] == "please process the data"
     assert host.agent_sends[0]["chain_id"] == "chain-test"
     # Only the first LLM call ran; the second round was never consumed.
-    assert mock_llm.await_count == 1
+    assert scripted.call_count == 1
     # Outbox shows the "awaiting peer reply" status, not a text reply.
     assert any(
         m["kind"] == "status" and "awaiting peer reply" in m["text"]
@@ -532,17 +553,14 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
         "name": "delegate_to_agent",
         "args": {"to": "peer", "request": "do work"},
     }])
+    scripted = _ScriptedLLM([delegate_round] * 5)
 
-    with patch(
-        "reyn.chat.router_loop.call_llm_tools",
-        new_callable=AsyncMock,
-    ) as mock_llm:
-        mock_llm.side_effect = [delegate_round] * 5
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("delegate", [])
 
     # Exactly one delegate dispatch; loop exited after the first iteration.
     assert len(host.agent_sends) == 1
-    assert mock_llm.await_count == 1
+    assert scripted.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -567,12 +585,9 @@ async def test_dedupe_duplicate_async_tool_calls_in_same_round():
         {"id": "tc_b", "name": "delegate_to_agent",
          "args": {"to": "peer", "request": "do work"}},
     ])
+    scripted = _ScriptedLLM([duplicate_round])
 
-    with patch(
-        "reyn.chat.router_loop.call_llm_tools",
-        new_callable=AsyncMock,
-    ) as mock_llm:
-        mock_llm.side_effect = [duplicate_round]
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("send", [])
 
     # Only one send_to_agent — duplicate suppressed.
@@ -609,12 +624,9 @@ async def test_dedupe_does_not_collapse_distinct_async_args():
         {"id": "tc_b", "name": "delegate_to_agent",
          "args": {"to": "peer", "request": "task B"}},
     ])
+    scripted = _ScriptedLLM([distinct_round])
 
-    with patch(
-        "reyn.chat.router_loop.call_llm_tools",
-        new_callable=AsyncMock,
-    ) as mock_llm:
-        mock_llm.side_effect = [distinct_round]
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("send two tasks", [])
 
     # Both dispatch — different args.
@@ -651,12 +663,9 @@ async def test_dedupe_does_not_apply_to_sync_tool_calls():
         ]),
         text_result("done"),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch(
-        "reyn.chat.router_loop.call_llm_tools",
-        new_callable=AsyncMock,
-    ) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("describe", [])
 
     # No dedupe events for sync tools.
@@ -669,7 +678,7 @@ async def test_dedupe_does_not_apply_to_sync_tool_calls():
 
 @pytest.mark.asyncio
 async def test_forget_memory_deletes_file_and_regenerates_index():
-    """Tier 1 framework boundary: forget_memory tool deletes the memory file and triggers index regeneration. AsyncMock required for scripted tool-call round."""
+    """Tier 1: forget_memory tool deletes the memory file and triggers index regeneration."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})
     host._files["/memory/shared/user_role.md"] = "# old memory"
     loop = make_loop(host)
@@ -681,9 +690,9 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
         }]),
         text_result("Forgotten."),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("forget my role", [])
 
     assert "/memory/shared/user_role.md" in host.file_deletes
@@ -693,7 +702,7 @@ async def test_forget_memory_deletes_file_and_regenerates_index():
 
 @pytest.mark.asyncio
 async def test_history_appended_to_messages():
-    """Tier 1 framework boundary: prior history turns appear in LLM messages before the current user utterance, in correct role order. AsyncMock required for message-capture."""
+    """Tier 1: prior history turns appear in LLM messages before the current user utterance, in correct role order."""
     host = FakeRouterHost()
     loop = make_loop(host)
 
@@ -769,7 +778,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
 
 @pytest.mark.asyncio
 async def test_tool_names_populated_per_run():
-    """Tier 1 framework boundary: tool catalog reflects host configuration — file tools absent without file_permissions, present with it. Tests catalog-build contract without LLM involvement.
+    """Tier 1: tool catalog reflects host configuration — file tools absent without file_permissions, present with it. Tests catalog-build contract without LLM involvement.
 
     First run: no file permissions, no MCP → file/mcp tools absent.
     Second run: with file permissions → file tools present.
@@ -777,8 +786,8 @@ async def test_tool_names_populated_per_run():
     host_no_file = FakeRouterHost(file_permissions=None, mcp_servers=[])
     loop = RouterLoop(host=host_no_file, chain_id="chain-test")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = text_result("ok")
+    scripted1 = _ScriptedLLM([text_result("ok")])
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted1):
         await loop.run("hello", [])
 
     names_no_file = frozenset(loop._tool_names)
@@ -792,8 +801,8 @@ async def test_tool_names_populated_per_run():
     )
     loop2 = RouterLoop(host=host_with_file, chain_id="chain-test-2")
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.return_value = text_result("ok")
+    scripted2 = _ScriptedLLM([text_result("ok")])
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted2):
         await loop2.run("hello", [])
 
     names_with_file = frozenset(loop2._tool_names)
@@ -802,7 +811,7 @@ async def test_tool_names_populated_per_run():
 
 @pytest.mark.asyncio
 async def test_known_tool_still_dispatches():
-    """Tier 1 framework boundary: valid catalog tool (list_skills) dispatches and returns status=ok with list data. Sanity check that tool name validation does not block legitimate tools."""
+    """Tier 1: valid catalog tool (list_skills) dispatches and returns status=ok with list data. Sanity check that tool name validation does not block legitimate tools."""
     host = FakeRouterHost(
         skills=[{"name": "my_skill", "category": "general"}],
     )
@@ -851,9 +860,9 @@ async def test_dispatch_tool_emits_tool_called_and_tool_returned_events():
         }}]),
         text_result("Done!"),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run skill", [])
 
     event_types = [e["type"] for e in host.events.emitted]
@@ -934,7 +943,7 @@ async def test_invoke_skill_with_unknown_skill_name_rejected():
 
 @pytest.mark.asyncio
 async def test_invoke_skill_with_known_name_dispatches():
-    """Tier 1 framework boundary: invoke_skill with a valid skill name dispatches and produces text reply. Happy-path sanity check for skill name validation."""
+    """Tier 1: invoke_skill with a valid skill name dispatches and produces text reply. Happy-path sanity check for skill name validation."""
     host = FakeRouterHost(skills=[{"name": "real_skill", "category": "general"}])
     loop = make_loop(host)
 
@@ -945,9 +954,9 @@ async def test_invoke_skill_with_known_name_dispatches():
         }}]),
         text_result("Skill ran."),
     ]
+    scripted = _ScriptedLLM(rounds)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm:
-        mock_llm.side_effect = rounds
+    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
         await loop.run("run real skill", [])
 
     assert len(host.skill_calls) == 1
