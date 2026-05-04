@@ -19,21 +19,23 @@ models:
 # output_language: en          # en | ja | zh | ...
 # shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
 
-# Optional: configure MCP servers. Each entry is either stdio (local
-# subprocess, e.g. official @modelcontextprotocol servers) or http.
-# See docs/en/concepts/mcp.md for details.
-#
+# ───────────────────────────────────────────────────────────────────────────
+# MCP servers (optional). Stdlib skills like `read_local_files` need a
+# `filesystem` server. Uncomment below to enable, or see the full example at
+# examples/configs/with-mcp.yaml.  Run the server manually first to verify:
+#   npx -y @modelcontextprotocol/server-filesystem .
+# Full setup guide: docs/en/how-to/use-an-mcp-server.md
+# ───────────────────────────────────────────────────────────────────────────
 # mcp:
 #   servers:
 #     filesystem:
 #       type: stdio
 #       command: npx
 #       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
-#     remote_search:
-#       type: http
-#       url: http://localhost:3000/mcp
-#       headers:
-#         Authorization: "Bearer ${SEARCH_API_KEY}"
+#     # git:
+#     #   type: stdio
+#     #   command: npx
+#     #   args: ["-y", "@modelcontextprotocol/server-git", "--repository", "."]
 """
 
 

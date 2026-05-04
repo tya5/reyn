@@ -23,6 +23,7 @@ def build_system_prompt(
     memory_index: dict,
     file_permissions: dict | None = None,
     mcp_servers: list[dict] | None = None,
+    output_language: str = "en",
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -41,6 +42,10 @@ def build_system_prompt(
             When non-empty (either list), a Files section is rendered.
         mcp_servers: optional list of ``{"name": ..., "description": ...}``.
             When non-empty, an MCP servers section is rendered.
+        output_language: BCP-47-style language code (e.g. "ja", "en").
+            When set, the Behaviour section instructs the LLM to reply in
+            that specific language rather than just "the user's language".
+            Defaults to "en" so callers that omit it get deterministic English.
     """
     skill_section = _render_skills(available_skills)
     agent_section = _render_agents(available_agents)
@@ -121,20 +126,37 @@ def build_system_prompt(
             parts.append(f"  {line}")
         parts.append("")
     parts.append("## Behaviour")
-    parts.append("  - Match the user's language for any text reply.")
+    # Explicit language instruction: a concrete language tag is stronger than
+    # "match the user's language" — the LLM must produce text in this language
+    # even on clarifying-question and error fallback paths (F11).
+    parts.append(
+        f"  - Always reply in language: {output_language}."
+        "  Do NOT switch language even for error messages or clarifying questions."
+    )
     parts.append(
         "  - First decide intent (Action / Recall / Save / Forget / Reply),"
     )
     parts.append("    then pick tools from that group.")
+    # F3 + F9 (dogfood batch 1): with the gemini-2.5-flash-lite default
+    # the router tends to reply directly even when a domain task or an
+    # explicit skill-name reference would warrant invoke_skill. The two rules
+    # below are minimal disambiguation hints — concrete, not exhaustive.
+    # Strategy: tighten the system on flash-lite first, then revisit with
+    # stronger models later. Avoid prompt bloat / verb-list overfitting.
     parts.append(
-        "  - Reply directly (no tools) for chitchat / stable knowledge."
+        "  - Reply directly only for chitchat, questions about yourself,"
     )
     parts.append(
-        "  - For Action, browse the relevant skill category first"
+        "    and clarifications back to the user. Domain tasks → Action."
     )
     parts.append(
-        "    (list_skills, then describe_skill if needed) before invoke_skill."
+        "  - If the user names a skill, use list_skills + invoke_skill"
     )
+    parts.append("    rather than paraphrasing the request as a Reply.")
+    parts.append(
+        "  - For Action, browse list_skills (then describe_skill if needed)"
+    )
+    parts.append("    before invoke_skill.")
     parts.append(
         "  - For Recall, answer from the Memory section's inlined descriptions;"
     )

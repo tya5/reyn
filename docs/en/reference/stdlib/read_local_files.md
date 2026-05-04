@@ -22,7 +22,8 @@ Read a file from the project (or anywhere the configured `filesystem` MCP server
 
 ## Required setup
 
-A `filesystem` MCP server MUST be configured in `reyn.yaml` under that exact name:
+A `filesystem` MCP server MUST be configured in `reyn.yaml` under that exact name.
+A ready-to-use config is at [`examples/configs/with-mcp.yaml`](../../../../examples/configs/with-mcp.yaml) — copy it to your project root and rename to `reyn.yaml`, or paste the block below into your existing `reyn.yaml`:
 
 ```yaml
 mcp:

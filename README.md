@@ -47,6 +47,8 @@ Initialize a project (creates `reyn.yaml` and `.reyn/config.yaml`):
 reyn init
 ```
 
+To enable MCP-backed skills such as `read_local_files`, uncomment the `mcp:` block that `reyn init` places in `reyn.yaml`, or copy [`examples/configs/with-mcp.yaml`](examples/configs/with-mcp.yaml) as your starting point.
+
 ---
 
 ## Quick start

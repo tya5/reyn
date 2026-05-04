@@ -80,8 +80,10 @@ class TestCategoriesGroupedCorrectly:
         )
         assert "general (1)" in prompt
         assert "write (2)" in prompt
-        # analyze and read must not appear (no skills in those categories)
-        assert "analyze" not in prompt
+        # analyze and read must not appear AS CATEGORIES (no skills in those
+        # categories). Bare verbs may appear in the Behaviour section's
+        # domain-verb list — use the "(N)" suffix to assert category-form.
+        assert "analyze (" not in prompt
         assert "read (0)" not in prompt
 
     def test_missing_category_defaults_to_general(self):
@@ -393,3 +395,46 @@ class TestIntentAxisDynamic:
         assert "Save — persist new facts" in prompt
         assert "Forget — delete persisted facts" in prompt
         assert "Reply — answer directly (no tool)" in prompt
+
+
+# ---------------------------------------------------------------------------
+# F3 + F9 fix (PR-router-fix): Behaviour rules tighten the routing decision
+# ---------------------------------------------------------------------------
+
+class TestBehaviourRulesAfterF3F9Fix:
+    """Tier 2: pin the Behaviour rules added to address 0/3 routing
+    failures observed in dogfood batch 1 (findings F3 + F9). The rules
+    are intentionally minimal — they're concrete disambiguation hints
+    for weaker models, not a complete fix. (For consistent routing on
+    weak models like gemini-2.5-flash-lite, a stronger router model is
+    the structural fix; the prompt rules are best-effort.)"""
+
+    def test_explicit_skill_name_directs_to_invoke(self):
+        """Tier 2: prompt instructs LLM that user-named skills go through
+        list_skills + invoke_skill (not direct Reply)."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="",
+            available_skills=[_make_skill("read_local_files", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        assert "If the user names a skill" in prompt
+        assert "list_skills + invoke_skill" in prompt
+        assert "paraphrasing" in prompt
+
+    def test_reply_directly_restricted_to_chitchat(self):
+        """Tier 2: 'Reply directly' rule restricted — only chitchat,
+        self-questions, clarifications. Domain tasks must go to Action."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="",
+            available_skills=[],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        assert "Reply directly only for chitchat" in prompt
+        assert "Domain tasks" in prompt
+        assert "Action" in prompt
+        # The old too-permissive phrasing must be gone
+        assert "stable knowledge" not in prompt

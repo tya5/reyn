@@ -58,6 +58,7 @@ class FakeRouterHost:
     chat_id: str = "test-chat-id"
     agent_name: str = "test-agent"
     agent_role: str = "test role"
+    output_language: str = "en"
 
     def __init__(
         self,

@@ -46,6 +46,20 @@ from reyn.chat.outbox import OutboxMessage
 ROUTER_SKILL_NAME = "skill_router"
 NARRATOR_SKILL_NAME = "skill_narrator"
 
+# Localized user-facing messages for the router retry-exhausted fallback (F8).
+# Keys are BCP-47-style language codes matching config `output_language`.
+# Unsupported codes fall back to "en".
+_ROUTER_RETRY_EXHAUSTED_MSG: dict[str, str] = {
+    "ja": (
+        "このターン内で処理を完結できませんでした (router 予算使い切り)。"
+        " 別の言い回しで試すか、リクエストを分割してみてください。"
+    ),
+    "en": (
+        "I couldn't find a way to handle that within this turn's routing budget."
+        " Please try rephrasing or breaking the request into smaller pieces."
+    ),
+}
+
 
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more
@@ -1169,10 +1183,9 @@ class ChatSession:
             ),
             meta={"chain_id": chain_id},
         ))
-        fallback = (
-            "I couldn't find a way to handle that within this turn's "
-            "routing budget. Please try rephrasing or breaking the request "
-            "into smaller pieces."
+        fallback = _ROUTER_RETRY_EXHAUSTED_MSG.get(
+            self.output_language,
+            _ROUTER_RETRY_EXHAUSTED_MSG["en"],
         )
         await self._put_outbox(OutboxMessage(
             kind="agent", text=fallback, meta={"chain_id": chain_id},

@@ -32,6 +32,7 @@ class RouterLoopHost(Protocol):
     chat_id: str
     agent_name: str
     agent_role: str
+    output_language: str  # BCP-47 code, e.g. "ja" or "en"
 
     @property
     def events(self) -> Any:
@@ -148,6 +149,7 @@ class RouterLoop:
             memory_index=host.get_memory_index(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
+            output_language=host.output_language,
         )
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(history)  # prior chat turns

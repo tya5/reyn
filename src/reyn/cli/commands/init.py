@@ -58,3 +58,8 @@ def run(args: argparse.Namespace) -> None:
     print("       export ANTHROPIC_API_KEY=sk-ant-...")
     print("  4. Run an app:")
     print('       reyn run app_builder "describe the app you want to build"')
+    print()
+    print("MCP servers (optional):")
+    print("  To use stdlib skills like read_local_files, uncomment the mcp:")
+    print("  block in reyn.yaml.  Full example: examples/configs/with-mcp.yaml")
+    print("  Setup guide:          docs/en/how-to/use-an-mcp-server.md")
