@@ -202,6 +202,80 @@ B6-S1-M1 の fix として OS 側で `validation.ok = false` を abort に繋げ
 
 ---
 
+## dispatch wave 完走後の追跡 — B6-S1-M1 系と新規 infra fix 2 件
+
+### dispatch wave 構成
+
+batch 6 の S1-S5 観測 (A3) が完了した後、 A4 user review で B6-S1-H1 の fix
+方向 (= OS が path を解決して渡す) と B6-S1-M1 の仮説 (a) 検証が次ステップ
+として確定した。 以降は **3 wave の並列 → 逐次 dispatch** で進行した:
+
+| Wave | 内容 | 体制 |
+|---|---|---|
+| Wave 1 | B6-S1-H1 fix (eval_builder OS path resolution) | sonnet ×1 |
+| Wave 2 | B5-M2 fix (skill_improver decide-turn instruction) | sonnet ×1 |
+| Wave 3 | B6-S1-M1 仮説 (a) Tier 3 LLMReplay test + dogfood retest | sonnet ×1 (sequential) |
+
+Wave 1 + 2 は並列で landing した (`e6de782` + `0fd6d0b`)。 Wave 3 は
+`e6de782` / `0fd6d0b` の両方を前提とした retest だったため、 Wave 1/2 完了後に
+逐次で実施した。
+
+### B6-S1-M1 仮説 (a) の 2 経路検証
+
+仮説 (a) (= `_validation` → `validation` rename が LLM の context 認識を改善した)
+を検証するために 2 つの経路を並べた結果が以下の通りだった:
+
+| 経路 | 手法 | 判定 | コメント |
+|---|---|---|---|
+| Tier 3 LLMReplay | hand-crafted fixture で behavioral pin | **verified (間接的)** (`9763ecf`) | `data.validation.ok` に基づく分岐を test で pin、 regression guard として確立 |
+| dogfood retest | 実 LLM を chat / run mode で e2e 実行 | **inconclusive** (`07e16ca`) | preprocessor が step 0/1 で先行 fail → LLM 呼ばれず観測不能 |
+
+dogfood retest が inconclusive になった理由は仮説 (a) の問題でなく、 **インフラ
+層の別 gap 2 件** だった。 これが今 batch の最も意外な副次成果となった。
+
+### 新規 infra bug 2 件 — dogfood retest 中に発見、 同 session 内で fix landing
+
+#### B6-INFRA-1: `reyn chat` での trusted python 未サポート
+
+`copy_to_work` preprocessor の step 0 は `mode='trusted'` の python step。
+`reyn chat` コマンドは `--allow-untrusted-python` フラグを持たず、
+`PermissionResolver` を `trusted_python_allowed=False` 固定で生成する。
+`reyn.yaml` に `python.trusted: allow` を設定しても runtime の hard-fail は
+bypass されない — 設計上の gap。
+
+→ `reyn chat --allow-untrusted-python` flag 追加で `reyn run` との symmetry を確保。
+Commit `07ee851`、 +4 test。 当 session 内で fix landing。
+
+#### B6-INFRA-2: `Workspace.glob_files()` の stdlib boundary 拒否
+
+`compute_paths()` が返す stdlib skill の glob path は absolute path。
+`Workspace.glob_files()` が `base_dir` 以外を境界外として `PermissionError` を
+raise する。 `file.read: allow` config は `PermissionResolver` 経由だが、
+`Workspace.glob_files()` の boundary check は別レイヤー — 二重 gate 構造の gap。
+
+→ `PermissionResolver` consultation を boundary check に追加、 stdlib path への
+explicit perm で opt-in できる設計に変更。 Commit `f666acb`、 +4 test。
+当 session 内で fix landing。
+
+### infra fix 2 件 landing 後の状態
+
+| Commit | 内容 | test 増分 |
+|---|---|---|
+| `e6de782` | eval_builder D1+D2+D3a fix (preprocessor 経由 OS path resolution) | +8 |
+| `0fd6d0b` | skill_improver decide-turn instructions strengthening (B5-M2 H1+H2+H3) | +4 |
+| `9763ecf` | copy_to_work validation judgment Tier 3 LLMReplay test (B6-S1-M1 仮説 a) | +2 |
+| `07e16ca` | B6-S1-M1 仮説 (a) dogfood retest doc | 0 |
+| `07ee851` | reyn chat --allow-untrusted-python flag (infra fix #1) | +4 |
+| `f666acb` | Workspace.glob_files() perm consultation (infra fix #2) | +4 |
+
+合計 +22 test、 0 regression。 main HEAD: `f666acb`、 775 passed / 2 xfailed。
+
+**「chat 経由で skill_improver が動く前提が揃った」** — これが wave 完走の
+headline。 B6-S1-M1 仮説 (a) の dogfood 観測は次 batch (batch 7) の retest
+課題として持ち越しとなる一方、 Tier 3 が regression guard として確立された。
+
+---
+
 ## 次回への持ち越し
 
 ### Wave 1 着手内容 (= 次の即着手)
@@ -248,13 +322,29 @@ user 指摘 「LLM に path を扱わせない」 を受けて、 skill identifi
 6. **fix の dependency を tracker に明示する**: B4-M1 fix は B6-S1-H1 fix が
    先行条件。 dependency 関係が暗黙になると fix 設計時に前提が崩れた状態で
    走ることになる。 tracker に「blocks / blocked-by」 の記述を追加する候補
+7. **dogfood retest が inconclusive でも、 副次的に新 infra bug を炙り出す**: 仮説
+   (a) の dogfood 観測が失敗した理由は仮説 (a) でなく、 chat trusted python gap
+   + workspace boundary mismatch の 2 件だった。 「観測できなかった = 何も学ばなかった」
+   ではなく、 「インフラ層の gap を発見した」 という観点で dogfood retest の
+   価値を評価し直す必要がある
+8. **Tier 3 LLMReplay は dogfood retest の代替でなく補完**: Tier 3 は「そのような
+   応答が来た時に正しく動作する」 を pin し、 regression guard として機能する。
+   dogfood は「実 LLM が実際にそう振る舞うか」 を観測する。 両経路は目的が
+   別であり、 どちらかが inconclusive でも他方の価値は毀損されない
+9. **permission system と workspace boundary の二重 gate は gap を生む**: 同じ
+   semantics (= アクセス許可) を 2 つの独立したレイヤーが実装すると、 片方を
+   bypass した時に他方が拒否する gap が生まれる。 設計 review で「同じ semantics
+   の gate は 1 箇所に集約」 という invariant を tracker に pin する候補
 
 ---
 
 ## 関連 docs
 
-- [findings.md](findings.md) — 全体 narrative + A4 review 記録
+- [findings.md](findings.md) — 全体 narrative + A4 review 記録 + post-S5 wave 追記
 - [findings/B6-S{1-5}-observation.md](findings/) — 5 scenario raw 観測
-- [giveup-tracker.md](../giveup-tracker.md) — G3 resolved / G10 resolved / G12 update
+- [findings/B6-S1-M1-hypothesis-a-verify.md](findings/B6-S1-M1-hypothesis-a-verify.md) — 仮説 (a) 初回 verify (inconclusive)
+- [findings/B6-S1-M1-hypothesis-a-tier3-verify.md](findings/B6-S1-M1-hypothesis-a-tier3-verify.md) — Tier 3 LLMReplay verified (regression guard)
+- [findings/B6-S1-M1-hypothesis-a-retest.md](findings/B6-S1-M1-hypothesis-a-retest.md) — dogfood retest (inconclusive + 新 infra bug 2 件)
+- [giveup-tracker.md](../giveup-tracker.md) — G3/G10/G12 update + G13/G14 resolved
 - [batch 5 retro](../2026-05-04-batch-5-fix-verify/retrospective.md) — 直前 batch (= G2 / G12 化判断)
 - [prelude.md](prelude.md) — batch 6 の前夜

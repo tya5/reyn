@@ -19,7 +19,8 @@
 
 - batch 6 開始時: `0660bb2`、 736 passed
 - A3 並走中の Wave 4 fix: G3 `9798372` + G10 `af16228` landed
-- batch 6 終了時 (= A3 完了): `fd852e5`、 743 passed (+7 = G3 +3 / G10 +4)
+- A3 完了 (= S1-S5 観測終了): `fd852e5`、 743 passed (+7 = G3 +3 / G10 +4)
+- post-S5 wave (eval_builder + B5-M2 + Tier 3 + infra fix 2 件): `f666acb`、 775 passed (+32 = +22 post-wave / 0 regression)
 
 ---
 
@@ -27,14 +28,18 @@
 
 | ID | 重要度 | 一行で言うと | 状態 |
 |---|---|---|---|
-| [B6-S1-H1](findings/B6-S1-observation.md) | HIGH | `prepare` LLM が stdlib skill (`direct_llm`) の path を `reyn/local/<name>/skill.md` に補完 → stdlib path resolution 欠落 | open (= 新規) |
-| [B6-S1-M1](findings/B6-S1-observation.md) | MED | `_validation.ok=false / files_written=0` でも LLM が「copied」 判定 → preprocessor validation 結果が LLM context に未到達 | open (= 新規) |
+| [B6-S1-H1](findings/B6-S1-observation.md) | HIGH | `prepare` LLM が stdlib skill (`direct_llm`) の path を `reyn/local/<name>/skill.md` に補完 → stdlib path resolution 欠落 | **resolved** by `e6de782` |
+| [B6-S1-M1 仮説 (a) Tier 3](findings/B6-S1-M1-hypothesis-a-tier3-verify.md) | MED | `data.validation.ok` に基づく LLM 分岐を Tier 3 LLMReplay で behavioral pin | **verified (間接的)** `9763ecf` — regression guard 確立 |
+| [B6-S1-M1 仮説 (a) retest](findings/B6-S1-M1-hypothesis-a-retest.md) | MED | dogfood retest で preprocessor 先行失敗 → LLM 未呼び出し → 仮説観測不能 | **inconclusive** — 新 infra bug 2 件 (G13/G14) 発見の起点 |
+| [B6-INFRA-1](findings/B6-S1-M1-hypothesis-a-retest.md) | HIGH | `reyn chat` が `--allow-untrusted-python` フラグなし → trusted python step が config 設定に関わらず常に失敗 | **resolved** by `07ee851` |
+| [B6-INFRA-2](findings/B6-S1-M1-hypothesis-a-retest.md) | HIGH | `Workspace.glob_files()` が stdlib path (absolute) を境界外として拒否 → `file.read: allow` でも bypass 不能 | **resolved** by `f666acb` |
 | [B6-S2 G12 retest](findings/B6-S2-observation.md) | (G12 monitoring) | `describe→stop` attractor を 4 batch 連続再現 | G12 active、 Wave 3 G4 spike 動機 |
 | [B6-S3 B5-M1 retest](findings/B6-S3-observation.md) | (= G3 evidence) | router 単一 LLM call から `invoke_skill` 3 件 155ms 以内発行 | **G3 fix** (`9798372`) 動機裏付け、 post-fix retest 次 batch |
 | [B6-S4 B2-M2 不再現](findings/B6-S4-observation.md) | (= G10 evidence) | 不存在 skill 名で tool_failed 発火せず LLM が直接日本語 reply | G10 fix (`af16228`) は tool_failed path に正しく landing、 effective scope は要確認 |
 | [B6-S5 B4-M1 不再現 + 新発見](findings/B6-S5-observation.md) | INFO + 新 root cause | eval.md path search 観測前に target_skill_path hallucination で abort | B4-M1 fix の前提条件として B6-S1-H1 hallucination fix が先 |
 
-**新規: HIGH 1 / MED 1** (= B6-S1-H1 / B6-S1-M1)。 これら **以外** は監視・観測系の record。
+**S1-S5 観測 (A3) 時点の新規: HIGH 1 / MED 1** (= B6-S1-H1 / B6-S1-M1)。
+**post-S5 wave での新規: HIGH 2** (= B6-INFRA-1 / B6-INFRA-2) — 両方同 session 内で resolved。
 
 ---
 
@@ -126,6 +131,69 @@ P3 (OS = runtime engine) が gate すべき箇所で gate していない。
 
 ---
 
+---
+
+## B6-S1-M1 系 3 file の関係 — 「どれが結論?」 と迷わないために
+
+B6-S1-M1 に関連する finding doc が 3 つある。 それぞれ別の問いに答えている:
+
+| ファイル | 問い | 結論 |
+|---|---|---|
+| [B6-S1-M1-hypothesis-a-verify.md](findings/B6-S1-M1-hypothesis-a-verify.md) | 初回 dogfood で仮説 (a) を観測できたか? | **inconclusive** — prepare が copy_to_work に遷移できず LLM 未呼び出し (eval_builder fix 前の状態) |
+| [B6-S1-M1-hypothesis-a-tier3-verify.md](findings/B6-S1-M1-hypothesis-a-tier3-verify.md) | `data.validation` rename は LLM judgment に有効か? | **verified (間接的)** — Tier 3 LLMReplay で `validation.ok` に基づく分岐を behavioral pin、 regression guard として確立 (`9763ecf`) |
+| [B6-S1-M1-hypothesis-a-retest.md](findings/B6-S1-M1-hypothesis-a-retest.md) | fix landing 後の dogfood e2e で観測できたか? | **inconclusive** — 新 infra bug 2 件 (G13/G14) が先行 fail、 LLM 到達できず。 ただしインフラ gap 発見の起点となった |
+
+**canonical regression guard は Tier 3 (tier3-verify.md)**。 実 LLM での最終確認は
+batch 7 以降の retest 課題。 2 つの inconclusive は「仮説 (a) が誤り」ではなく、
+「観測路が別の障壁で詰まった」事実を示している。
+
+---
+
+## post-S5 wave narrative (= A4 review 後の events)
+
+### eval_builder D1+D2+D3a fix (Wave 1) — `e6de782`
+
+A4 user review で「LLM に path を扱わせない」 方針が確定し、 eval_builder の
+OS path resolution を preprocessor 経由に変更した。 `prepare` phase が
+`target_skill_path` を自力で構築するのをやめ、 OS が解決した path を artifact
+field として受け取る設計。 B6-S1-H1 の本質的修正。 +8 test。
+
+### B5-M2 fix (Wave 2) — `0fd6d0b`
+
+skill_improver `decide` turn の instructions を strengthen し、 H1/H2/H3 の
+initial Control IR invalid 問題を解消。 Wave 1 と並列で landing。 +4 test。
+
+### Tier 3 LLMReplay (Wave 3 前半) — `9763ecf`
+
+`e6de782` / `0fd6d0b` landing 後、 B6-S1-M1 仮説 (a) の behavioral pin を
+Tier 3 test として作成。 `copy_to_work` の `validation.ok=True/False` 各ケースの
+LLM 分岐を hand-crafted fixture で pin。 2 test、 +2。
+
+### dogfood retest (Wave 3 後半) — `07e16ca` (doc only)
+
+Tier 3 verified の後、 実 LLM で e2e 確認を試みた。 **3 run とも LLM 到達前に
+失敗**:
+
+- chat run: `reyn chat` が trusted python を hard-fail (B6-INFRA-1)
+- run mode 2 件: `Workspace.glob_files()` が stdlib path を境界外拒否 (B6-INFRA-2)
+
+仮説 (a) の観測は inconclusive だが、 2 つの新規 infra bug を発見した。
+
+### infra fix #1 (G13) — `07ee851`
+
+`reyn chat --allow-untrusted-python` flag 追加。 `reyn run` との symmetry を確保。
+`PermissionResolver` に `trusted_python_allowed` フラグが渡されるよう配線。 +4 test。
+
+### infra fix #2 (G14) — `f666acb`
+
+`Workspace.glob_files()` に `PermissionResolver` consultation 追加。 stdlib path
+(= `base_dir` 外) への glob を permission 判断で opt-in できる設計に変更。 +4 test。
+
+**この 2 件の landing をもって「chat 経由で skill_improver が動く前提が揃った」**
+が batch 6 wave の最終 headline となった。
+
+---
+
 ## prediction 精度 (= internal/user metric 分離評価)
 
 | ID | Internal pred | Internal 結果 | User pred | User 結果 | 外れ予測該当 |
@@ -178,20 +246,25 @@ schema を formalize する candidate。
 
 ## 次のアクション
 
-### 即着手 (= sequential)
+### 完了済 (= batch 6 wave 内で resolved)
 
-1. **B6-S1-H1 fix** (= 新 HIGH): `prepare` instructions に stdlib skill path
-   resolution を追記。 `direct_llm` のような stdlib name と local skill name を
-   明示的に区別する instruction を追加
-2. **B6-S1-M1 fix** (= 新 MED): preprocessor の `_validation` 結果を次 phase の
-   LLM context に inject、 `ok=false` なら LLM が「copied」 と誤判断できないように
+- ✅ **B6-S1-H1 fix** (`e6de782`) — eval_builder OS path resolution
+- ✅ **B5-M2 fix** (`0fd6d0b`) — skill_improver decide-turn instructions
+- ✅ **B6-S1-M1 Tier 3 guard** (`9763ecf`) — regression guard 確立
+- ✅ **B6-INFRA-1 fix** (`07ee851`) — reyn chat trusted python
+- ✅ **B6-INFRA-2 fix** (`f666acb`) — workspace glob boundary
+
+### 残件 (= batch 7 以降)
+
+- **B6-S1-M1 dogfood retest** — infra fix 2 件 landing 後の e2e 観測 (仮説 a 最終確認)
+- **B4-M1 fix** (= B6-S1-H1 fix landing 済みので前提条件解消): path convention ADR
+  + eval_builder write と prepare read の path 一致
+- **G3 / G10 post-fix retest** — fix 後の挙動確認 (本 batch は fix 前 HEAD での観測)
 
 ### 並走 (= 並列 OK)
 
 - **Wave 3 G4 trigger spike** (= 強モデルで S2 と同 scenario を回す): G12
-  attractor が消えるか定量化、 cost 上昇と ROI 評価
-- **B4-M1 fix** (= B6-S1-H1 fix landing 後): path convention ADR + eval_builder
-  write と prepare read の path 一致
+  attractor が消えるか定量化、 cost 上昇と ROI 評価 (proxy 整備 blocked)
 
 ### 次 batch (= batch 7) 設計候補
 
@@ -207,24 +280,24 @@ schema を formalize する candidate。
 
 - [scenarios.md](scenarios.md) — A1 + A2 で確定した 5 scenario
 - [prelude.md](prelude.md) — batch 6 の前夜
-- [giveup-tracker.md G12](../giveup-tracker.md) — attractor variant family、 本 batch で 4 連続再現確認
+- [retrospective.md](retrospective.md) — batch 6 全体 retrospective (dispatch wave 追記済)
+- [findings/B6-S1-M1-hypothesis-a-verify.md](findings/B6-S1-M1-hypothesis-a-verify.md) — 仮説 (a) 初回 verify
+- [findings/B6-S1-M1-hypothesis-a-tier3-verify.md](findings/B6-S1-M1-hypothesis-a-tier3-verify.md) — Tier 3 verified (canonical regression guard)
+- [findings/B6-S1-M1-hypothesis-a-retest.md](findings/B6-S1-M1-hypothesis-a-retest.md) — dogfood retest (inconclusive + 新 infra bug 2 件)
+- [giveup-tracker.md G12](../giveup-tracker.md) — attractor variant family + G13/G14 resolved
 - [batch 5 retest 2 retrospective](../2026-05-04-batch-5-fix-verify/retrospective.md) — 直前 batch の教訓 (= G2 / G12 化判断)
 - memory `feedback_deterministic_split.md` — G2 + G10 で実証された決定論分離思想
 - memory `feedback_prompt_design.md` — bloat / consolidation の警告
 
 ---
 
-## A4 review request (= user 介在ポイント)
+## A4 review 結果 (= 決定済)
 
-以下を user に確認したい:
+batch 6 wave 完走後の user review で以下が決定された:
 
-1. **新 HIGH/MED 2 件 (B6-S1-H1 + B6-S1-M1) の fix 着手** を batch 6 内で済ませる?
-   それとも batch 7 へ繰り越し?
-2. **Wave 3 G4 trigger spike** を即着手してよいか? G12 4 連続再現の evidence は
-   明確、 cost vs reliability の ROI 評価は急ぐべき
-3. **prediction 方向当たり 1.5/5 の低水準** をどう解釈するか? (= scenario 設計の
-   問題か、 LLM judgment variance の認識不足か、 weak LLM 限界か)
-4. **attractor mapping schema** を giveup tracker に formalize する案 (= 前 turn で
-   提示) の進め方
-5. **「fix の dependency」 を tracker で明示** する仕組み (= B4-M1 が B6-S1-H1
-   fix を blocker とする pattern)
+1. **B6-S1-H1 fix** → batch 6 内で完了 (`e6de782`) — B6-S1-M1 Tier 3 も同 wave 内
+2. **Wave 3 G4 trigger spike** → proxy 整備 blocked のまま。 整備後に即着手
+3. **prediction 1.5/5** → 「LLM judgment のばらつき範囲が prediction モデルより広い」
+   knowledge 獲得として解釈。 batch 7 で分布形式 prediction を試行候補
+4. **attractor mapping schema** → G12 section で variant tag を formalize、 batch 7 で
+5. **fix の dependency 明示** → tracker に「blocks / blocked-by」 記述追加の候補 (= B4-M1 → B6-S1-H1 依存解消済)
