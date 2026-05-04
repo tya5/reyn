@@ -158,9 +158,18 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # ASCII banner (neofetch style): gradient logo left, agent info right
+        # Pictograph + ASCII banner side-by-side (neofetch style)
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
+        _HORSE = [
+            "                ",
+            "         ▃▖     ",
+            "     ▂▄▆  ▝     ",
+            "    ▃━━     ▖   ",
+            "   ▍   ▂▝▃   ▖  ",
+            "   ▎   ▂▁▃▝▅▃▘  ",
+            "   ▆▆▆▆▆▇",
+        ]
         _BANNER = [
             "██████╗ ███████╗██╗   ██╗███╗   ██╗",
             "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
@@ -177,17 +186,24 @@ class ReynTUIApp(App):
             None,
             None,
         ]
-        n = len(_BANNER)
-        for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
-            t = i / (n - 1)
-            r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
+        horse_w = 20   # 18 chars + 2-char gap
+        n_rows = max(len(_HORSE), len(_BANNER))
+        for i in range(n_rows):
             rt = Text()
-            rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
-            if info:
-                key, val = info
-                rt.append("    ")
-                rt.append(f"{key}  ", style="dim #555555")
-                rt.append(val, style="#dddddd")
+            # horse: no style, no processing
+            hline = _HORSE[i] if i < len(_HORSE) else ""
+            rt.append(hline.ljust(horse_w))
+            # banner: coral gradient (only while banner lines remain)
+            if i < len(_BANNER):
+                t = i / max(len(_BANNER) - 1, 1)
+                r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
+                rt.append(_BANNER[i], style=f"#{r:02x}{g:02x}{b:02x}")
+                info = _INFO[i] if i < len(_INFO) else None
+                if info:
+                    key, val = info
+                    rt.append("    ")
+                    rt.append(f"{key}  ", style="dim #555555")
+                    rt.append(val, style="#dddddd")
             conv._write_log(rt)
         conv._write_log(Text("  — counsels you to hold the reins.", style="dim #555555"))
         conv._write_log(Text("─" * 38, style="#2a2a2a"))
