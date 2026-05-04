@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | HIGH |
-| Status | **fixed** at `<commit-hash>` |
+| Status | **fixed** at `a75587d` |
 | Scenario | S2 (Agent B — `read_local_files` headless run) |
 | Found | 2026-05-04 |
 
