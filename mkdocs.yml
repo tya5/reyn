@@ -113,6 +113,7 @@ nav:
           - reference/stdlib/read_local_files.md
   - Concepts:
       - concepts/principles.md
+      - concepts/care-boundary.md
       - concepts/architecture.md
       - concepts/phase-vs-skill-vs-os.md
       - concepts/llm-as-decision-engine.md

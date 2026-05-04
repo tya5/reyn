@@ -127,6 +127,7 @@ Key constraints (full rationale in the doc):
 ## When in doubt — read these (Tier 2)
 
 - **P1–P8 rationale and examples**: `docs/en/concepts/principles.md`
+- **Care boundary** (what Reyn cares / doesn't care): `docs/en/concepts/care-boundary.md`
 - **Architecture overview / component layers**: `docs/en/concepts/architecture.md`
 - **Phase vs Skill vs OS boundary**: `docs/en/concepts/phase-vs-skill-vs-os.md`
 - **Why constrain the LLM (P4)**: `docs/en/concepts/llm-as-decision-engine.md`
