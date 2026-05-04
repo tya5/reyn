@@ -15,6 +15,7 @@ from reyn.chat.router_tools import build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools
+from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
     pass
@@ -133,9 +134,20 @@ class RouterLoop:
         self.budget = budget
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
+        self._total_usage: TokenUsage = TokenUsage()
 
-    async def run(self, user_text: str, history: list[dict]) -> None:
-        """Process one user utterance end-to-end. Emits to host.put_outbox."""
+    @property
+    def total_usage(self) -> TokenUsage:
+        """Accumulated token usage across all LLM calls made in this loop."""
+        return self._total_usage
+
+    async def run(self, user_text: str, history: list[dict]) -> TokenUsage:
+        """Process one user utterance end-to-end. Emits to host.put_outbox.
+
+        Returns the total TokenUsage accumulated across all LLM calls so the
+        caller can credit it to the session-level usage counter (F4 Bug 2).
+        """
+        self._total_usage = TokenUsage()
         host = self.host
         tools = build_tools(
             host.list_available_skills(),
@@ -169,6 +181,8 @@ class RouterLoop:
                 budget=self.budget,
                 budget_agent=host.agent_name,
             )
+            if result.usage:
+                self._total_usage += result.usage
             if result.tool_calls:
                 # F5 fix (dogfood batch 1): dedupe duplicate async
                 # tool_calls within the same round. Weak models
@@ -205,7 +219,7 @@ class RouterLoop:
                         ),
                         meta={"chain_id": self.chain_id},
                     )
-                    return
+                    return self._total_usage
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
@@ -228,7 +242,7 @@ class RouterLoop:
                 text=result.content or "",
                 meta={"chain_id": self.chain_id},
             )
-            return
+            return self._total_usage
 
         # max_iterations exhausted
         await self.host.put_outbox(
@@ -236,6 +250,7 @@ class RouterLoop:
             text=f"Router loop exceeded max iterations ({self.max_iterations}).",
             meta={"chain_id": self.chain_id},
         )
+        return self._total_usage
 
     # -----------------------------------------------------------------------
     # Tool dispatch

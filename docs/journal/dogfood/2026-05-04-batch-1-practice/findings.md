@@ -16,7 +16,7 @@
 | [F1](findings/F01-chat-startup-attribute-error.md) | HIGH | reyn chat を起動した瞬間 `AttributeError`。 「Did you mean」 まで親切な Python だが起動はしない | **fixed** at `f5b3281` |
 | [F2](findings/F02-reyn-local-yaml-docstring-mismatch.md) | LOW | `reyn.local.yaml` は実際 load されているのに、 `config.py` の docstring には「そんな file 知らん」 と書いてある | **fixed** at `5fc120e` |
 | [F3](findings/F03-skill-router-direct-reply.md) | HIGH | 「要約して」 とお願いしたのに `text_summarizer` skill は呼ばれず、 LLM が「自分でやれます」 と直答 | **fixed** at `e59cead` |
-| [F4](findings/F04-cost-always-zero.md) | LOW | LLM 応答は来てるのに `cost -- prompt=0 completion=0 total=0`。 永遠の 0 円 | deferred (Wave B) |
+| [F4](findings/F04-cost-always-zero.md) | LOW | LLM 応答は来てるのに `cost -- prompt=0 completion=0 total=0`。 永遠の 0 円 | **fixed** at `<F4-commit>` |
 | [F5](findings/F05-delegate-double-inbox-put.md) | HIGH | LLM が `delegate_to_agent` を 1 回呼んだのに、 specialist の inbox には同じ依頼が **2 件** 届く | **fixed** at `9e8126c` |
 | [F6](findings/F06-specialist-empty-early-reply.md) | HIGH | specialist 側、 LLM がまだ考え中なのに「答えました (中身: 空)」 を default に送りつける | **fixed** at `9e8126c` |
 | [F7](findings/F07-default-misreads-empty-reply.md) | MED | default、 specialist の空 reply を「失敗」 と判定して再 delegate。 retry budget 即枯渇 | **fixed** at `9e8126c` |

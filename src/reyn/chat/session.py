@@ -3130,4 +3130,20 @@ class ChatSession:
             budget=self._budget_tracker,
         )
         history = self._build_history_for_router()
-        await loop.run(user_text=user_text, history=history)
+        router_usage = await loop.run(user_text=user_text, history=history)
+
+        # F4 Bug 2: accumulate router LLM usage into session totals.
+        if router_usage is not None and router_usage.total_tokens > 0:
+            self._total_usage += router_usage
+            # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
+            from reyn.llm.pricing import estimate_cost
+            from reyn.llm.llm import proxy_kwargs
+            resolved = self._resolver.resolve("router")
+            pricing_model = (
+                resolved.split("/", 1)[1]
+                if "/" in resolved and proxy_kwargs()
+                else resolved
+            )
+            cost_usd, _ = estimate_cost(pricing_model, router_usage)
+            if cost_usd is not None:
+                self._total_cost_usd += cost_usd

@@ -424,10 +424,12 @@ async def call_llm(
                 continue  # retry
 
         result = LLMCallResult(data=parsed, usage=usage)
-        # Budget post-record — after successful parse
+        # Budget post-record — after successful parse.
+        # Use effective_model (proxy prefix stripped) so estimate_cost inside
+        # record_llm resolves against the bare litellm model_cost key (F4 Bug 1).
         if budget is not None and result.usage is not None:
             budget.record_llm(
-                model=model,
+                model=effective_model,
                 agent=budget_agent,
                 usage=result.usage,
             )
@@ -499,10 +501,12 @@ async def call_llm_tools(
     msg = response.choices[0].message
     usage = _extract_usage(response) or TokenUsage()
 
-    # Budget post-record — after successful LLM call
+    # Budget post-record — after successful LLM call.
+    # Use effective_model (proxy prefix stripped) so estimate_cost inside
+    # record_llm resolves against the bare litellm model_cost key (F4 Bug 1).
     if budget is not None:
         budget.record_llm(
-            model=model,
+            model=effective_model,
             agent=budget_agent,
             usage=usage,
         )

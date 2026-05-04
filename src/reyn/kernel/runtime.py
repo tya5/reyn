@@ -19,6 +19,7 @@ from reyn.kernel.validation import validate_output, ValidationError
 from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.llm.llm import call_llm
 from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.llm.llm import proxy_kwargs as _proxy_kwargs
 from reyn.kernel.normalizer import normalize, NormalizationError, NormalizationResult, ControlIRValidationError
 from reyn.workspace.artifact_validator import validate_artifact_data
 from reyn.llm.model_resolver import ModelResolver
@@ -645,7 +646,14 @@ class OSRuntime:
         pricing_snapshot: dict | None = None
         if llm_result.usage:
             self._token_usage += llm_result.usage
-            cost_usd, pricing_snapshot = estimate_cost(resolved_model, llm_result.usage)
+            # Strip provider prefix (e.g. "openai/gemini-2.5-flash-lite" →
+            # "gemini-2.5-flash-lite") so litellm.model_cost lookup succeeds.
+            _pricing_model = (
+                resolved_model.split("/", 1)[1]
+                if "/" in resolved_model and _proxy_kwargs()
+                else resolved_model
+            )
+            cost_usd, pricing_snapshot = estimate_cost(_pricing_model, llm_result.usage)
             if cost_usd is not None:
                 self._total_cost_usd += cost_usd
             self._record_budget_post_llm(resolved_model, llm_result.usage)
@@ -716,7 +724,12 @@ class OSRuntime:
         usage = TokenUsage.from_dict(usage_dict)
         # Update local accumulators (mirror the fresh-call path)
         self._token_usage += usage
-        cost_usd, _ = estimate_cost(resolved_model, usage)
+        _pricing_model_memo = (
+            resolved_model.split("/", 1)[1]
+            if "/" in resolved_model and _proxy_kwargs()
+            else resolved_model
+        )
+        cost_usd, _ = estimate_cost(_pricing_model_memo, usage)
         if cost_usd is not None:
             self._total_cost_usd += cost_usd
         # Credit the shared BudgetTracker
