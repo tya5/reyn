@@ -1061,29 +1061,31 @@ class RightPanel(Widget):
             for agent in sorted(by_agent_skill):
                 ag = by_agent[agent]
                 ag_tok = ag["p"] + ag["c"]
+                # agent total: name bold white, tok light gray, cost bright green
                 ag_cost = (
-                    f"  [#44cc88]${ag['cost']:.4f}[/]"
+                    f"  [bold #44cc88]${ag['cost']:.4f}[/]"
                     if ag["has_cost"] else ""
                 )
                 lines.append(
                     f"[bold #dddddd]  {_esc(agent):<20}[/]"
-                    f"[#888888]{ag_tok:>7,} tok[/]"
+                    f"[#aaaaaa]{ag_tok:>7,} tok[/]"
                     f"{ag_cost}"
-                    f"  [#555555]{ag['calls']}c[/]"
+                    f"  [#777777]{ag['calls']}c[/]"
                 )
                 skills = by_agent_skill[agent]
                 for skill in sorted(skills):
                     m = skills[skill]
                     tok_total = m["p"] + m["c"]
+                    # skill rows: dim name, muted green for cost — clearly subordinate
                     cost_part = (
-                        f"  [#44cc88]${m['cost']:.4f}[/]"
+                        f"  [#2d7a4f]${m['cost']:.4f}[/]"
                         if m["has_cost"] else ""
                     )
                     lines.append(
                         f"[#555555]    {_esc(skill):<22}[/]"
-                        f"[#666666]{tok_total:>7,} tok[/]"
+                        f"[#555555]{tok_total:>7,} tok[/]"
                         f"{cost_part}"
-                        f"  [#555555]{m['calls']}c[/]"
+                        f"  [#444444]{m['calls']}c[/]"
                     )
                 lines.append("")
 
