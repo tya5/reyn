@@ -806,18 +806,24 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
 async def test_agent_request_empty_router_reply_sends_marker_upstream(
     tmp_path, monkeypatch
 ):
-    """Tier 2: when RouterLoop completes without a text reply during an
-    inbound agent_request, the upstream agent receives a structured "no
-    reply" marker, NOT an empty string (F6/F7 fix).
+    """Tier 2: when RouterLoop produces an empty-stop response during an
+    inbound agent_request, the upstream agent receives a NON-EMPTY reply
+    (F6/F7 fix + ADR-0021 Option F).
 
     Pre-fix dogfood scenario 2 (multi-agent delegate batch 1): the
     specialist's RouterLoop returned with `agent_replies = []` (e.g. from
     max_iterations exhaustion or empty content), and `_handle_agent_request`
     forwarded `response=""` upstream. The upstream LLM interpreted the
     empty string as "in-progress" and re-delegated until the router cap
-    fired (= F7 cascade). Fix: synthesise a clear text marker so the
-    upstream LLM can produce a coherent user-facing reply instead of
-    retrying.
+    fired (= F7 cascade). F6/F7 fix: synthesise a clear text marker.
+
+    ADR-0021 Option F (2026-05-04): when finish_reason=stop and content is
+    empty, RouterLoop itself emits a user-visible failure message (Option F
+    path) rather than an empty put_outbox. The failure message is captured
+    by _router_loop_agent_replies and forwarded upstream as the reply.
+    The upstream therefore always receives a non-empty, human-readable
+    failure description — the F6 invariant (no empty upstream reply) is
+    preserved via a different mechanism.
     """
     monkeypatch.chdir(tmp_path)
 
@@ -841,10 +847,11 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     )
     session.is_attached = True
 
-    # LLM returns empty content (a finish_reason="stop" with text="").
-    # RouterLoop will put_outbox(kind="agent", text="") → ChatSession's
-    # capture filter (`if kind == "agent" and text:`) skips empty,
-    # leaving agent_replies empty → triggers F6/F7 path.
+    # LLM returns empty content (finish_reason="stop", content="").
+    # With ADR-0021 Option F, RouterLoop detects this as empty-stop and
+    # emits a failure message to the outbox (kind="agent", non-empty text).
+    # ChatSession's capture filter picks it up → agent_replies non-empty
+    # → failure message forwarded upstream (not the no-reply marker).
     mock = _install_call_llm_tools_mock(_text_result(""))
 
     with patch("reyn.chat.router_loop.call_llm_tools", new=mock):
@@ -860,16 +867,16 @@ async def test_agent_request_empty_router_reply_sends_marker_upstream(
     )
     resp = upstream_received[0]
     assert resp["chain_id"] == "chain-f6-001"
-    # Must NOT be empty — that's the F6 bug.
+    # Core F6 invariant: upstream must NOT receive an empty response.
     assert resp["response"] != "", (
-        "F6 regression: upstream received empty response; should be a marker"
+        "F6 regression: upstream received empty response; "
+        "Option F should produce a non-empty failure message"
     )
-    # Must contain a clear failure indicator + the agent's name.
-    assert "specialist" in resp["response"], (
-        f"Expected agent name in marker; got: {resp['response']!r}"
-    )
-    assert "could not produce a reply" in resp["response"].lower(), (
-        f"Expected structured failure marker; got: {resp['response']!r}"
+    # Option F: the response should be a meaningful failure description.
+    # It is NOT the no-reply marker format (that path is now bypassed
+    # because agent_replies is non-empty via the Option F failure text).
+    assert len(resp["response"]) > 10, (
+        f"Upstream reply is suspiciously short: {resp['response']!r}"
     )
 
 

@@ -23,6 +23,44 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
+# Empty-response detection (Option F — ADR-0021)
+# ---------------------------------------------------------------------------
+
+# Localized user-facing message when the model returns an empty response
+# (finish_reason=stop, no content, no tool calls). Deterministic i18n so
+# output_language is always honoured.  P7-clean: no skill / tool names.
+# "en" is the global-safe default.
+_EMPTY_RESPONSE_MSG: dict[str, str] = {
+    "ja": (
+        "モデルが空の応答を返しました。"
+        " 別の表現で再入力するか、設定を確認してください。"
+    ),
+    "en": (
+        "The model returned an empty response."
+        " Please try rephrasing your request or check your configuration."
+    ),
+}
+
+
+def _is_empty_router_response(response: Any) -> bool:
+    """OS-side detection: model emitted no text and no tool calls.
+
+    Provider-level glitch (observed with weak models such as
+    gemini-2.5-flash-lite at ~50% rate — ADR-0021 / B7-G12).  This is
+    NOT recovered by Reyn — surfaced to the user as an explicit failure
+    for user-side handling (no retry, no context change, no model switch).
+
+    Trigger: finish_reason=="stop", content empty, tool_calls empty.
+    """
+    if response is None:
+        return True
+    finish = getattr(response, "finish_reason", None)
+    content = getattr(response, "content", None) or ""
+    tool_calls = getattr(response, "tool_calls", None) or []
+    return finish == "stop" and not content.strip() and not tool_calls
+
+
+# ---------------------------------------------------------------------------
 # Host protocol
 # ---------------------------------------------------------------------------
 
@@ -277,6 +315,37 @@ class RouterLoop:
                         "content": json.dumps(r, default=str),
                     })
                 continue
+
+            # Option F (ADR-0021): detect empty-stop before treating as text reply.
+            # Empty-stop = finish_reason="stop", content empty, no tool calls.
+            # This is a provider-level glitch (observed at ~50% rate with weak
+            # models — B7-G12 measurement).  Reyn does NOT retry, change context,
+            # or switch models.  Responsibility: observe + surface to user.
+            if _is_empty_router_response(result):
+                # P6: emit audit event — state change must be observable.
+                self.host.events.emit(
+                    "router_empty_response_detected",
+                    finish_reason=result.finish_reason,
+                    completion_tokens=getattr(result.usage, "completion_tokens", 0)
+                    if result.usage else 0,
+                    prompt_tokens=getattr(result.usage, "prompt_tokens", 0)
+                    if result.usage else 0,
+                    caller_hint="router",
+                    model=host.resolve_model(self.router_model),
+                )
+                lang = getattr(host, "output_language", None)
+                failure_text = _EMPTY_RESPONSE_MSG.get(
+                    lang, _EMPTY_RESPONSE_MSG["en"]
+                )
+                await host.put_outbox(
+                    kind="agent",
+                    text=failure_text,
+                    meta={
+                        "chain_id": self.chain_id,
+                        "source": "router_empty_response",
+                    },
+                )
+                return self._total_usage  # no retry
 
             # Text reply — emit and stop
             await self.host.put_outbox(
