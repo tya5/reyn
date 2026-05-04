@@ -36,17 +36,31 @@ A5: HIGH/MED/LOW に分類、 HIGH bug は即 PR
 
 shadow しても見えないものを見るための iterative loop。
 
-### 運用ノウハウ (batch 1-5 で確立)
+### 運用ノウハウ (batch 1-7 で確立)
 
 - **per-scenario worktree 隔離**: 各 sonnet が独立した `.reyn/` で実行 → state
   collision なし、 並列 cost 効率最大化
 - **batch 観測ツール**: `python scripts/dogfood_trace.py --root .reyn --mode summary`
   で 8-12 個の grep / ls / cat を 1 コマンドに集約。 sub-agent の tool_use を
   10 件 / scenario 削減
+- **LLM payload 観測 infra (batch 7 整備)**: `REYN_LLM_TRACE_DUMP=<path>` で
+  LLM call の full payload (system prompt / messages / tools) を JSONL dump、
+  `dogfood_trace.py --mode llm-{payloads, detail, tools-schema}` で inspect。
+  `llm_replay.py` で reyn 起動なしの直接 replay (`--patch` で payload 改変、
+  `--diff` で original 比較、 `--n` で N-shot 確率分布、 `--model` で G4 spike)。
+  `detect_attractor.py` で empty stop / enum violation / tool name hallucinate
+  自動検出。 「LLM がおかしい」 と疑う前にこの道具で観測する習慣を batch 7 で確立、
+  memory `feedback_observe_before_speculate_llm.md` 参照
 - **prompt 設計の bloat 注意**: scenario 別 fix で `MUST` rule を積み重ねると
   cross-scenario interference / overfitting / prompt size 暴発のリスク。
   user feedback memory `feedback_prompt_design.md` 参照。 過剰 consolidation も
   逆に regression を生むので、 個別 bullet × 1 MUST × wording dedup が optimal
+- **care boundary 3 区分 framework (batch 7 言語化)**: fix 設計時に
+  「これは structural? behavioral? gray?」 で判断:
+  pre-call structural (= schema / context / 決定論代行) は Reyn が care、
+  post-call behavioral (= retry / fallback / state machine) は Reyn が touch しない、
+  gray (= prompt rule 累積) は bloat trap 注意。 公開 doc `concepts/care-boundary.md`
+  + memory `feedback_reyn_care_boundary.md` 参照
 - **trade-off の見える化**: 「両立できなかった」 / 「真の解への着手順序待ち」
   の案件は [giveup-tracker.md](giveup-tracker.md) で managed list 化。
   Reyn は production-grade フェーズなので「MVP defer」 でなく着手 trigger を
@@ -63,6 +77,7 @@ shadow しても見えないものを見るための iterative loop。
 | [batch-5-fix-verify](2026-05-04-batch-5-fix-verify/) | 2026-05-04 | 2 件 (B4 fix verify: curry recipe + skill_improver chain) | B4-H1 fix は prereq blocked で未検証、 prompt consolidation `e90c0f2` が weak LLM の signal 弱化を生み specialist 再び list_skills 後空 reply (= **B5-H1 [HIGH] regression**)。 B4-H2 (copy_to_work) は workspace 作成成功確認 ✅、 ただし eval cascade で path 形式 mismatch 発見 (B5-H2)。 教訓: 過剰 consolidation も regression を生む — 個別 bullet × 1 MUST が weak LLM への最強 signal | B5-H1〜H2 (HIGH×2) / B5-M1〜M2 (MED×2) |
 | [batch-5-retest2](2026-05-04-batch-5-retest2/) | 2026-05-04 | 2 件 (B5-H1+H2 fix verify) | B4-H1 narrator reply 経路 ✅ 確認 (= score=0.0 summary が user に到達)、 B5-H1 fix は describe_skill 段階まで前進だが invoke_skill 到達せず → **B5R2-H1 [HIGH]** describe→stop attractor。 B5-H2 prompt fix は run_target の `skill:` field 使用を確認 ✅、 ただし下流で copy_to_work 0-byte write (B5R2-H2) により同 error 再現 → G2 (preprocessor 化、 本 retest 後 land) で構造的解消見込み、 batch 6 で再検証 | B5R2-H1〜H2 (HIGH×2) |
 | [batch-6-non-attractor](2026-05-04-batch-6-non-attractor/) | 2026-05-04 | 5 件 (G2 retest / ask_user trial / B5-M1 観測 / B2-M2 観測 / B4-M1 観測) | attractor を意図的に触らず非 attractor 観測に focus。 G3 fix (`9798372`) + G10 fix (`af16228`) が並走 landing。 G12 attractor の 4 連続再現で Wave 3 G4 spike 優先度確定、 G3 dedupe の必要性を B5-M1 完全再現で裏付け。 B2-M2 / B4-M1 は未再現 — 別 layer の root cause (LLM が tool 呼ばず直答 / target_skill_path hallucination) が先に顕在化。 新規 HIGH 1 件 (B6-S1-H1: stdlib skill path 補完欠落) + MED 1 件 (B6-S1-M1: validation 結果が LLM context 未到達) を発見 | B6-S1-H1 (HIGH×1) / B6-S1-M1 (MED×1) + G3 / G10 resolved + G12 4 連続再現確認 |
+| [batch-7-post-infra-verify](2026-05-04-batch-7-post-infra-verify/) | 2026-05-04 | 5 件 (chain 完走 verify / G3 retest / B4-M1 retest / 仮説 a verify / eval_builder 直接) + 4 retroactive | 「6 commit fix の e2e verify」 のつもりが、 user 「LLM が見たもの確認した?」 介入で **観測 infra 整備** に redirect、 そこから **推測スタック解体 → 観測ベース fix 連鎖 → care boundary 言語化** の構造的成果。 道具 4 種 (REYN_LLM_TRACE_DUMP / dogfood_trace 3 mode / llm_replay --patch/--diff/--n / detect_attractor) 整備、 RETRO-H1〜H4 で過去推測 1.5/4 訂正、 router enum + preprocessor anyOf + B8-NEW-1+2 + Option F (G12 retry 却下) fix 連鎖、 ADR 0021 + care boundary doc (en+ja) + 5 つ目 feedback memory 永続化 | RETRO-H1 verified (= router enum fix 有効、 hallucination 57%→0%) / G12 50% probabilistic (= Option F observe-only 採用) / B7-NEW-1 (router dot-notation) / B7-S5b-NEW (preprocessor anyOf regression) / B8-NEW-1+2 (= path 2 retest 経由発見) ほか |
 
 ## こちらの心境
 
