@@ -151,6 +151,7 @@ Get `<request_id>` from `dogfood_trace.py --mode llm-payloads` output.
 | `--full` | Show full content without head/tail truncation |
 | `--output-format pretty\|json` | Output format (default: `pretty`) |
 | `--patch EXPR` | Mutate the payload before replay (repeatable; see below) |
+| `--diff` | Compare replay response against original recorded response (see below) |
 
 ## Payload patching (`--patch`)
 
@@ -205,6 +206,85 @@ the LLM result:
   tools[0].function.parameters.properties.name.enum: replaced → ['skill_a', 'skill_b', 'skill_c']
   messages[0].content: appended ' Available skills (3): skill_a, skill_b, skill_c'
 ```
+
+## Response diff (`--diff`)
+
+`--diff` compares the original response (recorded in the trace file) with the
+response obtained from the replay. It classifies the comparison as:
+
+- **`exact`**: content, tool_calls, and finish_reason all match.
+- **`partial`**: tool call *names* match but arguments differ; or content
+  matches but finish_reason differs; or similar near-match.
+- **`different`**: tool call names differ, or structure changed significantly.
+
+### Single replay diff
+
+```bash
+python scripts/llm_replay.py <request_id> --trace .reyn/llm_trace.jsonl --diff
+```
+
+Pretty output:
+
+```
+=== Diff: original vs replay ===
+Match: partial
+Content: (no change)
+Tool calls:
+  ~ changed: invoke_skill
+      original: {"name":"skill_improver.review"}
+      replay:   {"name":"skill_improver"}
+Finish reason: (matches)
+```
+
+JSON output (`--output-format json --diff`):
+
+```json
+{"match": "partial", "content_diff": null, "tool_calls_diff": {"added": [], "removed": [], "changed": [...]}, "finish_reason_match": true, "summary_line": "match=partial, tool_calls: 1 args changed"}
+```
+
+### N-shot diff summary
+
+```bash
+python scripts/llm_replay.py <request_id> --trace .reyn/llm_trace.jsonl --n 10 --diff
+```
+
+After the per-run distribution table, a diff summary is appended:
+
+```
+=== N-shot diff summary (n=10) ===
+match=exact      : 3 (30%)
+match=partial    : 5 (50%)
+match=different  : 2 (20%)
+
+Tool call name distribution (vs original=['invoke_skill']):
+  [invoke_skill] (= original): 8 (80%)
+  [list_skills]:               2 (20%)
+
+Finish reason matches: 7/10
+```
+
+### Fix effect verification (`--patch` + `--diff`)
+
+Combine `--patch` (payload mutation) with `--diff` (comparison against the
+original recorded response) to measure a fix in one command:
+
+```bash
+python scripts/llm_replay.py <router_request_id> --trace .reyn/llm_trace.jsonl \
+  --patch 'tools[0].function.parameters.properties.name.enum=["skill_a","skill_b"]' \
+  --diff --n 10
+```
+
+This answers "after the fix, how often does the replay match the originally
+correct behaviour?" without a full dogfood session.
+
+### Notes
+
+- If the trace file contains no `response` record for the given `request_id`
+  (e.g. request-only dumps), `--diff` emits a warning and skips diff output;
+  the replay itself continues normally.
+- `--diff` with `--model` override compares the override model's response
+  against the original model's recorded response — useful for cross-model
+  comparison.
 
 ## Use cases
 

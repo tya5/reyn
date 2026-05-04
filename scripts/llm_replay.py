@@ -12,11 +12,17 @@ Usage:
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
         --patch 'tools[0].function.parameters.properties.name.enum=["a","b"]' \\
         --patch 'messages[0].content+=" MUST output flat skill names"'
+    python scripts/llm_replay.py <request_id> --trace <jsonl_path> --diff
+    python scripts/llm_replay.py <request_id> --trace <jsonl_path> --diff --n 10
+    python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
+        --patch 'tools[0].function.parameters.properties.name.enum=["a","b"]' \\
+        --diff --n 10
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import hashlib
 import json
 import os
@@ -348,6 +354,199 @@ async def _single_call(
 
 
 # ---------------------------------------------------------------------------
+# Diff helpers
+# ---------------------------------------------------------------------------
+
+
+def _tc_name(tc: dict) -> str:
+    return tc.get("function", {}).get("name", "?")
+
+
+def _tc_args(tc: dict) -> str:
+    return tc.get("function", {}).get("arguments", "")
+
+
+def _compute_diff(original: dict, replay: dict) -> dict:
+    """Compare original (recorded) response with replay response.
+
+    Returns a dict with keys:
+        match: "exact" | "partial" | "different"
+        content_diff: unified diff string or None
+        tool_calls_diff: {added, removed, changed} or None
+        finish_reason_match: bool
+        summary_line: 1-line human-readable summary
+    """
+    orig_content = original.get("content") or ""
+    replay_content = replay.get("content") or ""
+    orig_tcs = original.get("tool_calls") or []
+    replay_tcs = replay.get("tool_calls") or []
+    orig_fr = original.get("finish_reason")
+    replay_fr = replay.get("finish_reason")
+
+    # --- content diff ---
+    content_diff: str | None = None
+    content_same = orig_content == replay_content
+    if not content_same:
+        orig_lines = orig_content.splitlines(keepends=True)
+        replay_lines = replay_content.splitlines(keepends=True)
+        content_diff = "".join(difflib.unified_diff(
+            orig_lines, replay_lines,
+            fromfile="original", tofile="replay",
+            lineterm="",
+        ))
+        if not content_diff:
+            # edge case: whitespace-only difference not caught by splitlines
+            content_diff = f"- {repr(orig_content)}\n+ {repr(replay_content)}"
+
+    # --- tool_calls diff ---
+    tc_diff: dict | None = None
+    orig_names = [_tc_name(tc) for tc in orig_tcs]
+    replay_names = [_tc_name(tc) for tc in replay_tcs]
+    orig_name_set = set(orig_names)
+    replay_name_set = set(replay_names)
+
+    if orig_tcs or replay_tcs:
+        added = [tc for tc in replay_tcs if _tc_name(tc) not in orig_name_set]
+        removed = [tc for tc in orig_tcs if _tc_name(tc) not in replay_name_set]
+        # "changed" = same name but different arguments
+        changed = []
+        for orig_tc in orig_tcs:
+            name = _tc_name(orig_tc)
+            for rep_tc in replay_tcs:
+                if _tc_name(rep_tc) == name and _tc_args(rep_tc) != _tc_args(orig_tc):
+                    changed.append({
+                        "name": name,
+                        "original_args": _tc_args(orig_tc),
+                        "replay_args": _tc_args(rep_tc),
+                    })
+        tc_diff = {"added": added, "removed": removed, "changed": changed}
+
+    # --- finish_reason ---
+    fr_match = orig_fr == replay_fr
+
+    # --- overall match classification ---
+    tc_names_same = orig_names == replay_names
+    tc_args_all_same = (tc_diff is None) or (
+        not tc_diff["added"] and not tc_diff["removed"] and not tc_diff["changed"]
+    )
+
+    if content_same and tc_args_all_same and fr_match:
+        match = "exact"
+    elif tc_names_same and (not content_same or not tc_args_all_same or not fr_match):
+        # Names are the same but something else differs — near-match
+        match = "partial"
+    else:
+        # Names differ or multiple significant changes
+        match = "different"
+
+    # Build summary line
+    parts: list[str] = [f"match={match}"]
+    if not content_same:
+        parts.append("content changed")
+    if tc_diff and (tc_diff["added"] or tc_diff["removed"]):
+        parts.append(f"tool_calls: +{len(tc_diff['added'])} -{len(tc_diff['removed'])}")
+    elif tc_diff and tc_diff["changed"]:
+        parts.append(f"tool_calls: {len(tc_diff['changed'])} args changed")
+    if not fr_match:
+        parts.append(f"finish_reason: {orig_fr!r} → {replay_fr!r}")
+    summary_line = ", ".join(parts)
+
+    return {
+        "match": match,
+        "content_diff": content_diff,
+        "tool_calls_diff": tc_diff,
+        "finish_reason_match": fr_match,
+        "summary_line": summary_line,
+    }
+
+
+def _print_diff_result(diff: dict, *, output_format: str) -> None:
+    """Print one diff result in pretty or json format."""
+    if output_format == "json":
+        print(json.dumps(diff, indent=2, ensure_ascii=False))
+        return
+
+    print("=== Diff: original vs replay ===")
+    print(f"Match: {diff['match']}")
+
+    # content
+    cd = diff.get("content_diff")
+    if cd is None:
+        print("Content: (no change)")
+    else:
+        print("Content:")
+        for line in cd.splitlines():
+            print(f"  {line}")
+
+    # tool_calls
+    tc_diff = diff.get("tool_calls_diff")
+    if tc_diff is None:
+        pass  # neither original nor replay had tool_calls
+    else:
+        added = tc_diff.get("added") or []
+        removed = tc_diff.get("removed") or []
+        changed = tc_diff.get("changed") or []
+        if not added and not removed and not changed:
+            if diff.get("match") != "exact":
+                print("Tool calls: (same names, args differ — see changed)")
+            else:
+                print("Tool calls: (no change)")
+        else:
+            print("Tool calls:")
+            for tc in removed:
+                print(f"  - removed: {_tc_name(tc)}({_tc_args(tc)[:80]})")
+            for tc in added:
+                print(f"  + added:   {_tc_name(tc)}({_tc_args(tc)[:80]})")
+            for ch in changed:
+                print(f"  ~ changed: {ch['name']}")
+                print(f"      original: {ch['original_args'][:80]}")
+                print(f"      replay:   {ch['replay_args'][:80]}")
+
+    # finish_reason
+    if diff.get("finish_reason_match"):
+        print(f"Finish reason: (matches)")
+    else:
+        print(f"Finish reason: CHANGED")
+
+
+def _print_nshot_diff_summary(diffs: list[dict], original: dict) -> None:
+    """Print aggregated diff statistics for N-shot runs."""
+    n = len(diffs)
+    match_counter: Counter = Counter(d["match"] for d in diffs)
+
+    print(f"\n=== N-shot diff summary (n={n}) ===")
+    for label in ("exact", "partial", "different"):
+        count = match_counter.get(label, 0)
+        pct = round(count / n * 100)
+        print(f"match={label:<10}: {count} ({pct}%)")
+
+    # Tool call name distribution vs original
+    orig_tcs = original.get("tool_calls") or []
+    orig_names = [_tc_name(tc) for tc in orig_tcs]
+    if orig_names:
+        print(f"\nTool call name distribution (vs original={orig_names}):")
+        # collect per-run names
+        run_name_lists: list[list[str]] = []
+        for d in diffs:
+            tc_diff = d.get("tool_calls_diff") or {}
+            # reconstruct replay names from diff: orig - removed + added
+            removed_names = {_tc_name(tc) for tc in tc_diff.get("removed") or []}
+            added = [_tc_name(tc) for tc in tc_diff.get("added") or []]
+            names = [n for n in orig_names if n not in removed_names] + added
+            run_name_lists.append(names)
+        name_counter: Counter = Counter(tuple(sorted(nl)) for nl in run_name_lists)
+        for name_tuple, count in name_counter.most_common():
+            pct = round(count / n * 100)
+            label = ", ".join(name_tuple) if name_tuple else "(none)"
+            marker = " (= original)" if list(name_tuple) == sorted(orig_names) else ""
+            print(f"  [{label}]{marker}: {count} ({pct}%)")
+
+    # finish_reason match rate
+    fr_matches = sum(1 for d in diffs if d.get("finish_reason_match"))
+    print(f"\nFinish reason matches: {fr_matches}/{n}")
+
+
+# ---------------------------------------------------------------------------
 # Display helpers
 # ---------------------------------------------------------------------------
 
@@ -499,6 +698,7 @@ async def _run(
     full: bool,
     output_format: str,
     patch_exprs: list[str] | None = None,
+    diff: bool = False,
     acompletion_fn: Any = None,
 ) -> None:
     records = _load_jsonl(trace_path)
@@ -539,12 +739,22 @@ async def _run(
     if max_tokens_override is not None:
         sampling_params["max_tokens"] = max_tokens_override
 
+    # Warn when --diff is requested but trace has no response record
+    if diff and original_resp is None:
+        print(
+            "warning: --diff requested but no response record found in trace for this request_id. "
+            "Diff output will be skipped.",
+            file=sys.stderr,
+        )
+
     print(f"=== LLM Replay ===")
     print(f"  request_id: {request_id}")
     print(f"  model:      {model}" + (f"  (original: {original_model})" if model_override else ""))
     print(f"  messages:   {len(messages)}")
     print(f"  tools:      {len(tools) if tools else 0}")
     print(f"  n:          {n}")
+    if diff:
+        print(f"  diff:       enabled")
     print()
 
     # Show applied patches summary in pretty mode
@@ -552,6 +762,7 @@ async def _run(
         _print_applied_patches(applied_patches)
 
     results: list[dict] = []
+    diffs: list[dict] = []
     for i in range(n):
         if n > 1:
             print(f"--- run {i + 1}/{n} ---")
@@ -576,8 +787,20 @@ async def _run(
                     original_model=original_model if model_override else None,
                 )
 
+        # Compute and (for n==1) print diff
+        if diff and original_resp is not None:
+            d = _compute_diff(original_resp, result)
+            diffs.append(d)
+            if n == 1:
+                if output_format == "json":
+                    print(json.dumps(d, indent=2, ensure_ascii=False))
+                else:
+                    _print_diff_result(d, output_format=output_format)
+
     if n > 1:
         _print_nshot_summary(results)
+        if diff and original_resp is not None and diffs:
+            _print_nshot_diff_summary(diffs, original_resp)
 
     await _shutdown_logging()
 
@@ -616,6 +839,15 @@ def main() -> None:
             "'key.path--' (delete). Repeatable; applied in CLI order."
         ),
     )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        default=False,
+        help=(
+            "Show diff between original (recorded) response and replay response. "
+            "For N-shot, summarize match rate across all runs."
+        ),
+    )
     args = parser.parse_args()
 
     trace_path = Path(args.trace)
@@ -633,6 +865,7 @@ def main() -> None:
         full=args.full,
         output_format=args.output_format,
         patch_exprs=args.patch or [],
+        diff=args.diff,
     ))
 
 
