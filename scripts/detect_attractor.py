@@ -446,6 +446,39 @@ def _format_json(
 
 
 # ---------------------------------------------------------------------------
+# Public module API (importable by other scripts)
+# ---------------------------------------------------------------------------
+
+
+def detect_all_attractors(
+    records: list[dict],
+    *,
+    heuristics: list[str] | None = None,
+    filter_caller: str | None = None,
+) -> list[dict]:
+    """Detect attractors in *records* and return a list of detection dicts.
+
+    This is the module-level public API intended for import by other scripts
+    (e.g. llm_replay.py) so they can reuse heuristic logic without subprocess
+    invocation.
+
+    Args:
+        records: Raw JSONL records (a list of dicts with ``kind`` field).
+        heuristics: Canonical heuristic names to run.  ``None`` runs all.
+        filter_caller: If set, only inspect records whose ``caller_hint``
+            matches this value exactly.
+
+    Returns:
+        List of detection dicts, each containing at minimum:
+        ``request_id``, ``timestamp``, ``rel_time``, ``caller``,
+        ``heuristic``, ``evidence``.
+    """
+    active = heuristics if heuristics is not None else list(ALL_HEURISTICS)
+    pairs = _pair_records(records)
+    return detect(pairs, heuristics=active, filter_caller=filter_caller)
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 

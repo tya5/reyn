@@ -226,6 +226,9 @@ Get `<request_id>` from `dogfood_trace.py --mode llm-payloads` output.
 | `--output-format pretty\|json` | Output format (default: `pretty`) |
 | `--patch EXPR` | Mutate the payload before replay (repeatable; see below) |
 | `--diff` | Compare replay response against original recorded response (see below) |
+| `--from-attractor` | Detect all attractors in the trace and replay each (see below) |
+| `--attractor-heuristics LIST` | Comma-separated heuristic names to filter when using `--from-attractor` |
+| `--attractor-first N` | Limit `--from-attractor` to the first N attractors |
 
 ## Payload patching (`--patch`)
 
@@ -359,6 +362,75 @@ correct behaviour?" without a full dogfood session.
 - `--diff` with `--model` override compares the override model's response
   against the original model's recorded response — useful for cross-model
   comparison.
+
+## Attractor-driven replay (`--from-attractor`)
+
+`--from-attractor` collapses the manual detect → copy → replay cycle into one
+command. It runs `detect_attractor` heuristics on the trace, then replays
+every detected attractor request using the same options as a normal replay
+(`--n`, `--patch`, `--diff`, `--model`, etc.).
+
+### Syntax
+
+```bash
+# Replay all attractors with n=10
+python scripts/llm_replay.py --trace .reyn/llm_trace.jsonl \
+    --from-attractor --n 10
+
+# Only stop_with_must_rule attractors
+python scripts/llm_replay.py --trace .reyn/llm_trace.jsonl \
+    --from-attractor --attractor-heuristics stop_with_must_rule --n 5
+
+# First 3 attractors only
+python scripts/llm_replay.py --trace .reyn/llm_trace.jsonl \
+    --from-attractor --attractor-first 3 --n 10
+
+# Combine with patch to test a fix across all attractors
+python scripts/llm_replay.py --trace .reyn/llm_trace.jsonl \
+    --from-attractor \
+    --patch 'tools[0].function.parameters.properties.name.enum=["skill_a","skill_b"]' \
+    --n 10
+```
+
+### Output
+
+Each attractor is replayed with a section header, followed by normal replay
+output. A summary table is printed at the end:
+
+```
+Detected 3 attractor(s) — replaying each with n=10.
+
+=== Attractor 1/3 (heuristic=stop_with_must_rule, rel=T+12.3s) ===
+=== LLM Replay ===
+  request_id: abc123...
+  ...
+=== N-shot replay (n=10) ===
+  ...
+
+=== Attractor 2/3 (heuristic=stop_with_must_rule, rel=T+24.5s) ===
+  ...
+
+=== Multi-attractor replay summary ===
+Total attractors replayed: 3
+Total LLM calls: 30 (= 3 × 10)
+By heuristic:
+  stop_with_must_rule: 2 attractors, 20 calls
+  enum_violation: 1 attractors, 10 calls
+Empty-stop rate by attractor:
+  abc123.. (stop_with_must_rule): 5/10 (50%)
+  def456.. (stop_with_must_rule): 7/10 (70%)
+  ghi789.. (enum_violation): 0/10 (0%)
+```
+
+### Primary use cases
+
+**G4 spike — attractor rate measurement across context patches.** After a
+prompt change, run `--from-attractor --n 10` on the same trace before and
+after to measure attractor rate change without a full dogfood session.
+
+**Systematic fix verification.** Combine `--from-attractor` with `--patch` to
+test a schema fix against every attractor in the trace in one command and
+inspect the summary for empty-stop rate reduction.
 
 ## Use cases
 

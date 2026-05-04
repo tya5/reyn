@@ -32,6 +32,26 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+# ---------------------------------------------------------------------------
+# detect_attractor import (lazy, from sibling scripts/ directory)
+# ---------------------------------------------------------------------------
+# We defer the import to _import_detect_attractor() so that the dependency on
+# detect_attractor.py only materialises when --from-attractor is used.  The
+# script stays usable without detect_attractor on the path.
+
+_SCRIPTS_DIR = Path(__file__).parent
+
+
+def _import_detect_attractor() -> Any:
+    """Import scripts/detect_attractor.py as a module and return it."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "detect_attractor", _SCRIPTS_DIR / "detect_attractor.py"
+    )
+    mod = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
 
 # ---------------------------------------------------------------------------
 # JSONL helpers
@@ -700,7 +720,14 @@ async def _run(
     patch_exprs: list[str] | None = None,
     diff: bool = False,
     acompletion_fn: Any = None,
+    _collect_results: list[dict] | None = None,
 ) -> None:
+    """Replay *request_id* from *trace_path*.
+
+    *_collect_results*: if provided, each replay result dict is appended to
+    this list so the caller (e.g. _run_from_attractor) can compute aggregate
+    statistics without re-running.
+    """
     records = _load_jsonl(trace_path)
     req, original_resp = _find_record(records, request_id)
 
@@ -775,6 +802,8 @@ async def _run(
             acompletion_fn=acompletion_fn,
         )
         results.append(result)
+        if _collect_results is not None:
+            _collect_results.append(result)
 
         if n == 1 or output_format == "json":
             if output_format == "json":
@@ -806,6 +835,112 @@ async def _run(
 
 
 # ---------------------------------------------------------------------------
+# Multi-attractor replay helpers
+# ---------------------------------------------------------------------------
+
+
+def _print_attractor_summary(
+    detections: list[dict],
+    results_by_rid: dict[str, list[dict]],
+    n: int,
+) -> None:
+    """Print multi-attractor replay summary table."""
+    total_attractors = len(detections)
+    total_calls = total_attractors * n
+
+    print("\n=== Multi-attractor replay summary ===")
+    print(f"Total attractors replayed: {total_attractors}")
+    print(f"Total LLM calls: {total_calls} (= {total_attractors} × {n})")
+
+    # By-heuristic counts
+    heuristic_counter: Counter = Counter(d["heuristic"] for d in detections)
+    if heuristic_counter:
+        print("By heuristic:")
+        for h_name, count in heuristic_counter.most_common():
+            h_calls = count * n
+            print(f"  {h_name}: {count} attractors, {h_calls} calls")
+
+    # Per-attractor empty-stop rate
+    if results_by_rid:
+        print("Empty-stop rate by attractor:")
+        for d in detections:
+            rid = d.get("request_id", "?")
+            h = d.get("heuristic", "?")
+            run_results = results_by_rid.get(rid, [])
+            if not run_results:
+                continue
+            empty_stops = sum(
+                1 for r in run_results
+                if r.get("finish_reason") == "stop"
+                and not (r.get("content") or "").strip()
+                and not (r.get("tool_calls") or [])
+            )
+            total_runs = len(run_results)
+            pct = round(empty_stops / total_runs * 100) if total_runs else 0
+            short_rid = rid[:8] if len(rid) > 8 else rid
+            print(f"  {short_rid}... ({h}): {empty_stops}/{total_runs} ({pct}%)")
+
+
+async def _run_from_attractor(
+    trace_path: Path,
+    *,
+    attractor_heuristics: list[str] | None,
+    attractor_first: int | None,
+    model_override: str | None,
+    temperature_override: float | None,
+    max_tokens_override: int | None,
+    n: int,
+    full: bool,
+    output_format: str,
+    patch_exprs: list[str] | None = None,
+    diff: bool = False,
+    acompletion_fn: Any = None,
+) -> None:
+    """Detect all attractors in *trace_path* and replay each one."""
+    da = _import_detect_attractor()
+
+    records = _load_jsonl(trace_path)
+    detections = da.detect_all_attractors(
+        records,
+        heuristics=attractor_heuristics,
+    )
+
+    if attractor_first is not None:
+        detections = detections[:attractor_first]
+
+    if not detections:
+        print("No attractors detected in trace — nothing to replay.")
+        return
+
+    print(f"Detected {len(detections)} attractor(s) — replaying each with n={n}.")
+
+    results_by_rid: dict[str, list[dict]] = {}
+
+    for i, detection in enumerate(detections):
+        rid = detection["request_id"]
+        h = detection["heuristic"]
+        rel = detection.get("rel_time", "?")
+        print(f"\n=== Attractor {i + 1}/{len(detections)} "
+              f"(heuristic={h}, rel={rel}) ===")
+        await _run(
+            request_id=rid,
+            trace_path=trace_path,
+            model_override=model_override,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
+            n=n,
+            full=full,
+            output_format=output_format,
+            patch_exprs=patch_exprs or [],
+            diff=diff,
+            acompletion_fn=acompletion_fn,
+            _collect_results=results_by_rid.setdefault(rid, []),
+        )
+
+    _print_attractor_summary(detections, results_by_rid, n)
+
+
+# ---------------------------------------------------------------------------
 # CLI entry
 # ---------------------------------------------------------------------------
 
@@ -814,7 +949,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Replay a single LLM call from a REYN_LLM_TRACE_DUMP file."
     )
-    parser.add_argument("request_id", help="request_id to replay (from llm-payloads output)")
+    parser.add_argument(
+        "request_id",
+        nargs="?",
+        default=None,
+        help="request_id to replay (from llm-payloads output). "
+             "Omit when using --from-attractor.",
+    )
     parser.add_argument("--trace", required=True, help="Path to JSONL trace file")
     parser.add_argument("--model", default=None, dest="model_override",
                         help="Override model (e.g. claude-sonnet, openai/gpt-4o)")
@@ -848,12 +989,69 @@ def main() -> None:
             "For N-shot, summarize match rate across all runs."
         ),
     )
+    # --from-attractor group
+    parser.add_argument(
+        "--from-attractor",
+        action="store_true",
+        default=False,
+        help=(
+            "Detect all attractors in the trace (via detect_attractor heuristics) "
+            "and replay each one.  Replaces the positional request_id argument."
+        ),
+    )
+    parser.add_argument(
+        "--attractor-heuristics",
+        default=None,
+        metavar="LIST",
+        help=(
+            "Comma-separated heuristic names to filter when using --from-attractor "
+            "(e.g. 'stop_with_must_rule').  Default: all heuristics."
+        ),
+    )
+    parser.add_argument(
+        "--attractor-first",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Limit --from-attractor to the first N attractor request_ids (default: all)."
+        ),
+    )
     args = parser.parse_args()
 
     trace_path = Path(args.trace)
     if not trace_path.exists():
         print(f"error: trace file not found: {trace_path}", file=sys.stderr)
         sys.exit(1)
+
+    if args.from_attractor:
+        # Parse attractor heuristics filter
+        attractor_heuristics: list[str] | None = None
+        if args.attractor_heuristics:
+            da = _import_detect_attractor()
+            attractor_heuristics = da._parse_heuristics(args.attractor_heuristics)
+            if not attractor_heuristics:
+                print("error: no valid heuristics specified for --attractor-heuristics",
+                      file=sys.stderr)
+                sys.exit(1)
+
+        asyncio.run(_run_from_attractor(
+            trace_path=trace_path,
+            attractor_heuristics=attractor_heuristics,
+            attractor_first=args.attractor_first,
+            model_override=args.model_override,
+            temperature_override=args.temperature,
+            max_tokens_override=args.max_tokens,
+            n=args.n,
+            full=args.full,
+            output_format=args.output_format,
+            patch_exprs=args.patch or [],
+            diff=args.diff,
+        ))
+        return
+
+    if args.request_id is None:
+        parser.error("request_id is required unless --from-attractor is used")
 
     asyncio.run(_run(
         request_id=args.request_id,
