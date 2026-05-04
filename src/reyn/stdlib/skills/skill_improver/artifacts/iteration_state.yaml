@@ -5,7 +5,7 @@ schema:
   properties:
     session:
       type: object
-      description: The original improvement_session, carried through every iteration unchanged. Contains target_skill_path, eval_spec_path, max_iterations, score_threshold, etc.
+      description: The improvement_session carried through every iteration. Contains target_skill (skill name), max_iterations, score_threshold, and _resolved_paths (OS-derived path fields injected by copy_to_work preprocessor).
     current_iteration:
       type: integer
       minimum: 1

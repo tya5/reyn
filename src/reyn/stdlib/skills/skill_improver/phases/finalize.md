@@ -9,6 +9,9 @@ allowed_ops: [file]
 
 Copy improved files back to the original skill directory if the score threshold was met, then emit the final result.
 
+All path values come from `improvement_result` fields which were populated by apply_improvements
+from `session._resolved_paths`. Do NOT construct path strings yourself.
+
 ## Step 1 — Determine whether to copy back
 
 Copy back **only** when ALL of the following hold:

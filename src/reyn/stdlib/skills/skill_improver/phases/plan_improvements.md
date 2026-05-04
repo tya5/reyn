@@ -11,12 +11,16 @@ Design concrete, minimal DSL file changes that will improve the target skill's s
 
 ## Step 1 — Read the target skill's DSL
 
-Read all DSL files under `iteration_state.session.target_dsl_root`. Use glob ops:
+Read all DSL files under the work directory. The resolved work path is in
+`iteration_state.session._resolved_paths.target_dsl_root`. Use glob ops:
 
 ```
-{"kind": "file", "op": "glob", "path": "<target_dsl_root>/**/*.md"}
-{"kind": "file", "op": "glob", "path": "<target_dsl_root>/**/*.yaml"}
+{"kind": "file", "op": "glob", "path": "<_resolved_paths.target_dsl_root>/**/*.md"}
+{"kind": "file", "op": "glob", "path": "<_resolved_paths.target_dsl_root>/**/*.yaml"}
 ```
+
+Do NOT construct path strings yourself. Use the value from `_resolved_paths.target_dsl_root`
+exactly as provided.
 
 Read each returned file with file read ops. You need the current state of:
 - `skill.md` — overall graph and finish criteria

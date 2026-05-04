@@ -5,7 +5,7 @@ schema:
   properties:
     target_skill_path:
       type: string
-      description: Path to the target skill that was improved.
+      description: Path to the work-copy of the target skill's skill.md (from _resolved_paths.target_skill_path).
     iterations_performed:
       type: integer
       minimum: 1

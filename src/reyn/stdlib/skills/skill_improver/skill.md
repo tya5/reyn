@@ -38,9 +38,9 @@ routing:
       - "新しい skill を作って"   # this is skill_builder, not improver
 permissions:
   python:
-    - module: ./copy_to_work.py
+    - module: ./copy_to_work_resolver.py
       function: compute_paths
-      mode: pure
+      mode: trusted
       timeout: 5
     - module: ./copy_to_work.py
       function: build_copy_plan
@@ -52,6 +52,10 @@ permissions:
       timeout: 5
     - module: ./copy_to_work.py
       function: validate_copy
+      mode: pure
+      timeout: 5
+    - module: ./copy_to_work.py
+      function: inject_resolved_paths
       mode: pure
       timeout: 5
 ---

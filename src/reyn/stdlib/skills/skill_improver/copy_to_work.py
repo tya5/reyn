@@ -1,32 +1,18 @@
-"""Deterministic helper functions for the copy_to_work preprocessor phase.
+"""Pure-mode helper functions for the copy_to_work preprocessor phase.
 
-Pure-mode Python preprocessor functions — run sandboxed via reyn._python_harness.
-No file I/O: all path computation is string manipulation only.
-File I/O (glob, read, write) is delegated to run_op steps in the preprocessor chain.
+All functions here run in the pure-mode AST sandbox (no I/O, no reyn imports).
+File I/O (glob, read, write) is delegated to run_op steps in the preprocessor
+chain.
+
+The trusted-mode compute_paths function (which calls resolve_skill_path) lives
+in copy_to_work_resolver.py to keep this file importable in pure mode.
+
+NOTE: Do NOT add 'from __future__ import annotations' and do NOT import any
+reyn modules at the top level — the pure-mode AST sandbox blocks both.
 """
 
 
-def compute_paths(artifact: dict) -> dict:
-    """Step 1: compute all derived paths from original_dsl_root.
-
-    Receives the improvement_session artifact.
-    Returns: {skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug}
-    """
-    data = artifact.get("data", {})
-    original_dsl_root = str(data.get("original_dsl_root", "")).rstrip("/")
-    # last path component
-    skill_slug = original_dsl_root.rsplit("/", 1)[-1] if "/" in original_dsl_root else original_dsl_root
-    work_dir = ".reyn/skill_improver_work/" + skill_slug
-    return {
-        "skill_glob": original_dsl_root + "/skill.md",
-        "phases_glob": original_dsl_root + "/phases/*.md",
-        "work_dir": work_dir,
-        "original_dsl_root": original_dsl_root,
-        "skill_slug": skill_slug,
-    }
-
-
-def build_copy_plan(artifact: dict) -> list:
+def build_copy_plan(artifact):
     """Step 4: combine glob results into a list of {src, rel} pairs.
 
     Reads:
@@ -61,7 +47,7 @@ def build_copy_plan(artifact: dict) -> list:
     return plan
 
 
-def build_write_ops(artifact: dict) -> list:
+def build_write_ops(artifact):
     """Step 6: pair read results with destination paths.
 
     Reads:
@@ -93,7 +79,7 @@ def build_write_ops(artifact: dict) -> list:
     return write_ops
 
 
-def validate_copy(artifact: dict) -> dict:
+def validate_copy(artifact):
     """Step 8: validate the copy results.
 
     Reads:
@@ -120,4 +106,40 @@ def validate_copy(artifact: dict) -> dict:
         "files_written": files_written,
         "files_expected": files_expected,
         "work_dir": work_dir,
+    }
+
+
+def inject_resolved_paths(artifact):
+    """Step 9: inject OS-resolved path fields into the session for downstream phases.
+
+    After the copy, downstream phases (run_and_eval, plan_improvements,
+    apply_improvements, finalize) need backward-compat path fields:
+    target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root.
+
+    The work_dir copy already happened; target_dsl_root is updated to the work copy.
+
+    Reads:
+      data._prep.target_skill_path    (resolved by compute_paths in step 1)
+      data._prep.target_dsl_root      (original — becomes original_dsl_root)
+      data._prep.eval_spec_path
+      data._prep.work_dir             (becomes the new target_dsl_root)
+      data._prep.skill_slug
+
+    Returns: {target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root}
+    """
+    data = artifact.get("data", {})
+    prep = data.get("_prep", {})
+    work_dir = str(prep.get("work_dir", "")).rstrip("/")
+    original_dsl_root = str(prep.get("original_dsl_root", "")).rstrip("/")
+    eval_spec_path = str(prep.get("eval_spec_path", ""))
+
+    # After copy, target_skill_path and target_dsl_root point to the work copy
+    new_target_dsl_root = work_dir
+    new_target_skill_path = work_dir + "/skill.md"
+
+    return {
+        "target_skill_path": new_target_skill_path,
+        "target_dsl_root": new_target_dsl_root,
+        "eval_spec_path": eval_spec_path,
+        "original_dsl_root": original_dsl_root,
     }

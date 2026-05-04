@@ -82,9 +82,12 @@ For rollback, set `control.reason.summary` to something like:
 
 ## Output (finalize path)
 
+All path values MUST be read from `state.session._resolved_paths` — do NOT construct
+path strings yourself.
+
 Emit `improvement_result` with:
 
-- `target_skill_path`: `state.session.target_skill_path`
+- `target_skill_path`: `state.session._resolved_paths.target_skill_path` (work-copy path)
 - `iterations_performed`: `state.current_iteration` (i.e. length of `iterations` AFTER Step 2's append)
 - `initial_score`: `state.history[0].eval_score` if `state.history` had ≥1 entry on entry to this phase; otherwise `state.latest_eval.overall_score`
 - `final_score`: `state.latest_eval.overall_score`
@@ -92,9 +95,9 @@ Emit `improvement_result` with:
 - `files_modified`: deduplicated union of `files_modified` across all entries in the post-append iterations array
 - `termination_reason`: from the table in Step 3
 - `summary`: prose describing the score progression and what changed
-- `next_steps`: a concrete command — typically `reyn eval <eval_spec_path>`
-- `work_dsl_root`: `state.session.target_dsl_root` (the temp work directory)
-- `original_dsl_root`: `state.session.original_dsl_root` (the original skill directory)
+- `next_steps`: a concrete command — typically `reyn eval <eval_spec_path>` where `eval_spec_path` = `state.session._resolved_paths.eval_spec_path`
+- `work_dsl_root`: `state.session._resolved_paths.target_dsl_root` (the temp work directory)
+- `original_dsl_root`: `state.session._resolved_paths.original_dsl_root` (the original skill directory)
 - `copied_back`: `false` (finalize will update this field)
 
 ## Output (rollback path)

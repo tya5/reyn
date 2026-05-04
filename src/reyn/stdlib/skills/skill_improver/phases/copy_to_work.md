@@ -6,9 +6,12 @@ role: workspace_initializer
 max_act_turns: 0
 allowed_ops: []
 preprocessor:
-  # Step 1: compute all derived paths (slug, work_dir, glob patterns) from original_dsl_root
+  # Step 1: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
+  # target_skill is a short skill name only (e.g. "direct_llm"); no path strings from LLM.
+  # Runs in trusted mode (copy_to_work_resolver.py) because resolve_skill_path does
+  # filesystem existence checks. Pure-mode functions live in copy_to_work.py.
   - type: python
-    module: ./copy_to_work.py
+    module: ./copy_to_work_resolver.py
     function: compute_paths
     into: data._prep
     output_schema:
@@ -19,7 +22,11 @@ preprocessor:
         work_dir:           {type: string}
         original_dsl_root:  {type: string}
         skill_slug:         {type: string}
-      required: [skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug]
+        target_skill_path:  {type: string}
+        target_dsl_root:    {type: string}
+        eval_spec_path:     {type: string}
+      required: [skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug,
+                 target_skill_path, target_dsl_root, eval_spec_path]
 
   # Step 2: glob skill.md using the computed pattern
   - type: run_op
@@ -112,10 +119,30 @@ preprocessor:
         files_expected: {type: integer}
         work_dir:       {type: string}
       required: [ok, files_written, files_expected, work_dir]
+
+  # Step 9: inject resolved path fields into the session for downstream phases
+  - type: python
+    module: ./copy_to_work.py
+    function: inject_resolved_paths
+    into: data._resolved_paths
+    output_schema:
+      type: object
+      properties:
+        target_skill_path:  {type: string}
+        target_dsl_root:    {type: string}
+        eval_spec_path:     {type: string}
+        original_dsl_root:  {type: string}
+      required: [target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root]
 ---
 
-The preprocessor has deterministically copied all target skill DSL files to the
-work directory. Emit the updated session with `target_dsl_root` and
-`target_skill_path` pointing to the work directory, then transition.
+The preprocessor has deterministically resolved the skill path via the OS resolver and
+copied all target skill DSL files to the work directory. Emit the updated session with
+`target_skill_path` and `target_dsl_root` pointing to the work directory, then transition.
+
+The resolved paths are available in `data._resolved_paths`:
+- `target_skill_path` → work-dir copy of skill.md (downstream phases use this)
+- `target_dsl_root`   → work directory root
+- `eval_spec_path`    → eval.md in the ORIGINAL skill directory (not copied to work)
+- `original_dsl_root` → original skill directory (finalize uses this for copy-back)
 
 The computed work directory is available in `data._prep.work_dir`.

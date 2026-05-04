@@ -1,17 +1,11 @@
 name: improvement_session
-description: Configuration carried through every iteration of an improver run — target paths, iteration limits, termination thresholds, and the eval criteria for the chosen test case.
+description: Configuration carried through every iteration of an improver run — target skill name, iteration limits, termination thresholds, and the eval criteria for the chosen test case.
 schema:
   type: object
   properties:
-    target_skill_path:
+    target_skill:
       type: string
-      description: Path to the target skill's skill.md, e.g. "reyn/local/my_app/skill.md".
-    target_dsl_root:
-      type: string
-      description: DSL root for resolving the target skill's shared artifacts and phases. Inferred from target_skill_path when blank.
-    eval_spec_path:
-      type: string
-      description: Path to the eval.md spec file for the target skill. Auto-generated via eval_builder during prepare if missing.
+      description: Short skill name only (e.g. "direct_llm"). Path resolution is OS responsibility via resolve_skill_path. LLM must NOT construct path strings.
     case_name:
       type: string
       description: Name of the test case from the eval spec to use for every iteration.
@@ -57,13 +51,8 @@ schema:
     improvement_focus:
       type: string
       description: Optional area to focus improvements on, e.g. "instruction clarity". Empty string when not specified.
-    original_dsl_root:
-      type: string
-      description: Original DSL root before the prepare phase copies files to the temp work directory. Empty string when no copy was made. Used by finalize to copy improved files back to the original location.
   required:
-    - target_skill_path
-    - target_dsl_root
-    - eval_spec_path
+    - target_skill
     - case_name
     - case_input
     - phase_criteria
@@ -71,4 +60,3 @@ schema:
     - max_iterations
     - score_threshold
     - improvement_focus
-    - original_dsl_root

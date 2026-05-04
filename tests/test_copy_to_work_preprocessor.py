@@ -71,14 +71,17 @@ def _make_sibling_skill(tmp_path: Path, skill_name: str) -> Path:
     return root
 
 
-def _make_artifact(dsl_root: str) -> dict:
-    """Build a minimal improvement_session artifact for copy_to_work input."""
+def _make_artifact(skill_name: str) -> dict:
+    """Build a minimal improvement_session artifact for copy_to_work input.
+
+    After Wave 1 (B6-S1-H1 fix), the artifact carries only ``target_skill``
+    (a short skill name).  All path fields are derived by the preprocessor via
+    ``resolve_skill_path`` — they are NOT in the LLM-emitted artifact.
+    """
     return {
         "type": "improvement_session",
         "data": {
-            "target_skill_path": dsl_root + "/skill.md",
-            "target_dsl_root": dsl_root,
-            "eval_spec_path": dsl_root + "/eval.md",
+            "target_skill": skill_name,
             "case_name": "basic",
             "case_input": "hello",
             "phase_criteria": [],
@@ -86,7 +89,6 @@ def _make_artifact(dsl_root: str) -> dict:
             "max_iterations": 3,
             "score_threshold": 0.85,
             "improvement_focus": "",
-            "original_dsl_root": dsl_root,
         },
     }
 
@@ -132,8 +134,8 @@ def test_copy_to_work_creates_workspace_dir(tmp_path, monkeypatch):
     so subsequent phases can write to it.
     """
     monkeypatch.chdir(tmp_path)
-    dsl_root = _make_fake_skill(tmp_path, "my_skill")
-    artifact = _make_artifact(str(dsl_root.relative_to(tmp_path)))
+    _make_fake_skill(tmp_path, "my_skill")
+    artifact = _make_artifact("my_skill")
 
     _run_preprocessor(tmp_path, artifact)
 
@@ -148,7 +150,7 @@ def test_copy_to_work_copies_skill_md(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
     dsl_root = _make_fake_skill(tmp_path, "my_skill")
-    artifact = _make_artifact(str(dsl_root.relative_to(tmp_path)))
+    artifact = _make_artifact("my_skill")
     source_skill_md = dsl_root / "skill.md"
 
     _run_preprocessor(tmp_path, artifact)
@@ -168,8 +170,8 @@ def test_copy_to_work_copies_all_phase_files(tmp_path, monkeypatch):
     by the preprocessor to prevent the improver from modifying its own eval spec).
     """
     monkeypatch.chdir(tmp_path)
-    dsl_root = _make_fake_skill(tmp_path, "my_skill")
-    artifact = _make_artifact(str(dsl_root.relative_to(tmp_path)))
+    _make_fake_skill(tmp_path, "my_skill")
+    artifact = _make_artifact("my_skill")
 
     _run_preprocessor(tmp_path, artifact)
 
@@ -190,9 +192,9 @@ def test_copy_to_work_glob_does_not_leak_other_skills(tmp_path, monkeypatch):
     scoped to original_dsl_root only — no leakage into sibling skill directories.
     """
     monkeypatch.chdir(tmp_path)
-    dsl_root = _make_fake_skill(tmp_path, "my_skill")
-    sibling_root = _make_sibling_skill(tmp_path, "other_skill")
-    artifact = _make_artifact(str(dsl_root.relative_to(tmp_path)))
+    _make_fake_skill(tmp_path, "my_skill")
+    _make_sibling_skill(tmp_path, "other_skill")
+    artifact = _make_artifact("my_skill")
 
     _run_preprocessor(tmp_path, artifact)
 

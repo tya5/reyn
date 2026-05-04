@@ -10,36 +10,49 @@ allowed_ops: [file, ask_user, run_skill]
 Validate the user's request and produce a fully-populated `improvement_session` for the loop.
 This phase runs ONCE per improver invocation — never re-entered.
 
+IMPORTANT: The LLM MUST NOT construct file paths. Extract only the skill name from the user
+input. Path resolution is performed by the OS using `resolve_skill_path`. The OS injects
+resolved paths into the preprocessor — your only job here is to extract the skill NAME.
+
 ## Step 1 — Parse the input
 
 If the input artifact type is `user_message`: extract from the `text` field:
-- `target_skill_path` (required) — path to the target skill's skill.md
+- `target_skill` (required) — the short skill name only (e.g. `"direct_llm"`, `"my_app"`)
+  - If the user says `"direct_llm を改善して"`, extract `"direct_llm"`.
+  - If the user says a path like `"reyn/local/my_app/skill.md"`, extract only the last
+    component before `/skill.md` (i.e. `"my_app"`).
+  - DO NOT produce a path string. The skill name is a single path component with no slashes.
 - `case_name` (optional) — defaults to the FIRST case in the eval spec
 - `max_iterations` (optional) — defaults to `3`
 - `score_threshold` (optional) — defaults to `0.85`
 - `improvement_focus` (optional) — defaults to empty string
 - `model` (optional) — defaults to `"standard"`
 
-If `target_skill_path` is missing, use `ask_user`.
+If `target_skill` cannot be determined from the text, use `ask_user` with the question:
+"Which skill would you like to improve? Please provide the skill name (e.g. \"direct_llm\")."
 
-If the input artifact type is `improvement_session`: pass the fields through unchanged but still execute Steps 2–5 (paths, eval.md existence, parsing, workspace state).
+If the input artifact type is `improvement_session`: pass the fields through unchanged but
+still execute Steps 2–4 (eval.md existence, parsing, workspace state).
 
-## Step 2 — Resolve paths
+## Step 2 — Ensure eval.md exists
 
-Set `target_dsl_root`:
-- If the input provided one, use it.
-- Else default to the parent directory of `target_skill_path` (e.g. `target_skill_path = "reyn/local/my_app/skill.md"` → `target_dsl_root = "reyn/local/my_app"`).
+The OS resolves `target_skill` to a skill directory. The eval.md is located at
+`<skill_dir>/eval.md` (also OS-derived). Issue a file read op using the path that the
+candidate_outputs schema provides as `eval_spec_path` — do NOT construct this path yourself.
 
-Set `eval_spec_path`:
-- If the input provided one, use it.
-- Else default to `<target_dsl_root>/eval.md`.
+Wait — the `eval_spec_path` field is NOT in the artifact you emit; it is injected by the
+preprocessor after your transition. Your only job in this step is to attempt a read of the
+path that the OS will provide via the `file` op: use the pattern
+`<target_skill directory>/eval.md` as read from the control_ir_results.
 
-## Step 3 — Ensure eval.md exists
+Actually: issue a file read op for the eval.md. Since the OS provides the resolved skill
+directory from `target_skill`, use the read result from the `eval_spec_path` that will be
+derived. If you do not know the exact path, you may issue `run_skill eval_builder` to
+generate it — the OS will handle path resolution.
 
-Issue a file read op for `eval_spec_path`.
-If the file is found, skip to Step 4.
-
-If the file is NOT found, generate it via the `eval_builder` stdlib skill skill. Issue this Control IR op:
+**Simplified approach**: Issue a `run_skill` op for `eval_builder` unconditionally only if
+you have clear evidence the eval.md does not exist. Otherwise first attempt a file read. If
+the read fails (status != "ok"), generate via `eval_builder`:
 
 ```
 {
@@ -47,16 +60,17 @@ If the file is NOT found, generate it via the `eval_builder` stdlib skill skill.
   "skill": "eval_builder",
   "input": {
     "type": "user_message",
-    "data": {"text": "Generate an eval.md for <target_skill_path>."}
+    "data": {"text": "Generate an eval.md for the skill named <target_skill>."}
   },
   "model": session.model,
   "workspace": "isolated"
 }
 ```
 
-After the sub-skill finishes, read `eval_spec_path` again to confirm it now exists. If it still does not, abort with `control.type="abort"` and a reason citing eval_builder failure.
+After the sub-skill finishes, attempt the file read again to confirm eval.md now exists.
+If it still does not exist, abort with `control.type="abort"` citing eval_builder failure.
 
-## Step 4 — Parse eval.md and pick a case
+## Step 3 — Parse eval.md and pick a case
 
 Parse the eval.md content (markdown). The format is:
 
@@ -97,7 +111,7 @@ A criterion has `required: false` ONLY when it begins with `[aspirational]`. Oth
 
 Strip the `[required]` / `[aspirational]` tag prefix from `description` when present.
 
-## Step 5 — Initialize workspace state
+## Step 4 — Initialize workspace state
 
 Issue a file write op to `.reyn/improver_state.json` with:
 
@@ -113,7 +127,10 @@ This file accumulates iteration history across the loop, surviving rollback chai
 ## Output
 
 Emit `improvement_session` with:
-- All resolved fields from Steps 1–4
-- `original_dsl_root`: set to `target_dsl_root` (the file copy step will update it)
+- `target_skill`: the skill name you extracted (a single component, no slashes, no ".md")
+- All other resolved fields from Steps 1–3
+
+DO NOT include any path fields (`target_skill_path`, `target_dsl_root`, `eval_spec_path`,
+`original_dsl_root`). These are derived by the OS preprocessor in copy_to_work.
 
 Choose `transition` → `copy_to_work`.

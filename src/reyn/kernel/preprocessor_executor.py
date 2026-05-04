@@ -405,7 +405,17 @@ class PreprocessorExecutor:
                 ) from exc
         else:
             from reyn.permissions.permissions import PythonPermission
-            perm = PythonPermission(module=step.module, function=step.function)
+            # When no resolver is configured (e.g. unit tests), look up the
+            # declared mode from the skill's permissions block so that skills
+            # declaring `mode: trusted` are not silently downgraded to pure.
+            declared_mode = "pure"
+            for decl in self._skill.permissions.python:
+                if decl.module == step.module and decl.function == step.function:
+                    declared_mode = decl.mode
+                    break
+            perm = PythonPermission(
+                module=step.module, function=step.function, mode=declared_mode
+            )
 
         if not self._skill.skill_dir:
             raise PreprocessorError(
