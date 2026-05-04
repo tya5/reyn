@@ -51,6 +51,14 @@ def register(sub) -> None:
             "Asks for confirmation before deleting."
         ),
     )
+    p.add_argument(
+        "--allow-untrusted-python", dest="allow_untrusted_python",
+        action="store_true",
+        help=(
+            "Enable trusted-mode Python preprocessor steps (no AST sandboxing). "
+            "Pure-mode python steps run without this flag. Off by default."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -145,12 +153,14 @@ def run(args: argparse.Namespace) -> None:
     budget_tracker.load_state(budget_state_path)
     budget_tracker.set_state_path(budget_state_path)
     perm_config = getattr(session_cfg.config, "permissions", {}) or {}
+    trusted_python = bool(getattr(args, "allow_untrusted_python", False))
     # Single PermissionResolver shared across agents (per the PR10 decision:
     # `.reyn/approvals.yaml` is process-wide).
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
         interactive=sys.stdin.isatty(),
+        trusted_python_allowed=trusted_python,
     )
 
     project_context = load_project_context(session_cfg.config, project_root)
