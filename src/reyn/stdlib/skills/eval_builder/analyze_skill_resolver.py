@@ -14,8 +14,8 @@ Path resolution contract:
     constructs path strings; the OS is the single source of path truth.
 
 Input forms supported:
-    - artifact type=eval_builder_request: data.target_skill directly
-    - artifact type=user_message: data.text parsed via regex patterns
+    - data contains "target_skill" field (any type, incl. "unknown"): direct lookup
+    - artifact type=user_message (or any without "target_skill"): data.text parsed via regex
 
 Raises ValueError if the skill name cannot be extracted from user_message,
 and SkillNotFoundError if the resolved skill does not exist on disk.
@@ -37,25 +37,31 @@ _PATTERNS = [
 def _extract_skill_name(artifact: dict) -> str:
     """Extract the target skill name from an artifact dict.
 
-    Supports two input forms:
-      - eval_builder_request: reads data.target_skill directly
-      - user_message: applies regex patterns to data.text
+    Supports three input forms (checked in priority order):
+      1. data contains "target_skill" field (any artifact type, including "unknown"):
+         reads data.target_skill directly.  This handles both the typed
+         eval_builder_request form and the untyped form that the OS classifies
+         as artifact_type="unknown" when the LLM omits the "type" field.
+      2. user_message (or any artifact without "target_skill"): applies regex
+         patterns to data.text.
 
     Raises ValueError if the skill name cannot be determined.
     """
-    artifact_type = artifact.get("type", "")
     data = artifact.get("data", {})
 
-    if artifact_type == "eval_builder_request":
-        name = str(data.get("target_skill", "")).strip()
+    # Priority 1: target_skill field present — canonical structured input.
+    # Works for artifact_type="eval_builder_request", "unknown", or "" because
+    # the OS sets type="unknown" when the LLM omits the "type" field from input.
+    if "target_skill" in data:
+        name = str(data["target_skill"]).strip()
         if not name:
             raise ValueError(
-                "eval_builder_request artifact has empty or missing 'target_skill'. "
+                "Artifact has empty 'target_skill' field. "
                 "Provide a short skill name (e.g. \"direct_llm\")."
             )
         return name
 
-    # Treat anything else (including user_message) as natural-language text
+    # Priority 2: natural-language text fallback (user_message or similar).
     text = str(data.get("text", "")).strip()
     for pattern in _PATTERNS:
         match = pattern.search(text)

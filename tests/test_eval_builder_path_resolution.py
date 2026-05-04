@@ -221,6 +221,97 @@ def test_inject_resolved_paths_mirrors_prep_into_resolved(tmp_path, monkeypatch)
         )
 
 
+# ── G17: unknown artifact_type with target_skill field (B8-NEW-6) ─────────────
+
+
+def test_extract_skill_name_unknown_type_with_target_skill(tmp_path, monkeypatch):
+    """Tier 2: _extract_skill_name returns target_skill when artifact_type is "unknown".
+
+    Guards G17 fix: when the LLM omits the "type" field from invoke_skill input,
+    the OS assigns artifact_type="unknown". The resolver must still extract the
+    skill name from data.target_skill rather than falling through to the
+    user_message regex path (which fails because data.text is absent).
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "type": "unknown",
+        "data": {"target_skill": "direct_llm"},
+    }
+    result = compute_paths(artifact)
+
+    skill_dir, _ = resolve_skill_path("direct_llm")
+    expected_root = str(skill_dir).rstrip("/")
+
+    assert result["target_skill"] == "direct_llm"
+    assert result["skill_dir"] == expected_root
+    assert "stdlib" in result["skill_dir"]
+
+
+def test_extract_skill_name_empty_type_with_target_skill(tmp_path, monkeypatch):
+    """Tier 2: _extract_skill_name returns target_skill when artifact type is empty string.
+
+    Guards G17 fix parity: artifact_type="" (artifact.get("type", "") fallback)
+    with target_skill present must resolve identically to the "unknown" case.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "data": {"target_skill": "direct_llm"},
+    }
+    result = compute_paths(artifact)
+
+    skill_dir, _ = resolve_skill_path("direct_llm")
+    expected_root = str(skill_dir).rstrip("/")
+
+    assert result["target_skill"] == "direct_llm"
+    assert result["skill_dir"] == expected_root
+
+
+def test_extract_skill_name_eval_builder_request_still_works(tmp_path, monkeypatch):
+    """Tier 2: existing eval_builder_request path continues to work after G17 fix.
+
+    Regression guard: the fix must not break the original typed artifact form.
+    """
+    monkeypatch.chdir(tmp_path)
+    result = compute_paths(_eval_builder_request("direct_llm"))
+
+    skill_dir, _ = resolve_skill_path("direct_llm")
+    expected_root = str(skill_dir).rstrip("/")
+
+    assert result["target_skill"] == "direct_llm"
+    assert result["skill_dir"] == expected_root
+
+
+def test_extract_skill_name_unknown_type_text_only_falls_back_to_regex(tmp_path, monkeypatch):
+    """Tier 2: unknown artifact_type with only "text" field uses regex fallback.
+
+    Guards that the G17 fix does not break the user_message regex path: when
+    data has no "target_skill" key but has a parseable "text", extraction succeeds.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "type": "unknown",
+        "data": {"text": "Generate spec for skill named direct_llm"},
+    }
+    result = compute_paths(artifact)
+
+    assert result["target_skill"] == "direct_llm"
+
+
+def test_extract_skill_name_unknown_type_no_target_skill_no_text_raises(tmp_path, monkeypatch):
+    """Tier 2: unknown artifact_type with neither target_skill nor extractable text raises ValueError.
+
+    Guards the error boundary: the resolver must raise ValueError (not silently
+    produce a bogus path) when no skill name can be determined from any field.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "type": "unknown",
+        "data": {},
+    }
+    with pytest.raises(ValueError, match="Cannot extract skill name"):
+        compute_paths(artifact)
+
+
 # ── B8-NEW-2: trusted mode declaration (PureModeViolation fix) ────────────────
 
 
