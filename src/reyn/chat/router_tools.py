@@ -257,7 +257,9 @@ def build_tools(
                             "listed in the system prompt's \"Available skills\" "
                             "section, used verbatim (no dots, no slashes, "
                             "no namespace prefixes). "
-                            "If unsure of input format, call describe_skill first."
+                            "Use list_skills' input_fields hint to construct "
+                            "the correct input, or call describe_skill for full "
+                            "schema details. Do not guess input field names."
                         ),
                         "parameters": {
                             "type": "object",

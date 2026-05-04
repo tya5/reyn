@@ -335,13 +335,74 @@ def _render_summary_for_storage(structured: dict) -> str:
     return "\n".join(parts)
 
 
+def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
+    """Extract input artifact name and top-level field list from a skill's entry phase.
+
+    Returns a dict with:
+      - ``input_artifact``: "|"-joined artifact type names from the phase ``input:`` field
+        (e.g. ``"user_message | eval_builder_request"``).
+      - ``input_fields``: flat list of top-level property names from the first
+        non-``user_message`` artifact schema (or from the only artifact if all
+        are ``user_message``). Empty list on any read/parse failure.
+
+    Failures are silently swallowed — the hint is best-effort and must not
+    break the catalogue enumeration.
+    """
+    import yaml as _yaml
+
+    try:
+        phase_path = skill_dir / "phases" / f"{entry_phase_name}.md"
+        if not phase_path.exists():
+            return {}
+        phase_fm, _ = _split_frontmatter(phase_path.read_text(encoding="utf-8"))
+        inputs_raw = phase_fm.get("input", "")
+        if not inputs_raw:
+            return {}
+        artifact_names = [n.strip() for n in str(inputs_raw).split("|") if n.strip()]
+        if not artifact_names:
+            return {}
+
+        input_artifact = " | ".join(artifact_names)
+
+        # Resolve top-level fields from the first non-user_message artifact,
+        # falling back to user_message if that's the only one.
+        preferred = [n for n in artifact_names if n != "user_message"] or artifact_names
+        input_fields: list[str] = []
+        artifacts_dir = skill_dir / "artifacts"
+        for art_name in preferred:
+            art_path = artifacts_dir / f"{art_name}.yaml"
+            if not art_path.exists():
+                continue
+            art_data = _yaml.safe_load(art_path.read_text(encoding="utf-8")) or {}
+            schema = art_data.get("schema") or {}
+            props = schema.get("properties") or {}
+            if props:
+                input_fields = list(props.keys())
+                break
+
+        return {"input_artifact": input_artifact, "input_fields": input_fields}
+    except Exception:  # noqa: BLE001 — best-effort; never break catalogue
+        return {}
+
+
 def enumerate_available_skills(exclude: set[str]) -> list[dict]:
     """Walk reyn/project, reyn/local, stdlib/skills and collect skill catalogue entries.
 
-    Each entry has `{name, description}` always, plus an optional `routing`
-    block lifted from the skill's frontmatter. The router uses `routing.intents`,
-    `routing.when_to_use`, `routing.when_not_to_use`, and `routing.examples`
-    to decide whether the user's request matches the skill.
+    Each entry has ``{name, description}`` always, plus optional fields:
+      - ``routing``: block lifted from skill.md frontmatter (intents, examples, …).
+      - ``input_artifact``: "|"-joined artifact type names accepted by the entry phase
+        (e.g. ``"user_message | eval_builder_request"``). Absent when unavailable.
+      - ``input_fields``: flat list of top-level property names from the structured
+        input artifact (e.g. ``["target_skill"]``). Empty list = unknown / no
+        structured fields. Absent when unavailable.
+
+    The router uses ``routing.intents``, ``routing.when_to_use``,
+    ``routing.when_not_to_use``, and ``routing.examples`` to decide whether the
+    user's request matches the skill.
+
+    ``input_artifact`` and ``input_fields`` are exposed via ``list_skills``
+    so the LLM sees the correct input field names before calling ``invoke_skill``
+    (RETRO-H2 fix — plan D: pre-call structural context provision).
     """
     sl = stdlib_root()
     roots = [
@@ -371,6 +432,11 @@ def enumerate_available_skills(exclude: set[str]) -> list[dict]:
             routing = fm.get("routing")
             if isinstance(routing, dict) and routing:
                 entry["routing"] = routing
+            # RETRO-H2 fix (plan D): inject input artifact + field hint for list_skills.
+            entry_phase_name = str(fm.get("entry") or "").strip()
+            if entry_phase_name:
+                hint = _extract_skill_input_hint(d, entry_phase_name)
+                entry.update(hint)
             results.append(entry)
             seen.add(d.name)
     return results

@@ -544,11 +544,30 @@ class RouterLoop:
     # Discovery helpers (pure, no async host calls)
     # -----------------------------------------------------------------------
 
+    @staticmethod
+    def _skill_item(s: dict) -> dict:
+        """Build a list_skills item from a catalogue entry.
+
+        Always includes ``name`` and ``description``. Passes through
+        ``input_artifact`` and ``input_fields`` when present so the LLM
+        sees the correct input field names before calling ``invoke_skill``
+        (RETRO-H2 fix — plan D: pre-call structural context provision).
+        """
+        item: dict = {
+            "name": s["name"],
+            "description": s.get("description", ""),
+        }
+        if "input_artifact" in s:
+            item["input_artifact"] = s["input_artifact"]
+        if "input_fields" in s:
+            item["input_fields"] = s["input_fields"]
+        return item
+
     def _list_skills(self, path: str) -> list[dict]:
         """Browse skill catalogue hierarchically.
 
         path == "" → group by category, return [{category, count}, ...]
-        path == "<category>" → return [{name, description}, ...] for that category
+        path == "<category>" → return [{name, description, input_artifact?, input_fields?}, ...]
         """
         skills = self.host.list_available_skills()
 
@@ -565,7 +584,7 @@ class RouterLoop:
 
         # Return skills in the given category
         by_category = [
-            {"name": s["name"], "description": s.get("description", "")}
+            self._skill_item(s)
             for s in skills
             if (s.get("category") or "general") == path
         ]
@@ -574,7 +593,7 @@ class RouterLoop:
 
         # path didn't match any category — try as a skill name (fallback)
         by_name = [
-            {"name": s["name"], "description": s.get("description", "")}
+            self._skill_item(s)
             for s in skills
             if s.get("name") == path
         ]
