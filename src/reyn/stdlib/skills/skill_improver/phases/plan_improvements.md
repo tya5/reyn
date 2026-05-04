@@ -110,3 +110,5 @@ Emit `improvement_plan` with:
 - `changes`: the list designed in Step 4 (may be empty for a stop signal)
 
 Choose `transition` → `apply_improvements`.
+
+**CRITICAL — decide turn output format**: Every decide turn response MUST include a top-level `control` block with at least `type` and `decision` fields. The OS rejects responses that emit only `artifact` without `control`. Always structure your final output with both `control` and `artifact` at the top level.

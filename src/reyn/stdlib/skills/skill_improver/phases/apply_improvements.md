@@ -10,11 +10,11 @@ allowed_ops: [file]
 
 Commit the iteration to history, optionally apply the planned DSL changes, then decide whether to loop or finish.
 
+**CRITICAL — single act turn**: This phase allows exactly **1 act turn** (`max_act_turns: 1`). Issue ALL file ops (Steps 1 and 2 combined) in that one act turn. If you exceed the budget, the OS forces a decide turn immediately — you lose the ability to issue further ops. Issue Steps 1 and 2 ops together in the SINGLE act turn. After receiving results, your next response MUST be a decide turn — do NOT issue any more ops.
+
 This phase uses exactly **1 act turn** followed by **1 decide turn**:
 - **Act turn** — issue ALL file ops (DSL changes + `.reyn/improver_state.json` read/write) in a single act turn.
 - **Decide turn** — receive results, then emit `improvement_result` or issue rollback. Do NOT emit any more ops.
-
-CRITICAL: Issue Steps 1 and 2 ops together in the SINGLE act turn. After receiving results, your next response MUST be a decide turn — do NOT issue any more ops.
 
 ## Step 1 — Apply DSL changes (conditional)
 
@@ -83,7 +83,11 @@ For rollback, set `control.reason.summary` to something like:
 ## Output (finalize path)
 
 All path values MUST be read from `state.session._resolved_paths` — do NOT construct
-path strings yourself.
+path strings yourself. Every required field in `improvement_result` MUST be populated
+from the session data already available in the input artifact (via `state.session`,
+`state.history`, `state.latest_eval`, and `state.session._resolved_paths`). Do NOT
+leave any required field as null or omit it — read the value from `_resolved_paths`
+or compute it from the session fields directly.
 
 Emit `improvement_result` with:
 
@@ -103,3 +107,5 @@ Emit `improvement_result` with:
 ## Output (rollback path)
 
 Emit `control.type="rollback"` with a clear `control.reason.summary`. The artifact field is ignored on rollback — emit `{"type": "rollback", "data": {}}` as a placeholder.
+
+**CRITICAL — decide turn output format**: Every decide turn response MUST include a top-level `control` block with at least `type` and `decision` fields. The OS rejects responses that emit only `artifact` without `control`. Always structure your final output with both `control` and `artifact` at the top level.
