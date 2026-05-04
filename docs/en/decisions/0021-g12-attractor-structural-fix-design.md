@@ -1,6 +1,6 @@
 # ADR-0021: G12 attractor — structural fix design options
 
-**Status**: Proposed (2026-05-04)
+**Status**: Proposed — with empty-stop frequency measurement (2026-05-04)
 **Track**: G12 (giveup-tracker.md) — attractor variant family
 
 ## Context
@@ -391,6 +391,47 @@ measurement instrument, not as a permanent deployment configuration.
 - D-track integration for router attractor (Option E): scope deferred
   indefinitely unless a concrete user need surfaces.
 
+## Empty-stop frequency measurement (ADR 0021 follow-up)
+
+**Measurement date**: 2026-05-04  
+**Instrument**: `llm_replay.py --n 10 --diff` on a freshly captured attractor request  
+**Source finding**: `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
+
+### Setup
+
+Existing trace dumps (`llm_trace_h4.jsonl`, `llm_trace_h2.jsonl`, `llm_trace_h1.jsonl`,
+`llm_trace_b8s1.jsonl`) contained no attractors. The attractor request recorded in
+B7-RETRO-H4 (`fd2aef81-...`) was no longer on disk. A fresh dogfood run using the
+same attractor-inducing input ("direct_llm skill を使って、カレーのレシピを教えてもらって")
+captured a new attractor on the second attempt:
+
+- request_id: `883da2c8-adf6-4cff-b86a-a9a540f423ee`
+- context: `list_skills("") → list_skills("general") → stop` (same sequence as RETRO-H4)
+- `completion_tokens=0`, MUST rule present in system prompt
+
+### Results (n=10 replay)
+
+| Outcome | Count | Rate |
+|---------|-------|------|
+| Empty-stop (attractor 再発) | 5 | **50%** |
+| Rescued (tool_call: describe_skill) | 5 | 50% |
+
+All rescued runs called `describe_skill("direct_llm")` with 18 completion tokens.
+All empty-stop runs returned `completion_tokens=0, content=null`.
+
+### Conclusions for Option B
+
+1. **Probabilistic, not deterministic.** The attractor fires on ~50% of identical
+   payloads. A single retry rescues ~50% of attractor events in expectation.
+2. **Option B is justified.** The open question — "would retry rescue anything?" —
+   is resolved: yes, with p≈0.5 per attempt. The "deterministic" failure mode
+   that would make retry useless occurs only ~50% of the time.
+3. **Residual risk.** ~50% of attractor events survive one retry. These are
+   surfaced via the mandatory `router_attractor_retry` event and continue to
+   provide G4 spike evidence.
+4. **Option B priority unchanged.** The short-term recommendation (Option B) is
+   maintained. Two retries would achieve ~75% rescue; cost delta is < $0.002/session.
+
 ## References
 
 - `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H4-attractor-prompt-evidence.md`
@@ -410,3 +451,5 @@ measurement instrument, not as a permanent deployment configuration.
 - [ADR-0013](0013-exception-aware-crash-lifecycle.md) — exception-aware
   lifecycle (retry policy precedent)
 - [ADR-0020](0020-skill-only-permissions.md) — precedent ADR format
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
+  — empty-stop frequency measurement (n=10, rate=50%, probabilistic verdict)
