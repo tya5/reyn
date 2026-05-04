@@ -1,6 +1,6 @@
 # ADR-0021: G12 attractor — structural fix design options
 
-**Status**: Accepted (Option F) — detect + explicit failure UX, no auto-rescue (2026-05-04)
+**Status**: Accepted (Option F + Option G) — detect + explicit failure UX, no auto-rescue; root cause confirmed, description truncation fix wave in progress (2026-05-04 — root cause confirmed, Option F + truncation fix wave)
 **Track**: G12 (giveup-tracker.md) — attractor variant family
 
 ## Context
@@ -73,6 +73,29 @@ These tools change the design space: several options that previously required
 The G12 empty-stop frequency was measured at 5/10 (50%) on a fixed payload
 (`B7-G12-empty-stop-frequency.md`), confirming the probabilistic nature of
 the attractor and directly informing the Option B vs Option F trade-off.
+
+### Root cause confirmed (batch 7 late-stage N-shot experiments)
+
+Two further finding documents closed the loop on the causal mechanism:
+
+- `B7-G12-context-root-cause.md` (a62a9dad): 4-hypothesis N-shot test confirmed
+  context verbosity (skill_improver 218-char description) is the decisive
+  trigger; MUST rules have zero causal effect.
+- `B7-G12-cross-attractor-pattern.md` (a947255e): two trigger paths confirmed
+  (list_skills tool_response, system prompt inline embedding) — both must be
+  fixed for full rescue.
+
+The H-a experiment (removing MUST rules) showed zero effect on attractor rate,
+definitively closing the "MUST rule non-honour" hypothesis that had driven four
+batches of prompt iteration. The H-b experiment (shrinking skill catalogue from
+1342 to 285 chars) produced a 100% → 0% empty-stop rate. H-b1 (shrinking only
+`skill_improver`'s description from 218 chars to under 80) produced 0/5 (0%)
+empty-stop — identifying the 218-char description as the decisive trigger.
+
+This changes the causal frame: the attractor is not a model-capability ceiling
+but a structural context verbosity problem in Reyn's router environment. It
+sits within Reyn's care boundary (pre-call structural integrity), not the LLM's
+responsibility.
 
 ## Considered options
 
@@ -294,6 +317,36 @@ the deterministic attractor without a model change.
 
 ---
 
+### Option G — Skill description truncation (structural fix at root cause) — ADOPTED 2026-05-04
+
+**Mechanism**: Truncate skill description to ≤80 characters in two locations:
+- `list_skills` tool_response builder (`router_loop.py`)
+- system prompt inline skill list (`router_system_prompt.py`)
+
+`describe_skill` continues to return full description (summary vs detail
+pattern, RFC-7807-like).
+
+**P-number analysis**:
+- P3: structural environment shaping, OS responsibility (router build) ✅
+- P4: candidate context construction, not LLM choice manipulation ✅
+- P7: generic char limit, no skill-specific strings ✅
+- P8: phase instructions untouched ✅
+- care boundary: pre-call structural ✅ — Reyn が care すべき領域
+
+**Effect** (B7 finding evidence):
+- H-b1 (skill_improver desc 218→<80 chars only) → 0/5 (0%) empty stop
+- H-b (1342→285 chars total) → 0/10 (0%) empty stop
+- → expected 100% rescue for the observed attractor pattern
+
+**Relationship to Option F**: Complementary, not redundant.
+- Option G: prevents the trigger from forming (pre-call structural)
+- Option F: surfaces residual cases via audit event + failure UX (post-call observability)
+
+**Effort**: 1 day (implementation + Tier 2 tests + LLMReplay fixture re-record)
+**ROI**: Very high — 1-day investment, 100% rescue for observed pattern
+
+---
+
 ### Option F — Detect + explicit failure UX (no auto-rescue) — ADOPTED 2026-05-04
 
 Surface the empty-stop as an explicit, user-visible failure without any
@@ -333,7 +386,23 @@ into explicit failure UX with audit trail.
 
 ## Decision
 
-### Short term — Adopted: Option F (detect + explicit failure UX, no auto-rescue)
+### Short term (within 1 week, no proxy prerequisite)
+
+**Adopt Option G (description truncation) + maintain Option F (empty-stop
+detection + clean failure UX).**
+
+Rationale: B7 N-shot evidence established description verbosity as the
+trigger. Truncation eliminates the trigger at root cause level (Option G).
+Option F remains as the safety net for any residual cases where truncation
+does not fully resolve (e.g., context evolution introduces new verbosity
+sources).
+
+The two options are complementary, not redundant:
+- Option G: prevents the trigger from forming (pre-call structural environment)
+- Option F: surfaces residual cases via audit event + failure UX (post-call observability)
+
+Both align with care boundary: Option G is pre-call structural environment
+integrity; Option F is post-call observability.
 
 **User principle confirmed (2026-05-04)**: "コンテキストに問題がないのに空文字だった場合のケース、
 これは llm の問題であって、 reyn で過剰ケアすべきではない。 retry すべきでない"
@@ -349,6 +418,14 @@ model. The G4 trigger signal must not be suppressed.
 
 **Option C (hybrid escalation) — REJECTED**: Subsumes Option B's retry
 violation. Additionally blocked by the same proxy prerequisite as Option A.
+
+**Option G — Adopted** (implementation wave: a6127a46, batch 8 verify):
+
+Truncate skill descriptions to ≤80 characters in both trigger paths:
+1. `list_skills` tool_response builder in `router_loop.py`
+2. system prompt inline skill list in `router_system_prompt.py`
+
+`describe_skill` returns the full description (summary/detail pattern).
 
 **Option F — Adopted** (shipped 2026-05-04):
 
@@ -376,11 +453,16 @@ Implementation: `_is_empty_router_response()` + `_EMPTY_RESPONSE_MSG` dict
 in `src/reyn/chat/router_loop.py`. Tier 2 tests in
 `tests/test_router_empty_response.py` (16 tests).
 
-### Mid term — unchanged
+### Mid term — unchanged (may be deprioritized)
 
 **Option C (hybrid weak + strong-model escalation)**: Remains deferred until
 proxy exposes a strong model and G4 spike data confirms the attractor rate.
 Option C would be evaluated as a user-configurable opt-in, not a default.
+
+**Mid term may be deprioritized if Option G eliminates the attractor in batch 8 retest.**
+If Option G (description truncation) reduces the empty-stop rate to 0% in
+batch 8, the G4 spike priority drops significantly. Strong-model evaluation
+would shift from "primary fix path" to "future scalability option."
 
 ### Deferred — unchanged
 
@@ -491,3 +573,11 @@ All empty-stop runs returned `completion_tokens=0, content=null`.
   surfaces clean failure UX)
 - `docs/en/concepts/care-boundary.md` — Reyn の care 範囲 (structural /
   behavioral / gray) framework、 Option F 採用の design philosophy 根拠
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-context-root-cause.md`
+  — N-shot --patch experiment proving description verbosity as the decisive
+  trigger (4 hypotheses tested, only H-b shows effect; H-a MUST rule removal
+  shows zero effect)
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-cross-attractor-pattern.md`
+  — two trigger paths (list_skills tool_response / system prompt inline)
+  confirmed across 5 attractor instances; both paths must be truncated for
+  full rescue
