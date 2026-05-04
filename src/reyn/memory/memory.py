@@ -150,7 +150,7 @@ def rewrite_index(scope_dir: Path) -> None:
     mutation paths share the same traversal + format here so on-disk
     indexes never drift between the two writers.
     """
-    from .op_runtime.file import regenerate_index_impl
+    from reyn.op_runtime.file import regenerate_index_impl
     regenerate_index_impl(
         dir_path=scope_dir,
         output_path=scope_dir / INDEX_FILENAME,
