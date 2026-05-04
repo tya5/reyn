@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | HIGH |
-| Status | **fixed** (commit to follow) |
+| Status | **fixed** at `e9216f6` |
 | Scenario | S3 (Agent C — multi-agent delegate) |
 | Found | 2026-05-04 |
 
