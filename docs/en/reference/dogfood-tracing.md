@@ -29,6 +29,21 @@ opens, no hashing, zero production overhead.
 
 `scripts/dogfood_trace.py` has three LLM-specific modes.
 
+All three modes accept **one or more trace files** via `--trace`.  When
+multiple files are given they are merged chronologically so that `T+` offsets
+span a single consistent time axis rooted at the oldest record across all
+files.
+
+```bash
+# Multiple trace files — specify each with its own --trace flag
+python scripts/dogfood_trace.py --mode llm-payloads \
+  --trace dump_h1.jsonl --trace dump_h2.jsonl
+
+# Comma-separated form (equivalent)
+python scripts/dogfood_trace.py --mode llm-payloads \
+  --trace dump_h1.jsonl,dump_h2.jsonl
+```
+
 ### `llm-payloads` — timeline overview
 
 ```bash
@@ -44,7 +59,16 @@ Prints a time-ordered list of all request/response pairs:
 ...
 ```
 
-`T+` is seconds since the first request in the trace.
+`T+` is seconds since the oldest record across all supplied trace files.
+
+When multiple files are supplied a `[file=<basename>]` annotation is appended
+to each request line so you can tell which dump file the record came from:
+
+```
+[T+0.0s]  request_id=abc123...  model=...  caller=router  msgs=3 tools=18  [file=dump_h1.jsonl]
+[T+0.4s]  response_id=abc123...  finish=tool_calls
+[T+12.3s] request_id=def456...  model=...  caller=phase:copy_to_work  msgs=4 tools=0  [file=dump_h2.jsonl]
+```
 
 ### `llm-detail <request_id>` — full payload
 

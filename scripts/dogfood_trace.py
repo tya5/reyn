@@ -8,6 +8,10 @@ Usage:
     python scripts/dogfood_trace.py --mode llm-payloads --trace .reyn/llm_trace.jsonl
     python scripts/dogfood_trace.py --mode llm-detail <request_id> --trace .reyn/llm_trace.jsonl [--full]
     python scripts/dogfood_trace.py --mode llm-tools-schema <request_id> --trace .reyn/llm_trace.jsonl
+
+    # Multiple trace files (merged chronologically):
+    python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl --trace b.jsonl
+    python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl,b.jsonl
 """
 from __future__ import annotations
 
@@ -244,6 +248,29 @@ def _load_llm_trace(trace_path: Path) -> list[dict]:
     return _load_jsonl(trace_path)
 
 
+def _load_llm_trace_files(paths: list[str]) -> list[dict]:
+    """Load JSONL records from multiple LLM trace files and merge in timestamp order.
+
+    Each record gets a ``_source_file`` field set to the basename of the file
+    it was loaded from.  Records are returned sorted by their ``timestamp``
+    field so that cross-file chronological inspection is possible.
+    """
+    all_records: list[dict] = []
+    for path_str in paths:
+        p = Path(path_str)
+        if not p.exists():
+            print(f"trace file not found: {p}", file=sys.stderr)
+            sys.exit(1)
+        records = _load_llm_trace(p)
+        source = p.name
+        for rec in records:
+            rec = dict(rec)
+            rec["_source_file"] = source
+            all_records.append(rec)
+    all_records.sort(key=lambda r: r.get("timestamp", ""))
+    return all_records
+
+
 def _pair_llm_records(records: list[dict]) -> list[tuple[dict, dict | None]]:
     """Pair request records with their response by request_id.
 
@@ -285,24 +312,26 @@ def _rel_seconds(base_ts: str | None, ts: str | None) -> str:
         return ts[:19] if ts else "?"
 
 
-def mode_llm_payloads(trace_path: Path) -> None:
-    """List all LLM request/response pairs from a trace file in time order."""
-    if not trace_path.exists():
-        print(f"trace file not found: {trace_path}")
-        sys.exit(1)
+def mode_llm_payloads(records: list[dict], multi_file: bool = False) -> None:
+    """List all LLM request/response pairs from merged records in time order.
 
-    records = _load_llm_trace(trace_path)
+    ``records`` must already be sorted by timestamp (as returned by
+    ``_load_llm_trace_files``).  When ``multi_file`` is True a ``[file]``
+    annotation is appended to each request line so the caller can tell which
+    dump the record came from.
+    """
     pairs = _pair_llm_records(records)
 
     if not pairs:
         print("no LLM request records found in trace file")
         return
 
-    # Determine base timestamp from first request
-    base_ts = pairs[0][0].get("timestamp") if pairs else None
+    # Determine base timestamp from the first record in the merged list
+    # (not just from the first request pair, so T+ is consistent across files)
+    first_ts = records[0].get("timestamp") if records else None
+    base_ts = first_ts or (pairs[0][0].get("timestamp") if pairs else None)
 
     for req, resp in pairs:
-        rid = req.get("request_id", "?")[:8]  # short id
         rid_full = req.get("request_id", "?")
         model = req.get("model", "?")
         caller = req.get("caller_hint", "unknown")
@@ -312,9 +341,10 @@ def mode_llm_payloads(trace_path: Path) -> None:
         rel_req = _rel_seconds(base_ts, ts_req)
 
         tool_count = len(tools) if tools else 0
+        file_tag = f"  [file={req.get('_source_file', '?')}]" if multi_file else ""
         print(
             f"[{rel_req}] request_id={rid_full}  model={model}  "
-            f"caller={caller}  msgs={len(msgs)}  tools={tool_count}"
+            f"caller={caller}  msgs={len(msgs)}  tools={tool_count}{file_tag}"
         )
 
         if resp is not None:
@@ -342,13 +372,13 @@ def _truncate_content(content: str | None, full: bool, head: int = 200, tail: in
     return f"{content[:head]}\n... [{len(content) - head - tail} chars omitted] ...\n{content[-tail:]}"
 
 
-def mode_llm_detail(trace_path: Path, request_id: str, full: bool = False) -> None:
-    """Pretty-print full payload for a single request_id."""
-    if not trace_path.exists():
-        print(f"trace file not found: {trace_path}")
-        sys.exit(1)
+def mode_llm_detail(records: list[dict], request_id: str, full: bool = False) -> None:
+    """Pretty-print full payload for a single request_id.
 
-    records = _load_llm_trace(trace_path)
+    Searches across all records (which may originate from multiple files).
+    If the same ``request_id`` appears in more than one source file, all hits
+    are displayed in order with the ``_source_file`` annotated.
+    """
     req: dict | None = None
     resp: dict | None = None
 
@@ -367,6 +397,8 @@ def mode_llm_detail(trace_path: Path, request_id: str, full: bool = False) -> No
     print(f"  model:       {req.get('model', '?')}")
     print(f"  caller_hint: {req.get('caller_hint', 'unknown')}")
     print(f"  timestamp:   {req.get('timestamp', '?')}")
+    if req.get("_source_file"):
+        print(f"  source_file: {req['_source_file']}")
 
     sampling = req.get("sampling_params", {})
     if sampling:
@@ -422,13 +454,11 @@ def mode_llm_detail(trace_path: Path, request_id: str, full: bool = False) -> No
         print("\n  (no response record found)")
 
 
-def mode_llm_tools_schema(trace_path: Path, request_id: str) -> None:
-    """Pretty-print the full tools schema for a single request_id."""
-    if not trace_path.exists():
-        print(f"trace file not found: {trace_path}")
-        sys.exit(1)
+def mode_llm_tools_schema(records: list[dict], request_id: str) -> None:
+    """Pretty-print the full tools schema for a single request_id.
 
-    records = _load_llm_trace(trace_path)
+    Searches across all records (which may originate from multiple files).
+    """
     req: dict | None = None
 
     for rec in records:
@@ -448,37 +478,61 @@ def mode_llm_tools_schema(trace_path: Path, request_id: str) -> None:
     print(json.dumps(tools, indent=2, ensure_ascii=False))
 
 
+def _resolve_trace_paths(raw: list[str]) -> list[str]:
+    """Expand a list of raw --trace values into a flat list of file paths.
+
+    Each value may itself be a comma-separated list of paths.
+    """
+    paths: list[str] = []
+    for v in raw:
+        paths.extend(p.strip() for p in v.split(",") if p.strip())
+    return paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="dogfood_trace — consolidated Reyn batch observation tool")
     parser.add_argument("--root", default=".reyn", help="Path to .reyn directory (default: .reyn)")
     parser.add_argument("--mode", choices=["summary", "full", "chain", "cost", "llm-payloads", "llm-detail", "llm-tools-schema"], default="summary")
     parser.add_argument("--filter", dest="filter_kind", default=None, help="Filter by event kind (for --mode full)")
-    parser.add_argument("--trace", default=None, help="Path to LLM trace JSONL file (for llm-* modes)")
+    parser.add_argument(
+        "--trace",
+        action="append",
+        default=[],
+        help=(
+            "Path to LLM trace JSONL file (for llm-* modes). "
+            "Can be specified multiple times or as a comma-separated list "
+            "(e.g. --trace a.jsonl,b.jsonl). All files are merged chronologically."
+        ),
+    )
     parser.add_argument("--full", action="store_true", default=False, help="Show full messages/tools (for llm-detail)")
     parser.add_argument("request_id", nargs="?", default=None, help="request_id for llm-detail / llm-tools-schema")
     args = parser.parse_args()
 
     # LLM trace modes
-    if args.mode == "llm-payloads":
-        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
-        mode_llm_payloads(trace)
-        return
+    if args.mode in ("llm-payloads", "llm-detail", "llm-tools-schema"):
+        trace_paths = _resolve_trace_paths(args.trace)
+        if not trace_paths:
+            trace_paths = [".reyn/llm_trace.jsonl"]
+        multi_file = len(trace_paths) > 1
+        records = _load_llm_trace_files(trace_paths)
 
-    if args.mode == "llm-detail":
-        if not args.request_id:
-            print("llm-detail requires a request_id argument")
-            sys.exit(1)
-        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
-        mode_llm_detail(trace, args.request_id, full=args.full)
-        return
+        if args.mode == "llm-payloads":
+            mode_llm_payloads(records, multi_file=multi_file)
+            return
 
-    if args.mode == "llm-tools-schema":
-        if not args.request_id:
-            print("llm-tools-schema requires a request_id argument")
-            sys.exit(1)
-        trace = Path(args.trace) if args.trace else Path(".reyn/llm_trace.jsonl")
-        mode_llm_tools_schema(trace, args.request_id)
-        return
+        if args.mode == "llm-detail":
+            if not args.request_id:
+                print("llm-detail requires a request_id argument")
+                sys.exit(1)
+            mode_llm_detail(records, args.request_id, full=args.full)
+            return
+
+        if args.mode == "llm-tools-schema":
+            if not args.request_id:
+                print("llm-tools-schema requires a request_id argument")
+                sys.exit(1)
+            mode_llm_tools_schema(records, args.request_id)
+            return
 
     # Event-based modes
     root = Path(args.root)
