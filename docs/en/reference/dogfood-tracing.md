@@ -98,3 +98,72 @@ paired by `request_id`.
   ```
 - **Delete after a session.** The file grows unbounded across sessions; delete
   it before starting a new dogfood run.
+
+---
+
+# LLM Replay (`scripts/llm_replay.py`)
+
+`llm_replay.py` takes a trace file, finds a specific request by `request_id`,
+and re-submits that exact payload directly to litellm. No Reyn stack is
+started — one LLM call, one cost unit, full isolation.
+
+## Basic usage
+
+```bash
+python scripts/llm_replay.py <request_id> --trace <jsonl_path>
+```
+
+Get `<request_id>` from `dogfood_trace.py --mode llm-payloads` output.
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--trace <path>` | Path to JSONL trace file (required) |
+| `--model <name>` | Override the model (e.g. `claude-sonnet`, `openai/gpt-4o`) |
+| `--temperature <float>` | Override temperature sampling param |
+| `--max-tokens <int>` | Override max_tokens sampling param |
+| `--n <count>` | Replay N times to observe distribution (default: 1) |
+| `--full` | Show full content without head/tail truncation |
+| `--output-format pretty\|json` | Output format (default: `pretty`) |
+
+## Use cases
+
+### G4 spike — weak vs strong model comparison
+
+Replay the same payload with a stronger model to check if the hallucination
+is model-specific, without running a full dogfood session:
+
+```bash
+python scripts/llm_replay.py abc123 --trace .reyn/llm_trace.jsonl \
+    --model openai/gpt-4o
+```
+
+The output shows both original and override model with token/tool-call diff.
+
+### Attractor probability measurement
+
+Replay the same payload 10 times to measure how often the LLM picks a
+particular tool call or decision:
+
+```bash
+python scripts/llm_replay.py abc123 --trace .reyn/llm_trace.jsonl --n 10
+```
+
+Output is a distribution table: tool call names with frequencies, finish
+reason distribution, and token avg/min/max.
+
+### Regression observation after prompt change
+
+After modifying a phase's instructions, replay the exact payload that
+previously triggered a bug to confirm the fix without a full dogfood run.
+
+## Security and cost notes
+
+- **Dump files contain sensitive prompt content.** System prompts carry project
+  context and skill instructions. Do not share trace files externally.
+- **Each replay is a real LLM call.** `--n 10` costs 10x a single call.
+  Use the cheapest model for initial investigation; switch to stronger models
+  only for targeted comparison.
+- **No API keys in the dump.** Credentials are read from env vars at replay
+  time, not stored in the trace file.
