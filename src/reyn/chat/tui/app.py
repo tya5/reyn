@@ -156,17 +156,19 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # Show startup banner
+        # ASCII banner
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
-        t = Text()
-        t.append("Reyn ", style="bold #C8553D")
-        t.append("— type a message or ")
-        t.append("Tab", style="bold")
-        t.append(" for commands, ")
-        t.append("Ctrl+D", style="bold")
-        t.append(" to quit")
-        conv._write_log(t)
+        for line in [
+            "██████╗ ███████╗██╗   ██╗███╗   ██╗",
+            "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
+            "██████╔╝█████╗   ╚████╔╝ ██╔██╗ ██║",
+            "██╔══██╗██╔══╝    ╚██╔╝  ██║╚██╗██║",
+            "██║  ██║███████╗   ██║   ██║ ╚████║",
+            "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
+        ]:
+            conv._write_log(Text(line, style="#C8553D"))
+        conv._write_log(Text("  Tab for commands", style="dim #555555"))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
