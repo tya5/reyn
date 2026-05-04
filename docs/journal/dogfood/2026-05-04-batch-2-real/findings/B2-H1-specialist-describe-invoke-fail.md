@@ -6,7 +6,7 @@
 | Field | Value |
 |---|---|
 | Severity | HIGH |
-| Status | **fixed** (commit TBD) |
+| Status | **fixed** at `83bad83` (parallel race: B2-H2 agent が B2-H1 の差分も込みで先に commit、 commit message は B2-H2 とラベルされたが diff の中身は B2-H1) |
 | Scenario | S3 (Agent C — multi-agent delegate) |
 | Found | 2026-05-04 |
 
