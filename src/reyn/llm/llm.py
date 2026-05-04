@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, UTC
@@ -33,22 +34,141 @@ def _get_trace_dump_path() -> str | None:
     return os.environ.get("REYN_LLM_TRACE_DUMP") or None
 
 
+# ---------------------------------------------------------------------------
+# Size limit + rotation
+# ---------------------------------------------------------------------------
+
+def _get_trace_dump_max_size() -> int:
+    """Read max dump file size from env var (bytes). Default: 100 MB.
+
+    Reads REYN_LLM_TRACE_DUMP_MAX_SIZE at call time so the limit can be
+    changed without restart. Falls back to 100 MB on missing or invalid value.
+    """
+    val = os.environ.get("REYN_LLM_TRACE_DUMP_MAX_SIZE")
+    if val:
+        try:
+            return int(val)
+        except ValueError:
+            pass
+    return 100 * 1024 * 1024  # 100 MB
+
+
+def _maybe_rotate_dump(path: str) -> None:
+    """Rotate the dump file if it exceeds the configured size limit.
+
+    Rotation keeps exactly one generation: ``<path>`` becomes ``<path>.1``.
+    Any pre-existing ``<path>.1`` is replaced (single-generation policy).
+    A message is printed to stderr so rotation is never silent.
+    OSError (disk full, permission denied, etc.) causes silent fall-through
+    so the main dump path continues regardless.
+    """
+    try:
+        if not os.path.exists(path):
+            return
+        size = os.path.getsize(path)
+        limit = _get_trace_dump_max_size()
+        if size <= limit:
+            return
+        rotated = path + ".1"
+        if os.path.exists(rotated):
+            os.remove(rotated)
+        os.rename(path, rotated)
+        print(
+            f"[reyn] LLM trace dump rotated: {path} -> {rotated} "
+            f"(size {size:,} > limit {limit:,})",
+            file=sys.stderr,
+        )
+    except OSError:
+        pass  # rotation failure is non-fatal; dump continues
+
+
+# ---------------------------------------------------------------------------
+# Secrets redaction
+# ---------------------------------------------------------------------------
+
+_DEFAULT_REDACT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"sk-[A-Za-z0-9_-]{20,}"), "openai-key"),
+    (re.compile(r"xoxb-[A-Za-z0-9-]{20,}"), "slack-token"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._-]{20,}"), "bearer-token"),
+    (
+        re.compile(r"-----BEGIN [A-Z ]+ KEY-----[\s\S]*?-----END [A-Z ]+ KEY-----"),
+        "private-key",
+    ),
+]
+
+
+def _get_extra_redact_patterns() -> list[tuple[re.Pattern, str]]:
+    """Read extra redaction patterns from REYN_LLM_TRACE_REDACT_PATTERNS.
+
+    Value is a comma-separated list of regex strings. Invalid patterns are
+    silently skipped so a typo never blocks the dump path.
+    """
+    val = os.environ.get("REYN_LLM_TRACE_REDACT_PATTERNS")
+    if not val:
+        return []
+    out: list[tuple[re.Pattern, str]] = []
+    for i, raw in enumerate(val.split(",")):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            out.append((re.compile(raw), f"custom-{i}"))
+        except re.error:
+            continue
+    return out
+
+
+def _redact_secrets(payload: dict) -> dict:
+    """Mask known sensitive patterns inside a payload dict (recursive).
+
+    Default ON — disabled only when REYN_LLM_TRACE_REDACT=off.
+    Walks all strings inside dicts and lists; non-string values are untouched.
+    False positives (long strings matching a pattern) are possible; see docs.
+    """
+    if os.environ.get("REYN_LLM_TRACE_REDACT") == "off":
+        return payload
+
+    patterns = _DEFAULT_REDACT_PATTERNS + _get_extra_redact_patterns()
+
+    def _mask(s: str) -> str:
+        for pat, name in patterns:
+            s = pat.sub(f"[REDACTED:{name}]", s)
+        return s
+
+    def _walk(obj: object) -> object:
+        if isinstance(obj, str):
+            return _mask(obj)
+        if isinstance(obj, dict):
+            return {k: _walk(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_walk(v) for v in obj]
+        return obj
+
+    return _walk(payload)  # type: ignore[return-value]
+
+
 def _dump_llm_request(payload: dict) -> str | None:
     """If REYN_LLM_TRACE_DUMP is set, append a request record to that file.
 
     Returns request_id (str) so the response can be paired, or None when
     tracing is disabled (env var not set). Completely no-op when disabled.
+
+    Production hardening applied before write:
+    - Rotates the file when it exceeds REYN_LLM_TRACE_DUMP_MAX_SIZE (default 100 MB).
+    - Redacts known sensitive patterns via _redact_secrets (default ON).
     """
     path = _get_trace_dump_path()
     if not path:
         return None
+    _maybe_rotate_dump(path)
     request_id = str(uuid.uuid4())
-    record = {
+    record: dict = {
         "kind": "request",
         "request_id": request_id,
         "timestamp": datetime.now(UTC).isoformat(),
         **payload,
     }
+    record = _redact_secrets(record)
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -59,16 +179,23 @@ def _dump_llm_request(payload: dict) -> str | None:
 
 
 def _dump_llm_response(request_id: str | None, payload: dict) -> None:
-    """If REYN_LLM_TRACE_DUMP is set and request_id is non-None, append response record."""
+    """If REYN_LLM_TRACE_DUMP is set and request_id is non-None, append response record.
+
+    Production hardening applied before write:
+    - Rotates the file when it exceeds REYN_LLM_TRACE_DUMP_MAX_SIZE (default 100 MB).
+    - Redacts known sensitive patterns via _redact_secrets (default ON).
+    """
     path = _get_trace_dump_path()
     if not path or not request_id:
         return
-    record = {
+    _maybe_rotate_dump(path)
+    record: dict = {
         "kind": "response",
         "request_id": request_id,
         "timestamp": datetime.now(UTC).isoformat(),
         **payload,
     }
+    record = _redact_secrets(record)
     try:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")

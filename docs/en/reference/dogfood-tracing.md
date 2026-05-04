@@ -109,19 +109,93 @@ paired by `request_id`.
 `tool_calls`, `finish_reason`, `usage` (`prompt_tokens`,
 `completion_tokens`)
 
+## Production hardening
+
+Two opt-out-able safeguards are active by default whenever
+`REYN_LLM_TRACE_DUMP` is set.
+
+### Size limit and rotation
+
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `REYN_LLM_TRACE_DUMP_MAX_SIZE` | `104857600` (100 MB) | Maximum dump file size in bytes |
+
+Before each write, Reyn checks the file size. When it exceeds the limit, the
+current file is renamed to `<path>.1` (one generation only — any pre-existing
+`.1` is replaced) and a fresh file is started. A message is printed to stderr:
+
+```
+[reyn] LLM trace dump rotated: .reyn/llm_trace.jsonl -> .reyn/llm_trace.jsonl.1
+(size 104,857,601 > limit 104,857,600)
+```
+
+Rotation is intentionally single-generation. For multi-generation archiving,
+use an external log-rotation tool (e.g. `logrotate`) on the dump path.
+
+If rotation fails (disk full, permission error, etc.) the write continues on
+the original path without error — the dump is never blocked by infrastructure
+problems.
+
+To lower the limit for testing:
+
+```bash
+export REYN_LLM_TRACE_DUMP_MAX_SIZE=1048576  # 1 MB
+```
+
+### Secrets redaction
+
+Reyn scans every string in the dump payload and masks known sensitive patterns
+before writing. This is **default ON** — set `REYN_LLM_TRACE_REDACT=off` to
+disable.
+
+**Built-in patterns:**
+
+| Pattern name | Regex | Example match |
+|--------------|-------|---------------|
+| `openai-key` | `sk-[A-Za-z0-9_-]{20,}` | `sk-proj-abc...` |
+| `slack-token` | `xoxb-[A-Za-z0-9-]{20,}` | `xoxb-1234567890-abc...` |
+| `bearer-token` | `Bearer\s+[A-Za-z0-9._-]{20,}` | `Bearer eyJhbGci...` |
+| `private-key` | PEM `-----BEGIN ... KEY-----` block | RSA / EC private keys |
+
+Masked format: `[REDACTED:<pattern_name>]`
+
+**Adding custom patterns** via `REYN_LLM_TRACE_REDACT_PATTERNS` (comma-separated
+regex list):
+
+```bash
+export REYN_LLM_TRACE_REDACT_PATTERNS='MY_SECRET_[A-Z0-9]+,ghp_[A-Za-z0-9]{36}'
+```
+
+Each pattern is assigned a label `custom-0`, `custom-1`, … in order.
+Invalid regex strings are silently skipped.
+
+**Disabling redaction:**
+
+```bash
+export REYN_LLM_TRACE_REDACT=off
+```
+
+**False positive risk:** any sufficiently long alphanumeric string matching a
+pattern will be masked. This is intentional — production-safe defaults are
+preferred over completeness. If a legitimate field is being masked, add a more
+specific regex to distinguish it, or use `REYN_LLM_TRACE_REDACT=off` for local
+development only.
+
 ## Security and cleanup
 
-- **No API keys in the dump.** Auth credentials never appear in messages or
-  tools — Reyn reads them from env vars, not the message list.
+- **Secrets redaction is default ON.** Known API key patterns are automatically
+  masked before writing. See [Secrets redaction](#secrets-redaction) above.
 - **Prompts may contain sensitive content.** System prompts carry project
-  context and skill instructions. Treat the file as internal.
+  context and skill instructions. Treat the file as internal even with redaction
+  enabled.
 - **Add to `.gitignore`.** The dump path (`.reyn/llm_trace.jsonl` by default)
   should not be committed:
   ```
   .reyn/llm_trace.jsonl
+  .reyn/llm_trace.jsonl.1
   ```
-- **Delete after a session.** The file grows unbounded across sessions; delete
-  it before starting a new dogfood run.
+- **Delete after a session.** The file is automatically rotated at 100 MB, but
+  deleting it before a new dogfood run keeps the trace clean.
 
 ---
 
