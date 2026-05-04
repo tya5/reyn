@@ -948,6 +948,7 @@ class RightPanel(Widget):
 
         today = _new_bucket()
         total = _new_bucket()
+        by_agent: dict[str, dict] = defaultdict(_new_bucket)
         # agent → skill → bucket
         by_agent_skill: dict[str, dict[str, dict]] = defaultdict(
             lambda: defaultdict(_new_bucket)
@@ -993,7 +994,7 @@ class RightPanel(Widget):
                         has_cost = raw_cost is not None
                         ts = str(ev.get("timestamp", ""))
 
-                        for bucket in (total, by_agent_skill[agent][skill]):
+                        for bucket in (total, by_agent[agent], by_agent_skill[agent][skill]):
                             bucket["p"] += pt; bucket["c"] += ct
                             bucket["cost"] += cost; bucket["calls"] += 1
                             if has_cost:
@@ -1058,7 +1059,18 @@ class RightPanel(Widget):
         if by_agent_skill:
             lines.append("[bold #aaaaaa]  BY AGENT / SKILL[/]")
             for agent in sorted(by_agent_skill):
-                lines.append(f"[bold #dddddd]  {_esc(agent)}[/]")
+                ag = by_agent[agent]
+                ag_tok = ag["p"] + ag["c"]
+                ag_cost = (
+                    f"  [#44cc88]${ag['cost']:.4f}[/]"
+                    if ag["has_cost"] else ""
+                )
+                lines.append(
+                    f"[bold #dddddd]  {_esc(agent):<20}[/]"
+                    f"[#888888]{ag_tok:>7,} tok[/]"
+                    f"{ag_cost}"
+                    f"  [#555555]{ag['calls']}c[/]"
+                )
                 skills = by_agent_skill[agent]
                 for skill in sorted(skills):
                     m = skills[skill]
@@ -1068,8 +1080,8 @@ class RightPanel(Widget):
                         if m["has_cost"] else ""
                     )
                     lines.append(
-                        f"[#555555]    {_esc(skill):<24}[/]"
-                        f"[#888888]{tok_total:>7,} tok[/]"
+                        f"[#555555]    {_esc(skill):<22}[/]"
+                        f"[#666666]{tok_total:>7,} tok[/]"
                         f"{cost_part}"
                         f"  [#555555]{m['calls']}c[/]"
                     )
