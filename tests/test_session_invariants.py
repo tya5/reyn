@@ -1106,3 +1106,155 @@ async def test_peer_no_reply_marker_forwarded_upstream_in_pending_chain(
     assert "peer_reply_failed_surfaced" in chat_event_types, (
         f"B2-H2 relay: expected 'peer_reply_failed_surfaced' chat event; got: {chat_event_types!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B4-H1 fix: _run_skill_awaitable narrator reply must reach RouterLoop replies
+# ---------------------------------------------------------------------------
+
+
+class _FakeAgent:
+    """Real callable fake for Agent — returns a scripted RunResult without LLM."""
+
+    def __init__(self, run_result):
+        self._run_result = run_result
+
+    async def run(self, skill, input_artifact, **kwargs):
+        return self._run_result
+
+
+@pytest.mark.asyncio
+async def test_run_skill_awaitable_routes_to_router_loop_agent_replies(
+    tmp_path, monkeypatch
+):
+    """Tier 2: _run_skill_awaitable narrator reply is captured in _router_loop_agent_replies.
+
+    B4-H1 invariant: when RouterLoop is active (i.e. _router_loop_agent_replies
+    is armed as a non-None list) and _run_skill_awaitable completes and narrates
+    a reply, the narrated text must appear in _router_loop_agent_replies.
+
+    Without the fix, _run_skill_awaitable calls the internal _put_outbox directly
+    (bypassing the RouterLoopHost.put_outbox callback), leaving agent_replies empty
+    at RouterLoop exit → specialist-ran-but-no-reply false-positive.
+
+    Observation: _router_loop_agent_replies is a public-access field via the
+    armed/disarmed lifecycle in _handle_agent_request; we arm it directly here
+    to exercise the invariant without running a full agent_request flow.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    from reyn.kernel.runtime import RunResult
+    import reyn.chat.session as session_mod
+
+    NARRATED = "カレーレシピを生成しました"
+
+    # Fake: resolve_skill_path returns a dummy path pair.
+    dummy_skill_dir = tmp_path / "dummy_skill"
+    dummy_skill_dir.mkdir()
+    dummy_dsl_root = tmp_path
+
+    def _fake_resolve(skill_name):
+        return dummy_skill_dir, dummy_dsl_root
+
+    # Fake: load_dsl_skill returns a sentinel (agent.run is also faked).
+    def _fake_load_dsl_skill(path, *, dsl_root):
+        return object()
+
+    monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)
+    monkeypatch.setattr(session_mod, "load_dsl_skill", _fake_load_dsl_skill)
+
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    # Fake _build_agent to return a scripted agent whose run() yields a clean result.
+    fake_result = RunResult(data={"reply": "ok"}, status="finished")
+
+    def _fake_build_agent(**kwargs):
+        return _FakeAgent(fake_result)
+
+    session._build_agent = _fake_build_agent  # real callable — policy-compliant
+
+    # Fake _invoke_narrator with a real async callable returning a fixed string.
+    async def _fake_narrator(skill_name, status, result, state_subdir):
+        return NARRATED
+
+    session._invoke_narrator = _fake_narrator  # real async callable
+
+    # Arm _router_loop_agent_replies to simulate active RouterLoop.
+    session._router_loop_agent_replies = []
+
+    spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
+    await session._run_skill_awaitable(spec, chain_id="chain-b4h1-001")
+
+    # Invariant: narrated reply must be captured in _router_loop_agent_replies.
+    assert session._router_loop_agent_replies == [NARRATED], (
+        f"B4-H1: narrated reply not captured in _router_loop_agent_replies; "
+        f"got: {session._router_loop_agent_replies!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_double_history_append_on_agent_reply(tmp_path, monkeypatch):
+    """Tier 2: _run_skill_awaitable appends narrator reply to history exactly once.
+
+    B4-H1 companion invariant: the B4-H1 fix adds _router_loop_agent_replies
+    capture after _put_outbox, but must NOT trigger a second _append_history
+    call. History is already appended before _put_outbox in _run_skill_awaitable;
+    the RouterLoopHost.put_outbox callback (which would normally append history
+    for kind="agent") is NOT called here because _run_skill_awaitable uses the
+    internal _put_outbox directly.
+
+    Observation: session.history is the public surface for history state.
+    We count entries before and after the call; exactly one new entry with the
+    narrator text must appear.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    from reyn.kernel.runtime import RunResult
+    import reyn.chat.session as session_mod
+
+    NARRATED = "履歴重複テスト用ナレーション"
+
+    def _fake_resolve(skill_name):
+        return tmp_path / "skill", tmp_path
+
+    def _fake_load_dsl_skill(path, *, dsl_root):
+        return object()
+
+    monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)
+    monkeypatch.setattr(session_mod, "load_dsl_skill", _fake_load_dsl_skill)
+
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    fake_result = RunResult(data={"text": "done"}, status="finished")
+
+    def _fake_build_agent(**kwargs):
+        return _FakeAgent(fake_result)
+
+    session._build_agent = _fake_build_agent
+
+    async def _fake_narrator(skill_name, status, result, state_subdir):
+        return NARRATED
+
+    session._invoke_narrator = _fake_narrator
+
+    # Arm for RouterLoop capture (B4-H1 path).
+    session._router_loop_agent_replies = []
+
+    history_before = len(session.history)
+
+    spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
+    await session._run_skill_awaitable(spec, chain_id="chain-b4h1-hist-001")
+
+    # Exactly one new history entry.
+    history_after = len(session.history)
+    new_entries = session.history[history_before:]
+    assert history_after - history_before == 1, (
+        f"B4-H1 double-append: expected 1 new history entry, got {history_after - history_before}; "
+        f"entries: {new_entries!r}"
+    )
+    assert new_entries[0].text == NARRATED, (
+        f"B4-H1: history entry text mismatch; expected {NARRATED!r}, "
+        f"got {new_entries[0].text!r}"
+    )

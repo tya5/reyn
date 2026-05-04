@@ -2982,6 +2982,13 @@ class ChatSession:
                 },
             ))
             await self._put_outbox(OutboxMessage(kind="agent", text=narrated, meta=meta))
+            # B4-H1: capture narrator reply for RouterLoop when active.
+            # _run_skill_awaitable calls the internal _put_outbox directly,
+            # bypassing the RouterLoopHost.put_outbox callback that normally
+            # updates _router_loop_agent_replies.  Mirror that logic here so
+            # specialist skill results reach _handle_agent_request / chain-resolve.
+            if self._router_loop_agent_replies is not None:
+                self._router_loop_agent_replies.append(narrated)
         else:
             summary = json.dumps(result.data, ensure_ascii=False, indent=2)
             fallback = f"done (status={result.status})\n{summary}"
