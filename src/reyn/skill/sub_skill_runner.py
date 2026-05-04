@@ -15,6 +15,7 @@ from reyn.llm.pricing import TokenUsage
 if TYPE_CHECKING:
     from reyn.schemas.models import Skill
     from reyn.llm.model_resolver import ModelResolver
+    from reyn.permissions.permissions import PermissionResolver
     from reyn.user_intervention import InterventionBus
 
 
@@ -38,6 +39,7 @@ async def invoke_sub_skill(
     subscribers: list,
     resolver: "ModelResolver",
     intervention_bus: "InterventionBus | None" = None,
+    permission_resolver: "PermissionResolver | None" = None,
     output_language: str | None = None,
     max_phase_visits: int = 25,
     caller: str = "direct",
@@ -55,6 +57,14 @@ async def invoke_sub_skill(
     SkillSnapshot so the parent / child tree can be reconstructed by
     ``/skill list`` and resume bookkeeping. ``None`` = top-level
     (preprocessor / standalone invocation).
+
+    ``permission_resolver`` (G15): propagated from the parent so the
+    sub-skill's workspace inherits the same per-skill approval state.
+    Without this the sub-skill's workspace has no resolver, and any
+    path outside CWD is denied regardless of what the sub-skill declared.
+    ``startup_guard`` is NOT re-run for sub-skills — declarations in the
+    sub-skill's skill.md are auto-approved by the guard on the parent's
+    resolver when the parent runs in non-interactive mode.
     """
     from reyn.agent import Agent
 
@@ -64,6 +74,7 @@ async def invoke_sub_skill(
         subscribers=subscribers,
         resolver=resolver,
         intervention_bus=intervention_bus,
+        permission_resolver=permission_resolver,
         caller=caller,
     )
     run_result = await agent.run(

@@ -404,6 +404,12 @@ class PermissionResolver:
         Pre-flight permission check: scan all phase declarations, collect paths that
         fall outside the default zones, and ask the user to approve them before
         execution starts. Already-approved and config-approved paths are skipped.
+
+        Non-interactive mode (piped stdin / sub-skill execution): declared
+        file.read paths are auto-approved as session-only.  The declaration in
+        skill.md is treated as checked-in consent; the user opted in by invoking
+        the skill.  File.write paths and python steps are NOT auto-approved —
+        they require explicit flags or persisted approval (G15 fix).
         """
         write_requests: list[dict] = []
         read_requests: list[dict] = []
@@ -475,6 +481,21 @@ class PermissionResolver:
                 )
 
         if not (write_requests or read_requests or python_requests):
+            return
+
+        if not self._interactive:
+            # Non-interactive mode (piped stdin / sub-skill execution).
+            # Declared file.read paths are auto-approved as session-only —
+            # the skill author declared the paths in skill.md (checked-in
+            # consent), and the user opted in by invoking the skill.  This
+            # mirrors the "skill author declares → user trusts the package"
+            # assumption and is intentionally restricted to reads (writes and
+            # python steps still require explicit flags or persisted approval).
+            for req in read_requests:
+                self.session_approve_path(
+                    req["path"], skill_name, "file.read",
+                    recursive=(req["scope"] == "recursive"),
+                )
             return
 
         for req in read_requests:
