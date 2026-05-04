@@ -36,6 +36,24 @@ routing:
     negative:
       - "skill X を eval して"   # this is eval, not improver
       - "新しい skill を作って"   # this is skill_builder, not improver
+permissions:
+  python:
+    - module: ./copy_to_work.py
+      function: compute_paths
+      mode: pure
+      timeout: 5
+    - module: ./copy_to_work.py
+      function: build_copy_plan
+      mode: pure
+      timeout: 5
+    - module: ./copy_to_work.py
+      function: build_write_ops
+      mode: pure
+      timeout: 5
+    - module: ./copy_to_work.py
+      function: validate_copy
+      mode: pure
+      timeout: 5
 ---
 
 ## Overview

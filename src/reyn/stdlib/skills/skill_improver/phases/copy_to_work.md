@@ -3,53 +3,119 @@ type: phase
 name: copy_to_work
 input: improvement_session
 role: workspace_initializer
-max_act_turns: 6
-allowed_ops: [file]
+max_act_turns: 0
+allowed_ops: []
+preprocessor:
+  # Step 1: compute all derived paths (slug, work_dir, glob patterns) from original_dsl_root
+  - type: python
+    module: ./copy_to_work.py
+    function: compute_paths
+    into: data._prep
+    output_schema:
+      type: object
+      properties:
+        skill_glob:         {type: string}
+        phases_glob:        {type: string}
+        work_dir:           {type: string}
+        original_dsl_root:  {type: string}
+        skill_slug:         {type: string}
+      required: [skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug]
+
+  # Step 2: glob skill.md using the computed pattern
+  - type: run_op
+    op:
+      kind: file
+      op: glob
+      path: PLACEHOLDER
+    args_from:
+      path: data._prep.skill_glob
+    into: data._glob_skill
+
+  # Step 3: glob phases/*.md using the computed pattern
+  - type: run_op
+    op:
+      kind: file
+      op: glob
+      path: PLACEHOLDER
+    args_from:
+      path: data._prep.phases_glob
+    into: data._glob_phases
+
+  # Step 4: combine glob results into a copy plan (excludes eval.md)
+  - type: python
+    module: ./copy_to_work.py
+    function: build_copy_plan
+    into: data._copy_plan
+    output_schema:
+      type: array
+      items:
+        type: object
+        properties:
+          src: {type: string}
+          rel: {type: string}
+        required: [src, rel]
+
+  # Step 5: read each source file
+  - type: iterate
+    over: data._copy_plan
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: read
+        path: PLACEHOLDER
+      args_from:
+        path: _iter.item.src
+    into: data._reads
+    on_error: fail
+
+  # Step 6: pair read results with destination paths
+  - type: python
+    module: ./copy_to_work.py
+    function: build_write_ops
+    into: data._write_ops
+    output_schema:
+      type: array
+      items:
+        type: object
+        properties:
+          dst:     {type: string}
+          content: {type: string}
+        required: [dst, content]
+
+  # Step 7: write each file to the work directory
+  - type: iterate
+    over: data._write_ops
+    apply:
+      type: run_op
+      op:
+        kind: file
+        op: write
+        path: PLACEHOLDER
+        content: ""
+      args_from:
+        path: _iter.item.dst
+        content: _iter.item.content
+    into: data._write_results
+    on_error: fail
+
+  # Step 8: validate that all expected files were written
+  - type: python
+    module: ./copy_to_work.py
+    function: validate_copy
+    into: data._validation
+    output_schema:
+      type: object
+      properties:
+        ok:             {type: boolean}
+        files_written:  {type: integer}
+        files_expected: {type: integer}
+        work_dir:       {type: string}
+      required: [ok, files_written, files_expected, work_dir]
 ---
 
-Copy the target skill's DSL files to a temp work directory and emit an updated session pointing at the copy.
+The preprocessor has deterministically copied all target skill DSL files to the
+work directory. Emit the updated session with `target_dsl_root` and
+`target_skill_path` pointing to the work directory, then transition.
 
-You have up to 6 act turns. Use them in order — complete all three stages before the decide turn.
-
-## Compute before acting
-
-From `input_artifact.data`:
-- `original_dsl_root` = `target_dsl_root` (e.g. `"src/stdlib/skills/word_stats_demo"` or `"reyn/local/my_app"`)
-- `skill_slug` = last path component of `original_dsl_root` (e.g. `"word_stats_demo"`)
-- `work_dir` = `.reyn/skill_improver_work/<skill_slug>` (e.g. `.reyn/skill_improver_work/word_stats_demo`)
-
-## Act turn 1 — Glob source files
-
-Issue exactly these three ops using `original_dsl_root` as the prefix — do NOT glob parent directories or sibling skills:
-
-```json
-{"kind": "file", "op": "glob", "path": "<original_dsl_root>/**/*.md"}
-{"kind": "file", "op": "glob", "path": "<original_dsl_root>/**/*.yaml"}
-{"kind": "file", "op": "glob", "path": "<original_dsl_root>/**/*.py"}
-```
-
-Combine all three result lists. Remove any entry whose filename is `eval.md`.
-
-IMPORTANT: the glob patterns MUST start with `original_dsl_root` (e.g. `src/reyn/stdlib/skills/word_stats_demo/**/*.md`), not with a parent path like `src/reyn/stdlib/skills/**/*.md`. Globbing a parent directory wastes act turns reading unrelated skills.
-
-## Act turn 2 — Read all source files
-
-For every path in the combined list, issue one `file read` op. All reads go in this single act turn.
-
-## Act turn 3 — Write copies to work dir
-
-For every file read in Act turn 2:
-1. `relative_path` = path with `<original_dsl_root>/` prefix stripped
-2. Issue: `{"kind": "file", "op": "write", "path": "<work_dir>/<relative_path>", "content": <read_content>}`
-
-All writes go in this single act turn.
-
-## Decide turn — Emit updated session
-
-After Act turn 3 results arrive, emit `improvement_session` with these fields updated:
-- `original_dsl_root` = `original_dsl_root` (the value you computed above)
-- `target_dsl_root` = `work_dir`
-- `target_skill_path` = `<work_dir>/skill.md`
-- All other fields copied unchanged from input
-
-Choose `transition` → `run_and_eval`.
+The computed work directory is available in `data._prep.work_dir`.
