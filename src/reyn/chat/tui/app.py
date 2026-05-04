@@ -115,6 +115,8 @@ class ReynTUIApp(App):
         self._panel_visible = False
         self._all_slash_names: list[str] = []
         self._cancel_event: asyncio.Event = asyncio.Event()
+        # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
+        self._skill_exec: dict[str, dict] = {}
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -276,6 +278,16 @@ class ReynTUIApp(App):
             if msg.kind in {"agent", "skill_done"}:
                 self._maybe_refresh_status(header)
 
+            # Track live skill execution state for Agents tab
+            if msg.kind == "trace" and msg.meta.get("skill_name"):
+                self._update_skill_exec(msg)
+                self._push_exec_state()
+            elif msg.kind == "skill_done":
+                run_id = msg.meta.get("run_id", "")
+                if run_id:
+                    self._skill_exec.pop(run_id, None)
+                    self._push_exec_state()
+
     def _mount_intervention(
         self,
         conv: ConversationView,
@@ -336,6 +348,38 @@ class ReynTUIApp(App):
     def _periodic_status_refresh(self) -> None:
         """Called every 1s by set_interval to keep status line current."""
         self._maybe_refresh_status()
+
+    def _update_skill_exec(self, msg) -> None:
+        """Parse a trace OutboxMessage with skill_name in meta and update _skill_exec."""
+        import time as _time
+        run_id = msg.meta.get("run_id", "")
+        if not run_id:
+            return
+        skill_name = msg.meta.get("skill_name", "")
+        text = msg.text or ""
+        existing = self._skill_exec.get(run_id)
+        if existing is None:
+            existing = {
+                "skill_name": skill_name,
+                "agent_name": self._agent_name,
+                "start_time": _time.monotonic(),
+                "phase": "",
+                "phase_visits": 0,
+            }
+            self._skill_exec[run_id] = existing
+        # Text pattern: "phase started: <phase_name>"
+        if text.startswith("phase started: "):
+            phase = text[len("phase started: "):].strip()
+            existing["phase"] = phase
+            existing["phase_visits"] = existing.get("phase_visits", 0) + 1
+
+    def _push_exec_state(self) -> None:
+        """Forward current _skill_exec snapshot to RightPanel for live display."""
+        try:
+            panel = self.query_one("#right_panel", RightPanel)
+            panel.update_exec_state(self._skill_exec)
+        except Exception:
+            pass
 
     # ── message handlers from widgets ─────────────────────────────────────────
 

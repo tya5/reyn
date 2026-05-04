@@ -455,6 +455,8 @@ class RightPanel(Widget):
         self._docs_groups: dict[str, list[Path]] = {}
         self._preview_visible: bool = False
         self._panel_width: int = 0  # 0 = use CSS default (33%); set on first resize
+        # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
+        self._exec_state: dict[str, dict] = {}
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -498,6 +500,16 @@ class RightPanel(Widget):
 
     def resize(self, delta: int) -> None:
         self._panel_resize(delta)
+
+    def update_exec_state(self, state: dict[str, dict]) -> None:
+        """Receive a live snapshot of running skills from the TUI app.
+
+        Called from app._push_exec_state() whenever a trace event arrives.
+        Triggers a re-render only when the agents tab is visible.
+        """
+        self._exec_state = dict(state)
+        if self._panel_type == "agents":
+            self._invalidate()
 
     def _panel_resize(self, delta: int) -> None:
         if self._panel_width == 0:
@@ -787,6 +799,8 @@ class RightPanel(Widget):
         return "\n".join(lines)
 
     def _render_agents(self) -> str:
+        import time as _time
+
         lines: list[str] = []
 
         if self._registry is None:
@@ -800,6 +814,7 @@ class RightPanel(Widget):
 
         attached = self._registry.attached_name
         loaded = set(self._registry.loaded_names())
+        now = _time.monotonic()
 
         for name in names:
             is_attached = name == attached
@@ -813,13 +828,50 @@ class RightPanel(Widget):
                 f"[{name_style}]{name_col}[/]"
                 f"  [{status_style}]{status}[/]"
             )
-            try:
-                last = self._registry.last_activity_at(name)
-                if last:
-                    ts = _esc(last.strftime("%Y-%m-%d %H:%M"))
-                    lines.append(f"[#555555]    last: {ts}[/]")
-            except Exception:
-                pass
+
+            # Running skills for this agent
+            agent_skills = [
+                (rid, info)
+                for rid, info in self._exec_state.items()
+                if info.get("agent_name") == name
+            ]
+
+            if agent_skills:
+                for i, (run_id, info) in enumerate(agent_skills):
+                    elapsed = int(now - info.get("start_time", now))
+                    skill_name = _esc(info.get("skill_name", "?"))
+                    phase = _esc(info.get("phase", ""))
+                    visits = info.get("phase_visits", 0)
+                    elapsed_str = f"{elapsed:3d}s"
+                    is_last = i == len(agent_skills) - 1
+                    tree_ch = "└" if is_last else "├"
+
+                    line = (
+                        f"  [#555555]  {tree_ch} [[/]"
+                        f"[#888888]{elapsed_str}[/]"
+                        f"[#555555]][/]"
+                        f" [#dddddd]{skill_name}[/]"
+                    )
+                    if phase:
+                        line += f"  [#555555]{phase}[/]"
+                        if visits > 1:
+                            line += f" [#444444]v{visits}[/]"
+                    lines.append(line)
+            else:
+                # Idle — show last activity timestamp
+                try:
+                    last = self._registry.last_activity_at(name)
+                    if last:
+                        ts = _esc(last.strftime("%Y-%m-%d %H:%M"))
+                        lines.append(f"[#555555]    last: {ts}[/]")
+                except Exception:
+                    pass
+
+            lines.append("")  # blank line between agents
+
+        # Trim trailing blank
+        while lines and lines[-1] == "":
+            lines.pop()
 
         return "\n".join(lines)
 
