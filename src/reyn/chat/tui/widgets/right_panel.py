@@ -1062,8 +1062,8 @@ class RightPanel(Widget):
         lines.append("")
 
         # ── BY AGENT / SKILL ──────────────────────────────────────────────
+        lines.append("[bold #aaaaaa]  BY AGENT / SKILL[/]")
         if by_agent_skill:
-            lines.append("[bold #aaaaaa]  BY AGENT / SKILL[/]")
             for agent in sorted(by_agent_skill):
                 ag = by_agent[agent]
                 ag_tok = ag["p"] + ag["c"]
@@ -1095,6 +1095,8 @@ class RightPanel(Widget):
                         f"  [#444444]{m['calls']}c[/]"
                     )
                 lines.append("")
+        else:
+            lines.append("[#555555]    (no skill runs yet)[/]")
 
         return "\n".join(lines)
 
