@@ -37,6 +37,18 @@ routing:
       - "skill X を eval して"   # this is eval, not improver
       - "新しい skill を作って"   # this is skill_builder, not improver
 permissions:
+  # copy_to_work reads skill DSL files from the resolved skill directory.
+  # Stdlib skills live under src/reyn/stdlib/skills/ which may be outside
+  # the project root when running from a worktree (B8-NEW-1). Declare
+  # recursive read access for all three skill search paths so startup_guard
+  # prompts once and saves approval for the run.
+  file.read:
+    - path: src/reyn/stdlib/skills
+      scope: recursive
+    - path: reyn/local
+      scope: recursive
+    - path: reyn/project
+      scope: recursive
   python:
     - module: ./copy_to_work_resolver.py
       function: compute_paths

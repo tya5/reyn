@@ -29,6 +29,17 @@ routing:
       - "eval ってなに？"
       - "skill X を eval して"   # this is run, use eval skill instead
 permissions:
+  # analyze_skill reads target skill DSL files which may live under
+  # src/reyn/stdlib/skills/ — outside the project root when running from a
+  # worktree. Declare recursive read access for all three skill search paths
+  # (B8-NEW-1 pattern, same as skill_improver).
+  file.read:
+    - path: src/reyn/stdlib/skills
+      scope: recursive
+    - path: reyn/local
+      scope: recursive
+    - path: reyn/project
+      scope: recursive
   python:
     - module: ./analyze_skill_resolver.py
       function: compute_paths
