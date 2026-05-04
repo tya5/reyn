@@ -1,0 +1,412 @@
+# ADR-0021: G12 attractor — structural fix design options
+
+**Status**: Proposed (2026-05-04)
+**Track**: G12 (giveup-tracker.md) — attractor variant family
+
+## Context
+
+G12 is the long-running attractor issue in which `gemini-2.5-flash-lite` (the
+default `light` / `standard` model in the LiteLLM proxy) terminates a router
+loop turn with `finish_reason=stop, completion_tokens=0` and no tool calls,
+despite the system prompt containing explicit MUST rules such as:
+
+> "After list_skills reveals at least one matching skill, you MUST call
+> describe_skill or invoke_skill. Do NOT reply directly."
+
+The issue has recurred across four dogfood batches (B2-H1, B3-H1, B5R2-H1,
+B6-S2) in the same `list_skills → describe_skill → stop` sequence. Each
+recurrence was met with an additional prompt rule; the rules accumulated but
+the attractor persisted. B7-RETRO-H4 (2026-05-04) closed the loop on the
+root cause: the MUST rule *was* injected into the live payload at the time of
+the empty-stop response. The LLM saw the rule and did not honour it.
+
+### Observed mechanism (RETRO-H4)
+
+```
+[T+0.0s] router  list_skills("")         → finish=tool_calls  (1 call)
+[T+1.3s] router  list_skills("general")  → finish=tool_calls  (1 call)
+[T+2.3s] router  (no tool call)          → finish=stop, completion_tokens=0
+```
+
+- `tool_choice: auto` was in effect (confirmed via `llm-detail` inspect).
+- The context at T+2.3s included the full skill list (10 skills, `direct_llm`
+  visible) and the system prompt MUST rules unchanged from prior commits.
+- `completion_tokens=0` indicates the model generated zero output tokens —
+  not a truncation at the model context window, but a degenerate API response
+  (possible internal truncation mid-generation or a provider-level policy
+  cut-off on the Gemini side).
+
+### Router behaviour on empty-stop
+
+`RouterLoop.run()` at line 281–287 (`router_loop.py`) treats an empty-stop
+response as a "text reply" and calls `host.put_outbox(kind="agent", text="")`.
+The user receives a blank reply; the conversation ends without invoking any
+skill. There is no retry, no detection, and no escalation path in the current
+code.
+
+### Prior design decision: OS-layer state machine withdrawn
+
+The original B5R2-H1 option set included an OS-layer state machine (track
+`list_skills` / `describe_skill` state; gate on `invoke_skill` before
+allowing exit). This was withdrawn from G12 on the grounds that:
+
+1. It encodes skill-specific tool names (`invoke_skill`) in OS code — P7
+   violation.
+2. Each new attractor variant would require a new OS gate — linear bloat.
+3. It obscures the G4 trigger signal (weak LLM capacity ceiling).
+4. Structurally identical to the prompt bloat trap, only in code.
+
+The withdrawal was recorded in `giveup-tracker.md` G12 "Out-of-scope" and the
+G4 spike was placed as the primary fix path, blocked on proxy setup.
+
+### New observational data available (batch 7)
+
+Batch 7 delivered the trace / replay / attractor-detection infra:
+
+- `REYN_LLM_TRACE_DUMP` + `dogfood_trace.py` for payload inspection
+- `detect_attractor.py` with `stop_with_must_rule` heuristic (Heuristic 1)
+  that precisely identifies the G12 variant from a JSONL trace
+- `llm_replay.py` for deterministic re-runs with `--model` swap
+
+These tools change the design space: several options that previously required
+"fire and hope" can now be evaluated quantitatively with < 1 day of effort.
+
+## Considered options
+
+### Option A — G4 spike (strong model substitution)
+
+Replace `gemini-2.5-flash-lite` with a reasoning-capable model
+(`claude-sonnet-4-x` or `gemini-2.5-pro`) for the router path and measure
+attractor rate.
+
+**Feasibility**: Blocked. The LiteLLM proxy at `http://localhost:4000` serves
+only `codex-proxy` (self-referential loop) and `gemini-2.5-flash-lite`.
+Neither `claude-sonnet` nor `gemini-2.5-pro` is registered. Prerequisite:
+`/Users/yasudatetsuya/Workspace/junk/litellm/config.yaml` update + proxy
+reload. See `g4-trigger-evaluation-spike.md` for the exact YAML snippets.
+
+**Effect hypothesis**: Strong models are unlikely to emit `completion_tokens=0`
+on a simple skill-routing task. Evidence from other providers supports this,
+but it is a hypothesis — not yet observed for this specific prompt structure.
+The `llm_replay.py --model` flag would let us test without a live dogfood run
+once the proxy has the model.
+
+**Cost**: Router call cost scales with model capability. `claude-sonnet`
+pricing is roughly 20–60x `gemini-2.5-flash-lite` at typical token volumes;
+`gemini-2.5-pro` is 10–30x. For the router path (≈ 1 500–2 000 tokens/turn,
+2–4 turns/request), estimated cost delta is $0.02–$0.10/request vs < $0.001
+today.
+
+**Vision alignment**: The Reyn vision (memory `project_reyn_vision.md`) is
+"predictability via constrained reasoning, not model autonomy." Strong models
+reduce prompt-engineering overhead but increase cost and reduce
+predictability-per-dollar. G4 explicitly defers this trade-off to a
+per-customer or per-scenario selector; it is not a default-flip.
+
+**Design surface**: Minimal — `reyn.local.yaml` `models.standard` or a
+per-scenario model selector. No OS code change.
+
+**Effort**: 0.5 day (proxy setup + 5-run spike measurement).
+**Effect**: High (attractor expected to disappear or drop to < 20% rate).
+**ROI**: High if proxy setup cost is borne. **Blocked** until proxy is ready.
+
+---
+
+### Option B — OS-layer attractor detection + retry
+
+Detect the `finish_reason=stop, completion_tokens=0` signature in the router
+loop and retry the turn with an augmented prompt.
+
+**Mechanism**: After each `call_llm_tools` in `RouterLoop.run()`, check
+whether the response matches the `_is_empty_response` predicate from
+`detect_attractor.py` (the same three-line check already implemented there).
+On match, inject a fallback instruction into the messages and retry once.
+
+**P-number analysis**:
+
+- P3: The OS is the "runtime engine — context build, LLM call, validation,
+  Control IR execution, transitions, events." A retry on a malformed (empty)
+  LLM response sits within the runtime engine's existing scope. The current
+  `_run_decide_with_retry` in `OSRuntime` already retries on validation
+  failures (ValueError). A parallel retry path in the router for structural
+  response failures is architecturally consistent.
+- P7: The trigger condition is `finish_reason=stop AND completion_tokens=0`
+  — a provider-level API property, not a skill-specific string. The retry
+  message would need careful wording to avoid embedding skill-concept terms.
+  If the retry injection says "you must call a tool" (generic), it is
+  P7-clean; if it says "you must call invoke_skill" (skill-specific), it is
+  a P7 violation. The design must stay at the generic level.
+- P4: The retry does not choose a next phase or artifact — it only forces
+  another LLM iteration within the existing router turn. P4 is not violated.
+
+**Precondition**: None. The `_is_empty_response` logic exists in
+`detect_attractor.py` and can be inlined or imported.
+
+**Limitation**: Retry rescues the transient-failure case (model glitch) but
+cannot rescue the true attractor (where the model will also emit an empty
+response on the retry). RETRO-H4 observed only one attractor call per
+session; a single retry would have rescued that instance. But if the attractor
+is deterministic for a given context (same model, same token sequence), the
+retry will also fail. No quantitative data on the retry-success rate exists;
+measuring it would require the `llm_replay.py --n` flag.
+
+**Effect on G4 signal**: A retry layer that silently absorbs attractor events
+reduces the observable signal needed to justify the G4 spike. This is a
+meaningful cost: the attractor evidence is what motivates proxy setup and
+strong-model evaluation. Option B should not suppress trace events; any retry
+should emit a named event (e.g. `router_attractor_retry`) so the detection
+infra continues to surface the issue.
+
+**Effort**: 1 day (implementation + Tier 2 test for the retry path + event
+emission + non-regression on normal tool-call paths).
+**Effect**: Medium (rescues transient attractor cases; does not fix
+deterministic ones).
+**ROI**: Medium. Worth doing only if it emits an observable event and does
+not suppress the G4 trigger signal.
+
+---
+
+### Option C — Hybrid (weak model + attractor-triggered strong-model retry)
+
+Combine Options A and B: first call with the weak model; if
+`detect_attractor.py` Heuristic 1 fires, retry the same turn with the strong
+model.
+
+**Mechanism**: `RouterLoop.run()` calls weak model first. On empty-stop, call
+`call_llm_tools` again with `model=host.resolve_model("strong")`. The strong
+model's result replaces the weak result for the rest of the turn.
+
+**Cost**: Attractor-adaptive. If attractor rate is 30% (B6-S2 implied 4/4 for
+that specific scenario), 30% of turns incur a dual-model cost. For
+general-purpose usage the attractor scenario is a subset; overall cost delta
+is smaller than a flat strong-model switch (Option A).
+
+**Precondition**: Proxy must expose at least one strong model (same blocker as
+Option A). Without the proxy, Option C degrades to Option B (retry with the
+same model).
+
+**Vision alignment**: Better than Option A for the vision, because the default
+path stays on the weak model and cost scales with observed attractor rate
+rather than being charged on every turn.
+
+**Complexity**: Higher than A or B individually. The `resolve_model("strong")`
+call requires `strong` to be a named slot in `reyn.yaml` `models:`, which is
+already part of the config schema (`models.strong` exists). No new config
+schema required.
+
+**Effort**: 1.5 days (builds on Option B's retry path, adds model parameter
+switching + Tier 3 replay test for the escalation path).
+**Effect**: High for transient cases; strong model handles the deterministic
+attractor context if the model capability gap is sufficient.
+**ROI**: High if proxy is available; blocked otherwise (same as A).
+
+---
+
+### Option D — Provider-native tool_choice enforcement
+
+Set `tool_choice="required"` for the turn immediately following a
+`list_skills` or `describe_skill` tool result, forcing the model to call at
+least one tool.
+
+**Mechanism**: RETRO-H4 confirmed that `tool_choice="auto"` was active at the
+attractor turn. Switching to `tool_choice="required"` for that specific turn
+would force a tool call. The LiteLLM `call_llm_tools` signature already
+accepts `tool_choice` as a parameter (line 540, `llm.py`); `router_loop.py`
+hardcodes `"auto"` at line 180.
+
+**P7 analysis**: The trigger condition ("the previous turn had a tool result
+from a specific tool") requires tracking which tools were called in the prior
+turn. If this tracking uses the tool name `list_skills` or `describe_skill` as
+a literal, it is a P7 violation (skill-specific strings in OS code). A P7-safe
+variant would switch to `tool_choice="required"` on *any* turn where the
+messages contain one or more tool results (i.e. the model has already made at
+least one tool call). This is a structural property of the message history,
+not a skill concept.
+
+**Side effect**: `tool_choice="required"` forces the model to emit *some*
+tool call, but does not constrain *which* tool. After `list_skills`, the model
+could call `list_skills` again (looping), call `describe_skill` (correct), or
+call any other available tool. The attractor scenario would be transformed
+from "stop without action" to "call a tool, possibly the wrong one." This may
+produce different failure modes (e.g. hallucinated tool arguments, infinite
+list_skills loops) that are harder to detect and recover from.
+
+**Provider compatibility**: `tool_choice="required"` is supported by
+OpenAI-format APIs. Gemini via LiteLLM passes it through; RETRO-H4 confirms
+the proxy forwards standard OpenAI params. However, Gemini-specific behaviour
+under `tool_choice="required"` with zero generation budget is not documented
+— it is possible the provider ignores it or applies it inconsistently on the
+same model version that produces `completion_tokens=0`.
+
+**Precondition**: None for implementation. Behavioural verification requires a
+live run or `llm_replay.py --patch` to swap `tool_choice`.
+
+**Effort**: 0.5 day (router_loop.py change + conditional logic + Tier 2 test
+for the tool_choice switching path).
+**Effect**: Low to medium. Eliminates the silent-stop attractor but may
+introduce loop or wrong-tool attractors. Net effect is uncertain without
+measurement.
+**ROI**: Low. High implementation risk due to unknown provider behaviour under
+`required`; new failure modes may exceed the cost of the attractor being
+replaced.
+
+---
+
+### Option E — Per-session auto-resume after router attractor
+
+When the router emits a blank reply (attractor stop), treat the session as
+"incomplete" and re-invoke the router with the original user message in a
+fresh turn, integrating with the skill-resume machinery from
+[ADR-0012](0012-auto-resume-default.md) and [ADR-0013](0013-exception-aware-crash-lifecycle.md).
+
+**Mechanism**: On empty-stop in `RouterLoop.run()`, emit a named event
+(`router_attractor_detected`) and re-queue the original user message as a new
+`pending_chain` entry, allowing the session's normal chain-dispatch path to
+re-invoke `RouterLoop` on the next iteration.
+
+**Semantic issue**: A fresh RouterLoop invocation on the same user message
+with the same model and the same system prompt will likely reproduce the
+attractor. The session history would show the prior empty reply; the model
+might anchor on it or generate a text reply acknowledging nothing happened.
+Neither outcome advances the user's task.
+
+**Integration complexity**: The skill-resume machinery (D-track, ADR-0012/13)
+is phase-level, not router-turn-level. Wiring the router's attractor exit into
+the D-track resume loop would require extending `SkillResumeAnalyzer` and
+`ChatSession._auto_resume_active_skills` to cover a new "router attractor"
+lifecycle state. This is significant scope for a path with low expected
+success rate.
+
+**Precondition**: None for the infrastructure, but the option is only
+meaningful in combination with Option A or C (different model on retry). As a
+standalone retry-same-model option it is dominated by Option B with less
+complexity.
+
+**Effort**: 3+ days (new lifecycle state, event taxonomy, ChatSession wiring,
+D-track extension).
+**Effect**: Low as standalone. Only meaningful as an async variant of Option C.
+**ROI**: Low. Option B covers the synchronous retry case with far less
+complexity; Option E adds an async restart path that is unlikely to resolve
+the deterministic attractor without a model change.
+
+## Decision
+
+**Proposed sequencing:**
+
+### Short term (within 1–2 weeks, no proxy prerequisite)
+
+**Adopt Option B (attractor detection + retry) with mandatory event emission.**
+
+Rationale: The `detect_attractor.py` `stop_with_must_rule` heuristic is
+already implemented and tested. Wiring it into `RouterLoop.run()` with a
+single retry and a `router_attractor_retry` event emission is a contained
+change with no P7 risk (the trigger is a structural API property, not a skill
+concept). The event emission is non-negotiable: the retry must remain
+observable so the G4 trigger signal is not suppressed.
+
+Constraint: The retry injection message must not reference skill-specific tool
+names. A generic "please call one of the available tools to proceed" is
+sufficient and P7-clean.
+
+This change converts the current silent-blank-reply UX into a one-retry path
+with a named audit event. It does not fix the deterministic attractor, but it
+rescues the transient variant (model glitch, not true attractor) and surfaces
+the true attractor via the event log.
+
+### Mid term (within 1 month, after proxy is ready)
+
+**Adopt Option C (hybrid weak + strong-model escalation).**
+
+Rationale: Once the LiteLLM proxy has `claude-sonnet` or `gemini-2.5-pro`
+registered and the G4 spike (Option A) has measured the attractor rate on the
+strong model, Option C becomes implementable. The Option B retry path is the
+foundation; the only change is substituting `resolve_model("strong")` for the
+second call instead of repeating the same model.
+
+The G4 spike should be run before Option C lands, both to confirm the strong
+model eliminates the attractor and to establish the cost baseline. If the
+spike shows the strong model has a similar attractor rate, Option C should not
+be adopted — the root cause is elsewhere (prompt structure, not model
+capability), and a different investigation is needed.
+
+### Deferred
+
+**Option D (tool_choice="required")**: The unknown provider behaviour under
+`required` with a model that has already demonstrated degenerate output
+introduces unquantified risk of new failure modes. The investigation
+needed (live runs or `llm_replay.py --patch tool_choice=required --n 10`)
+is best done as part of the G4 spike session, not as a standalone change.
+Defer until the spike data is available.
+
+**Option E (per-session auto-resume)**: Dominated by Option B for the
+synchronous case. As an async variant of Option C it may become relevant for
+long-running session recovery, but the D-track extension cost is not
+justified until the simpler options are exhausted.
+
+**Option A (flat strong-model substitution)**: Not adopted as a default-path
+change. The Reyn vision is weak-model-first; strong-model usage should be
+adaptive (Option C), not unconditional. The G4 spike uses Option A as a
+measurement instrument, not as a permanent deployment configuration.
+
+## Consequences
+
+**Positive (Option B, short term):**
+
+- G12 attractor events become audit-visible via `router_attractor_retry`
+  events, queryable from `reyn events`.
+- The transient-variant attractor (model glitch, not deterministic) is rescued
+  without user-visible blank reply.
+- `detect_attractor.py` Heuristic 1 logic is reused in production code,
+  reducing the gap between infra tooling and runtime behaviour.
+- No OS architecture change; no P7 risk if the retry message stays generic.
+
+**Negative (Option B, short term):**
+
+- Does not fix the deterministic attractor. A session where the model
+  consistently produces `completion_tokens=0` will exhaust the one-retry
+  budget and still emit a blank reply.
+- Adds one extra LLM call per attractor event (cost: < $0.001/event at
+  flash-lite pricing).
+- The retry message wording requires careful review to avoid P7 drift.
+
+**Positive (Option C, mid term):**
+
+- Adaptive cost: strong-model call only on confirmed attractor events.
+- Deterministic attractor variant is rescued if the strong model handles the
+  context correctly.
+- G4 spike data provides quantitative justification rather than hypothesis.
+
+**Negative (Option C, mid term):**
+
+- Requires proxy maintenance (strong model registered, monitored for cost).
+- Dual-model path adds complexity to `RouterLoop.run()` and
+  `call_llm_tools` invocation.
+- Strong-model API cost per rescued attractor event: estimated $0.02–$0.10.
+  For production traffic with 10% attractor rate, this scales.
+
+**Precluded:**
+
+- Silent blank-reply UX (Option B lands): any attractor event is logged.
+- Flat strong-model-default for the router (not adopted; vision alignment).
+- D-track integration for router attractor (Option E): scope deferred
+  indefinitely unless a concrete user need surfaces.
+
+## References
+
+- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H4-attractor-prompt-evidence.md`
+  — observation evidence closing the root cause
+- `docs/journal/dogfood/giveup-tracker.md` G12 — full attractor history,
+  prior design rationale, and OS-state-machine withdrawal reasoning
+- `docs/journal/dogfood/g4-trigger-evaluation-spike.md` — G4 spike status
+  (blocked) and proxy setup instructions
+- `scripts/detect_attractor.py` — `_is_empty_response` / Heuristic 1 logic
+  that Option B and C reuse
+- `src/reyn/chat/router_loop.py` — attractor impact site (line 281–287,
+  empty `put_outbox` on stop-without-content)
+- `src/reyn/llm/llm.py` line 540 — `call_llm_tools` `tool_choice` parameter
+- `docs/en/concepts/principles.md` — P3, P4, P7 full rationale
+- [ADR-0012](0012-auto-resume-default.md) — skill-resume machinery (context
+  for Option E scope assessment)
+- [ADR-0013](0013-exception-aware-crash-lifecycle.md) — exception-aware
+  lifecycle (retry policy precedent)
+- [ADR-0020](0020-skill-only-permissions.md) — precedent ADR format
