@@ -459,3 +459,25 @@ class TestBehaviourRulesAfterF3F9Fix:
         assert "invoke_skill" in prompt
         # The "or explain" half must be present too.
         assert "explain" in prompt.lower()
+
+    def test_post_list_skills_must_invoke_or_describe(self):
+        """Tier 2: B3-H1 + B3-M3 fix — after list_skills reveals a matching
+        skill, the LLM must commit to describe_skill or invoke_skill and must
+        not reply directly.  Both bugs share the same attractor: list_skills
+        result ignored.  The rule targets the obligation post list_skills,
+        complementing the B2-H1 post-describe_skill rule."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[{"name": "text_summarizer", "category": "general"}],
+            available_agents=[],
+            memory_index={"status": "not_found", "content": ""},
+        )
+        # Rule must reference the trigger (list_skills reveals a skill)
+        assert "After list_skills" in prompt
+        # Must mention both commitment paths
+        assert "describe_skill" in prompt
+        assert "invoke_skill" in prompt
+        # Must prohibit direct reply when a skill is available
+        assert "Do NOT reply" in prompt
+        assert "skill ecosystem" in prompt

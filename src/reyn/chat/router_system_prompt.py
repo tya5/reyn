@@ -171,6 +171,21 @@ def build_system_prompt(
         "  - After describe_skill, you MUST call invoke_skill or explain in text"
     )
     parts.append("    why not; never stop silently after investigation.")
+    # B3-H1 + B3-M3 (dogfood batch 3): two attractors where list_skills result
+    # is NOT acted on — specialist stops after list_skills (B3-H1) and default
+    # router replies directly after finding a matching skill (B3-M3). Both are
+    # the same family: list_skills result ignored. Rule: matching skill found →
+    # MUST engage the skill ecosystem (describe_skill or invoke_skill).
+    parts.append(
+        "  - After list_skills reveals at least one matching skill, you MUST call"
+    )
+    parts.append(
+        "    describe_skill (to inspect) or invoke_skill (to execute)."
+        " Do NOT reply"
+    )
+    parts.append(
+        "    directly when a relevant skill is available; engage the skill ecosystem."
+    )
     parts.append(
         "  - For Recall, answer from the Memory section's inlined descriptions;"
     )
