@@ -4,21 +4,41 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reyn"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "LLM-driven phase execution engine with a Markdown DSL"
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
+license = { text = "MIT" }
 readme = "README.md"
-keywords = ["llm", "agent", "workflow", "dsl"]
+authors = [
+    # Replace before release: update name/email to maintainer contact
+    { name = "Reyn Contributors", email = "reyn-dev@example.com" },
+]
+keywords = [
+    "llm",
+    "agent",
+    "workflow",
+    "dsl",
+    "multi-agent",
+    "orchestration",
+    "os",
+    "phase",
+    "LLM workflow",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: System",
+    "Typing :: Typed",
 ]
+
 dependencies = [
     "litellm>=1.0",
     "pydantic>=2.0",
@@ -28,6 +48,12 @@ dependencies = [
     "ddgs>=8.0",
     "textual>=0.50",         # default TUI mode (PR-cli-2)
 ]
+
+[project.urls]
+# Replace before release: update to real repo URLs
+Homepage = "https://github.com/<org>/reyn"
+Repository = "https://github.com/<org>/reyn"
+Issues = "https://github.com/<org>/reyn/issues"
 
 [project.optional-dependencies]
 dev = [
