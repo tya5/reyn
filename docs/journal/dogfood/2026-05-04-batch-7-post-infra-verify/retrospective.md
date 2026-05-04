@@ -112,6 +112,8 @@ batch 7 で試行した分布形式 prediction (= verified / inconclusive / refu
 
 教訓: **dogfood prediction は 4 区分 (verified / inconclusive / refuted / blocked) で組むべき**。 「前段で blocked」 は dogfood で頻出する outcome、 prediction に含めないと calibration が歪む。
 
+この教訓の定量的分析と batch 8 以降の設計指針は [`prediction-calibration.md`](prediction-calibration.md) を参照。
+
 ## チームダイナミクス (= user vs assistant)
 
 | TP | user 介入の質 | 私の応答 | 学習 |
