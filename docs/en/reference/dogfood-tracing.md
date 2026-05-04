@@ -267,3 +267,169 @@ previously triggered a bug to confirm the fix without a full dogfood run.
   only for targeted comparison.
 - **No API keys in the dump.** Credentials are read from env vars at replay
   time, not stored in the trace file.
+
+---
+
+# Attractor Detection (`scripts/detect_attractor.py`)
+
+`detect_attractor.py` reads a JSONL trace file and applies heuristic checks to
+each request/response pair to flag attractor patterns — cases where the LLM
+misbehaves in a structurally repeatable way regardless of prompt changes.
+
+The tool was motivated by RETRO-H4: a MUST rule was injected into the system
+prompt, yet the LLM returned `finish_reason=stop` with zero completion tokens.
+Automated detection makes attractor rates measurable and comparable across
+batches and model variants.
+
+## Basic usage
+
+```bash
+python scripts/detect_attractor.py --trace <jsonl_path>
+```
+
+## Options
+
+| Option | Description |
+|--------|-------------|
+| `--trace <path>` | Path to JSONL trace file (required) |
+| `--heuristics <list>` | Comma-separated heuristic names to run (default: all) |
+| `--output-format pretty\|json` | Output format (default: `pretty`) |
+| `--summary-only` | Print aggregate counts only, not per-detection detail |
+| `--filter-caller <name>` | Only inspect records where `caller_hint` matches `name` |
+
+## Heuristics
+
+### `stop_with_must_rule` (Heuristic 1)
+
+Fires when:
+
+- `finish_reason = "stop"` **and** the response carries no content (`completion_tokens=0` or empty content + no tool calls)
+- **and** the request's system prompt contains MUST-directive language (`MUST`, `must call`, `must use`, `should call`, `必ず`, etc.)
+
+Evidence includes: the finish reason, completion token count, and the matching
+MUST-rule line(s) from the system prompt (up to 2 lines).
+
+**False positive risk:** low. The two conditions are combined with AND, so an
+ordinary `stop` with real content will not fire, and an empty stop without a
+MUST rule will not fire either.
+
+**False negative risk:** if the MUST rule is phrased in a way that does not
+match the keyword pattern (e.g. very domain-specific Japanese phrasing), it
+will be missed.
+
+### `enum_violation` (Heuristic 2)
+
+Fires when a tool call argument value is not in the `enum` list defined for
+that argument in the request tools schema.
+
+Evidence includes: the tool name, the field path, the expected enum list, and
+the actual value supplied.
+
+**False positive risk:** near-zero for well-formed traces. Can only fire when
+both the enum constraint and a matching argument are present in the trace.
+
+**False negative risk:** if the LLM serialises the argument differently (e.g.
+nested JSON or non-string type), the check may not parse the argument correctly.
+
+### `tool_name_hallucinate` (Heuristic 3)
+
+Fires when a tool call uses a `function.name` that is not present in the
+request tools list.
+
+Evidence includes: the hallucinated name and the sorted list of available names.
+
+**False positive risk:** none — the check is a strict set membership test.
+
+**False negative risk:** if the LLM calls a real tool but passes it bad
+arguments, only `enum_violation` catches it; `tool_name_hallucinate` will not.
+
+### `describe_skill_skip` (Heuristic 4 — not implemented, future work)
+
+Pattern: `list_skills` response appears in message history, followed immediately
+by `invoke_skill` without an intervening `describe_skill` call. High false
+positive rate expected; deferred to a follow-up wave.
+
+## Output examples
+
+### `--output-format pretty` (default)
+
+```
+=== Attractor Detection Report ===
+Trace file: .reyn/llm_trace.jsonl
+Total LLM calls: 25
+Detected attractors: 4 (16%)
+
+By heuristic:
+  stop_with_must_rule:           2 (8%)
+  enum_violation:                1 (4%)
+  tool_name_hallucinate:         1 (4%)
+
+=== Detail ===
+
+[T+12.3s  router] stop_with_must_rule (request_id=abc123...)
+  MUST rule found: "After list_skills you MUST call describe_skill or invoke_skill"
+  Response: finish=stop, completion_tokens=0
+
+[T+24.5s  router] tool_name_hallucinate (request_id=def456...)
+  Hallucinated name: "skill_improver.direct_llm"
+  Available names: ["describe_skill", "invoke_skill", "list_skills"]
+```
+
+### `--summary-only`
+
+```
+=== Attractor Detection Report ===
+Trace file: .reyn/llm_trace.jsonl
+Total LLM calls: 25
+Detected attractors: 4 (16%)
+
+By heuristic:
+  stop_with_must_rule:           2 (8%)
+  enum_violation:                1 (4%)
+  tool_name_hallucinate:         1 (4%)
+```
+
+### `--output-format json`
+
+```json
+{
+  "trace_file": ".reyn/llm_trace.jsonl",
+  "total_calls": 25,
+  "summary": {
+    "stop_with_must_rule": 2,
+    "enum_violation": 1,
+    "tool_name_hallucinate": 1
+  },
+  "detections": [
+    {
+      "request_id": "abc123...",
+      "timestamp": "2026-01-01T00:00:12+00:00",
+      "rel_time": "T+12.3s",
+      "caller": "router",
+      "heuristic": "stop_with_must_rule",
+      "evidence": {
+        "finish_reason": "stop",
+        "completion_tokens": 0,
+        "must_rule_excerpts": ["After list_skills you MUST call describe_skill or invoke_skill"]
+      }
+    }
+  ]
+}
+```
+
+## Primary use cases
+
+**G4 spike — weak vs strong model comparison.** Run detection on a weak-model
+trace, then on a strong-model trace for the same session. Compare attractor
+counts to confirm whether the model change eliminated the pattern.
+
+**Batch-to-batch attractor rate tracking.** After a prompt change or OS fix,
+compare `--summary-only --output-format json` output across batch traces to
+verify the rate dropped.
+
+**Production skill self-check.** Skill developers can enable `REYN_LLM_TRACE_DUMP`
+during local development and run detection to check whether their skill's
+prompts trigger attractors before submitting a PR.
+
+**Targeted investigation with `--filter-caller`.** Focus on a single caller
+(e.g. `router`) to isolate router-layer attractors from phase-layer noise.
