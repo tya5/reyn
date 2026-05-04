@@ -1,7 +1,7 @@
 ---
 type: skill
 name: eval_builder
-description: Auto-generate an eval spec (eval.md) for a skill
+description: Build an eval spec (eval.md) — to run evaluations use the eval skill instead
 entry: analyze_skill
 final_output: eval_spec_result
 final_output_description: |
@@ -15,19 +15,24 @@ graph:
 routing:
   intents: [task]
   when_to_use:
-    - User wants to create eval criteria / test spec for an existing skill
-    - User asks to generate or scaffold eval.md for a skill
+    - User wants to *create* / *build* / *generate* an eval spec (eval.md) for a skill
+    - User asks to scaffold or write eval criteria for a skill
+    - Typical input form is "SKILL_NAME の eval を作って" or "eval.md を生成して"
   when_not_to_use:
-    - User wants to *run* an evaluation (use eval instead)
+    - User wants to *run* or *execute* an evaluation against existing criteria — use eval skill
+    - Intent is "eval を実行する" or "SKILL_NAME を eval して" — use eval skill, not eval_builder
+    - eval_builder creates the spec; eval runs it — for "eval して" choose eval, not eval_builder
     - Conceptual questions about evaluation (stable_knowledge)
   examples:
     positive:
+      - "direct_llm の eval を作って"
       - "X skill 用の eval を作って"
       - "eval.md を生成して"
       - "このスキルのテスト基準を書いて"
     negative:
+      - "direct_llm を eval して"
+      - "skill X を eval して"
       - "eval ってなに？"
-      - "skill X を eval して"   # this is run, use eval skill instead
 permissions:
   # analyze_skill reads target skill DSL files which may live under
   # src/reyn/stdlib/skills/ — outside the project root when running from a

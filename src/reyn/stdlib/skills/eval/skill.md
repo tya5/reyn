@@ -15,17 +15,23 @@ graph:
 routing:
   intents: [task]
   when_to_use:
-    - User wants to evaluate or test an existing skill against criteria
-    - User asks to run / score / grade a skill on a test case
+    - User wants to *run* / *execute* / evaluate an existing skill against criteria
+    - User asks to score / grade / test a skill on a test case
+    - Typical input form is "SKILL_NAME を eval して" or "eval を実行"
   when_not_to_use:
+    - User wants to *create* / *build* / *generate* an eval spec — use eval_builder instead
+    - Intent is "eval を作って" or "eval.md を生成して" — use eval_builder, not eval
+    - eval runs the spec; eval_builder creates it — for "eval を作って" choose eval_builder
     - User asks conceptually what "eval" or LLM-as-judge means (stable_knowledge)
-    - User wants to *generate* eval cases (use eval_builder instead)
   examples:
     positive:
+      - "direct_llm を eval して"
       - "skill X を eval して"
       - "このスキルを採点して"
       - "test case で foo を評価"
     negative:
+      - "direct_llm の eval を作って"
+      - "eval.md を生成して"
       - "eval って何？"
       - "LLM-as-judge の仕組みを教えて"
 ---
