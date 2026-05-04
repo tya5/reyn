@@ -61,6 +61,24 @@ _ROUTER_RETRY_EXHAUSTED_MSG: dict[str, str] = {
 }
 
 
+def _no_reply_marker(agent_name: str, reason: str) -> str:
+    """Generate a structured upstream message when this agent's router
+    couldn't produce a real reply for an inbound agent_request (F6/F7).
+
+    Sending an empty string is ambiguous — the upstream LLM cannot
+    distinguish "empty success" from "failure" and tends to interpret
+    silence as in-progress, re-delegating in a tight loop until the
+    router cap fires (= F7 cascade). A clear text marker tells the
+    upstream LLM exactly what happened so it can produce a coherent
+    user-facing reply instead of retrying.
+
+    The marker is intentionally English + structural — the receiving
+    agent's LLM is supposed to interpret it and emit a user-facing reply
+    in the user's `output_language`, not forward it verbatim.
+    """
+    return f"[{agent_name}: could not produce a reply — {reason}]"
+
+
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more
     skill_router invocations than the configured cap. Caught by handlers,
@@ -1595,8 +1613,16 @@ class ChatSession:
                 ),
                 meta={"chain_id": chain_id, "from_agent": from_agent},
             ))
+            # F6/F7 fix: send a structured failure marker (not "") so the
+            # upstream LLM doesn't mistake silence for "in-progress" and
+            # retry in a tight loop.
             await self._send_agent_response(
-                to=from_agent, response="", depth=depth, chain_id=chain_id,
+                to=from_agent,
+                response=_no_reply_marker(
+                    self.agent_name,
+                    f"router retry budget exhausted ({exc.count}/{exc.cap})",
+                ),
+                depth=depth, chain_id=chain_id,
             )
             return
         except Exception as exc:
@@ -1604,10 +1630,15 @@ class ChatSession:
                 kind="error", text=f"router failed (agent_request): {exc}",
                 meta={"chain_id": chain_id},
             ))
-            # Even on failure, send empty response so the requester chain
-            # doesn't stall waiting forever.
+            # F6/F7 fix: send a structured failure marker so the requester
+            # chain receives a clear "no reply produced" instead of an
+            # ambiguous empty string.
             await self._send_agent_response(
-                to=from_agent, response="", depth=depth, chain_id=chain_id,
+                to=from_agent,
+                response=_no_reply_marker(
+                    self.agent_name, f"router error: {exc}"
+                ),
+                depth=depth, chain_id=chain_id,
             )
             return
         finally:
@@ -1639,7 +1670,17 @@ class ChatSession:
 
         # PR11-compatible single-hop reply path. RouterLoop emitted reply_text
         # via put_outbox → captured in agent_replies. Forward upstream.
-        reply_text = agent_replies[0] if agent_replies else ""
+        # F6/F7 fix: when no clean text reply was captured (max_iterations,
+        # empty content, async-only dispatch with no follow-up text), send
+        # a structured marker rather than "" so the upstream LLM doesn't
+        # interpret silence as "in-progress" and re-delegate.
+        if agent_replies:
+            reply_text = agent_replies[0]
+        else:
+            reply_text = _no_reply_marker(
+                self.agent_name,
+                "router completed without producing a text reply",
+            )
         # Note: history was already appended by put_outbox; add routing meta.
         await self._send_agent_response(
             to=from_agent, response=reply_text, depth=depth, chain_id=chain_id,
@@ -1731,8 +1772,14 @@ class ChatSession:
                 ),
                 meta={"chain_id": chain_id},
             ))
+            # F6/F7 fix: structured marker upstream, not "".
             await self._send_agent_response(
-                to=pending.origin_agent, response="",
+                to=pending.origin_agent,
+                response=_no_reply_marker(
+                    self.agent_name,
+                    f"router retry budget exhausted ({exc.count}/{exc.cap}) "
+                    f"resolving chain",
+                ),
                 depth=pending.origin_depth, chain_id=chain_id,
             )
             await self._chains.resolve(chain_id)
@@ -1743,9 +1790,13 @@ class ChatSession:
                 text=f"router failed (chain resolve): {exc}",
                 meta={"chain_id": chain_id},
             ))
-            # Send empty upstream so the parent chain doesn't hang.
+            # F6/F7 fix: structured marker upstream, not "".
             await self._send_agent_response(
-                to=pending.origin_agent, response="",
+                to=pending.origin_agent,
+                response=_no_reply_marker(
+                    self.agent_name,
+                    f"router error during chain resolve: {exc}",
+                ),
                 depth=pending.origin_depth, chain_id=chain_id,
             )
             await self._chains.resolve(chain_id)
@@ -1766,7 +1817,15 @@ class ChatSession:
             )
             return
 
-        final_reply = agent_replies[0] if agent_replies else ""
+        # F6/F7 fix: when no clean text reply was captured during chain
+        # resolve, send a structured marker upstream rather than "".
+        if agent_replies:
+            final_reply = agent_replies[0]
+        else:
+            final_reply = _no_reply_marker(
+                self.agent_name,
+                "chain resolved without producing a text reply",
+            )
         # History already appended by put_outbox.
         await self._send_agent_response(
             to=pending.origin_agent, response=final_reply,

@@ -546,6 +546,128 @@ async def test_delegate_does_not_re_delegate_in_same_turn():
 
 
 @pytest.mark.asyncio
+async def test_dedupe_duplicate_async_tool_calls_in_same_round():
+    """Tier 2: OS invariant — duplicate async tool_calls (same name, same
+    args) in a single LLM round are deduped before dispatch (F5 fix).
+
+    Weak models (e.g. gemini-2.5-flash-lite) sometimes emit
+    `delegate_to_agent` twice with identical arguments in one tool_calls
+    list. Without dedupe, the peer's inbox would receive the same
+    request twice, doubling cost and confusing the chain. After dedupe,
+    exactly one send_to_agent runs and a `tool_call_deduped` audit event
+    is emitted for the suppressed call.
+    """
+    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+    loop = make_loop(host)
+
+    # Two identical delegate_to_agent calls in the same round.
+    duplicate_round = tool_result([
+        {"id": "tc_a", "name": "delegate_to_agent",
+         "args": {"to": "peer", "request": "do work"}},
+        {"id": "tc_b", "name": "delegate_to_agent",
+         "args": {"to": "peer", "request": "do work"}},
+    ])
+
+    with patch(
+        "reyn.chat.router_loop.call_llm_tools",
+        new_callable=AsyncMock,
+    ) as mock_llm:
+        mock_llm.side_effect = [duplicate_round]
+        await loop.run("send", [])
+
+    # Only one send_to_agent — duplicate suppressed.
+    assert len(host.agent_sends) == 1
+    assert host.agent_sends[0]["to"] == "peer"
+    assert host.agent_sends[0]["request"] == "do work"
+    # Audit event records the suppressed call.
+    deduped_events = [
+        e for e in host.events.emitted  # type: ignore[attr-defined]
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 1, (
+        f"expected 1 tool_call_deduped event; got: {host.events.emitted}"
+    )
+    assert deduped_events[0]["name"] == "delegate_to_agent"
+    assert deduped_events[0]["reason"] == "duplicate_async_in_round"
+
+
+@pytest.mark.asyncio
+async def test_dedupe_does_not_collapse_distinct_async_args():
+    """Tier 2: OS invariant — async tool_calls with different args are
+    NOT deduped (F5 false-positive guard).
+
+    Two `delegate_to_agent` calls to the same peer with different
+    `request` payloads must both dispatch — they're legitimately distinct
+    work items.
+    """
+    host = FakeRouterHost(agents=[{"name": "peer", "role": "x"}])
+    loop = make_loop(host)
+
+    distinct_round = tool_result([
+        {"id": "tc_a", "name": "delegate_to_agent",
+         "args": {"to": "peer", "request": "task A"}},
+        {"id": "tc_b", "name": "delegate_to_agent",
+         "args": {"to": "peer", "request": "task B"}},
+    ])
+
+    with patch(
+        "reyn.chat.router_loop.call_llm_tools",
+        new_callable=AsyncMock,
+    ) as mock_llm:
+        mock_llm.side_effect = [distinct_round]
+        await loop.run("send two tasks", [])
+
+    # Both dispatch — different args.
+    assert len(host.agent_sends) == 2
+    requests = sorted(s["request"] for s in host.agent_sends)
+    assert requests == ["task A", "task B"]
+    # No dedupe events.
+    deduped_events = [
+        e for e in host.events.emitted  # type: ignore[attr-defined]
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 0
+
+
+@pytest.mark.asyncio
+async def test_dedupe_does_not_apply_to_sync_tool_calls():
+    """Tier 2: OS invariant — duplicate SYNC tool_calls in same round are
+    NOT deduped (F5 scope guard).
+
+    Sync tool dupes are wasteful but correctness-preserving (same args →
+    same result), and deduping them risks tool_call_id mismatches in the
+    follow-up assistant message. Only async tools (delegate_to_agent)
+    get the dedupe treatment.
+    """
+    host = FakeRouterHost(skills=[{"name": "my_skill", "category": "general"}])
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([
+            {"id": "tc_a", "name": "describe_skill",
+             "args": {"name": "my_skill"}},
+            {"id": "tc_b", "name": "describe_skill",
+             "args": {"name": "my_skill"}},
+        ]),
+        text_result("done"),
+    ]
+
+    with patch(
+        "reyn.chat.router_loop.call_llm_tools",
+        new_callable=AsyncMock,
+    ) as mock_llm:
+        mock_llm.side_effect = rounds
+        await loop.run("describe", [])
+
+    # No dedupe events for sync tools.
+    deduped_events = [
+        e for e in host.events.emitted  # type: ignore[attr-defined]
+        if e["type"] == "tool_call_deduped"
+    ]
+    assert len(deduped_events) == 0
+
+
+@pytest.mark.asyncio
 async def test_forget_memory_deletes_file_and_regenerates_index():
     """Tier 1 framework boundary: forget_memory tool deletes the memory file and triggers index regeneration. AsyncMock required for scripted tool-call round."""
     host = FakeRouterHost(file_permissions={"read": ["/memory"], "write": ["/memory"]})

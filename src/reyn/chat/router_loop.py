@@ -166,9 +166,17 @@ class RouterLoop:
                 budget_agent=host.agent_name,
             )
             if result.tool_calls:
-                # parallel execute all tool calls
+                # F5 fix (dogfood batch 1): dedupe duplicate async
+                # tool_calls within the same round. Weak models
+                # occasionally emit `delegate_to_agent` twice in one
+                # tool_calls list, which would inbox_put the same
+                # request twice and double-charge the peer. Sync tool
+                # dupes are wasteful but correctness-preserving (same
+                # args → same result), so we only dedupe async tools.
+                tool_calls = self._dedupe_async_tool_calls(result.tool_calls)
+                # parallel execute all tool calls (deduped)
                 tool_results = await asyncio.gather(*[
-                    self._execute_tool(tc) for tc in result.tool_calls
+                    self._execute_tool(tc) for tc in tool_calls
                 ])
                 # Detect async-deferred dispatches via dispatch_kind
                 # registry (router_tools._DISPATCH_KIND). Async tools'
@@ -180,7 +188,7 @@ class RouterLoop:
                 # Exit after the dispatch; the future invocation resumes.
                 async_count = sum(
                     1
-                    for tc in result.tool_calls
+                    for tc in tool_calls
                     if get_dispatch_kind(tc["function"]["name"]) == "async"
                 )
                 if async_count:
@@ -195,12 +203,14 @@ class RouterLoop:
                     )
                     return
                 # No delegation — accumulate messages for next iteration.
+                # Use deduped tool_calls so the assistant message and tool
+                # result messages stay in sync (matching tool_call_ids).
                 messages.append({
                     "role": "assistant",
                     "content": result.content or "",
-                    "tool_calls": result.tool_calls,
+                    "tool_calls": tool_calls,
                 })
-                for tc, r in zip(result.tool_calls, tool_results):
+                for tc, r in zip(tool_calls, tool_results):
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
@@ -226,6 +236,36 @@ class RouterLoop:
     # -----------------------------------------------------------------------
     # Tool dispatch
     # -----------------------------------------------------------------------
+
+    def _dedupe_async_tool_calls(self, tool_calls: list[dict]) -> list[dict]:
+        """Dedupe duplicate async tool_calls within the same round (F5).
+
+        Weak models sometimes emit `delegate_to_agent` twice in the same
+        tool_calls list, which would inbox_put the same request twice and
+        double-charge the peer. Sync tool duplicates are wasteful but
+        correctness-preserving (same args → same result), so we only
+        dedupe async tools — keyed on (name, arguments_json).
+
+        Emits a `tool_call_deduped` audit event for each skipped call so
+        the dedupe is visible in the events log.
+        """
+        deduped: list[dict] = []
+        seen_async: set[tuple[str, str]] = set()
+        for tc in tool_calls:
+            name = tc["function"]["name"]
+            if get_dispatch_kind(name) == "async":
+                key = (name, tc["function"].get("arguments", ""))
+                if key in seen_async:
+                    self.host.events.emit(
+                        "tool_call_deduped",
+                        name=name,
+                        chain_id=self.chain_id,
+                        reason="duplicate_async_in_round",
+                    )
+                    continue
+                seen_async.add(key)
+            deduped.append(tc)
+        return deduped
 
     async def _execute_tool(self, tc: dict) -> dict:
         """Dispatch one tool call via dispatch_tool (cross-cutting concerns).

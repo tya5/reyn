@@ -795,3 +795,139 @@ async def test_p6_chain_state_changes_emit_events(tmp_path, monkeypatch):
     assert snapshot.pending_chains == {}, (
         f"pending_chains must be empty after resolve, got: {snapshot.pending_chains!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# F6/F7 fix: empty router reply on agent_request → structured marker upstream
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_request_empty_router_reply_sends_marker_upstream(
+    tmp_path, monkeypatch
+):
+    """Tier 2: when RouterLoop completes without a text reply during an
+    inbound agent_request, the upstream agent receives a structured "no
+    reply" marker, NOT an empty string (F6/F7 fix).
+
+    Pre-fix dogfood scenario 2 (multi-agent delegate batch 1): the
+    specialist's RouterLoop returned with `agent_replies = []` (e.g. from
+    max_iterations exhaustion or empty content), and `_handle_agent_request`
+    forwarded `response=""` upstream. The upstream LLM interpreted the
+    empty string as "in-progress" and re-delegated until the router cap
+    fired (= F7 cascade). Fix: synthesise a clear text marker so the
+    upstream LLM can produce a coherent user-facing reply instead of
+    retrying.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    upstream_session = ChatSession(agent_name="origin_agent")
+    upstream_received: list[dict] = []
+
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+        upstream_received.append({
+            "from_agent": from_agent,
+            "response": response,
+            "chain_id": chain_id,
+        })
+
+    upstream_session.submit_agent_response = _fake_submit_agent_response
+
+    registry = _FakeRegistry()
+    registry.register("origin_agent", upstream_session)
+
+    session = _make_session(
+        tmp_path, agent_name="specialist", registry=registry
+    )
+    session.is_attached = True
+
+    # LLM returns empty content (a finish_reason="stop" with text="").
+    # RouterLoop will put_outbox(kind="agent", text="") → ChatSession's
+    # capture filter (`if kind == "agent" and text:`) skips empty,
+    # leaving agent_replies empty → triggers F6/F7 path.
+    mock = _install_call_llm_tools_mock(_text_result(""))
+
+    with patch("reyn.chat.router_loop.call_llm_tools", new=mock):
+        await session._handle_agent_request({
+            "from_agent": "origin_agent",
+            "request": "what is the recipe?",
+            "depth": 1,
+            "chain_id": "chain-f6-001",
+        })
+
+    assert upstream_received, (
+        "Expected origin_agent to receive an agent_response; none received"
+    )
+    resp = upstream_received[0]
+    assert resp["chain_id"] == "chain-f6-001"
+    # Must NOT be empty — that's the F6 bug.
+    assert resp["response"] != "", (
+        "F6 regression: upstream received empty response; should be a marker"
+    )
+    # Must contain a clear failure indicator + the agent's name.
+    assert "specialist" in resp["response"], (
+        f"Expected agent name in marker; got: {resp['response']!r}"
+    )
+    assert "could not produce a reply" in resp["response"].lower(), (
+        f"Expected structured failure marker; got: {resp['response']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_request_router_cap_exhausted_sends_marker_upstream(
+    tmp_path, monkeypatch
+):
+    """Tier 2: RouterCapExceeded during an agent_request handler also
+    sends a structured marker upstream (not "") so the upstream chain
+    doesn't stall on an ambiguous empty response (F6/F7 fix, exception
+    path).
+
+    Triggered by patching `_run_router_loop` to raise RouterCapExceeded
+    directly, isolating the fallback path from RouterLoop's internals.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    upstream_session = ChatSession(agent_name="origin_agent")
+    upstream_received: list[dict] = []
+
+    async def _fake_submit_agent_response(*, from_agent, response, depth, chain_id):
+        upstream_received.append({
+            "from_agent": from_agent,
+            "response": response,
+            "chain_id": chain_id,
+        })
+
+    upstream_session.submit_agent_response = _fake_submit_agent_response
+
+    registry = _FakeRegistry()
+    registry.register("origin_agent", upstream_session)
+
+    session = _make_session(
+        tmp_path, agent_name="specialist", registry=registry
+    )
+    session.is_attached = True
+
+    # Force RouterCapExceeded from the handler.
+    from reyn.chat.session import RouterCapExceeded
+
+    async def _raise_cap(*args, **kwargs):
+        raise RouterCapExceeded(count=3, cap=3, last_reason="loop")
+
+    session._run_router_loop = _raise_cap  # type: ignore[assignment]
+
+    await session._handle_agent_request({
+        "from_agent": "origin_agent",
+        "request": "anything",
+        "depth": 1,
+        "chain_id": "chain-f6-cap-001",
+    })
+
+    assert upstream_received, (
+        "upstream must receive an agent_response on cap exhaustion"
+    )
+    resp = upstream_received[0]
+    assert resp["response"] != ""
+    assert "specialist" in resp["response"]
+    assert "router retry budget exhausted" in resp["response"].lower(), (
+        f"Expected cap-exhausted reason in marker; got: {resp['response']!r}"
+    )
