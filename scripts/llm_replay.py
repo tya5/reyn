@@ -9,6 +9,9 @@ Usage:
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> --n 5
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> --model claude-sonnet
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> --full
+    python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
+        --patch 'tools[0].function.parameters.properties.name.enum=["a","b"]' \\
+        --patch 'messages[0].content+=" MUST output flat skill names"'
 """
 from __future__ import annotations
 
@@ -17,6 +20,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -58,6 +62,188 @@ def _find_record(records: list[dict], request_id: str) -> tuple[dict | None, dic
         elif rec.get("kind") == "response":
             resp = rec
     return req, resp
+
+
+# ---------------------------------------------------------------------------
+# Patch machinery
+# ---------------------------------------------------------------------------
+
+# Token types for the key.path parser
+_PATH_SEG = re.compile(r"([^\[\].]+)|\[(\d+)\]")
+
+# Regex matching the full patch expression:
+#   <key.path><op>[<value>]
+# Supported ops:  =  +=  ?=  --
+_PATCH_RE = re.compile(
+    r"^(.+?)"           # group 1: key.path (non-greedy)
+    r"(\?\=|\+\=|\-\-|=)"  # group 2: operator
+    r"(.*)$",           # group 3: value string (may be empty for --)
+    re.DOTALL,
+)
+
+
+def _parse_path(path: str) -> list[str | int]:
+    """Parse a dotted / bracketed key path into a list of str/int segments.
+
+    'tools[0].function.name' → ['tools', 0, 'function', 'name']
+    """
+    segments: list[str | int] = []
+    for m in _PATH_SEG.finditer(path):
+        key, idx = m.group(1), m.group(2)
+        if idx is not None:
+            segments.append(int(idx))
+        else:
+            segments.append(key)
+    if not segments:
+        raise ValueError(f"patch: empty or invalid key path: {path!r}")
+    return segments
+
+
+def _parse_value(raw: str) -> Any:
+    """Parse <raw> as a JSON literal, falling back to raw string on failure."""
+    raw = raw.strip()
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw
+
+
+def _get_parent(obj: Any, segments: list[str | int]) -> tuple[Any, str | int]:
+    """Walk *obj* along *segments[:-1]* and return (parent, last_segment).
+
+    Raises KeyError / IndexError / TypeError when an intermediate node is
+    missing (absent-path error for =, +=).
+    """
+    cur = obj
+    for seg in segments[:-1]:
+        if isinstance(seg, int):
+            cur = cur[seg]
+        else:
+            cur = cur[seg]
+    return cur, segments[-1]
+
+
+def _apply_patch(payload: dict, expr: str) -> tuple[str, str]:
+    """Apply one patch expression to *payload* in-place.
+
+    Returns (path_str, description) for the applied-patches summary.
+
+    Raises ValueError for invalid expressions / incompatible targets.
+    """
+    m = _PATCH_RE.match(expr)
+    if not m:
+        raise ValueError(f"patch: cannot parse expression: {expr!r}")
+
+    raw_path, op, raw_value = m.group(1), m.group(2), m.group(3)
+    segments = _parse_path(raw_path)
+
+    if op == "--":
+        # Delete — parent must exist
+        parent, last = _get_parent(payload, segments)
+        if isinstance(last, int):
+            if not isinstance(parent, list):
+                raise ValueError(f"patch: cannot index non-list with [{last}] at {raw_path!r}")
+            del parent[last]
+        else:
+            if not isinstance(parent, dict):
+                raise ValueError(f"patch: cannot key non-dict with {last!r} at {raw_path!r}")
+            del parent[last]
+        return raw_path, "deleted"
+
+    value = _parse_value(raw_value)
+
+    if op == "?=":
+        # Optional set — only write if key absent
+        try:
+            parent, last = _get_parent(payload, segments)
+        except (KeyError, IndexError, TypeError):
+            # Parent absent — create path
+            _force_set(payload, segments, value)
+            return raw_path, f"set (was absent): {value!r}"
+        # Parent exists — check whether the leaf is present
+        try:
+            if isinstance(last, int):
+                _ = parent[last]
+            else:
+                _ = parent[last]
+            # Key already present — leave unchanged
+            return raw_path, "skipped (already set)"
+        except (KeyError, IndexError):
+            if isinstance(last, int):
+                # Can't meaningfully insert into arbitrary list position; error
+                raise ValueError(f"patch: ?= on absent list index [{last}] is not supported")
+            parent[last] = value
+            return raw_path, f"set (was absent): {value!r}"
+
+    if op == "+=":
+        # String append — target must be a string
+        try:
+            parent, last = _get_parent(payload, segments)
+            if isinstance(last, int):
+                existing = parent[last]
+            else:
+                existing = parent[last]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"patch: += path not found: {raw_path!r}") from exc
+        if not isinstance(existing, str):
+            raise ValueError(
+                f"patch: += requires a string target; got {type(existing).__name__} at {raw_path!r}"
+            )
+        if not isinstance(value, str):
+            raise ValueError(
+                f"patch: += requires a string value; got {type(value).__name__}"
+            )
+        if isinstance(last, int):
+            parent[last] = existing + value
+        else:
+            parent[last] = existing + value
+        return raw_path, f"appended {value!r}"
+
+    # op == "="  — unconditional replace
+    try:
+        parent, last = _get_parent(payload, segments)
+        if isinstance(last, int):
+            parent[last] = value
+        else:
+            parent[last] = value
+        return raw_path, f"replaced → {value!r}"
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError(f"patch: path not found for =: {raw_path!r}") from exc
+
+
+def _force_set(obj: Any, segments: list[str | int], value: Any) -> None:
+    """Walk *segments* and set the leaf, creating intermediate dicts as needed."""
+    cur = obj
+    for seg in segments[:-1]:
+        if isinstance(seg, int):
+            cur = cur[seg]
+        else:
+            if seg not in cur:
+                cur[seg] = {}
+            cur = cur[seg]
+    last = segments[-1]
+    if isinstance(last, int):
+        cur[last] = value
+    else:
+        cur[last] = value
+
+
+def _apply_patches(payload: dict, patch_exprs: list[str]) -> list[tuple[str, str]]:
+    """Apply all patch expressions in order; return list of (path, description)."""
+    applied: list[tuple[str, str]] = []
+    for expr in patch_exprs:
+        path_str, desc = _apply_patch(payload, expr)
+        applied.append((path_str, desc))
+    return applied
+
+
+def _print_applied_patches(applied: list[tuple[str, str]]) -> None:
+    if not applied:
+        return
+    print("=== Applied patches ===")
+    for path_str, desc in applied:
+        print(f"  {path_str}: {desc}")
+    print()
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +498,7 @@ async def _run(
     n: int,
     full: bool,
     output_format: str,
+    patch_exprs: list[str] | None = None,
     acompletion_fn: Any = None,
 ) -> None:
     records = _load_jsonl(trace_path)
@@ -323,10 +510,28 @@ async def _run(
 
     original_model = req.get("model", "?")
     model = model_override if model_override else original_model
-    messages = req.get("messages") or []
-    tools = req.get("tools") or None
-    tool_choice = req.get("tool_choice")
-    sampling_params = dict(req.get("sampling_params") or {})
+
+    # Build a mutable payload dict for patch application
+    payload: dict = {
+        "messages": list(req.get("messages") or []),
+        "tools": list(req.get("tools") or []) if req.get("tools") else None,
+        "tool_choice": req.get("tool_choice"),
+        "sampling_params": dict(req.get("sampling_params") or {}),
+    }
+
+    # Apply --patch expressions before any other overrides
+    applied_patches: list[tuple[str, str]] = []
+    if patch_exprs:
+        try:
+            applied_patches = _apply_patches(payload, patch_exprs)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    messages = payload["messages"]
+    tools = payload["tools"] or None
+    tool_choice = payload["tool_choice"]
+    sampling_params = payload["sampling_params"]
 
     # Apply sampling overrides
     if temperature_override is not None:
@@ -341,6 +546,10 @@ async def _run(
     print(f"  tools:      {len(tools) if tools else 0}")
     print(f"  n:          {n}")
     print()
+
+    # Show applied patches summary in pretty mode
+    if applied_patches and output_format == "pretty":
+        _print_applied_patches(applied_patches)
 
     results: list[dict] = []
     for i in range(n):
@@ -396,6 +605,17 @@ def main() -> None:
                         help="Show full content without truncation")
     parser.add_argument("--output-format", choices=["pretty", "json"], default="pretty",
                         help="Output format: pretty (default) or json (raw response dict)")
+    parser.add_argument(
+        "--patch",
+        action="append",
+        default=[],
+        metavar="EXPR",
+        help=(
+            "Patch the payload before replay. Format: 'key.path=value', "
+            "'key.path+=value' (string append), 'key.path?=value' (set if absent), "
+            "'key.path--' (delete). Repeatable; applied in CLI order."
+        ),
+    )
     args = parser.parse_args()
 
     trace_path = Path(args.trace)
@@ -412,6 +632,7 @@ def main() -> None:
         n=args.n,
         full=args.full,
         output_format=args.output_format,
+        patch_exprs=args.patch or [],
     ))
 
 

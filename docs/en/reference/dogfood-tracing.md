@@ -126,6 +126,61 @@ Get `<request_id>` from `dogfood_trace.py --mode llm-payloads` output.
 | `--n <count>` | Replay N times to observe distribution (default: 1) |
 | `--full` | Show full content without head/tail truncation |
 | `--output-format pretty\|json` | Output format (default: `pretty`) |
+| `--patch EXPR` | Mutate the payload before replay (repeatable; see below) |
+
+## Payload patching (`--patch`)
+
+`--patch` lets you mutate any field in the captured payload before the LLM call
+is issued. No trace file is modified — the patch applies only to the in-memory
+copy used for this replay run.
+
+### Syntax
+
+```
+--patch 'key.path=value'       # replace
+--patch 'key.path+=value'      # append (string targets only)
+--patch 'key.path?=value'      # set only if the field is absent
+--patch 'key.path--'           # delete the field / list element
+```
+
+**Key path** uses dot notation and `[N]` for list indices:
+
+```
+messages[0].content
+tools[0].function.parameters.properties.name.enum
+sampling_params.temperature
+```
+
+**Value** is parsed as a JSON literal (`"string"`, `123`, `1.5`, `true`,
+`false`, `null`, `[…]`, `{…}`). If JSON parsing fails the raw string is used.
+
+Multiple `--patch` options are applied in CLI argument order. When two patches
+target the same path the later one wins.
+
+### Error behaviour
+
+| Situation | Result |
+|-----------|--------|
+| Path not found (for `=`, `+=`) | `error:` message + exit 1, LLM not called |
+| `+=` on a non-string target | `error:` message + exit 1 |
+| Deletion (`--`) of absent key | `KeyError` / `IndexError`, exit 1 |
+| `?=` on absent key | Field is created |
+| `?=` on existing key | Field is left unchanged |
+
+> **Note on list deletion:** deleting `tools[1]--` shifts all subsequent
+> indices. If you chain multiple list deletions, apply them from the highest
+> index to the lowest to avoid index drift.
+
+### Applied patches output
+
+In `--output-format pretty` (the default), a summary section is printed before
+the LLM result:
+
+```
+=== Applied patches ===
+  tools[0].function.parameters.properties.name.enum: replaced → ['skill_a', 'skill_b', 'skill_c']
+  messages[0].content: appended ' Available skills (3): skill_a, skill_b, skill_c'
+```
 
 ## Use cases
 
@@ -152,6 +207,27 @@ python scripts/llm_replay.py abc123 --trace .reyn/llm_trace.jsonl --n 10
 
 Output is a distribution table: tool call names with frequencies, finish
 reason distribution, and token avg/min/max.
+
+### Router enum fix verification
+
+Before landing a fix that adds an `enum` constraint to the router tool schema,
+verify it eliminates hallucination with a single replay:
+
+```bash
+python scripts/llm_replay.py <router_request_id> --trace .reyn/llm_trace.jsonl \
+  --patch 'tools[0].function.parameters.properties.name.enum=["skill_a","skill_b","skill_c"]' \
+  --patch 'messages[0].content+=" Available skills (3): skill_a, skill_b, skill_c"'
+```
+
+### System prompt MUST rule injection
+
+Add a MUST rule to the system prompt and observe whether the LLM honours it
+before the instruction lands in the phase definition:
+
+```bash
+python scripts/llm_replay.py <request_id> --trace .reyn/llm_trace.jsonl \
+  --patch 'messages[0].content+="\n\nMUST output flat skill names; dot-notation is forbidden."'
+```
 
 ### Regression observation after prompt change
 
