@@ -156,19 +156,23 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # ASCII banner
+        # ASCII banner with vertical red → black gradient
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
-        for line in [
+        _BANNER = [
             "██████╗ ███████╗██╗   ██╗███╗   ██╗",
             "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
             "██████╔╝█████╗   ╚████╔╝ ██╔██╗ ██║",
             "██╔══██╗██╔══╝    ╚██╔╝  ██║╚██╗██║",
             "██║  ██║███████╗   ██║   ██║ ╚████║",
             "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
-        ]:
-            conv._write_log(Text(line, style="#C8553D"))
-        conv._write_log(Text("  Tab for commands", style="dim #555555"))
+        ]
+        n = len(_BANNER)
+        for i, line in enumerate(_BANNER):
+            t = i / (n - 1)
+            r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
+            conv._write_log(Text(line, style=f"#{r:02x}{g:02x}{b:02x}"))
+        conv._write_log(Text("  — counsels you to hold the reins.", style="dim #555555"))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
