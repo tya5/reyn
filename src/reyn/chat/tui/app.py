@@ -156,7 +156,7 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # ASCII banner with vertical red → black gradient
+        # ASCII banner (neofetch style): gradient logo left, agent info right
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
         _BANNER = [
@@ -167,11 +167,26 @@ class ReynTUIApp(App):
             "██║  ██║███████╗   ██║   ██║ ╚████║",
             "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
         ]
+        _INFO = [
+            None,
+            ("agent", self._agent_name or "—"),
+            ("model", self._model or "—"),
+            None,
+            None,
+            None,
+        ]
         n = len(_BANNER)
-        for i, line in enumerate(_BANNER):
+        for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
             t = i / (n - 1)
             r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
-            conv._write_log(Text(line, style=f"#{r:02x}{g:02x}{b:02x}"))
+            rt = Text()
+            rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
+            if info:
+                key, val = info
+                rt.append("    ")
+                rt.append(f"{key}  ", style="dim #555555")
+                rt.append(val, style="#dddddd")
+            conv._write_log(rt)
         conv._write_log(Text("  — counsels you to hold the reins.", style="dim #555555"))
 
         # Start outbox subscription if registry is available
