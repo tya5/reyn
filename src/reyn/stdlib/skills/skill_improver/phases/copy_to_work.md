@@ -3,13 +3,13 @@ type: phase
 name: copy_to_work
 input: improvement_session
 role: workspace_initializer
-max_act_turns: 3
+max_act_turns: 6
 allowed_ops: [file]
 ---
 
 Copy the target skill's DSL files to a temp work directory and emit an updated session pointing at the copy.
 
-You have exactly 3 act turns. Use them in order — no more, no less.
+You have up to 6 act turns. Use them in order — complete all three stages before the decide turn.
 
 ## Compute before acting
 
@@ -20,7 +20,7 @@ From `input_artifact.data`:
 
 ## Act turn 1 — Glob source files
 
-Issue exactly these three ops with the full glob pattern in the `path` field:
+Issue exactly these three ops using `original_dsl_root` as the prefix — do NOT glob parent directories or sibling skills:
 
 ```json
 {"kind": "file", "op": "glob", "path": "<original_dsl_root>/**/*.md"}
@@ -29,6 +29,8 @@ Issue exactly these three ops with the full glob pattern in the `path` field:
 ```
 
 Combine all three result lists. Remove any entry whose filename is `eval.md`.
+
+IMPORTANT: the glob patterns MUST start with `original_dsl_root` (e.g. `src/reyn/stdlib/skills/word_stats_demo/**/*.md`), not with a parent path like `src/reyn/stdlib/skills/**/*.md`. Globbing a parent directory wastes act turns reading unrelated skills.
 
 ## Act turn 2 — Read all source files
 
