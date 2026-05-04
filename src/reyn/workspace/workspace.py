@@ -98,7 +98,29 @@ class Workspace:
                 str(resolved_root).startswith(str(r))
                 for r in [self.base_dir, self.state_dir]
             ):
-                raise PermissionError(f"glob not permitted: {pattern!r} (outside project)")
+                # Outside project root — consult PermissionResolver.
+                # stdlib skills and other legitimate read targets may live
+                # outside the project directory; the permission system is the
+                # canonical gate for those paths.
+                # For glob patterns that contain wildcards, extract the
+                # longest concrete prefix (the root before any wildcard
+                # component) and check read permission against that base.
+                pattern_str = str(resolved_root)
+                # Find the first component that contains a glob special char
+                parts = resolved_root.parts
+                concrete_parts = []
+                for part in parts:
+                    if any(c in part for c in ("*", "?", "[")):
+                        break
+                    concrete_parts.append(part)
+                base_for_check = str(Path(*concrete_parts)) if concrete_parts else pattern_str
+                if not (
+                    self._perm is not None
+                    and self._perm.is_read_allowed(base_for_check, self._skill_name)
+                ):
+                    raise PermissionError(
+                        f"glob not permitted: {pattern!r} (outside project, no read permission)"
+                    )
             raw = sorted(_glob.glob(pattern, recursive=True))[:max_results]
             return [m for m in raw if Path(m).is_file()]
 
