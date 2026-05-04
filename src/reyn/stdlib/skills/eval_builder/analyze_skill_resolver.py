@@ -37,32 +37,60 @@ _PATTERNS = [
 def _extract_skill_name(artifact: dict) -> str:
     """Extract the target skill name from an artifact dict.
 
-    Supports three input forms (checked in priority order):
-      1. data contains "target_skill" field (any artifact type, including "unknown"):
-         reads data.target_skill directly.  This handles both the typed
-         eval_builder_request form and the untyped form that the OS classifies
-         as artifact_type="unknown" when the LLM omits the "type" field.
-      2. user_message (or any artifact without "target_skill"): applies regex
-         patterns to data.text.
+    The OS may pass the artifact in two structural shapes depending on whether
+    the LLM emitted a structured ``invoke_skill`` input with the ``type`` field:
 
-    Raises ValueError if the skill name cannot be determined.
+      A. Top-level form (no ``data`` wrapper) — observed at runtime when
+         the LLM emits ``invoke_skill(name=..., input={"target_skill": "..."})``::
+
+            {"target_skill": "direct_llm", "eval_spec": {...}}
+
+      B. Wrapped form (legacy / typed) — when the artifact carries an explicit
+         ``type`` and a ``data`` payload::
+
+            {"type": "eval_builder_request", "data": {"target_skill": "direct_llm"}}
+            {"type": "unknown",              "data": {"target_skill": "direct_llm"}}
+
+    Priority order:
+      1. Top-level ``target_skill`` (form A — actual OS runtime shape)
+      2. ``data.target_skill`` (form B — typed eval_builder_request / wrapped legacy)
+      3. ``data.text`` regex fallback (user_message free-form input)
+
+    Raises ValueError if the skill name cannot be determined or is empty.
+
+    History:
+      G17 (B8-NEW-6) initial fix landed at d1f2d30 only checked form B,
+      missing the actual OS runtime shape (form A). B9-NEW-2 retest (B9-S5b)
+      revealed the wrong-layer trap. This patch adds form A as priority 1,
+      preserving form B as a fallback for typed/wrapped inputs.
     """
-    data = artifact.get("data", {})
-
-    # Priority 1: target_skill field present — canonical structured input.
-    # Works for artifact_type="eval_builder_request", "unknown", or "" because
-    # the OS sets type="unknown" when the LLM omits the "type" field from input.
-    if "target_skill" in data:
-        name = str(data["target_skill"]).strip()
+    # Priority 1: top-level target_skill — the OS runtime shape for
+    # invoke_skill(input={"target_skill": "..."}). No data wrapper.
+    if "target_skill" in artifact:
+        name = str(artifact["target_skill"]).strip()
         if not name:
             raise ValueError(
-                "Artifact has empty 'target_skill' field. "
+                "Artifact has empty top-level 'target_skill' field. "
                 "Provide a short skill name (e.g. \"direct_llm\")."
             )
         return name
 
-    # Priority 2: natural-language text fallback (user_message or similar).
-    text = str(data.get("text", "")).strip()
+    # Priority 2: wrapped form — data.target_skill (typed
+    # eval_builder_request, or legacy invocations that nested the input).
+    data = artifact.get("data", {})
+    if "target_skill" in data:
+        name = str(data["target_skill"]).strip()
+        if not name:
+            raise ValueError(
+                "Artifact has empty 'data.target_skill' field. "
+                "Provide a short skill name (e.g. \"direct_llm\")."
+            )
+        return name
+
+    # Priority 3: natural-language text fallback (user_message or similar).
+    # text may live at the top level or under data depending on how the OS
+    # constructed the artifact.
+    text = str(artifact.get("text") or data.get("text") or "").strip()
     for pattern in _PATTERNS:
         match = pattern.search(text)
         if match:

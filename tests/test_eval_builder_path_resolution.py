@@ -312,6 +312,91 @@ def test_extract_skill_name_unknown_type_no_target_skill_no_text_raises(tmp_path
         compute_paths(artifact)
 
 
+# ── B9-NEW-2: G17 wrong-layer fix — top-level target_skill (runtime shape) ────
+
+
+def test_extract_skill_name_top_level_target_skill(tmp_path, monkeypatch):
+    """Tier 2: _extract_skill_name reads target_skill from artifact top level.
+
+    Guards B9-NEW-2 fix: at runtime the OS passes the invoke_skill input dict
+    directly as the artifact (no `data` wrapper). The B9-S5b retest observed
+    the actual shape `{"target_skill": "direct_llm", "eval_spec": {...}}`.
+
+    The resolver must extract from artifact["target_skill"] (top level), not
+    only from artifact["data"]["target_skill"] (wrapped form).
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "target_skill": "direct_llm",
+        "eval_spec": {"name": "direct_llm.md"},
+    }
+    result = compute_paths(artifact)
+
+    skill_dir, _ = resolve_skill_path("direct_llm")
+    expected_root = str(skill_dir).rstrip("/")
+
+    assert result["target_skill"] == "direct_llm"
+    assert result["skill_dir"] == expected_root
+    assert "stdlib" in result["skill_dir"]
+
+
+def test_extract_skill_name_top_level_target_skill_minimal(tmp_path, monkeypatch):
+    """Tier 2: top-level target_skill alone (no eval_spec) resolves correctly.
+
+    Minimal runtime shape produced by `invoke_skill(input={"target_skill": "..."})`
+    when the LLM omits all other fields — the resolver must still extract the
+    name without requiring sibling fields.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {"target_skill": "direct_llm"}
+    result = compute_paths(artifact)
+
+    assert result["target_skill"] == "direct_llm"
+    skill_dir, _ = resolve_skill_path("direct_llm")
+    assert result["skill_dir"] == str(skill_dir).rstrip("/")
+
+
+def test_extract_skill_name_top_level_takes_priority_over_data(tmp_path, monkeypatch):
+    """Tier 2: when both top-level and data.target_skill are present, top-level wins.
+
+    Edge case: if some upstream layer happens to put the field in both places,
+    the top-level form (= the OS runtime shape) is authoritative.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {
+        "target_skill": "direct_llm",  # top-level (priority 1)
+        "data": {"target_skill": "skill_improver"},  # wrapped (priority 2)
+    }
+    result = compute_paths(artifact)
+
+    assert result["target_skill"] == "direct_llm"
+
+
+def test_extract_skill_name_top_level_empty_string_raises(tmp_path, monkeypatch):
+    """Tier 2: top-level target_skill present but empty string raises ValueError.
+
+    Guards the empty-name boundary at the top-level priority path.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {"target_skill": ""}
+    with pytest.raises(ValueError, match="empty top-level 'target_skill'"):
+        compute_paths(artifact)
+
+
+def test_extract_skill_name_top_level_text_fallback(tmp_path, monkeypatch):
+    """Tier 2: top-level text (no target_skill, no data wrapper) feeds regex fallback.
+
+    Some OS paths may emit `{"text": "..."}` at the top level instead of the
+    wrapped `{"data": {"text": "..."}}` form. Regex fallback should accept
+    both shapes.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {"text": "Generate spec for skill named direct_llm"}
+    result = compute_paths(artifact)
+
+    assert result["target_skill"] == "direct_llm"
+
+
 # ── B8-NEW-2: trusted mode declaration (PureModeViolation fix) ────────────────
 
 
