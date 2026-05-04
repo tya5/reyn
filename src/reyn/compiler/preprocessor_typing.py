@@ -24,18 +24,61 @@ def _get_at_path(schema: dict, path: str) -> Any:
 
     e.g. _get_at_path(schema, "data.items") walks
          schema["properties"]["data"]["properties"]["items"]
+
+    Handles anyOf / oneOf / allOf by trying each branch; returns the first branch
+    in which the full path resolves. Raises PreprocessorTypeError if no branch
+    (or no properties entry) contains the path.
     """
     parts = path.split(".")
-    cur = schema
-    for part in parts:
-        props = cur.get("properties")
-        if not isinstance(props, dict) or part not in props:
+    return _get_at_path_parts(schema, parts, path)
+
+
+def _get_at_path_parts(schema: dict, parts: list[str], original_path: str) -> Any:
+    """Recursive helper that walks *parts* starting from *schema*.
+
+    Separated from _get_at_path so union-branch recursion can pass the same
+    original_path for error messages without re-splitting on every call.
+    """
+    if not parts:
+        return schema
+
+    part = parts[0]
+    rest = parts[1:]
+
+    # anyOf / oneOf: union — at least one branch must satisfy the path.
+    for keyword in ("anyOf", "oneOf"):
+        if keyword in schema:
+            for branch in schema[keyword]:
+                try:
+                    return _get_at_path_parts(branch, parts, original_path)
+                except PreprocessorTypeError:
+                    continue
             raise PreprocessorTypeError(
-                f"Path '{path}': segment '{part}' not found in schema properties. "
-                f"Available: {list((props or {}).keys())}"
+                f"Path '{original_path}': segment '{part}' not found in any "
+                f"{keyword} branch. Branches tried: {len(schema[keyword])}"
             )
-        cur = props[part]
-    return cur
+
+    # allOf: all constraints apply — try each branch for the path (the first
+    # branch that declares the property wins; allOf merges, not alternates).
+    if "allOf" in schema:
+        for branch in schema["allOf"]:
+            try:
+                return _get_at_path_parts(branch, parts, original_path)
+            except PreprocessorTypeError:
+                continue
+        raise PreprocessorTypeError(
+            f"Path '{original_path}': segment '{part}' not found in any "
+            f"allOf branch. Branches tried: {len(schema['allOf'])}"
+        )
+
+    # Standard object / properties traversal.
+    props = schema.get("properties")
+    if not isinstance(props, dict) or part not in props:
+        raise PreprocessorTypeError(
+            f"Path '{original_path}': segment '{part}' not found in schema properties. "
+            f"Available: {list((props or {}).keys())}"
+        )
+    return _get_at_path_parts(props[part], rest, original_path)
 
 
 def _set_at_path(schema: dict, path: str, field_schema: dict) -> dict:
