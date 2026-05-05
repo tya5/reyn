@@ -28,6 +28,30 @@ from __future__ import annotations
 # full description (details on demand — list is summary only).
 MAX_DESC_LEN_FOR_LISTING: int = 80
 
+# ── G12 attractor mitigation — describe_skill routing field strip (B11-R2) ──
+#
+# describe_skill returns the full catalogue entry dict.  When that dict
+# includes the ``routing`` block (intents / when_to_use / when_not_to_use /
+# examples), the serialised tool_response can exceed 1000 chars and triggers
+# the same P-b verbosity attractor that list_skills descriptions trigger
+# (Pattern D — describe_skill response verbosity).
+#
+# B11-R2 N-shot experiment (synthetic trace, N=10):
+#   - Full routing included (~1000 chars): 2/10 empty-stop (20%)
+#   - Routing stripped (~187 chars):       0/10 empty-stop (0%)
+#   - invoke_skill desc truncation alone:  1/10 — not significant
+#
+# The ``routing`` block is decision-guidance for BEFORE the router calls
+# describe_skill.  Once the LLM has issued the describe_skill call it is
+# committed to that skill; the routing guidance is no longer needed and only
+# adds verbosity that triggers the P-b attractor.  ``category`` is internal
+# grouping metadata also redundant for invocation.
+#
+# P7-clean: ``routing`` and ``category`` are OS-level catalogue metadata
+# fields (not skill-specific names).  Filtering applied uniformly across all
+# skills (no skill-name / phase-name / artifact-name literals hardcoded).
+_DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({"routing", "category"})
+
 
 # ── dispatch_kind sidecar registry ──────────────────────────────────────────
 #

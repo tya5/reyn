@@ -5,13 +5,18 @@ Background (B7 finding — a62a9dad / a947255e):
   skill_improver's 218-char description).  Truncating to ≤80 chars in BOTH
   trigger paths reduced empty-stop from 100% → 0% (H-b verification).
 
-Two trigger paths addressed:
+Two trigger paths addressed in B7 wave:
   Pattern A: list_skills tool_response (router calls list_skills then attractor)
   Pattern C: system prompt inline skill list (router stops before list_skills)
 
+One additional trigger path addressed in B11-R2 wave:
+  Pattern D: describe_skill tool_response verbosity (routing field triggers P-b
+  attractor — 1000+ chars in describe response).  Fix: strip routing + category
+  fields from describe_skill response.  B11-R2 N-shot result: 20% → 0%.
+
 Fix: MAX_DESC_LEN_FOR_LISTING = 80 applied in _skill_item (Pattern A) and
-build_system_prompt inline skill list (Pattern C).  describe_skill is exempt —
-it returns full descriptions for details-on-demand use.
+build_system_prompt inline skill list (Pattern C).  describe_skill now strips
+routing + category fields (Pattern D) — see _DESCRIBE_SKILL_STRIP_FIELDS.
 
 All tests are pure Python, no LLM required. < 2 seconds total.
 """
@@ -21,7 +26,7 @@ import pytest
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
+from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, _DESCRIBE_SKILL_STRIP_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -209,15 +214,16 @@ def test_system_prompt_short_description_untouched():
 
 
 # ---------------------------------------------------------------------------
-# (e) describe_skill returns the full description (not truncated)
+# (e) describe_skill: description preserved, routing+category stripped (B11-R2)
 # ---------------------------------------------------------------------------
 
 
 def test_describe_skill_returns_full_description():
-    """Tier 2: describe_skill is exempt from truncation — returns full description.
+    """Tier 2: describe_skill preserves name/description/input fields verbatim.
 
-    describe_skill is the details-on-demand path.  list_skills truncation must
-    not bleed into describe_skill (separate code paths; no shared state).
+    describe_skill is the invocation-guidance path.  Description text is NOT
+    truncated (unlike list_skills).  The routing + category fields ARE stripped
+    to prevent the P-b verbosity attractor (B11-R2: Pattern D fix).
     """
     skills = [
         {
@@ -229,12 +235,70 @@ def test_describe_skill_returns_full_description():
     loop = _make_loop(skills)
     result = loop._describe_skill("long_skill")
 
+    # Description must be returned verbatim (no truncation)
     assert result.get("description") == _LONG_DESC, (
         "describe_skill must return the full untruncated description "
         f"(expected {len(_LONG_DESC)} chars, got {len(result.get('description', ''))})"
     )
     assert "..." not in result.get("description", ""), (
         "describe_skill description must not contain truncation ellipsis"
+    )
+
+
+def test_describe_skill_strips_routing_and_category():
+    """Tier 2: describe_skill strips routing and category fields (Pattern D fix).
+
+    B11-R2 finding: describe_skill routing field (~1000 chars) triggers the G12
+    P-b verbosity attractor (20% empty-stop rate).  Stripping routing + category
+    reduces response to ~200 chars and eliminates the attractor (0/10).
+
+    All fields in _DESCRIBE_SKILL_STRIP_FIELDS must be absent from the result.
+    The invocation-critical fields (name, description, input_artifact,
+    input_fields) must be preserved.
+    """
+    skills = [
+        {
+            "name": "skill_with_routing",
+            "description": "A test skill.",
+            "category": "general",
+            "routing": {
+                "intents": ["task"],
+                "when_to_use": ["When the user asks to do X"],
+                "when_not_to_use": ["When the user wants Y"],
+                "examples": {"positive": ["Do X"], "negative": ["Do Y"]},
+            },
+            "input_artifact": "user_message",
+            "input_fields": ["field_a"],
+        }
+    ]
+    loop = _make_loop(skills)
+    result = loop._describe_skill("skill_with_routing")
+
+    # Stripped fields must be absent
+    for field in _DESCRIBE_SKILL_STRIP_FIELDS:
+        assert field not in result, (
+            f"describe_skill must strip the '{field}' field "
+            f"(_DESCRIBE_SKILL_STRIP_FIELDS: {_DESCRIBE_SKILL_STRIP_FIELDS})"
+        )
+
+    # Invocation-critical fields must be present
+    assert result.get("name") == "skill_with_routing", "name must be preserved"
+    assert result.get("description") == "A test skill.", "description must be preserved"
+    assert result.get("input_artifact") == "user_message", "input_artifact must be preserved"
+    assert result.get("input_fields") == ["field_a"], "input_fields must be preserved"
+
+
+def test_describe_skill_strip_fields_constant():
+    """Tier 2: _DESCRIBE_SKILL_STRIP_FIELDS contains the expected fields (B11-R2).
+
+    This test pins the constant value so accidental changes to the strip set
+    are caught.  The set must include at minimum 'routing' and 'category'.
+    """
+    assert "routing" in _DESCRIBE_SKILL_STRIP_FIELDS, (
+        "_DESCRIBE_SKILL_STRIP_FIELDS must contain 'routing' (P-b verbosity trigger)"
+    )
+    assert "category" in _DESCRIBE_SKILL_STRIP_FIELDS, (
+        "_DESCRIBE_SKILL_STRIP_FIELDS must contain 'category' (internal metadata)"
     )
 
 

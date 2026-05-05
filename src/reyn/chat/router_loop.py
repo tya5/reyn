@@ -11,7 +11,7 @@ import functools
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, build_tools, get_dispatch_kind
+from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, _DESCRIBE_SKILL_STRIP_FIELDS, build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
@@ -610,10 +610,23 @@ class RouterLoop:
         return by_name
 
     def _describe_skill(self, name: str) -> dict:
-        """Return full entry for one skill, or error dict."""
+        """Return router-optimised entry for one skill, or error dict.
+
+        Returns the catalogue entry with internal-only fields stripped
+        (``routing``, ``category``) to keep the tool_response concise.
+        The ``routing`` block (when_to_use / when_not_to_use / examples)
+        averages 800–1400 chars and triggers the G12 P-b verbosity attractor
+        when included in the describe_skill tool_response (Pattern D —
+        B11-R2 diagnosis: 20% → 0% empty-stop after stripping).
+
+        ``name``, ``description``, ``input_artifact``, and ``input_fields``
+        are preserved — they are all the router needs to build a valid
+        invoke_skill call.  (P7-clean: filtering uses OS-level field names
+        in ``_DESCRIBE_SKILL_STRIP_FIELDS``, not any skill-specific strings.)
+        """
         for skill in self.host.list_available_skills():
             if skill.get("name") == name:
-                return skill
+                return {k: v for k, v in skill.items() if k not in _DESCRIBE_SKILL_STRIP_FIELDS}
         return {"error": f"skill not found: {name}"}
 
     def _list_agents(self, path: str) -> list[dict]:
