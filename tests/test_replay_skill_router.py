@@ -574,6 +574,70 @@ async def test_invoke_skill_then_remember():
 
 
 # ---------------------------------------------------------------------------
+# ── B11-R3 fix: named skill → direct invoke_skill (no list_skills first) ────
+# ---------------------------------------------------------------------------
+
+@pytest.mark.replay("fixtures/llm/router/named_skill_direct_invoke.jsonl")
+@pytest.mark.asyncio
+async def test_named_skill_direct_invoke_without_list_skills():
+    """Tier 3: B11-R3 fix — when user names a skill that appears in the
+    Available skills list, router calls invoke_skill directly (no list_skills hop).
+
+    Root cause of B9-NEW-3 / B10-NEW-2 text-reply non-determinism:
+    - Old prompt required 'call list_skills first, then invoke_skill'.
+    - Weak LLM (gemini-2.5-flash-lite) sometimes fell through to Reply intent
+      after the mandatory list_skills hop, producing a clarification text reply
+      instead of invoking the skill.
+    - The multi-verb Japanese input 'review して改善案を出して' combined with a
+      second entity name ('direct_llm') triggered the 'need clarification' path.
+
+    Fix (B11-R3): system prompt now says 'If the user names a skill in the
+    Available skills list, call invoke_skill directly (skip list_skills)'.
+
+    This test verifies the contract: the router must call invoke_skill (not
+    produce a text reply or clarification) when skill name is explicit in the
+    user message and in the Available skills list.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "skill_improver",
+                "description": "Iteratively improve an existing skill by reviewing and applying changes.",
+                "category": "general",
+                "input_artifact": "user_message | improvement_session",
+                "input_fields": ["target_skill"],
+            },
+            {
+                "name": "direct_llm",
+                "description": "Direct LLM call for single-shot tasks (summarize, classify, generate).",
+                "category": "general",
+                "input_artifact": "user_message",
+                "input_fields": [],
+            },
+        ],
+    )
+    loop = _make_loop(host)
+
+    # Exact user input from B9-S1 / B10-S1 dogfood sessions
+    await loop.run(
+        "skill_improver で direct_llm を 1 回 review して改善案を出して",
+        [],
+    )
+
+    # The router MUST have called invoke_skill (not produced a text-only reply).
+    # If the bug recurs, skill_calls will be empty and outbox will have a
+    # clarification text — the assertion catches this.
+    assert len(host.skill_calls) >= 1, (
+        "B11-R3 regression: router produced text reply instead of invoke_skill. "
+        f"Skill calls: {host.skill_calls}. Outbox: {host.outbox}"
+    )
+    # The invoked skill must be skill_improver (exact name from the user message)
+    assert host.skill_calls[0]["skill"] == "skill_improver", (
+        f"Expected skill_improver; got: {host.skill_calls[0]['skill']}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # ── Monkeypatch lifecycle invariant ─────────────────────────────────────────
 # ---------------------------------------------------------------------------
 

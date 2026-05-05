@@ -423,8 +423,14 @@ class TestBehaviourRulesAfterF3F9Fix:
     the structural fix; the prompt rules are best-effort.)"""
 
     def test_explicit_skill_name_directs_to_invoke(self):
-        """Tier 2: prompt instructs LLM that user-named skills go through
-        list_skills + invoke_skill (not direct Reply)."""
+        """Tier 2: prompt instructs LLM that user-named skills go directly to
+        invoke_skill (not list_skills first, not a text Reply).
+
+        B11-R3 fix: previously required list_skills first + stated
+        'paraphrasing the request as Reply' is wrong. Changed to direct
+        invoke_skill path when skill name is in Available skills list, which
+        closes the 'clarification text-reply' escape hatch for weak LLMs.
+        """
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="",
@@ -432,9 +438,12 @@ class TestBehaviourRulesAfterF3F9Fix:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
+        # Named skill → direct invoke_skill (B11-R3 fix: skip list_skills when
+        # skill name is already in the Available skills list)
         assert "If the user names a skill" in prompt
-        assert "list_skills + invoke_skill" in prompt
-        assert "paraphrasing" in prompt
+        assert "invoke_skill directly" in prompt
+        # Additional entities in user message are inputs, NOT clarification reasons
+        assert "inputs to the skill" in prompt or "NOT reasons to clarify" in prompt
 
     def test_reply_directly_restricted_to_chitchat(self):
         """Tier 2: 'Reply directly' rule restricted — only chitchat,

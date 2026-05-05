@@ -181,24 +181,46 @@ def build_system_prompt(
     # Fix: restore individual bullets (1 bullet = 1 MUST) per feedback_prompt_design.
     # "engage the skill ecosystem" jargon removed; duplicate list+invoke hints merged.
     #
+    # B9-NEW-3 / B10-NEW-2 fix (B11-R3): text-reply non-determinism.
+    # Root cause: weak LLM classified Japanese multi-verb input ("review して改善案を出して")
+    # as "requires clarification" (Reply intent) instead of Action, even when the
+    # skill name is explicitly visible in the Available skills list above.
+    # Structural fix (per feedback_reyn_care_boundary: pre-call structural environment):
+    #   1. When skill name is in Available skills, allow direct invoke_skill (skip list_skills).
+    #      The mandatory list_skills hop created an extra decision round that weak LLMs
+    #      exploited to fall through to Reply intent.
+    #   2. Explicit rule: additional entity names in the message are skill inputs, not
+    #      clarification triggers. Prevents the "but I need more info" text-reply escape.
+    #   3. Tighten Reply restriction: "clarifications back to the user" is permitted ONLY
+    #      when no skill name from the Available skills list appears in the user message.
+    #
     # Bullet 1 (F3+F9 — chitchat restriction, domain → Action):
     parts.append(
-        "  - Reply directly only for chitchat, questions about yourself,"
+        "  - Reply directly only for chitchat and questions about yourself."
     )
     parts.append(
-        "    and clarifications back to the user. Domain tasks → Action."
-    )
-    # Bullet 2 (F3+F9+B3-H1+M3 — explicit-skill / Action discovery path):
-    parts.append(
-        "  - For Action or explicit-skill requests, call list_skills first,"
+        "    Domain tasks → Action. Do NOT ask clarifying questions if a skill name"
     )
     parts.append(
-        "    then invoke_skill (use describe_skill in between only when you need to inspect)."
+        "    from the Available skills list appears in the user message — treat it as Action."
+    )
+    # Bullet 2 (F3+F9+B3-H1+M3+B11-R3 — explicit-skill direct path):
+    parts.append(
+        "  - If the user names a skill that appears in the Available skills list,"
     )
     parts.append(
-        "  - If the user names a skill, use list_skills + invoke_skill"
+        "    call invoke_skill directly (skip list_skills). Any other entities"
     )
-    parts.append("    rather than paraphrasing the request as a Reply.")
+    parts.append(
+        "    in the user message are inputs to the skill, NOT reasons to clarify."
+    )
+    # Bullet 2b (discovery path when skill name is unknown):
+    parts.append(
+        "  - If the skill name is NOT in the Available skills list above,"
+    )
+    parts.append(
+        "    call list_skills first, then invoke_skill."
+    )
     # Bullet 3 (B3-H1+M3 — post-list_skills MUST):
     parts.append(
         "  - After list_skills reveals at least one matching skill, you MUST"
