@@ -136,13 +136,19 @@ preprocessor:
 ---
 
 The preprocessor has deterministically resolved the skill path via the OS resolver and
-copied all target skill DSL files to the work directory. Emit the updated session with
-`target_skill_path` and `target_dsl_root` pointing to the work directory, then transition.
+copied all target skill DSL files to the work directory. Emit the updated session then
+transition to run_and_eval.
 
-The resolved paths are available in `data._resolved_paths`:
+CRITICAL — carry `_resolved_paths` verbatim: the emitted `improvement_session` artifact
+MUST include `_resolved_paths` copied exactly from `data._resolved_paths`. Do NOT construct
+path strings yourself. Do NOT omit this field — downstream phases (run_and_eval,
+plan_improvements, apply_improvements, finalize) all depend on these OS-resolved paths.
+
+The resolved paths in `data._resolved_paths` (copy all four verbatim):
 - `target_skill_path` → work-dir copy of skill.md (downstream phases use this)
 - `target_dsl_root`   → work directory root
 - `eval_spec_path`    → eval.md in the ORIGINAL skill directory (not copied to work)
 - `original_dsl_root` → original skill directory (finalize uses this for copy-back)
 
-The computed work directory is available in `data._prep.work_dir`.
+The computed work directory is available in `data._prep.work_dir` (same as
+`_resolved_paths.target_dsl_root`).

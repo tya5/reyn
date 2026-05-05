@@ -51,6 +51,23 @@ schema:
     improvement_focus:
       type: string
       description: Optional area to focus improvements on, e.g. "instruction clarity". Empty string when not specified.
+    _resolved_paths:
+      type: object
+      description: OS-resolved path fields injected by the copy_to_work preprocessor and carried verbatim through every subsequent phase. LLM MUST NOT construct these values — copy them as-is from the preprocessor output.
+      properties:
+        target_skill_path:
+          type: string
+          description: CWD-relative path to the work-copy skill.md (e.g. ".reyn/skill_improver_work/direct_llm/skill.md"). Used by run_and_eval as eval_case_input.target_skill_path.
+        target_dsl_root:
+          type: string
+          description: CWD-relative path to the work directory root (e.g. ".reyn/skill_improver_work/direct_llm"). Used by plan_improvements to glob DSL files.
+        eval_spec_path:
+          type: string
+          description: Path to the eval.md spec (in the ORIGINAL skill directory, not the work copy).
+        original_dsl_root:
+          type: string
+          description: Path to the original skill directory. Used by finalize for copy-back.
+      required: [target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root]
   required:
     - target_skill
     - case_name
@@ -60,3 +77,4 @@ schema:
     - max_iterations
     - score_threshold
     - improvement_focus
+    - _resolved_paths
