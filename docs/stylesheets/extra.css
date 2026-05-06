@@ -89,19 +89,80 @@ kbd {
   background-color: rgba(14, 13, 12, 0.92);
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
+/* Header row: brand · search · nav-links (space-between like Design) */
+.md-header__inner.md-grid {
+  max-width: 1280px !important;
+  margin: 0 auto !important;
+  padding: 18px clamp(24px, 4vw, 48px) !important;
+  gap: 24px;
+  justify-content: space-between;
+}
+/* Hide palette toggle (single scheme on this site) */
+.md-header__option {
+  display: none !important;
+}
+/* Hide Material's page-title spacer — flex layout fills the row instead */
 .md-header__title {
-  font-weight: 500;
-  letter-spacing: -0.01em;
+  display: none !important;
 }
-
-/* ---- Sidebar nav ---- */
-.md-nav__link--active,
-.md-nav__item--active > .md-nav__link {
-  color: #C8553D;
-  font-weight: 500;
+/* Fix brand: Material's .md-header__button sets display:block, override to flex */
+.md-header__button.reyn-brand {
+  display: flex !important;
+  align-items: center;
+  gap: 10px;
+  margin: 0 !important;
+  padding: 0 !important;
 }
-.md-nav__link:hover {
-  color: var(--md-default-fg-color);
+/* Search: bounded width, sits between brand and nav-links */
+.md-search {
+  flex: 1 1 auto !important;
+  max-width: 480px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.md-search__form {
+  background: #F7F6F4;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  height: 38px;
+  box-shadow: none;
+  transition: background 180ms, border-color 180ms;
+}
+.md-search__form:hover {
+  background: #F7F6F4;
+}
+[data-md-toggle="search"]:checked ~ .md-header .md-search__form,
+.md-search__input:focus ~ .md-search__form,
+.md-search__form:focus-within {
+  background: #FFFFFF;
+  border-color: #CDC9C3;
+}
+.md-search__input {
+  background: transparent !important;
+  height: 38px !important;
+  font-size: 14px !important;
+  color: #232120 !important;
+  padding-left: 38px !important;
+}
+.md-search__input::placeholder {
+  color: #807B74 !important;
+}
+.md-search__icon[for="__search"] {
+  left: 12px !important;
+  top: 11px !important;
+  width: 16px !important;
+  height: 16px !important;
+  color: #807B74 !important;
+}
+[data-md-color-scheme="slate"] .md-search__form {
+  background: #1A1917;
+}
+[data-md-color-scheme="slate"] .md-search__form:focus-within {
+  background: #232120;
+  border-color: #2E2C2A;
+}
+[data-md-color-scheme="slate"] .md-search__input {
+  color: #EFEDEA !important;
 }
 
 /* ---- Typeset headings ---- */
@@ -155,12 +216,6 @@ kbd {
   text-transform: uppercase;
 }
 
-/* ---- TOC ---- */
-.md-nav--secondary .md-nav__link--active {
-  color: #C8553D;
-  border-left-color: #C8553D;
-}
-
 /* ---- Logo: clay filter on white mark ---- */
 .md-header__button.md-logo img {
   filter: brightness(0) saturate(100%) invert(38%) sepia(48%) saturate(1100%) hue-rotate(338deg) brightness(92%) contrast(86%);
@@ -178,8 +233,15 @@ kbd {
   text-decoration: none;
   white-space: nowrap;
 }
+.reyn-brand img {
+  width: 26px;
+  height: 26px;
+  display: block;
+  object-fit: contain;
+}
 .reyn-brand__name {
   display: inline;
+  line-height: 1;
 }
 @media (max-width: 600px) {
   .reyn-brand__name { display: none; }
@@ -201,28 +263,6 @@ kbd {
 }
 .reyn-topnav-link:hover { color: #131211; }
 .reyn-topnav-link--active { color: #C8553D; }
-
-/* ---- Sidebar section headers ---- */
-.md-nav--primary .md-nav__item--section > .md-nav__link {
-  font-family: 'Geist Mono', monospace;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: #807B74;
-  font-weight: 500;
-  padding-left: 24px;
-  position: relative;
-  margin-top: 8px;
-}
-.md-nav--primary .md-nav__item--section > .md-nav__link::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 16px;
-  height: 1px;
-  background: #C8553D;
-}
 
 /* ---- Code blocks: dark background ---- */
 .md-typeset .highlight {
@@ -272,3 +312,155 @@ kbd {
 .md-footer__link {
   box-shadow: none;
 }
+
+/* ---- Docs shell layout (3-column grid, overrides Material's flex) ---- */
+.md-main__inner.md-grid {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 220px !important;
+  gap: 56px;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 clamp(24px, 4vw, 48px);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .md-main__inner.md-grid {
+    grid-template-columns: 220px minmax(0, 1fr) !important;
+  }
+  .reyn-toc-inner { display: none; }
+}
+@media (max-width: 760px) {
+  .md-main__inner.md-grid {
+    grid-template-columns: 1fr !important;
+    gap: 0;
+    padding: 0 24px;
+  }
+  .reyn-sidebar-inner { display: none; }
+}
+
+/* Reset Material's sidebar wrappers — width/height controlled by grid */
+.md-sidebar.md-sidebar--primary,
+.md-sidebar.md-sidebar--secondary {
+  position: sticky;
+  top: 88px;
+  width: auto;
+  max-height: calc(100vh - 96px);
+  padding: 0;
+  overflow: visible;
+}
+.md-sidebar__scrollwrap {
+  max-height: none;
+  overflow: visible;
+}
+.md-sidebar__inner {
+  padding: 0;
+}
+
+/* ---- Sidebar nav (reyn) ---- */
+.reyn-sidebar-inner {
+  padding: 48px 0 80px;
+  font-size: 14px;
+}
+.reyn-sidebar-section {
+  margin-bottom: 32px;
+}
+.reyn-sidebar-label {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #807B74;
+  font-weight: 500;
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.reyn-sidebar-accent {
+  display: inline-block;
+  width: 16px;
+  height: 1px;
+  background: #C8553D;
+  flex-shrink: 0;
+}
+.reyn-sidebar-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.reyn-sidebar-list a {
+  display: block;
+  padding: 6px 0 6px 14px;
+  margin-left: -14px;
+  color: #5A5651;
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  font-size: 14px;
+  transition: color 160ms, border-color 160ms;
+}
+.reyn-sidebar-list a:hover {
+  color: #131211;
+  text-decoration: none;
+}
+.reyn-sidebar-list a.active {
+  color: #C8553D;
+  border-left-color: #C8553D;
+  font-weight: 500;
+}
+.reyn-sidebar-group {
+  margin-top: 8px;
+}
+.reyn-sidebar-group-label {
+  display: block;
+  padding: 4px 0 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #807B74;
+}
+.reyn-sidebar-list--nested {
+  margin-left: 8px;
+}
+.reyn-sidebar-list--top {
+  margin-bottom: 12px;
+}
+
+/* ---- TOC rail (reyn) ---- */
+.reyn-toc-inner {
+  padding: 56px 0 80px;
+  font-size: 13px;
+}
+.reyn-toc-label {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #807B74;
+  font-weight: 500;
+  margin: 0 0 12px 0;
+}
+.reyn-toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.reyn-toc-link {
+  display: block;
+  padding: 5px 0 5px 14px;
+  color: #807B74;
+  border-left: 1px solid #E2DFDB;
+  text-decoration: none;
+  transition: color 160ms, border-color 160ms;
+}
+.reyn-toc-link:hover {
+  color: #232120;
+  text-decoration: none;
+}
+.reyn-toc-link.active {
+  color: #C8553D;
+  border-left-color: #C8553D;
+}
+.reyn-toc-link--sub {
+  padding-left: 26px;
+  font-size: 12px;
+}
+
