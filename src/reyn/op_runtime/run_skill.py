@@ -1,11 +1,14 @@
 """run_skill kind handler — invoke a sub-skill in-process."""
 from __future__ import annotations
+import logging
 from pathlib import Path
 from typing import Literal
 
 from . import register
 from .context import OpContext
 from reyn.schemas.models import RunSkillIROp
+
+_log = logging.getLogger(__name__)
 
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
@@ -30,7 +33,23 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
             dsl_root = None
         sub_skill = load_dsl_skill(skill_md_path, dsl_root=dsl_root)
 
-    model = op.model or ctx.model or "standard"
+    # Model class resolution: op.model is only honoured when it is a known model
+    # class in the resolver mapping (e.g. "light", "standard", "strong").
+    # Literal LiteLLM strings (e.g. "gpt-3.5-turbo") injected by the LLM are
+    # rejected here and fall back to the runtime model, because the proxy config
+    # (reyn.yaml models:) is the single source of truth for model selection.
+    # This prevents LLM-hallucinated model strings from bypassing the proxy.
+    if op.model and ctx.resolver and not ctx.resolver.is_known_class(op.model):
+        _log.warning(
+            "run_skill: op.model %r is not a known model class — ignoring and "
+            "inheriting runtime model %r instead. Use a model class (light / "
+            "standard / strong) defined in reyn.yaml models:.",
+            op.model,
+            ctx.model,
+        )
+        model = ctx.model or "standard"
+    else:
+        model = op.model or ctx.model or "standard"
 
     # Compute sub-state-dir based on caller context.
     sub_state_dir = ctx.sub_state_dir_override
