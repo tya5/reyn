@@ -6,7 +6,7 @@
 <title>Reyn — Gives you the reins.</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet" />
 <style>
   :root {
     --clay: #C8553D;
@@ -58,68 +58,148 @@
     padding-right: var(--pad-x);
   }
 
-  /* ---------- HERO ---------- */
+  /* ---------- HERO (V2 — Diptych) ---------- */
   .hero {
     position: relative;
-    min-height: 92vh;
-    padding-top: 48px;
-    padding-bottom: 140px;
-    background-color: #FCFBFA;
-    background-image: url('assets/bg-hero-reyn-light.png');
-    background-repeat: no-repeat;
-    background-size: cover;
-    background-position: center right;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
+    background: var(--bg);
+    color: var(--fg);
+    padding-top: 0;
+    padding-bottom: 0;
+    display: block;
+    margin-top: -75px; /* slide hero behind sticky nav so clay panel runs to the top edge */
   }
   .hero-top {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0);
+    transition: background-color 240ms var(--ease), border-color 240ms var(--ease);
+    border-bottom: 1px solid transparent;
+    pointer-events: none;
+  }
+  .hero-top .nav-row { pointer-events: auto; }
+  .hero-top .nav-row {
+    padding-top: 24px;
+    padding-bottom: 24px;
     display: flex;
     align-items: center;
     justify-content: space-between;
   }
+  .hero-top.is-stuck {
+    background-color: rgba(255, 255, 255, 0.92);
+    backdrop-filter: saturate(140%) blur(8px);
+    -webkit-backdrop-filter: saturate(140%) blur(8px);
+    border-bottom-color: var(--line);
+  }
   .brand {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     font-family: var(--font-sans);
     font-weight: 500;
     font-size: 17px;
     letter-spacing: -0.01em;
-    color: var(--fg);
+    color: var(--clay);
+    text-decoration: none;
   }
   .brand img {
     width: 26px;
     height: 26px;
     display: block;
+    object-fit: contain;
+    /* Always tinted to brand clay. Invisible on clay panel, visible on white. */
+    filter: brightness(0) saturate(100%) invert(38%) sepia(48%) saturate(1100%) hue-rotate(338deg) brightness(92%) contrast(86%);
   }
   .hero-body {
-    flex: 1;
+    margin-top: 0;
+    width: 100%;
+    max-width: none;
+    padding-left: 0;
+    padding-right: 0;
+    display: grid;
+    grid-template-columns: 1fr;
+    align-items: stretch;
+    min-height: 560px;
+  }
+  @media (min-width: 900px) {
+    .hero-body {
+      grid-template-columns: 5fr 7fr;
+      min-height: 680px;
+    }
+  }
+  .panel-clay {
+    background: var(--clay);
     display: flex;
     align-items: center;
-    margin-top: 80px;
+    justify-content: center;
+    padding: clamp(40px, 6vw, 72px);
+    min-height: 360px;
   }
-  .hero-grid {
-    max-width: 760px;
+  .panel-clay img {
+    width: 88%;
+    max-width: 640px;
+    height: auto;
+    display: block;
+  }
+  .panel-words {
+    padding: clamp(96px, 9vw, 128px) clamp(32px, 6vw, 96px) clamp(56px, 7vw, 96px);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin: 0 0 28px 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 500;
+  }
+  .hero-eyebrow .dash {
+    display: inline-block;
+    width: 18px;
+    height: 1px;
+    background: var(--clay);
   }
   .hero h1 {
     font-family: var(--font-sans);
     font-weight: 300;
-    font-size: clamp(72px, 11vw, 144px);
-    line-height: 0.95;
-    letter-spacing: -0.04em;
+    font-size: clamp(48px, 6.5vw, 88px);
+    line-height: 1;
+    letter-spacing: -0.025em;
     color: var(--fg);
-    margin: 0 0 32px 0;
+    margin: 0 0 24px 0;
+    text-transform: none;
   }
-  .hero .tagline {
-    font-size: clamp(22px, 2.4vw, 30px);
-    line-height: 1.3;
-    color: var(--fg-1);
+  .hero h1 em {
+    font-style: normal;
+    color: var(--clay);
+    font-weight: 400;
+  }
+  .hero .lede {
+    font-size: clamp(17px, 1.4vw, 19px);
+    line-height: 1.55;
+    color: var(--fg-2);
     font-weight: 300;
-    letter-spacing: -0.015em;
-    margin: 0 0 64px 0;
-    max-width: 520px;
+    letter-spacing: -0.005em;
+    max-width: 480px;
+    margin: 0 0 48px 0;
   }
+  .hero .actions {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .btn-secondary {
+    color: var(--fg-1);
+    border: 1px solid var(--line-strong);
+    background: transparent;
+  }
+  .btn-secondary:hover { border-color: var(--fg-2); color: var(--fg); }
 
   .btn {
     display: inline-flex;
@@ -147,7 +227,22 @@
   .btn-primary .arrow { transition: transform 200ms var(--ease); }
   .btn-primary:hover .arrow { transform: translateX(3px); }
 
-  /* ---------- SECTION SHELL ---------- */
+  /* ---------- SECTION HEADING (hero-echo) ---------- */
+  .section-heading {
+    font-family: var(--font-sans);
+    font-weight: 300;
+    font-size: clamp(40px, 4.6vw, 64px);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--fg);
+    margin: 0 0 64px 0;
+    max-width: 18ch;
+  }
+  .section-heading em {
+    font-style: normal;
+    color: var(--clay);
+    font-weight: 400;
+  }
   .section {
     padding-top: 140px;
     padding-bottom: 140px;
@@ -158,7 +253,7 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--fg-3);
-    margin-bottom: 56px;
+    margin-bottom: 28px;
     display: inline-flex;
     align-items: center;
     gap: 14px;
@@ -185,6 +280,11 @@
     margin: 0;
     font-weight: 300;
     letter-spacing: -0.02em;
+  }
+  .what p em {
+    font-style: normal;
+    color: var(--clay);
+    font-weight: 400;
   }
   .what p .muted {
     color: var(--fg-3);
@@ -358,29 +458,10 @@
   }
   .terminal .cmd { color: #EFEDEA; }
 
-  /* ---------- FOOTER ---------- */
-  .footer {
-    padding-top: 48px;
-    padding-bottom: 48px;
-    border-top: 1px solid var(--line);
-  }
-  .footer-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 24px;
-  }
-  .footer .brand-mini {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 13px;
-    color: var(--fg-3);
-  }
-  .footer .brand-mini img { width: 18px; height: 18px; }
+  /* ---------- (footer styles removed) ---------- */
 
-  .ic { width: 16px; height: 16px; flex: none; }
+  .ic { width: 16px; height: 16px; flex: none; color: var(--clay); }
+  .btn-primary .ic { color: #fff; }
 
   /* ---------- NAV ---------- */
   .nav-links {
@@ -394,16 +475,25 @@
     color: var(--fg-2);
     transition: color 200ms var(--ease);
   }
+  .nav-links a { color: var(--fg-2); }
   .nav-links a:hover { color: var(--fg); }
+  .hero-top.is-stuck .nav-links a { color: var(--fg-2); }
+  .hero-top.is-stuck .nav-links a:hover { color: var(--fg); }
+  .brand { color: var(--clay); }
+  .btn-primary {
+    background: var(--clay);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--clay-hover); }
 </style>
 </head>
 <body>
 
-  <!-- HERO -->
-  <section class="hero">
-    <div class="wrap hero-top">
+  <!-- STICKY NAV -->
+  <header class="hero-top">
+    <div class="wrap nav-row">
       <a href="#" class="brand" aria-label="Reyn home">
-        <img src="assets/logo-primary.svg" alt="" />
+        <img src="assets/reyn-mark-white.png" alt="" />
         <span>Reyn</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
@@ -411,14 +501,25 @@
         <a href="#">GitHub</a>
       </nav>
     </div>
-    <div class="wrap hero-body">
-      <div class="hero-grid">
-        <h1>Reyn</h1>
-        <p class="tagline">Gives you the reins.</p>
-        <a href="#start" class="btn btn-primary">
-          Get Started
-          <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </a>
+  </header>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-body">
+      <div class="panel-clay">
+        <img src="assets/reyn-wordmark-white.png" alt="Reyn" />
+      </div>
+      <div class="panel-words">
+        <p class="hero-eyebrow"><span class="dash"></span><span>Open-source orchestration</span></p>
+        <h1>Many agents.<br/>One pair of <em>reins.</em></h1>
+        <p class="lede">Reyn is the conductor for fleets of AI agents. Spawn, supervise, and stop them from one calm surface.</p>
+        <div class="actions">
+          <a href="#start" class="btn btn-primary">
+            Get Started
+            <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+          <a href="/docs" class="btn btn-secondary">Read the docs</a>
+        </div>
       </div>
     </div>
   </section>
@@ -432,7 +533,7 @@
         <span>What is Reyn</span>
       </div>
       <div class="what">
-        <p>Reyn is an AI agent orchestration system. <span class="muted">It gives you structured control over multiple agents through defined flows and phases.</span></p>
+        <p>Reyn is an AI agent <em>orchestration</em> system. <span class="muted">It gives you structured control over multiple agents through defined flows and phases.</span></p>
       </div>
     </div>
   </section>
@@ -445,6 +546,7 @@
         <span class="num">02</span>
         <span>How it works</span>
       </div>
+      <h2 class="section-heading">A skill graph, <em>conducted.</em></h2>
       <div class="how">
         <div class="how-illu" role="img" aria-label="Agents fan out from a single source along curved paths"></div>
         <div class="how-text">
@@ -463,6 +565,7 @@
         <span class="num">03</span>
         <span>Key concepts</span>
       </div>
+      <h2 class="section-heading">Three <em>primitives.</em> Nothing more.</h2>
       <div class="concepts">
         <div class="concept">
           <div class="label">Agent</div>
@@ -491,9 +594,9 @@
         <span class="num">04</span>
         <span>Get started</span>
       </div>
+      <h2 class="section-heading">One install. <em>No service to run.</em></h2>
       <div class="install">
         <div>
-          <h3>One install. No service to run.</h3>
           <a href="/docs" class="docs-link">
             Read the docs
             <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -510,15 +613,7 @@
     </div>
   </section>
 
-  <!-- FOOTER -->
-  <footer class="footer">
-    <div class="wrap footer-inner">
-      <div class="brand-mini">
-        <img src="assets/logo-primary.svg" alt="" />
-        <span>Reyn — open source under MIT</span>
-      </div>
-    </div>
-  </footer>
+  <!-- FOOTER BANNER + FOOTER intentionally removed -->
 
 <script>
   const btn = document.getElementById('copyBtn');
@@ -538,6 +633,20 @@
         setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
       }
     });
+  }
+
+  // Sticky-nav: toggle .is-stuck once the clay hero panel has scrolled past the nav
+  const navEl = document.querySelector('.hero-top');
+  const clayPanel = document.querySelector('.panel-clay');
+  if (navEl && clayPanel) {
+    const updateStuck = () => {
+      const navH = navEl.offsetHeight;
+      const clayBottom = clayPanel.getBoundingClientRect().bottom;
+      navEl.classList.toggle('is-stuck', clayBottom <= navH);
+    };
+    updateStuck();
+    window.addEventListener('scroll', updateStuck, { passive: true });
+    window.addEventListener('resize', updateStuck);
   }
 </script>
 </body>
