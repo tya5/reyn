@@ -71,16 +71,32 @@ def _new_agent_history_entries(session, baseline: int) -> list[str]:
     return out
 
 
-async def _await_agent_idle(session, *, timeout: float) -> bool:
-    """Poll until the session has no pending inbox items and no running
-    skills (= the run loop is parked at ``inbox.get()``). Returns True
-    on idle, False on timeout."""
+async def _await_turn_complete(
+    session, *, baseline: int, timeout: float
+) -> bool:
+    """Wait until the agent has produced at least one new ``role="agent"``
+    history entry past ``baseline`` AND the run loop is back to idle
+    (inbox empty + no running skills). Returns True on completion, False
+    on timeout.
+
+    The negative-signal-only approach (= "looks idle, no work in flight")
+    used to false-positive: between ``submit_user_text`` returning and
+    the run loop's ``inbox.get()`` actually picking up the message,
+    there's a window where the inbox briefly looks empty even though
+    nothing has been processed yet. Adding the positive signal (= a
+    new agent reply landed in history) closes that race — we only
+    declare done once the agent has measurably emitted something AND
+    the run loop has parked.
+    """
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
-        # The run loop pops an inbox item, processes it, then loops back
-        # to ``inbox.get()``. "Idle" = empty queue + nothing in flight.
-        if session.inbox.empty() and not session.running_skills:
-            # Grace period to let the router emit its final outbox push.
+        has_reply = any(
+            msg.role == "agent" for msg in session.history[baseline:]
+        )
+        is_idle = session.inbox.empty() and not session.running_skills
+        if has_reply and is_idle:
+            # Grace period to absorb a possible second `agent_response`
+            # follow-up in the same turn (= multi-iteration router loops).
             await asyncio.sleep(_IDLE_GRACE_SECONDS)
             if session.inbox.empty() and not session.running_skills:
                 return True
@@ -137,7 +153,9 @@ async def send_to_agent_impl(
     baseline = len(session.history)
     await session.submit_user_text(message)
 
-    idle = await _await_agent_idle(session, timeout=timeout)
+    idle = await _await_turn_complete(
+        session, baseline=baseline, timeout=timeout
+    )
     new_replies = _new_agent_history_entries(session, baseline)
     reply_text = "\n\n".join(new_replies).strip()
 
