@@ -99,44 +99,118 @@ async def test_header_refresh_updates_status():
 # ── test: input bar ───────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_input_bar_has_slash_names():
-    """InputBar hint footer contains slash command names from registry."""
+async def test_input_bar_has_slash_commands():
+    """InputBar receives slash commands from the registry on mount."""
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         inputbar = app.query_one("#inputbar", InputBar)
-        # Registry is loaded in on_mount; slash names should be populated
-        assert len(inputbar._slash_names) > 0, "slash names should be non-empty"
+        names = {c.name for c in inputbar._slash_commands}
+        assert names, "slash commands should be non-empty"
         # Expect well-known commands
-        assert "list" in inputbar._slash_names
-        assert "agents" in inputbar._slash_names
-        assert "cost" in inputbar._slash_names
+        assert "list" in names
+        assert "agents" in names
+        assert "cost" in names
 
 
 @pytest.mark.asyncio
 async def test_input_bar_typing():
-    """Typing into the Input widget updates its value."""
+    """Typing into the TextArea updates its text."""
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
-        await pilot.click("#input")  # focus the input inside InputBar
+        await pilot.click("#input")  # focus the TextArea inside InputBar
         await pilot.press("h", "e", "l", "l", "o")
-        from textual.widgets import Input
-        inp = app.query_one("#input", Input)
-        assert inp.value == "hello"
+        from textual.widgets import TextArea
+        ta = app.query_one("#input", TextArea)
+        assert ta.text == "hello"
 
 
 @pytest.mark.asyncio
 async def test_input_bar_clear_on_submit():
-    """Input is cleared after Enter is pressed with text."""
+    """TextArea is cleared after Enter is pressed with text."""
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         await pilot.click("#input")
         await pilot.press("h", "i", "enter")
-        from textual.widgets import Input
-        inp = app.query_one("#input", Input)
-        assert inp.value == ""  # cleared after submit
+        from textual.widgets import TextArea
+        ta = app.query_one("#input", TextArea)
+        assert ta.text == ""  # cleared after submit
+
+
+@pytest.mark.asyncio
+async def test_slash_picker_shows_on_slash_prefix():
+    """Typing '/' opens the SlashPicker with matches."""
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        await pilot.click("#input")
+        picker = app.query_one("#slash-picker", SlashPicker)
+        assert not picker.has_matches
+        await pilot.press("slash")
+        await pilot.pause()
+        assert picker.has_matches, "picker should show matches after '/' typed"
+        assert picker.visible_
+
+
+@pytest.mark.asyncio
+async def test_slash_picker_filters_by_prefix():
+    """Picker narrows down as user types more characters."""
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        await pilot.click("#input")
+        await pilot.press("slash", "l", "i")
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+        assert picker.has_matches
+        names = {c.name for c in picker._matches}
+        # All matches should start with "li" (e.g., "list")
+        assert all(n.startswith("li") for n in names), names
+
+
+@pytest.mark.asyncio
+async def test_slash_picker_tab_confirms():
+    """Tab inserts the highlighted command name into the input."""
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from textual.widgets import TextArea
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        await pilot.click("#input")
+        await pilot.press("slash", "l", "i", "s")
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+        assert picker.has_matches
+        await pilot.press("tab")
+        await pilot.pause()
+        ta = app.query_one("#input", TextArea)
+        # First match for "lis" should be "/list "
+        assert ta.text.startswith("/list ")
+        assert not picker.visible_
+
+
+@pytest.mark.asyncio
+async def test_slash_picker_escape_dismisses():
+    """Escape hides the picker but leaves text intact."""
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+    from textual.widgets import TextArea
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        await pilot.click("#input")
+        await pilot.press("slash", "l")
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+        assert picker.visible_
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not picker.visible_
+        ta = app.query_one("#input", TextArea)
+        assert ta.text == "/l"
 
 
 # ── test: conversation view ───────────────────────────────────────────────────

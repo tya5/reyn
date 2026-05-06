@@ -57,10 +57,6 @@ InputBar {
     padding: 0 1;
 }
 
-InputBar.palette-open #hints {
-    display: none;
-}
-
 InputBar TextArea {
     background: transparent;
     border: none;
@@ -75,31 +71,6 @@ InputBar #hints {
     color: #666666;
     padding: 0 1;
     dock: bottom;
-}
-
-/* Command palette overlay */
-CommandPalette {
-    background: #1a1a1a;
-    border: tall $primary;
-    padding: 0 1;
-    height: auto;
-    max-height: 12;
-    min-width: 50;
-}
-
-CommandPalette .palette-item {
-    padding: 0 1;
-    height: 1;
-}
-
-CommandPalette .palette-item:hover {
-    background: $primary 30%;
-}
-
-CommandPalette .palette-item--selected {
-    background: $primary 50%;
-    color: #ffffff;
-    text-style: bold;
 }
 
 /* Intervention widget */
