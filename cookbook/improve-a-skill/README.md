@@ -25,7 +25,7 @@ under-specified so the improver has something to fix. Copy it into your
 local skill area:
 
 ```bash
-cp -r examples/improve-a-skill/sample_skill reyn/local/sample_skill
+cp -r cookbook/improve-a-skill/sample_skill reyn/local/sample_skill
 ```
 
 Quick sanity check:

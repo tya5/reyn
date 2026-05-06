@@ -21,7 +21,7 @@ models:
 # ───────────────────────────────────────────────────────────────────────────
 # MCP servers (optional). Stdlib skills like `read_local_files` need a
 # `filesystem` server. Uncomment below to enable, or see the full example at
-# examples/configs/with-mcp.yaml.  Run the server manually first to verify:
+# cookbook/configs/with-mcp.yaml.  Run the server manually first to verify:
 #   npx -y @modelcontextprotocol/server-filesystem .
 # Full setup guide: docs/en/how-to/use-an-mcp-server.md
 # ───────────────────────────────────────────────────────────────────────────

@@ -29,7 +29,7 @@ Read a file from the project (or anywhere the configured `filesystem` MCP server
    Without this, Reyn prompts interactively on every MCP call; in headless / non-TTY environments
    (CI, piped stdin, dogfood scripts) the prompt cannot be answered and every call returns
    `permission_denied`, causing the skill to exit empty.
-3. See [`examples/configs/with-mcp.yaml`](https://github.com/tya5/reyn/blob/main/examples/configs/with-mcp.yaml) for a complete
+3. See [`cookbook/configs/with-mcp.yaml`](https://github.com/tya5/reyn/blob/main/cookbook/configs/with-mcp.yaml) for a complete
    working example — copy it to your project root and rename to `reyn.yaml`.
 
 A `filesystem` MCP server MUST be configured in `reyn.yaml` under that exact name.

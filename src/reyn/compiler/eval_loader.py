@@ -4,8 +4,8 @@ Parser for eval.md spec files.
 Format:
   ---
   type: eval
-  app: dsl/apps/foo/app.md
-  dsl_root: dsl/
+  skill: reyn/project/foo/skill.md
+  dsl_root: reyn/
   model: standard
   ---
 

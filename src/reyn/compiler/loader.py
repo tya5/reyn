@@ -35,7 +35,7 @@ def _collect_shared_dirs(dsl_root: Path, kind: str) -> list[Path]:
     """
     Return shared/<kind> directories to search in priority order (lowest first):
       1. installed stdlib/<kind>
-      2. dsl_root/shared/<kind>   (user-provided dsl root)
+      2. dsl_root/shared/<kind>   (caller-supplied skill root)
     """
     stdlib = _stdlib_dir(kind)
     dsl_shared = dsl_root / "shared" / kind
@@ -126,13 +126,10 @@ def load_dsl_skill(
     Directory resolution order:
       1. <skill_dir>/artifacts/  and  <skill_dir>/phases/       (skill-local)
       2. <dsl_root>/shared/artifacts/  and  .../phases/         (inferred shared)
-      3. <cwd>/dsl/shared/artifacts/   and  .../phases/         (project fallback)
 
-    The project fallback lets workspace-generated skills reference shared artifacts
-    (e.g. user_message) without requiring --dsl-root.
-
-    skill_md_path : path to the skill .md file  (dsl/skills/<name>/skill.md)
-    dsl_root      : root of the dsl/ tree. Defaults to <skill_dir>.parent.parent.
+    skill_md_path : path to the skill .md file  (e.g. reyn/project/<name>/skill.md)
+    dsl_root      : root of the skill tree (typically reyn/ or src/reyn/stdlib).
+                    Defaults to <skill_dir>.parent.parent.
     """
     skill_path = Path(skill_md_path)
     skill_dir = skill_path.parent

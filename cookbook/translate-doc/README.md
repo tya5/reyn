@@ -21,7 +21,7 @@ this recipe defines a small one under `reyn/local/`.
 Copy the skill into your local skill area:
 
 ```bash
-cp -r examples/translate-doc/translate_doc reyn/local/translate_doc
+cp -r cookbook/translate-doc/translate_doc reyn/local/translate_doc
 ```
 
 ## Run
