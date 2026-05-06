@@ -82,22 +82,53 @@ shadow しても見えないものを見るための iterative loop。
   の案件は [giveup-tracker.md](giveup-tracker.md) で managed list 化。
   Reyn は production-grade フェーズなので「MVP defer」 でなく着手 trigger を
   必ず明記する
+- **修正分類明示 (batch 13 で確立)**: fix landing 時に **🟡 仕様変更 / 🔵 不具合修正
+  / 🔵 doc 追加** を declare。 user 視点の API/UX 変化を contract として透明化、
+  doc 違反 fix の早期検出にも寄与
+- **documented design 整合性 audit (batch 13 で確立)**: fix dispatch 前に doc
+  compliance check。 fix accumulation で system が complex に感じる時、 真因は
+  doc 違反 fix の introduction の可能性。 「user の simplicity smell test」 が
+  re-calibration の信頼できる mechanism
+- **N≥5 stability discipline (batch 11 で確立)**: stability metric を主張する時
+  N=1 / N=2 sample 不可、 milestone declaration は N≥5 で 60%+ 達成必須
+- **API issue 時の main agent 直接実行 fallback (batch 14 で確立)**: sub-agent
+  dispatch failure 時に main agent (= Opus) で sequential mechanical task を
+  直接実行できる。 mechanical task は dispatch overhead を考慮して直接実行も
+  cost-efficient な candidate
 
 ## Milestone
 
-🏆 **2026-05-05 batch 10 — Reyn dogfood 史上初の chain 完走 via `reyn chat`**:
-`skill_improver で direct_llm を 1 回 review して改善案を出して` が `reyn chat`
-経由で 6 phase 全完走 (= prepare → copy_to_work → run_and_eval → plan_improvements
-→ apply_improvements → finalize) + sub-skill (eval_builder/eval) 完了 + narrator
-経由 user 通知。 batch 7 の観測 infra 整備 → batch 8 累積 fix verify → batch 9
-wrong layer trap 発見 → batch 10 chain 完走 という 4 batch progression の到達点。
-B10 retro 参照: `2026-05-05-batch-10-residual-fix-wave/retrospective.md`
+🏆 **2026-05-06 batch 14 — Reyn dogfood production-grade phase 1 完了**:
+N=5 で **5/5 (100%) complete rate** 達成、 batch 7-14 の 8 batch progression の
+到達点。 chain 完走 stability + routing reliability 100% + R1 fix (= literal
+model class fallback) で LLM hallucinate を OS が救済する operational evidence
+確立。 documented design 整合性復帰 + Brier 0.18 で calibration discipline best。
+B14 retro 参照: `2026-05-06-batch-14-stability-extension/retrospective.md`
 
-> **⚠️ Provisional milestone (= N=1 sample)** — batch 11 5-shot retest revealed
-> this Run 2 completion was a non-deterministic lucky case. batch 11 N=5 showed
-> 0/5 complete rate due to B11-NEW-1 (preprocessor `run_op` permission denied).
-> Real milestone confirmation is target of batch 12 (= N≥5 with ≥60% complete).
-> See `../2026-05-06-batch-12-real-milestone/` for resolution.
+### Provisional milestone (= 経過記録)
+
+🏆 **2026-05-05 batch 10 — Reyn dogfood 史上初の chain 完走 via `reyn chat`**
+**(provisional, N=1 sample)**: `skill_improver で direct_llm を 1 回 review して
+改善案を出して` が `reyn chat` 経由で 6 phase 全完走 + sub-skill + narrator。
+
+> **⚠️ N=1 lucky case** だったことが batch 11 5-shot retest で判明
+> (= 0/5 complete、 別 blocker 露呈)。 real milestone は batch 14 で N=5/5 で確定。
+> 詳細は B10 retro + B11-S2-stability + B14-S2-stability 参照。
+
+### batch 7-14 progression
+
+| Batch | 主成果 |
+|---|---|
+| batch 7 | 観測 infra (= REYN_LLM_TRACE_DUMP / dogfood_trace / llm_replay / detect_attractor 4 道具) 整備 + care boundary 言語化 |
+| batch 8 | 4 区分 prediction 導入、 「fix 1 件 = 1 layer 解消、 次 layer の new blocker >50% 確率で露呈」 構造的性質を data 化 |
+| batch 9 | wrong layer trap 発見 (= test pass + e2e 失敗)、 verify-first principle 確立 |
+| batch 10 | provisional milestone (N=1) + reproduce-first principle 確立 + resolved-indirectly classification |
+| batch 11 | G12 attractor Pattern D structural fix で 50%→0% 解消、 N≥5 stability discipline 確立 |
+| batch 12 | B11-NEW-1 fix (= worktree CWD vs stdlib_root() 乖離 deep diagnose) |
+| batch 13 | doc 違反 fix revert + V3 wording 仕様変更 + reyn.local.yaml dogfood pre-approval pattern + real milestone (4/5) |
+| batch 14 | R1 (literal model fallback) + R2 (wrong-layer fixture) + R3 (doc 化) + N=5 5/5 = production-grade phase 1 完了 |
+
+Calibration progression: Brier 0.96 → 0.55 → 0.30 → 0.65 → 0.40 → 0.20 → 0.18
 
 ## Batch 一覧
 
@@ -113,7 +144,11 @@ B10 retro 参照: `2026-05-05-batch-10-residual-fix-wave/retrospective.md`
 | [batch-7-post-infra-verify](2026-05-04-batch-7-post-infra-verify/) | 2026-05-04 | 5 件 (chain 完走 verify / G3 retest / B4-M1 retest / 仮説 a verify / eval_builder 直接) + 4 retroactive | 「6 commit fix の e2e verify」 のつもりが、 user 「LLM が見たもの確認した?」 介入で **観測 infra 整備** に redirect、 そこから **推測スタック解体 → 観測ベース fix 連鎖 → care boundary 言語化** の構造的成果。 道具 4 種 (REYN_LLM_TRACE_DUMP / dogfood_trace 3 mode / llm_replay --patch/--diff/--n / detect_attractor) 整備、 RETRO-H1〜H4 で過去推測 1.5/4 訂正、 router enum + preprocessor anyOf + B8-NEW-1+2 + Option F (G12 retry 却下) fix 連鎖、 ADR 0021 + care boundary doc (en+ja) + 5 つ目 feedback memory 永続化 | RETRO-H1 verified (= router enum fix 有効、 hallucination 57%→0%) / G12 50% probabilistic (= Option F observe-only 採用) / B7-NEW-1 (router dot-notation) / B7-S5b-NEW (preprocessor anyOf regression) / B8-NEW-1+2 (= path 2 retest 経由発見) ほか |
 | [batch-8-cumulative-verify](2026-05-04-batch-8-cumulative-verify/) | 2026-05-04 | 5 件 (S1-S5 累積 fix verify) | 8 commit 累積効果を chat 経路 e2e verify する観測 batch。 期待した chain 完走は未達、 代わりに **新 blocker 4 件発見** (B8-NEW-3〜6) + B8-NEW-2 fix の e2e 初確認 + router 1-turn shortcut 改善 (B7 5 turns → B8 1 turn)。 4 区分 prediction (verified/inconclusive/refuted/blocked) を導入、 累積 fix verify では「fix 1 件 = 1 layer 解消、 次 layer の new blocker は >50% 確率で露呈」 という構造的性質を data で実証 | B8-NEW-3 (eval_builder stdlib path) / B8-NEW-4 (tool function description 非 truncate) / B8-NEW-5 (router intent misrouting) / B8-NEW-6 (_extract_skill_name unknown type) / G15-G18 giveup-tracker 化 |
 | [batch-9-fix-wave](2026-05-05-batch-9-fix-wave/) | 2026-05-05 | 3 fix dispatch (G15/G16/G17) + post-fix retest sub-wave | batch 8 で確定した 3 HIGH bug を sonnet 並列 dispatch、 retest sub-wave で per-fix verify。 **G15 真に effective** (chain が write_eval まで到達、 Reyn 史上初 layer)、 **G17 wrong layer trap** (test 通過 + e2e 失敗、 fixture と runtime artifact 構造乖離)、 **G16 no-effect** (weak LLM が wording 差を読まない)。 「fix の層で base rate を切り分け」 calibration 確立、 Brier 0.96 → 0.55 改善。 教訓: **「fix verify は per-fix Tier 3 e2e cross-check 必須」** | B9-NEW-1 (write_eval validation) / B9-NEW-2 (G17 wrong layer) / B9-NEW-3 (router invoke duplication) |
-| [batch-10-residual-fix-wave](2026-05-05-batch-10-residual-fix-wave/) | 2026-05-05 | verify-first 4-step (Step 1 verify / Step 2 diagnose / Step 3 integration / Step 4 wrap) | **Reyn dogfood 史上初の chain 完走 via `reyn chat`** 達成 milestone batch **(provisional, real milestone in B12)**。 **B9-NEW-2 fix 1 件のみが真の bug、 NEW-1/NEW-3 は downstream symptom (resolved-indirectly)**。 verify-first + reproduce-first principle で不要 fix 2 件回避。 Brier 0.55 → 0.30 で 3 batch 連続 calibration 改善。 残課題は probabilistic non-determinism (G12 25% / B9-NEW-3 50%)、 batch 11 で structural fix。 batch 7→8→9→10 の 4 batch progression の milestone 地点 | B10-NEW-1 (temp workspace path mismatch) / B10-NEW-2 (router text-reply non-determinism) + B9-NEW-1/3 resolved-indirectly classification |
+| [batch-10-residual-fix-wave](2026-05-05-batch-10-residual-fix-wave/) | 2026-05-05 | verify-first 4-step (Step 1 verify / Step 2 diagnose / Step 3 integration / Step 4 wrap) | **Reyn dogfood 史上初の chain 完走 via `reyn chat`** 達成 milestone batch **(provisional, N=1 sample、 real milestone は batch 14)**。 **B9-NEW-2 fix 1 件のみが真の bug、 NEW-1/NEW-3 は downstream symptom (resolved-indirectly)**。 verify-first + reproduce-first principle で不要 fix 2 件回避。 Brier 0.55 → 0.30 で 3 batch 連続 calibration 改善。 残課題は probabilistic non-determinism (G12 25% / B9-NEW-3 50%) | B10-NEW-1 (temp workspace path mismatch) / B10-NEW-2 (router text-reply non-determinism) + B9-NEW-1/3 resolved-indirectly classification |
+| [batch-11-non-determinism-reduction](2026-05-05-batch-11-non-determinism-reduction/) | 2026-05-05 | 3 sonnet 並列 fix (R1 path schema / R2 G12 Pattern D / R3 router text-reply) + N=5 stability retest | non-determinism reduction theme。 R2 G12 Pattern D (= describe_skill routing field strip) で 50%→0% 構造的解消 (= 4 batch 跨ぎ G12 戦争に決定的解消) ✅。 R3 inconclusive、 R1 partially confirmed。 N=5 stability で **0/5 complete** 観察、 batch 10 milestone が N=1 lucky case だったことが判明 — **「stability 測定は N≥5 必須」 + 「resolved-indirectly classification は N-shot verification 必須」** という新 discipline 確立。 Brier 0.30 → 0.65 退行 (= N=1 を base rate に使った overestimate が主因) | B11-NEW-1 (CRITICAL: copy_to_work `run_op` permission_denied) / B11-NEW-2 (HIGH: R3 routing 60% rate 残存) + G12 Pattern D resolved |
+| [batch-12-real-milestone](2026-05-06-batch-12-real-milestone/) | 2026-05-06 | verify-first 4-step (R1 fix + R2 diagnose + M1 milestone hygiene + M2 fixture audit + S3 N=5) | B11-NEW-1 真因が **worktree CWD vs `stdlib_root()` 乖離** (= editable install + worktree path divergence) と判明、 R1 で `stdlib_root()` を default zone 追加 (後に doc 違反として batch 13 で revert)。 N=5 で 0/5 complete、 routing 100% / partial 100% で **B12-NEW-1 (= python step non-interactive auto-approve gap)** が真の dominant blocker と確定。 R3 fix の retroactive verified 格上げ (= batch 11 inconclusive 訂正)。 Brier 0.65 → 0.40 復帰 | B12-NEW-1 (CRITICAL: python step approval gap) + M2 audit B12-NEW-2/3/4/5 (= 4 wrong-layer fixture trap) |
+| [batch-13-revert-and-real-milestone](2026-05-06-batch-13-revert-and-real-milestone/) | 2026-05-06 | revert + V3 wording + N=5 (= user 「permission system 簡潔に説明できますか?」 介入で軌道修正) | **user simplicity smell test 介入** で documented design 違反 fix 群を発見、 G15 (`651a053`) + R1 (`2219b20`) を **revert** (= 不具合修正)。 B12-NEW-1 候補は **却下** (= doc 違反の symmetric 拡張)。 V3 wording fix (= ABSOLUTE rule + JA examples) で routing-fail 40-50% → 5% (= 仕様変更)、 reyn.local.yaml pre-approval pattern (= layer 3 mechanism 運用) 確立。 N=5 で **4/5 (80%) complete** で **real milestone CONFIRMED** ✅。 Brier 0.40 → 0.20 で 13 batch 中 best、 「documented design 整合性 audit」 + 「修正分類明示」 新原則確立 | B13-NEW-1 (MED: eval.run_target literal model string) + G15/R1 revert + V3 wording landed |
+| [batch-14-stability-extension](2026-05-06-batch-14-stability-extension/) | 2026-05-06 | 3 並列 fix (R1 model class / R2 fixture / R3 doc) + N=5 (= 仕様変更ゼロ batch) | 🏆 **production-grade phase 1 完了 declaration**。 N=5 で **5/5 (100%) complete** 達成 (= batch 13 80% → batch 14 100% で +20pp)。 R1 (= `run_skill` literal model fallback) が 3 fire 観察、 LLM hallucinate を OS が transparent 救済する operational evidence 確立。 R2 = wrong-layer fixture 修正、 R3 = reyn.local.yaml pattern doc 化。 全 fix が 🔵 不具合修正 / doc 追加 で 仕様変更ゼロ batch、 production user 影響なし。 Brier 0.20 → 0.18 で 8 batch 中 best | (なし、 chain 完走 path 完成) + observation: Run 2 phase skip (= LLM の graph navigation variance、 monitor 候補) |
 
 ## こちらの心境
 
