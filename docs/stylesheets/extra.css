@@ -1,0 +1,171 @@
+/* ============================================================
+   Reyn — mkdocs-material overrides
+   Minimal. Calm. White ground. One accent. No gradients. No shadows.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+
+/* ---- Light mode ---- */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:              #C8553D;
+  --md-primary-fg-color--light:       #EAB1A1;
+  --md-primary-fg-color--dark:        #863526;
+  --md-primary-bg-color:              #FFFFFF;
+  --md-primary-bg-color--light:       #FCFBFA;
+
+  --md-accent-fg-color:               #C8553D;
+  --md-accent-fg-color--transparent:  rgba(200, 85, 61, 0.1);
+  --md-accent-bg-color:               #FBEEEA;
+
+  --md-default-fg-color:              #131211;
+  --md-default-fg-color--light:       #5A5651;
+  --md-default-fg-color--lighter:     #807B74;
+  --md-default-fg-color--lightest:    #A8A39C;
+  --md-default-bg-color:              #FFFFFF;
+  --md-default-bg-color--light:       #FCFBFA;
+  --md-default-bg-color--lighter:     #F7F6F4;
+  --md-default-bg-color--lightest:    #EFEDEA;
+
+  --md-code-fg-color:                 #232120;
+  --md-code-bg-color:                 #F7F6F4;
+  --md-typeset-a-color:               #C8553D;
+
+  --md-shadow-z1: none;
+  --md-shadow-z2: none;
+  --md-shadow-z3: none;
+}
+
+/* ---- Dark mode ---- */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:              #C8553D;
+  --md-primary-fg-color--light:       #EAB1A1;
+  --md-primary-fg-color--dark:        #863526;
+  --md-primary-bg-color:              #0E0D0C;
+  --md-primary-bg-color--light:       #1A1917;
+
+  --md-accent-fg-color:               #DD8C75;
+  --md-accent-fg-color--transparent:  rgba(200, 85, 61, 0.15);
+  --md-accent-bg-color:               #3A1710;
+
+  --md-default-fg-color:              #EFEDEA;
+  --md-default-fg-color--light:       #A8A39C;
+  --md-default-fg-color--lighter:     #807B74;
+  --md-default-fg-color--lightest:    #5A5651;
+  --md-default-bg-color:              #0E0D0C;
+  --md-default-bg-color--light:       #1A1917;
+  --md-default-bg-color--lighter:     #232120;
+  --md-default-bg-color--lightest:    #2E2C2A;
+
+  --md-code-fg-color:                 #EFEDEA;
+  --md-code-bg-color:                 #131211;
+  --md-typeset-a-color:               #DD8C75;
+
+  --md-shadow-z1: none;
+  --md-shadow-z2: none;
+  --md-shadow-z3: none;
+}
+
+/* ---- Fonts ---- */
+body,
+.md-typeset {
+  font-family: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    'Helvetica Neue', Arial, sans-serif;
+}
+.md-typeset code,
+.md-typeset pre,
+kbd {
+  font-family: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* ---- Header ---- */
+.md-header {
+  background-color: rgba(255, 255, 255, 0.92);
+  backdrop-filter: saturate(140%) blur(8px);
+  -webkit-backdrop-filter: saturate(140%) blur(8px);
+  border-bottom: 1px solid #E2DFDB;
+  box-shadow: none;
+}
+[data-md-color-scheme="slate"] .md-header {
+  background-color: rgba(14, 13, 12, 0.92);
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+.md-header__title {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Sidebar nav ---- */
+.md-nav__link--active,
+.md-nav__item--active > .md-nav__link {
+  color: #C8553D;
+  font-weight: 500;
+}
+.md-nav__link:hover {
+  color: var(--md-default-fg-color);
+}
+
+/* ---- Typeset headings ---- */
+.md-typeset h1 {
+  font-weight: 300;
+  letter-spacing: -0.025em;
+  color: var(--md-default-fg-color);
+}
+.md-typeset h2 {
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  border-top: 1px solid var(--md-default-bg-color--lightest);
+  padding-top: 1rem;
+}
+.md-typeset h2:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+.md-typeset h3 {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* ---- Inline code ---- */
+.md-typeset code {
+  border: 1px solid var(--md-default-bg-color--lightest);
+  border-radius: 4px;
+}
+.md-typeset pre > code {
+  border: none;
+}
+
+/* ---- Code blocks ---- */
+.md-typeset .highlight {
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+/* ---- Admonitions ---- */
+.md-typeset .admonition,
+.md-typeset details {
+  border-radius: 6px;
+  border: 1px solid var(--md-default-bg-color--lightest);
+  box-shadow: none;
+}
+.md-typeset .admonition-title,
+.md-typeset summary {
+  font-family: 'Geist Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* ---- TOC ---- */
+.md-nav--secondary .md-nav__link--active {
+  color: #C8553D;
+  border-left-color: #C8553D;
+}
+
+/* ---- Prev/next footer ---- */
+.md-footer {
+  background-color: var(--md-default-bg-color--light);
+  border-top: 1px solid var(--md-default-bg-color--lightest);
+}
+.md-footer__link {
+  box-shadow: none;
+}
