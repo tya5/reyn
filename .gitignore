@@ -29,6 +29,11 @@ improver_state.json
 site/
 tmp/
 
+# Built landing page output — regenerated from website/copy.yaml +
+# website/index.html via website/build.py. The source files are tracked;
+# the build artefact is not.
+website/dist/
+
 # 別リポジトリで管理する本書ドラフト (Zenn Books)
 # reyn の reveal を守るため reyn repo には commit しない
 zenn-book/

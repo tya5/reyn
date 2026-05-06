@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Reyn — Gives you the reins.</title>
+<title>{{PAGE_TITLE}}</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&family=Quicksand:wght@500;600;700&display=swap" rel="stylesheet" />
@@ -497,8 +497,8 @@
         <span>Reyn</span>
       </a>
       <nav class="nav-links" aria-label="Primary">
-        <a href="/docs">Docs</a>
-        <a href="#">GitHub</a>
+        <a href="/docs">{{NAV_DOCS}}</a>
+        <a href="{{NAV_GITHUB_HREF}}">{{NAV_GITHUB}}</a>
       </nav>
     </div>
   </header>
@@ -510,15 +510,15 @@
         <img src="assets/reyn-wordmark-white.png" alt="Reyn" />
       </div>
       <div class="panel-words">
-        <p class="hero-eyebrow"><span class="dash"></span><span>Open-source orchestration</span></p>
-        <h1>Many agents.<br/>One pair of <em>reins.</em></h1>
-        <p class="lede">Reyn is the conductor for fleets of AI agents. Spawn, supervise, and stop them from one calm surface.</p>
+        <p class="hero-eyebrow"><span class="dash"></span><span>{{HERO_EYEBROW}}</span></p>
+        <h1>{{HERO_H1_HTML}}</h1>
+        <p class="lede">{{HERO_LEDE}}</p>
         <div class="actions">
           <a href="#start" class="btn btn-primary">
-            Get Started
+            {{HERO_CTA_PRIMARY}}
             <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
-          <a href="/docs" class="btn btn-secondary">Read the docs</a>
+          <a href="/docs" class="btn btn-secondary">{{HERO_CTA_SECONDARY}}</a>
         </div>
       </div>
     </div>
@@ -529,11 +529,11 @@
     <div class="wrap">
       <div class="section-eyebrow">
         <span class="accent"></span>
-        <span class="num">01</span>
-        <span>What is Reyn</span>
+        <span class="num">{{S01_NUM}}</span>
+        <span>{{S01_LABEL}}</span>
       </div>
       <div class="what">
-        <p>Reyn is an AI agent <em>orchestration</em> system. <span class="muted">It gives you structured control over multiple agents through defined flows and phases.</span></p>
+        <p>{{S01_BODY_HTML}}</p>
       </div>
     </div>
   </section>
@@ -543,15 +543,15 @@
     <div class="wrap">
       <div class="section-eyebrow">
         <span class="accent"></span>
-        <span class="num">02</span>
-        <span>How it works</span>
+        <span class="num">{{S02_NUM}}</span>
+        <span>{{S02_LABEL}}</span>
       </div>
-      <h2 class="section-heading">A skill graph, <em>conducted.</em></h2>
+      <h2 class="section-heading">{{S02_HEADING_HTML}}</h2>
       <div class="how">
         <div class="how-illu" role="img" aria-label="Agents fan out from a single source along curved paths"></div>
         <div class="how-text">
-          <p>Reyn connects agents through a skill graph.</p>
-          <p>Each phase is driven by LLM decisions within a constrained, auditable runtime.</p>
+          <p>{{S02_BODY_P1}}</p>
+          <p>{{S02_BODY_P2}}</p>
         </div>
       </div>
     </div>
@@ -562,25 +562,25 @@
     <div class="wrap">
       <div class="section-eyebrow">
         <span class="accent"></span>
-        <span class="num">03</span>
-        <span>Key concepts</span>
+        <span class="num">{{S03_NUM}}</span>
+        <span>{{S03_LABEL}}</span>
       </div>
-      <h2 class="section-heading">Three <em>primitives.</em> Nothing more.</h2>
+      <h2 class="section-heading">{{S03_HEADING_HTML}}</h2>
       <div class="concepts">
         <div class="concept">
-          <div class="label">Agent</div>
-          <h4>One worker, one skill.</h4>
-          <p>A scoped agent with a single skill, a memory window, and the right to call tools.</p>
+          <div class="label">{{S03_C1_LABEL}}</div>
+          <h4>{{S03_C1_TITLE}}</h4>
+          <p>{{S03_C1_BODY}}</p>
         </div>
         <div class="concept">
-          <div class="label">Flow</div>
-          <h4>A graph of phases.</h4>
-          <p>A directed graph that routes work between agents based on decisions and state.</p>
+          <div class="label">{{S03_C2_LABEL}}</div>
+          <h4>{{S03_C2_TITLE}}</h4>
+          <p>{{S03_C2_BODY}}</p>
         </div>
         <div class="concept">
-          <div class="label">Control</div>
-          <h4>An auditable runtime.</h4>
-          <p>Every step is logged, replayable, and can be paused or steered mid-flight.</p>
+          <div class="label">{{S03_C3_LABEL}}</div>
+          <h4>{{S03_C3_TITLE}}</h4>
+          <p>{{S03_C3_BODY}}</p>
         </div>
       </div>
     </div>
@@ -591,14 +591,14 @@
     <div class="wrap">
       <div class="section-eyebrow">
         <span class="accent"></span>
-        <span class="num">04</span>
-        <span>Get started</span>
+        <span class="num">{{S04_NUM}}</span>
+        <span>{{S04_LABEL}}</span>
       </div>
-      <h2 class="section-heading">One install. <em>No service to run.</em></h2>
+      <h2 class="section-heading">{{S04_HEADING_HTML}}</h2>
       <div class="install">
         <div>
           <a href="/docs" class="docs-link">
-            Read the docs
+            {{S04_DOCS_LINK}}
             <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
           </a>
         </div>
@@ -607,7 +607,7 @@
             <span class="label">terminal</span>
             <button class="copy" type="button" id="copyBtn" aria-label="Copy install command">Copy</button>
           </div>
-          <div class="row"><span class="prompt">$</span><span class="cmd" id="cmd">pip install reyn</span></div>
+          <div class="row"><span class="prompt">$</span><span class="cmd" id="cmd">{{S04_INSTALL_CMD}}</span></div>
         </div>
       </div>
     </div>

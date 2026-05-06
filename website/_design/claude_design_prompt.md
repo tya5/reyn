@@ -56,4 +56,43 @@ Page structure (5 sections, top to bottom):
 - Color accent (#C8553D) appears on: logo tint if needed, CTA button, section divider accents only
 - Output: single self-contained index.html with all CSS inlined
 </constraints>
+
+<copy_placeholder_convention>
+Body copy is maintained separately in `website/copy.yaml` and substituted
+into the page at build time by `website/build.py`. The HTML you output
+must use `{{TOKEN}}` placeholders for all visible body text — never
+literal copy. This lets us regenerate the design without re-editing the
+real copy.
+
+Use these exact token names (they map 1:1 onto keys in `copy.yaml`):
+
+- `{{PAGE_TITLE}}` — `<title>` text
+- `{{NAV_DOCS}}`, `{{NAV_GITHUB}}`, `{{NAV_GITHUB_HREF}}` — primary nav
+- `{{HERO_EYEBROW}}` — small uppercase tagline above the H1
+- `{{HERO_H1_HTML}}` — main H1 (HTML allowed — wrap accent words in `<em>`)
+- `{{HERO_LEDE}}` — paragraph below the H1
+- `{{HERO_CTA_PRIMARY}}`, `{{HERO_CTA_SECONDARY}}` — button labels
+- `{{S01_NUM}}`, `{{S01_LABEL}}`, `{{S01_BODY_HTML}}` — "What is Reyn"
+- `{{S02_NUM}}`, `{{S02_LABEL}}`, `{{S02_HEADING_HTML}}`, `{{S02_BODY_P1}}`, `{{S02_BODY_P2}}` — "How it works"
+- `{{S03_NUM}}`, `{{S03_LABEL}}`, `{{S03_HEADING_HTML}}` — "Key concepts" header
+- `{{S03_C1_LABEL}}`, `{{S03_C1_TITLE}}`, `{{S03_C1_BODY}}` — concept card 1
+- `{{S03_C2_LABEL}}`, `{{S03_C2_TITLE}}`, `{{S03_C2_BODY}}` — concept card 2
+- `{{S03_C3_LABEL}}`, `{{S03_C3_TITLE}}`, `{{S03_C3_BODY}}` — concept card 3
+- `{{S04_NUM}}`, `{{S04_LABEL}}`, `{{S04_HEADING_HTML}}`, `{{S04_DOCS_LINK}}`, `{{S04_INSTALL_CMD}}` — "Get started"
+
+Rules:
+1. Place placeholders inside the natural HTML element where copy belongs
+   (e.g. `<h1>{{HERO_H1_HTML}}</h1>`, not as attribute values).
+2. If a section calls for emphasised words rendered in the brand clay
+   colour, leave that emphasis to the YAML value — wrap with `<em>`
+   inside the YAML, not in the HTML around the placeholder.
+3. If you introduce a new copy slot, name it consistently
+   (`{{S05_LABEL}}`, etc.) and tell the maintainer to add the matching
+   key to `copy.yaml`. Do not invent names that overlap existing ones.
+4. Do not write fallback copy as a placeholder default. The build script
+   warns about missing keys; we want to catch additions explicitly.
+5. Header / footer / nav copy and link `href`s also go through tokens
+   (e.g. `{{NAV_GITHUB_HREF}}` for the GitHub URL). Don't hard-code
+   `https://github.com/...` URLs.
+</copy_placeholder_convention>
 ```

@@ -1,0 +1,88 @@
+# website/copy.yaml — single source of truth for landing page body copy.
+#
+# index.html uses {{TOKEN}} placeholders. Each value below is inserted as
+# raw HTML, so accent words can be wrapped in <em>...</em> to render in the
+# brand clay colour (see CSS rules for h1 em / .section-heading em / .what
+# p em).
+#
+# Build:
+#   python website/build.py    # writes website/dist/index.html
+#
+# Workflow when Claude Design regenerates index.html:
+#   1. The new index.html should keep the {{TOKEN}} placeholders. The
+#      generation prompt in website/_design/claude_design_prompt.md tells
+#      Claude Design to preserve them.
+#   2. If a regeneration introduces new copy slots, add a matching key
+#      here. If a slot disappears, the key becomes unused (build.py warns
+#      on unused keys).
+#   3. Edit values in this file freely — index.html no longer holds copy.
+
+# ── document head ───────────────────────────────────────────────────────────
+PAGE_TITLE: "Reyn — predictable LLM workflows"
+
+# ── header / nav ────────────────────────────────────────────────────────────
+NAV_DOCS: "Docs"
+NAV_GITHUB: "GitHub"
+NAV_GITHUB_HREF: "https://github.com/tya5/reyn"
+
+# ── hero ────────────────────────────────────────────────────────────────────
+HERO_EYEBROW: "Open-source LLM workflow OS"
+HERO_H1_HTML: "Many agents.<br/>One pair of <em>reins.</em>"
+HERO_LEDE: >-
+  Reyn is an LLM workflow OS. Phase transitions are constrained, validated,
+  and replayable — predictability for production agents, not just experiments.
+HERO_CTA_PRIMARY: "Get Started"
+HERO_CTA_SECONDARY: "Read the docs"
+
+# ── section 01: What is Reyn ────────────────────────────────────────────────
+S01_NUM: "01"
+S01_LABEL: "What is Reyn"
+S01_BODY_HTML: >-
+  Reyn is a runtime <em>engine</em>, not just an orchestrator.
+  <span class="muted">Every LLM transition is gated by a JSON-schema-validated
+  contract and a closed candidate set. The LLM decides; the OS enforces.</span>
+
+# ── section 02: How it works ────────────────────────────────────────────────
+S02_NUM: "02"
+S02_LABEL: "How it works"
+S02_HEADING_HTML: "A skill graph, <em>conducted.</em>"
+S02_BODY_P1: >-
+  A Skill is a directed graph of Phases. Each Phase declares its input
+  contract and runs to completion under a permission scope you control.
+S02_BODY_P2: >-
+  The LLM picks only from candidates the OS provides. Output is validated
+  against the next Phase's input schema, and every decision lands in an
+  append-only event log.
+
+# ── section 03: Key concepts ────────────────────────────────────────────────
+S03_NUM: "03"
+S03_LABEL: "Key concepts"
+S03_HEADING_HTML: "Three <em>primitives.</em> Nothing more."
+
+S03_C1_LABEL: "Agent"
+S03_C1_TITLE: "A long-lived process."
+S03_C1_BODY: >-
+  A scoped runner with a memory window, a permission scope, and a curated
+  set of Skills it can invoke.
+
+S03_C2_LABEL: "Skill"
+S03_C2_TITLE: "A graph of phases."
+S03_C2_BODY: >-
+  A directed graph plus a final-output schema. The OS routes work between
+  Phases based on LLM decisions and validated artifacts.
+
+S03_C3_LABEL: "OS"
+S03_C3_TITLE: "An auditable runtime."
+S03_C3_BODY: >-
+  Builds context, validates every output, executes Control IR ops under
+  permission gates, and logs everything for replay.
+
+# ── section 04: Get started ─────────────────────────────────────────────────
+S04_NUM: "04"
+S04_LABEL: "Get started"
+S04_HEADING_HTML: "One install. <em>No service to run.</em>"
+S04_DOCS_LINK: "Read the docs"
+# Note: alpha installs from git, not PyPI. We show the aspirational pip
+# install line on the LP and let the docs explain the git-clone path. If
+# this feels misleading, replace with: "git clone https://github.com/tya5/reyn"
+S04_INSTALL_CMD: "pip install reyn"
