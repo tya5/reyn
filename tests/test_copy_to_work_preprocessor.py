@@ -146,9 +146,9 @@ def test_copy_to_work_copies_skill_md(tmp_path, monkeypatch):
     The work dir's skill.md must have identical content to the source.
     """
     monkeypatch.chdir(tmp_path)
-    dsl_root = _make_fake_skill(tmp_path, "my_skill")
+    skill_root = _make_fake_skill(tmp_path, "my_skill")
     artifact = _make_artifact("my_skill")
-    source_skill_md = dsl_root / "skill.md"
+    source_skill_md = skill_root / "skill.md"
 
     _run_preprocessor(tmp_path, artifact)
 
@@ -186,7 +186,7 @@ def test_copy_to_work_glob_does_not_leak_other_skills(tmp_path, monkeypatch):
     """Tier 2b: files from sibling skills are not copied into the work dir (B4-L1).
 
     When multiple skills exist under the same parent directory, the glob is
-    scoped to original_dsl_root only — no leakage into sibling skill directories.
+    scoped to original_skill_root only — no leakage into sibling skill directories.
     """
     monkeypatch.chdir(tmp_path)
     _make_fake_skill(tmp_path, "my_skill")

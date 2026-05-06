@@ -26,7 +26,7 @@ Generate the file content exactly in this format:
 ---
 type: eval
 skill: {skill_analysis.skill_dsl_path}
-dsl_root: {skill_analysis.dsl_root}
+skill_root: {skill_analysis.skill_root}
 ---
 
 ## case: {case.name}

@@ -89,7 +89,7 @@ prepare  →  copy_to_work  →  run_and_eval  →  plan_improvements  →  appl
 | Phase | Role | Responsibility |
 |-------|------|----------------|
 | `prepare` | coordinator | Parses the request, ensures an `eval.md` exists (auto-generates via `eval_builder` if not), picks a test case, initializes session state |
-| `copy_to_work` | workspace_initializer | Globs the target skill's DSL files, copies them to `.reyn/skill_improver_work/<name>/`, and updates `target_dsl_root` in the session to the temp path |
+| `copy_to_work` | workspace_initializer | Globs the target skill's DSL files, copies them to `.reyn/skill_improver_work/<name>/`, and updates `target_skill_root` in the session to the temp path |
 | `run_and_eval` | evaluator | Invokes the `eval` stdlib skill via `run_skill`; records the score in `iteration_state` |
 | `plan_improvements` | architect | Reads the target's DSL files from the work dir, diagnoses the weakest phase, and proposes minimal DSL changes targeting failing criteria. Adapts strategy from iteration history (regression / stagnation detection) |
 | `apply_improvements` | implementer | Writes the proposed changes to the work dir, persists iteration state to `.reyn/improver_state.json`, then either **transitions to finalize** or **rolls back** to `run_and_eval` for iteration N+1 |
@@ -129,7 +129,7 @@ reyn run skill_improver '{
 }'
 ```
 
-If no `eval.md` exists at `<target_dsl_root>/eval.md`, `prepare` invokes `eval_builder` to generate one before the loop starts. If `target_skill_path` is missing, `prepare` asks for it via `ask_user`.
+If no `eval.md` exists at `<target_skill_root>/eval.md`, `prepare` invokes `eval_builder` to generate one before the loop starts. If `target_skill_path` is missing, `prepare` asks for it via `ask_user`.
 
 ## Output
 

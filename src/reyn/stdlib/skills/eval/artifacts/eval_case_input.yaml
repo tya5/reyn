@@ -15,9 +15,9 @@ schema:
     target_skill_path:
       type: string
       description: Path to the target skill's skill.md file.
-    dsl_root:
+    skill_root:
       type: string
-      description: DSL root to use when loading the target skill. Defaults to the skill's parent directory.
+      description: Skill-tree root to use when loading the target skill. Defaults to the skill's parent directory.
     phase_criteria:
       type: array
       description: Per-phase quality criteria to evaluate. Phases not listed are skipped.

@@ -110,7 +110,7 @@ def compute_paths(artifact: dict) -> dict:
 
     Returns a dict with the following keys:
         skill_dir         — absolute-relative path to the skill directory
-        dsl_root          — DSL root containing the skill (e.g. "src/reyn/stdlib")
+        skill_root          — skill-tree root containing the skill (e.g. "src/reyn/stdlib")
         target_skill      — the short skill name (no path, no .md)
         skill_dsl_path    — skill_dir + "/skill.md"
         phases_glob       — glob pattern for all phase files
@@ -125,9 +125,9 @@ def compute_paths(artifact: dict) -> dict:
     target_skill = _extract_skill_name(artifact)
 
     # OS-level path resolution — structural guarantee against hallucinated paths
-    skill_dir, dsl_root = resolve_skill_path(target_skill)
+    skill_dir, skill_root = resolve_skill_path(target_skill)
     skill_dir_str = str(skill_dir).rstrip("/")
-    dsl_root_str = str(dsl_root).rstrip("/")
+    skill_root_str = str(skill_root).rstrip("/")
 
     # eval_md_path_for returns skill_dir/eval.md via resolve_skill_path;
     # for stdlib skills this is inside src/ (read-only zone) — eval_output_path
@@ -137,7 +137,7 @@ def compute_paths(artifact: dict) -> dict:
 
     return {
         "skill_dir": skill_dir_str,
-        "dsl_root": dsl_root_str,
+        "skill_root": skill_root_str,
         "target_skill": target_skill,
         "skill_dsl_path": skill_dir_str + "/skill.md",
         "phases_glob": skill_dir_str + "/phases/*.md",

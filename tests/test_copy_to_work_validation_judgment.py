@@ -123,9 +123,9 @@ def _make_frame(skill, validation_ok: bool) -> ContextFrame:
                 # resolved paths written by preprocessor Step 9 (inject_resolved_paths)
                 "_resolved_paths": {
                     "target_skill_path": ".reyn/skill_improver_work/direct_llm/skill.md",
-                    "target_dsl_root": ".reyn/skill_improver_work/direct_llm",
+                    "target_skill_root": ".reyn/skill_improver_work/direct_llm",
                     "eval_spec_path": "reyn/local/direct_llm/phases/eval.md",
-                    "original_dsl_root": "reyn/local/direct_llm",
+                    "original_skill_root": "reyn/local/direct_llm",
                 },
             },
         },

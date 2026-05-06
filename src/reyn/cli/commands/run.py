@@ -38,9 +38,9 @@ def register(sub) -> None:
         help="Python module path exposing a 'skill' object (e.g. examples.writing_skill.skill)",
     )
     p.add_argument(
-        "--dsl-root", default=None, dest="dsl_root", metavar="DIR",
+        "--skill-root", default=None, dest="skill_root", metavar="DIR",
         help=(
-            "Root of the DSL tree for shared artifact/phase resolution. "
+            "Root of the skill tree for shared artifact/phase resolution. "
             "Inferred automatically when using app name or --app-path. "
             "Override with this flag when the inferred root is wrong."
         ),

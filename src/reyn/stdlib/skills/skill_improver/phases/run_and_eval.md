@@ -27,7 +27,7 @@ The `iterations` array represents only iterations whose `apply_improvements` has
 ## Step 2 — Build eval_case_input
 
 Construct the input artifact for the `eval` sub-skill from the input `improvement_session`.
-All path fields (`target_skill_path`, `target_dsl_root`, `eval_spec_path`) are resolved by
+All path fields (`target_skill_path`, `target_skill_root`, `eval_spec_path`) are resolved by
 the OS preprocessor in copy_to_work and stored in the session as `_resolved_paths`. Use
 those resolved values — do NOT construct path strings yourself.
 
@@ -39,7 +39,7 @@ those resolved values — do NOT construct path strings yourself.
     "case_input": "<session.case_input>",
     "spec_path": "<session._resolved_paths.eval_spec_path>",
     "target_skill_path": "<session._resolved_paths.target_skill_path>",
-    "dsl_root": "<session._resolved_paths.target_dsl_root>",
+    "skill_root": "<session._resolved_paths.target_skill_root>",
     "phase_criteria": <session.phase_criteria>
   }
 }

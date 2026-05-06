@@ -31,7 +31,7 @@ def stdlib_root() -> Path:
 
 
 def resolve_skill_path(name: str) -> tuple[Path, Path]:
-    """Resolve a short skill name to (skill_dir, dsl_root).
+    """Resolve a short skill name to (skill_dir, skill_root).
 
     Search order: reyn/local → reyn/project → stdlib/skills.
 
@@ -46,9 +46,9 @@ def resolve_skill_path(name: str) -> tuple[Path, Path]:
         (Path("reyn") / "project" / name,  Path("reyn")),
         (sl / "skills" / name,             sl),
     ]
-    for skill_dir, dsl_root in candidates:
+    for skill_dir, skill_root in candidates:
         if (skill_dir / "skill.md").exists():
-            return skill_dir, dsl_root
+            return skill_dir, skill_root
     raise SkillNotFoundError(name, [str(d / "skill.md") for d, _ in candidates])
 
 

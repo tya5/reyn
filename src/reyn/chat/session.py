@@ -996,9 +996,9 @@ class ChatSession:
         run_id = plan.run_id
         meta = _run_meta(run_id, skill_name)
         try:
-            skill_dir, dsl_root = resolve_skill_path(skill_name)
+            skill_dir, skill_root = resolve_skill_path(skill_name)
             skill = load_dsl_skill(
-                str(skill_dir / "skill.md"), dsl_root=str(dsl_root),
+                str(skill_dir / "skill.md"), skill_root=str(skill_root),
             )
         except (SkillNotFoundError, Exception) as exc:
             self._chat_events.emit(
@@ -1137,7 +1137,7 @@ class ChatSession:
         """Load a stdlib skill by its directory name. Propagates parse errors."""
         sl = stdlib_root()
         skill_md = sl / "skills" / skill_name / "skill.md"
-        return load_dsl_skill(str(skill_md), dsl_root=str(sl))
+        return load_dsl_skill(str(skill_md), skill_root=str(sl))
 
     async def _run_stdlib_skill(
         self,
@@ -2514,7 +2514,7 @@ class ChatSession:
     ) -> None:
         meta = _run_meta(run_id, skill_name)
         try:
-            skill_dir, dsl_root = resolve_skill_path(skill_name)
+            skill_dir, skill_root = resolve_skill_path(skill_name)
         except SkillNotFoundError:
             # P6 audit completeness: skill_run_spawned was emitted earlier; emit
             # skill_run_failed for the error path so events log captures every
@@ -2528,7 +2528,7 @@ class ChatSession:
             ))
             return
         try:
-            skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
+            skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
         except Exception as exc:
             # P6 audit completeness: pair with skill_run_spawned above.
             self._chat_events.emit(
@@ -2988,7 +2988,7 @@ class ChatSession:
         self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
 
         try:
-            skill_dir, dsl_root = resolve_skill_path(skill_name)
+            skill_dir, skill_root = resolve_skill_path(skill_name)
         except SkillNotFoundError:
             # P6 audit completeness: skill_run_spawned was emitted above; we must
             # emit a corresponding skill_run_failed for the error path so the
@@ -3000,7 +3000,7 @@ class ChatSession:
             return {"status": "error", "data": {"error": f"skill not found: {skill_name}"}}
 
         try:
-            skill = load_dsl_skill(str(skill_dir / "skill.md"), dsl_root=str(dsl_root))
+            skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
         except Exception as exc:
             # P6 audit completeness: pair with skill_run_spawned above.
             self._chat_events.emit(

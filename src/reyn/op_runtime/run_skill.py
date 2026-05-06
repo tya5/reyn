@@ -29,11 +29,11 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         if "/" not in skill_ref and not skill_ref.endswith(".md"):
             skill_dir, inferred_root = resolve_skill_path(skill_ref)
             skill_md_path = str(skill_dir / "skill.md")
-            dsl_root = str(inferred_root) if inferred_root else None
+            skill_root = str(inferred_root) if inferred_root else None
         else:
             skill_md_path = skill_ref
-            dsl_root = None
-        sub_skill = load_dsl_skill(skill_md_path, dsl_root=dsl_root)
+            skill_root = None
+        sub_skill = load_dsl_skill(skill_md_path, skill_root=skill_root)
 
     # Model class resolution: op.model is only honoured when it is a known model
     # class in the resolver mapping (e.g. "light", "standard", "strong").

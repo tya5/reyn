@@ -56,7 +56,7 @@ def _op_file() -> ControlIROpSpec:
     return ControlIROpSpec(
         kind="file",
         description="Read a file",
-        example={"kind": "file", "op": "read", "path": "dsl/skills/article_generator/skill.md"},
+        example={"kind": "file", "op": "read", "path": "reyn/project/article_generator/skill.md"},
     )
 
 
@@ -82,7 +82,7 @@ def test_analyze_skill_produces_per_case_criteria():
             "type": "user_message",
             "data": {
                 "text": "Generate an eval spec for the article_generator skill.",
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
@@ -157,7 +157,7 @@ def test_wrong_input_raises_missing_fixture():
             "type": "user_message",
             "data": {
                 "text": "Generate an eval spec for the article_generator skill.",
-                "skill_path": "dsl/skills/DIFFERENT_SKILL",  # <-- modified
+                "skill_path": "reyn/project/DIFFERENT_SKILL",  # <-- modified
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
@@ -207,7 +207,7 @@ def test_analyze_skill_recovers_from_malformed_prior_attempt():
             "type": "user_message",
             "data": {
                 "text": "Generate an eval spec for the article_generator skill.",
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(
@@ -217,7 +217,7 @@ def test_analyze_skill_recovers_from_malformed_prior_attempt():
             {
                 "kind": "file",
                 "op": "read",
-                "path": "dsl/skills/article_generator/skill.md",
+                "path": "reyn/project/article_generator/skill.md",
                 "content": "# article_generator\n\nGenerates a polished article on a given topic.",
                 "status": "ok",
             }
@@ -296,7 +296,7 @@ def test_analyze_skill_with_conflicting_user_criteria():
                     "Japanese article when the input topic is in Japanese. "
                     "Make sure both requirements are reflected in the criteria."
                 ),
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),

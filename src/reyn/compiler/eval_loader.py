@@ -5,7 +5,7 @@ Format:
   ---
   type: eval
   skill: reyn/project/foo/skill.md
-  dsl_root: reyn/
+  skill_root: reyn/
   model: standard
   ---
 
@@ -64,7 +64,7 @@ class EvalCase:
 @dataclass
 class EvalSpec:
     skill_dsl_path: str
-    dsl_root: str | None
+    skill_root: str | None
     model: str | None
     cases: list[EvalCase]
 
@@ -96,7 +96,7 @@ def load_eval_spec(spec_path: str | Path) -> EvalSpec:
 
     return EvalSpec(
         skill_dsl_path=skill_dsl_path,
-        dsl_root=fm.get("dsl_root"),
+        skill_root=fm.get("skill_root"),
         model=fm.get("model"),
         cases=cases,
     )

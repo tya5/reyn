@@ -102,7 +102,7 @@ async def execute_skill_node(
 
     events.emit("skill_node_started", node=node_id, skill_path=node_spec.skill_path)
 
-    sub_skill = load_dsl_skill(node_spec.skill_path, dsl_root=node_spec.dsl_root)
+    sub_skill = load_dsl_skill(node_spec.skill_path, skill_root=node_spec.skill_root)
 
     sub_runtime = OSRuntime(
         sub_skill,

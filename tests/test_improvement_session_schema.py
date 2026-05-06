@@ -86,8 +86,8 @@ def test_improvement_session_schema_resolved_paths_is_required():
 def test_improvement_session_schema_resolved_paths_sub_properties():
     """Tier 2: _resolved_paths sub-schema must declare all four path sub-fields.
 
-    Invariant: all four path fields (target_skill_path, target_dsl_root,
-    eval_spec_path, original_dsl_root) must be declared as sub-properties so
+    Invariant: all four path fields (target_skill_path, target_skill_root,
+    eval_spec_path, original_skill_root) must be declared as sub-properties so
     that _strip_data does not strip nested path fields.  Each downstream phase
     depends on at least one of these fields.
     """
@@ -96,9 +96,9 @@ def test_improvement_session_schema_resolved_paths_sub_properties():
     sub_props = resolved_schema.get("properties", {})
     expected = {
         "target_skill_path",
-        "target_dsl_root",
+        "target_skill_root",
         "eval_spec_path",
-        "original_dsl_root",
+        "original_skill_root",
     }
     missing = expected - set(sub_props.keys())
     assert not missing, (
@@ -134,9 +134,9 @@ def test_strip_data_preserves_resolved_paths_when_declared():
         "improvement_focus": "",
         "_resolved_paths": {
             "target_skill_path": ".reyn/skill_improver_work/direct_llm/skill.md",
-            "target_dsl_root": ".reyn/skill_improver_work/direct_llm",
+            "target_skill_root": ".reyn/skill_improver_work/direct_llm",
             "eval_spec_path": "reyn/local/direct_llm/phases/eval.md",
-            "original_dsl_root": "reyn/local/direct_llm",
+            "original_skill_root": "reyn/local/direct_llm",
         },
     }
 

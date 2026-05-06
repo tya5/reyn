@@ -100,8 +100,8 @@ Emit `improvement_result` with:
 - `termination_reason`: from the table in Step 3
 - `summary`: prose describing the score progression and what changed
 - `next_steps`: a concrete command — typically `reyn eval <eval_spec_path>` where `eval_spec_path` = `state.session._resolved_paths.eval_spec_path`
-- `work_dsl_root`: `state.session._resolved_paths.target_dsl_root` (the temp work directory)
-- `original_dsl_root`: `state.session._resolved_paths.original_dsl_root` (the original skill directory)
+- `work_skill_root`: `state.session._resolved_paths.target_skill_root` (the temp work directory)
+- `original_skill_root`: `state.session._resolved_paths.original_skill_root` (the original skill directory)
 - `copied_back`: `false` (finalize will update this field)
 
 ## Output (rollback path)

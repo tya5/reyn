@@ -119,7 +119,7 @@ class Phase(BaseModel):
 class SkillNodeSpec(BaseModel):
     """Runtime descriptor for a skill node in a parent skill's graph."""
     skill_path: str              # absolute path to sub-skill's skill.md
-    dsl_root: str                # dsl_root used to load the sub-skill
+    skill_root: str              # skill_root used to load the sub-skill
     workspace: str               # "isolated" | "shared"
     entry_input_schema: dict      # sub-app entry phase input_schema (for candidate building)
     entry_input_schema_name: str = "artifact"  # type name for display

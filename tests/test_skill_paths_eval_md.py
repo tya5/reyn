@@ -136,10 +136,10 @@ def test_compute_paths_uses_resolve_skill_path(tmp_path, monkeypatch):
     skill_dir, _ = resolve_skill_path("direct_llm")
     expected_root = str(skill_dir).rstrip("/")
 
-    assert result["original_dsl_root"] == expected_root, (
-        "compute_paths must derive original_dsl_root from resolve_skill_path"
+    assert result["original_skill_root"] == expected_root, (
+        "compute_paths must derive original_skill_root from resolve_skill_path"
     )
-    assert result["target_dsl_root"] == expected_root
+    assert result["target_skill_root"] == expected_root
     assert result["target_skill_path"] == expected_root + "/skill.md"
     assert result["eval_spec_path"] == expected_root + "/eval.md"
     assert result["work_dir"] == ".reyn/skill_improver_work/direct_llm"
@@ -163,7 +163,7 @@ def test_compute_paths_stdlib_skill(tmp_path, monkeypatch):
     skill_dir, _ = resolve_skill_path("skill_improver")
     expected_root = str(skill_dir).rstrip("/")
 
-    assert result["original_dsl_root"] == expected_root
+    assert result["original_skill_root"] == expected_root
     assert "stdlib" in expected_root, (
         "stdlib skill must resolve to the stdlib path, not reyn/local/"
     )

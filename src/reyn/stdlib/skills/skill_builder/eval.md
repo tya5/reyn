@@ -1,7 +1,7 @@
 ---
 type: eval
 skill: src/stdlib/skills/skill_builder/skill.md
-dsl_root: src/
+skill_root: src/
 ---
 
 ## case: simple_article_writer

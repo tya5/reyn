@@ -1156,13 +1156,13 @@ async def test_run_skill_awaitable_routes_to_router_loop_agent_replies(
     # Fake: resolve_skill_path returns a dummy path pair.
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
-    dummy_dsl_root = tmp_path
+    dummy_skill_root = tmp_path
 
     def _fake_resolve(skill_name):
-        return dummy_skill_dir, dummy_dsl_root
+        return dummy_skill_dir, dummy_skill_root
 
     # Fake: load_dsl_skill returns a sentinel (agent.run is also faked).
-    def _fake_load_dsl_skill(path, *, dsl_root):
+    def _fake_load_dsl_skill(path, *, skill_root):
         return object()
 
     monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)
@@ -1223,7 +1223,7 @@ async def test_no_double_history_append_on_agent_reply(tmp_path, monkeypatch):
     def _fake_resolve(skill_name):
         return tmp_path / "skill", tmp_path
 
-    def _fake_load_dsl_skill(path, *, dsl_root):
+    def _fake_load_dsl_skill(path, *, skill_root):
         return object()
 
     monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)

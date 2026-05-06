@@ -100,7 +100,7 @@ type and extracts the skill name without requiring the LLM to construct paths.
 ---
 type: eval
 skill: reyn/local/my_skill/skill.md
-dsl_root: reyn/local/
+skill_root: reyn/local/
 ---
 
 ## case: typical_input

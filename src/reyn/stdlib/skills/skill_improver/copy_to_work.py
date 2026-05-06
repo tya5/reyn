@@ -16,16 +16,16 @@ def build_copy_plan(artifact):
     """Step 4: combine glob results into a list of {src, rel} pairs.
 
     Reads:
-      data._prep.original_dsl_root
+      data._prep.original_skill_root
       data._glob_skill.matches  — from run_op glob result
       data._glob_phases.matches — from run_op glob result
 
-    Returns: [{src, rel}] where rel is the path relative to original_dsl_root.
+    Returns: [{src, rel}] where rel is the path relative to original_skill_root.
     """
     data = artifact.get("data", {})
     prep = data.get("_prep", {})
-    original_dsl_root = str(prep.get("original_dsl_root", "")).rstrip("/")
-    prefix = original_dsl_root + "/"
+    original_skill_root = str(prep.get("original_skill_root", "")).rstrip("/")
+    prefix = original_skill_root + "/"
 
     glob_skill = data.get("_glob_skill", {})
     glob_phases = data.get("_glob_phases", {})
@@ -53,15 +53,15 @@ def build_write_ops(artifact):
     Reads:
       data._reads  — list of run_op file/read results [{path, content, status, ...}]
       data._prep.work_dir
-      data._prep.original_dsl_root
+      data._prep.original_skill_root
 
     Returns: [{dst, content}] — one entry per successfully-read file.
     """
     data = artifact.get("data", {})
     prep = data.get("_prep", {})
     work_dir = str(prep.get("work_dir", "")).rstrip("/")
-    original_dsl_root = str(prep.get("original_dsl_root", "")).rstrip("/")
-    prefix = original_dsl_root + "/"
+    original_skill_root = str(prep.get("original_skill_root", "")).rstrip("/")
+    prefix = original_skill_root + "/"
 
     reads = data.get("_reads", [])
     write_ops = []
@@ -114,32 +114,32 @@ def inject_resolved_paths(artifact):
 
     After the copy, downstream phases (run_and_eval, plan_improvements,
     apply_improvements, finalize) need backward-compat path fields:
-    target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root.
+    target_skill_path, target_skill_root, eval_spec_path, original_skill_root.
 
-    The work_dir copy already happened; target_dsl_root is updated to the work copy.
+    The work_dir copy already happened; target_skill_root is updated to the work copy.
 
     Reads:
       data._prep.target_skill_path    (resolved by compute_paths in step 1)
-      data._prep.target_dsl_root      (original — becomes original_dsl_root)
+      data._prep.target_skill_root      (original — becomes original_skill_root)
       data._prep.eval_spec_path
-      data._prep.work_dir             (becomes the new target_dsl_root)
+      data._prep.work_dir             (becomes the new target_skill_root)
       data._prep.skill_slug
 
-    Returns: {target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root}
+    Returns: {target_skill_path, target_skill_root, eval_spec_path, original_skill_root}
     """
     data = artifact.get("data", {})
     prep = data.get("_prep", {})
     work_dir = str(prep.get("work_dir", "")).rstrip("/")
-    original_dsl_root = str(prep.get("original_dsl_root", "")).rstrip("/")
+    original_skill_root = str(prep.get("original_skill_root", "")).rstrip("/")
     eval_spec_path = str(prep.get("eval_spec_path", ""))
 
-    # After copy, target_skill_path and target_dsl_root point to the work copy
-    new_target_dsl_root = work_dir
+    # After copy, target_skill_path and target_skill_root point to the work copy
+    new_target_skill_root = work_dir
     new_target_skill_path = work_dir + "/skill.md"
 
     return {
         "target_skill_path": new_target_skill_path,
-        "target_dsl_root": new_target_dsl_root,
+        "target_skill_root": new_target_skill_root,
         "eval_spec_path": eval_spec_path,
-        "original_dsl_root": original_dsl_root,
+        "original_skill_root": original_skill_root,
     }

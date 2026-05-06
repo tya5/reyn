@@ -21,7 +21,7 @@ def inject_resolved_paths(artifact):
 
     Reads:
       data._prep.skill_dir
-      data._prep.dsl_root
+      data._prep.skill_root
       data._prep.target_skill
       data._prep.skill_dsl_path
       data._prep.phases_glob
@@ -36,7 +36,7 @@ def inject_resolved_paths(artifact):
 
     return {
         "skill_dir": str(prep.get("skill_dir", "")),
-        "dsl_root": str(prep.get("dsl_root", "")),
+        "skill_root": str(prep.get("skill_root", "")),
         "target_skill": str(prep.get("target_skill", "")),
         "skill_dsl_path": str(prep.get("skill_dsl_path", "")),
         "phases_glob": str(prep.get("phases_glob", "")),

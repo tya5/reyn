@@ -79,7 +79,7 @@ def _op_file() -> ControlIROpSpec:
     return ControlIROpSpec(
         kind="file",
         description="Read a file",
-        example={"kind": "file", "op": "read", "path": "dsl/skills/article_generator/skill.md"},
+        example={"kind": "file", "op": "read", "path": "reyn/project/article_generator/skill.md"},
     )
 
 
@@ -110,7 +110,7 @@ def test_prepare_phase_produces_improvement_session():
             "type": "user_message",
             "data": {
                 "text": "Please improve the article_generator skill to get above 0.8 eval score.",
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=0),
@@ -171,7 +171,7 @@ def test_force_decide_produces_decide_turn():
             "type": "user_message",
             "data": {
                 "text": "Improve the article_generator skill.",
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=1),
@@ -179,7 +179,7 @@ def test_force_decide_produces_decide_turn():
             {
                 "kind": "file",
                 "op": "read",
-                "path": "dsl/skills/article_generator/skill.md",
+                "path": "reyn/project/article_generator/skill.md",
                 "content": "# article_generator skill",
                 "status": "ok",
             }
@@ -234,8 +234,8 @@ def _candidate_apply_finalize() -> CandidateOutput:
                 "summary": {"type": "string"},
                 "score_history": {"type": "array", "items": {"type": "number"}},
                 "files_modified": {"type": "array", "items": {"type": "string"}},
-                "work_dsl_root": {"type": "string"},
-                "original_dsl_root": {"type": "string"},
+                "work_skill_root": {"type": "string"},
+                "original_skill_root": {"type": "string"},
                 "copied_back": {"type": "boolean"},
                 "next_steps": {"type": "string"},
             },
@@ -276,7 +276,7 @@ def test_validation_fails_after_attempt_force_decides():
             "type": "user_message",
             "data": {
                 "text": "Improve the article_generator skill.",
-                "skill_path": "dsl/skills/article_generator",
+                "skill_path": "reyn/project/article_generator",
             },
         },
         execution=ExecutionState(path=[], current_visit=1, total_steps=1),
@@ -284,7 +284,7 @@ def test_validation_fails_after_attempt_force_decides():
             {
                 "kind": "file",
                 "op": "read",
-                "path": "dsl/skills/article_generator/skill.md",
+                "path": "reyn/project/article_generator/skill.md",
                 "content": "# article_generator skill",
                 "status": "ok",
             }
@@ -412,9 +412,9 @@ def test_improvement_regression_handled():
                         "improvement_focus": "",
                         "_resolved_paths": {
                             "target_skill_path": ".reyn/skill_improver_work/article_generator/skill.md",
-                            "target_dsl_root": ".reyn/skill_improver_work/article_generator",
-                            "eval_spec_path": "dsl/skills/article_generator/eval.md",
-                            "original_dsl_root": "dsl/skills/article_generator",
+                            "target_skill_root": ".reyn/skill_improver_work/article_generator",
+                            "eval_spec_path": "reyn/project/article_generator/eval.md",
+                            "original_skill_root": "reyn/project/article_generator",
                         },
                     },
                     "history": [
@@ -439,7 +439,7 @@ def test_improvement_regression_handled():
                 "kind": "file",
                 "op": "read",
                 "path": ".reyn/improver_state.json",
-                "content": '{"session": {"target_skill_path": "dsl/skills/article_generator"}, "iterations": [{"iteration": 1, "eval_score": 0.72, "weakest_phase": "generate_article", "files_modified": [], "plan_summary": "initial baseline"}]}',
+                "content": '{"session": {"target_skill_path": "reyn/project/article_generator"}, "iterations": [{"iteration": 1, "eval_score": 0.72, "weakest_phase": "generate_article", "files_modified": [], "plan_summary": "initial baseline"}]}',
                 "status": "ok",
             },
             {

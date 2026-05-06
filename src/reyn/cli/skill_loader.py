@@ -46,7 +46,7 @@ def resolve_skill_path(name: str):
 class LoadedSkill:
     skill: Skill
     skill_md: Path | None      # None when source == "module"
-    dsl_root: str | None
+    skill_root: str | None
     source: str                # "name" | "path" | "module"
 
 
@@ -55,20 +55,20 @@ def load_skill_from_args(args: argparse.Namespace) -> LoadedSkill:
     if getattr(args, "skill_path", None):
         skill_dir = Path(args.skill_path)
         skill_md = skill_dir / "skill.md"
-        dsl_root = args.dsl_root
+        skill_root = args.skill_root
         return LoadedSkill(
-            skill=_compile(skill_md, dsl_root),
-            skill_md=skill_md, dsl_root=dsl_root, source="path",
+            skill=_compile(skill_md, skill_root),
+            skill_md=skill_md, skill_root=skill_root, source="path",
         )
 
     if getattr(args, "skill_name", None):
         skill_dir, inferred_root = resolve_skill_path(args.skill_name)
-        dsl_root = args.dsl_root or str(inferred_root)
+        skill_root = args.skill_root or str(inferred_root)
         skill_md = skill_dir / "skill.md"
-        print(f"resolved        : {skill_md}  (dsl-root: {dsl_root})")
+        print(f"resolved        : {skill_md}  (skill-root: {skill_root})")
         return LoadedSkill(
-            skill=_compile(skill_md, dsl_root),
-            skill_md=skill_md, dsl_root=dsl_root, source="name",
+            skill=_compile(skill_md, skill_root),
+            skill_md=skill_md, skill_root=skill_root, source="name",
         )
 
     if getattr(args, "module", None):
@@ -80,17 +80,17 @@ def load_skill_from_args(args: argparse.Namespace) -> LoadedSkill:
         if not hasattr(module, "skill"):
             print(f"Error: module '{args.module}' has no 'skill' attribute.", file=sys.stderr)
             sys.exit(1)
-        return LoadedSkill(skill=module.skill, skill_md=None, dsl_root=None, source="module")
+        return LoadedSkill(skill=module.skill, skill_md=None, skill_root=None, source="module")
 
     print("Error: provide a skill name (positional), --skill-path DIR, or --module.",
           file=sys.stderr)
     sys.exit(1)
 
 
-def _compile(skill_md: Path, dsl_root: str | None) -> Skill:
+def _compile(skill_md: Path, skill_root: str | None) -> Skill:
     from reyn.compiler import load_dsl_skill
     try:
-        return load_dsl_skill(str(skill_md), dsl_root=dsl_root)
+        return load_dsl_skill(str(skill_md), skill_root=skill_root)
     except Exception as e:
         print(f"Error: failed to compile DSL '{skill_md}': {e}", file=sys.stderr)
         sys.exit(1)

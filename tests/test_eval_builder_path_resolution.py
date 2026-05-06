@@ -211,7 +211,7 @@ def test_inject_resolved_paths_mirrors_prep_into_resolved(tmp_path, monkeypatch)
     resolved = inject_resolved_paths(artifact_with_prep)
 
     for key in [
-        "skill_dir", "dsl_root", "target_skill", "skill_dsl_path",
+        "skill_dir", "skill_root", "target_skill", "skill_dsl_path",
         "phases_glob", "artifacts_glob", "existing_eval_path", "eval_output_path",
     ]:
         assert key in resolved, f"inject_resolved_paths must emit '{key}'"

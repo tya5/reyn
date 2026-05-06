@@ -20,13 +20,13 @@ preprocessor:
         skill_glob:         {type: string}
         phases_glob:        {type: string}
         work_dir:           {type: string}
-        original_dsl_root:  {type: string}
+        original_skill_root:  {type: string}
         skill_slug:         {type: string}
         target_skill_path:  {type: string}
-        target_dsl_root:    {type: string}
+        target_skill_root:    {type: string}
         eval_spec_path:     {type: string}
-      required: [skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug,
-                 target_skill_path, target_dsl_root, eval_spec_path]
+      required: [skill_glob, phases_glob, work_dir, original_skill_root, skill_slug,
+                 target_skill_path, target_skill_root, eval_spec_path]
 
   # Step 2: glob skill.md using the computed pattern
   - type: run_op
@@ -129,10 +129,10 @@ preprocessor:
       type: object
       properties:
         target_skill_path:  {type: string}
-        target_dsl_root:    {type: string}
+        target_skill_root:    {type: string}
         eval_spec_path:     {type: string}
-        original_dsl_root:  {type: string}
-      required: [target_skill_path, target_dsl_root, eval_spec_path, original_dsl_root]
+        original_skill_root:  {type: string}
+      required: [target_skill_path, target_skill_root, eval_spec_path, original_skill_root]
 ---
 
 The preprocessor has deterministically resolved the skill path via the OS resolver and
@@ -146,9 +146,9 @@ plan_improvements, apply_improvements, finalize) all depend on these OS-resolved
 
 The resolved paths in `data._resolved_paths` (copy all four verbatim):
 - `target_skill_path` → work-dir copy of skill.md (downstream phases use this)
-- `target_dsl_root`   → work directory root
+- `target_skill_root`   → work directory root
 - `eval_spec_path`    → eval.md in the ORIGINAL skill directory (not copied to work)
-- `original_dsl_root` → original skill directory (finalize uses this for copy-back)
+- `original_skill_root` → original skill directory (finalize uses this for copy-back)
 
 The computed work directory is available in `data._prep.work_dir` (same as
-`_resolved_paths.target_dsl_root`).
+`_resolved_paths.target_skill_root`).

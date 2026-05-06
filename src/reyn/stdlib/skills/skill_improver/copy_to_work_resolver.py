@@ -24,8 +24,8 @@ def compute_paths(artifact):
     to find the actual skill directory — the LLM MUST NOT have constructed a
     path string.
 
-    Returns: {skill_glob, phases_glob, work_dir, original_dsl_root, skill_slug,
-              eval_spec_path, target_skill_path, target_dsl_root}
+    Returns: {skill_glob, phases_glob, work_dir, original_skill_root, skill_slug,
+              eval_spec_path, target_skill_path, target_skill_root}
 
     Raises SkillNotFoundError if target_skill cannot be resolved, preventing
     hallucinated skill names from silently producing empty copy plans (B6-S1-H1).
@@ -34,7 +34,7 @@ def compute_paths(artifact):
     target_skill = str(data.get("target_skill", "")).strip()
 
     # OS-level path resolution — structural guarantee against hallucinated paths
-    skill_dir, _dsl_root = resolve_skill_path(target_skill)
+    skill_dir, _skill_root = resolve_skill_path(target_skill)
     skill_dir_str = str(skill_dir).rstrip("/")
 
     skill_slug = target_skill  # slug == skill name (no path component)
@@ -47,10 +47,10 @@ def compute_paths(artifact):
         # Work directory for the temp copy
         "work_dir": work_dir,
         # Original skill root (project-relative string for backward compat)
-        "original_dsl_root": skill_dir_str,
+        "original_skill_root": skill_dir_str,
         "skill_slug": skill_slug,
         # Derived paths injected into the session artifact for downstream phases
         "target_skill_path": skill_dir_str + "/skill.md",
-        "target_dsl_root": skill_dir_str,
+        "target_skill_root": skill_dir_str,
         "eval_spec_path": skill_dir_str + "/eval.md",
     }

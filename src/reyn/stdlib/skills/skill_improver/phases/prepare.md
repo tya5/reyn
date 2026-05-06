@@ -82,7 +82,7 @@ Parse the eval.md content (markdown). The format is:
 ---
 type: eval
 skill: <path>
-dsl_root: <path>
+skill_root: <path>
 ---
 
 ## case: <case_name>
@@ -134,7 +134,7 @@ Emit `improvement_session` with:
 - `target_skill`: the skill name you extracted (a single component, no slashes, no ".md")
 - All other resolved fields from Steps 1–3
 
-DO NOT include any path fields (`target_skill_path`, `target_dsl_root`, `eval_spec_path`,
-`original_dsl_root`). These are derived by the OS preprocessor in copy_to_work.
+DO NOT include any path fields (`target_skill_path`, `target_skill_root`, `eval_spec_path`,
+`original_skill_root`). These are derived by the OS preprocessor in copy_to_work.
 
 Choose `transition` → `copy_to_work`.

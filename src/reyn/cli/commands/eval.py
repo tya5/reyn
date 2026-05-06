@@ -43,8 +43,8 @@ def register(sub) -> None:
     p.add_argument("spec", metavar="FILE",
                    help="Path to the eval.md spec file (e.g. reyn/local/my_app/eval.md)")
     add_model_arg(p)
-    p.add_argument("--dsl-root", dest="dsl_root", default=None, metavar="DIR",
-                   help="DSL root override for the target app (default: inferred from path)")
+    p.add_argument("--skill-root", dest="skill_root", default=None, metavar="DIR",
+                   help="Skill-tree root override for the target app (default: inferred from path)")
     add_output_language_arg(p)
     add_limits_args(p)
     p.set_defaults(func=run)
@@ -62,12 +62,12 @@ def run(args: argparse.Namespace) -> None:
         print(f"Error loading eval spec: {e}", file=sys.stderr)
         sys.exit(1)
 
-    target_skill_path, target_dsl_root = _resolve_target(args, spec)
+    target_skill_path, target_skill_root = _resolve_target(args, spec)
 
     sl = stdlib_root()
     eval_app_md = sl / "skills" / "eval" / "skill.md"
     try:
-        eval_app = load_dsl_skill(str(eval_app_md), dsl_root=str(sl))
+        eval_app = load_dsl_skill(str(eval_app_md), skill_root=str(sl))
     except Exception as e:
         print(f"Error loading eval stdlib app: {e}", file=sys.stderr)
         sys.exit(1)
@@ -90,7 +90,7 @@ def run(args: argparse.Namespace) -> None:
 
     for case in spec.cases:
         case_result, usage, cost = _run_case(
-            case, eval_app, args, spec, target_skill_path, target_dsl_root,
+            case, eval_app, args, spec, target_skill_path, target_skill_root,
             model, output_language, session,
         )
         case_results.append(case_result)
@@ -130,14 +130,14 @@ def _resolve_target(args: argparse.Namespace, spec) -> tuple[str, str | None]:
     if "/" not in app_ref and not app_ref.endswith(".md"):
         app_dir, inferred_root = resolve_skill_path(app_ref)
         target_skill_path = str(app_dir / "skill.md")
-        target_dsl_root = args.dsl_root or str(inferred_root)
-        print(f"resolved        : {target_skill_path}  (dsl-root: {target_dsl_root})")
-        return target_skill_path, target_dsl_root
-    return app_ref, spec.dsl_root or args.dsl_root
+        target_skill_root = args.skill_root or str(inferred_root)
+        print(f"resolved        : {target_skill_path}  (skill-root: {target_skill_root})")
+        return target_skill_path, target_skill_root
+    return app_ref, spec.skill_root or args.skill_root
 
 
 def _run_case(
-    case, eval_app, args, spec, target_skill_path, target_dsl_root,
+    case, eval_app, args, spec, target_skill_path, target_skill_root,
     model, output_language, session,
 ) -> tuple[dict, TokenUsage | None, float | None]:
     from reyn.agent import Agent
@@ -169,8 +169,8 @@ def _run_case(
             "phase_criteria": phase_criteria,
         },
     }
-    if target_dsl_root:
-        input_artifact["data"]["dsl_root"] = target_dsl_root
+    if target_skill_root:
+        input_artifact["data"]["skill_root"] = target_skill_root
 
     from reyn.config import _find_project_root, load_project_context
     project_context = load_project_context(
