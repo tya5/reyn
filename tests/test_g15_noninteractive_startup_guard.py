@@ -65,29 +65,32 @@ def _skill_with_read(paths: list[dict]) -> _FakeSkill:
 # ── Tier 2 tests ─────────────────────────────────────────────────────────────
 
 
-def test_startup_guard_noninteractive_approves_declared_read_path(tmp_path, monkeypatch):
+def test_startup_guard_noninteractive_approves_declared_read_path(tmp_path, tmp_path_factory, monkeypatch):
     """Tier 2: startup_guard auto-approves declared file.read in non-interactive mode.
 
     Guards G15 fix part 1: in non-interactive mode, startup_guard must call
     session_approve_path for every declared file.read path outside the default
     read zone.  After startup_guard, is_read_allowed must return True.
 
-    Uses monkeypatch.chdir(tmp_path) so the stdlib absolute path is outside
-    the default read zone (CWD = tmp_path), making the guard exercise the
-    actual non-interactive approval mechanism.
+    Uses a sibling tmp directory that is genuinely outside CWD (tmp_path_factory
+    creates a separate tmp directory, not under tmp_path).  The stdlib path is
+    now always in the default read zone (B11-NEW-1 fix), so it cannot be used
+    as an example of an out-of-zone path.
     """
-    monkeypatch.chdir(tmp_path)
-    stdlib_skills = stdlib_root() / "skills"
+    cwd_dir = tmp_path / "project"
+    cwd_dir.mkdir()
+    external = tmp_path_factory.mktemp("external")
+    monkeypatch.chdir(cwd_dir)
     skill = _skill_with_read([
-        {"path": str(stdlib_skills), "scope": "recursive"},
+        {"path": str(external), "scope": "recursive"},
     ])
-    perm = _resolver(tmp_path, interactive=False)
+    perm = _resolver(cwd_dir, interactive=False)
     bus = _RecordingBus()
 
-    # Before startup_guard: stdlib path is outside tmp_path CWD → denied
-    target = str(stdlib_skills / "direct_llm" / "skill.md")
+    # Before startup_guard: external path is outside CWD → denied
+    target = str(external / "somefile.txt")
     assert not perm.is_read_allowed(target, skill_name="test_skill"), (
-        "Pre-condition: stdlib path must be denied before startup_guard"
+        "Pre-condition: external path must be denied before startup_guard"
     )
 
     asyncio.run(perm.startup_guard(skill, "test_skill", bus))
@@ -129,24 +132,29 @@ def test_startup_guard_noninteractive_recursive_scope_covers_subtree(tmp_path, m
     )
 
 
-def test_startup_guard_noninteractive_approval_is_skill_scoped(tmp_path, monkeypatch):
+def test_startup_guard_noninteractive_approval_is_skill_scoped(tmp_path, tmp_path_factory, monkeypatch):
     """Tier 2: non-interactive startup_guard auto-approval is skill-scoped.
 
     Approval for 'test_skill' must NOT extend to a different skill_name.
     This pins the isolation invariant of the permission system.
 
-    Uses monkeypatch.chdir(tmp_path) so the stdlib path is outside CWD.
+    Uses a sibling external directory (NOT stdlib, NOT under CWD) so the path
+    is genuinely out-of-zone and approval is required.  The stdlib path is now
+    always in the default read zone (B11-NEW-1 fix) and therefore readable by
+    all skills without a skill-scoped approval.
     """
-    monkeypatch.chdir(tmp_path)
-    stdlib_skills = stdlib_root() / "skills"
+    cwd_dir = tmp_path / "project"
+    cwd_dir.mkdir()
+    external = tmp_path_factory.mktemp("external_scoped")
+    monkeypatch.chdir(cwd_dir)
     skill = _skill_with_read([
-        {"path": str(stdlib_skills), "scope": "recursive"},
+        {"path": str(external), "scope": "recursive"},
     ])
-    perm = _resolver(tmp_path, interactive=False)
+    perm = _resolver(cwd_dir, interactive=False)
     bus = _RecordingBus()
     asyncio.run(perm.startup_guard(skill, "test_skill", bus))
 
-    target = str(stdlib_skills / "direct_llm" / "skill.md")
+    target = str(external / "data.txt")
     assert perm.is_read_allowed(target, skill_name="test_skill")
     assert not perm.is_read_allowed(target, skill_name="other_skill"), (
         "Approval for test_skill must not grant access under other_skill"
@@ -181,18 +189,25 @@ def test_startup_guard_noninteractive_does_not_approve_write_paths(tmp_path):
     )
 
 
-def test_startup_guard_interactive_still_prompts(tmp_path, monkeypatch):
+def test_startup_guard_interactive_still_prompts(tmp_path, tmp_path_factory, monkeypatch):
     """Tier 2: startup_guard in interactive mode still issues a prompt (regression guard).
 
     The non-interactive auto-approve path must not suppress interactive prompts.
     In interactive mode, _prompt_file_access is called and returns True on YES.
+
+    Uses a sibling external directory (NOT stdlib, NOT under CWD) so the path
+    is genuinely out-of-zone and a prompt is expected.  The stdlib path is now
+    always in the default read zone (B11-NEW-1 fix) and would not trigger a
+    prompt even in interactive mode.
     """
-    monkeypatch.chdir(tmp_path)
-    stdlib_skills = stdlib_root() / "skills"
+    cwd_dir = tmp_path / "project"
+    cwd_dir.mkdir()
+    external = tmp_path_factory.mktemp("external_interactive")
+    monkeypatch.chdir(cwd_dir)
     skill = _skill_with_read([
-        {"path": str(stdlib_skills), "scope": "recursive"},
+        {"path": str(external), "scope": "recursive"},
     ])
-    perm = _resolver(tmp_path, interactive=True)
+    perm = _resolver(cwd_dir, interactive=True)
 
     class _AutoYesBus:
         def __init__(self):

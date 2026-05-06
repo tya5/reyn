@@ -7,9 +7,13 @@ may be outside the project root when reyn is invoked from a worktree.
 The fix adds file.read entries to skill_improver (and eval_builder) so that
 startup_guard can prompt once and save per-skill approval for those paths.
 
+B11-NEW-1 fix update: stdlib_root() is now always in the default read zone
+(_in_default_read_zone returns True for paths under the installed reyn stdlib).
+Tests that previously used stdlib paths as "out-of-zone" examples now use
+tmp directories created via tmp_path_factory (genuinely outside both CWD and stdlib).
+
 These are Tier 2 OS-invariant tests.  No mocks; real PermissionDecl and
-PermissionResolver instances.  tmp_path is used as project root so that the
-actual stdlib path is outside the default read zone (deterministic gate check).
+PermissionResolver instances.
 """
 from __future__ import annotations
 
@@ -100,15 +104,16 @@ def test_skill_improver_decl_stdlib_path_is_recursive():
 # ── test (b): is_read_allowed with session approval ───────────────────────────
 
 
-def test_is_read_allowed_for_skill_improver_with_session_approval(tmp_path, monkeypatch):
-    """Tier 2: is_read_allowed returns True for a stdlib skill path when session-approved.
+def test_is_read_allowed_for_skill_improver_stdlib_in_default_zone(tmp_path, monkeypatch):
+    """Tier 2: stdlib paths are readable by default — no explicit approval needed (B11-NEW-1 fix).
 
-    Uses tmp_path as CWD (via monkeypatch.chdir) so the stdlib absolute path is
-    outside the default read zone, making the permission gate exercise the actual
-    approval mechanism rather than the default-zone short-circuit.
+    B11-NEW-1 fix: _in_default_read_zone now includes the installed reyn stdlib as a
+    second default zone (in addition to CWD).  This means stdlib paths are always
+    readable without explicit session_approve_path, even when CWD is a worktree that
+    doesn't contain the stdlib.
 
-    Simulates what happens after startup_guard prompts and the user approves:
-    session_approve_path records the approval, then is_read_allowed returns True.
+    This test pins the B11-NEW-1 invariant: with CWD = tmp_path (not under stdlib),
+    a path inside stdlib_root() is still readable without any approval.
     """
     monkeypatch.chdir(tmp_path)
 
@@ -118,51 +123,46 @@ def test_is_read_allowed_for_skill_improver_with_session_approval(tmp_path, monk
 
     perm = _resolver(tmp_path)
 
-    # Without approval the path is outside the default zone (CWD = tmp_path) → denied
-    assert not perm.is_read_allowed(target_path, skill_name=skill_name), (
-        "Pre-condition: stdlib path must not be in default read zone for tmp_path CWD"
-    )
-
-    # Simulate startup_guard + user approval (recursive approval of stdlib skills dir)
-    perm.session_approve_path(
-        str(stdlib_root() / "skills"),
-        skill_name,
-        "file.read",
-        recursive=True,
-    )
-
+    # B11-NEW-1 fix: stdlib is always in the default zone — readable without approval
     assert perm.is_read_allowed(target_path, skill_name=skill_name), (
-        "is_read_allowed must return True after session_approve_path for the parent dir"
+        "B11-NEW-1 fix: stdlib path must be in default read zone even when CWD differs"
     )
 
 
 # ── test (c): approval is skill-scoped ────────────────────────────────────────
 
 
-def test_is_read_allowed_skill_scoped_other_skill_denied(tmp_path, monkeypatch):
-    """Tier 2: stdlib path approval is skill-scoped; other skills remain denied.
+def test_is_read_allowed_skill_scoped_other_skill_denied(tmp_path, tmp_path_factory, monkeypatch):
+    """Tier 2: session_approve_path is skill-scoped; other skills remain denied.
 
-    Uses tmp_path as CWD so the stdlib absolute path is outside the default zone.
-    Approval for skill_improver must NOT extend to other skills.  This pins the
-    skill-level isolation of the permission system: one skill cannot read paths
-    approved for a different skill.
+    Pins the skill-level isolation of the permission system: approval of an out-of-zone
+    path for one skill must NOT extend to a different skill.
+
+    NOTE: stdlib paths (under stdlib_root()) are now in the default read zone for ALL
+    skills (B11-NEW-1 fix), so they cannot serve as an example of "out-of-zone" paths.
+    This test uses a sibling tmp directory created with tmp_path_factory — a path that
+    is genuinely outside both CWD and the stdlib, so skill isolation is exercised on
+    real out-of-zone data.
     """
-    monkeypatch.chdir(tmp_path)
+    cwd_dir = tmp_path / "project"
+    cwd_dir.mkdir()
+    external = tmp_path_factory.mktemp("external_skill_scoped")
+    monkeypatch.chdir(cwd_dir)
 
     skill_name = "skill_improver"
     other_skill = "eval_builder"
-    target_path = str(stdlib_root() / "skills" / "direct_llm" / "skill.md")
+    target_path = str(external / "some_skill" / "skill.md")
 
-    perm = _resolver(tmp_path)
+    perm = _resolver(cwd_dir)
     # Approve only for skill_improver
     perm.session_approve_path(
-        str(stdlib_root() / "skills"),
+        str(external),
         skill_name,
         "file.read",
         recursive=True,
     )
 
-    # skill_improver: allowed
+    # skill_improver: allowed (approved)
     assert perm.is_read_allowed(target_path, skill_name=skill_name)
     # eval_builder (no approval): denied
     assert not perm.is_read_allowed(target_path, skill_name=other_skill), (
