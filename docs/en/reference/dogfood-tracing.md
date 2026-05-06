@@ -152,8 +152,8 @@ disable.
 
 | Pattern name | Regex | Example match |
 |--------------|-------|---------------|
-| `openai-key` | `sk-[A-Za-z0-9_-]{20,}` | `sk-proj-abc...` |
-| `slack-token` | `xoxb-[A-Za-z0-9-]{20,}` | `xoxb-1234567890-abc...` |
+| `openai-key` | `sk-[A-Za-z0-9_-]{20,}` | `sk-FAKE-FOR-TESTING-DO-NOT-USE` |
+| `slack-token` | `xoxb-[A-Za-z0-9-]{20,}` | `xoxb-FAKE-FOR-TESTING-DO-NOT-USE` |
 | `bearer-token` | `Bearer\s+[A-Za-z0-9._-]{20,}` | `Bearer eyJhbGci...` |
 | `private-key` | PEM `-----BEGIN ... KEY-----` block | RSA / EC private keys |
 
