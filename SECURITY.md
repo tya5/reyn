@@ -4,28 +4,44 @@
 
 Do not open a public GitHub issue for security vulnerabilities.
 
-**Preferred channel:** Email `security@reyn-project.example` with a clear
-description of the issue, reproduction steps, and the potential impact.
+**Use GitHub's private security advisory feature:**
+[Report a vulnerability](https://github.com/tya5/reyn/security/advisories/new).
+This routes the report directly and privately to the maintainer.
 
-**Alternative:** Use
-[GitHub's private security advisory feature](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing/privately-reporting-a-security-vulnerability)
-for this repository.
-
-You will receive an acknowledgement within 72 hours. We aim to provide an
-initial assessment within 7 days.
+Reyn is currently maintained by a single author on a best-effort basis. There
+is no formal SLA — acknowledgement and initial assessment are typically
+delivered within a few business days.
 
 ## Disclosure timeline
 
-Reyn follows a 90-day coordinated disclosure window from the date of initial
-report acknowledgement. If a fix requires more than 90 days, we will communicate
-the revised timeline before the window closes. Public disclosure is coordinated
-with the reporter.
+Reyn aims for a 90-day coordinated disclosure window from the date of initial
+report acknowledgement. If a fix requires longer, the revised timeline is
+communicated to the reporter before the window closes. Public disclosure is
+coordinated with the reporter.
 
 ## Supported versions
 
 Reyn is pre-1.0. Only the current `main` branch receives security fixes.
 Older commits or release tags are not supported. Upgrade to the latest commit
 on `main` before reporting a vulnerability.
+
+## Scope
+
+In scope:
+- Vulnerabilities in Reyn's OS layer — the validation gate, permission
+  enforcement, Control IR execution, event log integrity, and persistence
+  (snapshot / WAL) mechanisms.
+- Sandbox / privilege escalation issues in stdlib skill execution paths.
+
+Out of scope:
+- Issues caused by user-supplied skills or `reyn.yaml` configurations that
+  intentionally relax Reyn's permission model. The OS gate enforces the
+  declared permission policy; choosing a permissive policy is a user decision.
+- Prompt-injection content delivered through user-provided LLM inputs that
+  the user's own skill graph chooses to act on. Reyn enforces structural
+  validation; semantic content judgement is the skill author's responsibility.
+- Vulnerabilities in third-party LLM providers, LiteLLM, or MCP servers.
+  Report those upstream.
 
 ## LLM-specific security design
 

@@ -40,4 +40,4 @@ reyn run skill_improver "improve my_explainer" --allow-shell
 
 ## Source
 
-[`src/stdlib/skills/skill_improver/skill.md`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/skill_improver/skill.md)
+[`src/stdlib/skills/skill_improver/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_improver/skill.md)

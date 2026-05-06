@@ -16,7 +16,7 @@ Get a working reyn install in under 5 minutes.
 ## Install
 
 ```bash
-git clone https://github.com/<org>/reyn.git
+git clone https://github.com/tya5/reyn.git
 cd reyn
 python -m venv venv
 source venv/bin/activate

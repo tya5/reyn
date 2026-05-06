@@ -10,8 +10,7 @@ requires-python = ">=3.11"
 license = { text = "MIT" }
 readme = "README.md"
 authors = [
-    # Replace before release: update name/email to maintainer contact
-    { name = "Reyn Contributors", email = "reyn-dev@example.com" },
+    { name = "Tetsuya Yasuda" },
 ]
 keywords = [
     "llm",
@@ -50,10 +49,9 @@ dependencies = [
 ]
 
 [project.urls]
-# Replace before release: update to real repo URLs
-Homepage = "https://github.com/<org>/reyn"
-Repository = "https://github.com/<org>/reyn"
-Issues = "https://github.com/<org>/reyn/issues"
+Homepage = "https://github.com/tya5/reyn"
+Repository = "https://github.com/tya5/reyn"
+Issues = "https://github.com/tya5/reyn/issues"
 
 [project.optional-dependencies]
 dev = [

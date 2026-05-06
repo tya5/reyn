@@ -33,4 +33,4 @@ reyn run eval_builder "build an eval for my_explainer"
 
 ## ソース
 
-[`src/stdlib/skills/eval_builder/skill.md`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/eval_builder/skill.md)
+[`src/stdlib/skills/eval_builder/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/eval_builder/skill.md)

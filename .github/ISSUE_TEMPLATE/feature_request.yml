@@ -1,0 +1,62 @@
+name: Feature request
+description: Suggest a new capability, ergonomics improvement, or stdlib skill.
+title: "[Feature] "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reyn is a workflow OS, not a feature shopping cart. Describing the
+        underlying problem you hit is far more valuable than proposing a
+        specific API — please prioritize the "Problem" section.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        What use case is blocked, awkward, or suboptimal today? Concrete
+        scenarios are more useful than abstract wishes.
+      placeholder: |
+        When I try to ..., Reyn currently ...
+        This makes it hard to ... because ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution (optional)
+      description: |
+        A concrete API or behavior sketch, if you have one in mind. This
+        section is **optional** — a clear problem statement without a
+        proposal is often more useful, because it leaves room for the
+        right design.
+      placeholder: |
+        A new Control IR op `...`
+        A new stdlib skill `...`
+        A change to phase preprocessor behavior such that ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered (optional)
+      description: |
+        Other approaches you considered, including workarounds you tried,
+        and why they were unsatisfactory.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: This aligns with Reyn's "predictability over autonomy" vision (see `docs/en/concepts/principles.md`).
+          required: true
+        - label: This would not require violating the P1-P8 invariants (see `CLAUDE.md`).
+          required: true
+        - label: I searched existing issues and did not find a duplicate.
+          required: true

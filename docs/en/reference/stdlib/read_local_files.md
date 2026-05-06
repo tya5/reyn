@@ -84,7 +84,7 @@ Sample prompts that DO NOT route here:
 
 ## Source
 
-[`src/stdlib/skills/read_local_files/`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/read_local_files/)
+[`src/stdlib/skills/read_local_files/`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/read_local_files/)
 
 ## See also
 

@@ -39,4 +39,4 @@ reyn run skill_builder "A skill that takes a topic and returns a one-paragraph e
 
 ## Source
 
-[`src/stdlib/skills/skill_builder/skill.md`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/skill_builder/skill.md)
+[`src/stdlib/skills/skill_builder/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_builder/skill.md)

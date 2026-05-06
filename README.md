@@ -2,13 +2,11 @@
 
 **LLM workflow OS — predictable, auditable, constrained.**
 
-<!-- Badges — replace <org> with the real GitHub org before release -->
-<!-- ![PyPI](https://img.shields.io/pypi/v/reyn?label=pypi) -->
-<!-- ![CI](https://github.com/<org>/reyn/actions/workflows/ci.yml/badge.svg) -->
-<!-- ![License](https://img.shields.io/badge/license-MIT-blue) -->
+[![CI](https://github.com/tya5/reyn/actions/workflows/test.yml/badge.svg)](https://github.com/tya5/reyn/actions/workflows/test.yml)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ```bash
-pip install reyn          # placeholder — PyPI release coming
+pip install reyn          # not yet on PyPI — see Quick Start below for local install
 reyn init
 reyn run my_skill "Write a report on AI in education."
 ```

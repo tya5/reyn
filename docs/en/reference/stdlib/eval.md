@@ -45,4 +45,4 @@ Without prior approval, the target's run fails and the case is reported as not-f
 
 ## Source
 
-[`src/stdlib/skills/eval/skill.md`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/eval/skill.md)
+[`src/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/eval/skill.md)

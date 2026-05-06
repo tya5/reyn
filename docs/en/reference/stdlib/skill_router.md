@@ -54,7 +54,7 @@ Never both a skill AND an agent in the same decision — pick one branch.
 
 ## Source
 
-[`src/stdlib/skills/skill_router/`](https://github.com/<org>/reyn/blob/main/src/stdlib/skills/skill_router/)
+[`src/stdlib/skills/skill_router/`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_router/)
 
 ## See also
 
