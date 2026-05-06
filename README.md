@@ -128,6 +128,56 @@ make docs-serve     # http://127.0.0.1:8000
 
 ---
 
+## Talk to Reyn from another LLM (MCP)
+
+Reyn ships an MCP (Model Context Protocol) server, so an outer LLM —
+Claude Desktop, Claude Code, Cursor, OpenAI Agents SDK, anything that
+speaks MCP — can converse with a Reyn agent. This is the symmetric
+counterpart of Reyn's existing MCP-client role: Reyn already _consumes_
+external MCP servers; this lets external clients _consume_ Reyn back.
+
+### Wire it up (Claude Desktop example)
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "reyn": {
+      "command": "/absolute/path/to/your/python/bin/reyn",
+      "args": [
+        "mcp", "serve",
+        "--project", "/absolute/path/to/your/reyn-project"
+      ]
+    }
+  }
+}
+```
+
+Why `--project` is in `args`, not a `cwd` field: Claude Desktop and
+similar MCP clients don't honour a `cwd` field in their server config,
+so the spawned process can land in `/`. Pass the project path as a CLI
+argument instead.
+
+Restart the MCP host fully (= Quit, not just close window).
+
+### Tools exposed
+
+```
+reyn:list_agents()
+    List currently-registered agents in the project.
+
+reyn:send_to_agent(agent_name, message)
+    Send one user message to the named agent. Returns the agent's
+    final reply text. Multi-turn conversation accumulates because
+    Reyn persists per-agent chat history across calls.
+```
+
+That's it for v1. Tool-call tracing / narration streaming and
+ask-user / sampling integration are tracked for future iterations.
+
+---
+
 ## Project Status
 
 Reyn is **pre-1.0 alpha**. The DSL, CLI, and event log are stable enough to build skills against; APIs may still change before 1.0. See [CLAUDE.md](CLAUDE.md) for architectural constraints and the testing policy.

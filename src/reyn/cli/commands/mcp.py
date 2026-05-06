@@ -70,7 +70,30 @@ def run_serve(args: argparse.Namespace) -> None:
     if args.project:
         project_root = Path(args.project).resolve()
     else:
-        project_root = _find_project_root(Path.cwd()) or Path.cwd()
+        # Note: MCP clients (Claude Desktop, Cursor, …) typically don't
+        # honour a `cwd` field in their server config, so the spawned
+        # process can land in `/`. If no --project was given and no
+        # reyn.yaml is reachable from cwd, fail loudly rather than
+        # silently creating `/.reyn/` (read-only on macOS) or worse.
+        found = _find_project_root(Path.cwd())
+        if found is None:
+            print(
+                "error: no reyn.yaml found from cwd; pass --project "
+                "<path-to-project-root>. MCP clients typically ignore "
+                "the `cwd` field in their config — set --project in "
+                "the args list instead.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        project_root = found
+
+    if not (project_root / "reyn.yaml").exists():
+        print(
+            f"error: {project_root}/reyn.yaml not found. "
+            f"Run `reyn init` there or pass a different --project path.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     budget_tracker = BudgetTracker(session_cfg.config.cost)
