@@ -18,6 +18,12 @@
 
 ## Dogfood Milestone Confirmation
 
+> **⚠️ Provisional milestone (= N=1 sample)** — batch 11 5-shot retest revealed
+> this Run 2 completion was a non-deterministic lucky case. batch 11 N=5 showed
+> 0/5 complete rate due to B11-NEW-1 (preprocessor `run_op` permission denied).
+> Real milestone confirmation is target of batch 12 (= N≥5 with ≥60% complete).
+> See `../2026-05-06-batch-12-real-milestone/` for resolution.
+
 **YES — First chain completion via `reyn chat`.**
 
 S1 Run 2 produced the first fully observed `reyn chat` session where `skill_improver`

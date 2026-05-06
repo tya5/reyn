@@ -5,6 +5,12 @@
 > B9-NEW-1 + B9-NEW-3 は downstream symptom で resolved-indirectly**。 結果 **Reyn dogfood
 > 史上初の chain 完走 via `reyn chat`** を確認 (S1)。
 
+> **⚠️ Provisional milestone (= N=1 sample)** — batch 11 5-shot retest revealed
+> this Run 2 completion was a non-deterministic lucky case. batch 11 N=5 showed
+> 0/5 complete rate due to B11-NEW-1 (preprocessor `run_op` permission denied).
+> Real milestone confirmation is target of batch 12 (= N≥5 with ≥60% complete).
+> See `../2026-05-06-batch-12-real-milestone/` for resolution.
+
 ## Summary table
 
 ### Step 1: B9-NEW-2 e2e verify (= verify-first principle)
@@ -24,7 +30,7 @@
 
 | Scenario | B9 Verdict | B10 Verdict | 主要発見 |
 |---|---|---|---|
-| **S1** (chain 完走 via chat) | inconclusive | **verified** | **Reyn 史上初**: skill_improver 6 phase 完走 + sub-skill (eval_builder/eval) 完了 + narrator 経由 user 通知。 Run 1 で router text-reply 失敗 (= B9-NEW-3 pattern 残存)、 Run 2 で完走 |
+| **S1** (chain 完走 via chat) | inconclusive | **verified ⚠️ provisional** | **Reyn 史上初 (= N=1 Run 2 のみ、provisional)**: skill_improver 6 phase 完走 + sub-skill (eval_builder/eval) 完了 + narrator 経由 user 通知。 Run 1 で router text-reply 失敗 (= B9-NEW-3 pattern 残存)、 Run 2 で完走。 batch 11 5-shot で 0/5 (B11-NEW-1 blocked) |
 | **S5a** (自然言語 invoke) | refuted | **refuted (継続)** | router が eval_builder を identify するが「clarification text-reply」 で stop。 G16 wording fix 依然 no-effect |
 | **S5b** (構造 invoke) | refuted | **refuted (non-deterministic)** | Step 1 で完走、 Step 3 で G12 attractor (stop_with_must_rule) 発火 → describe_skill 後 empty stop。 25% rate の確率的事象、 B9-NEW-2 fix は構造的に sound |
 
@@ -147,6 +153,12 @@ batch 11 は **non-determinism reduction** wave: G12 / B9-NEW-3 / B10-NEW-1 の 
 chain 完走の安定化が中心。
 
 ## 一言で
+
+> **⚠️ Provisional milestone (= N=1 sample)** — batch 11 5-shot retest revealed
+> this Run 2 completion was a non-deterministic lucky case. batch 11 N=5 showed
+> 0/5 complete rate due to B11-NEW-1 (preprocessor `run_op` permission denied).
+> Real milestone confirmation is target of batch 12 (= N≥5 with ≥60% complete).
+> See `../2026-05-06-batch-12-real-milestone/` for resolution.
 
 > **B9-NEW-2 fix のみが真の bug、 NEW-1/NEW-3 は downstream symptom — 1 structural fix で
 > chain 完走 via `reyn chat` が史上初成立**

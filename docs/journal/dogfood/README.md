@@ -86,6 +86,12 @@ shadow しても見えないものを見るための iterative loop。
 wrong layer trap 発見 → batch 10 chain 完走 という 4 batch progression の到達点。
 B10 retro 参照: `2026-05-05-batch-10-residual-fix-wave/retrospective.md`
 
+> **⚠️ Provisional milestone (= N=1 sample)** — batch 11 5-shot retest revealed
+> this Run 2 completion was a non-deterministic lucky case. batch 11 N=5 showed
+> 0/5 complete rate due to B11-NEW-1 (preprocessor `run_op` permission denied).
+> Real milestone confirmation is target of batch 12 (= N≥5 with ≥60% complete).
+> See `../2026-05-06-batch-12-real-milestone/` for resolution.
+
 ## Batch 一覧
 
 | Batch | Date | Scenarios | 一言で | 主要 finding |
@@ -100,7 +106,7 @@ B10 retro 参照: `2026-05-05-batch-10-residual-fix-wave/retrospective.md`
 | [batch-7-post-infra-verify](2026-05-04-batch-7-post-infra-verify/) | 2026-05-04 | 5 件 (chain 完走 verify / G3 retest / B4-M1 retest / 仮説 a verify / eval_builder 直接) + 4 retroactive | 「6 commit fix の e2e verify」 のつもりが、 user 「LLM が見たもの確認した?」 介入で **観測 infra 整備** に redirect、 そこから **推測スタック解体 → 観測ベース fix 連鎖 → care boundary 言語化** の構造的成果。 道具 4 種 (REYN_LLM_TRACE_DUMP / dogfood_trace 3 mode / llm_replay --patch/--diff/--n / detect_attractor) 整備、 RETRO-H1〜H4 で過去推測 1.5/4 訂正、 router enum + preprocessor anyOf + B8-NEW-1+2 + Option F (G12 retry 却下) fix 連鎖、 ADR 0021 + care boundary doc (en+ja) + 5 つ目 feedback memory 永続化 | RETRO-H1 verified (= router enum fix 有効、 hallucination 57%→0%) / G12 50% probabilistic (= Option F observe-only 採用) / B7-NEW-1 (router dot-notation) / B7-S5b-NEW (preprocessor anyOf regression) / B8-NEW-1+2 (= path 2 retest 経由発見) ほか |
 | [batch-8-cumulative-verify](2026-05-04-batch-8-cumulative-verify/) | 2026-05-04 | 5 件 (S1-S5 累積 fix verify) | 8 commit 累積効果を chat 経路 e2e verify する観測 batch。 期待した chain 完走は未達、 代わりに **新 blocker 4 件発見** (B8-NEW-3〜6) + B8-NEW-2 fix の e2e 初確認 + router 1-turn shortcut 改善 (B7 5 turns → B8 1 turn)。 4 区分 prediction (verified/inconclusive/refuted/blocked) を導入、 累積 fix verify では「fix 1 件 = 1 layer 解消、 次 layer の new blocker は >50% 確率で露呈」 という構造的性質を data で実証 | B8-NEW-3 (eval_builder stdlib path) / B8-NEW-4 (tool function description 非 truncate) / B8-NEW-5 (router intent misrouting) / B8-NEW-6 (_extract_skill_name unknown type) / G15-G18 giveup-tracker 化 |
 | [batch-9-fix-wave](2026-05-05-batch-9-fix-wave/) | 2026-05-05 | 3 fix dispatch (G15/G16/G17) + post-fix retest sub-wave | batch 8 で確定した 3 HIGH bug を sonnet 並列 dispatch、 retest sub-wave で per-fix verify。 **G15 真に effective** (chain が write_eval まで到達、 Reyn 史上初 layer)、 **G17 wrong layer trap** (test 通過 + e2e 失敗、 fixture と runtime artifact 構造乖離)、 **G16 no-effect** (weak LLM が wording 差を読まない)。 「fix の層で base rate を切り分け」 calibration 確立、 Brier 0.96 → 0.55 改善。 教訓: **「fix verify は per-fix Tier 3 e2e cross-check 必須」** | B9-NEW-1 (write_eval validation) / B9-NEW-2 (G17 wrong layer) / B9-NEW-3 (router invoke duplication) |
-| [batch-10-residual-fix-wave](2026-05-05-batch-10-residual-fix-wave/) | 2026-05-05 | verify-first 4-step (Step 1 verify / Step 2 diagnose / Step 3 integration / Step 4 wrap) | **Reyn dogfood 史上初の chain 完走 via `reyn chat`** 達成 milestone batch。 **B9-NEW-2 fix 1 件のみが真の bug、 NEW-1/NEW-3 は downstream symptom (resolved-indirectly)**。 verify-first + reproduce-first principle で不要 fix 2 件回避。 Brier 0.55 → 0.30 で 3 batch 連続 calibration 改善。 残課題は probabilistic non-determinism (G12 25% / B9-NEW-3 50%)、 batch 11 で structural fix。 batch 7→8→9→10 の 4 batch progression の milestone 地点 | B10-NEW-1 (temp workspace path mismatch) / B10-NEW-2 (router text-reply non-determinism) + B9-NEW-1/3 resolved-indirectly classification |
+| [batch-10-residual-fix-wave](2026-05-05-batch-10-residual-fix-wave/) | 2026-05-05 | verify-first 4-step (Step 1 verify / Step 2 diagnose / Step 3 integration / Step 4 wrap) | **Reyn dogfood 史上初の chain 完走 via `reyn chat`** 達成 milestone batch **(provisional, real milestone in B12)**。 **B9-NEW-2 fix 1 件のみが真の bug、 NEW-1/NEW-3 は downstream symptom (resolved-indirectly)**。 verify-first + reproduce-first principle で不要 fix 2 件回避。 Brier 0.55 → 0.30 で 3 batch 連続 calibration 改善。 残課題は probabilistic non-determinism (G12 25% / B9-NEW-3 50%)、 batch 11 で structural fix。 batch 7→8→9→10 の 4 batch progression の milestone 地点 | B10-NEW-1 (temp workspace path mismatch) / B10-NEW-2 (router text-reply non-determinism) + B9-NEW-1/3 resolved-indirectly classification |
 
 ## こちらの心境
 
