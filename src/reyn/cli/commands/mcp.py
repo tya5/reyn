@@ -12,6 +12,7 @@ budget tracker, project context) — minus the TUI / REPL launch.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -94,6 +95,16 @@ def run_serve(args: argparse.Namespace) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+    # MCP clients (Claude Desktop, Cursor, …) spawn the server with cwd=`/`,
+    # which causes any code that uses relative `.reyn/...` paths to try to
+    # write under the filesystem root and crash with a read-only-fs error.
+    # `--project` only fixes the explicit StateLog/budget paths in this
+    # function; deeper code paths (ChatSession, Workspace, AgentRegistry)
+    # also use relative paths internally. Anchor the whole process at the
+    # project root so the same code that works under `reyn chat` works
+    # here unchanged.
+    os.chdir(project_root)
 
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     budget_tracker = BudgetTracker(session_cfg.config.cost)
