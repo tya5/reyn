@@ -510,3 +510,29 @@ class TestBehaviourRulesAfterF3F9Fix:
         assert "Do NOT reply" in prompt
         # "skill ecosystem" jargon removed — too abstract for weak LLMs
         assert "skill ecosystem" not in prompt
+
+    def test_v3_absolute_routing_rule_present(self):
+        """Tier 2: B13-R3 V3 wording — ABSOLUTE routing rule block is present
+        in the Behaviour section with the required components.
+
+        B12-R2 N=20 measurement: combined ABSOLUTE keyword + JA examples
+        drops text-reply rate from 40-50% → ~5% (1/20).
+        This test pins the structural contract (rule block present + key
+        phrases), not the exact wording.
+        """
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("skill_improver", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        # ABSOLUTE rule framing must be present
+        assert "ROUTING RULE (ABSOLUTE)" in prompt
+        # Core imperative: call invoke_skill immediately
+        assert "invoke_skill" in prompt
+        # Explicit prohibitions
+        assert "NO clarifying questions" in prompt
+        assert "NO text replies" in prompt
+        # JA examples must be present (placeholder form, P7-compliant)
+        assert "<skill_name>" in prompt

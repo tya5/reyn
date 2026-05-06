@@ -256,6 +256,30 @@ def build_system_prompt(
         '  - Memory writes (Save) via remember_*. Triggers: "remember", "覚えて",'
     )
     parts.append('    "save", "from now on", "treat as".')
+    # B12-R2 / B13-R3 V3 wording fix (ABSOLUTE rule + JA examples):
+    # Baseline (R3 fix only): 40-50% text-reply non-compliance.
+    # V3 combined (ABSOLUTE keyword + JA examples): ~5% (1/20, N=20 measurement).
+    # Mechanism: (1) ABSOLUTE keyword raises implicit weight above LLM's
+    # clarification-seeking instinct; (2) JA examples reduce translation
+    # ambiguity for JA-input users; (3) explicit NEVER list closes the
+    # "I need more info" text-reply escape hatch.
+    # P7 compliance: examples use <skill_name> placeholder, not hardcoded names.
+    parts.append("")
+    parts.append(
+        "  ROUTING RULE (ABSOLUTE): When ANY Available skill name appears in the"
+    )
+    parts.append(
+        "  user message, call invoke_skill with that skill name immediately."
+    )
+    parts.append(
+        "  NO clarifying questions. NO text replies. Examples:"
+    )
+    parts.append(
+        "    「<skill_name> で <target> を review して」 → invoke_skill(name=<skill_name>)"
+    )
+    parts.append(
+        "    「<skill_name> で <X> を作って」 → invoke_skill(name=<skill_name>)"
+    )
 
     return "\n".join(parts)
 
