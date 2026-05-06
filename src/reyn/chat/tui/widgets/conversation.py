@@ -20,6 +20,9 @@ kind → prefix / style mapping (from design doc):
 """
 from __future__ import annotations
 
+_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+
+import time
 from dataclasses import dataclass
 
 from rich.markdown import Markdown as RichMarkdown
@@ -33,6 +36,21 @@ from textual.widgets import RichLog
 from reyn.chat.outbox import OutboxMessage
 from .intervention import InterventionWidget
 from .streaming_row import StreamingRow
+
+
+_DASH_TOTAL = 38  # matches the banner separator width
+
+def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
+    """Timestamp + label + dash rule for a new message turn."""
+    t = Text()
+    t.append(time.strftime("%H:%M"), style="dim #666666")
+    t.append("  ")
+    padded = label.ljust(4)  # "you " / "reyn" — fixed 4-char column
+    t.append(padded, style=name_style)
+    t.append(" ")
+    dashes = max(1, _DASH_TOTAL - 5 - 2 - 4 - 1)  # = 26
+    t.append("─" * dashes, style=dash_style)
+    return t
 
 
 def _meta_prefix(meta: dict) -> str:
@@ -68,7 +86,7 @@ class ConversationView(Widget):
         background: transparent;
         height: 1fr;
         border: none;
-        scrollbar-color: #C8553D;
+        scrollbar-color: $primary;
         padding: 0 1;
     }
     """
@@ -103,23 +121,13 @@ class ConversationView(Widget):
             self._write_log(text)
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
-        """Render agent message as Markdown into the RichLog timeline.
-
-        Earlier wave-B impl mounted Textual `Markdown` widgets as siblings
-        below the RichLog, which broke chronological flow — user messages
-        sat in RichLog while agent messages stacked separately at the
-        bottom. Writing `rich.markdown.Markdown` directly into the RichLog
-        keeps every turn in one append-only timeline (the original design)
-        while still rendering markdown features (headers / lists / code
-        blocks with syntax highlight via Rich's built-in renderer).
-        """
         log = self._log()
         meta_pfx = _meta_prefix(msg.meta)
-        prefix_text = f"agent  {meta_pfx}" if meta_pfx else "agent  "
-        prefix = Text(prefix_text, style="bold #C8553D")
-        log.write(prefix)
+        label = f"reyn  {meta_pfx}" if meta_pfx else "reyn"
+        log.write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
         if msg.text:
             log.write(RichMarkdown(msg.text))
+        log.write(Text(""))
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
@@ -129,12 +137,10 @@ class ConversationView(Widget):
 
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
         """Start a streaming agent message row. Returns the row widget."""
-        prefix = f"{agent_name:<6}  " if agent_name else "agent  "
-        row = StreamingRow(prefix=prefix, id=f"stream_{msg_id[:8]}")
+        label = agent_name if agent_name else "reyn"
+        self._log().write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
+        row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
-        # Mount inside a small wrapper so it sits after the RichLog
-        self._log().write(Text(""))  # placeholder blank line for spacing
-        # We mount the streaming row as a sibling of the log
         self.mount(row)
         return row
 
@@ -150,8 +156,7 @@ class ConversationView(Widget):
         if row is None:
             return ""
         row.seal()
-        # After sealing, the row stays in the DOM for the user to read.
-        # The final text is available via row.full_text().
+        self._log().write(Text(""))
         return row.full_text()
 
     # ── intervention mounting ─────────────────────────────────────────────────
@@ -196,12 +201,12 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 
     if msg.kind == "agent":
         t = Text()
-        t.append("agent  ", style="bold #C8553D")
+        t.append("agent  ", style="bold " + _CORAL)
         t.append(body)
         return t
     if msg.kind == "status":
         t = Text()
-        t.append("⟳ ", style="dim italic #C8553D")
+        t.append("⟳ ", style="dim italic " + _CORAL)
         t.append(body, style="dim italic")
         return t
     if msg.kind == "error":
@@ -231,6 +236,6 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 def _format_intervention_line(msg: OutboxMessage) -> Text:
     """Fallback inline line for intervention when no widget callback set."""
     t = Text()
-    t.append("  Aria asks  ", style="bold #C8553D")
+    t.append("  Aria asks  ", style="bold " + _CORAL)
     t.append(msg.text, style="#ffcc88")
     return t

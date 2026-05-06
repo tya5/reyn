@@ -24,6 +24,8 @@ seal() behaviour:
 """
 from __future__ import annotations
 
+_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
@@ -101,7 +103,7 @@ class StreamingRow(Widget):
 
     def _build_renderable(self) -> Text:
         t = Text()
-        t.append(self._prefix, style="bold #C8553D")
+        t.append(self._prefix, style="bold " + _CORAL)
         t.append("".join(self._chunks))
         return t
 
@@ -121,7 +123,7 @@ class StreamingRow(Widget):
             prefix_widget = Static(id="sealed_prefix")
             md_widget = Markdown(full, id="sealed_markdown")
             self.mount(prefix_widget, md_widget)
-            prefix_widget.update(Text(self._prefix, style="bold #C8553D"))
+            prefix_widget.update(Text(self._prefix, style="bold " + _CORAL))
         except Exception:
             # Graceful fallback: freeze raw Rich text in the existing Static.
             if self._static is not None:

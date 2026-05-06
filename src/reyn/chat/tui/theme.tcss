@@ -1,5 +1,5 @@
 /* Reyn TUI — coral theme. One bundled theme, no user customisation in v1.
-   Primary accent: #C8553D (warm coral matching the coral design's App primary)
+   Primary accent: $primary (warm coral matching the coral design's App primary)
 */
 
 Screen {
@@ -17,7 +17,7 @@ ReynHeader {
 }
 
 ReynHeader #title {
-    color: #C8553D;
+    color: $primary;
     text-style: bold;
     width: auto;
 }
@@ -29,18 +29,23 @@ ReynHeader #status {
     padding: 0 1;
 }
 
-ConversationView {
+#content {
     height: 1fr;
+}
+
+ConversationView {
+    width: 1fr;
+    height: 100%;
     border: tall #2a2a2a;
     padding: 0 1;
     overflow-y: scroll;
-    scrollbar-color: #C8553D;
+    scrollbar-color: $primary;
     scrollbar-background: #1a1a1a;
 }
 
 ConversationView > RichLog {
     background: transparent;
-    scrollbar-color: #C8553D;
+    scrollbar-color: $primary;
 }
 
 InputBar {
@@ -52,16 +57,13 @@ InputBar {
     padding: 0 1;
 }
 
-InputBar.palette-open #hints {
-    display: none;
-}
-
-InputBar Input {
+InputBar TextArea {
     background: transparent;
     border: none;
     color: #ffffff;
     padding: 0 1;
-    height: 1;
+    height: auto;
+    max-height: 10;
 }
 
 InputBar #hints {
@@ -71,35 +73,10 @@ InputBar #hints {
     dock: bottom;
 }
 
-/* Command palette overlay */
-CommandPalette {
-    background: #1a1a1a;
-    border: tall #C8553D;
-    padding: 0 1;
-    height: auto;
-    max-height: 12;
-    min-width: 50;
-}
-
-CommandPalette .palette-item {
-    padding: 0 1;
-    height: 1;
-}
-
-CommandPalette .palette-item:hover {
-    background: #C8553D 30%;
-}
-
-CommandPalette .palette-item--selected {
-    background: #C8553D 50%;
-    color: #ffffff;
-    text-style: bold;
-}
-
 /* Intervention widget */
 InterventionWidget {
     background: #1e1510;
-    border: tall #C8553D;
+    border: tall $primary;
     padding: 1 2;
     height: auto;
     margin: 1 0;
@@ -120,7 +97,7 @@ InterventionWidget .iv-chips {
 
 InterventionWidget Button {
     margin: 0 1 0 0;
-    background: #C8553D;
+    background: $primary;
     color: #ffffff;
     border: none;
     padding: 0 2;

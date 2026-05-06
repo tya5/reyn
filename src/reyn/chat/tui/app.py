@@ -3,11 +3,14 @@
 Layout:
   ┌─ ReynHeader ─────────────────────────────────────────────────────┐  dock=top h=1
   │                                                                   │
-  │  ConversationView (RichLog + inline widgets)          1fr         │
+  │  ConversationView (RichLog + inline widgets)  1fr  │  RightPanel │  dock=right (hidden by default)
   │                                                                   │
   ├───────────────────────────────────────────────────────────────────┤
-  │  InputBar (Input + hint label)                        dock=bottom │
+  │  InputBar (TextArea + hint label)                     dock=bottom │
   └───────────────────────────────────────────────────────────────────┘
+
+RightPanel (ctrl+b to toggle, ctrl+o to focus, ctrl+w to cycle tabs):
+  keys · events · agents · memory · docs
 
 ChatSession integration (phase 3+):
   - subscribe_outbox():    coroutine draining registry.repl_outbox → render
@@ -29,43 +32,14 @@ from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.widgets import Label
+from textual.containers import Horizontal
+from textual.theme import Theme
 
-from .widgets import ReynHeader, ConversationView, InputBar
-from .widgets.input_bar import InputBar as _InputBar  # same, but alias for clarity
+from .widgets import ReynHeader, ConversationView, InputBar, RightPanel
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
-
-
-# Command palette item for Tab autocomplete
-from textual.widgets import OptionList
-from textual.widgets.option_list import Option
-
-
-class CommandPaletteOverlay(OptionList):
-    """Inline command palette that appears above the Input on Tab press.
-
-    Mounted (hidden) inside InputBar in compose(). Toggling the "visible"
-    class flips display between none and block. InputBar is `height: auto`
-    so the bar grows upward when the palette becomes visible.
-    """
-
-    DEFAULT_CSS = """
-    CommandPaletteOverlay {
-        dock: top;
-        height: auto;
-        max-height: 12;
-        min-width: 40;
-        background: #1a1a1a;
-        border: tall #C8553D;
-        display: none;
-    }
-    CommandPaletteOverlay.visible {
-        display: block;
-    }
-    """
 
 
 class ReynTUIApp(App):
@@ -73,29 +47,29 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
-    # Textual's built-in command palette stays on its default Ctrl+P. It
-    # surfaces system actions (Keys, Quit, Screenshot, …) and complements
-    # the Reyn slash palette (Tab — surfaces /list, /budget, /help, …).
+    ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
         Binding("ctrl+d", "quit_tui", "Quit", priority=True),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True),
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
-        Binding("tab", "palette_next", "Commands / next", priority=True, show=False),
-        Binding("shift+tab", "palette_prev", "Prev", priority=True, show=False),
-        Binding("ctrl+n", "palette_next", "Next", priority=True, show=False),
-        # ctrl+p is reserved for Textual's built-in command palette;
-        # Reyn's own slash-palette nav uses Shift+Tab / k / p when open.
-        # Plain-letter shortcuts only work while the palette is visible
-        # (gated via check_action). Otherwise typing "n" into a message
-        # would silently navigate.
-        Binding("n", "palette_next_only", "Next", priority=True, show=False),
-        Binding("p", "palette_prev", "Prev", priority=True, show=False),
-        Binding("j", "palette_next_only", "Next", priority=True, show=False),
-        Binding("k", "palette_prev", "Prev", priority=True, show=False),
-        Binding("backspace", "palette_backspace", "Back", priority=True, show=False),
-        Binding("escape", "close_palette", "Close palette", priority=True, show=False),
+        Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
+        Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
+        Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
+        Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
+
+    _REYN_THEME = Theme(
+        name="reyn",
+        primary="#C8553D",
+        accent="#C8553D",
+        dark=True,
+        variables={
+            "block-cursor-background": "#C8553D",
+            "block-cursor-foreground": "#ffffff",
+        },
+    )
 
     def __init__(
         self,
@@ -106,14 +80,17 @@ class ReynTUIApp(App):
         budget_tracker=None,
     ) -> None:
         super().__init__()
+        self.register_theme(self._REYN_THEME)
+        self.theme = "reyn"
         self._agent_registry = registry   # NOTE: NOT _registry (Textual internal)
         self._agent_name = agent_name
         self._model = model
         self._budget_tracker = budget_tracker
         self._outbox_task: asyncio.Task | None = None
-        self._palette_visible = False
-        self._all_slash_names: list[str] = []
+        self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
+        # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
+        self._skill_exec: dict[str, dict] = {}
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -123,37 +100,64 @@ class ReynTUIApp(App):
             model=self._model,
             id="header",
         )
-        yield ConversationView(id="conversation")
+        project_root: Path | None = None
+        if self._agent_registry is not None:
+            try:
+                project_root = self._agent_registry._project_root
+            except Exception:
+                pass
+        with Horizontal(id="content"):
+            yield ConversationView(id="conversation")
+            yield RightPanel(
+                registry=self._agent_registry,
+                project_root=project_root,
+                id="right_panel",
+            )
         yield InputBar(id="inputbar")
 
     def on_mount(self) -> None:
         """Wire up after DOM is ready."""
-        # Load slash names from registry
+        # Load slash commands from registry into the inline picker
         from reyn.chat.slash import REGISTRY as SLASH_REGISTRY
-        self._all_slash_names = SLASH_REGISTRY.names()
 
         inputbar = self.query_one("#inputbar", InputBar)
-        inputbar.update_slash_names(self._all_slash_names)
-
-        # Pre-mount the command palette (hidden) inside InputBar so that
-        # Tab handling only needs to populate + toggle the visible class —
-        # no race with the async mount lifecycle.
-        palette = CommandPaletteOverlay(id="palette")
-        inputbar.mount(palette)
+        inputbar.update_slash_commands(SLASH_REGISTRY.all_commands())
 
         inputbar.focus_input()
 
-        # Show startup banner
+        # ASCII banner (neofetch style): gradient logo left, agent info right
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
-        t = Text()
-        t.append("Reyn ", style="bold #C8553D")
-        t.append("— type a message or ")
-        t.append("Tab", style="bold")
-        t.append(" for commands, ")
-        t.append("Ctrl+D", style="bold")
-        t.append(" to quit")
-        conv._write_log(t)
+        _BANNER = [
+            "██████╗ ███████╗██╗   ██╗███╗   ██╗",
+            "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
+            "██████╔╝█████╗   ╚████╔╝ ██╔██╗ ██║",
+            "██╔══██╗██╔══╝    ╚██╔╝  ██║╚██╗██║",
+            "██║  ██║███████╗   ██║   ██║ ╚████║",
+            "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
+        ]
+        _INFO = [
+            None,
+            ("agent", self._agent_name or "—"),
+            ("model", self._model or "—"),
+            None,
+            None,
+            None,
+        ]
+        n = len(_BANNER)
+        for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
+            t = i / (n - 1)
+            r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
+            rt = Text()
+            rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
+            if info:
+                key, val = info
+                rt.append("    ")
+                rt.append(f"{key}  ", style="dim #555555")
+                rt.append(val, style="#dddddd")
+            conv._write_log(rt)
+        conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
+        conv._write_log(Text("─" * 38, style="#2a2a2a"))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
@@ -241,6 +245,16 @@ class ReynTUIApp(App):
             if msg.kind in {"agent", "skill_done"}:
                 self._maybe_refresh_status(header)
 
+            # Track live skill execution state for Agents tab
+            if msg.kind == "trace" and msg.meta.get("skill_name"):
+                self._update_skill_exec(msg)
+                self._push_exec_state()
+            elif msg.kind == "skill_done":
+                run_id = msg.meta.get("run_id", "")
+                if run_id:
+                    self._skill_exec.pop(run_id, None)
+                    self._push_exec_state()
+
     def _mount_intervention(
         self,
         conv: ConversationView,
@@ -302,6 +316,38 @@ class ReynTUIApp(App):
         """Called every 1s by set_interval to keep status line current."""
         self._maybe_refresh_status()
 
+    def _update_skill_exec(self, msg) -> None:
+        """Parse a trace OutboxMessage with skill_name in meta and update _skill_exec."""
+        import time as _time
+        run_id = msg.meta.get("run_id", "")
+        if not run_id:
+            return
+        skill_name = msg.meta.get("skill_name", "")
+        text = msg.text or ""
+        existing = self._skill_exec.get(run_id)
+        if existing is None:
+            existing = {
+                "skill_name": skill_name,
+                "agent_name": self._agent_name,
+                "start_time": _time.monotonic(),
+                "phase": "",
+                "phase_visits": 0,
+            }
+            self._skill_exec[run_id] = existing
+        # Text pattern: "phase started: <phase_name>"
+        if text.startswith("phase started: "):
+            phase = text[len("phase started: "):].strip()
+            existing["phase"] = phase
+            existing["phase_visits"] = existing.get("phase_visits", 0) + 1
+
+    def _push_exec_state(self) -> None:
+        """Forward current _skill_exec snapshot to RightPanel for live display."""
+        try:
+            panel = self.query_one("#right_panel", RightPanel)
+            panel.update_exec_state(self._skill_exec)
+        except Exception:
+            pass
+
     # ── message handlers from widgets ─────────────────────────────────────────
 
     async def on_input_bar_user_submitted(self, msg: InputBar.UserSubmitted) -> None:
@@ -314,13 +360,10 @@ class ReynTUIApp(App):
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
         from reyn.chat.outbox import OutboxMessage
-        user_t = Text()
-        user_t.append("you    ", style="bold")
-        user_t.append(text)
-        conv._write_log(user_t)
-
-        # Close palette if open
-        self._close_palette()
+        from reyn.chat.tui.widgets.conversation import _msg_header
+        conv._write_log(_msg_header("you", "bold #4abbb5", "#1f5856"))
+        conv._write_log(Text(text))
+        conv._write_log(Text(""))
 
         # Get the attached session
         session = self._get_session()
@@ -367,10 +410,6 @@ class ReynTUIApp(App):
         """Ctrl+C — cancel the in-flight model call."""
         self.action_cancel_inflight()
 
-    def on_input_bar_open_palette(self, msg: InputBar.OpenPalette) -> None:
-        """Tab — open/update slash command palette."""
-        self._open_palette(prefix=msg.prefix)
-
     # ── actions ───────────────────────────────────────────────────────────────
 
     async def action_quit_tui(self) -> None:
@@ -392,6 +431,28 @@ class ReynTUIApp(App):
         conv = self.query_one("#conversation", ConversationView)
         conv.clear()
 
+    def action_screenshot(self) -> None:
+        """Ctrl+\\ — save an SVG screenshot, open it, and log the path."""
+        filename = self.save_screenshot()
+        try:
+            from pathlib import Path
+            from rich.text import Text
+            import sys, subprocess
+            abs_path = Path(filename).resolve()
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(abs_path)])
+            elif sys.platform == "win32":
+                import os
+                os.startfile(str(abs_path))
+            else:
+                subprocess.Popen(["xdg-open", str(abs_path)])
+            t = Text()
+            t.append("screenshot → ", style="dim")
+            t.append(str(abs_path), style="bold")
+            self.query_one("#conversation", ConversationView)._write_log(t)
+        except Exception:
+            pass
+
     def action_cancel_inflight(self) -> None:
         """Cancel the in-flight skill/model call on the attached session."""
         session = self._get_session()
@@ -402,151 +463,72 @@ class ReynTUIApp(App):
             if not task.done():
                 task.cancel()
 
-    def action_close_palette(self) -> None:
-        self._close_palette()
-        inputbar = self.query_one("#inputbar", InputBar)
-        inputbar.focus_input()
+    def action_toggle_panel(self) -> None:
+        """ctrl+b — open or close the right panel."""
+        self._panel_visible = not self._panel_visible
+        self.query_one("#right_panel", RightPanel).display = self._panel_visible
 
-    def action_open_palette(self) -> None:
-        """Tab — open the slash command palette filtered by current input."""
+    def action_focus_toggle_panel(self) -> None:
+        """ctrl+o — cycle focus: input → panel tabs → preview pane → input."""
+        panel = self.query_one("#right_panel", RightPanel)
+        focused = self.focused
+        ancestors = [focused, *focused.ancestors] if focused else []
+        in_panel = any(a is panel for a in ancestors)
+
+        if not in_panel:
+            # Not in panel at all → move to panel tabs
+            panel.focus_tabs()
+            return
+
+        # Determine whether focus is inside the preview pane specifically
+        in_preview = False
         try:
-            inp = self.query_one("#inputbar", InputBar).query_one("#input")
-            prefix = inp.value
+            preview = panel.query_one("#preview-pane")
+            in_preview = any(a is preview for a in ancestors)
         except Exception:
-            prefix = ""
-        self._open_palette(prefix=prefix)
+            pass
 
-    def action_palette_next(self) -> None:
-        """Tab / Ctrl+N — open the palette, or advance selection if already open."""
-        if self._palette_visible:
-            self._move_palette_cursor(1)
+        if in_preview:
+            # Preview pane → go back to input
+            self.query_one("#inputbar", InputBar).focus_input()
         else:
-            self.action_open_palette()
+            # Panel tabs → go to preview pane (if open) else input
+            if panel.preview_visible:
+                try:
+                    panel.query_one("#preview-pane").focus()
+                    return
+                except Exception:
+                    pass
+            self.query_one("#inputbar", InputBar).focus_input()
 
-    def action_palette_next_only(self) -> None:
-        """n / j — advance selection; only fires when palette is visible
-        (gated via check_action so plain letters don't capture in input)."""
-        self._move_palette_cursor(1)
+    def action_panel_next_content(self) -> None:
+        """ctrl+w — cycle to next panel tab (gated: panel visible only)."""
+        self.query_one("#right_panel", RightPanel).cycle(+1)
 
-    def action_palette_prev(self) -> None:
-        """Shift+Tab / Ctrl+P / p / k — move selection up; gated via
-        check_action so plain letters don't capture when input has focus."""
-        if self._palette_visible:
-            self._move_palette_cursor(-1)
+    def action_panel_prev_content(self) -> None:
+        """ctrl+shift+w — cycle to previous panel tab (gated: panel visible only)."""
+        self.query_one("#right_panel", RightPanel).cycle(-1)
 
-    def _move_palette_cursor(self, delta: int) -> None:
-        """Advance / retreat the palette selection by `delta` (±1)."""
-        try:
-            overlay = self.query_one("#palette", CommandPaletteOverlay)
-        except Exception:
-            return
-        count = overlay.option_count
-        if count == 0:
-            return
-        current = overlay.highlighted if overlay.highlighted is not None else -1
-        overlay.highlighted = (current + delta) % count
+    def action_event_filter_cycle(self) -> None:
+        """f — rotate event filter (gated: events tab visible)."""
+        self.query_one("#right_panel", RightPanel).cycle_event_filter()
+
+    def action_event_tail_cycle(self) -> None:
+        """t — rotate event tail count (gated: events tab visible)."""
+        self.query_one("#right_panel", RightPanel).cycle_event_tail()
 
     def check_action(self, action: str, parameters):
-        """Disable palette-only bindings when the palette is closed.
-
-        Backspace, Shift+Tab, Ctrl+P, Esc should fall through to the focused
-        Input widget when no palette is visible. Without this, the priority
-        bindings would swallow them — Backspace wouldn't delete characters,
-        Esc wouldn't reach prompt-toolkit-style chord handlers, etc.
-        """
-        if action in {
-            "palette_backspace",
-            "palette_prev",
-            "palette_next_only",
-            "close_palette",
-        }:
-            # Plain-letter palette nav (n/p/j/k), Backspace, Esc must only
-            # fire while the palette is open — otherwise typing those into
-            # a message would silently navigate / delete. Tab keeps using
-            # `palette_next` (un-gated) so it can still open the palette.
-            return self._palette_visible
-        return True
-
-    def action_palette_backspace(self) -> None:
-        """Backspace while palette is open: close + delete one char from input."""
-        self._close_palette()
-        try:
-            inputbar = self.query_one("#inputbar", InputBar)
-            inp = inputbar.query_one("#input")
-            if inp.value:
-                # Drop the last character; cursor follows.
-                inp.value = inp.value[:-1]
-                inp.cursor_position = len(inp.value)
-            inputbar.focus_input()
-        except Exception:
-            pass
-
-    # ── command palette ───────────────────────────────────────────────────────
-
-    def _open_palette(self, prefix: str = "") -> None:
-        """Show or refresh the command palette."""
-        from reyn.chat.slash import REGISTRY
-
-        # Filter commands by prefix (after /), sorted alphabetically.
-        # Hidden commands (e.g. easter eggs) only appear when typed by name.
-        cmd_prefix = prefix[1:] if prefix.startswith("/") else ""
-        all_cmds = sorted(
-            (c for c in REGISTRY.all_commands() if not c.hidden),
-            key=lambda c: c.name,
-        )
-        matches = [c for c in all_cmds if c.name.startswith(cmd_prefix)]
-
-        if not matches:
-            self._close_palette()
-            return
-
-        try:
-            overlay = self.query_one("#palette", CommandPaletteOverlay)
-        except Exception:
-            # Should not happen — palette is pre-mounted in on_mount.
-            return
-
-        overlay.clear_options()
-        for cmd in matches:
-            overlay.add_option(Option(f"/{cmd.name}  — {cmd.summary}", id=cmd.name))
-
-        overlay.add_class("visible")
-        try:
-            self.query_one("#inputbar", InputBar).add_class("palette-open")
-        except Exception:
-            pass
-        # Highlight the first match so Enter is immediately useful — no
-        # need to press Ctrl+N before selecting the only candidate.
-        overlay.highlighted = 0
-        overlay.focus()
-        self._palette_visible = True
-
-    def _close_palette(self) -> None:
-        try:
-            overlay = self.query_one("#palette", CommandPaletteOverlay)
-            overlay.remove_class("visible")
-        except Exception:
-            pass
-        try:
-            self.query_one("#inputbar", InputBar).remove_class("palette-open")
-        except Exception:
-            pass
-        self._palette_visible = False
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        """User selected a command from the palette."""
-        if event.option.id:
-            cmd_name = event.option.id
-            inputbar = self.query_one("#inputbar", InputBar)
-            # Set input to the slash command
+        """Gate panel-scoped bindings to when the panel is visible/relevant."""
+        if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
+            return self._panel_visible
+        if action in {"event_filter_cycle", "event_tail_cycle"}:
+            if not self._panel_visible:
+                return False
             try:
-                inp = inputbar.query_one("#input")
-                inp.value = f"/{cmd_name} "
-                inp.cursor_position = len(inp.value)
-                inp.focus()
+                return self.query_one("#right_panel", RightPanel).panel_type == "events"
             except Exception:
-                pass
-        self._close_palette()
+                return False
+        return True
 
     # ── helpers ───────────────────────────────────────────────────────────────
 

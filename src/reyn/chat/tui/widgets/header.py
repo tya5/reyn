@@ -30,7 +30,7 @@ class ReynHeader(Widget):
         layout: horizontal;
     }
     ReynHeader #title {
-        color: #C8553D;
+        color: $primary;
         text-style: bold;
         padding: 0 1;
         width: auto;
@@ -95,16 +95,15 @@ class ReynHeader(Widget):
             parts.append(self._agent_name)
         if self._model:
             parts.append(self._model)
-        if self._tokens_today > 0 or self._cost_usd > 0.0:
-            tok_str = f"{self._tokens_today:,}"
-            if self._tokens_cap is not None:
-                tok_str += f" / {self._tokens_cap:,}"
-            tok_str += " tok"
-            cost_str = f"${self._cost_usd:.2f}"
-            if self._cost_cap is not None:
-                cost_str += f" / ${self._cost_cap:.2f}"
-            parts.append(tok_str)
-            parts.append(cost_str)
+        tok_str = f"{self._tokens_today:,}"
+        if self._tokens_cap is not None:
+            tok_str += f" / {self._tokens_cap:,}"
+        tok_str += " tok"
+        cost_str = f"${self._cost_usd:.2f}"
+        if self._cost_cap is not None:
+            cost_str += f" / ${self._cost_cap:.2f}"
+        parts.append(tok_str)
+        parts.append(cost_str)
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append(self._now_text())
 
