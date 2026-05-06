@@ -58,13 +58,15 @@ async def invoke_sub_skill(
     ``/skill list`` and resume bookkeeping. ``None`` = top-level
     (preprocessor / standalone invocation).
 
-    ``permission_resolver`` (G15): propagated from the parent so the
-    sub-skill's workspace inherits the same per-skill approval state.
-    Without this the sub-skill's workspace has no resolver, and any
-    path outside CWD is denied regardless of what the sub-skill declared.
-    ``startup_guard`` is NOT re-run for sub-skills — declarations in the
-    sub-skill's skill.md are auto-approved by the guard on the parent's
-    resolver when the parent runs in non-interactive mode.
+    ``permission_resolver``: propagated from the parent so the sub-skill's
+    workspace inherits the same per-skill approval state (resolver object).
+    Without this the sub-skill's workspace has no resolver, and any path
+    outside CWD is denied regardless of what the sub-skill declared.
+    The sub-skill runs its own ``startup_guard`` to register approvals for
+    its own declarations; the propagated resolver is the container through
+    which those approvals are checked at runtime.  Non-interactive runs
+    require approvals to be in place beforehand via reyn.yaml / reyn.local.yaml
+    or .reyn/approvals.yaml (per documented permission model).
     """
     from reyn.agent import Agent
 

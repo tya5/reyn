@@ -57,10 +57,9 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         subscribers=ctx.subscribers,
         resolver=ctx.resolver,
         intervention_bus=ctx.intervention_bus,
-        # G15: propagate the parent's PermissionResolver so the sub-skill's
-        # workspace inherits per-skill approval state (e.g. stdlib path reads
-        # that the parent's startup_guard approved).  startup_guard is NOT
-        # re-run for sub-skills; the resolver carries the session-approved state.
+        # Propagate the parent's PermissionResolver so the sub-skill's workspace
+        # can check approvals recorded in the session.  Without this, the
+        # sub-skill's workspace has no resolver and denies all non-CWD reads.
         permission_resolver=ctx.permission_resolver,
         output_language=op.output_language or ctx.output_language,
         max_phase_visits=ctx.max_phase_visits,
