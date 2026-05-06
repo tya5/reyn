@@ -1,4 +1,4 @@
-"""Tier 2: ModelResolver OS invariant tests (PR-MODEL-SPEC).
+"""Tier 2: ModelResolver OS invariant tests (PR-MODEL-SPEC + PR-MODEL-SPEC-EXTENDS).
 
 Pinned invariants:
   - resolve(name) returns ModelSpec for known classes (API change pin)
@@ -8,8 +8,11 @@ Pinned invariants:
   - is_known_class behaves identically for str-form and dict-form values
   - unknown name passthrough: ModelSpec(model=name, kwargs={})
   - ReynConfig.models accepts dict-form values (config layer check)
+  - [EXTENDS] built-in pre-load: claude-sonnet-thinking resolvable with empty user mapping
+  - [EXTENDS] user override: user-declared entry wins over same-named built-in
+  - [EXTENDS] backward compat: existing ``/``-containing str form unchanged
 
-Reference: PR-MODEL-SPEC Task 2 (Tier 2).
+Reference: PR-MODEL-SPEC Task 2 (Tier 2) + PR-MODEL-SPEC-EXTENDS Task 3 (Tier 2).
 """
 from __future__ import annotations
 
@@ -172,3 +175,35 @@ def test_reyn_config_models_accepts_dict_form():
     assert strong_spec.model == "anthropic/claude-3-7-sonnet"
     assert strong_spec.kwargs["temperature"] == 0.0
     assert strong_spec.kwargs["extra_body"]["thinking"]["type"] == "enabled"
+
+
+# ---------------------------------------------------------------------------
+# PR-MODEL-SPEC-EXTENDS: built-in pre-load + user override (Tier 2)
+# ---------------------------------------------------------------------------
+
+
+def test_extends_builtin_preload_empty_user_mapping():
+    """Tier 2 [EXTENDS]: empty user mapping -> built-in claude-sonnet-thinking resolvable."""
+    r = ModelResolver({})
+    spec = r.resolve("claude-sonnet-thinking")
+    assert isinstance(spec, ModelSpec)
+    assert "anthropic" in spec.model
+    assert spec.kwargs.get("extra_body", {}).get("thinking", {}).get("type") == "enabled"
+
+
+def test_extends_user_override_wins_over_builtin():
+    """Tier 2 [EXTENDS]: user-declared entry with same name as built-in takes precedence."""
+    r = ModelResolver({"claude-sonnet": {"model": "openai/gpt-4o"}})
+    spec = r.resolve("claude-sonnet")
+    assert spec.model == "openai/gpt-4o"
+
+
+def test_extends_backward_compat_slash_str_with_builtin_loaded():
+    """Tier 2 [EXTENDS]: existing '/' str form resolves as literal even with built-ins loaded."""
+    r = ModelResolver({
+        "light": "openai/gemini-2.5-flash-lite",
+        "standard": "openai/gpt-4o",
+    })
+    assert r.resolve("light").model == "openai/gemini-2.5-flash-lite"
+    assert r.resolve("light").kwargs == {}
+    assert r.resolve("standard").model == "openai/gpt-4o"

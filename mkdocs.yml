@@ -102,6 +102,7 @@ nav:
           - reference/config/permissions.md
           - reference/config/state-dir.md
           - reference/config/multi-agent.md
+          - reference/builtin-models.md
       - Stdlib:
           - reference/stdlib/index.md
           - reference/stdlib/skill_builder.md

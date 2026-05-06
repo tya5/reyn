@@ -44,11 +44,18 @@ def test_is_known_class_returns_true_for_configured_class():
 
 
 def test_is_known_class_returns_false_for_unknown_string():
-    """Tier 1: is_known_class(name) is False when name is not in the mapping (str form)."""
+    """Tier 1: is_known_class(name) is False when name is not in the namespace.
+
+    PR-MODEL-SPEC-EXTENDS: built-in catalog is pre-loaded.  ``gpt-4o`` is a
+    built-in class reference and IS known; use a genuinely-absent name for this
+    test.  ``gpt-3.5-turbo`` is not in the built-in catalog or user mapping, so
+    it remains unknown.  ``strong`` is also not in either.
+    """
     r = ModelResolver({"standard": "openai/model-b"})
     assert r.is_known_class("gpt-3.5-turbo") is False
-    assert r.is_known_class("gpt-4o") is False
-    assert r.is_known_class("strong") is False  # not in this mapping
+    # gpt-4o is now a built-in class — it IS known.
+    assert r.is_known_class("gpt-4o") is True
+    assert r.is_known_class("strong") is False  # not in user mapping or built-ins
 
 
 def test_is_known_class_false_for_empty_mapping():

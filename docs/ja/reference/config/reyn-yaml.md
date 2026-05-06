@@ -34,7 +34,9 @@ models:
 
 `models:` の各エントリはクラス名を LiteLLM モデル文字列 **または** per-class LLM パラメータを宣言する dict にマップします。
 
-### str 形式（後方互換）
+### str 形式 — リテラル（後方互換）
+
+str 値に **`/` が含まれる** 場合、LiteLLM モデル文字列として直接使用されます：
 
 ```yaml
 models:
@@ -45,7 +47,19 @@ models:
 
 str 形式を使用している既存の `reyn.yaml` はすべて変更なしで動作します。
 
-### dict 形式（opt-in、PR-MODEL-SPEC）
+### str 形式 — クラス参照省略形（新規）
+
+str 値に **`/` が含まれない** 場合、`{extends: <name>}` の省略形として扱われます。
+名前はフラット namespace（ユーザーエントリ + built-in カタログ）で解決されます：
+
+```yaml
+models:
+  standard: claude-sonnet-thinking     # 等価: standard: {extends: claude-sonnet-thinking}
+```
+
+不明な省略形（ユーザーエントリにも built-in にも存在しない名前）は起動エラーになります。
+
+### dict 形式 — plain kwargs
 
 ```yaml
 models:
@@ -54,7 +68,7 @@ models:
   strong:
     model: anthropic/claude-3-7-sonnet      # 必須
     temperature: 0.0
-    max_tokens: 16000
+    max_completion_tokens: 16000             # max_tokens より推奨 — 下記注意
     extra_body:
       thinking:
         type: enabled
@@ -65,16 +79,72 @@ models:
 |-------|----------|-------------|
 | `model` | はい | LiteLLM モデル文字列。 |
 | `temperature` | いいえ | litellm に渡すサンプリング温度。 |
-| `max_tokens` | いいえ | litellm に渡す最大出力トークン数。 |
+| `max_completion_tokens` | いいえ | **推奨** 最大出力トークン数（OpenAI o1+ およびほとんどのプロバイダーで強制）。 |
+| `max_tokens` | いいえ | レガシーのソフトヒント — 多くのプロバイダーが無視する。`max_completion_tokens` を推奨。 |
 | `top_p` | いいえ | litellm に渡す top-p サンプリング。 |
 | `extra_body` | いいえ | プロバイダー固有のペイロード（例：推論モデルの `thinking`）。 |
+| `extends` | いいえ | 名前付きクラスから継承し、オーバーライドを deep merge（下記参照）。 |
 | *（その他のフィールド）* | いいえ | litellm にそのまま渡されます（パススルーポリシー）。 |
+
+> **コスト制限**: `max_tokens` ではなく `max_completion_tokens` を使用してください。`max_tokens` は多くのプロバイダーが無視するレガシーのソフトヒントです。`max_completion_tokens` は API レベルで強制されます（OpenAI o1+ および Anthropic モデル）。
 
 **フィールドポリシー**: `model` のみ必須です。他のフィールドはすべてバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。
 
 **Skill / Phase 側オーバーライド**: サポートしていません。Operator config（`reyn.yaml`）が LLM パラメータの唯一の source of truth です。Skill 作者はクラス名のみを指定します（例：`model_class: strong`）。
 
 **マージ順**: Reyn が管理する設定（`timeout`、`num_retries`、プロキシルーティング）は operator 宣言の kwargs より常に優先されます。
+
+### dict 形式 — `extends` フィールド（新規）
+
+`extends` を使用して別のクラスから継承し、特定のフィールドをオーバーライドできます。
+参照される名前はフラット namespace（ユーザーエントリ + built-in カタログ）で解決されます。
+
+```yaml
+models:
+  # claude-sonnet-thinking built-in を継承し、budget_tokens を 8000 → 4000 に変更。
+  # extra_body.thinking.type: enabled は base から引き継がれます（deep merge）。
+  reasoning-light:
+    extends: claude-sonnet-thinking
+    extra_body:
+      thinking:
+        budget_tokens: 4000
+
+  # マルチレベル: reasoning-heavy は上で定義した reasoning-light を extends。
+  reasoning-heavy:
+    extends: reasoning-light
+    extra_body:
+      thinking:
+        budget_tokens: 16000
+    max_completion_tokens: 32000
+```
+
+**Deep merge**: ネストした dict は再帰的にマージされます。`extra_body.thinking` の下に指定したキーのみがオーバーライドされ、兄弟キー（例：`type: enabled`）は base から引き継がれます。スカラーとリストは置換されます（マージされません）。
+
+**マルチレベルチェーン**: 任意の深さが許可されます。Reyn は起動時にチェーン全体を解決します。
+
+**サイクル検出**: 循環する `extends` 参照（例：`A extends B, B extends A`）は起動時に検出され、設定エラーが発生します。
+
+**不明な参照**: namespace（ユーザーエントリまたは built-in カタログ）に存在しない名前の参照は起動エラーになります。
+
+### Built-in カタログ
+
+Reyn には、namespace にプリロードされた一般的なモデルクラスの built-in カタログが付属しています。
+`reyn.yaml` に宣言せずに名前で参照できます：
+
+| クラス名 | プロバイダー / モデル | 備考 |
+|---|---|---|
+| `claude-sonnet` | `anthropic/claude-3-7-sonnet` | |
+| `claude-sonnet-thinking` | `anthropic/claude-3-7-sonnet` + thinking 有効 | budget_tokens=8000 |
+| `claude-haiku` | `anthropic/claude-3-5-haiku` | |
+| `gpt-4o-mini` | `openai/gpt-4o-mini` | |
+| `gpt-4o` | `openai/gpt-4o` | |
+| `gemini-flash-lite` | `openai/gemini-2.5-flash-lite` | |
+| `gemini-3.1-flash-preview` | `openai/gemini-3.1-flash-preview` | |
+| `gemini-2.0-flash` | `openai/gemini-2.0-flash` | `thinking_budget=0` で thinking 無効化 |
+
+ユーザー宣言エントリは同名の built-in を**上書き**します。built-in カタログは便利な出発点であり、`reyn.yaml` が常に source of truth です。
+
+詳細は [Reference: built-in models](../builtin-models.md) を参照してください。
 
 ## `limits` ブロック
 

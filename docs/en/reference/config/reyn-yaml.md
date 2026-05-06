@@ -34,7 +34,9 @@ models:
 
 Each entry under `models:` maps a class name to a LiteLLM model string **or** a dict that declares per-class LLM parameters.
 
-### str form (backward compatible)
+### str form — literal (backward compatible)
+
+If a str value **contains `/`**, it is treated as a literal LiteLLM model string:
 
 ```yaml
 models:
@@ -45,7 +47,19 @@ models:
 
 All existing `reyn.yaml` files using str form continue to work without change.
 
-### dict form (opt-in, PR-MODEL-SPEC)
+### str form — class reference shorthand (new)
+
+If a str value **has no `/`**, it is a shorthand for `{extends: <name>}`.  The name
+is resolved against the flat namespace (user entries + built-in catalog):
+
+```yaml
+models:
+  standard: claude-sonnet-thinking     # equivalent to: standard: {extends: claude-sonnet-thinking}
+```
+
+An unknown shorthand (name not in user entries or built-ins) is a startup error.
+
+### dict form — plain kwargs
 
 ```yaml
 models:
@@ -54,7 +68,7 @@ models:
   strong:
     model: anthropic/claude-3-7-sonnet      # required
     temperature: 0.0
-    max_tokens: 16000
+    max_completion_tokens: 16000             # preferred over max_tokens — see note
     extra_body:
       thinking:
         type: enabled
@@ -65,16 +79,79 @@ models:
 |-------|----------|-------------|
 | `model` | yes | LiteLLM model string. |
 | `temperature` | no | Sampling temperature passed to litellm. |
-| `max_tokens` | no | Max output tokens passed to litellm. |
+| `max_completion_tokens` | no | **Preferred** max output tokens (enforced by OpenAI o1+ and most providers). |
+| `max_tokens` | no | Legacy soft hint — ignored by many providers. Prefer `max_completion_tokens`. |
 | `top_p` | no | Top-p sampling passed to litellm. |
 | `extra_body` | no | Provider-specific payload (e.g. `thinking` for reasoning models). |
+| `extends` | no | Inherit from a named class and deep-merge overrides (see below). |
 | *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
+
+> **Cost limit**: use `max_completion_tokens`, not `max_tokens`.  `max_tokens` is a legacy
+> soft hint that many providers ignore; it has no enforcement power on OpenAI o1+ or
+> Anthropic models.  `max_completion_tokens` is enforced at the API level.
 
 **Field policy**: `model` is the only required field. All other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof). Typos cause silent litellm failures, not reyn errors.
 
 **Skill / phase override**: NOT supported. Operator config (`reyn.yaml`) is the single source of truth for LLM parameters. Skill authors specify class names only (e.g. `model_class: strong`).
 
 **Merge order**: Reyn-managed settings (`timeout`, `num_retries`, proxy routing) always take precedence over operator-declared kwargs so proxy configuration is never bypassed.
+
+### dict form — `extends` field (new)
+
+Use `extends` to inherit from another class and override specific fields.  The referenced
+name is resolved against the same flat namespace (user entries + built-in catalog).
+
+```yaml
+models:
+  # Inherit claude-sonnet-thinking built-in, reduce budget_tokens from 8000 → 4000.
+  # extra_body.thinking.type: enabled is carried from the base (deep merge).
+  reasoning-light:
+    extends: claude-sonnet-thinking
+    extra_body:
+      thinking:
+        budget_tokens: 4000
+
+  # Multi-level: reasoning-heavy extends the user-defined reasoning-light above.
+  reasoning-heavy:
+    extends: reasoning-light
+    extra_body:
+      thinking:
+        budget_tokens: 16000
+    max_completion_tokens: 32000
+```
+
+**Deep merge**: nested dicts are merged recursively.  Only the keys you specify under
+`extra_body.thinking` are overridden; sibling keys (e.g. `type: enabled`) are carried
+from the base.  Scalars and lists are replaced, not merged.
+
+**Multi-level chains**: any depth is allowed.  Reyn resolves the full chain at startup.
+
+**Cycle detection**: circular `extends` references (e.g. `A extends B, B extends A`) are
+detected at startup and raise a configuration error.
+
+**Unknown references**: referencing a name not in the namespace (user entries or
+built-in catalog) is a startup error.
+
+### Built-in catalog
+
+Reyn ships a built-in catalog of common model classes pre-loaded into the namespace.
+You can reference them by name without declaring them in `reyn.yaml`:
+
+| Class name | Provider / model | Notes |
+|---|---|---|
+| `claude-sonnet` | `anthropic/claude-3-7-sonnet` | |
+| `claude-sonnet-thinking` | `anthropic/claude-3-7-sonnet` + thinking enabled | budget_tokens=8000 |
+| `claude-haiku` | `anthropic/claude-3-5-haiku` | |
+| `gpt-4o-mini` | `openai/gpt-4o-mini` | |
+| `gpt-4o` | `openai/gpt-4o` | |
+| `gemini-flash-lite` | `openai/gemini-2.5-flash-lite` | |
+| `gemini-3.1-flash-preview` | `openai/gemini-3.1-flash-preview` | |
+| `gemini-2.0-flash` | `openai/gemini-2.0-flash` | thinking disabled via `thinking_budget=0` |
+
+User-declared entries **override** built-ins with the same name.  The built-in catalog
+is a convenience starting point; your `reyn.yaml` is always the source of truth.
+
+See [Reference: built-in models](../builtin-models.md) for per-entry details.
 
 ## `limits` block
 
