@@ -425,7 +425,7 @@ class OSRuntime:
             available_ops=effective_ops,
             op_catalog=all_ops,
             effective_model=effective_model,
-            model_resolved=self._resolver.resolve(effective_model),
+            model_resolved=self._resolver.resolve(effective_model).model,
             events=self.events,
             control_ir_results=control_ir_results,
             artifact_path=artifact_path,
@@ -565,7 +565,8 @@ class OSRuntime:
         rollback_context: dict | None = None,
     ) -> dict:
         self._check_phase_budget(phase)
-        resolved_model = self._resolver.resolve(self._effective_model(phase))
+        resolved_spec = self._resolver.resolve(self._effective_model(phase))
+        resolved_model = resolved_spec.model  # str form for events, budget, pricing
         phase_def = self.skill.phases.get(phase)
 
         # R-D2: per-phase LLM op_invocation_id + memoization. The counter is
@@ -629,7 +630,7 @@ class OSRuntime:
         self._check_budget_pre_llm(resolved_model)
         self.events.emit("llm_called", phase=phase, model=resolved_model)
         llm_result = await call_llm(
-            resolved_model, frame,
+            resolved_spec, frame,
             prior_attempts=prior_attempts or None,
             rollback_context=rollback_context,
             timeout=self._llm_timeout,
@@ -647,7 +648,7 @@ class OSRuntime:
         pricing_snapshot: dict | None = None
         if llm_result.usage:
             self._token_usage += llm_result.usage
-            # Strip provider prefix (e.g. "openai/gemini-2.5-flash-lite" →
+            # Strip provider prefix (e.g. "openai/gemini-2.5-flash-lite" ->
             # "gemini-2.5-flash-lite") so litellm.model_cost lookup succeeds.
             _pricing_model = (
                 resolved_model.split("/", 1)[1]
@@ -1308,7 +1309,7 @@ class OSRuntime:
             skill=self.skill.name,
             entry_phase=self.skill.entry_phase,
             input_type=artifact.get("type"),
-            default_model=self._resolver.resolve(self.model),
+            default_model=self._resolver.resolve(self.model).model,
         )
 
         # PR-skill-resume D3b-3: forward-replay fast-forward.

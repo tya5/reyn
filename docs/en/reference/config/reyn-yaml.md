@@ -24,11 +24,57 @@ models:
 | Key | Type | Description |
 |-----|------|-------------|
 | `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
-| `models` | map | Class name → LiteLLM model string. |
+| `models` | map | Class name → LiteLLM model string **or** dict (see below). |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `limits` | map | Runtime bounds: phase visits, wall-clock budgets, LLM timeouts/retries. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
+
+## `models` block
+
+Each entry under `models:` maps a class name to a LiteLLM model string **or** a dict that declares per-class LLM parameters.
+
+### str form (backward compatible)
+
+```yaml
+models:
+  light:    openai/gemini-2.5-flash-lite
+  standard: openai/gpt-4o
+  strong:   anthropic/claude-3-5-sonnet-20241022
+```
+
+All existing `reyn.yaml` files using str form continue to work without change.
+
+### dict form (opt-in, PR-MODEL-SPEC)
+
+```yaml
+models:
+  standard: openai/gemini-2.5-flash-lite   # str form still OK alongside dict entries
+
+  strong:
+    model: anthropic/claude-3-7-sonnet      # required
+    temperature: 0.0
+    max_tokens: 16000
+    extra_body:
+      thinking:
+        type: enabled
+        budget_tokens: 8000
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `model` | yes | LiteLLM model string. |
+| `temperature` | no | Sampling temperature passed to litellm. |
+| `max_tokens` | no | Max output tokens passed to litellm. |
+| `top_p` | no | Top-p sampling passed to litellm. |
+| `extra_body` | no | Provider-specific payload (e.g. `thinking` for reasoning models). |
+| *(any other field)* | no | Silently passed through to litellm (passthrough policy). |
+
+**Field policy**: `model` is the only required field. All other fields are passed directly to `litellm.acompletion` without validation — unknown fields are silently forwarded (future-proof). Typos cause silent litellm failures, not reyn errors.
+
+**Skill / phase override**: NOT supported. Operator config (`reyn.yaml`) is the single source of truth for LLM parameters. Skill authors specify class names only (e.g. `model_class: strong`).
+
+**Merge order**: Reyn-managed settings (`timeout`, `num_retries`, proxy routing) always take precedence over operator-declared kwargs so proxy configuration is never bypassed.
 
 ## `limits` block
 

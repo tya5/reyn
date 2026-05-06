@@ -3270,7 +3270,7 @@ class ChatSession:
 
     def resolve_model(self, name: str) -> str:
         """Resolve config model name (e.g. 'router') to actual model id."""
-        return self._resolver.resolve(name)
+        return self._resolver.resolve(name).model
 
     # --- RouterLoop orchestration ---
 
@@ -3340,7 +3340,7 @@ class ChatSession:
             # finds the actual model string (e.g. "openai/gemini-2.5-flash-lite").
             from reyn.llm.pricing import estimate_cost
             from reyn.llm.llm import proxy_kwargs
-            resolved = self._resolver.resolve(loop.router_model)
+            resolved = self._resolver.resolve(loop.router_model).model
             pricing_model = (
                 resolved.split("/", 1)[1]
                 if "/" in resolved and proxy_kwargs()

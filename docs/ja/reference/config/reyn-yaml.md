@@ -24,11 +24,57 @@ models:
 | キー | 型 | 説明 |
 |-----|------|-------------|
 | `model` | 文字列 | デフォルトのモデルクラス。`models` を通じて解決されます。`--model` でオーバーライド。 |
-| `models` | マップ | クラス名 → LiteLLM モデル文字列。 |
+| `models` | マップ | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
 | `output_language` | 文字列 | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `limits` | マップ | ランタイム上限: Phase 訪問数、ウォールクロックバジェット、LLM タイムアウト/リトライ。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
+
+## `models` ブロック
+
+`models:` の各エントリはクラス名を LiteLLM モデル文字列 **または** per-class LLM パラメータを宣言する dict にマップします。
+
+### str 形式（後方互換）
+
+```yaml
+models:
+  light:    openai/gemini-2.5-flash-lite
+  standard: openai/gpt-4o
+  strong:   anthropic/claude-3-5-sonnet-20241022
+```
+
+str 形式を使用している既存の `reyn.yaml` はすべて変更なしで動作します。
+
+### dict 形式（opt-in、PR-MODEL-SPEC）
+
+```yaml
+models:
+  standard: openai/gemini-2.5-flash-lite   # str 形式も dict エントリと併用可能
+
+  strong:
+    model: anthropic/claude-3-7-sonnet      # 必須
+    temperature: 0.0
+    max_tokens: 16000
+    extra_body:
+      thinking:
+        type: enabled
+        budget_tokens: 8000
+```
+
+| フィールド | 必須 | 説明 |
+|-------|----------|-------------|
+| `model` | はい | LiteLLM モデル文字列。 |
+| `temperature` | いいえ | litellm に渡すサンプリング温度。 |
+| `max_tokens` | いいえ | litellm に渡す最大出力トークン数。 |
+| `top_p` | いいえ | litellm に渡す top-p サンプリング。 |
+| `extra_body` | いいえ | プロバイダー固有のペイロード（例：推論モデルの `thinking`）。 |
+| *（その他のフィールド）* | いいえ | litellm にそのまま渡されます（パススルーポリシー）。 |
+
+**フィールドポリシー**: `model` のみ必須です。他のフィールドはすべてバリデーションなしで `litellm.acompletion` に直接渡されます（未知のフィールドも silent に転送されます — future-proof）。タイポは reyn エラーではなく silent な litellm 失敗を引き起こします。
+
+**Skill / Phase 側オーバーライド**: サポートしていません。Operator config（`reyn.yaml`）が LLM パラメータの唯一の source of truth です。Skill 作者はクラス名のみを指定します（例：`model_class: strong`）。
+
+**マージ順**: Reyn が管理する設定（`timeout`、`num_retries`、プロキシルーティング）は operator 宣言の kwargs より常に優先されます。
 
 ## `limits` ブロック
 

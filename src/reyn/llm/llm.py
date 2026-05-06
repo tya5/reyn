@@ -7,12 +7,13 @@ import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, UTC
-from typing import TYPE_CHECKING, Coroutine, TypeVar
+from typing import TYPE_CHECKING, Coroutine, TypeVar, Union
 import litellm
 
 logger = logging.getLogger(__name__)
 from reyn.schemas.models import ContextFrame
 from reyn.llm.pricing import TokenUsage
+from reyn.llm.model_resolver import ModelSpec
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
@@ -460,7 +461,7 @@ def _build_system_message(system_text: str, prompt_cache_enabled: bool) -> dict:
 
 
 async def call_llm(
-    model: str,
+    model: "Union[str, ModelSpec]",
     frame: ContextFrame,
     prior_attempts: list[dict[str, str]] | None = None,
     rollback_context: dict | None = None,
@@ -497,10 +498,13 @@ async def call_llm(
     budget_agent: agent name passed to budget.check_pre_llm / record_llm.
       Typically the agent running the skill (e.g. "default"). None = no agent context.
     """
+    # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
+    spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
+
     # Budget pre-check — runs before any LLM call
     if budget is not None:
         from reyn.budget.budget import BudgetExceeded, format_refusal_message
-        check = budget.check_pre_llm(model=model, agent=budget_agent)
+        check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
             raise BudgetExceeded(
                 check.hard_dimension or "budget",
@@ -572,8 +576,12 @@ async def call_llm(
         # When routing via a local proxy, strip the provider prefix from the model
         # name (e.g. "openai/gemini-2.5-flash-lite" → "gemini-2.5-flash-lite") so
         # the proxy receives the bare model name it registered under.
-        effective_model = model.split("/", 1)[1] if extra and "/" in model else model
+        effective_model = spec.model.split("/", 1)[1] if extra and "/" in spec.model else spec.model
         common_kwargs = {"timeout": timeout, "num_retries": max_retries}
+        # Merge operator-declared kwargs (spec.kwargs) with Reyn defaults.
+        # Reyn-set options (common_kwargs, extra) take precedence over spec.kwargs
+        # so proxy routing and retry settings are never overridden by operator config.
+        spec_kwargs = dict(spec.kwargs)
 
         # Payload trace dump — dump once per attempt (only attempt 0 creates a
         # new request_id; attempt 1 re-uses the same id so the pair is linked).
@@ -585,6 +593,7 @@ async def call_llm(
                 "tools": None,
                 "tool_choice": None,
                 "sampling_params": {"timeout": timeout, "max_retries": max_retries},
+                "spec_kwargs": spec_kwargs,
             })
 
         try:
@@ -592,12 +601,13 @@ async def call_llm(
                 model=effective_model,
                 messages=messages,
                 response_format={"type": "json_object"},
+                **spec_kwargs,
                 **common_kwargs,
                 **extra,
             )
         except Exception:
             response = await litellm.acompletion(
-                model=effective_model, messages=messages, **common_kwargs, **extra,
+                model=effective_model, messages=messages, **spec_kwargs, **common_kwargs, **extra,
             )
 
         usage = _extract_usage(response)
@@ -661,7 +671,7 @@ async def call_llm(
 
 async def call_llm_tools(
     *,
-    model: str,
+    model: "Union[str, ModelSpec]",
     messages: list[dict],            # OpenAI-format messages (role/content/tool_calls/tool_call_id)
     tools: list[dict],               # OpenAI-format tools array
     tool_choice: str = "auto",       # "auto" | "required" | "none" (note: "none" not Gemini-safe)
@@ -685,10 +695,13 @@ async def call_llm_tools(
       is called after a successful call. budget=None skips all tracking.
     budget_agent: agent name passed to budget.check_pre_llm / record_llm.
     """
+    # Normalize model to ModelSpec — accept both str (backward compat) and ModelSpec.
+    spec: ModelSpec = model if isinstance(model, ModelSpec) else ModelSpec(model=model, kwargs={})
+
     # Budget pre-check — runs before the LLM call
     if budget is not None:
         from reyn.budget.budget import BudgetExceeded, format_refusal_message
-        check = budget.check_pre_llm(model=model, agent=budget_agent)
+        check = budget.check_pre_llm(model=spec.model, agent=budget_agent)
         if not check.allowed:
             raise BudgetExceeded(
                 check.hard_dimension or "budget",
@@ -697,14 +710,18 @@ async def call_llm_tools(
 
     extra = proxy_kwargs()
     # Strip provider prefix when routing via local proxy (same logic as call_llm)
-    effective_model = model.split("/", 1)[1] if extra and "/" in model else model
+    effective_model = spec.model.split("/", 1)[1] if extra and "/" in spec.model else spec.model
+    # Operator-declared kwargs from ModelSpec; Gemini-safe forced settings override these.
+    spec_kwargs = dict(spec.kwargs)
 
     call_kwargs: dict = {
         "model": effective_model,
         "messages": messages,
         "tools": tools,
         "tool_choice": tool_choice,
-        # Gemini-safe forced settings:
+        # spec.kwargs passthrough (operator-declared, e.g. temperature)
+        **spec_kwargs,
+        # Gemini-safe forced settings override spec_kwargs:
         "stream": False,             # Gemini #21041: streaming + tools bug
         # No response_format: incompatible with tools= on most providers
         # No thinking kwargs: disabled by default on all providers

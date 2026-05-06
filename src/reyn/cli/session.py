@@ -31,7 +31,7 @@ class Session:
     def model_for(self, args: argparse.Namespace) -> tuple[str, str]:
         """Return (model_class_or_string, resolved_litellm_string)."""
         m = getattr(args, "model", None) or self.config.model
-        return m, self.resolver.resolve(m)
+        return m, self.resolver.resolve(m).model
 
     def output_language_for(self, args: argparse.Namespace) -> str | None:
         """Resolve output_language with CLI > config priority.

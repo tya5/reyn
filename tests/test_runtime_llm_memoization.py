@@ -110,7 +110,7 @@ def _build_args_hash_for(rt: OSRuntime, phase: str) -> str:
     Mirrors the runtime's hashing inputs (model resolved, frame, no priors,
     no rollback, system_inputs from skill metadata).
     """
-    resolved_model = rt._resolver.resolve(rt._effective_model(phase))
+    resolved_model = rt._resolver.resolve(rt._effective_model(phase)).model
     phase_def = rt.skill.phases.get(phase)
     frame = rt.build_frame(
         phase, {"type": "input", "data": {}}, [], "en",

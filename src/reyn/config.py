@@ -192,7 +192,7 @@ class ReynConfig:
     # `build_system_prompt(output_language=...)`.
     output_language: str | None = None
     shell_allowed: bool = False
-    models: dict[str, str] = field(default_factory=dict)
+    models: dict[str, str | dict] = field(default_factory=dict)
     # LiteLLM proxy: non-secret base URL only.
     # API keys must be set as environment variables (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)
     # — never stored in config files.
@@ -466,7 +466,10 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         model=str(merged.get("model", "standard")),
         output_language=output_language,
         shell_allowed=bool(merged.get("shell_allowed", False)),
-        models={str(k): str(v) for k, v in (merged.get("models") or {}).items()},
+        models={
+            str(k): (v if isinstance(v, dict) else str(v))
+            for k, v in (merged.get("models") or {}).items()
+        },
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
         limits=_build_limits_config(merged.get("limits")),

@@ -78,7 +78,7 @@ def run(args: argparse.Namespace) -> None:
     # output_language is Optional[str]; None means "no language directive
     # in LLM prompts, infer from user input". No silent regional default.
     output_language = session.output_language_for(args)
-    resolved_model = session.resolver.resolve(model)
+    resolved_model = session.resolver.resolve(model).model
     model_display = f"{model} → {resolved_model}" if resolved_model != model else model
 
     print(f"=== Eval: {spec.skill_dsl_path}  [{len(spec.cases)} case(s)] ===")

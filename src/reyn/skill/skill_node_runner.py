@@ -56,7 +56,7 @@ async def _adapt_artifact(
         prompt_lines.append(f"Output language: {output_language}")
     prompt = "\n".join(prompt_lines)
     response = await litellm.acompletion(
-        model=resolver.resolve(model),
+        model=resolver.resolve(model).model,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         timeout=llm_timeout,
