@@ -61,6 +61,13 @@ shadow しても見えないものを見るための iterative loop。
   batch 9 で「test 通過 + e2e 失敗」 wrong layer trap (G17) を観測、 batch 10 で
   「観測した bug ≠ 真の bug」 (= NEW-1/NEW-3 が downstream symptom) を回避。
   memory `feedback_verify_reproduce_first.md` 参照
+- **dogfood pre-approval pattern (batch 13 で確立)**: `reyn chat` を piped stdin
+  (= sonnet 自動化 / CI / scripted use) で使う場合、 TTY がないため startup_guard
+  prompt が出せない。 `reyn.local.yaml` (gitignored operator-personal override) に
+  `permissions: file.read / python.pure / python.trusted: allow` を追加することで
+  project-wide pre-approval を付与しつつ、 committed `reyn.yaml` と interactive
+  TTY ユーザへの影響を ゼロに保つのが標準 pattern。 詳細は
+  [permission-model.md](../../en/concepts/permission-model.md#reynlocalyaml-for-operator-local-pre-approval) 参照
 - **resolved-indirectly classification (batch 10 で形式化)**: fix の cascade
   effect で別 bug が同時消失する pattern。 「reproduce or refute first」 で
   確認後に「不要 fix 投資を回避」 として明示記録、 prediction 設計に「次 layer

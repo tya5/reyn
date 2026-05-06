@@ -65,6 +65,25 @@ Use sparingly — `allow` removes the prompt entirely.
 
 This is the same trust model: the eval doesn't get to decide what's safe; you do, in advance.
 
+### reyn.local.yaml for operator-local pre-approval
+
+For dogfood automation, CI runs, or any non-interactive scripted use, the natural
+mechanism is `reyn.local.yaml` — a gitignored operator-personal override of `reyn.yaml`
+(layer 3 project-wide pre-approval, scoped to the local machine).  Add:
+
+```yaml
+permissions:
+  file:
+    read: allow
+  python:
+    pure: allow
+    trusted: allow
+```
+
+This grants project-wide pre-approval for the local environment without affecting
+committed `reyn.yaml` or production users.  Interactive TTY runs elsewhere still see
+startup_guard prompts as documented.
+
 ## Why skill-scoped keys
 
 Approvals are keyed by skill, not globally. If skill A asks "can you write to `/tmp/foo`?", granting it doesn't grant skill B the same access.
