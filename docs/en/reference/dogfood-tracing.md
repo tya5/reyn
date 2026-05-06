@@ -199,6 +199,141 @@ development only.
 
 ---
 
+# Time Travel: Replay + Diff Compare (`--mode replay` / `--mode compare`)
+
+Two new modes in `scripts/dogfood_trace.py` expose the recorded WAL and LLM
+trace data as a navigable step-by-step walk.  No LLM calls are made —
+everything is deterministic read-only from the dump files.
+
+Engine: `src/reyn/replay/` (internal API, TUI-reusable).  The CLI modes are a
+thin presentation layer over `ReplayEngine` and `compare()` from that module.
+
+## `--mode replay` — inspect a session step by step
+
+```bash
+# Walk all steps in a recorded trace
+python scripts/dogfood_trace.py --mode replay \
+    --trace /tmp/b14_run.jsonl
+
+# Zoom to phase granularity
+python scripts/dogfood_trace.py --mode replay \
+    --trace /tmp/b14_run.jsonl \
+    --scope phase
+
+# Jump to a specific checkpoint
+python scripts/dogfood_trace.py --mode replay \
+    --trace /tmp/b14_run.jsonl \
+    --at run_xyz:copy_to_work:3
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--trace <path>` | required | JSONL trace file (WAL and/or LLM trace) |
+| `--at <run_id>:<phase>:<step_idx>` | none | Jump to a specific step and print it |
+| `--scope step\|phase\|skill_run` | `step` | Zoom level for the walk |
+
+### Output
+
+Each frame shows:
+- **checkpoint** — `run_id:phase:step_idx`
+- **events** — list of WAL events (kind, seq, timestamp)
+- **state_snapshot** — synthesised key/value snapshot at end of step
+- **llm_payload** — model name + message count (if a LLM call occurred in the step)
+- **llm_result** — finish_reason (if a response was recorded)
+
+## `--mode compare` — diff two sessions side-by-side
+
+Headline use case: **"fix landing 前後で同じ session を side-by-side 比較"**
+(verify that R1-type fixes actually change the behaviour they claim to).
+
+```bash
+# Compare two sessions at step granularity
+python scripts/dogfood_trace.py --mode compare \
+    --before /tmp/b14_pre_fix.jsonl \
+    --after  /tmp/b14_post_fix.jsonl
+
+# Zoom to phase level for a higher-level view
+python scripts/dogfood_trace.py --mode compare \
+    --before /tmp/b14_pre_fix.jsonl \
+    --after  /tmp/b14_post_fix.jsonl \
+    --scope phase
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--before <path>` | required | Trace recorded before the fix |
+| `--after <path>` | required | Trace recorded after the fix |
+| `--scope step\|phase\|skill_run` | `step` | Aggregation level |
+
+### Output
+
+For each aligned frame pair the tool prints:
+
+- **(no diff)** if the frame is identical between before and after
+- **events_diff** — added / removed WAL event kind counts
+- **state_diff** — changed / added / removed state_snapshot keys
+- **llm_diff** — prompt length change, response length change, tool call name change, model change
+
+A summary header shows `frames=N  with_diff=M` for a quick quantitative read.
+
+### Example output
+
+```
+=== Compare  scope=phase  frames=3  with_diff=1 ===
+
+  before: /tmp/b14_pre_fix.jsonl
+  after:  /tmp/b14_post_fix.jsonl
+
+[1/3]  before=run_abc:router:0  after=run_abc:router:0  (no diff)
+[2/3]  before=run_abc:copy_to_work:0  after=run_abc:copy_to_work:0
+  events_diff:
+    step_failed: before=1  after=0
+    step_completed: before=0  after=1
+  state_diff:
+    changed: last_completed_op: 'file' (added in after)
+    removed: last_error
+  llm_diff:
+    response: len 120 → 340 (changed)
+[3/3]  before=run_abc:review:0  after=run_abc:review:0  (no diff)
+```
+
+## Checkpoint format
+
+Checkpoints use the shell-friendly `run_id:phase:step_idx` format.  Get valid
+checkpoint strings from `--mode replay` output (each frame header shows the
+checkpoint), then pass to `--at` for targeted inspection.
+
+## Engine API (`src/reyn/replay/`)
+
+The CLI modes are a presentation layer over an importable engine:
+
+```python
+from reyn.replay import ReplayEngine, Checkpoint, compare
+
+# Walk a session
+engine = ReplayEngine("/tmp/b14_run.jsonl")
+for frame in engine.walk(scope="phase"):
+    print(frame.checkpoint, len(frame.events))
+
+# Jump to a step
+frame = engine.seek(Checkpoint.parse("run_xyz:copy_to_work:3"))
+
+# Diff two sessions
+for diff in compare("/tmp/pre_fix.jsonl", "/tmp/post_fix.jsonl", scope="phase"):
+    if diff.has_diff:
+        print(diff.llm_diff)
+```
+
+The engine yields `StepFrame` and `DiffFrame` dataclasses — render-agnostic,
+reusable in a future TUI (`src/reyn/replay/` can be imported directly by
+Textual widgets in phase 3+).
+
+---
+
 # LLM Replay (`scripts/llm_replay.py`)
 
 `llm_replay.py` takes a trace file, finds a specific request by `request_id`,
