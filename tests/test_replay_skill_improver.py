@@ -1,8 +1,10 @@
 """Replay tests for skill_improver temp-copy workflow.
 
 Verifies that:
-1. The ``prepare`` phase produces a valid ``work_config`` artifact with skill
-   path, work path, score threshold, and max iterations.
+1. The ``prepare`` phase produces a valid ``improvement_session`` artifact with
+   target_skill, case_name, case_input, phase_criteria, model, max_iterations,
+   score_threshold, and improvement_focus (no path fields — those are injected
+   by the copy_to_work preprocessor).
 2. The ``force_decide`` path (``remaining_act_turns=0``) still produces a valid
    decide turn — the LLM is not allowed to emit act ops.
 
@@ -43,21 +45,33 @@ def _run(coro):
 
 
 def _candidate_copy_to_work() -> CandidateOutput:
+    # B12-NEW-2 fix: use improvement_session (runtime schema) instead of the
+    # obsolete work_config (non-existent schema).  prepare.md instructs the LLM
+    # to emit improvement_session without path fields (_resolved_paths is
+    # injected later by the copy_to_work preprocessor).
     return CandidateOutput(
         next_phase="copy_to_work",
         control_type="transition",
-        schema_name="work_config",
+        schema_name="improvement_session",
         artifact_schema={
             "type": "object",
             "properties": {
-                "skill_path": {"type": "string"},
-                "work_path": {"type": "string"},
-                "score_threshold": {"type": "number"},
+                "target_skill": {"type": "string"},
+                "case_name": {"type": "string"},
+                "case_input": {"type": "string"},
+                "phase_criteria": {"type": "array", "items": {"type": "object"}},
+                "model": {"type": "string"},
                 "max_iterations": {"type": "integer"},
+                "score_threshold": {"type": "number"},
+                "improvement_focus": {"type": "string"},
             },
-            "required": ["skill_path", "work_path", "score_threshold", "max_iterations"],
+            "required": [
+                "target_skill", "case_name", "case_input",
+                "phase_criteria", "model", "max_iterations",
+                "score_threshold", "improvement_focus",
+            ],
         },
-        description="Transition to copy_to_work with configuration",
+        description="Transition to copy_to_work with the fully-populated improvement session",
     )
 
 
@@ -69,12 +83,17 @@ def _op_file() -> ControlIROpSpec:
     )
 
 
-# ── test: prepare phase produces work_config ──────────────────────────────────
+# ── test: prepare phase produces improvement_session ──────────────────────────
 
 
 @pytest.mark.replay("fixtures/llm/skill_improver/prepare_phase.jsonl")
-def test_prepare_phase_produces_work_config():
-    """Tier 3a: prepare phase transitions to copy_to_work with a valid work_config."""
+def test_prepare_phase_produces_improvement_session():
+    """Tier 3a: prepare phase transitions to copy_to_work with a valid improvement_session.
+
+    B12-NEW-2 fix: fixture uses improvement_session (runtime schema) instead of
+    the obsolete work_config.  _resolved_paths is NOT expected here — it is
+    injected by the copy_to_work preprocessor in the next phase.
+    """
     frame = ContextFrame(
         current_phase="prepare",
         current_phase_role="skill_improver",
@@ -119,17 +138,15 @@ def test_prepare_phase_produces_work_config():
     assert ctrl["decision"] == "continue"
 
     artifact = data["artifact"]
-    assert artifact["type"] == "work_config"
+    assert artifact["type"] == "improvement_session"
     cfg = artifact["data"]
-    assert "skill_path" in cfg
-    assert "work_path" in cfg
-    assert "score_threshold" in cfg
+    assert "target_skill" in cfg
     assert "max_iterations" in cfg
+    assert "score_threshold" in cfg
 
     assert 0.0 < cfg["score_threshold"] <= 1.0
     assert cfg["max_iterations"] >= 1
-    assert isinstance(cfg["skill_path"], str)
-    assert isinstance(cfg["work_path"], str)
+    assert isinstance(cfg["target_skill"], str)
 
 
 # ── test: force_decide path — remaining_act_turns=0 ──────────────────────────
@@ -190,11 +207,12 @@ def test_force_decide_produces_decide_turn():
     assert ctrl["type"] == "transition"
     assert ctrl["next_phase"] == "copy_to_work"
 
-    cfg = data["artifact"]["data"]
-    assert "skill_path" in cfg
-    assert "work_path" in cfg
-    assert "score_threshold" in cfg
+    artifact = data["artifact"]
+    assert artifact["type"] == "improvement_session"
+    cfg = artifact["data"]
+    assert "target_skill" in cfg
     assert "max_iterations" in cfg
+    assert "score_threshold" in cfg
 
 
 # ── corner case: validation fails after attempt → force_decide engaged ────────
@@ -277,8 +295,8 @@ def test_validation_fails_after_attempt_force_decides():
 
     prior_attempts = [
         {
-            "raw": '{"type": "decide", "control": {"type": "transition", "next_phase": "copy_to_work", "decision": "continue"}, "artifact": {"type": "work_config", "data": {"skill_path": "dsl/skills/article_generator"}}}',
-            "error": "Artifact validation failed: missing required fields ['work_path', 'score_threshold', 'max_iterations']",
+            "raw": '{"type": "decide", "control": {"type": "transition", "next_phase": "copy_to_work", "decision": "continue"}, "artifact": {"type": "improvement_session", "data": {"target_skill": "article_generator"}}}',
+            "error": "Artifact validation failed: missing required fields ['case_name', 'case_input', 'phase_criteria', 'model', 'max_iterations', 'score_threshold', 'improvement_focus']",
         }
     ]
 
@@ -301,8 +319,9 @@ def test_validation_fails_after_attempt_force_decides():
     assert ctrl["next_phase"] == "copy_to_work"
 
     # On the corrected attempt all required fields must now be present.
+    assert data["artifact"]["type"] == "improvement_session"
     cfg = data["artifact"]["data"]
-    for field in ("skill_path", "work_path", "score_threshold", "max_iterations"):
+    for field in ("target_skill", "max_iterations", "score_threshold"):
         assert field in cfg, (
             f"After validation failure, retry still missing required field: {field}"
         )
@@ -371,12 +390,32 @@ def test_improvement_regression_handled():
                         "overall_score": 0.55,
                         "weakest_phase": "generate_article",
                     },
+                    # B12-NEW-3 fix: full improvement_session with all 9 required
+                    # fields, including _resolved_paths (the field whose absence
+                    # caused B10-NEW-1 and which this fixture was missing).
                     "session": {
-                        "target_skill_path": "dsl/skills/article_generator",
-                        "target_dsl_root": ".reyn/skill_improver_work/article_generator/",
-                        "original_dsl_root": "dsl/skills/article_generator/",
-                        "score_threshold": 0.85,
+                        "target_skill": "article_generator",
+                        "case_name": "default",
+                        "case_input": "Write a short article about AI trends.",
+                        "phase_criteria": [
+                            {
+                                "phase_name": "generate_article",
+                                "criteria": [
+                                    {"description": "Article is relevant to the given topic", "required": True},
+                                    {"description": "Article has clear structure", "required": True},
+                                ],
+                            }
+                        ],
+                        "model": "standard",
                         "max_iterations": 3,
+                        "score_threshold": 0.85,
+                        "improvement_focus": "",
+                        "_resolved_paths": {
+                            "target_skill_path": ".reyn/skill_improver_work/article_generator/skill.md",
+                            "target_dsl_root": ".reyn/skill_improver_work/article_generator",
+                            "eval_spec_path": "dsl/skills/article_generator/eval.md",
+                            "original_dsl_root": "dsl/skills/article_generator",
+                        },
                     },
                     "history": [
                         {
