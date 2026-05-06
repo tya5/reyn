@@ -115,9 +115,18 @@ class ConversationView(Widget):
         background: transparent;
         height: 1fr;
         border: none;
-        scrollbar-color: $primary;
+        /* Dim by default; only the active/hover scrollbar uses the coral
+           highlight. Avoids the full-track coral block when content fits
+           in one viewport. */
+        scrollbar-color: #2a2a2a;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $primary;
         scrollbar-background: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-background-active: transparent;
         scrollbar-corner-color: transparent;
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
         padding: 0 1;
     }
     ConversationView #empty-hint {
