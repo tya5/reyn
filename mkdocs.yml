@@ -3,6 +3,13 @@ site_description: LLM workflow OS — phase transitions as a constrained decisio
 site_url: https://tya5.github.io/reyn/docs/
 docs_dir: docs
 
+# Show a GitHub icon in the top-right of the docs header that links back
+# to the source repository. mkdocs-material renders this automatically
+# when both repo_url and repo_name are set.
+repo_url: https://github.com/tya5/reyn
+repo_name: tya5/reyn
+edit_uri: edit/main/docs/
+
 # Files / directories tracked in git for development reference but NOT
 # published to the static site. Patterns are gitignore-style, relative to
 # docs_dir.  Add an entry here when you want to keep working notes in the

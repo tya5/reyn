@@ -49,9 +49,11 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/tya5/reyn"
+Homepage = "https://tya5.github.io/reyn/"
+Documentation = "https://tya5.github.io/reyn/docs/"
 Repository = "https://github.com/tya5/reyn"
 Issues = "https://github.com/tya5/reyn/issues"
+Changelog = "https://github.com/tya5/reyn/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [

@@ -104,14 +104,17 @@ Details: [docs/en/concepts/architecture.md](docs/en/concepts/architecture.md) | 
 
 ## Documentation
 
-Full docs live under `docs/` (English + Japanese, built with MkDocs Material):
+📖 **Read the docs online: <https://tya5.github.io/reyn/docs/>**
+🏠 **Project landing page: <https://tya5.github.io/reyn/>**
 
-| Section | Contents |
-|---|---|
-| [Tutorials](docs/en/tutorials/01-installation.md) | Ordered learning path — start here |
-| [How-to](docs/en/how-to/) | Task-oriented recipes (evals, permissions, sub-skills, …) |
-| [Reference](docs/en/reference/) | CLI flags, DSL spec, Control IR op catalog |
-| [Concepts](docs/en/concepts/) | Design principles P1–P8, workspace, events, permission model |
+Built with MkDocs Material; English + Japanese (translation in progress).
+
+| Section | Live | Source |
+|---|---|---|
+| Tutorials | [tya5.github.io/reyn/docs/tutorials/](https://tya5.github.io/reyn/docs/tutorials/01-installation/) | [docs/en/tutorials/](docs/en/tutorials/) |
+| How-to | [/docs/how-to/](https://tya5.github.io/reyn/docs/how-to/validate-artifacts/) | [docs/en/how-to/](docs/en/how-to/) |
+| Reference | [/docs/reference/](https://tya5.github.io/reyn/docs/reference/cli/run/) | [docs/en/reference/](docs/en/reference/) |
+| Concepts | [/docs/concepts/](https://tya5.github.io/reyn/docs/concepts/principles/) | [docs/en/concepts/](docs/en/concepts/) |
 
 Build and serve locally:
 
