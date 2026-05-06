@@ -1,0 +1,566 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reyn Docs — Getting Started</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --clay: #C8553D;
+    --clay-hover: #A84431;
+
+    --bg: #FFFFFF;
+    --bg-soft: #FCFBFA;
+    --bg-muted: #F7F6F4;
+    --bg-dark: #0E0D0C;
+
+    --fg:   #131211;
+    --fg-1: #232120;
+    --fg-2: #5A5651;
+    --fg-3: #807B74;
+
+    --line:        #E2DFDB;
+    --line-soft:   #EFEDEA;
+    --line-strong: #CDC9C3;
+
+    --font-sans: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+    --max: 1280px;
+    --pad-x: clamp(24px, 4vw, 48px);
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+
+    /* MkDocs Material variables we'd override in real config */
+    --md-primary-fg-color: var(--clay);
+    --md-accent-fg-color: var(--clay);
+    --md-typeset-a-color: var(--clay);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  a { color: var(--clay); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+  /* ---------- TOP NAV (matches landing) ---------- */
+  .topnav {
+    position: sticky; top: 0; z-index: 50;
+    background-color: rgba(255,255,255,0.92);
+    backdrop-filter: saturate(140%) blur(8px);
+    -webkit-backdrop-filter: saturate(140%) blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topnav-row {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 18px var(--pad-x);
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 500; font-size: 17px; letter-spacing: -0.01em;
+    color: var(--clay); text-decoration: none;
+  }
+  .brand img {
+    width: 26px; height: 26px; display: block; object-fit: contain;
+    filter: brightness(0) saturate(100%) invert(38%) sepia(48%) saturate(1100%) hue-rotate(338deg) brightness(92%) contrast(86%);
+  }
+  .topnav-search {
+    flex: 1; max-width: 480px; position: relative;
+  }
+  .topnav-search input {
+    width: 100%; height: 38px;
+    background: var(--bg-muted);
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0 14px 0 38px;
+    font: inherit; font-size: 14px;
+    color: var(--fg-1);
+    outline: none;
+    transition: background 180ms var(--ease), border-color 180ms var(--ease);
+  }
+  .topnav-search input:focus {
+    background: #fff; border-color: var(--line-strong);
+  }
+  .topnav-search svg {
+    position: absolute; left: 12px; top: 11px;
+    width: 16px; height: 16px; color: var(--fg-3);
+  }
+  .topnav-search kbd {
+    position: absolute; right: 10px; top: 9px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg-3);
+    background: #fff; border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 2px 6px;
+  }
+  .nav-links { display: flex; align-items: center; gap: 28px; }
+  .nav-links a {
+    font-size: 14px; color: var(--fg-2); font-weight: 400;
+    text-decoration: none;
+  }
+  .nav-links a:hover { color: var(--fg); text-decoration: none; }
+  .nav-links a.active { color: var(--clay); }
+
+  /* ---------- DOCS LAYOUT ---------- */
+  .docs-shell {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 var(--pad-x);
+    display: grid;
+    grid-template-columns: 240px minmax(0, 1fr) 220px;
+    gap: 56px;
+    align-items: start;
+  }
+  @media (max-width: 1100px) {
+    .docs-shell { grid-template-columns: 220px minmax(0, 1fr); }
+    .toc { display: none; }
+  }
+  @media (max-width: 760px) {
+    .docs-shell { grid-template-columns: 1fr; gap: 0; }
+    .sidebar { display: none; }
+  }
+
+  /* ---------- LEFT SIDEBAR (nav) ---------- */
+  .sidebar {
+    position: sticky; top: 88px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    padding: 48px 0 80px;
+    font-size: 14px;
+  }
+  .sidebar-section { margin-bottom: 32px; }
+  .sidebar-section .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    font-weight: 500;
+    margin: 0 0 12px 0;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .sidebar-section .label .accent {
+    width: 16px; height: 1px; background: var(--clay);
+  }
+  .sidebar ul { list-style: none; padding: 0; margin: 0; }
+  .sidebar li a {
+    display: block;
+    padding: 6px 0;
+    color: var(--fg-2);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    padding-left: 14px;
+    margin-left: -14px;
+    transition: color 160ms var(--ease), border-color 160ms var(--ease);
+  }
+  .sidebar li a:hover { color: var(--fg); }
+  .sidebar li a.active {
+    color: var(--clay);
+    border-left-color: var(--clay);
+    font-weight: 500;
+  }
+
+  /* ---------- MAIN CONTENT ---------- */
+  .main {
+    padding: 56px 0 120px;
+    min-width: 0;
+  }
+  .breadcrumb {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--fg-3);
+    margin-bottom: 24px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .breadcrumb a { color: var(--fg-3); }
+  .breadcrumb a:hover { color: var(--clay); text-decoration: none; }
+  .breadcrumb .sep { color: var(--line-strong); }
+
+  .doc-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin: 0 0 20px 0;
+    display: inline-flex; align-items: center; gap: 12px;
+    font-weight: 500;
+  }
+  .doc-eyebrow .dash {
+    display: inline-block; width: 18px; height: 1px; background: var(--clay);
+  }
+
+  h1.doc-title {
+    font-weight: 300;
+    font-size: clamp(40px, 4.4vw, 56px);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--fg);
+    margin: 0 0 20px 0;
+  }
+  h1.doc-title em {
+    font-style: normal; color: var(--clay); font-weight: 400;
+  }
+  .doc-lede {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--fg-2);
+    font-weight: 300;
+    max-width: 60ch;
+    margin: 0 0 56px 0;
+  }
+
+  .main h2 {
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+    margin: 64px 0 16px 0;
+    padding-top: 16px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .main h2:first-of-type { border-top: 0; padding-top: 0; }
+  .main h3 {
+    font-weight: 500;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+    margin: 36px 0 12px 0;
+  }
+  .main p {
+    margin: 0 0 16px 0;
+    color: var(--fg-1);
+    max-width: 70ch;
+  }
+  .main p code, .main li code {
+    font-family: var(--font-mono);
+    font-size: 0.88em;
+    background: var(--bg-muted);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--fg);
+    border: 1px solid var(--line-soft);
+  }
+  .main ul { margin: 0 0 16px 0; padding-left: 22px; max-width: 70ch; }
+  .main li { margin-bottom: 6px; color: var(--fg-1); }
+
+  /* ---------- CODE BLOCK (Material-style, Reyn-skinned) ---------- */
+  .codeblock {
+    background: var(--bg-dark);
+    color: #EFEDEA;
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 24px 0;
+    font-family: var(--font-mono);
+    font-size: 13.5px;
+  }
+  .codeblock-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .codeblock-bar .label {
+    color: rgba(239,237,234,0.55);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .codeblock-bar .copy {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.14);
+    color: rgba(239,237,234,0.7);
+    padding: 4px 10px;
+    border-radius: 5px;
+    font: inherit; font-size: 11px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    cursor: pointer;
+  }
+  .codeblock-bar .copy:hover { border-color: rgba(255,255,255,0.3); color: #fff; }
+  .codeblock pre {
+    margin: 0; padding: 18px 20px;
+    line-height: 1.6;
+    overflow-x: auto;
+    color: #EFEDEA;
+  }
+  .codeblock .tok-comment { color: #6F6A63; }
+  .codeblock .tok-key { color: #E8B7A6; }
+  .codeblock .tok-str { color: #F0E1A8; }
+  .codeblock .tok-fn  { color: #FFFFFF; }
+  .codeblock .tok-kw  { color: #C8553D; }
+  .codeblock .prompt  { color: var(--clay); user-select: none; }
+
+  /* ---------- ADMONITION (Material-style, Reyn-skinned) ---------- */
+  .admon {
+    border: 1px solid var(--line);
+    border-left: 2px solid var(--clay);
+    border-radius: 6px;
+    padding: 18px 22px;
+    margin: 24px 0;
+    background: var(--bg-soft);
+    max-width: 70ch;
+  }
+  .admon .head {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin: 0 0 6px 0;
+    font-weight: 500;
+  }
+  .admon p { margin: 0; color: var(--fg-1); }
+
+  /* ---------- TOC (right rail) ---------- */
+  .toc {
+    position: sticky; top: 88px;
+    padding: 56px 0 80px;
+    font-size: 13px;
+  }
+  .toc .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    margin: 0 0 12px 0;
+    font-weight: 500;
+  }
+  .toc ul { list-style: none; padding: 0; margin: 0; }
+  .toc li a {
+    display: block;
+    padding: 5px 0 5px 14px;
+    color: var(--fg-3);
+    border-left: 1px solid var(--line);
+    text-decoration: none;
+    transition: color 160ms var(--ease), border-color 160ms var(--ease);
+  }
+  .toc li a:hover { color: var(--fg-1); }
+  .toc li a.active { color: var(--clay); border-left-color: var(--clay); }
+  .toc li.lvl-3 a { padding-left: 26px; font-size: 12px; }
+
+  /* ---------- PAGE FOOTER (prev/next) ---------- */
+  .pagefoot {
+    margin-top: 80px;
+    padding-top: 32px;
+    border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; gap: 24px;
+  }
+  .pagefoot a {
+    flex: 1;
+    display: block;
+    padding: 18px 22px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--fg-1);
+    text-decoration: none;
+    transition: border-color 200ms var(--ease);
+  }
+  .pagefoot a:hover { border-color: var(--clay); text-decoration: none; }
+  .pagefoot .dir {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    margin-bottom: 6px;
+  }
+  .pagefoot .ttl { font-weight: 500; color: var(--fg); }
+  .pagefoot .next { text-align: right; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<header class="topnav">
+  <div class="topnav-row">
+    <a href="/" class="brand" aria-label="Reyn home">
+      <img src="assets/reyn-mark-white.png" alt="" />
+      <span>Reyn</span>
+    </a>
+    <div class="topnav-search">
+      <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7" cy="7" r="5" stroke="currentColor" stroke-width="1.5"/><path d="M11 11l3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <input type="text" placeholder="Search the docs" aria-label="Search" />
+      <kbd>⌘ K</kbd>
+    </div>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="/docs" class="active">Docs</a>
+      <a href="#">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="docs-shell">
+
+  <!-- LEFT SIDEBAR -->
+  <aside class="sidebar" aria-label="Documentation navigation">
+    <div class="sidebar-section">
+      <p class="label"><span class="accent"></span><span>01 · Start</span></p>
+      <ul>
+        <li><a href="#">Introduction</a></li>
+        <li><a href="#" class="active">Installation</a></li>
+        <li><a href="#">Your first flow</a></li>
+      </ul>
+    </div>
+    <div class="sidebar-section">
+      <p class="label"><span class="accent"></span><span>02 · Concepts</span></p>
+      <ul>
+        <li><a href="#">Agents</a></li>
+        <li><a href="#">Flows</a></li>
+        <li><a href="#">Phases</a></li>
+        <li><a href="#">Skills</a></li>
+        <li><a href="#">The runtime</a></li>
+      </ul>
+    </div>
+    <div class="sidebar-section">
+      <p class="label"><span class="accent"></span><span>03 · Guides</span></p>
+      <ul>
+        <li><a href="#">Building a research agent</a></li>
+        <li><a href="#">Branching on LLM decisions</a></li>
+        <li><a href="#">Pausing and steering</a></li>
+        <li><a href="#">Replaying a flow</a></li>
+      </ul>
+    </div>
+    <div class="sidebar-section">
+      <p class="label"><span class="accent"></span><span>04 · Reference</span></p>
+      <ul>
+        <li><a href="#">CLI</a></li>
+        <li><a href="#">Python API</a></li>
+        <li><a href="#">Configuration</a></li>
+      </ul>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+    <p class="breadcrumb">
+      <a href="#">Docs</a><span class="sep">/</span>
+      <a href="#">Start</a><span class="sep">/</span>
+      <span>Installation</span>
+    </p>
+
+    <p class="doc-eyebrow"><span class="dash"></span><span>01 · Start</span></p>
+    <h1 class="doc-title">Installation, in <em>under a minute.</em></h1>
+    <p class="doc-lede">Reyn ships as a single Python package with no service to run. Install it, define a flow, and start orchestrating agents from your terminal.</p>
+
+    <h2 id="requirements">Requirements</h2>
+    <p>Reyn supports Python 3.10 and later on Linux, macOS, and Windows. You'll also need an API key for the LLM provider you plan to use — <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>, or any provider supported by the runtime.</p>
+
+    <h2 id="install">Install with pip</h2>
+    <p>The fastest path is pip. Reyn has a small dependency footprint and installs in seconds.</p>
+
+    <div class="codeblock">
+      <div class="codeblock-bar">
+        <span class="label">terminal</span>
+        <button class="copy" type="button">Copy</button>
+      </div>
+<pre><span class="prompt">$</span> pip install reyn</pre>
+    </div>
+
+    <p>Verify the install with the version command:</p>
+
+    <div class="codeblock">
+      <div class="codeblock-bar">
+        <span class="label">terminal</span>
+        <button class="copy" type="button">Copy</button>
+      </div>
+<pre><span class="prompt">$</span> reyn --version
+<span class="tok-comment"># reyn 0.4.2</span></pre>
+    </div>
+
+    <div class="admon">
+      <p class="head">Note</p>
+      <p>If you're on a managed Python environment, use <code>pipx install reyn</code> instead so the CLI lands on your PATH without polluting the system interpreter.</p>
+    </div>
+
+    <h2 id="first-flow">Your first flow</h2>
+    <p>A flow is a graph of phases. Each phase invokes one or more agents, and the runtime decides — based on LLM output — which phase to enter next.</p>
+
+    <div class="codeblock">
+      <div class="codeblock-bar">
+        <span class="label">flow.py</span>
+        <button class="copy" type="button">Copy</button>
+      </div>
+<pre><span class="tok-kw">from</span> reyn <span class="tok-kw">import</span> Flow, Agent
+
+researcher <span class="tok-kw">=</span> Agent(
+    name<span class="tok-kw">=</span><span class="tok-str">"researcher"</span>,
+    skill<span class="tok-kw">=</span><span class="tok-str">"web_search"</span>,
+)
+
+writer <span class="tok-kw">=</span> Agent(
+    name<span class="tok-kw">=</span><span class="tok-str">"writer"</span>,
+    skill<span class="tok-kw">=</span><span class="tok-str">"draft_summary"</span>,
+)
+
+flow <span class="tok-kw">=</span> Flow(<span class="tok-str">"summarize"</span>)
+flow.<span class="tok-fn">add</span>(researcher).<span class="tok-fn">then</span>(writer)
+
+<span class="tok-kw">if</span> __name__ <span class="tok-kw">==</span> <span class="tok-str">"__main__"</span>:
+    flow.<span class="tok-fn">run</span>(input<span class="tok-kw">=</span><span class="tok-str">"open-source AI orchestrators 2026"</span>)
+</pre>
+    </div>
+
+    <p>Run it:</p>
+
+    <div class="codeblock">
+      <div class="codeblock-bar">
+        <span class="label">terminal</span>
+        <button class="copy" type="button">Copy</button>
+      </div>
+<pre><span class="prompt">$</span> python flow.py</pre>
+    </div>
+
+    <h3>What just happened</h3>
+    <ul>
+      <li>The <code>researcher</code> agent ran first, called the <code>web_search</code> skill, and produced a structured result.</li>
+      <li>The runtime passed that result to the <code>writer</code> agent.</li>
+      <li>Every step was logged to <code>~/.reyn/runs/</code> — replayable and inspectable.</li>
+    </ul>
+
+    <div class="admon">
+      <p class="head">Tip</p>
+      <p>Pass <code>--steer</code> to <code>reyn run</code> to pause between phases and approve, edit, or reject what the next agent sees.</p>
+    </div>
+
+    <!-- Prev / Next -->
+    <div class="pagefoot">
+      <a href="#">
+        <div class="dir">← Previous</div>
+        <div class="ttl">Introduction</div>
+      </a>
+      <a href="#" class="next">
+        <div class="dir">Next →</div>
+        <div class="ttl">Your first flow</div>
+      </a>
+    </div>
+  </main>
+
+  <!-- RIGHT TOC -->
+  <aside class="toc" aria-label="On this page">
+    <p class="label">On this page</p>
+    <ul>
+      <li><a href="#requirements">Requirements</a></li>
+      <li><a href="#install" class="active">Install with pip</a></li>
+      <li><a href="#first-flow">Your first flow</a></li>
+      <li class="lvl-3"><a href="#first-flow">What just happened</a></li>
+    </ul>
+  </aside>
+
+</div>
+
+</body>
+</html>

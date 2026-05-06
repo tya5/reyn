@@ -1,4 +1,4 @@
-site_name: reyn
+site_name: Reyn
 site_description: LLM workflow OS — phase transitions as a constrained decision graph
 docs_dir: docs
 
@@ -26,26 +26,18 @@ exclude_docs: |
 
 theme:
   name: material
+  custom_dir: overrides
   features:
     - navigation.sections
-    - navigation.tabs
     - navigation.top
     - search.suggest
     - content.code.copy
     - content.code.annotate
+  font: false
+  logo: assets/reyn-mark-white.png
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: indigo
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: indigo
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: default
+    primary: custom
 
 plugins:
   - search
@@ -68,6 +60,7 @@ markdown_extensions:
   - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
+      pygments_lang_class: true
   - pymdownx.tabbed:
       alternate_style: true
   - toc:
@@ -160,6 +153,9 @@ nav:
       - contributing/style-guide.md
       - contributing/testing.md
       - contributing/dogfood-discipline.md
+
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   alternate:

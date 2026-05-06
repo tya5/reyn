@@ -1,0 +1,89 @@
+{#-
+  Reyn — custom header override for mkdocs-material.
+  Replaces the default header to make the brand prominent (clay color, wordmark).
+-#}
+{% set class = "md-header" %}
+{% if "navigation.tabs.sticky" in features %}
+  {% set class = class ~ " md-header--shadow md-header--lifted" %}
+{% elif "navigation.tabs" not in features %}
+  {% set class = class ~ " md-header--shadow" %}
+{% endif %}
+<header class="{{ class }}" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="{{ lang.t('header') }}">
+
+    {# Hamburger (mobile) #}
+    <label class="md-header__button md-icon" for="__drawer">
+      {% set icon = config.theme.icon.menu or "material/menu" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </label>
+
+    {# Brand: logo + wordmark in clay #}
+    <a href="{{ config.extra.homepage | d(nav.homepage.url, true) | url }}"
+       class="md-header__button md-logo reyn-brand"
+       aria-label="{{ config.site_name }}">
+      {% include "partials/logo.html" %}
+      <span class="reyn-brand__name">{{ config.site_name }}</span>
+    </a>
+
+    {# Spacer pushes search + actions to the right #}
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">{{ config.site_name }}</span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            {% if page.meta and page.meta.title %}
+              {{ page.meta.title }}
+            {% else %}
+              {{ page.title }}
+            {% endif %}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    {# Palette toggle #}
+    {% if config.theme.palette %}
+      {% if not config.theme.palette is mapping %}
+        {% include "partials/palette.html" %}
+      {% endif %}
+    {% endif %}
+    {% if not config.theme.palette is mapping %}
+      {% include "partials/javascripts/palette.html" %}
+    {% endif %}
+
+    {# Language switcher #}
+    {% if config.extra.alternate %}
+      {% include "partials/alternate.html" %}
+    {% endif %}
+
+    {# Search #}
+    {% if "material/search" in config.plugins %}
+      {% set search = config.plugins["material/search"] | attr("config") %}
+      {% if search.enabled %}
+        <label class="md-header__button md-icon" for="__search">
+          {% set icon = config.theme.icon.search or "material/magnify" %}
+          {% include ".icons/" ~ icon ~ ".svg" %}
+        </label>
+        {% include "partials/search.html" %}
+      {% endif %}
+    {% endif %}
+
+    {# Top nav links: Docs + GitHub #}
+    <nav class="reyn-topnav-links" aria-label="Site navigation">
+      <a href="{{ nav.homepage.url | url }}" class="reyn-topnav-link reyn-topnav-link--active">Docs</a>
+      {% if config.repo_url %}
+        <a href="{{ config.repo_url }}" class="reyn-topnav-link" target="_blank" rel="noopener">GitHub</a>
+      {% else %}
+        <a href="#" class="reyn-topnav-link">GitHub</a>
+      {% endif %}
+    </nav>
+
+  </nav>
+  {% if "navigation.tabs.sticky" in features %}
+    {% if "navigation.tabs" in features %}
+      {% include "partials/tabs.html" %}
+    {% endif %}
+  {% endif %}
+</header>

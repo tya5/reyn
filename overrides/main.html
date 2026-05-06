@@ -1,0 +1,88 @@
+{#-
+  Reyn — main template override for MkDocs Material 9.x.
+
+  Material's {% block site_nav %} contains BOTH nav sidebar and TOC sidebar.
+  We override it for the nav column only.
+  TOC goes in {% block container %} after the content div.
+-#}
+{% extends "base.html" %}
+
+{# ── Left nav sidebar (replaces Material's primary + secondary sidebar block) ── #}
+{% block site_nav %}
+<div class="reyn-sidebar-inner">
+  {% for item in nav %}
+    {% if item.children %}
+      <div class="reyn-sidebar-section">
+        <p class="reyn-sidebar-label">
+          <span class="reyn-sidebar-accent"></span>
+          <span>{{ item.title }}</span>
+        </p>
+        <ul class="reyn-sidebar-list">
+          {% for child in item.children %}
+            {% if child.children %}
+              <li class="reyn-sidebar-group">
+                <span class="reyn-sidebar-group-label">{{ child.title }}</span>
+                <ul class="reyn-sidebar-list reyn-sidebar-list--nested">
+                  {% for grandchild in child.children %}
+                    {% if not grandchild.children %}
+                      <li>
+                        <a href="{{ grandchild.url | url }}"
+                          {% if grandchild.active %}class="active"{% endif %}>{{ grandchild.title }}</a>
+                      </li>
+                    {% endif %}
+                  {% endfor %}
+                </ul>
+              </li>
+            {% else %}
+              <li>
+                <a href="{{ child.url | url }}"
+                  {% if child.active %}class="active"{% endif %}>{{ child.title }}</a>
+              </li>
+            {% endif %}
+          {% endfor %}
+        </ul>
+      </div>
+    {% else %}
+      <ul class="reyn-sidebar-list reyn-sidebar-list--top">
+        <li>
+          <a href="{{ item.url | url }}"
+            {% if item.active %}class="active"{% endif %}>{{ item.title }}</a>
+        </li>
+      </ul>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endblock %}
+
+{# ── Main content + right TOC rail ── #}
+{% block container %}
+<div class="md-content" data-md-component="content">
+  {% if "navigation.path" in features %}{% include "partials/path.html" %}{% endif %}
+  <article class="md-content__inner md-typeset">
+    {% block content %}{% include "partials/content.html" %}{% endblock %}
+  </article>
+</div>
+{% if page.toc %}
+<div class="reyn-toc-inner">
+  <p class="reyn-toc-label">On this page</p>
+  <ul class="reyn-toc-list">
+    {% for toc_item in page.toc %}
+      <li class="reyn-toc-item">
+        <a href="#{{ toc_item.id }}"
+          class="reyn-toc-link{% if toc_item.active %} active{% endif %}">{{ toc_item.title }}</a>
+        {% if toc_item.children %}
+          <ul class="reyn-toc-list">
+            {% for sub in toc_item.children %}
+              <li class="reyn-toc-item reyn-toc-item--sub">
+                <a href="#{{ sub.id }}"
+                  class="reyn-toc-link reyn-toc-link--sub{% if sub.active %} active{% endif %}">{{ sub.title }}</a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}
