@@ -1,5 +1,6 @@
 site_name: Reyn
 site_description: LLM workflow OS — phase transitions as a constrained decision graph
+site_url: https://tya5.github.io/reyn/docs/
 docs_dir: docs
 
 # Files / directories tracked in git for development reference but NOT
@@ -158,6 +159,11 @@ extra_css:
   - stylesheets/extra.css
 
 extra:
+  # Click the Reyn logo / site name in the docs header to go back to the
+  # landing page (one level above the docs site under GitHub Pages).
+  # Update this together with site_url when the project moves to a custom
+  # domain such as https://reyn.dev/.
+  homepage: https://tya5.github.io/reyn/
   alternate:
     - name: English
       link: /en/

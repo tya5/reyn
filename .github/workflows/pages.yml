@@ -1,0 +1,88 @@
+# Build the landing page + mkdocs site and deploy them to GitHub Pages.
+#
+# Layout produced under the deploy artifact:
+#   /                     → website/dist/index.html (the LP)
+#   /assets/              → LP assets
+#   /docs/                → mkdocs site (built from docs/ via mkdocs.yml)
+#
+# Trigger: every push to main, plus manual dispatch from the Actions tab.
+# Settings → Pages → Source must be set to "GitHub Actions" (one-time click
+# in the GitHub UI; this workflow handles everything else).
+
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Single concurrent deploy. Cancel any older in-flight run when a new push
+# lands so the freshest commit is always the one published.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: Build LP + docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install build deps
+        # `[docs]` for mkdocs + plugins; `pyyaml` for website/build.py
+        # (pyyaml is already in core deps via pyproject, so `pip install -e .`
+        # would suffice, but pin the docs extras explicitly here).
+        run: pip install -e ".[docs]"
+
+      - name: Build landing page (website/dist/)
+        run: python website/build.py
+
+      - name: Build documentation (site/)
+        run: mkdocs build --strict
+
+      - name: Assemble deploy directory
+        # The Pages artifact wants a single directory whose root contains
+        # the site to serve. Combine LP at the root + mkdocs under /docs/.
+        run: |
+          mkdir -p _deploy/docs
+          cp -r website/dist/. _deploy/
+          cp -r website/assets _deploy/assets
+          cp -r site/. _deploy/docs/
+          # Disable Jekyll: GitHub Pages would otherwise apply Jekyll
+          # filtering, which strips files starting with `_` (mkdocs uses
+          # them under search/) and reformats some HTML.
+          touch _deploy/.nojekyll
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _deploy
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build
+    timeout-minutes: 5
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
