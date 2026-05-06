@@ -111,14 +111,42 @@ class ReplayEngine:
     The engine is lazy: ``walk()`` yields one ``StepFrame`` at a time so that
     large traces do not require loading everything into memory.  ``seek()``
     materialises only the requested frame.
+
+    Multi-file input
+    ----------------
+    Real Reyn sessions split records across two files by default:
+    ``.reyn/state/wal.jsonl`` (WAL events) and the path pointed to by
+    ``REYN_LLM_TRACE_DUMP`` (LLM payloads). To avoid forcing the caller to
+    ``cat`` them together, pass a list of paths::
+
+        engine = ReplayEngine([".reyn/state/wal.jsonl", ".reyn/llm_trace.jsonl"])
+
+    The records from each file are loaded and classified independently — the
+    engine then merges WAL events by ``seq`` and indexes LLM payloads by
+    ``request_id``, just as it does for a concatenated single file.
     """
 
-    def __init__(self, trace_path: str) -> None:
-        self._path = Path(trace_path)
-        if not self._path.exists():
-            raise FileNotFoundError(f"trace file not found: {self._path}")
+    def __init__(self, trace_path: str | list[str]) -> None:
+        # Normalise to list[Path] so the rest of the engine sees one shape.
+        raw_paths: list[str]
+        if isinstance(trace_path, str):
+            raw_paths = [trace_path]
+        else:
+            raw_paths = list(trace_path)
+        if not raw_paths:
+            raise ValueError("trace_path must be a non-empty path or list of paths")
 
-        all_records = _load_jsonl(self._path)
+        self._paths: list[Path] = [Path(p) for p in raw_paths]
+        for p in self._paths:
+            if not p.exists():
+                raise FileNotFoundError(f"trace file not found: {p}")
+        # Keep ``self._path`` as the first entry for backward-compat error
+        # messages and tests that introspect a single path.
+        self._path = self._paths[0]
+
+        all_records: list[dict] = []
+        for p in self._paths:
+            all_records.extend(_load_jsonl(p))
         self._wal_events, llm_reqs, llm_resps = _split_sources(all_records)
 
         # Sort WAL events by seq for deterministic ordering.

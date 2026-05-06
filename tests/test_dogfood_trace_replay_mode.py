@@ -213,3 +213,108 @@ def test_new_args_not_required_for_existing_modes(tmp_path: Path):
     assert rc == 0
     # Should print the "no LLM request records" message.
     assert "no llm" in stdout.lower() or "no" in stdout.lower()
+
+
+# ---------------------------------------------------------------------------
+# --wal flag for replay (multi-file friction follow-up)
+# ---------------------------------------------------------------------------
+
+def _wal_only_trace(tmp_path: Path) -> Path:
+    """Trace containing only WAL events (no LLM payloads)."""
+    p = tmp_path / "wal.jsonl"
+    _write_trace(p, [
+        {
+            "seq": 1, "ts": "2026-01-01T00:00:01", "kind": "skill_started",
+            "run_id": "run1", "skill": "demo",
+        },
+        {
+            "seq": 2, "ts": "2026-01-01T00:00:02", "kind": "skill_phase_advanced",
+            "run_id": "run1", "phase": "p1",
+        },
+        {
+            "seq": 3, "ts": "2026-01-01T00:00:03", "kind": "step_started",
+            "run_id": "run1", "phase": "p1",
+            "op_kind": "file", "op_invocation_id": "oid1",
+            "args_hash": "abc", "args": {},
+        },
+        {
+            "seq": 4, "ts": "2026-01-01T00:00:04", "kind": "step_completed",
+            "run_id": "run1", "phase": "p1",
+            "op_kind": "file", "op_invocation_id": "oid1",
+            "result": {},
+        },
+    ])
+    return p
+
+
+def _llm_only_trace(tmp_path: Path) -> Path:
+    """Trace containing only LLM payload records (no WAL)."""
+    p = tmp_path / "llm.jsonl"
+    _write_trace(p, [
+        {
+            "kind": "request", "request_id": "req1",
+            "timestamp": "2026-01-01T00:00:05",
+            "model": "test-model", "caller_hint": "phase:p1",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tools": None,
+        },
+        {
+            "kind": "response", "request_id": "req1",
+            "timestamp": "2026-01-01T00:00:06",
+            "content": "ok", "finish_reason": "stop",
+            "tool_calls": [],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5},
+        },
+    ])
+    return p
+
+
+def test_replay_with_wal_and_trace_separately(tmp_path: Path):
+    """Tier 1: --mode replay with --wal + --trace runs without concat step."""
+    wal = _wal_only_trace(tmp_path)
+    llm = _llm_only_trace(tmp_path)
+    rc, stdout, stderr = _run(
+        "--mode", "replay",
+        "--wal", str(wal),
+        "--trace", str(llm),
+    )
+    assert rc == 0, f"stdout={stdout!r} stderr={stderr!r}"
+    # Engine should have walked the WAL events; expect a frame header line.
+    assert "frame" in stdout.lower() or "checkpoint" in stdout.lower()
+
+
+def test_replay_with_only_wal_works(tmp_path: Path):
+    """Tier 1: --mode replay with only --wal (no --trace) is accepted."""
+    wal = _wal_only_trace(tmp_path)
+    rc, stdout, stderr = _run("--mode", "replay", "--wal", str(wal))
+    assert rc == 0, f"stdout={stdout!r} stderr={stderr!r}"
+
+
+def test_replay_no_wal_or_trace_exits_with_error():
+    """Tier 1: --mode replay with neither --wal nor --trace exits non-zero."""
+    rc, stdout, stderr = _run("--mode", "replay")
+    assert rc != 0
+    assert "trace" in stderr.lower() or "wal" in stderr.lower()
+
+
+def test_compare_with_multiple_before_after_paths(tmp_path: Path):
+    """Tier 1: --before / --after accept multiple paths (= WAL + LLM split)."""
+    wal_a = _wal_only_trace(tmp_path)
+    llm_a = _llm_only_trace(tmp_path)
+
+    # Make a 'b' pair by copying.
+    import shutil
+    wal_b = tmp_path / "wal_b.jsonl"
+    llm_b = tmp_path / "llm_b.jsonl"
+    shutil.copy(wal_a, wal_b)
+    shutil.copy(llm_a, llm_b)
+
+    rc, stdout, stderr = _run(
+        "--mode", "compare",
+        "--before", str(wal_a), "--before", str(llm_a),
+        "--after", str(wal_b), "--after", str(llm_b),
+    )
+    assert rc == 0, f"stdout={stdout!r} stderr={stderr!r}"
+    assert "compare" in stdout.lower()
+    # Should mention "2 files" since each side has 2 paths.
+    assert "2 files" in stdout

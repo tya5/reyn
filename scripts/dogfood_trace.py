@@ -17,6 +17,13 @@ Usage:
     python scripts/dogfood_trace.py --mode replay --trace <path> [--scope step|phase|skill_run]
     python scripts/dogfood_trace.py --mode replay --trace <path> --at run_xyz:copy_to_work:3
     python scripts/dogfood_trace.py --mode compare --before <trace_a> --after <trace_b> [--scope phase]
+
+    # Multi-file replay (= operational shortcut, no concat needed):
+    python scripts/dogfood_trace.py --mode replay \\
+        --wal .reyn/state/wal.jsonl --trace .reyn/llm_trace.jsonl
+    python scripts/dogfood_trace.py --mode compare \\
+        --before .reyn/state/wal.jsonl --before .reyn/llm_trace.jsonl \\
+        --after .reyn/state/wal.jsonl.bak --after .reyn/llm_trace.jsonl.bak
 """
 from __future__ import annotations
 
@@ -487,8 +494,11 @@ def mode_llm_tools_schema(records: list[dict], request_id: str) -> None:
 # Time-travel: replay + compare modes
 # ---------------------------------------------------------------------------
 
-def mode_replay(trace_path: str, at: str | None, scope: str) -> None:
+def mode_replay(trace_paths: list[str], at: str | None, scope: str) -> None:
     """Walk a recorded trace and print step frames.
+
+    *trace_paths* is the merged list of WAL + LLM trace inputs (from
+    ``--wal`` and ``--trace``).  Single-file callers pass a list of one.
 
     When ``at`` is given (``run_id:phase:step_idx``), jump to that specific
     checkpoint and print its frame only.  Otherwise, walk all frames at the
@@ -499,7 +509,7 @@ def mode_replay(trace_path: str, at: str | None, scope: str) -> None:
     from reyn.replay import Checkpoint, ReplayEngine
 
     try:
-        engine = ReplayEngine(trace_path)
+        engine = ReplayEngine(trace_paths)
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -525,15 +535,19 @@ def mode_replay(trace_path: str, at: str | None, scope: str) -> None:
         print("no frames found in trace")
         return
 
-    print(f"=== Replay: {trace_path}  scope={scope_val}  frames={len(frames)} ===\n")
+    label = trace_paths[0] if len(trace_paths) == 1 else f"{len(trace_paths)} files"
+    print(f"=== Replay: {label}  scope={scope_val}  frames={len(frames)} ===\n")
     for i, frame in enumerate(frames, 1):
         print(f"[{i}/{len(frames)}]  {frame.checkpoint}")
         _print_step_frame(frame, show_llm=(i == 1 or frame.llm_payload is not None))
 
 
-def mode_compare(before_path: str, after_path: str, scope: str) -> None:
+def mode_compare(
+    before_paths: list[str], after_paths: list[str], scope: str
+) -> None:
     """Walk two traces and print side-by-side diffs.
 
+    Each side accepts a list of paths (= merged WAL + LLM trace inputs).
     Events diff, state diff, and LLM payload diff are shown for each frame
     where a difference is detected.
     """
@@ -543,7 +557,9 @@ def mode_compare(before_path: str, after_path: str, scope: str) -> None:
 
     scope_val: str = scope or "step"
     try:
-        diff_frames = list(compare(before_path, after_path, scope=scope_val))  # type: ignore[arg-type]
+        diff_frames = list(
+            compare(before_paths, after_paths, scope=scope_val)  # type: ignore[arg-type]
+        )
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -554,8 +570,10 @@ def mode_compare(before_path: str, after_path: str, scope: str) -> None:
         f"=== Compare  scope={scope_val}  frames={total}  "
         f"with_diff={with_diff} ===\n"
     )
-    print(f"  before: {before_path}")
-    print(f"  after:  {after_path}\n")
+    before_label = before_paths[0] if len(before_paths) == 1 else f"{len(before_paths)} files"
+    after_label = after_paths[0] if len(after_paths) == 1 else f"{len(after_paths)} files"
+    print(f"  before: {before_label}")
+    print(f"  after:  {after_label}\n")
 
     for i, df in enumerate(diff_frames, 1):
         b_cp = str(df.before.checkpoint) if df.before else "(absent)"
@@ -660,7 +678,17 @@ def main() -> None:
         help=(
             "Path to LLM/WAL trace JSONL file. "
             "For llm-* modes: can be specified multiple times or comma-separated. "
-            "For replay mode: path to the single trace file to walk."
+            "For replay mode: combined with --wal entries to feed the engine."
+        ),
+    )
+    parser.add_argument(
+        "--wal",
+        action="append",
+        default=[],
+        help=(
+            "Path to WAL JSONL file (= .reyn/state/wal.jsonl). "
+            "For replay mode only.  Combine with --trace to feed both files "
+            "without concat.  Can be specified multiple times or comma-separated."
         ),
     )
     parser.add_argument("--full", action="store_true", default=False, help="Show full messages/tools (for llm-detail)")
@@ -679,30 +707,49 @@ def main() -> None:
     )
     parser.add_argument(
         "--before",
-        default=None,
-        help="Path to 'before' trace JSONL (for --mode compare)",
+        action="append",
+        default=[],
+        help=(
+            "Path to 'before' trace JSONL (for --mode compare). "
+            "Can be specified multiple times to feed both WAL and LLM trace "
+            "files without concat (e.g. --before .reyn/state/wal.jsonl "
+            "--before .reyn/llm_trace.jsonl)."
+        ),
     )
     parser.add_argument(
         "--after",
-        default=None,
-        help="Path to 'after' trace JSONL (for --mode compare)",
+        action="append",
+        default=[],
+        help=(
+            "Path to 'after' trace JSONL (for --mode compare). "
+            "Can be specified multiple times — same merging rules as --before."
+        ),
     )
     args = parser.parse_args()
 
     # ── Time-travel modes (new) ────────────────────────────────────────────
     if args.mode == "replay":
-        trace_paths = _resolve_trace_paths(args.trace)
+        trace_paths = _resolve_trace_paths(args.trace) + _resolve_trace_paths(args.wal)
         if not trace_paths:
-            print("--mode replay requires --trace <path>", file=sys.stderr)
+            print(
+                "--mode replay requires --trace <path> and/or --wal <path>",
+                file=sys.stderr,
+            )
             sys.exit(1)
-        mode_replay(trace_paths[0], at=args.at, scope=args.scope)
+        mode_replay(trace_paths, at=args.at, scope=args.scope)
         return
 
     if args.mode == "compare":
-        if not args.before or not args.after:
-            print("--mode compare requires --before <trace_a> and --after <trace_b>", file=sys.stderr)
+        before_paths = _resolve_trace_paths(args.before)
+        after_paths = _resolve_trace_paths(args.after)
+        if not before_paths or not after_paths:
+            print(
+                "--mode compare requires --before <path> and --after <path> "
+                "(repeat each flag to merge WAL + LLM trace)",
+                file=sys.stderr,
+            )
             sys.exit(1)
-        mode_compare(args.before, args.after, scope=args.scope)
+        mode_compare(before_paths, after_paths, scope=args.scope)
         return
 
     # ── LLM trace modes ───────────────────────────────────────────────────

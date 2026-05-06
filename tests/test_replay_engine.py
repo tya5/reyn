@@ -391,3 +391,94 @@ def test_walk_scope_invalid_raises_value_error(tmp_path: Path):
     engine = ReplayEngine(str(trace))
     with pytest.raises(ValueError, match="unknown scope"):
         list(engine.walk(scope="bogus"))  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# Tests: multi-file input (PR-TIME-TRAVEL friction follow-up)
+#
+# Real Reyn sessions split records across two files (.reyn/state/wal.jsonl
+# for WAL, REYN_LLM_TRACE_DUMP path for LLM trace).  The engine must accept
+# a list of paths so callers don't have to ``cat`` them together.
+# ---------------------------------------------------------------------------
+
+def test_init_with_list_of_paths_merges_records(tmp_path: Path):
+    """Tier 2: ReplayEngine([wal_path, llm_path]) merges WAL + LLM records."""
+    wal_path = tmp_path / "wal.jsonl"
+    llm_path = tmp_path / "llm_trace.jsonl"
+    _write_trace(wal_path, [
+        _wal_skill_started(seq=1),
+        _wal_phase_advanced(seq=2),
+        _wal_step_started(seq=3, op_invocation_id="oid1"),
+        _wal_step_completed(seq=4, op_invocation_id="oid1"),
+    ])
+    _write_trace(llm_path, [
+        _llm_request(request_id="req1", phase="p1"),
+        _llm_response(request_id="req1", content="ok"),
+    ])
+    engine = ReplayEngine([str(wal_path), str(llm_path)])
+    frames = list(engine.walk())
+    assert len(frames) == 1
+    # LLM payload should be attached because phase matches caller_hint.
+    assert frames[0].llm_payload is not None
+    assert frames[0].llm_result is not None
+
+
+def test_multi_file_equivalent_to_concatenated_single_file(tmp_path: Path):
+    """Tier 2: Loading [wal, llm] is equivalent to loading their concat."""
+    wal_records = [
+        _wal_skill_started(seq=1),
+        _wal_phase_advanced(seq=2),
+        _wal_step_started(seq=3, op_invocation_id="oid1"),
+        _wal_step_completed(seq=4, op_invocation_id="oid1"),
+    ]
+    llm_records = [
+        _llm_request(request_id="req1", phase="p1"),
+        _llm_response(request_id="req1", content="ok"),
+    ]
+
+    # Multi-file load.
+    wal_path = tmp_path / "wal.jsonl"
+    llm_path = tmp_path / "llm.jsonl"
+    _write_trace(wal_path, wal_records)
+    _write_trace(llm_path, llm_records)
+    multi = list(ReplayEngine([str(wal_path), str(llm_path)]).walk())
+
+    # Concatenated single-file load.
+    concat_path = tmp_path / "concat.jsonl"
+    _write_trace(concat_path, wal_records + llm_records)
+    single = list(ReplayEngine(str(concat_path)).walk())
+
+    # Same number of frames, same checkpoints, same LLM attachment.
+    assert len(multi) == len(single) == 1
+    assert multi[0].checkpoint == single[0].checkpoint
+    assert (multi[0].llm_payload is not None) == (single[0].llm_payload is not None)
+    assert (multi[0].llm_result is not None) == (single[0].llm_result is not None)
+
+
+def test_init_with_empty_list_raises_value_error():
+    """Tier 2: ReplayEngine([]) raises ValueError (no paths to load)."""
+    with pytest.raises(ValueError, match="non-empty"):
+        ReplayEngine([])
+
+
+def test_init_with_list_includes_missing_file_raises(tmp_path: Path):
+    """Tier 2: One missing path in the list raises FileNotFoundError."""
+    existing = tmp_path / "wal.jsonl"
+    _write_trace(existing, [_wal_skill_started(seq=1)])
+    missing = tmp_path / "__does_not_exist__.jsonl"
+    with pytest.raises(FileNotFoundError):
+        ReplayEngine([str(existing), str(missing)])
+
+
+def test_init_with_single_string_still_works(tmp_path: Path):
+    """Tier 2: Backward compat — single-string path is unchanged."""
+    trace = tmp_path / "trace.jsonl"
+    _write_trace(trace, [
+        _wal_skill_started(seq=1),
+        _wal_phase_advanced(seq=2),
+        _wal_step_started(seq=3, op_invocation_id="oid1"),
+        _wal_step_completed(seq=4, op_invocation_id="oid1"),
+    ])
+    engine = ReplayEngine(str(trace))
+    frames = list(engine.walk())
+    assert len(frames) == 1

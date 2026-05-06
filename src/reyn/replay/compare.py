@@ -27,8 +27,8 @@ from reyn.replay.model import Checkpoint, DiffFrame, StepFrame
 # ---------------------------------------------------------------------------
 
 def compare(
-    before_trace: str,
-    after_trace: str,
+    before_trace: str | list[str],
+    after_trace: str | list[str],
     scope: ScopeType = "step",
 ) -> Iterator[DiffFrame]:
     """Yield DiffFrames comparing *before_trace* against *after_trace*.
@@ -38,8 +38,12 @@ def compare(
     are yielded with ``before=None`` or ``after=None``.
 
     Args:
-        before_trace: path to JSONL trace recorded before the fix
-        after_trace:  path to JSONL trace recorded after the fix
+        before_trace: path (or list of paths) to JSONL trace recorded before
+            the fix.  Pass a list of paths to feed both WAL and LLM trace
+            files (the typical operational pattern when capturing real
+            sessions).  See :class:`ReplayEngine` for details.
+        after_trace:  path (or list of paths) to JSONL trace recorded after
+            the fix.
         scope:        "step" | "phase" | "skill_run" — aggregation level
 
     Yields:
