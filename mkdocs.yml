@@ -133,7 +133,10 @@ nav:
           - concepts/agent-engineering/security.md
           - concepts/agent-engineering/evaluation-and-observability.md
           - concepts/agent-engineering/product-think.md
-  - Contributing: contributing/style-guide.md
+  - Contributing:
+      - contributing/style-guide.md
+      - contributing/testing.md
+      - contributing/dogfood-discipline.md
 
 extra:
   alternate:
