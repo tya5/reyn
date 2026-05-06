@@ -38,6 +38,11 @@ models:
   strong:   anthropic/claude-3-5-sonnet-20241022
 ```
 
+The shorthand `<value>` above is a literal model string (= contains `/`). Reyn also
+ships a built-in catalog (e.g. `claude-sonnet-thinking`, `gemini-flash-lite`) that
+you can reference by short name, and a dict form with `extends` for cost variants.
+See `reference/config/reyn-yaml.md` and `reference/builtin-models.md` for details.
+
 Then export the matching API key:
 
 ```bash
