@@ -161,6 +161,46 @@ kbd {
   border-left-color: #C8553D;
 }
 
+/* ---- Brand in header ---- */
+.reyn-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #C8553D;
+  font-weight: 500;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.reyn-brand__name {
+  display: inline;
+}
+@media (max-width: 600px) {
+  .reyn-brand__name { display: none; }
+}
+
+/* ---- Pygments token colors (dark code blocks) ---- */
+.highlight .c,
+.highlight .c1,
+.highlight .cm  { color: #6F6A63; }          /* comment */
+.highlight .k,
+.highlight .kn,
+.highlight .kd,
+.highlight .kw  { color: #C8553D; }          /* keyword → clay */
+.highlight .s,
+.highlight .s1,
+.highlight .s2  { color: #F0E1A8; }          /* string → warm yellow */
+.highlight .n,
+.highlight .nf,
+.highlight .nc  { color: #FFFFFF; }          /* name / function */
+.highlight .nv,
+.highlight .na  { color: #E8B7A6; }          /* variable / attribute → clay-light */
+.highlight .mi,
+.highlight .mf  { color: #EAB1A1; }          /* number → clay-100 */
+.highlight .o   { color: #CDC9C3; }          /* operator */
+.highlight .p   { color: #EFEDEA; }          /* punctuation */
+
 /* ---- Prev/next footer ---- */
 .md-footer {
   background-color: var(--md-default-bg-color--light);
