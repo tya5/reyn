@@ -56,40 +56,6 @@ if TYPE_CHECKING:
 
 _DEFAULT_WRITE_ZONES = (".reyn", "reyn")
 
-# The reyn stdlib directory (where bundled skills live) is always readable —
-# it is part of the installed OS package, not user-controlled content.  Paths
-# under this root are treated as an extension of the default read zone so that
-# preprocessor run_op steps that reference stdlib skill files (e.g.
-# copy_to_work glob/read) pass the permission gate even when the process CWD
-# is a git worktree that lives outside the installed package root (editable-
-# install scenario: `pip install -e .` from sandbox_2, but CWD is
-# sandbox_2/.claude/worktrees/<id>).
-#
-# B11-NEW-1 root cause: stdlib_root() returns the installed-package absolute
-# path, but CWD is the worktree — so _in_default_read_zone returned False for
-# stdlib paths and the gate denied the read.
-#
-# Lazy sentinel to avoid a circular import at module load time.  permissions.py
-# → reyn.skill.skill_paths → reyn.skill.__init__ → skill_node_runner →
-# reyn.schemas.models → reyn.permissions.permissions (circular).  We resolve
-# the stdlib path on first use of _in_default_read_zone instead.
-_STDLIB_READ_ZONE: Path | None = None
-_STDLIB_READ_ZONE_RESOLVED: bool = False
-
-
-def _get_stdlib_read_zone() -> Path | None:
-    """Return (and cache) the resolved stdlib root for the installed reyn package."""
-    global _STDLIB_READ_ZONE, _STDLIB_READ_ZONE_RESOLVED
-    if _STDLIB_READ_ZONE_RESOLVED:
-        return _STDLIB_READ_ZONE
-    _STDLIB_READ_ZONE_RESOLVED = True
-    try:
-        from reyn.skill.skill_paths import stdlib_root
-        _STDLIB_READ_ZONE = stdlib_root().resolve()
-    except Exception:
-        _STDLIB_READ_ZONE = None
-    return _STDLIB_READ_ZONE
-
 
 def _normalize_paths(v: object) -> list[str]:
     if not v:
@@ -119,20 +85,7 @@ def _in_default_write_zone(path_str: str) -> bool:
 
 
 def _in_default_read_zone(path_str: str) -> bool:
-    """Return True if path falls within the default-granted read zone.
-
-    Two zones are always granted without explicit approval:
-
-    1. CWD (the project directory) — any file under the working directory
-       where reyn is invoked.
-    2. The installed reyn stdlib directory — the OS's own bundled skill
-       files.  Needed because preprocessor steps (e.g. copy_to_work
-       glob/read) use stdlib_root() which returns an absolute path derived
-       from the *installed* package location.  When running from a git
-       worktree, CWD differs from the installed package root, so without
-       this second zone the permission gate would deny stdlib reads even
-       though they are fully within the OS package boundary (B11-NEW-1).
-    """
+    """Return True if path falls within the default-granted read zone (CWD)."""
     base = Path.cwd()
     p = Path(path_str).expanduser()
     resolved = (base / p).resolve() if not p.is_absolute() else p.resolve()
@@ -140,16 +93,7 @@ def _in_default_read_zone(path_str: str) -> bool:
         resolved.relative_to(base)
         return True
     except ValueError:
-        pass
-    # Also allow reading from the installed reyn stdlib (OS package boundary).
-    stdlib_zone = _get_stdlib_read_zone()
-    if stdlib_zone is not None:
-        try:
-            resolved.relative_to(stdlib_zone)
-            return True
-        except ValueError:
-            pass
-    return False
+        return False
 
 
 @dataclass
