@@ -161,6 +161,30 @@ nav:
       - contributing/style-guide.md
       - contributing/testing.md
       - contributing/dogfood-discipline.md
+  - Decisions:
+      - decisions/README.md
+      - decisions/0001-state-model-wal-snapshot.md
+      - decisions/0002-forward-replay-resume.md
+      - decisions/0003-op-purity-classification.md
+      - decisions/0004-memoization-key-design.md
+      - decisions/0005-volatile-field-stripping.md
+      - decisions/0006-schema-version-refuse-policy.md
+      - decisions/0007-bulk-resume-prompt-ux.md
+      - decisions/0008-intervention-answer-buffering.md
+      - decisions/0009-visit-count-decrement-on-resume.md
+      - decisions/0010-restore-cli-flags.md
+      - decisions/0011-world-purity-memo-invalidation.md
+      - decisions/0012-auto-resume-default.md
+      - decisions/0013-exception-aware-crash-lifecycle.md
+      - decisions/0014-wal-size-safety-net.md
+      - decisions/0015-llm-result-workspace-ref.md
+      - decisions/0016-durable-answer-buffer.md
+      - decisions/0017-parent-run-id-nested-skill-path.md
+      - decisions/0018-cross-agent-discard-notify.md
+      - decisions/0019-openui-reyn-internal-framing.md
+      - decisions/0020-skill-only-permissions.md
+      - decisions/0021-g12-attractor-structural-fix-design.md
+      - decisions/discussion-log.md
 
 extra_css:
   - stylesheets/extra.css

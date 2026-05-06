@@ -6,7 +6,9 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 ```bash
-pip install reyn          # not yet on PyPI — see Quick Start below for local install
+# Reyn is alpha (0.1.x) — install from source for now; PyPI release follows 1.0.
+git clone https://github.com/tya5/reyn.git
+cd reyn && pip install -e ".[dev]"
 reyn init
 reyn run my_skill "Write a report on AI in education."
 ```

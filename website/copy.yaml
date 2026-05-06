@@ -104,10 +104,10 @@ S04_NUM: "04"
 S04_LABEL: "Get started"
 S04_HEADING_HTML: "One install. <em>No service to run.</em>"
 S04_DOCS_LINK: "Read the docs"
-# Note: alpha installs from git, not PyPI. We show the aspirational pip
-# install line on the LP and let the docs explain the git-clone path. If
-# this feels misleading, replace with: "git clone https://github.com/tya5/reyn"
-S04_INSTALL_CMD: "pip install reyn"
+# Reyn is alpha (= 0.1.x) and not yet published to PyPI. The LP shows the
+# git-clone install path so the command works as-typed; switch to
+# `pip install reyn` once 1.0 ships on PyPI.
+S04_INSTALL_CMD: "git clone https://github.com/tya5/reyn"
 
 # ── footer ──────────────────────────────────────────────────────────────────
 # Powered by AI is intentional double-meaning: Reyn (a) runs on LLMs at
