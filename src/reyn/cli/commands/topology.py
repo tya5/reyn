@@ -11,7 +11,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from reyn.chat.registry import AgentRegistry, _DEFAULT_TOPOLOGY_NAME
+from reyn.chat.registry import _DEFAULT_TOPOLOGY_NAME, AgentRegistry
 from reyn.chat.topology import KINDS, Topology
 
 

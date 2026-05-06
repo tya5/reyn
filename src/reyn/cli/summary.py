@@ -4,6 +4,7 @@ RunSummary: token + cost reporter shared by `run` and `eval`.
 Single source of truth for how token usage and cost are formatted on the CLI.
 """
 from __future__ import annotations
+
 from reyn.llm.pricing import TokenUsage
 
 

@@ -13,6 +13,7 @@ Scalars: higher priority wins outright.
 models dict: shallow merge — each key overrides independently.
 """
 from __future__ import annotations
+
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path

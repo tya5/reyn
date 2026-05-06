@@ -17,10 +17,6 @@ Observation: the `SkillResumeConfig` instance returned by
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from reyn.config import (
     SKILL_RESUME_POLICIES,
     SkillResumeConfig,

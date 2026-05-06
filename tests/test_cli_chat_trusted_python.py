@@ -23,7 +23,6 @@ from reyn.cli.commands.chat import register
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver, PythonPermission
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 

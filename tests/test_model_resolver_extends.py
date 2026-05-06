@@ -25,7 +25,6 @@ import pytest
 
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
 
-
 # ---------------------------------------------------------------------------
 # Helper: resolver with built-ins disabled for isolation
 # ---------------------------------------------------------------------------

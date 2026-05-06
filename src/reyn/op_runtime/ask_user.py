@@ -8,12 +8,14 @@ The op routes through `ctx.intervention_bus`. The chat REPL wires a
 the handler emits a free-text `UserIntervention` and awaits the answer.
 """
 from __future__ import annotations
+
 from typing import Literal
+
+from reyn.schemas.models import AskUserIROp
+from reyn.user_intervention import UserIntervention
 
 from . import register
 from .context import OpContext
-from reyn.schemas.models import AskUserIROp
-from reyn.user_intervention import UserIntervention
 
 
 async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:

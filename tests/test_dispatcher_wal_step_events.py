@@ -14,14 +14,10 @@ No mocks — we use a real StateLog backed by a tmp_path file.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
-
-import pytest
 
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.state_log import StateLog
-
 
 # ---------------------------------------------------------------------------
 # Helpers

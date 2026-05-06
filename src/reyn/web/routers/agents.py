@@ -12,14 +12,10 @@ Routes:
 """
 from __future__ import annotations
 
-from datetime import datetime
-from pathlib import Path
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from reyn.web.deps import get_registry, get_project_root
+from reyn.web.deps import get_registry
 
 router = APIRouter(tags=["agents"])
 

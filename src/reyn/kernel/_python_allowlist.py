@@ -11,7 +11,6 @@ child processes.
 """
 from __future__ import annotations
 
-
 # Stdlib modules considered safe enough for pure-mode preprocessor steps.
 # Curated for "no I/O, no subprocess, no dynamic code execution".
 # random / time are included because they're CPU-only — non-deterministic

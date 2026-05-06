@@ -21,13 +21,11 @@ Testing policy (docs/ja/contributing/testing.md):
 """
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
 from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING
 from reyn.compiler.parser import _split_frontmatter
 from reyn.skill.skill_paths import resolve_skill_path
-from pathlib import Path
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

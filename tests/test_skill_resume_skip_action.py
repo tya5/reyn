@@ -11,11 +11,6 @@ defeating the whole point of skip.
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-
-import pytest
-
 from reyn.config import SkillResumeConfig
 from reyn.dispatch.dispatcher import _compute_args_hash
 from reyn.skill.skill_resume_analyzer import (
@@ -24,7 +19,6 @@ from reyn.skill.skill_resume_analyzer import (
     ResumePlan,
 )
 from reyn.skill.skill_resume_coordinator import (
-    ResumeDecision,
     SkillResumeCoordinator,
 )
 
@@ -172,11 +166,8 @@ def test_skip_synthetic_step_memoizes_via_dispatch_tool(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     from reyn.dispatch.dispatcher import (
-        DispatchContext, _lookup_memoized_step,
+        _lookup_memoized_step,
     )
-    from reyn.events.events import EventLog
-    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-    from reyn.workspace.workspace import Workspace
 
     # Build the args_hash the dispatch_tool would compute for a real op
     op_args = {"op": "write", "path": "x.txt", "content": "x"}

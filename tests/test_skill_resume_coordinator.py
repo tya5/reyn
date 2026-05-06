@@ -13,9 +13,6 @@ backed by tmp_path + real StateLog.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-
-import pytest
 
 from reyn.config import SkillResumeConfig
 from reyn.events.state_log import StateLog
@@ -23,14 +20,11 @@ from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import (
     AmbiguousStep,
     ResumePlan,
-    SkillResumeAnalyzer,
 )
 from reyn.skill.skill_resume_coordinator import (
     ResumeDecision,
     SkillResumeCoordinator,
 )
-from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 # ---------------------------------------------------------------------------
 # decide_for_plan — policy → action mapping (pure-function tests)

@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 from datetime import datetime
 from typing import Annotated, Any, Literal, Union
-from pydantic import BaseModel, Field, model_validator
-from reyn.permissions.permissions import PermissionDecl
 
+from pydantic import BaseModel, Field, model_validator
+
+from reyn.permissions.permissions import PermissionDecl
 
 # ── Preprocessor step types ───────────────────────────────────────────────────
 

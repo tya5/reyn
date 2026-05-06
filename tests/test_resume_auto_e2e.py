@@ -24,8 +24,6 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from reyn.chat.session import ChatSession
 from reyn.events.state_log import StateLog
 from reyn.kernel.normalizer import NormalizationResult
@@ -41,7 +39,6 @@ from reyn.schemas.models import (
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_coordinator import ResumeDecision
 from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 _RUN_ID = "run_auto_resume_e2e"
 _SKILL_NAME = "resume_demo"

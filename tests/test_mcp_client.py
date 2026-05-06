@@ -8,7 +8,6 @@ and ``ClientSession`` at the module they're imported from.
 from __future__ import annotations
 
 import asyncio
-import os
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest import mock
@@ -16,7 +15,6 @@ from unittest import mock
 import pytest
 
 from reyn.mcp_client import MCPClient, MCPError, expand_env
-
 
 # ── fakes ────────────────────────────────────────────────────────────────────
 

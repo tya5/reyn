@@ -35,9 +35,9 @@ logger = logging.getLogger(__name__)
 
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
-from .profile import AgentProfile, PROFILE_FILENAME
-from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
+from .profile import PROFILE_FILENAME, AgentProfile
+from .topology import TOPOLOGY_DIRNAME, Topology, _validate_topology_name
 
 DEFAULT_AGENT_NAME = "default"
 

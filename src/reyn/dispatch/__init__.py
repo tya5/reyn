@@ -1,8 +1,8 @@
 from reyn.dispatch.dispatcher import (
     DispatchContext,
-    dispatch_tool,
-    UnknownToolError,
     InvalidArgsError,
+    UnknownToolError,
+    dispatch_tool,
 )
 
 __all__ = [

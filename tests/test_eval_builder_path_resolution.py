@@ -28,10 +28,9 @@ from pathlib import Path
 import pytest
 
 from reyn.compiler.loader import load_dsl_skill
-from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path
+from reyn.skill.skill_paths import resolve_skill_path
 from reyn.stdlib.skills.eval_builder.analyze_skill import inject_resolved_paths
 from reyn.stdlib.skills.eval_builder.analyze_skill_resolver import compute_paths
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

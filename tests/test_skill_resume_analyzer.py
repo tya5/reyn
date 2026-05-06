@@ -15,12 +15,7 @@ Observation flows through:
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.skill.skill_resume_analyzer import (
-    AmbiguousStep,
-    CommittedStep,
-    ResumePlan,
     SkillResumeAnalyzer,
 )
 from reyn.skill.skill_snapshot import SkillSnapshot

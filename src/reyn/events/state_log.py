@@ -28,13 +28,13 @@ Per P7: this is OS-level generic infrastructure — `kind` strings and
 field names live here, not in any skill/domain code.
 """
 from __future__ import annotations
+
 import asyncio
 import json
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
-
 
 WAL_EVENT_KINDS = (
     # Existing PR21 — inbox and chain lifecycle

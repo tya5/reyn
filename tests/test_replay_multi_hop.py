@@ -19,7 +19,6 @@ from reyn.llm.llm import call_llm
 from reyn.schemas.models import (
     CandidateOutput,
     ContextFrame,
-    ControlIROpSpec,
     ExecutionState,
     PhaseConstraints,
 )

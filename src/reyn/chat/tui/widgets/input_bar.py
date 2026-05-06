@@ -20,14 +20,15 @@ Keybindings (handled here):
 """
 from __future__ import annotations
 
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import TextArea, Label
-from textual import on
+from textual.widgets import Label, TextArea
 
 from reyn.chat.slash import SlashCommand
+
 from .slash_picker import SlashPicker
 
 

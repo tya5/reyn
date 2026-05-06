@@ -1,5 +1,6 @@
 """`reyn config` — view and edit reyn configuration."""
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path

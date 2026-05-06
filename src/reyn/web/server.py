@@ -14,12 +14,11 @@ passes through as opaque JSON payloads.
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(
@@ -53,14 +52,14 @@ app.add_middleware(
 
 # ── mount REST routers ──────────────────────────────────────────────────────
 
-from reyn.web.routers import agents as _agents_router      # noqa: E402
-from reyn.web.routers import skills as _skills_router      # noqa: E402
-from reyn.web.routers import runs as _runs_router          # noqa: E402
-from reyn.web.routers import topologies as _topos_router   # noqa: E402
+from reyn.web.routers import agents as _agents_router  # noqa: E402
+from reyn.web.routers import budget as _budget_router  # noqa: E402
 from reyn.web.routers import permissions as _perms_router  # noqa: E402
-from reyn.web.routers import budget as _budget_router      # noqa: E402
+from reyn.web.routers import runs as _runs_router  # noqa: E402
+from reyn.web.routers import skills as _skills_router  # noqa: E402
+from reyn.web.routers import topologies as _topos_router  # noqa: E402
 from reyn.web.routers import web_config as _web_config_router  # noqa: E402
-from reyn.web.routers import web_data as _web_data_router      # noqa: E402
+from reyn.web.routers import web_data as _web_data_router  # noqa: E402
 
 app.include_router(_agents_router.router, prefix="/api")
 app.include_router(_skills_router.router, prefix="/api")

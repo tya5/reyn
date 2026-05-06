@@ -19,11 +19,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-import yaml
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.chat.router_tools import build_tools
-
 
 # ---------------------------------------------------------------------------
 # Fake host / loop helpers (mirrors test_router_loop.py pattern)

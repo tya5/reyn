@@ -18,10 +18,8 @@ Reference: PR-memo-purity-fix M3 in the active plan.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
 from pathlib import Path
-
-import pytest
+from typing import Any
 
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.state_log import StateLog
@@ -29,7 +27,6 @@ from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

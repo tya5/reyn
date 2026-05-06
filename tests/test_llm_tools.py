@@ -9,14 +9,10 @@ Migration note (PR-test-policy-1):
 """
 from __future__ import annotations
 
-import asyncio
-import json
-
 import pytest
 
-from reyn.llm.llm import call_llm_tools, call_llm
+from reyn.llm.llm import call_llm, call_llm_tools
 from reyn.schemas.models import ContextFrame
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures / helpers
@@ -84,9 +80,7 @@ async def test_stream_false_is_forced(monkeypatch):
     async def fake_acompletion(**kwargs):
         captured.update(kwargs)
         # Return a minimal litellm-compatible ModelResponse
-        from reyn.testing.replay import LLMReplay
         # Build a minimal response dict; litellm.ModelResponse accepts this shape.
-        import litellm as _ll
         msg = type("_Msg", (), {"content": "ok", "tool_calls": None})()
         choice = type("_Choice", (), {"message": msg, "finish_reason": "stop"})()
         usage = type("_Usage", (), {"prompt_tokens": 1, "completion_tokens": 1})()

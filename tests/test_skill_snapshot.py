@@ -9,10 +9,7 @@ other OS-level code (``SkillRegistry``, ``OSRuntime``) depends on.
 import json
 from pathlib import Path
 
-import pytest
-
-from reyn.skill.skill_snapshot import SkillSnapshot, SKILL_SNAPSHOT_VERSION
-
+from reyn.skill.skill_snapshot import SKILL_SNAPSHOT_VERSION, SkillSnapshot
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 

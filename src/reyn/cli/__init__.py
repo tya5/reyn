@@ -5,6 +5,7 @@ Each subcommand lives in `cli.commands.<name>` and exposes:
   run(args)     — implementation invoked via args.func(args)
 """
 from __future__ import annotations
+
 import argparse
 
 from .commands import ALL as _COMMANDS

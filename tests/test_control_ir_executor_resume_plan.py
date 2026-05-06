@@ -19,8 +19,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
 from reyn.permissions.permissions import PermissionDecl

@@ -1,5 +1,6 @@
 """`reyn skills` — list available skills or show details for one."""
 from __future__ import annotations
+
 import argparse
 from pathlib import Path
 

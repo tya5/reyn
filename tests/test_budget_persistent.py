@@ -13,15 +13,13 @@ Exception: test_check_pre_llm_rolls_period_across_midnight writes private state
 to simulate a stale clock — annotated explicitly as Tier 2 (OS invariant).
 """
 from __future__ import annotations
+
 import json
 import tempfile
 import time
 from pathlib import Path
 
-import pytest
-
 from reyn.budget.budget import (
-    BudgetLedger,
     BudgetTracker,
     CostConfig,
     CostLimitConfig,
@@ -29,7 +27,6 @@ from reyn.budget.budget import (
     format_warn_message,
 )
 from reyn.llm.pricing import TokenUsage
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -410,5 +407,6 @@ def test_ledger_created_on_first_append():
 
 if __name__ == "__main__":
     import sys
+
     import pytest as _pytest
     sys.exit(_pytest.main([__file__, "-v"]))

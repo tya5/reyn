@@ -1,11 +1,13 @@
 """lint kind handler — run the DSL linter against a skill directory."""
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Literal
 
+from reyn.schemas.models import LintIROp
+
 from . import register
 from .context import OpContext
-from reyn.schemas.models import LintIROp
 
 
 async def handle(op: LintIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:

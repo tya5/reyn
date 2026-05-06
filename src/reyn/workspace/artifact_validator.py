@@ -27,6 +27,7 @@ Custom JSON Schema vocabulary (P7-clean — no skill-specific strings in OS code
   would mask context-plumbing bugs as schema failures.
 """
 from __future__ import annotations
+
 from typing import Any
 
 import jsonschema

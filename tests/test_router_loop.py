@@ -8,7 +8,6 @@ used. patch() is only called with real callables (policy: Mock vs Fake).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 from unittest.mock import patch
@@ -18,7 +17,6 @@ import pytest
 from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Minimal EventLog stub for tests

@@ -1,5 +1,6 @@
 """`reyn eval` — run an eval spec against an app."""
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
@@ -7,12 +8,11 @@ from pathlib import Path
 from reyn.llm.llm import run_async
 from reyn.llm.pricing import TokenUsage
 
-from ..common_args import add_model_arg, add_limits_args, add_output_language_arg
-from ..skill_loader import resolve_skill_path, stdlib_root
+from ..common_args import add_limits_args, add_model_arg, add_output_language_arg
 from ..eval_report import EvalReport
 from ..session import Session
+from ..skill_loader import resolve_skill_path, stdlib_root
 from ..summary import print_eval_total
-
 
 _EVAL_EPILOG = """
 Note for skills using `python` preprocessor steps:
@@ -51,7 +51,6 @@ def register(sub) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.agent import Agent
     from reyn.compiler import load_dsl_skill
     from reyn.compiler.eval_loader import load_eval_spec
 

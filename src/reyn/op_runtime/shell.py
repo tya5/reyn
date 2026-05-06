@@ -1,12 +1,14 @@
 """shell kind handler — execute a shell command."""
 from __future__ import annotations
+
 import asyncio
 from typing import Literal
+
+from reyn.schemas.models import ShellIROp
 
 from . import register
 from .context import OpContext
 from .result import OpSkipped
-from reyn.schemas.models import ShellIROp
 
 
 async def handle(op: ShellIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:

@@ -12,7 +12,6 @@ PR6 migrates `ask_user`. PR7 layers permission prompts onto the same bus.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import uuid
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable

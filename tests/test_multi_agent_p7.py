@@ -30,10 +30,8 @@ Four tests are added:
 """
 from __future__ import annotations
 
-import asyncio
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -43,7 +41,6 @@ from reyn.chat.services.chain_manager import ChainManager
 from reyn.chat.session import ChatSession
 from reyn.chat.topology import Topology
 from reyn.events.state_log import StateLog
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared across tests

@@ -25,20 +25,22 @@ Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify
 op kinds.  They are a different concern and intentionally stay local.
 """
 from __future__ import annotations
+
 from enum import Enum
 from typing import Type
 
+from pydantic import BaseModel
+
 from reyn.schemas.models import (
+    AskUserIROp,
     FileIROp,
+    LintIROp,
     MCPIROp,
     RunSkillIROp,
     ShellIROp,
-    LintIROp,
-    AskUserIROp,
     WebFetchIROp,
     WebSearchIROp,
 )
-from pydantic import BaseModel
 
 
 class OpPurity(str, Enum):

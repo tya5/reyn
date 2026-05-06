@@ -6,12 +6,12 @@ no mocks for core persistence objects.
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
-
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 

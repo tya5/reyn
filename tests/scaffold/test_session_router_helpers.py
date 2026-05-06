@@ -27,16 +27,12 @@ in an awaitable form.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from reyn.chat.session import ChatSession
 from reyn.kernel.runtime import RunResult
 from reyn.permissions.permissions import PermissionResolver
-
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -460,6 +456,7 @@ def test_allowed_mcp_loaded_from_profile(tmp_path, monkeypatch):
     """Profile.yaml with allowed_mcp: [filesystem] is parsed into AgentProfile."""
     monkeypatch.chdir(tmp_path)
     import yaml
+
     from reyn.chat.profile import AgentProfile
 
     agent_dir = tmp_path / ".reyn" / "agents" / "test_agent"
@@ -503,6 +500,7 @@ def test_allowed_mcp_all_string_normalized_to_none(tmp_path, monkeypatch):
     """Profile with allowed_mcp: all normalizes to None (no restriction)."""
     monkeypatch.chdir(tmp_path)
     import yaml
+
     from reyn.chat.profile import AgentProfile
 
     agent_dir = tmp_path / ".reyn" / "agents" / "test_agent2"

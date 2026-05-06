@@ -20,6 +20,7 @@ Per P7: this is OS-level generic infrastructure — the dimension names
 are not tied to any specific skill or domain.
 """
 from __future__ import annotations
+
 import json
 import os
 import time
@@ -29,7 +30,6 @@ from pathlib import Path
 from typing import Optional
 
 from reyn.llm.pricing import TokenUsage, estimate_cost
-
 
 # ── exceptions ──────────────────────────────────────────────────────────────
 
@@ -254,7 +254,7 @@ def _parse_iso_ts(ts_str: str) -> float:
     if not m:
         raise ValueError(f"cannot parse ts: {ts_str!r}")
     dt_naive_str, sign, hh, mm = m.groups()
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
     dt_naive = datetime.strptime(dt_naive_str, "%Y-%m-%dT%H:%M:%S")
     offset = timedelta(hours=int(hh), minutes=int(mm))
     if sign == "-":

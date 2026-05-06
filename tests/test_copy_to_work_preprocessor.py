@@ -19,13 +19,10 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.compiler.loader import load_dsl_skill
 from reyn.events.events import EventLog
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.workspace.workspace import Workspace
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

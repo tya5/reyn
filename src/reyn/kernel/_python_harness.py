@@ -27,12 +27,10 @@ from __future__ import annotations
 import ast
 import builtins as _builtins_module
 import copy
-import importlib
 import json
 import sys
 import traceback
 from typing import Any
-
 
 # Re-exported to keep parent and child agreeing on the constants.
 from reyn.kernel._python_allowlist import (
@@ -40,7 +38,6 @@ from reyn.kernel._python_allowlist import (
     PURE_STDLIB_ALLOWLIST,
     module_is_allowed,
 )
-
 
 # ── AST validation (pure mode) ──────────────────────────────────────────────
 

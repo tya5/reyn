@@ -12,11 +12,13 @@ frontends — gating is provided by the existing PermissionResolver, which
 is call-site agnostic.
 """
 from __future__ import annotations
+
 from typing import Literal
 
-from .context import OpContext
-from .result import OpResult, OpDenied, OpSkipped
 from reyn.schemas.models import ControlIROp
+
+from .context import OpContext
+from .result import OpDenied, OpResult, OpSkipped
 
 
 class OpDispatchError(RuntimeError):
@@ -92,14 +94,13 @@ def available_kinds() -> list[str]:
 
 
 # Eagerly import handler modules so they self-register.
-from . import file as _file  # noqa: F401, E402
-from . import run_skill as _run_skill  # noqa: F401, E402
-from . import web as _web  # noqa: F401, E402
-from . import shell as _shell  # noqa: F401, E402
-from . import lint as _lint  # noqa: F401, E402
 from . import ask_user as _ask_user  # noqa: F401, E402
+from . import file as _file  # noqa: F401, E402
+from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
-
+from . import run_skill as _run_skill  # noqa: F401, E402
+from . import shell as _shell  # noqa: F401, E402
+from . import web as _web  # noqa: F401, E402
 
 __all__ = [
     "OpContext",

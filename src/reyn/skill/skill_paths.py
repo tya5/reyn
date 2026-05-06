@@ -6,6 +6,7 @@ to find a skill's directory under reyn/local, reyn/project, or stdlib.
 Lives outside the CLI package so the runtime doesn't depend on CLI internals.
 """
 from __future__ import annotations
+
 from pathlib import Path
 
 

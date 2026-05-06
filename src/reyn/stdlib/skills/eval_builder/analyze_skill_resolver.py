@@ -22,8 +22,7 @@ and SkillNotFoundError if the resolved skill does not exist on disk.
 """
 import re
 
-from reyn.skill.skill_paths import eval_md_path_for, resolve_skill_path
-
+from reyn.skill.skill_paths import resolve_skill_path
 
 # Regex patterns tried in order to extract a skill name from natural language.
 # Pattern 1 matches "skill named <name>" (preferred, explicit).

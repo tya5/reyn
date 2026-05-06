@@ -25,8 +25,9 @@ silently remove _resolved_paths from the schema without a test failure.
 """
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
+
+import yaml
 
 from reyn.workspace.artifact_validator import _strip_data
 

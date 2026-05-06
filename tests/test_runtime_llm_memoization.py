@@ -17,11 +17,6 @@ Invariants pinned here:
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
-from typing import Any
-
-import pytest
 
 import reyn.kernel.runtime as runtime_mod
 from reyn.dispatch.dispatcher import _compute_llm_args_hash
@@ -29,13 +24,11 @@ from reyn.events.state_log import StateLog
 from reyn.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult
 from reyn.schemas.models import (
-    CandidateOutput,
     Phase,
     Skill,
     SkillGraph,
 )
 from reyn.skill.skill_resume_analyzer import CommittedStep, ResumePlan
-
 
 # ---------------------------------------------------------------------------
 # Stub call_llm

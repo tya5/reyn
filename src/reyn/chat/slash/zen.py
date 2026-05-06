@@ -12,7 +12,6 @@ from __future__ import annotations
 
 from reyn.chat.slash import reply, slash
 
-
 _ZEN = """The Zen of Reyn, by Tetsuya Yasuda
 
   Constraint is the path to creativity.

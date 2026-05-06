@@ -31,7 +31,6 @@ mocks, real StateLog + SkillRegistry on tmp_path.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -49,9 +48,7 @@ from reyn.schemas.models import (
     SkillGraph,
 )
 from reyn.skill.skill_registry import SkillRegistry
-from reyn.skill.skill_resume_analyzer import SkillResumeAnalyzer
 from reyn.skill.skill_resume_coordinator import SkillResumeCoordinator
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

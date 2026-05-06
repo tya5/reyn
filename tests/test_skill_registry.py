@@ -17,11 +17,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
-from reyn.skill.skill_snapshot import SkillSnapshot
 
 
 def _make_registry(tmp_path: Path) -> tuple[SkillRegistry, StateLog]:

@@ -11,6 +11,7 @@ Tier classification: these tests pin the public exception type contract of
 contract tests, not OS invariants — hence Tier 1.
 """
 from __future__ import annotations
+
 import pytest
 
 from reyn.skill.skill_paths import (

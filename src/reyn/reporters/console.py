@@ -4,6 +4,7 @@ ConsoleLogger — event subscriber that renders OS events as human-readable cons
 Wire up by passing an instance as a subscriber to EventLog or Agent.
 """
 from __future__ import annotations
+
 from reyn.schemas.models import Event
 
 

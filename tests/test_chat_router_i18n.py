@@ -20,20 +20,16 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-
-import pytest
+from unittest.mock import patch
 
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.session import (
-    ChatSession,
     _ROUTER_RETRY_EXHAUSTED_MSG,
-    _TOOL_FAILED_FALLBACK_MSG,
+    ChatSession,
 )
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -193,8 +189,8 @@ def test_system_prompt_contains_explicit_ja_instruction():
         output_language="ja",
     )
     assert "language: ja" in prompt, (
-        f"Expected explicit 'language: ja' instruction in system prompt.\n"
-        f"Prompt excerpt (Behaviour section):\n"
+        "Expected explicit 'language: ja' instruction in system prompt.\n"
+        "Prompt excerpt (Behaviour section):\n"
         + "\n".join(l for l in prompt.splitlines() if "Behaviour" in l or "language" in l.lower())
     )
 
@@ -212,7 +208,7 @@ def test_system_prompt_contains_explicit_en_instruction():
         output_language="en",
     )
     assert "language: en" in prompt, (
-        f"Expected 'language: en' in system prompt but got:\n"
+        "Expected 'language: en' in system prompt but got:\n"
         + "\n".join(l for l in prompt.splitlines() if "Behaviour" in l or "language" in l.lower())
     )
 
@@ -233,8 +229,8 @@ def test_system_prompt_omits_language_directive_when_output_language_is_none():
     )
     # No "Always reply in language" line at all.
     assert "Always reply in language" not in prompt, (
-        f"Expected no language directive when output_language=None, "
-        f"but got:\n"
+        "Expected no language directive when output_language=None, "
+        "but got:\n"
         + "\n".join(l for l in prompt.splitlines() if "language" in l.lower())
     )
     # Behaviour section still exists (just without the language line).
@@ -289,8 +285,8 @@ def test_router_loop_passes_output_language_to_system_prompt(tmp_path, monkeypat
     assert captured_prompts, "No system prompt was captured — LLM was never called"
     system_prompt = captured_prompts[0]
     assert "language: ja" in system_prompt, (
-        f"Router did not pass output_language=ja to system prompt.\n"
-        f"Prompt lines with 'language':\n"
+        "Router did not pass output_language=ja to system prompt.\n"
+        "Prompt lines with 'language':\n"
         + "\n".join(l for l in system_prompt.splitlines() if "language" in l.lower())
     )
 

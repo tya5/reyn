@@ -10,8 +10,6 @@ input.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.dispatch.dispatcher import _compute_llm_args_hash
 
 

@@ -18,9 +18,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers: minimal real-callable LLM stub (allowed by testing policy)
 # ---------------------------------------------------------------------------
@@ -49,8 +46,8 @@ class _ScriptedLLM:
 
 
 def _minimal_frame():
-    from reyn.testing.replay import REPLAY_DATETIME
     from reyn.schemas.models import ContextFrame
+    from reyn.testing.replay import REPLAY_DATETIME
     return ContextFrame(
         current_phase="test",
         instructions="Reply with a minimal valid JSON decide turn.",
@@ -215,7 +212,9 @@ class TestTraceDumpDisabledByDefault:
     def test_call_llm_no_dump_without_env_var(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm with env var absent leaves no trace file."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
@@ -233,7 +232,9 @@ class TestTraceDumpDisabledByDefault:
     def test_call_llm_tools_no_dump_without_env_var(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm_tools with env var absent leaves no trace file."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         monkeypatch.delenv("REYN_LLM_TRACE_DUMP", raising=False)
@@ -260,7 +261,9 @@ class TestTraceDumpEnabled:
     def test_call_llm_creates_jsonl_with_request_and_response(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm writes 1 request + 1 response entry when env var is set."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace.jsonl"
@@ -298,7 +301,9 @@ class TestTraceDumpEnabled:
     def test_call_llm_tools_creates_jsonl_with_tools_schema(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: call_llm_tools includes tools schema in request record."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_tools.jsonl"
@@ -331,7 +336,9 @@ class TestCallerHint:
     def test_caller_hint_in_call_llm(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: trace_caller kwarg arrives as caller_hint in the request record."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_caller.jsonl"
@@ -352,7 +359,9 @@ class TestCallerHint:
     def test_caller_hint_defaults_to_unknown(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: when trace_caller is not passed, caller_hint defaults to 'unknown'."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_default.jsonl"
@@ -374,7 +383,9 @@ class TestCallerHint:
     def test_caller_hint_in_call_llm_tools(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: trace_caller kwarg arrives as caller_hint in call_llm_tools request record."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_caller_tools.jsonl"
@@ -403,7 +414,9 @@ class TestMultipleCallsAccumulate:
     def test_two_calls_produce_four_records(self, tmp_path: Path, monkeypatch) -> None:
         """Tier 2: 2 consecutive call_llm calls produce 4 records (2 req + 2 resp) with distinct request_ids."""
         import asyncio
+
         import litellm
+
         import reyn.llm.llm as llm_mod
 
         trace_file = tmp_path / "trace_multi.jsonl"

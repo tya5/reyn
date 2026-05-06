@@ -59,6 +59,7 @@ dev = [
     "pytest-cov",
     "ruff",
     "mypy",
+    "pytest-asyncio>=0.23",
 ]
 docs = [
     "mkdocs>=1.5",
@@ -89,9 +90,40 @@ include = ["reyn*"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
+exclude = [
+    "venv",
+    ".venv",
+    "site",
+    "dist",
+    "build",
+    "tmp",
+    "zenn-book",
+    ".claude",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+# Pyflakes (real bugs) + import sorting only. The pycodestyle style
+# rules (E501 long lines, E402 module-level imports, E741 ambiguous
+# names) are intentionally not enforced — we keep the line-length
+# target as a guideline rather than a hard rule, since wrapping
+# Reyn's narrative comments and skill scripts often hurts
+# readability more than it helps.
+select = ["F", "I"]
+ignore = [
+    # F401: re-exports in __init__.py and TYPE_CHECKING blocks make
+    # these false positives common.
+    "F401",
+    # F811: local imports inside functions for clarity (e.g. lazy
+    # imports of optional deps) trigger this.
+    "F811",
+    # F821: forward references in string annotations
+    # (`x: "Foo | None"`) confuse pyflakes; the actual import lives
+    # under TYPE_CHECKING.
+    "F821",
+    # F841: explicit `_ = ...` placeholders or guard variables that
+    # aren't used outside an assertion are intentional.
+    "F841",
+]
 
 [tool.mypy]
 python_version = "3.11"

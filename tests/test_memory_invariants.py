@@ -24,10 +24,10 @@ from pathlib import Path
 import pytest
 
 from reyn.memory.memory import (
-    AmbiguousMemoryError,
+    ENTRY_TEMPLATE,
     INDEX_FILENAME,
     INDEX_HEADER,
-    ENTRY_TEMPLATE,
+    AmbiguousMemoryError,
     find_one,
     list_entries,
     read_entry,

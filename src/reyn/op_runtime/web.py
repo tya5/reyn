@@ -1,12 +1,14 @@
 """web kind handlers — web_fetch and web_search."""
 from __future__ import annotations
+
 import asyncio
 import html.parser
 from typing import Literal
 
+from reyn.schemas.models import WebFetchIROp, WebSearchIROp
+
 from . import register
 from .context import OpContext
-from reyn.schemas.models import WebFetchIROp, WebSearchIROp
 
 
 class _TextExtractor(html.parser.HTMLParser):

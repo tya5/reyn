@@ -14,8 +14,7 @@ call boundary (call_llm / call_llm_tools), not here.
 """
 from __future__ import annotations
 
-import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Literal
 
 

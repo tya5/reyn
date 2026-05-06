@@ -2,10 +2,7 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from reyn.events.agent_snapshot import AgentSnapshot
-
 
 # ── helpers ─────────────────────────────────────────────────────────────────
 

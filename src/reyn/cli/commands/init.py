@@ -1,5 +1,6 @@
 """`reyn init` — scaffold reyn.yaml and .reyn/config.yaml in cwd."""
 from __future__ import annotations
+
 import argparse
 from pathlib import Path
 

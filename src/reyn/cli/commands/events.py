@@ -5,6 +5,7 @@ Forms:
   reyn events purge --before <DATE>   # delete event files older than a date
 """
 from __future__ import annotations
+
 import argparse
 import json
 import re
@@ -14,7 +15,6 @@ from pathlib import Path
 from typing import Iterator
 
 from ..logger_factory import make_logger
-
 
 _FILENAME_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:T(\d{6}))?")
 

@@ -23,8 +23,7 @@ import pytest
 from reyn.compiler.expander import expand_phase, expand_skill
 from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
 from reyn.compiler.parser import parse_skill
-from reyn.schemas.models import Phase, Postprocessor, Skill
-
+from reyn.schemas.models import Postprocessor, Skill
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

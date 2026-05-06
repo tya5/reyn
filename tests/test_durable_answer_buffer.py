@@ -26,14 +26,11 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
-from reyn.chat.session import ChatSession
 from reyn.chat.services.snapshot_journal import SnapshotJournal
+from reyn.chat.session import ChatSession
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import InterventionAnswer
-
 
 # ---------------------------------------------------------------------------
 # AgentSnapshot apply / serialize round-trip
@@ -53,7 +50,7 @@ def test_snapshot_applies_intervention_answer_buffered():
     }])
     assert snap.applied_seq == 1
     assert snap.buffered_intervention_answers == {
-        "run_id_no": ["run_x"][0],  # noqa: just to make it explicit
+        "run_id_no": ["run_x"][0],  # explicit run_id placeholder
     } or snap.buffered_intervention_answers == {
         "run_x": {"text": "user said hi", "choice_id": None},
     }

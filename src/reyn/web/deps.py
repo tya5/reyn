@@ -22,13 +22,11 @@ is treated as opaque from the gateway's perspective.
 """
 from __future__ import annotations
 
-import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends
-
 
 # ---------------------------------------------------------------------------
 # project_root discovery
@@ -148,8 +146,8 @@ _registry = None
 def _get_registry():
     global _registry
     if _registry is None:
-        from reyn.chat.registry import AgentRegistry
         from reyn.chat.profile import AgentProfile
+        from reyn.chat.registry import AgentRegistry
         from reyn.chat.session import ChatSession
         from reyn.config import load_project_context
 
@@ -169,7 +167,6 @@ def _get_registry():
         model = config.model
         output_language = config.output_language
 
-        from reyn.config import LimitsConfig
         limits = config.limits
 
         # registry is referenced inside the factory closure — defined below.

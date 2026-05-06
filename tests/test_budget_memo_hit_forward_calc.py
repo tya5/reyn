@@ -11,9 +11,6 @@ the usage so a future resume can re-credit.
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
-
 import pytest
 
 import reyn.kernel.runtime as runtime_mod

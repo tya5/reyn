@@ -54,7 +54,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    import litellm as _litellm
+    pass
 
 # Fixed datetime used in all replay test fixtures so that ContextFrame's
 # volatile ``current_datetime`` field does not break the SHA-256 key lookup.

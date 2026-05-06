@@ -1,9 +1,10 @@
 """Pluggable chat UI backends for reyn chat."""
 from __future__ import annotations
+
 import sys
 from io import StringIO
 
-from prompt_toolkit.formatted_text import AnyFormattedText, HTML
+from prompt_toolkit.formatted_text import HTML, AnyFormattedText
 
 from reyn.chat.outbox import OutboxMessage
 from reyn.llm.pricing import TokenUsage

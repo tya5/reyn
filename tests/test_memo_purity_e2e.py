@@ -22,13 +22,10 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_resume_analyzer import SkillResumeAnalyzer
 from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 _RUN_ID = "run_e2e_purity"
 _PHASE = "search"

@@ -16,17 +16,15 @@ _ScriptedLLM is a real callable — see testing policy.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop, _EMPTY_RESPONSE_MSG, _is_empty_router_response
+from reyn.chat.router_loop import _EMPTY_RESPONSE_MSG, RouterLoop, _is_empty_router_response
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Test doubles (copied from test_router_loop.py — shared infrastructure kept

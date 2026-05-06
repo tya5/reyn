@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import glob as _glob
 import json
 from pathlib import Path

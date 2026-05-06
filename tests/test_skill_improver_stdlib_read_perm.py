@@ -15,18 +15,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.skill.skill_paths import stdlib_root
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 
 def _load_skill_permissions(skill_name: str) -> PermissionDecl:
     """Load the PermissionDecl declared in a stdlib skill's frontmatter."""
-    import yaml
     from reyn.compiler.parser import _split_frontmatter
 
     skill_md = stdlib_root() / "skills" / skill_name / "skill.md"

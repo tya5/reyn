@@ -30,7 +30,6 @@ in one process lifetime so this race is acceptable.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
@@ -39,11 +38,9 @@ from reyn.chat.session import ChatInterventionBus, ChatSession
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
-    InterventionAnswer,
     InterventionChoice,
     UserIntervention,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

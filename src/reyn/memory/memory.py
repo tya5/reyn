@@ -19,7 +19,6 @@ from pathlib import Path
 from reyn.compiler.parser import _split_frontmatter
 from reyn.memory.memory_paths import memory_dir
 
-
 VALID_TYPES = ("user", "feedback", "project", "reference")
 
 

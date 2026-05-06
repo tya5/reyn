@@ -23,8 +23,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
 from reyn.events.state_log import StateLog
 from reyn.kernel.runtime import OSRuntime
 from reyn.schemas.models import Phase, Skill, SkillGraph
@@ -33,9 +31,7 @@ from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
-    SkillResumeAnalyzer,
 )
-
 
 _RUN_ID = "run_payload_int"
 _PHASE = "draft"

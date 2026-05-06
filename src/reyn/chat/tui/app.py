@@ -35,7 +35,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
-from .widgets import ReynHeader, ConversationView, InputBar, RightPanel
+from .widgets import ConversationView, InputBar, ReynHeader, RightPanel
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -364,7 +364,7 @@ class ReynTUIApp(App):
         # Show user message in conversation
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
-        from reyn.chat.outbox import OutboxMessage
+
         from reyn.chat.tui.widgets.conversation import _msg_header
         conv._write_log(_msg_header("you", "bold #4abbb5", "#1f5856"))
         conv._write_log(Text(text))
@@ -440,9 +440,11 @@ class ReynTUIApp(App):
         """Ctrl+\\ — save an SVG screenshot, open it, and log the path."""
         filename = self.save_screenshot()
         try:
+            import subprocess
+            import sys
             from pathlib import Path
+
             from rich.text import Text
-            import sys, subprocess
             abs_path = Path(filename).resolve()
             if sys.platform == "darwin":
                 subprocess.Popen(["open", str(abs_path)])

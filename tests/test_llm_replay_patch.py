@@ -14,15 +14,14 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Import helpers (same pattern as test_llm_replay_script.py)
 # ---------------------------------------------------------------------------
-
 from pathlib import Path as _Path
+from typing import Any
+
+import pytest
 
 _SCRIPTS_DIR = _Path(__file__).parent.parent / "scripts"
 

@@ -6,11 +6,13 @@ configs that omit ``type`` default to ``http`` for backward compatibility
 with pre-PR32 reyn.yaml files.
 """
 from __future__ import annotations
+
 from typing import Literal
+
+from reyn.schemas.models import MCPIROp
 
 from . import register
 from .context import OpContext
-from reyn.schemas.models import MCPIROp
 
 
 async def _execute(op: MCPIROp, ctx: OpContext) -> dict:

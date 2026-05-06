@@ -17,11 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
-import pytest
-
-from reyn.config import SkillResumeConfig
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import (
@@ -33,7 +29,6 @@ from reyn.skill.skill_resume_coordinator import (
     ResumeDecision,
     SkillResumeCoordinator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -14,10 +14,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import pytest
-
-from reyn.cli.commands.chat import register, _reset_project_state
-
+from reyn.cli.commands.chat import _reset_project_state, register
 
 # ---------------------------------------------------------------------------
 # argparse

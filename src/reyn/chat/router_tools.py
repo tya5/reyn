@@ -14,7 +14,6 @@ Gemini-safe schema rules enforced throughout:
 
 from __future__ import annotations
 
-
 # ── G12 attractor mitigation (B7 finding: skill description verbosity trigger) ──
 #
 # Empty-stop attractor root cause: skill description verbosity.  B7 finding

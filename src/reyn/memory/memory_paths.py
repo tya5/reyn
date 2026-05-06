@@ -8,6 +8,7 @@ Global / cross-project memory was removed; all memory is scoped to one
 project.
 """
 from __future__ import annotations
+
 from pathlib import Path
 
 

@@ -11,16 +11,13 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor, _build_phase_tool_catalog
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import FileIROp
 from reyn.workspace.workspace import Workspace
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

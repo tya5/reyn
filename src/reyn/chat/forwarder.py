@@ -12,6 +12,7 @@ keep the noise level reasonable — those are all available in the run's
 jsonl log if the user wants the full picture.
 """
 from __future__ import annotations
+
 import asyncio
 
 from reyn.chat.outbox import OutboxMessage

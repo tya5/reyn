@@ -1,5 +1,6 @@
 import jsonschema
-from reyn.schemas.models import LLMOutput, CandidateOutput
+
+from reyn.schemas.models import CandidateOutput, LLMOutput
 from reyn.workspace.artifact_validator import extract_data_schema
 
 

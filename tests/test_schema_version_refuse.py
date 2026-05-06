@@ -12,20 +12,18 @@ until then the explicit reset is the documented upgrade path.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import pytest
 
 from reyn.events.agent_snapshot import (
-    AgentSnapshot,
     SNAPSHOT_VERSION,
+    AgentSnapshot,
     SchemaVersionError,
 )
 from reyn.skill.skill_snapshot import (
     SKILL_SNAPSHOT_VERSION,
     SkillSnapshot,
 )
-
 
 # ---------------------------------------------------------------------------
 # AgentSnapshot

@@ -3,10 +3,8 @@
 No LLM needed — all tests are pure Python, < 1 second total.
 """
 
-import pytest
 
 from reyn.chat.router_tools import build_tools
-
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 

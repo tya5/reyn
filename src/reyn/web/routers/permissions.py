@@ -13,7 +13,6 @@ Routes:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 from fastapi import APIRouter, Body, Depends, HTTPException, status

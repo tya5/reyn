@@ -1,11 +1,11 @@
 """`reyn permissions` — inspect and revoke saved permission approvals."""
 from __future__ import annotations
+
 import argparse
 import sys
 from pathlib import Path
 
 from reyn.config import _find_project_root
-
 
 # ── argparse ─────────────────────────────────────────────────────────────────
 

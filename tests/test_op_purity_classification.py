@@ -15,15 +15,12 @@ Reference: PR-memo-purity-fix M1 in the active plan.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.op_runtime.registry import (
     ALL_OP_KINDS,
     OP_PURITY,
     OpPurity,
     get_op_purity,
 )
-
 
 # ---------------------------------------------------------------------------
 # Per-op-kind classification

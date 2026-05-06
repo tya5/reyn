@@ -19,7 +19,6 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 
@@ -29,7 +28,6 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror tests/test_session_invariants.py pattern)

@@ -29,7 +29,6 @@ from pathlib import Path
 
 import yaml
 
-
 TOPOLOGY_DIRNAME = "topologies"
 KINDS = ("network", "team", "pipeline")
 

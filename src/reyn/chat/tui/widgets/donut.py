@@ -17,7 +17,6 @@ from textual.app import ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
-
 # Shading ramp: dimmest → brightest. Standard donut.c ramp.
 _SHADES = ".,-~:;=!*#$@"
 

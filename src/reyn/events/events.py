@@ -1,5 +1,7 @@
 from __future__ import annotations
+
 from typing import Callable
+
 from reyn.schemas.models import Event
 
 

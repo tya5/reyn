@@ -10,12 +10,7 @@ No real LLM is called; all tests exercise _key() directly.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from reyn.testing.replay import LLMReplay
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

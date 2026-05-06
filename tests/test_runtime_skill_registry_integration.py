@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 
 from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.runtime import OSRuntime, RunResult, WorkflowAbortedError
+from reyn.kernel.runtime import OSRuntime, WorkflowAbortedError
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,
@@ -41,7 +41,6 @@ from reyn.schemas.models import (
     SkillGraph,
 )
 from reyn.skill.skill_registry import SkillRegistry
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

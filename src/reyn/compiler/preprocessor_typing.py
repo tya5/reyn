@@ -7,12 +7,14 @@ the LLM will see after the preprocessor runs (the "enriched" schema).
 All LLM interaction stays inside sub-skills; this module is purely deterministic.
 """
 from __future__ import annotations
+
 import copy
+from typing import TYPE_CHECKING, Any
+
 import jsonschema
-from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.schemas.models import Skill, PreprocessorStep
+    from reyn.schemas.models import PreprocessorStep, Skill
 
 
 class PreprocessorTypeError(ValueError):
@@ -169,7 +171,7 @@ def _infer_step_output_schema(
     step_label: str,
 ) -> dict:
     """Return the JSON Schema that a single step produces (for use in iterate.apply)."""
-    from reyn.schemas.models import IterateStep, ValidateStep, RunOpStep
+    from reyn.schemas.models import IterateStep, RunOpStep, ValidateStep
     if isinstance(step, RunOpStep):
         return _op_output_schema(step.op.kind)
     if isinstance(step, ValidateStep):
@@ -189,7 +191,7 @@ def infer_llm_visible_schema(
     Returns a deep copy of input_schema enriched with fields added by each step.
     Raises PreprocessorTypeError on incompatible or invalid steps.
     """
-    from reyn.schemas.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
+    from reyn.schemas.models import IterateStep, LintPlanStep, PythonStep, RunOpStep, ValidateStep
 
     schema = copy.deepcopy(input_schema)
 

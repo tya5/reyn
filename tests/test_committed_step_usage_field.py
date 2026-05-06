@@ -12,9 +12,6 @@ and skips the credit (graceful degradation).
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
-
-import pytest
 
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_resume_analyzer import (

@@ -5,12 +5,14 @@ then hands off to `run_repl`. The registry holds all loaded ChatSession
 instances; switching agents mid-REPL via `/attach <name>` happens through it.
 """
 from __future__ import annotations
+
 import argparse
 import shutil
 import sys
 from pathlib import Path
 
 from reyn.llm.llm import run_async
+
 from ..common_args import add_common_args
 from ..session import Session
 
@@ -123,14 +125,14 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
 
 
 def run(args: argparse.Namespace) -> None:
-    from reyn.chat.session import ChatSession
-    from reyn.chat.registry import AgentRegistry, DEFAULT_AGENT_NAME
-    from reyn.chat.profile import AgentProfile
-    from reyn.chat.repl import run_repl
     from reyn.budget.budget import BudgetTracker
+    from reyn.chat.profile import AgentProfile
+    from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry
+    from reyn.chat.repl import run_repl
+    from reyn.chat.session import ChatSession
     from reyn.config import _find_project_root, load_project_context
-    from reyn.permissions.permissions import PermissionResolver
     from reyn.events.state_log import StateLog
+    from reyn.permissions.permissions import PermissionResolver
 
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
@@ -256,8 +258,9 @@ def run(args: argparse.Namespace) -> None:
 
         run_async(_main_tui())
     else:
-        from ..logger_factory import make_chat_renderer
         from reyn.chat.repl import run_repl
+
+        from ..logger_factory import make_chat_renderer
 
         renderer = make_chat_renderer()
 

@@ -13,8 +13,6 @@ Routes:
 """
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
@@ -71,7 +69,7 @@ async def create_topology(
     registry=Depends(get_registry),
 ) -> TopologySummary:
     """Create a new named topology."""
-    from reyn.chat.topology import Topology, KINDS
+    from reyn.chat.topology import KINDS, Topology
     if body.kind not in KINDS:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

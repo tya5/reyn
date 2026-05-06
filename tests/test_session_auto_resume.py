@@ -20,20 +20,13 @@ Reference: PR-resume-auto A2 in the active plan.
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_resume_coordinator import (
     ResumeDecision,
-    SkillResumeCoordinator,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -21,15 +21,10 @@ Reference: B13-NEW-1 fix (batch 14 R1). PR-MODEL-SPEC (dict-form variant).
 """
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
 from typing import Any
-
-import pytest
 
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
 from reyn.schemas.models import RunSkillIROp
-
 
 # ---------------------------------------------------------------------------
 # Tier 1 — ModelResolver.is_known_class contract (str form)

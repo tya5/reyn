@@ -22,14 +22,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.skill.skill_resume_analyzer import (
     CommittedStep,
     ResumePlan,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

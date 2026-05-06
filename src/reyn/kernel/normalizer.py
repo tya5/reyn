@@ -19,12 +19,13 @@ isn't in the allowed list — when there's exactly one valid alternative,
 we forgive it. Anything else falls through to the retry loop.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
 import pydantic
 
-from reyn.schemas.models import ControlDecision, ControlReason
+from reyn.schemas.models import ControlDecision
 
 
 class NormalizationError(Exception):

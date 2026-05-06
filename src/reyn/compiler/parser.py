@@ -1,5 +1,7 @@
-import yaml
 from pathlib import Path
+
+import yaml
+
 from .ir import ArtifactDef, PhaseDef, SkillDef, SkillNodeDef
 
 
@@ -77,6 +79,7 @@ def parse_phase(path: Path) -> PhaseDef:
 
 
 import re as _re
+
 _APP_NODE_RE = _re.compile(r'^@([\w]+)(?:\[(isolated|shared)\])?$')
 
 

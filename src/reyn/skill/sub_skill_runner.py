@@ -6,16 +6,16 @@ Used by both:
   - PreprocessorExecutor (OS-triggered preprocessor run_app step)
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
-    from reyn.schemas.models import Skill
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
+    from reyn.schemas.models import Skill
     from reyn.user_intervention import InterventionBus
 
 

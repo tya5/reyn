@@ -17,7 +17,6 @@ from reyn.events.events import EventLog
 from reyn.permissions.permissions import PermissionResolver
 from reyn.workspace.workspace import Workspace
 
-
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 

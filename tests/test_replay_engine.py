@@ -17,7 +17,6 @@ import pytest
 
 from reyn.replay import Checkpoint, ReplayEngine, StepFrame
 
-
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------

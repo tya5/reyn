@@ -10,9 +10,6 @@ implementation pinning has crept in under the wrong tier label.
 """
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from reyn.events.events import EventLog
@@ -21,7 +18,6 @@ from reyn.kernel.normalizer import (
     normalize,
 )
 from reyn.workspace.workspace import Workspace
-
 
 # ── P4: LLM output contract ────────────────────────────────────────────────────
 

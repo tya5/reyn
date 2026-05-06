@@ -15,23 +15,19 @@ against ReynTUIApp(registry=None).
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 # Make the worktree src importable in case the test runner uses the installed package.
 _SRC = Path(__file__).parent.parent.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from reyn.chat.tui.app import ReynTUIApp
-from reyn.chat.tui.widgets import ReynHeader, ConversationView, InputBar
-from reyn.chat.tui.widgets.streaming_row import StreamingRow
 from reyn.chat.outbox import OutboxMessage
-
+from reyn.chat.tui.app import ReynTUIApp
+from reyn.chat.tui.widgets import ConversationView, InputBar, ReynHeader
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -175,8 +171,9 @@ async def test_slash_picker_filters_by_prefix():
 @pytest.mark.asyncio
 async def test_slash_picker_tab_confirms():
     """Tab inserts the highlighted command name into the input."""
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     from textual.widgets import TextArea
+
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -196,8 +193,9 @@ async def test_slash_picker_tab_confirms():
 @pytest.mark.asyncio
 async def test_slash_picker_escape_dismisses():
     """Escape hides the picker but leaves text intact."""
-    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     from textual.widgets import TextArea
+
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -358,7 +356,6 @@ async def test_intervention_mounts_in_conversation():
 @pytest.mark.asyncio
 async def test_intervention_free_text_answer():
     """InterventionWidget with free-text input calls callback on submit."""
-    from reyn.chat.tui.widgets.intervention import InterventionWidget
 
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -438,7 +435,6 @@ async def test_agent_message_writes_richmarkdown_into_richlog():
     in different DOM regions). The fix writes rich.markdown.Markdown into
     the existing RichLog so every turn shares one append-only timeline.
     """
-    from rich.markdown import Markdown as RichMarkdown
     from textual.widgets import RichLog
     app = _make_app()
     async with app.run_test(headless=True) as pilot:

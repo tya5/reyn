@@ -14,7 +14,6 @@ import pytest
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

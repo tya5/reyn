@@ -20,19 +20,16 @@ Old ``tests/fixtures/llm/skill_router/`` is preserved until Wave H.
 """
 from __future__ import annotations
 
-import asyncio
 import json
-from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from reyn.chat.router_loop import RouterLoop
-from reyn.chat.router_tools import build_tools
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.chat.router_tools import build_tools
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Minimal events stub

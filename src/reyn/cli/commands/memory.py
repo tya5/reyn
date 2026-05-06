@@ -1,5 +1,6 @@
 """`reyn memory` — inspect and manage stored memories."""
 from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -18,7 +19,6 @@ from reyn.memory.memory import (
     rewrite_index,
 )
 from reyn.memory.memory_paths import memory_dir
-
 
 # ── argparse wiring ───────────────────────────────────────────────────────────
 

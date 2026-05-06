@@ -15,6 +15,7 @@ Per P7: this is OS-level generic infrastructure — it never references
 specific event types or skill / chat domain strings.
 """
 from __future__ import annotations
+
 import json
 from datetime import datetime
 from pathlib import Path

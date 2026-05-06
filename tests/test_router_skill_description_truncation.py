@@ -26,8 +26,7 @@ import pytest
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.chat.router_system_prompt import build_system_prompt
-from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, _DESCRIBE_SKILL_STRIP_FIELDS
-
+from reyn.chat.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS, MAX_DESC_LEN_FOR_LISTING
 
 # ---------------------------------------------------------------------------
 # Helpers / fake host (mirrors test_router_list_skills_input_hint.py pattern)

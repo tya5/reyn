@@ -1,10 +1,18 @@
 from typing import Any
+
 from pydantic import TypeAdapter
-from .ir import ArtifactDef, PhaseDef, SkillDef
-from reyn.schemas.models import (
-    Skill, Phase, SkillGraph, SkillNodeSpec, PreprocessorStep, Postprocessor,
-)
+
 from reyn.permissions.permissions import PermissionDecl
+from reyn.schemas.models import (
+    Phase,
+    Postprocessor,
+    PreprocessorStep,
+    Skill,
+    SkillGraph,
+    SkillNodeSpec,
+)
+
+from .ir import ArtifactDef, PhaseDef, SkillDef
 
 _PreprocessorAdapter = TypeAdapter(list[PreprocessorStep])
 

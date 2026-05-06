@@ -22,18 +22,13 @@ Reference: PR-runtime-wal-size-safety (R-D4) in the active plan.
 from __future__ import annotations
 
 import asyncio
-import json
-import time
 from pathlib import Path
-
-import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Helpers (mirrors test_registry_wal_truncate.py)

@@ -36,7 +36,6 @@ from typing import Any
 
 import pytest
 
-import reyn.kernel.runtime as runtime_mod
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
@@ -58,12 +57,9 @@ from reyn.schemas.models import (
 )
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_analyzer import (
-    CommittedStep,
-    ResumePlan,
     SkillResumeAnalyzer,
 )
 from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Shared LLM stub

@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 
+from reyn.budget.budget import BudgetExceeded
 from reyn.events.state_log import StateLog
 from reyn.kernel.normalizer import NormalizationResult
 from reyn.kernel.runtime import (
@@ -43,7 +43,6 @@ from reyn.kernel.runtime import (
     RunResult,
     WorkflowAbortedError,
 )
-from reyn.budget.budget import BudgetExceeded
 from reyn.schemas.models import (
     ControlDecision,
     ControlReason,
@@ -53,7 +52,6 @@ from reyn.schemas.models import (
     SkillGraph,
 )
 from reyn.skill.skill_registry import SkillRegistry
-
 
 _RUN_ID = "run_crash_lifecycle"
 _SKILL_NAME = "crash_demo"

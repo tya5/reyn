@@ -29,20 +29,21 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-import jsonschema
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+import jsonschema
+
+from reyn.kernel.preprocessor_executor import PreprocessorError, PreprocessorExecutor
 from reyn.llm.pricing import TokenUsage
-from reyn.kernel.preprocessor_executor import PreprocessorExecutor, PreprocessorError
 
 if TYPE_CHECKING:
-    from reyn.schemas.models import Skill, PreprocessorStep
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
     from reyn.python_runner import PythonRunner
+    from reyn.schemas.models import PreprocessorStep, Skill
     from reyn.user_intervention import InterventionBus
     from reyn.workspace.workspace import Workspace
 

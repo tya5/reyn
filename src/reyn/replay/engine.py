@@ -25,7 +25,6 @@ from typing import Any, Iterator, Literal
 
 from reyn.replay.model import Checkpoint, StepFrame
 
-
 ScopeType = Literal["step", "phase", "skill_run"]
 
 

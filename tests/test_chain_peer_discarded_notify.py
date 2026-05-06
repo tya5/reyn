@@ -22,15 +22,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
-
-import pytest
 
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
 from reyn.events.state_log import StateLog
-
 
 # ---------------------------------------------------------------------------
 # Helpers

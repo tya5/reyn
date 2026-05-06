@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from reyn.chat.slash import REGISTRY, reply, slash
 
-
 # Built-ins handled outside the registry (intercepted by the TUI / REPL
 # before reaching session._maybe_handle_slash). Listed here for discoverability.
 _BUILTIN_HINTS: list[tuple[str, str]] = [

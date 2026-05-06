@@ -14,9 +14,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
-
 _SCRIPT = Path(__file__).parent.parent / "scripts" / "dogfood_trace.py"
 
 

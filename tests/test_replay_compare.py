@@ -12,10 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
-from reyn.replay import compare, DiffFrame
-
+from reyn.replay import compare
 
 # ---------------------------------------------------------------------------
 # Fixture helpers (duplicated from test_replay_engine.py for isolation)

@@ -524,9 +524,9 @@ def _print_diff_result(diff: dict, *, output_format: str) -> None:
 
     # finish_reason
     if diff.get("finish_reason_match"):
-        print(f"Finish reason: (matches)")
+        print("Finish reason: (matches)")
     else:
-        print(f"Finish reason: CHANGED")
+        print("Finish reason: CHANGED")
 
 
 def _print_nshot_diff_summary(diffs: list[dict], original: dict) -> None:
@@ -612,7 +612,7 @@ def _print_single_result(result: dict, *, full: bool, original_resp: dict | None
     # Diff section when original response available
     if original_resp is not None and original_model is not None:
         print()
-        print(f"  --- cross-model diff ---")
+        print("  --- cross-model diff ---")
         print(f"  Original model: {original_model}")
         print(f"  Override model: {result.get('model', '?')}")
 
@@ -774,14 +774,14 @@ async def _run(
             file=sys.stderr,
         )
 
-    print(f"=== LLM Replay ===")
+    print("=== LLM Replay ===")
     print(f"  request_id: {request_id}")
     print(f"  model:      {model}" + (f"  (original: {original_model})" if model_override else ""))
     print(f"  messages:   {len(messages)}")
     print(f"  tools:      {len(tools) if tools else 0}")
     print(f"  n:          {n}")
     if diff:
-        print(f"  diff:       enabled")
+        print("  diff:       enabled")
     print()
 
     # Show applied patches summary in pretty mode

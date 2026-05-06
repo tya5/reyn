@@ -11,12 +11,9 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from reyn.chat.session import ChatSession, _PendingChain
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -173,7 +170,6 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # We need a registry with a fake peer
-    from unittest.mock import MagicMock
     registry = MagicMock()
     registry.iter_reachable_agents.return_value = [
         {"name": "peer_agent", "role": "data analyst"},

@@ -15,7 +15,6 @@ from typing import Awaitable, Callable
 
 from reyn.user_intervention import (
     InterventionAnswer,
-    InterventionChoice,
     UserIntervention,
     match_choice,
 )

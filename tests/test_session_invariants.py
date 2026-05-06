@@ -32,7 +32,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from reyn.chat.outbox import OutboxMessage
 from reyn.chat.session import ChatSession
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
@@ -43,7 +42,6 @@ from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,
 )
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -1150,8 +1148,8 @@ async def test_run_skill_awaitable_routes_to_router_loop_agent_replies(
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.kernel.runtime import RunResult
     import reyn.chat.session as session_mod
+    from reyn.kernel.runtime import RunResult
 
     NARRATED = "カレーレシピを生成しました"
 
@@ -1217,8 +1215,8 @@ async def test_no_double_history_append_on_agent_reply(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    from reyn.kernel.runtime import RunResult
     import reyn.chat.session as session_mod
+    from reyn.kernel.runtime import RunResult
 
     NARRATED = "履歴重複テスト用ナレーション"
 

@@ -16,10 +16,7 @@ Reference: PR-MODEL-SPEC Task 2 (Tier 2) + PR-MODEL-SPEC-EXTENDS Task 3 (Tier 2)
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.llm.model_resolver import ModelResolver, ModelSpec
-
 
 # ---------------------------------------------------------------------------
 # resolve() returns ModelSpec — API change pin

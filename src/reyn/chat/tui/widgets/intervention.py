@@ -10,13 +10,12 @@ selects "free response".
 """
 from __future__ import annotations
 
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable
 
 from textual.app import ComposeResult
-from textual.widget import Widget
-from textual.widgets import Label, Button, Input
 from textual.message import Message
-from textual.reactive import reactive
+from textual.widget import Widget
+from textual.widgets import Button, Input, Label
 
 
 class InterventionWidget(Widget):

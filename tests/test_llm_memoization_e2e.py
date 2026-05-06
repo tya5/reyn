@@ -30,16 +30,11 @@ calls — exactly what R-D2 is designed to prevent.
 from __future__ import annotations
 
 import asyncio
-import json
-from pathlib import Path
-from typing import Any
-
-import pytest
 
 import reyn.kernel.runtime as runtime_mod
 from reyn.config import SkillResumeConfig
 from reyn.events.state_log import StateLog
-from reyn.kernel.runtime import OSRuntime, RunResult
+from reyn.kernel.runtime import OSRuntime
 from reyn.llm.llm import LLMCallResult
 from reyn.schemas.models import (
     Phase,
@@ -49,7 +44,6 @@ from reyn.schemas.models import (
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.skill.skill_resume_coordinator import SkillResumeCoordinator
 from reyn.skill.skill_snapshot import SkillSnapshot
-
 
 # ---------------------------------------------------------------------------
 # Skill + LLM stub

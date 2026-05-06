@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -71,9 +70,10 @@ def tmp_project(tmp_path: Path) -> Path:
 
 def _make_client(tmp_project: Path, monkeypatch, env_overrides: dict | None = None):
     """Build a TestClient with singletons reset to use tmp_project."""
+
     from fastapi.testclient import TestClient
+
     import reyn.web.deps as deps
-    import os
 
     # Reset cached singletons
     deps._get_project_root.cache_clear()

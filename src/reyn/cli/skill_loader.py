@@ -6,18 +6,21 @@ Skill resolution and loading shared by `run` and `eval` subcommands.
                        (positional name, --skill-path, --module).
 """
 from __future__ import annotations
+
 import argparse
 import importlib
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from reyn.schemas.models import Skill
+from reyn.skill.skill_paths import (
+    SkillNotFoundError,
+    stdlib_root,
+)
 from reyn.skill.skill_paths import (  # re-exported for convenience
     resolve_skill_path as _resolve_skill_path_raw,
-    stdlib_root,
-    SkillNotFoundError,
 )
-from reyn.schemas.models import Skill
 
 __all__ = [
     "LoadedSkill", "load_skill_from_args",

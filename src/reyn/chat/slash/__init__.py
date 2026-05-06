@@ -22,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Iterable
 
-
 HandlerFn = Callable[..., Awaitable[None]]
 CompleterFn = Callable[..., list[str]]
 
@@ -125,16 +124,15 @@ async def reply_error(session: "object", text: str) -> None:
 # ── trigger registration of built-in commands ─────────────────────────────
 # Sub-modules register on import; importing them here makes the registry
 # fully populated as soon as `reyn.chat.slash` is imported.
-from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
 from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
-from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
-from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
+from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
+from reyn.chat.slash import donut as _donut_mod  # noqa: E402, F401
 from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
 from reyn.chat.slash import matrix as _matrix_mod  # noqa: E402, F401
+from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
+from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.chat.slash import zen as _zen_mod  # noqa: E402, F401
-from reyn.chat.slash import donut as _donut_mod  # noqa: E402, F401
-
 
 __all__ = [
     "REGISTRY",

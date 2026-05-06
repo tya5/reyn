@@ -13,9 +13,7 @@ Testing policy compliance:
 from __future__ import annotations
 
 import asyncio
-import io
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -136,8 +134,6 @@ def _write_trace_with_tools(
 # Import the module under test
 # ---------------------------------------------------------------------------
 
-import importlib
-import sys as _sys
 from pathlib import Path as _Path
 
 _SCRIPTS_DIR = _Path(__file__).parent.parent / "scripts"

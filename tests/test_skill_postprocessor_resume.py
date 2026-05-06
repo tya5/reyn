@@ -18,18 +18,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
-from typing import Any
 
 import pytest
 
 from reyn.compiler.expander import expand_phase, expand_skill
 from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
-from reyn.config import SkillResumeConfig
 from reyn.events.events import EventLog
 from reyn.events.state_log import StateLog
 from reyn.kernel.normalizer import NormalizationResult
-from reyn.kernel.postprocessor_executor import PostprocessorExecutor, PostprocessorError
+from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.runtime import OSRuntime, RunResult, WorkflowAbortedError
 from reyn.llm.model_resolver import ModelResolver
 from reyn.schemas.models import (
@@ -41,10 +38,8 @@ from reyn.schemas.models import (
     SkillGraph,
 )
 from reyn.skill.skill_registry import SkillRegistry
-from reyn.skill.skill_resume_analyzer import ResumePlan, CommittedStep, SkillResumeAnalyzer
-from reyn.skill.skill_resume_coordinator import SkillResumeCoordinator
+from reyn.skill.skill_resume_analyzer import CommittedStep, ResumePlan, SkillResumeAnalyzer
 from reyn.workspace.workspace import Workspace
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -357,9 +352,6 @@ def test_postprocessor_step_memo_returns_recorded_result(tmp_path, monkeypatch):
     events = _event_log()
     ws = Workspace(events)
 
-    from reyn.schemas.models import Postprocessor, ValidateStep
-    from reyn.compiler.expander import expand_phase, expand_skill
-    from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
 
     # Build a skill with a 2-step postprocessor.
     skill = _build_postprocessor_skill(

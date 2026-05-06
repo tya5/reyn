@@ -31,23 +31,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from reyn.user_intervention import (
-    InterventionAnswer,
-    InterventionBus,
-    UserIntervention,
-)
 from reyn.intervention_choices import (
     ALWAYS,
     JUST_PATH,
     NEVER,
-    NO,
     RECURSIVE,
     YES,
     file_access_choices,
     generic_yn_choices,
     python_choices,
+)
+from reyn.user_intervention import (
+    InterventionBus,
+    UserIntervention,
 )
 
 if TYPE_CHECKING:

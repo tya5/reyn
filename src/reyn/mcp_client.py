@@ -24,7 +24,6 @@ import warnings
 from contextlib import AsyncExitStack
 from typing import Any
 
-
 # ── Env var expansion ─────────────────────────────────────────────────────────
 
 _ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")

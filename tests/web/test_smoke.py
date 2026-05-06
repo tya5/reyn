@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -153,6 +152,7 @@ def test_get_agents_200(tmp_project: Path, monkeypatch: pytest.MonkeyPatch) -> N
 def test_health_endpoint() -> None:
     """GET /health returns {status: ok}."""
     from fastapi.testclient import TestClient
+
     from reyn.web.server import app
 
     client = TestClient(app, raise_server_exceptions=False)

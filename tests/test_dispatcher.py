@@ -2,16 +2,11 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 from typing import Any
-
-import pytest
 
 from reyn.dispatch import (
     DispatchContext,
     dispatch_tool,
-    UnknownToolError,
-    InvalidArgsError,
 )
 
 

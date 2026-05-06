@@ -1,9 +1,11 @@
 from pathlib import Path
-from .parser import parse_artifact, parse_phase, parse_skill
+
+from reyn.schemas.models import Skill
+
 from .expander import expand_phase, expand_skill
 from .ir import ArtifactDef, PhaseDef
-from .preprocessor_typing import infer_llm_visible_schema, PreprocessorTypeError
-from reyn.schemas.models import Skill
+from .parser import parse_artifact, parse_phase, parse_skill
+from .preprocessor_typing import PreprocessorTypeError, infer_llm_visible_schema
 
 
 def _not_found_error(name: str, search_dirs: list[Path], kind: str, ext: str = ".md") -> ValueError:

@@ -26,10 +26,10 @@ from __future__ import annotations
 
 _CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
-from rich.text import Text
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000

@@ -21,6 +21,7 @@ matching the production call path; no real LLM call was made).
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -33,7 +34,6 @@ from reyn.schemas.models import (
     PhaseConstraints,
 )
 from reyn.testing.replay import REPLAY_DATETIME
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Constants

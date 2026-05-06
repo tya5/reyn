@@ -17,20 +17,19 @@ No LLM calls are made; cost is 0.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
-from reyn.testing.replay import LLMReplay, MissingFixture, REPLAY_DATETIME
+from reyn.llm.llm import _system_prompt
 from reyn.schemas.models import (
     CandidateOutput,
     ContextFrame,
     ExecutionState,
     PhaseConstraints,
 )
-from reyn.llm.llm import _system_prompt
+from reyn.testing.replay import REPLAY_DATETIME, LLMReplay, MissingFixture
 
 # ── Fixture paths ─────────────────────────────────────────────────────────────
 

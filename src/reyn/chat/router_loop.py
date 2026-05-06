@@ -11,8 +11,13 @@ import functools
 import json
 from typing import TYPE_CHECKING, Any, Protocol
 
-from reyn.chat.router_tools import MAX_DESC_LEN_FOR_LISTING, _DESCRIBE_SKILL_STRIP_FIELDS, build_tools, get_dispatch_kind
 from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.chat.router_tools import (
+    _DESCRIBE_SKILL_STRIP_FIELDS,
+    MAX_DESC_LEN_FOR_LISTING,
+    build_tools,
+    get_dispatch_kind,
+)
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.llm.llm import call_llm_tools

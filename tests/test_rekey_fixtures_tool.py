@@ -9,13 +9,10 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 # Make scripts/ importable
 _SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(_SCRIPTS_DIR))
 import rekey_fixtures as rk
-
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 

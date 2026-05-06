@@ -21,20 +21,22 @@ Step semantics:
                validates it against the declared output_schema
 """
 from __future__ import annotations
+
 import asyncio
 import copy
-import jsonschema
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+import jsonschema
 
 from reyn.llm.pricing import TokenUsage
 from reyn.python_runner import PythonRunner, PythonStepError
 
 if TYPE_CHECKING:
-    from reyn.schemas.models import Skill, Phase, PreprocessorStep
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
+    from reyn.schemas.models import Phase, PreprocessorStep, Skill
     from reyn.user_intervention import InterventionBus
     from reyn.workspace.workspace import Workspace
 
@@ -185,7 +187,13 @@ class PreprocessorExecutor:
         self, step: "PreprocessorStep", artifact: dict, index: int,
         phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
-        from reyn.schemas.models import IterateStep, ValidateStep, LintPlanStep, PythonStep, RunOpStep
+        from reyn.schemas.models import (
+            IterateStep,
+            LintPlanStep,
+            PythonStep,
+            RunOpStep,
+            ValidateStep,
+        )
         phase_name = phase.name
         if isinstance(step, ValidateStep):
             return self._apply_validate(step, artifact, index, phase_name)
@@ -289,8 +297,8 @@ class PreprocessorExecutor:
         self, step: Any, artifact: dict, index: int,
         phase: "Phase", output_language: str | None,
     ) -> tuple[dict, TokenUsage]:
-        from reyn.schemas.models import RunOpStep
         from reyn.op_runtime import execute_op
+        from reyn.schemas.models import RunOpStep
 
         phase_name = phase.name
         if not isinstance(step.apply, RunOpStep):

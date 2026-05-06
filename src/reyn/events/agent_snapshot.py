@@ -9,12 +9,12 @@ Atomic write: dump to `<path>.tmp`, fsync, rename. mid-write crash leaves
 the previous file intact.
 """
 from __future__ import annotations
+
 import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
-
 
 SNAPSHOT_VERSION = 1
 

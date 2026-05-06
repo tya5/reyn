@@ -1,5 +1,6 @@
 """`reyn lint` — lint a DSL app for issues."""
 from __future__ import annotations
+
 import argparse
 import sys
 

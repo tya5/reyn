@@ -17,12 +17,9 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-import pytest
-
 from reyn.chat.services.chain_manager import ChainManager, _PendingChain
 from reyn.chat.services.snapshot_journal import SnapshotJournal
 from reyn.events.state_log import StateLog
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -14,8 +14,8 @@ Reference: PR-MODEL-SPEC Task 1 (Tier 1).
 from __future__ import annotations
 
 import pytest
-from reyn.llm.model_resolver import ModelSpec
 
+from reyn.llm.model_resolver import ModelSpec
 
 # ---------------------------------------------------------------------------
 # str form

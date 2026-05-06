@@ -1,12 +1,12 @@
 """memory — memory store helpers (frontmatter-aware reader, indexer, resolver)."""
 from .memory import (
-    MemoryEntry,
+    VALID_TYPES,
     AmbiguousMemoryError,
-    list_entries,
+    MemoryEntry,
     find_one,
+    list_entries,
     render_body,
     rewrite_index,
-    VALID_TYPES,
 )
 from .memory_paths import memory_dir
 

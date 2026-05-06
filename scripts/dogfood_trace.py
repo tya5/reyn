@@ -105,7 +105,7 @@ def mode_cost(root: Path) -> None:
         usd, tokens, model = e.get("cost_usd", 0.0) or 0.0, e.get("tokens", 0) or 0, e.get("model", "unknown")
         total_usd += usd; total_tokens += tokens
         per_model[model]["usd"] += usd; per_model[model]["tokens"] += tokens; per_model[model]["calls"] += 1
-    print(f"=== Cost Summary ===")
+    print("=== Cost Summary ===")
     print(f"  Total: ${total_usd:.6f}  |  {total_tokens:,} tokens  |  {len(entries)} calls\n  Per-model:")
     for model, m in sorted(per_model.items(), key=lambda x: -x[1]["usd"]):
         print(f"    {model}: ${m['usd']:.6f}  {m['tokens']:,} tokens  ({m['calls']} calls)")
@@ -447,7 +447,7 @@ def mode_llm_detail(records: list[dict], request_id: str, full: bool = False) ->
             print(f"  [{i}] {role}: (non-text content)")
 
     if resp is not None:
-        print(f"\n  --- response ---")
+        print("\n  --- response ---")
         print(f"  timestamp:    {resp.get('timestamp', '?')}")
         print(f"  finish_reason: {resp.get('finish_reason', '?')}")
         usage = resp.get("usage", {})
@@ -633,7 +633,7 @@ def _print_step_frame(frame: object, *, show_llm: bool = True) -> None:
         ts = (ev.get("ts") or ev.get("timestamp") or "")[:19]
         print(f"    [{seq}] {kind}  {ts}")
     if frame.state_snapshot:
-        print(f"  state_snapshot:")
+        print("  state_snapshot:")
         for k, v in frame.state_snapshot.items():
             print(f"    {k}: {v!r}")
     if show_llm and frame.llm_payload:

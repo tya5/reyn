@@ -5,6 +5,7 @@ Checks DSL files for consistency issues that would make Meta-App generation unre
 Does not compile; reports issues without crashing.
 """
 from __future__ import annotations
+
 import ast
 import re
 from dataclasses import dataclass
@@ -12,8 +13,9 @@ from pathlib import Path
 
 import jsonschema
 
-from .parser import _split_frontmatter, parse_artifact
 from reyn.op_runtime.registry import ALL_OP_KINDS as _KNOWN_OP_KINDS
+
+from .parser import _split_frontmatter, parse_artifact
 
 PHASE_FRONTMATTER_ORDER = ["type", "name", "input", "role", "can_finish", "allowed_ops"]
 _SNAKE_CASE = re.compile(r"^[a-z][a-z0-9_]*$")

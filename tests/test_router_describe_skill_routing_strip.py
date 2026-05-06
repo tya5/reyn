@@ -22,7 +22,6 @@ Tests are Tier 2c: pure Python with _ScriptedLLM (no network, no LLM calls).
 """
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 from unittest.mock import patch
@@ -33,7 +32,6 @@ from reyn.chat.router_loop import RouterLoop
 from reyn.chat.router_tools import _DESCRIBE_SKILL_STRIP_FIELDS
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
 
 # ---------------------------------------------------------------------------
 # Shared test infrastructure (inline to keep test self-contained)

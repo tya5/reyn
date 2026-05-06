@@ -1,14 +1,15 @@
 """file kind handler — read/write/glob/grep/delete/edit/regenerate_index."""
 from __future__ import annotations
+
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Literal
 
-from . import register
-from .context import OpContext
 from reyn.schemas.models import FileIROp
 
+from . import register
+from .context import OpContext
 
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
 _READ_OPS = frozenset({"read", "glob", "grep"})

@@ -7,6 +7,7 @@ attached pointer; the REPL doesn't need to re-bind anything because both
 the input and output sides funnel through the registry.
 """
 from __future__ import annotations
+
 import asyncio
 import sys
 
@@ -16,8 +17,8 @@ from prompt_toolkit.application.current import get_app_or_none
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
 
-from .renderer import ChatRenderer
 from .registry import AgentRegistry
+from .renderer import ChatRenderer
 
 
 async def _input_loop(

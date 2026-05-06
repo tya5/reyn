@@ -5,6 +5,7 @@ Pulled out of cmd_eval so the JSON layout has one home and a future
 `reyn eval report <path>` viewer subcommand can reuse it.
 """
 from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone

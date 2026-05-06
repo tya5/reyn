@@ -13,16 +13,12 @@ and real estimate_cost with a fake model_cost entry.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.chat.session import ChatSession
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage, estimate_cost
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared with existing router tests

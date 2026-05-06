@@ -1,7 +1,6 @@
 """Static templates and metadata used by `reyn init` and `reyn config`."""
 from __future__ import annotations
 
-
 REYN_YAML_TEMPLATE = """\
 # Reyn project configuration — commit this file.
 # Local overrides belong in reyn.local.yaml or .reyn/config.yaml (both gitignored) — never commit secrets here.

@@ -21,8 +21,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-import pytest
-
 from reyn.user_intervention import (
     InterventionChoice,
     UserIntervention,

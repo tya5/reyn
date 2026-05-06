@@ -7,14 +7,13 @@ has no circular imports and stays testable in isolation.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, Callable
 
 from reyn.events.events import EventLog
 from reyn.llm.llm import proxy_kwargs
 from reyn.llm.model_resolver import ModelResolver
-from reyn.schemas.models import SkillNodeSpec
 from reyn.llm.pricing import TokenUsage
+from reyn.schemas.models import SkillNodeSpec
 
 
 async def _adapt_artifact(

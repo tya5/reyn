@@ -1,20 +1,22 @@
 """run_skill kind handler — invoke a sub-skill in-process."""
 from __future__ import annotations
+
 import logging
 from pathlib import Path
 from typing import Literal
 
+from reyn.schemas.models import RunSkillIROp
+
 from . import register
 from .context import OpContext
-from reyn.schemas.models import RunSkillIROp
 
 _log = logging.getLogger(__name__)
 
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     from reyn.compiler import load_dsl_skill
-    from reyn.skill.sub_skill_runner import invoke_sub_skill
     from reyn.skill.skill_paths import resolve_skill_path
+    from reyn.skill.sub_skill_runner import invoke_sub_skill
 
     # Resolve sub-skill: prefer preloaded preprocessor sub-skills (set up at compile time)
     # before falling back to filesystem resolution.

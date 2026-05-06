@@ -20,7 +20,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
-
 SKILL_SNAPSHOT_VERSION = 1
 
 

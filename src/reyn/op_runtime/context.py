@@ -6,16 +6,17 @@ handler signatures stay flat. Frontends construct an OpContext once
 and reuse it for the whole phase or act loop.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.schemas.models import Skill
-    from reyn.workspace.workspace import Workspace
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.schemas.models import Skill
     from reyn.user_intervention import InterventionBus
+    from reyn.workspace.workspace import Workspace
 
 
 @dataclass

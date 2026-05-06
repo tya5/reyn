@@ -16,11 +16,10 @@ Use case (headline): "fix landing 前後で同じ session を side-by-side 比�
 """
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal
+from typing import Any, Iterator
 
 from reyn.replay.engine import ReplayEngine, ScopeType
-from reyn.replay.model import Checkpoint, DiffFrame, StepFrame
-
+from reyn.replay.model import DiffFrame, StepFrame
 
 # ---------------------------------------------------------------------------
 # Public API

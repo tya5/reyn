@@ -16,21 +16,22 @@ uniform error shape. The existing tool_executed events from op_runtime
 handlers are preserved (they run inside the invoker).
 """
 from __future__ import annotations
+
 from typing import Any
 
-from reyn.schemas.models import (
-    ControlIROp, ControlIROpSpec,
-)
-from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
-from reyn.workspace.workspace import Workspace
+from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
-from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
+from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
+from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+from reyn.schemas.models import (
+    ControlIROp,
+    ControlIROpSpec,
+)
 from reyn.user_intervention import InterventionBus
-from reyn.dispatch import DispatchContext, dispatch_tool
-
+from reyn.workspace.workspace import Workspace
 
 # Map: op kind -> IROp Pydantic model (used to derive tool parameter schemas).
 # Single source of truth lives in reyn.op_runtime.registry.OP_KIND_MODEL_MAP.

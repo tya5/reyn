@@ -11,8 +11,6 @@ import asyncio
 import json
 from pathlib import Path
 
-import pytest
-
 from reyn.events.state_log import StateLog
 
 

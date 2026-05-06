@@ -12,10 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from reyn.skill import llm_result_ref
-
 
 _RUN_ID = "run_llmref"
 _ARGS_HASH = "abcdef0123456789"

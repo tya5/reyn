@@ -9,12 +9,8 @@ No mocks, no private state.  Real IR + expander objects only.
 """
 from __future__ import annotations
 
-import pytest
-
 from reyn.compiler.expander import expand_phase, expand_skill
 from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
-from reyn.permissions.permissions import PermissionDecl
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 

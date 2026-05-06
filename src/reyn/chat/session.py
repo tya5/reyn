@@ -1,12 +1,12 @@
 """ChatSession — long-lived chat loop driving the skill_router stdlib skill."""
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import re
 import time
 import uuid
-from collections import deque
 from typing import Any, Awaitable, Callable
 
 logger = logging.getLogger(__name__)
@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from reyn.agent import Agent
-from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.budget.budget import (
     BudgetTracker,
     format_budget_full,
@@ -23,26 +22,26 @@ from reyn.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import ChainManager, InterventionRegistry, SnapshotJournal
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, LimitsConfig
+from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
+from reyn.events.state_log import StateLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
-from reyn.skill.skill_paths import resolve_skill_path, stdlib_root, SkillNotFoundError
+from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdlib_root
 from reyn.skill.skill_registry import SkillRegistry
-from reyn.events.state_log import StateLog
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
     UserIntervention,
     match_choice,
 )
-from reyn.chat.outbox import OutboxMessage
-
 
 ROUTER_SKILL_NAME = "skill_router"
 NARRATOR_SKILL_NAME = "skill_narrator"
@@ -2737,8 +2736,8 @@ class ChatSession:
         silently allowing everything through an empty decl.
         """
         from reyn.op_runtime.context import OpContext
-        from reyn.workspace.workspace import Workspace
         from reyn.permissions.permissions import PermissionDecl
+        from reyn.workspace.workspace import Workspace
 
         file_perms = self._get_file_permissions_for_router() or {}
         mcp_servers = self._get_mcp_servers_for_router() or []
@@ -3097,7 +3096,7 @@ class ChatSession:
 
         servers = self._mcp_servers_flat()
         if not servers:
-            return [{"error": f"no MCP servers configured"}]
+            return [{"error": "no MCP servers configured"}]
         server_cfg = servers.get(server)
         if not server_cfg:
             return [{"error": f"MCP server {server!r} not configured"}]
@@ -3121,8 +3120,8 @@ class ChatSession:
     async def _mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
         """Invoke an MCP tool and return its result."""
         from reyn.op_runtime import execute_op
-        from reyn.schemas.models import MCPIROp
         from reyn.permissions.permissions import PermissionDecl
+        from reyn.schemas.models import MCPIROp
 
         op = MCPIROp(kind="mcp", server=server, tool=tool, args=args)
         ctx = self._make_router_op_context()
@@ -3338,8 +3337,8 @@ class ChatSession:
             # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
             # Use loop.router_model ("light") — not "router" — so the resolver
             # finds the actual model string (e.g. "openai/gemini-2.5-flash-lite").
-            from reyn.llm.pricing import estimate_cost
             from reyn.llm.llm import proxy_kwargs
+            from reyn.llm.pricing import estimate_cost
             resolved = self._resolver.resolve(loop.router_model).model
             pricing_model = (
                 resolved.split("/", 1)[1]

@@ -20,7 +20,6 @@ from textual.widgets import Static
 
 from reyn.chat.slash import SlashCommand
 
-
 _CORAL = "#C8553D"
 _MAX_VISIBLE = 8
 
