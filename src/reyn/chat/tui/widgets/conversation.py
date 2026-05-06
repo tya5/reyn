@@ -40,6 +40,7 @@ _CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
 
 import time
 
+from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -48,7 +49,6 @@ from textual.widgets import RichLog, Static
 from reyn.chat.outbox import OutboxMessage
 
 from .error_box import ErrorBox
-from .foldable_markdown import FoldableMarkdown
 from .intervention import InterventionWidget
 from .skill_activity import SkillActivityRow
 from .sticky_status import StickyStatus
@@ -56,7 +56,6 @@ from .streaming_row import StreamingRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
-_FOLD_THRESHOLD_LINES = 30
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
@@ -116,6 +115,8 @@ class ConversationView(Widget):
         height: 1fr;
         border: none;
         scrollbar-color: $primary;
+        scrollbar-background: transparent;
+        scrollbar-corner-color: transparent;
         padding: 0 1;
     }
     ConversationView #empty-hint {
@@ -242,16 +243,20 @@ class ConversationView(Widget):
         self._write_log(Text(""))
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
-        """Render a non-streaming agent message with grouped header + fold."""
+        """Render a non-streaming agent message inline in the log.
+
+        Writes Markdown directly into the RichLog (as a Rich renderable) so
+        agent replies appear under their header instead of being pushed to
+        the bottom of the pane. Hides any sticky "thinking…" indicator that
+        was active for this turn.
+        """
         self._consume_empty_hint()
+        self.hide_status()  # turn finished — clear "thinking…" sticky
         meta_pfx = _meta_prefix(msg.meta)
         label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
         self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
         if msg.text:
-            # B3: fold long agent replies
-            md = FoldableMarkdown(msg.text, fold_threshold=_FOLD_THRESHOLD_LINES)
-            self.mount(md)
-        # Spacer (kept as a log line for visual rhythm)
+            self._log().write(RichMarkdown(msg.text))
         self._write_log(Text(""))
 
     def _write_log(self, text: Text) -> None:
@@ -276,12 +281,29 @@ class ConversationView(Widget):
             row.append(text)
 
     def end_stream(self, msg_id: str) -> str:
+        """Seal the stream and flush the final content INTO the RichLog inline,
+        then remove the transient StreamingRow widget so the bottom of the
+        pane stays empty (or holds the next streaming row)."""
         row = self._stream_rows.pop(msg_id, None)
         if row is None:
             return ""
+        full = row.full_text()
+        # Seal stops the cursor + 16ms tick.
         row.seal()
+        self.hide_status()
+        # Write the final reply into the log as Markdown (inline under header).
+        if full:
+            try:
+                self._log().write(RichMarkdown(full))
+            except Exception:
+                self._log().write(Text(full))
         self._log().write(Text(""))
-        return row.full_text()
+        # Remove the transient row — its content is now in the log.
+        try:
+            row.remove()
+        except Exception:
+            pass
+        return full
 
     # ── skill activity rows (C1+A1) ──────────────────────────────────────────
 
