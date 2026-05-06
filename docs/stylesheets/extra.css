@@ -161,6 +161,11 @@ kbd {
   border-left-color: #C8553D;
 }
 
+/* ---- Logo: clay filter on white mark ---- */
+.md-header__button.md-logo img {
+  filter: brightness(0) saturate(100%) invert(38%) sepia(48%) saturate(1100%) hue-rotate(338deg) brightness(92%) contrast(86%);
+}
+
 /* ---- Brand in header ---- */
 .reyn-brand {
   display: flex;

@@ -7,25 +7,15 @@ theme:
   custom_dir: overrides
   features:
     - navigation.sections
-    - navigation.tabs
     - navigation.top
     - search.suggest
     - content.code.copy
     - content.code.annotate
   font: false
+  logo: assets/reyn-mark-white.png
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: custom
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
-      primary: custom
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+    scheme: default
+    primary: custom
 
 plugins:
   - search
