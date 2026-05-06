@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
+from textual.theme import Theme
 from textual.widgets import Label
 
 from .widgets import ReynHeader, ConversationView, InputBar, RightPanel
@@ -63,7 +64,7 @@ class CommandPaletteOverlay(OptionList):
         max-height: 12;
         min-width: 40;
         background: #1a1a1a;
-        border: tall #C8553D;
+        border: tall $primary;
         display: none;
     }
     CommandPaletteOverlay.visible {
@@ -97,6 +98,17 @@ class ReynTUIApp(App):
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
 
+    _REYN_THEME = Theme(
+        name="reyn",
+        primary="#C8553D",
+        accent="#C8553D",
+        dark=True,
+        variables={
+            "block-cursor-background": "#C8553D",
+            "block-cursor-foreground": "#ffffff",
+        },
+    )
+
     def __init__(
         self,
         *,
@@ -106,6 +118,8 @@ class ReynTUIApp(App):
         budget_tracker=None,
     ) -> None:
         super().__init__()
+        self.register_theme(self._REYN_THEME)
+        self.theme = "reyn"
         self._agent_registry = registry   # NOTE: NOT _registry (Textual internal)
         self._agent_name = agent_name
         self._model = model
@@ -158,18 +172,9 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # Pictograph + ASCII banner side-by-side (neofetch style)
+        # ASCII banner (neofetch style): gradient logo left, agent info right
         conv = self.query_one("#conversation", ConversationView)
         from rich.text import Text
-        _HORSE = [
-            "                ",
-            "         ▃▖     ",
-            "     ▂▄▆  ▝     ",
-            "    ▃━━     ▖   ",
-            "   ▍   ▂▝▃   ▖  ",
-            "   ▎   ▂▁▃▝▅▃▘  ",
-            "   ▆▆▆▆▆▇",
-        ]
         _BANNER = [
             "██████╗ ███████╗██╗   ██╗███╗   ██╗",
             "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
@@ -186,26 +191,19 @@ class ReynTUIApp(App):
             None,
             None,
         ]
-        horse_w = 20   # 18 chars + 2-char gap
-        n_rows = max(len(_HORSE), len(_BANNER))
-        for i in range(n_rows):
+        n = len(_BANNER)
+        for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
+            t = i / (n - 1)
+            r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
             rt = Text()
-            # horse: no style, no processing
-            hline = _HORSE[i] if i < len(_HORSE) else ""
-            rt.append(hline.ljust(horse_w))
-            # banner: coral gradient (only while banner lines remain)
-            if i < len(_BANNER):
-                t = i / max(len(_BANNER) - 1, 1)
-                r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
-                rt.append(_BANNER[i], style=f"#{r:02x}{g:02x}{b:02x}")
-                info = _INFO[i] if i < len(_INFO) else None
-                if info:
-                    key, val = info
-                    rt.append("    ")
-                    rt.append(f"{key}  ", style="dim #555555")
-                    rt.append(val, style="#dddddd")
+            rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
+            if info:
+                key, val = info
+                rt.append("    ")
+                rt.append(f"{key}  ", style="dim #555555")
+                rt.append(val, style="#dddddd")
             conv._write_log(rt)
-        conv._write_log(Text("  — counsels you to hold the reins.", style="dim #555555"))
+        conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
         conv._write_log(Text("─" * 38, style="#2a2a2a"))
 
         # Start outbox subscription if registry is available

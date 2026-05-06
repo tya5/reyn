@@ -20,6 +20,8 @@ kind → prefix / style mapping (from design doc):
 """
 from __future__ import annotations
 
+_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+
 import time
 from dataclasses import dataclass
 
@@ -84,7 +86,7 @@ class ConversationView(Widget):
         background: transparent;
         height: 1fr;
         border: none;
-        scrollbar-color: #C8553D;
+        scrollbar-color: $primary;
         padding: 0 1;
     }
     """
@@ -122,7 +124,7 @@ class ConversationView(Widget):
         log = self._log()
         meta_pfx = _meta_prefix(msg.meta)
         label = f"reyn  {meta_pfx}" if meta_pfx else "reyn"
-        log.write(_msg_header(label, "bold #C8553D", "#5a2020"))
+        log.write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
         if msg.text:
             log.write(RichMarkdown(msg.text))
         log.write(Text(""))
@@ -136,7 +138,7 @@ class ConversationView(Widget):
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
         """Start a streaming agent message row. Returns the row widget."""
         label = agent_name if agent_name else "reyn"
-        self._log().write(_msg_header(label, "bold #C8553D", "#5a2020"))
+        self._log().write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
@@ -199,12 +201,12 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 
     if msg.kind == "agent":
         t = Text()
-        t.append("agent  ", style="bold #C8553D")
+        t.append("agent  ", style="bold " + _CORAL)
         t.append(body)
         return t
     if msg.kind == "status":
         t = Text()
-        t.append("⟳ ", style="dim italic #C8553D")
+        t.append("⟳ ", style="dim italic " + _CORAL)
         t.append(body, style="dim italic")
         return t
     if msg.kind == "error":
@@ -234,6 +236,6 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 def _format_intervention_line(msg: OutboxMessage) -> Text:
     """Fallback inline line for intervention when no widget callback set."""
     t = Text()
-    t.append("  Aria asks  ", style="bold #C8553D")
+    t.append("  Aria asks  ", style="bold " + _CORAL)
     t.append(msg.text, style="#ffcc88")
     return t

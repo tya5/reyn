@@ -1,6 +1,8 @@
 """RightPanel — swappable right-side panel slot for the Reyn TUI."""
 from __future__ import annotations
 
+_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,6 +15,15 @@ from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, Static, Tab, Tabs
+from textual.widgets._tabs import Underline as _Underline
+
+
+class _TopTabs(Tabs):
+    """Tabs with the underline indicator docked to the top instead of the bottom."""
+
+    def on_mount(self) -> None:
+        # Inline styles have highest priority — overrides DEFAULT_CSS dock:bottom
+        self.query_one(_Underline).styles.dock = "top"
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -295,10 +306,10 @@ class _PreviewPane(Widget):
         padding: 0 1;
     }
     _PreviewPane:focus {
-        border-top: tall #C8553D;
+        border-top: tall $primary;
     }
     _PreviewPane:focus #preview-header {
-        color: #C8553D;
+        color: $primary;
     }
     _PreviewPane RichLog {
         background: transparent;
@@ -417,7 +428,7 @@ class RightPanel(Widget):
     }
 
     RightPanel Tab.-active {
-        color: #C8553D;
+        color: $primary;
         text-style: bold;
     }
 
@@ -464,15 +475,15 @@ class RightPanel(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield Tabs(
-            *[Tab(_PANEL_LABELS[t], id=t) for t in PANEL_TYPES],
-            id="panel-tabs",
-        )
         with _TabContent(id="tab-content"):
             yield _PanelHeader(self, id="panel-header")
             with VerticalScroll(id="panel-scroll"):
                 yield _PanelContent(self, id="panel-content")
             yield _PreviewPane(id="preview-pane")
+        yield _TopTabs(
+            *[Tab(_PANEL_LABELS[t], id=t) for t in PANEL_TYPES],
+            id="panel-tabs",
+        )
 
     def on_mount(self) -> None:
         self.set_interval(_REFRESH_INTERVAL, self._refresh_live)
@@ -489,7 +500,7 @@ class RightPanel(Widget):
 
     def cycle(self, delta: int) -> None:
         """Advance (delta=+1) or retreat (delta=-1) through tabs."""
-        tabs = self.query_one("#panel-tabs", Tabs)
+        tabs = self.query_one("#panel-tabs", _TopTabs)
         if delta > 0:
             tabs.action_next_tab()
         else:
@@ -497,7 +508,7 @@ class RightPanel(Widget):
 
     def focus_tabs(self) -> None:
         try:
-            self.query_one("#panel-tabs", Tabs).focus()
+            self.query_one("#panel-tabs", _TopTabs).focus()
         except Exception:
             pass
 
@@ -672,28 +683,28 @@ class RightPanel(Widget):
 
     def _panel_header_markup(self) -> str:
         if self._panel_type == "keys":
-            return "[bold #C8553D]Key Bindings[/]"
+            return f"[bold {_CORAL}]Key Bindings[/]"
         if self._panel_type == "agents":
-            return "[bold #C8553D]Agents[/]"
+            return f"[bold {_CORAL}]Agents[/]"
         if self._panel_type == "memory":
-            return "[bold #C8553D]Memory[/]"
+            return f"[bold {_CORAL}]Memory[/]"
         if self._panel_type == "cost":
-            return "[bold #C8553D]Cost[/]"
+            return f"[bold {_CORAL}]Cost[/]"
         if self._panel_type == "docs":
-            return "[bold #C8553D]Docs[/]  [#555555]j↓  k↑  enter=open[/]"
+            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓  k↑  enter=open[/]"
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
             tail = _TAIL_CYCLE[self._event_tail_idx]
             filter_label = (
-                f"[bold #C8553D]{filter_name}[/]" if filter_name != "all"
+                f"[bold {_CORAL}]{filter_name}[/]" if filter_name != "all"
                 else "[#555555]all[/]"
             )
             lbr = "[#555555]\\[[/]"
             rbr = "[#555555]][/]"
-            kf = f"{lbr}[#C8553D]f[/]{rbr}"
-            kt = f"{lbr}[#C8553D]t[/]{rbr}"
+            kf = f"{lbr}[{_CORAL}]f[/]{rbr}"
+            kt = f"{lbr}[{_CORAL}]t[/]{rbr}"
             return (
-                f"[bold #C8553D]Events[/]"
+                f"[bold {_CORAL}]Events[/]"
                 f"  {kf}[#555555]ilter:[/]{filter_label}"
                 f"  {kt}[#555555]ail:[/][#aaaaaa]{tail}[/]"
             )
@@ -764,11 +775,11 @@ class RightPanel(Widget):
             visible = all_events
 
         filter_label = (
-            f"[bold #C8553D]{filter_name}[/]" if filter_name != "all"
+            f"[bold {_CORAL}]{filter_name}[/]" if filter_name != "all"
             else "[#555555]all[/]"
         )
         header = (
-            f"[bold #C8553D]Recent Events[/]"
+            f"[bold {_CORAL}]Recent Events[/]"
             f"  [#555555]filter:[/] {filter_label}"
             f"  [#555555]tail:[/] [#aaaaaa]{tail}[/]"
             f"  [#555555]({len(visible)}/{len(all_events)})[/]"
@@ -824,7 +835,7 @@ class RightPanel(Widget):
             # ── agent label ────────────────────────────────────────────
             label = RichText()
             label.append("▶ " if is_attached else "  ", style="#555555")
-            label.append(name, style="bold #C8553D" if is_attached else "#dddddd")
+            label.append(name, style="bold " + _CORAL if is_attached else "#dddddd")
             label.append("  ")
             label.append(
                 "● running" if in_loaded else "○ idle",
@@ -917,7 +928,7 @@ class RightPanel(Widget):
 
         # Shared memory
         shared = list_entries(self._project_root / ".reyn" / "memory")
-        _render_scope(shared, "SHARED", "#C8553D")
+        _render_scope(shared, "SHARED", _CORAL)
 
         # Per-agent memory
         agents_dir = self._project_root / ".reyn" / "agents"
@@ -1033,7 +1044,7 @@ class RightPanel(Widget):
             max_v = max(recent) or 1
             blocks = "▁▂▃▄▅▆▇█"
             bar = "".join(blocks[min(7, int(v / max_v * 8))] for v in recent)
-            return f"[#C8553D]{bar}[/]"
+            return f"[{_CORAL}]{bar}[/]"
 
         # ── TODAY ────────────────────────────────────────────────────────
         lines.append("[bold #aaaaaa]  TODAY[/]")
@@ -1133,7 +1144,7 @@ class RightPanel(Widget):
                 rel = md.relative_to(docs_root)
                 indent = "    "
                 if file_idx == self._docs_cursor:
-                    lines.append(f"[bold #C8553D]{indent}▶ {_esc(md.stem)}[/]")
+                    lines.append(f"[bold {_CORAL}]{indent}▶ {_esc(md.stem)}[/]")
                 else:
                     lines.append(f"[#666666]{indent}  {_esc(md.stem)}[/]")
                 file_idx += 1

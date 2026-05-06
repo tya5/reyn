@@ -30,7 +30,7 @@ class ReynHeader(Widget):
         layout: horizontal;
     }
     ReynHeader #title {
-        color: #C8553D;
+        color: $primary;
         text-style: bold;
         padding: 0 1;
         width: auto;
