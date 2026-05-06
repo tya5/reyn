@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from time import monotonic as _now_monotonic
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
@@ -55,6 +56,8 @@ class ReynTUIApp(App):
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
         Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
+        Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
@@ -93,6 +96,13 @@ class ReynTUIApp(App):
         self._cancel_event: asyncio.Event = asyncio.Event()
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
         self._skill_exec: dict[str, dict] = {}
+        # Per-turn cost tracking (A4 — opt-in via /cost-inline)
+        self._cost_inline_enabled = False
+        self._turn_start_cost_usd: float = 0.0
+        self._turn_start_tokens: int = 0
+        self._turn_start_time: float = 0.0
+        # Recent context for smart Ctrl+B target tab
+        self._last_focal_tab: str | None = None  # "events" | "agents" | None
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -201,26 +211,39 @@ class ReynTUIApp(App):
                 continue
 
             if msg.kind == "__matrix__":
-                # Easter egg: /matrix slash command lands here.
                 from reyn.chat.tui.widgets.matrix import MatrixScreen
                 self.push_screen(MatrixScreen())
                 continue
 
             if msg.kind == "__donut__":
-                # Easter egg: /donut slash command lands here.
                 from reyn.chat.tui.widgets.donut import DonutScreen
                 self.push_screen(DonutScreen())
                 continue
 
+            if msg.kind == "__cost_inline_toggle__":
+                # /cost-inline slash sets this. Body text is "on"/"off" or empty (toggle).
+                want = (msg.text or "").strip().lower()
+                if want == "on":
+                    self._cost_inline_enabled = True
+                elif want == "off":
+                    self._cost_inline_enabled = False
+                else:
+                    self._cost_inline_enabled = not self._cost_inline_enabled
+                state = "on" if self._cost_inline_enabled else "off"
+                conv.show_status(f"cost-inline {state}", kind="general")
+                # Auto-hide after a couple of seconds
+                self.set_timer(2.5, conv.hide_status)
+                continue
+
             if msg.kind == "__stream_start__":
-                # Begin a streaming row
                 current_stream_id = msg.meta.get("msg_id", id(msg))
+                # Hide the "thinking…" sticky now that the reply is starting
+                conv.hide_status()
                 agent = self._agent_name
                 conv.begin_stream(current_stream_id, agent)
                 continue
 
             if msg.kind == "__stream_chunk__":
-                # Append to the current streaming row
                 if current_stream_id is not None:
                     conv.append_stream(current_stream_id, msg.text)
                 continue
@@ -229,11 +252,11 @@ class ReynTUIApp(App):
                 if current_stream_id is not None:
                     conv.end_stream(current_stream_id)
                     current_stream_id = None
-                # Update status line after stream ends
                 self._maybe_refresh_status(header)
+                # A4: render per-turn cost suffix when opt-in is enabled
+                self._maybe_render_cost_suffix(conv)
                 continue
 
-            # Intervention: mount inline widget for structured response
             if msg.kind == "intervention":
                 iv_id = msg.meta.get("intervention_id", "")
                 raw_choices = msg.meta.get("choices")
@@ -243,22 +266,45 @@ class ReynTUIApp(App):
                 self._mount_intervention(conv, msg.text, iv_id, choices)
                 continue
 
-            # Regular message
-            conv.render_message(msg)
+            # ── kind="status" → sticky bar (not log) ──────────────────────────
+            if msg.kind == "status":
+                conv.show_status(msg.text, kind="thinking")
+                continue
 
-            # Refresh status after agent/skill_done messages
-            if msg.kind in {"agent", "skill_done"}:
-                self._maybe_refresh_status(header)
-
-            # Track live skill execution state for Agents tab
+            # ── kind="trace" → SkillActivityRow (driven from app) ─────────────
             if msg.kind == "trace" and msg.meta.get("skill_name"):
+                self._handle_trace_for_skill_row(conv, msg)
                 self._update_skill_exec(msg)
                 self._push_exec_state()
-            elif msg.kind == "skill_done":
+                continue
+
+            # ── kind="skill_done" → finish skill row + tab focus hint ────────
+            if msg.kind == "skill_done":
                 run_id = msg.meta.get("run_id", "")
                 if run_id:
+                    conv.finish_skill_row(
+                        run_id,
+                        success=True,
+                        reason=msg.meta.get("summary", "") or "",
+                    )
                     self._skill_exec.pop(run_id, None)
                     self._push_exec_state()
+                    self._last_focal_tab = "agents"
+                self._maybe_refresh_status(header)
+                continue
+
+            # ── kind="error" → ErrorBox + remember tab focus ─────────────────
+            if msg.kind == "error":
+                # ErrorBox is mounted inside conv.render_message() routing.
+                conv.render_message(msg)
+                self._last_focal_tab = "events"
+                continue
+
+            # Regular message (agent, intervention-fallback, unknown)
+            conv.render_message(msg)
+            if msg.kind == "agent":
+                self._maybe_refresh_status(header)
+                self._maybe_render_cost_suffix(conv)
 
     def _mount_intervention(
         self,
@@ -353,6 +399,67 @@ class ReynTUIApp(App):
         except Exception:
             pass
 
+    def _handle_trace_for_skill_row(self, conv: ConversationView, msg) -> None:
+        """Mount or update a SkillActivityRow from a `kind="trace"` message.
+
+        Recognised text patterns from ChatEventForwarder:
+          - "phase started: <phase_name>" → start row (if missing) + set_phase
+          - "<phase> → <next> ..."         → ignored (phase-completed details
+            are visible in the right panel events tab)
+        """
+        run_id = msg.meta.get("run_id", "")
+        skill_name = msg.meta.get("skill_name", "") or ""
+        if not run_id:
+            return
+        text = msg.text or ""
+        if text.startswith("phase started: "):
+            phase = text[len("phase started: "):].strip()
+            # Lazy-create the row if first trace
+            conv.start_skill_row(run_id, skill_name)
+            # Track phase visit count from existing exec state
+            existing = self._skill_exec.get(run_id) or {}
+            visit = int(existing.get("phase_visits", 0)) + 1
+            conv.update_skill_phase(run_id, phase, visit=visit)
+            self._last_focal_tab = "agents"
+
+    def _maybe_render_cost_suffix(self, conv: ConversationView) -> None:
+        """A4 — emit a dim per-turn cost suffix line when /cost-inline is on."""
+        if not self._cost_inline_enabled:
+            return
+        if self._budget_tracker is None:
+            return
+        try:
+            snap = self._budget_tracker.snapshot()
+            cost_now = float(snap.get("daily_cost_usd", 0.0))
+            tokens_now = int(snap.get("daily_tokens", 0))
+        except Exception:
+            return
+        delta_cost = max(0.0, cost_now - self._turn_start_cost_usd)
+        delta_tokens = max(0, tokens_now - self._turn_start_tokens)
+        elapsed = max(0.0, _now_monotonic() - self._turn_start_time)
+        # Suppress when the delta is exactly zero (no model call this turn)
+        if delta_cost == 0.0 and delta_tokens == 0:
+            return
+        try:
+            conv.render_cost_suffix(delta_tokens, delta_cost, elapsed)
+        except Exception:
+            pass
+
+    def _record_turn_start(self) -> None:
+        """Capture cost / token / time snapshot at the start of a user turn."""
+        self._turn_start_time = _now_monotonic()
+        if self._budget_tracker is not None:
+            try:
+                snap = self._budget_tracker.snapshot()
+                self._turn_start_cost_usd = float(snap.get("daily_cost_usd", 0.0))
+                self._turn_start_tokens = int(snap.get("daily_tokens", 0))
+            except Exception:
+                self._turn_start_cost_usd = 0.0
+                self._turn_start_tokens = 0
+        else:
+            self._turn_start_cost_usd = 0.0
+            self._turn_start_tokens = 0
+
     # ── message handlers from widgets ─────────────────────────────────────────
 
     async def on_input_bar_user_submitted(self, msg: InputBar.UserSubmitted) -> None:
@@ -361,14 +468,11 @@ class ReynTUIApp(App):
         if not text:
             return
 
-        # Show user message in conversation
         conv = self.query_one("#conversation", ConversationView)
-        from rich.text import Text
-
-        from reyn.chat.tui.widgets.conversation import _msg_header
-        conv._write_log(_msg_header("you", "bold #4abbb5", "#1f5856"))
-        conv._write_log(Text(text))
-        conv._write_log(Text(""))
+        # B1: render with grouped header
+        conv.render_user_message(text)
+        # A4: snapshot cost/tokens/time at turn start
+        self._record_turn_start()
 
         # Get the attached session
         session = self._get_session()
@@ -471,9 +575,34 @@ class ReynTUIApp(App):
                 task.cancel()
 
     def action_toggle_panel(self) -> None:
-        """ctrl+b — open or close the right panel."""
+        """ctrl+b — open or close the right panel.
+
+        Smart targeting: when opening the panel, jump to the tab most relevant
+        to the recent conv-pane focal point — events tab after an error,
+        agents tab after skill activity. When closing, no tab change.
+        """
         self._panel_visible = not self._panel_visible
-        self.query_one("#right_panel", RightPanel).display = self._panel_visible
+        panel = self.query_one("#right_panel", RightPanel)
+        panel.display = self._panel_visible
+        if self._panel_visible and self._last_focal_tab:
+            try:
+                panel.set_panel_type(self._last_focal_tab)
+            except Exception:
+                pass
+
+    def action_prev_turn(self) -> None:
+        """ctrl+p — scroll the conversation log to the previous agent turn."""
+        try:
+            self.query_one("#conversation", ConversationView).jump_prev_turn()
+        except Exception:
+            pass
+
+    def action_next_turn(self) -> None:
+        """ctrl+n — scroll the conversation log to the next agent turn."""
+        try:
+            self.query_one("#conversation", ConversationView).jump_next_turn()
+        except Exception:
+            pass
 
     def action_focus_toggle_panel(self) -> None:
         """ctrl+o — cycle focus: input → panel tabs → preview pane → input."""

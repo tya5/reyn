@@ -1,22 +1,38 @@
 """ConversationView — scrollable conversation pane.
 
-Design decision (recorded here per design doc request):
-  - Uses RichLog (not VerticalScroll+Static per-message) for the default
-    renderer. RichLog gives us: append-only semantics, auto-scroll on new
-    content, Rich markup / Text renderables out of the box, and a clean
-    .clear() method for Ctrl+L. It is fast enough for streaming because we
-    call .write() per coalesced chunk (16 ms window, not per token).
-  - Intervention and permission widgets are mounted as child widgets in a
-    VerticalScroll overlay *below* the RichLog, then removed when answered.
-    This keeps the log clean while keeping interventions inline.
+Composition (top → bottom):
+  - RichLog (1fr) — the main append-only log of user/agent messages
+  - Per-stream / inline widgets mounted as children: StreamingRow, ErrorBox,
+    SkillActivityRow, InterventionWidget — all height:auto so they stack
+    naturally below the log as it streams.
+  - StickyStatus (dock: bottom, h:1) — pins at the very bottom; replaces
+    inline `⟳ thinking…` log lines.
 
-kind → prefix / style mapping (from design doc):
-  agent      → "Aria  "  bold coral
-  status     → "⟳ "      dim italic coral
-  error      → "✗ "      bold red
-  intervention → (InterventionWidget mounted — not a RichLog line)
-  trace      → "· "      dim
-  skill_done → "✓ "      bold green
+Message-kind routing:
+  agent       → header (timestamp + label, optionally suppressed when
+                consecutive turns are within _GROUP_WINDOW_S) followed
+                by FoldableMarkdown so long replies can be folded.
+  status      → routed to StickyStatus (sticky 1-line, never logged).
+  error       → mounted as an ErrorBox widget (tall red border).
+  intervention→ InterventionWidget (mount_intervention).
+  trace       → suppressed in the conv pane; the App's outbox loop drives
+                a SkillActivityRow instead. Right panel events tab still
+                shows the full picture.
+  skill_done  → suppressed; SkillActivityRow.finish() handles the visible
+                completion line.
+
+Empty state:
+  The pane mounts a single dim hint ("Type / for commands · …") that auto-
+  removes on the first user/agent message.
+
+Turn navigation (B4):
+  ConversationView records the RichLog line index at the start of every
+  agent header. ReynTUIApp's Ctrl+P / Ctrl+N actions call jump_prev_turn /
+  jump_next_turn to scroll the log to the previous/next turn anchor.
+
+Cost suffix (A4):
+  When the App enables cost-inline mode, _render_agent_cost_suffix() is
+  called after a turn ends and writes a dim "⌁ Δ tokens · $0.XXXX" line.
 """
 from __future__ import annotations
 
@@ -24,18 +40,24 @@ _CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
 
 import time
 
-from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
-from textual.widgets import RichLog
+from textual.widgets import RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage
 
+from .error_box import ErrorBox
+from .foldable_markdown import FoldableMarkdown
 from .intervention import InterventionWidget
+from .skill_activity import SkillActivityRow
+from .sticky_status import StickyStatus
 from .streaming_row import StreamingRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
+_GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
+_FOLD_THRESHOLD_LINES = 30
+
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
     """Timestamp + label + dash rule for a new message turn."""
@@ -64,13 +86,23 @@ def _meta_prefix(meta: dict) -> str:
 
 
 class ConversationView(Widget):
-    """Wraps a RichLog plus space for inline InterventionWidgets.
+    """Main conversation pane: RichLog + inline widgets + sticky status.
 
     Streaming:
       - `begin_stream(msg_id, agent_name)` → mounts a StreamingRow.
       - `append_stream(msg_id, text)` → calls StreamingRow.append().
-      - `end_stream(msg_id)` → seals the row (stops accumulation).
-    Non-streaming messages go through `render_message()`.
+      - `end_stream(msg_id)` → seals the row.
+
+    Skill activity (replaces trace lines):
+      - `start_skill_row(run_id, skill_name)` → mounts a SkillActivityRow.
+      - `update_skill_phase(run_id, phase, visit)` → set_phase on the row.
+      - `finish_skill_row(run_id, success, reason)` → finish the row.
+
+    Sticky status:
+      - `show_status(text, kind)` / `hide_status()` → drive StickyStatus.
+
+    Errors:
+      - `mount_error(message, details, ...)` → ErrorBox widget.
     """
 
     DEFAULT_CSS = """
@@ -86,75 +118,244 @@ class ConversationView(Widget):
         scrollbar-color: $primary;
         padding: 0 1;
     }
+    ConversationView #empty-hint {
+        color: #555555;
+        padding: 1 2;
+        height: auto;
+    }
     """
 
     def __init__(self, *, scroll_end: bool = True, id: str | None = None) -> None:
         super().__init__(id=id)
         self._scroll_end = scroll_end
-        self._stream_rows: dict[str, StreamingRow] = {}  # msg_id → row
+        self._stream_rows: dict[str, StreamingRow] = {}
+        self._skill_rows: dict[str, SkillActivityRow] = {}
+        # Header-grouping state (B1)
+        self._last_speaker: str = ""
+        self._last_speaker_at: float = 0.0
+        # Empty-state (B5)
+        self._has_first_message = False
+        # Turn navigation (B4) — log line indexes where each agent turn begins
+        self._turn_anchors: list[int] = []
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
 
+    # ── composition ──────────────────────────────────────────────────────────
+
     def compose(self) -> ComposeResult:
         yield RichLog(highlight=False, markup=False, wrap=True, id="log")
+        # B5: empty-state hint, removed on first message
+        yield Static(
+            "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
+            "[bold]Ctrl+L[/] clear  ·  ↑ history",
+            id="empty-hint",
+            markup=True,
+        )
+        # A3: sticky status pinned to bottom of conv pane
+        yield StickyStatus(id="sticky-status")
 
     def _log(self) -> RichLog:
         return self.query_one("#log", RichLog)
 
-    # ── non-streaming message rendering ────────────────────────────────────────
+    def _sticky(self) -> StickyStatus | None:
+        try:
+            return self.query_one("#sticky-status", StickyStatus)
+        except Exception:
+            return None
+
+    # ── empty state ───────────────────────────────────────────────────────────
+
+    def _consume_empty_hint(self) -> None:
+        if self._has_first_message:
+            return
+        self._has_first_message = True
+        try:
+            self.query_one("#empty-hint", Static).remove()
+        except Exception:
+            pass
+
+    # ── header grouping (B1) ──────────────────────────────────────────────────
+
+    def _maybe_write_header(self, speaker: str, label_text: str,
+                             name_style: str, dash_style: str) -> None:
+        """Write a header line only when the speaker changes or the gap is
+        larger than _GROUP_WINDOW_S. Stores the new state."""
+        now = time.monotonic()
+        same_speaker = (speaker == self._last_speaker)
+        within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
+        if not (same_speaker and within_window):
+            log = self._log()
+            # Record turn anchor for agent turns (B4 navigation)
+            if speaker == "reyn":
+                self._turn_anchors.append(len(log.lines))
+            log.write(_msg_header(label_text, name_style, dash_style))
+        self._last_speaker = speaker
+        self._last_speaker_at = now
+
+    # ── non-streaming message rendering ───────────────────────────────────────
 
     def render_message(self, msg: OutboxMessage) -> None:
-        """Append a non-streaming OutboxMessage to the log."""
+        """Append an OutboxMessage to the log (or route via dedicated widget).
+
+        Routing:
+          agent      → header + FoldableMarkdown (mounted as inline widget)
+          intervention/trace/status/skill_done → suppressed (handled elsewhere)
+          error      → ErrorBox widget
+          others     → plain Rich Text line
+        """
         if msg.kind == "intervention":
             # Interventions are handled via mount_intervention, not here.
-            # Fall back to a plain log line for display when no callback wired.
+            self._consume_empty_hint()
             self._write_log(_format_intervention_line(msg))
             return
+
+        if msg.kind in {"trace", "status", "skill_done"}:
+            # Suppressed — these are handled by:
+            #   trace       → start/update_skill_row (driven from app.py)
+            #   status      → show_status (sticky)
+            #   skill_done  → finish_skill_row (driven from app.py)
+            return
+
         if msg.kind == "agent":
             self._render_agent_markdown(msg)
             return
+
+        if msg.kind == "error":
+            self.mount_error(
+                message=msg.text,
+                details=str(msg.meta.get("details", "")),
+                run_id_short=str(msg.meta.get("run_id_short", "")),
+                skill_name=str(msg.meta.get("skill_name", "")),
+            )
+            return
+
         text = _format_message(msg)
         if text is not None:
+            self._consume_empty_hint()
             self._write_log(text)
 
+    def render_user_message(self, text: str) -> None:
+        """Render a freshly submitted user message with grouped header."""
+        self._consume_empty_hint()
+        self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
+        self._write_log(Text(text))
+        self._write_log(Text(""))
+
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
-        log = self._log()
+        """Render a non-streaming agent message with grouped header + fold."""
+        self._consume_empty_hint()
         meta_pfx = _meta_prefix(msg.meta)
-        label = f"reyn  {meta_pfx}" if meta_pfx else "reyn"
-        log.write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
+        label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
+        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
         if msg.text:
-            log.write(RichMarkdown(msg.text))
-        log.write(Text(""))
+            # B3: fold long agent replies
+            md = FoldableMarkdown(msg.text, fold_threshold=_FOLD_THRESHOLD_LINES)
+            self.mount(md)
+        # Spacer (kept as a log line for visual rhythm)
+        self._write_log(Text(""))
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
 
-    # ── streaming support ──────────────────────────────────────────────────────
+    # ── streaming support ─────────────────────────────────────────────────────
 
     def begin_stream(self, msg_id: str, agent_name: str = "") -> StreamingRow:
         """Start a streaming agent message row. Returns the row widget."""
+        self._consume_empty_hint()
         label = agent_name if agent_name else "reyn"
-        self._log().write(_msg_header(label, "bold " + _CORAL, "#5a2020"))
+        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
         return row
 
     def append_stream(self, msg_id: str, text: str) -> None:
-        """Append text to an in-progress streaming row."""
         row = self._stream_rows.get(msg_id)
         if row is not None:
             row.append(text)
 
     def end_stream(self, msg_id: str) -> str:
-        """Seal and remove a streaming row; returns accumulated text."""
         row = self._stream_rows.pop(msg_id, None)
         if row is None:
             return ""
         row.seal()
         self._log().write(Text(""))
         return row.full_text()
+
+    # ── skill activity rows (C1+A1) ──────────────────────────────────────────
+
+    def start_skill_row(self, run_id: str, skill_name: str) -> SkillActivityRow:
+        """Mount (or return existing) SkillActivityRow for a skill run.
+
+        Suppresses the noisy `· phase started: …` trace stream by giving it
+        a single ambient widget that updates in-place.
+        """
+        existing = self._skill_rows.get(run_id)
+        if existing is not None:
+            return existing
+        self._consume_empty_hint()
+        row = SkillActivityRow(
+            run_id=run_id,
+            skill_name=skill_name,
+            id=f"skillrow_{run_id[:8]}",
+        )
+        self._skill_rows[run_id] = row
+        self.mount(row)
+        return row
+
+    def update_skill_phase(self, run_id: str, phase: str, visit: int = 1) -> None:
+        row = self._skill_rows.get(run_id)
+        if row is not None:
+            row.set_phase(phase, visit=visit)
+
+    def finish_skill_row(
+        self, run_id: str, *, success: bool = True, reason: str = "",
+    ) -> None:
+        row = self._skill_rows.pop(run_id, None)
+        if row is not None:
+            row.finish(success=success, reason=reason)
+
+    # ── sticky status (A3) ────────────────────────────────────────────────────
+
+    def show_status(self, text: str, kind: str = "thinking") -> None:
+        s = self._sticky()
+        if s is not None:
+            s.show(text, kind=kind)
+
+    def update_status(self, text: str) -> None:
+        s = self._sticky()
+        if s is not None:
+            s.update_text(text)
+
+    def hide_status(self) -> None:
+        s = self._sticky()
+        if s is not None:
+            s.hide()
+
+    # ── error box (A2) ────────────────────────────────────────────────────────
+
+    def mount_error(
+        self,
+        *,
+        message: str,
+        details: str = "",
+        run_id_short: str = "",
+        skill_name: str = "",
+    ) -> ErrorBox:
+        self._consume_empty_hint()
+        box = ErrorBox(
+            message=message,
+            details=details,
+            run_id_short=run_id_short,
+            skill_name=skill_name,
+        )
+        self.mount(box)
+        try:
+            box.scroll_visible()
+        except Exception:
+            pass
+        return box
 
     # ── intervention mounting ─────────────────────────────────────────────────
 
@@ -166,7 +367,7 @@ class ConversationView(Widget):
         answer_callback=None,
         iv_id: str = "",
     ) -> InterventionWidget:
-        """Mount an InterventionWidget inline below current log content."""
+        self._consume_empty_hint()
         widget = InterventionWidget(
             question=question,
             choices=choices,
@@ -177,13 +378,71 @@ class ConversationView(Widget):
         widget.scroll_visible()
         return widget
 
+    # ── cost suffix (A4) ──────────────────────────────────────────────────────
+
+    def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
+        """Append a dim per-turn cost suffix. Caller decides when (opt-in)."""
+        t = Text()
+        t.append("                              ")  # right-leaning padding
+        t.append(f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
+                 style="dim #666666")
+        self._write_log(t)
+
+    # ── turn navigation (B4) ──────────────────────────────────────────────────
+
+    def jump_prev_turn(self) -> None:
+        """Scroll the log to the previous agent turn anchor."""
+        self._jump_to_relative_anchor(-1)
+
+    def jump_next_turn(self) -> None:
+        """Scroll the log to the next agent turn anchor."""
+        self._jump_to_relative_anchor(+1)
+
+    def _jump_to_relative_anchor(self, delta: int) -> None:
+        if not self._turn_anchors:
+            return
+        log = self._log()
+        # Find the nearest anchor >= or <= current scroll y
+        cur_y = log.scroll_y
+        # Pick the most recent one before/after cur_y
+        anchors = self._turn_anchors
+        if delta < 0:
+            target = None
+            for a in reversed(anchors):
+                if a < cur_y - 1:  # strictly above current view
+                    target = a
+                    break
+            if target is None:
+                target = anchors[0]
+        else:
+            target = None
+            for a in anchors:
+                if a > cur_y + 1:  # strictly below current view
+                    target = a
+                    break
+            if target is None:
+                target = anchors[-1]
+        try:
+            log.scroll_to(y=target, animate=False)
+        except Exception:
+            pass
+
     def clear(self) -> None:
-        """Ctrl+L: clear the log (does not affect engine state)."""
+        """Ctrl+L: clear the log + reset state. Does not affect engine state."""
         self._log().clear()
-        # Seal any open streaming rows without removing them (they become static)
         for row in self._stream_rows.values():
             row.seal()
         self._stream_rows.clear()
+        # Force-finish any in-progress skill rows so they don't keep ticking
+        for row in list(self._skill_rows.values()):
+            row.finish(success=True, reason="cleared")
+        self._skill_rows.clear()
+        # Reset header-grouping + turn anchors
+        self._last_speaker = ""
+        self._last_speaker_at = 0.0
+        self._turn_anchors.clear()
+        # Hide sticky status
+        self.hide_status()
 
 
 # ── formatting helpers ─────────────────────────────────────────────────────────
@@ -191,39 +450,17 @@ class ConversationView(Widget):
 def _format_message(msg: OutboxMessage) -> Text | None:
     """Convert an OutboxMessage to a Rich Text renderable.
 
-    Returns None for kinds handled elsewhere (intervention → widget).
+    NOTE: agent / status / error / trace / skill_done / intervention are all
+    handled in render_message() with dedicated widgets and never reach here.
+    This helper only formats unknown / fallback kinds.
     """
     meta_pfx = _meta_prefix(msg.meta)
     body = f"{meta_pfx}{msg.text}"
 
-    if msg.kind == "agent":
-        t = Text()
-        t.append("agent  ", style="bold " + _CORAL)
-        t.append(body)
-        return t
-    if msg.kind == "status":
-        t = Text()
-        t.append("⟳ ", style="dim italic " + _CORAL)
-        t.append(body, style="dim italic")
-        return t
-    if msg.kind == "error":
-        t = Text()
-        t.append("✗ ", style="bold red")
-        t.append(body, style="bold red")
-        return t
-    if msg.kind == "trace":
-        t = Text()
-        t.append("· ", style="dim")
-        t.append(body, style="dim")
-        return t
-    if msg.kind == "skill_done":
-        t = Text()
-        t.append("✓ ", style="bold green")
-        t.append(body, style="bold green")
-        return t
-    if msg.kind in {"__end__", "__attach_request__", "intervention"}:
+    if msg.kind in {"__end__", "__attach_request__", "intervention",
+                    "agent", "status", "error", "trace", "skill_done"}:
         return None
-    # Unknown kind — show raw
+    # Unknown kind — show raw with subtle prefix
     t = Text()
     t.append(f"[{msg.kind}] ", style="dim")
     t.append(body)

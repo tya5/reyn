@@ -1,0 +1,106 @@
+"""StickyStatus — a 1-line status bar pinned to the bottom of the conversation pane.
+
+Shows a live "currently happening" message with an elapsed timer that updates
+every 0.1 s. Auto-hides when nothing is being reported. Intended to replace
+inline "⟳ thinking…" log lines with a non-intrusive persistent indicator.
+
+Usage::
+
+    status = StickyStatus(id="sticky-status")
+    await conversation.mount(status)
+    status.show("thinking", kind="thinking")
+    # … later …
+    status.hide()
+"""
+from __future__ import annotations
+
+_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+
+import time
+
+from rich.text import Text
+from textual.widgets import Static
+
+_TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
+
+_GLYPHS: dict[str, str] = {
+    "thinking": "⟳",
+    "tool": "⚙",
+    "general": "●",
+}
+
+
+class StickyStatus(Static):
+    """A 1-line sticky status bar with a live elapsed timer.
+
+    Pinned to the bottom of whatever container it lives in (above InputBar).
+    Hidden by default; call show() to activate and hide() to dismiss.
+
+    Rendering while active::
+
+        ⟳ thinking · 1.4s
+
+    The glyph is rendered in coral; the body text is dim italic.
+    Elapsed is formatted with 1 decimal place, minimum 0.1 s.
+    """
+
+    DEFAULT_CSS = """
+    StickyStatus {
+        display: none;
+        height: 1;
+        padding: 0 1;
+        dock: bottom;
+        background: transparent;
+    }
+    StickyStatus.active {
+        display: block;
+    }
+    """
+
+    can_focus = False
+
+    def __init__(self, *, id: str | None = None) -> None:
+        super().__init__("", id=id)
+        self._active: bool = False
+        self._glyph: str = _GLYPHS["thinking"]
+        self._body: str = ""
+        self._start: float = 0.0
+
+    def on_mount(self) -> None:
+        """Start the 0.1 s elapsed timer tick."""
+        self.set_interval(_TICK_INTERVAL_S, self._tick)
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def show(self, text: str, kind: str = "thinking") -> None:
+        """Activate the status bar with the given body text and glyph kind."""
+        self._glyph = _GLYPHS.get(kind, _GLYPHS["thinking"])
+        self._start = time.monotonic()
+        self._active = True
+        self.add_class("active")
+        self.update_text(text)
+
+    def update_text(self, text: str) -> None:
+        """Update the body text without resetting the elapsed timer."""
+        self._body = text
+        self._repaint()
+
+    def hide(self) -> None:
+        """Deactivate and hide the status bar."""
+        self._active = False
+        self.remove_class("active")
+
+    # ── internal ──────────────────────────────────────────────────────────────
+
+    def _tick(self) -> None:
+        if not self._active:
+            return
+        self._repaint()
+
+    def _repaint(self) -> None:
+        elapsed = max(0.1, time.monotonic() - self._start)
+        t = Text()
+        t.append(self._glyph + " ", style=_CORAL)
+        t.append(self._body, style="dim italic")
+        t.append(f" · {elapsed:.1f}s", style="dim italic")
+        self.update(t)
