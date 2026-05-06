@@ -135,6 +135,7 @@ from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
 from reyn.chat.slash import zen as _zen_mod  # noqa: E402, F401
 from reyn.chat.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
+from reyn.chat.slash import expand as _expand_mod  # noqa: E402, F401
 
 __all__ = [
     "REGISTRY",

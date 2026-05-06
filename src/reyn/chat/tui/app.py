@@ -235,6 +235,15 @@ class ReynTUIApp(App):
                 self.set_timer(2.5, conv.hide_status)
                 continue
 
+            if msg.kind == "__expand_last_reply__":
+                # /expand slash command — flush the most recent truncated reply
+                if conv.expand_last_reply():
+                    pass  # silent success — content appears inline
+                else:
+                    conv.show_status("nothing to expand", kind="general")
+                    self.set_timer(2.0, conv.hide_status)
+                continue
+
             if msg.kind == "__stream_start__":
                 current_stream_id = msg.meta.get("msg_id", id(msg))
                 # Hide the "thinking…" sticky now that the reply is starting

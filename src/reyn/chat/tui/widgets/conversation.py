@@ -56,6 +56,7 @@ from .streaming_row import StreamingRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
+_FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
@@ -138,6 +139,9 @@ class ConversationView(Widget):
         self._has_first_message = False
         # Turn navigation (B4) — log line indexes where each agent turn begins
         self._turn_anchors: list[int] = []
+        # B3 — full text of the last truncated agent reply (or None when the
+        # most recent reply fit within _FOLD_THRESHOLD_LINES).
+        self._last_long_reply: str | None = None
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
 
@@ -199,7 +203,7 @@ class ConversationView(Widget):
         """Append an OutboxMessage to the log (or route via dedicated widget).
 
         Routing:
-          agent      → header + FoldableMarkdown (mounted as inline widget)
+          agent      → header + Markdown inline (with B3 fold for >30 lines)
           intervention/trace/status/skill_done → suppressed (handled elsewhere)
           error      → ErrorBox widget
           others     → plain Rich Text line
@@ -256,8 +260,58 @@ class ConversationView(Widget):
         label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
         self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
         if msg.text:
-            self._log().write(RichMarkdown(msg.text))
+            self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
+
+    # ── B3 fold (long-reply truncation + /expand) ────────────────────────────
+
+    def _write_agent_markdown_with_fold(self, text: str) -> None:
+        """Write `text` as Markdown into the log; truncate when it's too long.
+
+        Long replies (> _FOLD_THRESHOLD_LINES) are truncated and a dim hint is
+        appended pointing the user at /expand. The full text is stashed in
+        self._last_long_reply so expand_last_reply() can flush the rest.
+        Replies that fit are rendered as-is and clear any pending fold.
+        """
+        log = self._log()
+        lines = text.split("\n")
+        if len(lines) <= _FOLD_THRESHOLD_LINES:
+            log.write(RichMarkdown(text))
+            self._last_long_reply = None
+            return
+        preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
+        remaining = len(lines) - _FOLD_THRESHOLD_LINES
+        log.write(RichMarkdown(preview))
+        hint = Text()
+        hint.append(
+            f"  [ … {remaining} more lines · type ",
+            style=f"dim {_CORAL}",
+        )
+        hint.append("/expand", style=f"bold {_CORAL}")
+        hint.append(" to show ]", style=f"dim {_CORAL}")
+        log.write(hint)
+        self._last_long_reply = text
+
+    def expand_last_reply(self) -> bool:
+        """Append the full text of the most recently truncated reply.
+
+        Returns True when a reply was expanded; False when nothing pending.
+        After expanding, the stash is cleared (only one expand per fold).
+        """
+        if not self._last_long_reply:
+            return False
+        log = self._log()
+        marker = Text()
+        marker.append("  ↓ expanded", style=f"dim {_CORAL}")
+        log.write(marker)
+        log.write(RichMarkdown(self._last_long_reply))
+        log.write(Text(""))
+        self._last_long_reply = None
+        return True
+
+    @property
+    def has_pending_expand(self) -> bool:
+        return self._last_long_reply is not None
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
@@ -283,7 +337,10 @@ class ConversationView(Widget):
     def end_stream(self, msg_id: str) -> str:
         """Seal the stream and flush the final content INTO the RichLog inline,
         then remove the transient StreamingRow widget so the bottom of the
-        pane stays empty (or holds the next streaming row)."""
+        pane stays empty (or holds the next streaming row).
+
+        Long replies are truncated with a /expand hint (B3 fold).
+        """
         row = self._stream_rows.pop(msg_id, None)
         if row is None:
             return ""
@@ -291,14 +348,12 @@ class ConversationView(Widget):
         # Seal stops the cursor + 16ms tick.
         row.seal()
         self.hide_status()
-        # Write the final reply into the log as Markdown (inline under header).
         if full:
             try:
-                self._log().write(RichMarkdown(full))
+                self._write_agent_markdown_with_fold(full)
             except Exception:
                 self._log().write(Text(full))
         self._log().write(Text(""))
-        # Remove the transient row — its content is now in the log.
         try:
             row.remove()
         except Exception:
@@ -459,10 +514,11 @@ class ConversationView(Widget):
         for row in list(self._skill_rows.values()):
             row.finish(success=True, reason="cleared")
         self._skill_rows.clear()
-        # Reset header-grouping + turn anchors
+        # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
         self._turn_anchors.clear()
+        self._last_long_reply = None
         # Hide sticky status
         self.hide_status()
 
