@@ -131,3 +131,28 @@ Reyn is **pre-1.0 alpha**. The DSL, CLI, and event log are stable enough to buil
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+
+## Acknowledgements — powered by AI
+
+Reyn is **powered by AI** in two senses, and the project tries to be
+explicit about both:
+
+1. **At runtime.** Reyn is an LLM workflow OS. Every Skill execution
+   delegates decisions to an LLM provider via LiteLLM. Without a
+   capable model behind it, Reyn is just a runtime with nothing to
+   run.
+2. **In its development.** Substantial portions of this codebase, the
+   stdlib skills, the documentation, the landing page, and the TUI
+   were drafted with AI tooling — primarily Claude Code (Anthropic) for
+   implementation and Claude Design for the website. Human review,
+   integration, and the final architectural calls live with the
+   maintainer; the AI contributions are recorded as
+   `Co-Authored-By: Claude ...` trailers throughout the git history.
+
+This disclosure is mandatory rather than promotional. If you're
+auditing the project's provenance — for security review, license
+compliance, or simply to understand the AI-assistance posture — start
+with `git log --grep="Co-Authored-By: Claude"` and the design prompts
+under `website/_design/`.

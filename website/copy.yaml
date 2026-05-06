@@ -86,3 +86,12 @@ S04_DOCS_LINK: "Read the docs"
 # install line on the LP and let the docs explain the git-clone path. If
 # this feels misleading, replace with: "git clone https://github.com/tya5/reyn"
 S04_INSTALL_CMD: "pip install reyn"
+
+# ── footer ──────────────────────────────────────────────────────────────────
+# Powered by AI is intentional double-meaning: Reyn (a) runs on LLMs at
+# runtime by design, and (b) was substantially co-authored with AI tooling
+# (Claude Code + Claude Design). Both are honest disclosures; the wording
+# leans into the dual sense rather than splitting them.
+FOOTER_LINE: >-
+  Powered by AI <span class="sep">·</span> MIT licensed
+  <span class="sep">·</span> © 2026 Tetsuya Yasuda

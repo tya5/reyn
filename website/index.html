@@ -458,7 +458,24 @@
   }
   .terminal .cmd { color: #EFEDEA; }
 
-  /* ---------- (footer styles removed) ---------- */
+  /* ---------- FOOTER ---------- */
+  .site-footer {
+    border-top: 1px solid var(--line);
+    padding-top: 28px;
+    padding-bottom: 32px;
+  }
+  .site-footer p {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    color: var(--fg-3);
+    margin: 0;
+  }
+  .site-footer .sep {
+    color: var(--line-strong);
+    margin: 0 10px;
+    user-select: none;
+  }
 
   .ic { width: 16px; height: 16px; flex: none; color: var(--clay); }
   .btn-primary .ic { color: #fff; }
@@ -613,7 +630,12 @@
     </div>
   </section>
 
-  <!-- FOOTER BANNER + FOOTER intentionally removed -->
+  <!-- FOOTER -->
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>{{FOOTER_LINE}}</p>
+    </div>
+  </footer>
 
 <script>
   const btn = document.getElementById('copyBtn');
