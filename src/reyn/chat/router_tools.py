@@ -91,6 +91,7 @@ def build_tools(
     *,
     file_permissions: dict | None = None,  # {"read": [paths], "write": [paths]}
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
+    web_fetch_allowed: bool = False,        # operator opt-in (data-exfiltration risk)
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -545,6 +546,63 @@ def build_tools(
                     },
                 },
             ]
+
+    # ── E. Web tools (OS-native, backed by Control IR ops web/search +
+    #         web/fetch). E1 web_search is always exposed (read-only, public
+    #         queries — comparable security level to a logged query string).
+    #         E2 web_fetch is opt-in: arbitrary URL fetches can be misused for
+    #         data exfiltration (LLM bakes secrets into the URL and the
+    #         attacker's server logs them) or to probe internal endpoints, so
+    #         the operator enables it explicitly via `web.fetch: allow` in
+    #         reyn.yaml.
+    tools += [
+        # ── E1: web_search (always available) ────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "web_search",
+                "description": (
+                    "Search the public web with DuckDuckGo and return "
+                    "structured results. query: search string. "
+                    "max_results: cap on returned results (default 5)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "max_results": {"type": "integer"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+    ]
+
+    # ── E2: web_fetch (operator opt-in via web.fetch: allow) ──────────────────
+    if web_fetch_allowed:
+        tools += [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_fetch",
+                    "description": (
+                        "Fetch a single URL and return its (text-extracted) "
+                        "content. url: absolute http/https URL. "
+                        "max_length: cap on returned content size "
+                        "(default 50000). Use after web_search to read a "
+                        "result page in detail."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "url": {"type": "string"},
+                            "max_length": {"type": "integer"},
+                        },
+                        "required": ["url"],
+                    },
+                },
+            },
+        ]
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     if mcp_servers:

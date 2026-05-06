@@ -19,6 +19,36 @@ models:
 # shell_allowed: false         # allow 'shell' Control IR op (meta-apps only)
 
 # ───────────────────────────────────────────────────────────────────────────
+# Pre-approved permissions for chat / skill ops.
+#
+# `file.read` recursive under the project root is on by default so that
+# `reyn chat` can answer questions about the codebase without prompting on
+# every file. Same convention as Claude Code / aider / Cursor: read freely
+# in cwd, ask before writing.
+#
+# ⚠ SECURITY NOTE: file.read recursive means the LLM can request any file
+# under the project root — including `.env`, secret keys, draft notes, etc.
+# Their contents will be sent to your model provider. Mitigate by either:
+#   - Keeping secrets out of the project root (recommended).
+#   - Tightening this list to specific paths (e.g. `src/`, `docs/`).
+#   - Removing this block entirely; chat will then prompt for each file.
+#
+# `file.write` and `shell` stay opt-in — they prompt interactively, or the
+# operator can pre-approve specific paths here.
+# ───────────────────────────────────────────────────────────────────────────
+permissions:
+  python.pure: allow
+  file.read:
+    - path: "."
+      scope: recursive
+  # Uncomment to pre-approve writes (list each writable subtree):
+  # file.write:
+  #   - path: "scratch/"
+  #     scope: recursive
+  # Uncomment to allow shell (unsafe; only for meta-apps):
+  # shell: allow
+
+# ───────────────────────────────────────────────────────────────────────────
 # MCP servers (optional). Stdlib skills like `read_local_files` need a
 # `filesystem` server. Uncomment below to enable, or see the full example at
 # cookbook/configs/with-mcp.yaml.  Run the server manually first to verify:

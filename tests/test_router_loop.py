@@ -94,6 +94,15 @@ class FakeRouterHost:
     def get_mcp_servers(self) -> list[dict]:
         return self._mcp_servers
 
+    def get_web_fetch_allowed(self) -> bool:
+        return False
+
+    async def web_search(self, *, query: str, max_results: int) -> dict:
+        return {"kind": "web_search", "query": query, "results": []}
+
+    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+        return {"kind": "web_fetch", "url": url, "status": "ok", "content": ""}
+
     # --- Memory paths ---
 
     def memory_path(self, layer: str, slug: str) -> str:

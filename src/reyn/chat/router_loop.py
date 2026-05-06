@@ -108,6 +108,18 @@ class RouterLoopHost(Protocol):
         """[{name, description, ...}, ...]"""
         ...
 
+    def get_web_fetch_allowed(self) -> bool:
+        """True if `web.fetch: allow` is in the operator's permissions."""
+        ...
+
+    async def web_search(self, *, query: str, max_results: int) -> dict:
+        """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
+        ...
+
+    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+        """RouterLoopHost: invoke the OS-native web/fetch op."""
+        ...
+
     # Memory file paths (for list_memory / read_memory_body)
     def memory_path(self, layer: str, slug: str) -> str:
         """Resolve layer ('shared'|'agent') + slug to file path"""
@@ -198,6 +210,7 @@ class RouterLoop:
             host.list_available_agents(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
+            web_fetch_allowed=host.get_web_fetch_allowed(),
         )
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
@@ -539,6 +552,20 @@ class RouterLoop:
         if name == "call_mcp_tool":
             return await self.host.mcp_call_tool(
                 args["server"], args["tool"], args["args"]
+            )
+
+        # E. Web (OS-native ops, not skills) — delegate to host so the
+        # underlying op_runtime/web.py handlers run with the same OpContext
+        # plumbing as Control IR phase invocations.
+        if name == "web_search":
+            return await self.host.web_search(
+                query=args["query"],
+                max_results=args.get("max_results", 5),
+            )
+        if name == "web_fetch":
+            return await self.host.web_fetch(
+                url=args["url"],
+                max_length=args.get("max_length", 50_000),
             )
 
         # Should not be reached if catalog is correct — dispatch_tool already

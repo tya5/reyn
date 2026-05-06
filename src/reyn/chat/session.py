@@ -3192,6 +3192,56 @@ class ChatSession:
     def get_mcp_servers(self) -> list[dict]:
         return self._get_mcp_servers_for_router()
 
+    def get_web_fetch_allowed(self) -> bool:
+        """RouterLoopHost: True iff `web.fetch: allow` is in the operator's
+        permissions config. Gates the web_fetch tool because arbitrary URL
+        fetches are a data-exfiltration vector — see router_tools.py:E2.
+        """
+        if self._perm is None:
+            return False
+        config = self._perm._config or {}
+        web_block = config.get("web") if isinstance(config.get("web"), dict) else {}
+        return (
+            config.get("web.fetch") == "allow"
+            or (web_block.get("fetch") == "allow")
+        )
+
+    async def web_search(self, *, query: str, max_results: int) -> dict:
+        """RouterLoopHost: dispatch the OS-native web/search op (DuckDuckGo)
+        from the chat router. Same handler as Control IR `web/search`; the
+        chat path just builds its own minimal OpContext via
+        ``_make_router_op_context``.
+        """
+        from reyn.op_runtime.web import handle_web_search
+        from reyn.schemas.models import WebSearchIROp
+
+        op = WebSearchIROp(
+            kind="web_search",
+            query=query,
+            max_results=max_results,
+            backend="duckduckgo",
+        )
+        ctx = self._make_router_op_context()
+        return await handle_web_search(op, ctx, caller="control_ir")
+
+    async def web_fetch(self, *, url: str, max_length: int) -> dict:
+        """RouterLoopHost: dispatch the OS-native web/fetch op from the chat
+        router. Gated by ``get_web_fetch_allowed()`` at catalog-build time;
+        if the LLM still calls it without permission the op result will
+        carry an error.
+        """
+        from reyn.op_runtime.web import handle_web_fetch
+        from reyn.schemas.models import WebFetchIROp
+
+        op = WebFetchIROp(
+            kind="web_fetch",
+            url=url,
+            max_length=max_length,
+            timeout=15.0,
+        )
+        ctx = self._make_router_op_context()
+        return await handle_web_fetch(op, ctx, caller="control_ir")
+
     def memory_path(self, layer: str, slug: str) -> str:
         return self._memory_path(layer, slug)
 

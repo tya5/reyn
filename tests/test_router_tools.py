@@ -33,6 +33,8 @@ EXPECTED_TOOL_NAMES = [
     "remember_shared",
     "remember_agent",
     "forget_memory",
+    # web_search is always exposed (E1) — read-only public search.
+    "web_search",
 ]
 
 
@@ -76,10 +78,10 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_11_tools_when_no_extras():
-    """Calling build_tools without new kwargs preserves backward compat."""
+def test_build_tools_returns_12_tools_when_no_extras():
+    """No file/MCP/web_fetch extras: 11 baseline + web_search (E1, always on)."""
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 11, f"Expected 11 tools, got {len(tools)}"
+    assert len(tools) == 12, f"Expected 12 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -230,14 +232,16 @@ def test_mcp_tools_present_when_servers_configured():
 
 
 def test_total_tool_count_with_full_permissions():
-    """Full file + MCP permissions → 11 + 4 + 3 = 18 tools total."""
+    """Full file + MCP + web permissions → 11 + 4 + 2 + 3 = 20 tools total
+    (11 baseline, 4 file C1-C4, 2 web E1+E2, 3 MCP D1-D3)."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
         file_permissions={"read": ["src"], "write": ["out"]},
         mcp_servers=SAMPLE_MCP_SERVERS,
+        web_fetch_allowed=True,
     )
-    assert len(tools) == 18, f"Expected 18 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 20, f"Expected 20 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
