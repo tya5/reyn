@@ -26,7 +26,11 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        run: pip install -e ".[dev]"
+        # Install all optional extras the test suite touches:
+        #   dev  — pytest + pytest-asyncio + ruff + mypy
+        #   mcp  — `mcp` SDK, used by tests/test_mcp_client.py
+        #   web  — fastapi + uvicorn + websockets, used by tests/web/
+        run: pip install -e ".[dev,mcp,web]"
 
       - name: Run tests
         run: python -m pytest -q
