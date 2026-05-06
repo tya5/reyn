@@ -1,6 +1,6 @@
 # Reyn
 
-**LLM workflow OS — predictable, auditable, constrained.**
+**LLM workflow OS — predictable, auditable, constrained.** · 🏠 <https://tya5.github.io/reyn/>
 
 [![CI](https://github.com/tya5/reyn/actions/workflows/test.yml/badge.svg)](https://github.com/tya5/reyn/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -105,6 +105,7 @@ Details: [docs/en/concepts/architecture.md](docs/en/concepts/architecture.md) | 
 ## Documentation
 
 📖 **Read the docs online: <https://tya5.github.io/reyn/docs/>**
+
 🏠 **Project landing page: <https://tya5.github.io/reyn/>**
 
 Built with MkDocs Material; English + Japanese (translation in progress).
