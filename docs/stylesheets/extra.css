@@ -185,6 +185,63 @@ kbd {
   .reyn-brand__name { display: none; }
 }
 
+/* ---- Header top nav links ---- */
+.reyn-topnav-links {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  flex-shrink: 0;
+}
+.reyn-topnav-link {
+  font-size: 14px;
+  font-weight: 400;
+  color: #5A5651;
+  text-decoration: none;
+  transition: color 160ms;
+}
+.reyn-topnav-link:hover { color: #131211; }
+.reyn-topnav-link--active { color: #C8553D; }
+
+/* ---- Sidebar section headers ---- */
+.md-nav--primary .md-nav__item--section > .md-nav__link {
+  font-family: 'Geist Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #807B74;
+  font-weight: 500;
+  padding-left: 24px;
+  position: relative;
+  margin-top: 8px;
+}
+.md-nav--primary .md-nav__item--section > .md-nav__link::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 16px;
+  height: 1px;
+  background: #C8553D;
+}
+
+/* ---- Code blocks: dark background ---- */
+.md-typeset .highlight {
+  background: #0E0D0C;
+  border-radius: 8px;
+  box-shadow: none;
+}
+.md-typeset .highlight pre {
+  background: #0E0D0C;
+  color: #EFEDEA;
+  margin: 0;
+}
+.md-typeset .highlight code {
+  background: transparent;
+  border: none;
+  color: #EFEDEA;
+}
+.md-typeset .highlight * { background: transparent; }
+
 /* ---- Pygments token colors (dark code blocks) ---- */
 .highlight .c,
 .highlight .c1,
