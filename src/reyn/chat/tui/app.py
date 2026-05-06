@@ -78,6 +78,7 @@ class ReynTUIApp(App):
         agent_name: str = "default",
         model: str = "",
         budget_tracker=None,
+        banner: bool = False,
     ) -> None:
         super().__init__()
         self.register_theme(self._REYN_THEME)
@@ -86,6 +87,7 @@ class ReynTUIApp(App):
         self._agent_name = agent_name
         self._model = model
         self._budget_tracker = budget_tracker
+        self._banner = banner
         self._outbox_task: asyncio.Task | None = None
         self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
@@ -125,39 +127,42 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
-        # ASCII banner (neofetch style): gradient logo left, agent info right
-        conv = self.query_one("#conversation", ConversationView)
-        from rich.text import Text
-        _BANNER = [
-            "██████╗ ███████╗██╗   ██╗███╗   ██╗",
-            "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
-            "██████╔╝█████╗   ╚████╔╝ ██╔██╗ ██║",
-            "██╔══██╗██╔══╝    ╚██╔╝  ██║╚██╗██║",
-            "██║  ██║███████╗   ██║   ██║ ╚████║",
-            "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
-        ]
-        _INFO = [
-            None,
-            ("agent", self._agent_name or "—"),
-            ("model", self._model or "—"),
-            None,
-            None,
-            None,
-        ]
-        n = len(_BANNER)
-        for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
-            t = i / (n - 1)
-            r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
-            rt = Text()
-            rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
-            if info:
-                key, val = info
-                rt.append("    ")
-                rt.append(f"{key}  ", style="dim #555555")
-                rt.append(val, style="#dddddd")
-            conv._write_log(rt)
-        conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
-        conv._write_log(Text("─" * 38, style="#2a2a2a"))
+        # Optional ASCII banner (neofetch style): gradient logo left, agent
+        # info right. Off by default — daily use should focus the input bar
+        # instantly. Opt-in via `reyn chat --banner` (see cli/commands/chat.py).
+        if self._banner:
+            conv = self.query_one("#conversation", ConversationView)
+            from rich.text import Text
+            _BANNER = [
+                "██████╗ ███████╗██╗   ██╗███╗   ██╗",
+                "██╔══██╗██╔════╝╚██╗ ██╔╝████╗  ██║",
+                "██████╔╝█████╗   ╚████╔╝ ██╔██╗ ██║",
+                "██╔══██╗██╔══╝    ╚██╔╝  ██║╚██╗██║",
+                "██║  ██║███████╗   ██║   ██║ ╚████║",
+                "╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝  ╚═══╝",
+            ]
+            _INFO = [
+                None,
+                ("agent", self._agent_name or "—"),
+                ("model", self._model or "—"),
+                None,
+                None,
+                None,
+            ]
+            n = len(_BANNER)
+            for i, (line, info) in enumerate(zip(_BANNER, _INFO)):
+                t = i / (n - 1)
+                r, g, b = int(200 - 126 * t), int(85 - 59 * t), int(61 - 49 * t)
+                rt = Text()
+                rt.append(line, style=f"#{r:02x}{g:02x}{b:02x}")
+                if info:
+                    key, val = info
+                    rt.append("    ")
+                    rt.append(f"{key}  ", style="dim #555555")
+                    rt.append(val, style="#dddddd")
+                conv._write_log(rt)
+            conv._write_log(Text("  Gives you the reins.", style="dim #555555"))
+            conv._write_log(Text("─" * 38, style="#2a2a2a"))
 
         # Start outbox subscription if registry is available
         if self._agent_registry is not None:
@@ -544,6 +549,7 @@ async def run_tui(
     agent_name: str = "default",
     model: str = "",
     budget_tracker=None,
+    banner: bool = False,
 ) -> None:
     """Entry point called from cli/commands/chat.py when TUI mode is selected."""
     app = ReynTUIApp(
@@ -551,5 +557,6 @@ async def run_tui(
         agent_name=agent_name,
         model=model,
         budget_tracker=budget_tracker,
+        banner=banner,
     )
     await app.run_async()

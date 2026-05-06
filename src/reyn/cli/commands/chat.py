@@ -59,6 +59,16 @@ def register(sub) -> None:
             "Pure-mode python steps run without this flag. Off by default."
         ),
     )
+    p.add_argument(
+        "--banner",
+        action="store_true",
+        default=False,
+        help=(
+            "Show the ASCII-art startup banner (gradient REYN logo + agent / "
+            "model info, neofetch style). Off by default for instant input "
+            "focus on daily use."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -241,6 +251,7 @@ def run(args: argparse.Namespace) -> None:
                 agent_name=name,
                 model=model,
                 budget_tracker=budget_tracker,
+                banner=getattr(args, "banner", False),
             )
 
         run_async(_main_tui())
