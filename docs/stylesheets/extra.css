@@ -227,8 +227,9 @@ kbd {
 /* ---- Code blocks: dark background ---- */
 .md-typeset .highlight {
   background: #0E0D0C;
-  border-radius: 8px;
+  border-radius: 10px;
   box-shadow: none;
+  overflow: hidden;
 }
 .md-typeset .highlight pre {
   background: #0E0D0C;
