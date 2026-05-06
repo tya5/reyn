@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Reyn — Gives you the reins.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --clay: #C8553D;
+    --clay-hover: #A84431;
+    --clay-press: #863526;
+
+    --bg: #FFFFFF;
+    --bg-soft: #FCFBFA;
+    --bg-muted: #F7F6F4;
+    --bg-dark: #0E0D0C;
+
+    --fg:   #131211;
+    --fg-1: #232120;
+    --fg-2: #5A5651;
+    --fg-3: #807B74;
+
+    --line:        #E2DFDB;
+    --line-soft:   #EFEDEA;
+    --line-strong: #CDC9C3;
+
+    --font-sans: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    --font-mono: 'Geist Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+    --max: 1200px;
+    --pad-x: clamp(24px, 5vw, 64px);
+
+    --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg-1);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  a { color: inherit; text-decoration: none; }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--max);
+    margin: 0 auto;
+    padding-left: var(--pad-x);
+    padding-right: var(--pad-x);
+  }
+
+  /* ---------- HERO ---------- */
+  .hero {
+    position: relative;
+    min-height: 92vh;
+    padding-top: 48px;
+    padding-bottom: 140px;
+    background-color: #FCFBFA;
+    background-image: url('assets/bg-hero-reyn-light.png');
+    background-repeat: no-repeat;
+    background-size: cover;
+    background-position: center right;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .hero-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-family: var(--font-sans);
+    font-weight: 500;
+    font-size: 17px;
+    letter-spacing: -0.01em;
+    color: var(--fg);
+  }
+  .brand img {
+    width: 26px;
+    height: 26px;
+    display: block;
+  }
+  .hero-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    margin-top: 80px;
+  }
+  .hero-grid {
+    max-width: 760px;
+  }
+  .hero h1 {
+    font-family: var(--font-sans);
+    font-weight: 300;
+    font-size: clamp(72px, 11vw, 144px);
+    line-height: 0.95;
+    letter-spacing: -0.04em;
+    color: var(--fg);
+    margin: 0 0 32px 0;
+  }
+  .hero .tagline {
+    font-size: clamp(22px, 2.4vw, 30px);
+    line-height: 1.3;
+    color: var(--fg-1);
+    font-weight: 300;
+    letter-spacing: -0.015em;
+    margin: 0 0 64px 0;
+    max-width: 520px;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    height: 52px;
+    padding: 0 28px;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--fg);
+    cursor: pointer;
+    transition: background 160ms var(--ease), color 160ms var(--ease);
+  }
+  .btn-primary {
+    background: var(--clay);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--clay-hover); }
+  .btn-primary:active { background: var(--clay-press); }
+  .btn-primary .arrow { transition: transform 200ms var(--ease); }
+  .btn-primary:hover .arrow { transform: translateX(3px); }
+
+  /* ---------- SECTION SHELL ---------- */
+  .section {
+    padding-top: 140px;
+    padding-bottom: 140px;
+  }
+  .section-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--fg-3);
+    margin-bottom: 56px;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .section-eyebrow .num { color: var(--fg-3); }
+  .section-eyebrow .accent {
+    width: 24px;
+    height: 1px;
+    background: var(--clay);
+    display: inline-block;
+  }
+
+  /* ---------- WHAT IS REYN ---------- */
+  .what {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 48px;
+  }
+  .what p {
+    font-size: clamp(24px, 2.8vw, 36px);
+    line-height: 1.35;
+    color: var(--fg);
+    max-width: 22ch;
+    margin: 0;
+    font-weight: 300;
+    letter-spacing: -0.02em;
+  }
+  .what p .muted {
+    color: var(--fg-3);
+  }
+
+  /* ---------- HOW IT WORKS ---------- */
+  .how {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 64px;
+    align-items: center;
+  }
+  @media (min-width: 900px) {
+    .how {
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+      gap: 96px;
+    }
+  }
+  .how-illu {
+    width: 100%;
+    aspect-ratio: 3 / 2;
+    background-image: url('assets/illustration-agent-flow-primary.png');
+    background-size: contain;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  .how-text p {
+    font-size: clamp(20px, 2vw, 26px);
+    line-height: 1.45;
+    color: var(--fg);
+    margin: 0 0 20px 0;
+    font-weight: 300;
+    letter-spacing: -0.015em;
+    max-width: 22ch;
+  }
+  .how-text p:last-child { color: var(--fg-2); }
+
+  /* ---------- KEY CONCEPTS ---------- */
+  .concepts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+    border-top: 1px solid var(--line);
+  }
+  @media (min-width: 760px) {
+    .concepts { grid-template-columns: repeat(3, 1fr); }
+  }
+  .concept {
+    padding: 56px 40px 56px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (min-width: 760px) {
+    .concept {
+      border-bottom: 0;
+      padding: 56px 40px 0 0;
+    }
+    .concept + .concept { padding-left: 40px; border-left: 1px solid var(--line); }
+  }
+  .concept .label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--clay);
+    margin-bottom: 32px;
+  }
+  .concept h4 {
+    font-family: var(--font-sans);
+    font-weight: 400;
+    font-size: 28px;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--fg);
+    margin: 0 0 16px 0;
+  }
+  .concept p {
+    font-size: 16px;
+    line-height: 1.55;
+    color: var(--fg-2);
+    margin: 0;
+    max-width: 32ch;
+  }
+
+  /* ---------- GET STARTED ---------- */
+  .install {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 56px;
+    align-items: center;
+  }
+  @media (min-width: 900px) {
+    .install {
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+      gap: 96px;
+    }
+  }
+  .install h3 {
+    font-family: var(--font-sans);
+    font-weight: 300;
+    font-size: clamp(28px, 3.2vw, 40px);
+    line-height: 1.1;
+    letter-spacing: -0.025em;
+    color: var(--fg);
+    margin: 0 0 32px 0;
+    max-width: 14ch;
+  }
+  .docs-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    color: var(--fg);
+    border-bottom: 1px solid var(--line-strong);
+    padding-bottom: 4px;
+    transition: border-color 200ms var(--ease), color 200ms var(--ease);
+  }
+  .docs-link:hover { border-color: var(--clay); color: var(--clay); }
+  .docs-link .arrow { transition: transform 200ms var(--ease); }
+  .docs-link:hover .arrow { transform: translateX(3px); }
+
+  .terminal {
+    background: var(--bg-dark);
+    color: #EFEDEA;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 28px 28px 32px 28px;
+  }
+  .terminal-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  .terminal-bar .label {
+    color: rgba(239,237,234,0.55);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .terminal-bar .copy {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.12);
+    color: rgba(239,237,234,0.7);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 6px 10px;
+    cursor: pointer;
+    transition: border-color 200ms var(--ease), color 200ms var(--ease);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .terminal-bar .copy:hover {
+    border-color: rgba(255,255,255,0.3);
+    color: #fff;
+  }
+  .terminal-bar .copy.copied {
+    border-color: var(--clay);
+    color: var(--clay);
+  }
+  .terminal .row {
+    display: flex;
+    gap: 14px;
+    align-items: baseline;
+  }
+  .terminal .prompt {
+    color: var(--clay);
+    user-select: none;
+  }
+  .terminal .cmd { color: #EFEDEA; }
+
+  /* ---------- FOOTER ---------- */
+  .footer {
+    padding-top: 48px;
+    padding-bottom: 48px;
+    border-top: 1px solid var(--line);
+  }
+  .footer-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 24px;
+  }
+  .footer .brand-mini {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--fg-3);
+  }
+  .footer .brand-mini img { width: 18px; height: 18px; }
+
+  .ic { width: 16px; height: 16px; flex: none; }
+
+  /* ---------- NAV ---------- */
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: 32px;
+  }
+  .nav-links a {
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--fg-2);
+    transition: color 200ms var(--ease);
+  }
+  .nav-links a:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-top">
+      <a href="#" class="brand" aria-label="Reyn home">
+        <img src="assets/logo-primary.svg" alt="" />
+        <span>Reyn</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/docs">Docs</a>
+        <a href="#">GitHub</a>
+      </nav>
+    </div>
+    <div class="wrap hero-body">
+      <div class="hero-grid">
+        <h1>Reyn</h1>
+        <p class="tagline">Gives you the reins.</p>
+        <a href="#start" class="btn btn-primary">
+          Get Started
+          <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2 8h12M9 3l5 5-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT IS REYN -->
+  <section id="what" class="section">
+    <div class="wrap">
+      <div class="section-eyebrow">
+        <span class="accent"></span>
+        <span class="num">01</span>
+        <span>What is Reyn</span>
+      </div>
+      <div class="what">
+        <p>Reyn is an AI agent orchestration system. <span class="muted">It gives you structured control over multiple agents through defined flows and phases.</span></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section id="how" class="section" style="background: var(--bg-soft);">
+    <div class="wrap">
+      <div class="section-eyebrow">
+        <span class="accent"></span>
+        <span class="num">02</span>
+        <span>How it works</span>
+      </div>
+      <div class="how">
+        <div class="how-illu" role="img" aria-label="Agents fan out from a single source along curved paths"></div>
+        <div class="how-text">
+          <p>Reyn connects agents through a skill graph.</p>
+          <p>Each phase is driven by LLM decisions within a constrained, auditable runtime.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- KEY CONCEPTS -->
+  <section id="concepts" class="section">
+    <div class="wrap">
+      <div class="section-eyebrow">
+        <span class="accent"></span>
+        <span class="num">03</span>
+        <span>Key concepts</span>
+      </div>
+      <div class="concepts">
+        <div class="concept">
+          <div class="label">Agent</div>
+          <h4>One worker, one skill.</h4>
+          <p>A scoped agent with a single skill, a memory window, and the right to call tools.</p>
+        </div>
+        <div class="concept">
+          <div class="label">Flow</div>
+          <h4>A graph of phases.</h4>
+          <p>A directed graph that routes work between agents based on decisions and state.</p>
+        </div>
+        <div class="concept">
+          <div class="label">Control</div>
+          <h4>An auditable runtime.</h4>
+          <p>Every step is logged, replayable, and can be paused or steered mid-flight.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- GET STARTED -->
+  <section id="start" class="section">
+    <div class="wrap">
+      <div class="section-eyebrow">
+        <span class="accent"></span>
+        <span class="num">04</span>
+        <span>Get started</span>
+      </div>
+      <div class="install">
+        <div>
+          <h3>One install. No service to run.</h3>
+          <a href="/docs" class="docs-link">
+            Read the docs
+            <svg class="ic arrow" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </a>
+        </div>
+        <div class="terminal" aria-label="Install command">
+          <div class="terminal-bar">
+            <span class="label">terminal</span>
+            <button class="copy" type="button" id="copyBtn" aria-label="Copy install command">Copy</button>
+          </div>
+          <div class="row"><span class="prompt">$</span><span class="cmd" id="cmd">pip install reyn</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="wrap footer-inner">
+      <div class="brand-mini">
+        <img src="assets/logo-primary.svg" alt="" />
+        <span>Reyn — open source under MIT</span>
+      </div>
+    </div>
+  </footer>
+
+<script>
+  const btn = document.getElementById('copyBtn');
+  const cmd = document.getElementById('cmd');
+  if (btn && cmd) {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(cmd.textContent.trim());
+        btn.textContent = 'Copied';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy';
+          btn.classList.remove('copied');
+        }, 1600);
+      } catch (e) {
+        btn.textContent = 'Copy failed';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
+      }
+    });
+  }
+</script>
+</body>
+</html>
