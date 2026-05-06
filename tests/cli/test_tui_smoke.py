@@ -538,3 +538,200 @@ async def test_agent_message_chronological_order_with_user():
         # Render produces multiple lines per agent turn (prefix + body),
         # so just assert RichLog has accumulated all the content.
         assert len(log.lines) >= 4
+
+
+# ── test: right panel — preview pane vim keybindings ─────────────────────────
+
+@pytest.mark.asyncio
+async def test_preview_pane_vim_keys_scroll_richlog():
+    """Tier 2: _PreviewPane on_key with j/k delegates to scroll_line and h/l to scroll_col.
+
+    Verifies that vim-style navigation drives the underlying RichLog through
+    the preview pane's public scroll_line / scroll_col surface. Asserts on
+    a behavior pin (call counts), not on internal RichLog state.
+    """
+    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        right_panel = app.query_one("#right_panel")
+        # Mount a preview pane locally inside the right panel for isolation
+        # (the existing one inside compose() has the same behaviour).
+        pane = right_panel.query_one("#preview-pane", _PreviewPane)
+
+        calls: dict[str, int] = {"line": 0, "col": 0}
+        deltas: dict[str, list[int]] = {"line": [], "col": []}
+
+        def fake_line(d: int) -> None:
+            calls["line"] += 1
+            deltas["line"].append(d)
+
+        def fake_col(d: int) -> None:
+            calls["col"] += 1
+            deltas["col"].append(d)
+
+        pane.scroll_line = fake_line  # type: ignore[method-assign]
+        pane.scroll_col = fake_col  # type: ignore[method-assign]
+
+        class _FakeKey:
+            def __init__(self, key: str) -> None:
+                self.key = key
+
+            def prevent_default(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        pane.on_key(_FakeKey("j"))
+        pane.on_key(_FakeKey("k"))
+        pane.on_key(_FakeKey("l"))
+        pane.on_key(_FakeKey("h"))
+
+        assert calls["line"] == 2
+        assert calls["col"] == 2
+        # j is +1, k is -1, l is +1, h is -1
+        assert deltas["line"] == [+1, -1]
+        assert deltas["col"] == [+1, -1]
+
+
+# ── test: right panel — event filter cycling ─────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_event_filter_cycling_rotates_through_groups():
+    """Tier 2: cycle_event_filter() rotates _event_filter_idx modulo the group count.
+
+    The visible group label / filter set drives which events are rendered
+    in the events tab. Asserting on the rotation pin captures the contract
+    that pressing 'f' steps forward through the groups defined in
+    events_tab._FILTER_GROUPS and wraps at the end.
+    """
+    from reyn.chat.tui.widgets.right_panel.events_tab import _FILTER_GROUPS
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#right_panel")
+
+        n = len(_FILTER_GROUPS)
+        assert panel._event_filter_idx == 0  # initial state
+
+        for i in range(1, n + 1):
+            panel.cycle_event_filter()
+            assert panel._event_filter_idx == i % n
+
+        # Wrap-around: after n cycles we land back at 0
+        assert panel._event_filter_idx == 0
+
+
+# ── test: right panel — docs cursor navigation ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_docs_cursor_advances_with_j_keypress():
+    """Tier 2: docs tab j keypress advances _docs_cursor and stays in bounds.
+
+    Pins the contract that pressing j on the docs tab moves the cursor
+    forward by one and never overflows past the last file.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#right_panel")
+
+        # Force docs tab and prime the file list with synthetic entries so the
+        # test does not depend on the project's docs/en/ layout.
+        panel._panel_type = "docs"
+        panel._docs_files = [Path("/tmp/a.md"), Path("/tmp/b.md"), Path("/tmp/c.md")]
+        panel._docs_groups = {"": panel._docs_files}
+        panel._docs_cursor = 0
+
+        panel._docs_move(+1)
+        assert panel._docs_cursor == 1
+        panel._docs_move(+1)
+        assert panel._docs_cursor == 2
+        # Bounded — does not overflow past the last file.
+        panel._docs_move(+1)
+        assert panel._docs_cursor == 2
+        # Reverse navigation works too.
+        panel._docs_move(-1)
+        assert panel._docs_cursor == 1
+
+
+# ── test: right panel — tab cycling ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_panel_cycle_advances_and_wraps():
+    """Tier 2: cycle(+1) walks PANEL_TYPES forward and wraps; cycle(-1) walks back.
+
+    Pins the contract behind ctrl+w / ctrl+shift+w so a future Tabs refactor
+    cannot silently change ordering or wrap behaviour.
+    """
+    from reyn.chat.tui.widgets.right_panel import PANEL_TYPES
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#right_panel")
+
+        # Initial active tab = first entry
+        assert panel.panel_type == PANEL_TYPES[0]
+
+        # Forward through every tab — must visit each in order
+        seen: list[str] = [panel.panel_type]
+        for _ in range(len(PANEL_TYPES) - 1):
+            panel.cycle(+1)
+            await pilot.pause()
+            seen.append(panel.panel_type)
+        assert seen == list(PANEL_TYPES)
+
+        # One more forward — wrap-around to the first tab
+        panel.cycle(+1)
+        await pilot.pause()
+        assert panel.panel_type == PANEL_TYPES[0]
+
+        # Reverse cycle from index 0 wraps to the last tab
+        panel.cycle(-1)
+        await pilot.pause()
+        assert panel.panel_type == PANEL_TYPES[-1]
+
+
+# ── test: SlashPicker wraparound navigation ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_slash_picker_wraps_around_at_boundaries():
+    """Tier 2: SlashPicker.move_selection wraps at both ends of the candidate list.
+
+    From the last row, +1 must wrap to row 0; from row 0, -1 must wrap to
+    the last row. Pins the modular-navigation contract documented in the
+    picker's design notes.
+    """
+    from reyn.chat.slash import SlashCommand
+    from reyn.chat.tui.widgets.slash_picker import SlashPicker
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        picker = app.query_one("#slash-picker", SlashPicker)
+
+        async def _noop(_session, _args: str) -> None:
+            return None
+
+        candidates = [
+            SlashCommand(name=f"cmd{i}", summary=f"summary {i}", handler=_noop)
+            for i in range(3)
+        ]
+        picker.set_matches(candidates)
+        assert picker._selected == 0
+
+        # Walk forward N times: 0 -> 1 -> 2 -> 0 (wrap)
+        picker.move_selection(+1)
+        assert picker._selected == 1
+        picker.move_selection(+1)
+        assert picker._selected == 2
+        picker.move_selection(+1)
+        assert picker._selected == 0
+
+        # Walk backward from 0 wraps to the last entry
+        picker.move_selection(-1)
+        assert picker._selected == len(candidates) - 1

@@ -41,11 +41,35 @@ permissions:
   file.read:
     - path: "."
       scope: recursive
-  # Uncomment to pre-approve writes (list each writable subtree):
+  # ── file.write — opt-in, by-path ────────────────────────────────────────
+  # Reads are recursive by default (above); writes are not. Without an
+  # entry here the chat agent triggers an interactive permission prompt
+  # for each write (and fails on headless / non-TTY runs). Uncomment one
+  # or more entries to silently allow writes to specific subtrees you've
+  # decided are safe to overwrite. The prompt itself also offers a
+  # "remember this path" button that persists into `.reyn/approvals.yaml`
+  # (gitignored) — so the allow-list can be built up interactively rather
+  # than pre-declared.
+  #
   # file.write:
   #   - path: "scratch/"
   #     scope: recursive
-  # Uncomment to allow shell (unsafe; only for meta-apps):
+  #   - path: "drafts/"
+  #     scope: recursive
+  #
+  # ── web.fetch — operator opt-in ─────────────────────────────────────────
+  # `web_search` (DuckDuckGo public query) is always on. `web_fetch`
+  # (arbitrary URL) is off by default: the LLM could bake secrets into
+  # a URL and have an attacker-controlled server log them, so we don't
+  # want this one on without a deliberate decision. Uncomment if you
+  # want the agent to be able to read specific pages after searching:
+  # web.fetch: allow
+  #
+  # ── shell — keep off unless you're writing meta-skills ──────────────────
+  # `shell: allow` lets skills run arbitrary subprocesses. Required for
+  # specific meta-skills (skill_builder, skill_improver) but unsafe for
+  # a chat agent — keep commented out unless you understand the
+  # implications.
   # shell: allow
 
 # ───────────────────────────────────────────────────────────────────────────

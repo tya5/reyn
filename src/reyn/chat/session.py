@@ -2813,10 +2813,23 @@ class ChatSession:
         """List directory contents through op_runtime (glob).
 
         Returns: {"path": path, "entries": [...]} or {"error": ...}.
+
+        Path normalisation: the LLM frequently sends ``"/"`` or ``""`` when
+        it really means "the project root I'm allowed to read". A literal
+        ``"/"`` resolves to the filesystem root, which is outside the
+        permission scope and triggers a misleading "no read permission"
+        error. Map both to ``"."`` (= cwd) so the typical "list files
+        here" intent works on a fresh project without requiring path
+        education.
         """
-        result = await self._file_op({"kind": "file", "op": "glob", "path": f"{path.rstrip('/')}/*"})
+        normalised = path
+        if normalised in ("", "/", "./"):
+            normalised = "."
+        result = await self._file_op(
+            {"kind": "file", "op": "glob", "path": f"{normalised.rstrip('/')}/*"}
+        )
         if result.get("status") == "ok":
-            return {"path": path, "entries": result.get("matches", [])}
+            return {"path": normalised, "entries": result.get("matches", [])}
         return {"error": result.get("error", "list_directory failed")}
 
     async def _file_regenerate_index(

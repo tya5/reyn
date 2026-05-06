@@ -24,6 +24,7 @@ def build_system_prompt(
     memory_index: dict,
     file_permissions: dict | None = None,
     mcp_servers: list[dict] | None = None,
+    web_fetch_allowed: bool = False,
     output_language: str | None = None,
 ) -> str:
     """Render the system prompt for the tool_use router loop.
@@ -85,6 +86,17 @@ def build_system_prompt(
     if has_file_read:
         parts.append(
             "           files:   list_directory / read_file"
+        )
+    # Web search is always exposed (low-risk, public queries). Web fetch
+    # requires operator opt-in (`web.fetch: allow`) and is included only
+    # when permitted.
+    if web_fetch_allowed:
+        parts.append(
+            "           web:     web_search / web_fetch"
+        )
+    else:
+        parts.append(
+            "           web:     web_search"
         )
     if has_mcp:
         parts.append(
@@ -153,6 +165,40 @@ def build_system_prompt(
         for line in mcp_section:
             parts.append(f"  {line}")
         parts.append("")
+    # ── User-facing capability framing ───────────────────────────────────────
+    # The intent-axis section above is internal routing guidance. When a user
+    # asks the meta question "what can you do?" the LLM previously parroted
+    # the intent labels back, which reads as internal jargon. Give it a
+    # concrete user-facing answer template instead. The list reflects the
+    # tools that ARE actually exposed in this session (= avoids hallucinating
+    # capabilities that aren't wired up).
+    user_capabilities: list[str] = ["run skills, build new skills, and improve existing ones"]
+    if has_file_read:
+        user_capabilities.append("read files in your project")
+    if has_file_write:
+        user_capabilities.append("write files to approved paths")
+    user_capabilities.append("search the web (DuckDuckGo)")
+    if web_fetch_allowed:
+        user_capabilities.append("fetch a specific web page")
+    user_capabilities.append("remember and recall facts via your memory")
+    if available_agents:
+        user_capabilities.append("delegate to other agents on your team")
+    if mcp_servers:
+        user_capabilities.append(
+            f"call external services through {len(mcp_servers)} configured MCP server(s)"
+        )
+    parts.append("## When asked what you can do")
+    parts.append(
+        "  Answer in plain user-facing terms — never with the routing labels"
+    )
+    parts.append(
+        "  (Action / Recall / Save / Forget / Reply). The honest answer is:"
+    )
+    for cap in user_capabilities:
+        parts.append(f"    • I can {cap}.")
+    parts.append("  Tailor the wording naturally; don't list every bullet verbatim.")
+    parts.append("")
+
     parts.append("## Behaviour")
     # Explicit language instruction (only when the user configured one):
     # a concrete language tag is stronger than "match the user's language"

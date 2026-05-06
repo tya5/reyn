@@ -17,8 +17,30 @@
 #      on unused keys).
 #   3. Edit values in this file freely — index.html no longer holds copy.
 
-# ── document head ───────────────────────────────────────────────────────────
+# ── document head + SNS share metadata ─────────────────────────────────────
 PAGE_TITLE: "Reyn — predictable LLM workflows"
+
+# meta description: shows in Google snippets and as the SNS-share blurb when
+# no per-platform override is provided. Aim for 120–160 chars; match the LP
+# hero lede tone without repeating it word-for-word.
+META_DESCRIPTION: >-
+  LLM agent workflow OS with a Markdown DSL. Phase transitions are
+  constrained, validated, and replayable — predictability for production
+  agents, not just experiments.
+
+# Canonical URL: the production landing-page URL. Update this together with
+# `site_url` in mkdocs.yml when the project moves to a custom domain
+# (reyn.dev was mentioned in website/TODO.md as a candidate).
+CANONICAL_URL: "https://tya5.github.io/reyn/"
+
+# Open Graph + Twitter share card. og:title is shown above the description
+# in share previews; keep it punchy. og:image is what people SEE in the
+# unfurl — it must be a publicly-accessible URL (relative paths don't work
+# for SNS scrapers). Use the GitHub-hosted asset for now; switch to the
+# custom domain once that lands.
+OG_TITLE: "Reyn — gives you the reins"
+OG_IMAGE: "https://tya5.github.io/reyn/assets/banner-hero-reyn-main.png"
+OG_IMAGE_ALT: "Reyn — LLM agent workflow OS, on a clay-coloured banner"
 
 # ── header / nav ────────────────────────────────────────────────────────────
 NAV_DOCS: "Docs"
