@@ -2,6 +2,28 @@ site_name: reyn
 site_description: LLM workflow OS — phase transitions as a constrained decision graph
 docs_dir: docs
 
+# Files / directories tracked in git for development reference but NOT
+# published to the static site. Patterns are gitignore-style, relative to
+# docs_dir.  Add an entry here when you want to keep working notes in the
+# repo without exposing them on the public docs site.
+exclude_docs: |
+  # Engineering journals — dogfood batch logs, feature-verify notes
+  journal/
+
+  # OpenUI = internal contract for Reyn's web UI. Not yet a neutral
+  # multi-vendor protocol (see docs/openui/README.md framing).
+  openui/
+
+  # LLM-targeted rubrics. Primary reader is a reyn skill, not a human.
+  agent/
+
+  # Web mode design / handoff docs. User-facing pieces live under
+  # en/how-to/author-a-design.md; the rest is internal contract.
+  web/
+
+  # CLI redesign draft — tracked for design history, not policy.
+  contributing/cli-redesign.md
+
 theme:
   name: material
   features:

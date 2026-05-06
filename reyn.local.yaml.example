@@ -1,0 +1,39 @@
+# ============================================================
+# Local environment settings — example template
+#
+# Copy this file to `reyn.local.yaml` (which is gitignored) and edit it
+# with your local values. Fields here override the corresponding entries
+# in `reyn.yaml`.
+#
+#   cp reyn.local.yaml.example reyn.local.yaml
+# ============================================================
+
+# LiteLLM endpoint. Point this at your provider directly (omit api_base) or
+# at a local proxy. Example shown is a LiteLLM proxy on the loopback.
+# api_base: http://localhost:4000
+
+# API key is NOT stored here. Set it in your shell environment so it never
+# lands in a config file or git history:
+#
+#   export OPENAI_API_KEY=sk-...
+#   export ANTHROPIC_API_KEY=sk-ant-...
+#
+# The variable name depends on the provider prefix in the model string
+# (see reyn.yaml `models:`).
+
+# Model class -> LiteLLM model string. Override per machine to swap
+# providers without editing the checked-in `reyn.yaml`. A class reference
+# (no `/`) resolves against the built-in catalog or your `reyn.yaml`
+# `models:` block; a string with `/` is passed through to LiteLLM as-is.
+#
+# Examples:
+#   models:
+#     light:    openai/gpt-4o-mini
+#     standard: claude-sonnet            # built-in catalog reference
+#     strong:   anthropic/claude-3-7-sonnet
+
+# Phase / chain limits. Tighten or relax for local debugging.
+#
+# limits:
+#   phase:
+#     max_visits: 5

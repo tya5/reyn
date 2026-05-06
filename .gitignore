@@ -15,6 +15,12 @@ reyn/local/
 .env
 .env.*
 !.env.example
+
+# Local user config — contains api_base / model overrides etc.
+# A `reyn.local.yaml.example` template IS checked in; the real file is not.
+reyn.local.yaml
+!reyn.local.yaml.example
+
 improver_state.json
 .DS_Store
 .vscode/
