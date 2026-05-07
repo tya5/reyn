@@ -790,6 +790,36 @@ async def call_llm_tools(
     # Operator-declared kwargs from ModelSpec; Gemini-safe forced settings override these.
     spec_kwargs = dict(spec.kwargs)
 
+    # ── G12 post-tool empty-stop attractor workaround ──────────────────────
+    #
+    # WORKAROUND (not a real fix): when the last message is role=tool,
+    # gemini-2.5-flash-lite (and likely other weak LLMs in the OpenAI
+    # tool_use compat path) hits an empty-stop attractor at high rate
+    # (30-100% in N=10 measurement, deterministic-leaning depending on
+    # context). The model emits 0 completion tokens with finish_reason=stop,
+    # so the user sees nothing after a successful tool call.
+    #
+    # Empirically (`/tmp/wave_a_trailing_user.py` evidence, N=10 each):
+    #   V0 baseline:                empty_stop 30-60%, reply 40-70%
+    #   V7 trailing user "(answered)": empty_stop 0%, reply 100%, no duplicate tool_call
+    #
+    # Why "(answered)": the user's question was answered (tool returned), and
+    # the LLM is free to either summarise in text OR chain another tool. It's
+    # a *neutral state signal*, not an imperative "reply now" — so multi-tool
+    # workflows aren't blocked by this injection. Compare with "(continue)"
+    # (= 70-100% duplicate tool_call) or "Reply in text now." (= forces text,
+    # blocks tool-chain).
+    #
+    # Caveats:
+    #   - Workaround only — true fix is provider-side or different model.
+    #   - English directive: weak LLM may bias reply language to English.
+    #     Accepted as workaround limitation (= we don't multilingual-engineer
+    #     the bandaid).
+    #   - The injected message is NOT persisted to history; it's added at the
+    #     LLM call boundary so chat history stays clean for downstream logic.
+    if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == "tool":
+        messages = messages + [{"role": "user", "content": "(answered)"}]
+
     call_kwargs: dict = {
         "model": effective_model,
         "messages": messages,
