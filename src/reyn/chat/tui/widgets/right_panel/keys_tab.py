@@ -31,7 +31,7 @@ _PANEL_KEYS = {
     "h", "l",
 }
 _EVENTS_KEYS = {"f", "t"}
-_DOCS_KEYS = {"j", "k", "enter", "/"}
+_DOCS_KEYS = {"j", "k", "space", "/"}
 _GROUP_ORDER = [
     "GLOBAL", "CONVERSATION", "PANEL",
     "EVENTS (gated)", "DOCS (gated)", "OTHER",

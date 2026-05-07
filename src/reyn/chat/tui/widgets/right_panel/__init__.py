@@ -266,7 +266,11 @@ class RightPanel(Widget):
             event.prevent_default()
             event.stop()
             self.cycle(-1)
-        elif event.key == "enter":
+        elif event.key == "space":
+            # Space toggles / opens the preview pane on docs / events /
+            # memory tabs. Enter is reserved for keystroke-passthrough on
+            # focused inputs (e.g. modal dialogs); Space is the standard
+            # "activate the highlighted row" key in TUIs.
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._toggle_preview()
@@ -503,11 +507,11 @@ class RightPanel(Widget):
         if self._panel_type == "agents":
             return f"[bold {_CORAL}]Agents[/]"
         if self._panel_type == "memory":
-            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓  k↑  enter=open[/]"
+            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓  k↑  space=open[/]"
         if self._panel_type == "cost":
             return f"[bold {_CORAL}]Cost[/]"
         if self._panel_type == "docs":
-            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓  k↑  enter=open[/]"
+            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓  k↑  space=open[/]"
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
             tail = _TAIL_CYCLE[self._event_tail_idx]
@@ -523,7 +527,7 @@ class RightPanel(Widget):
                 f"[bold {_CORAL}]Events[/]"
                 f"  {kf}[#555555]ilter:[/]{filter_label}"
                 f"  {kt}[#555555]ail:[/][#aaaaaa]{tail}[/]"
-                f"  [#555555]j/k=move  enter=open[/]"
+                f"  [#555555]j/k=move  space=open[/]"
             )
         return ""
 
