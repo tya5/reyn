@@ -75,6 +75,27 @@ def _seed_skill(
     return snap_path
 
 
+def _seed_plan(
+    registry: AgentRegistry,
+    agent_name: str,
+    plan_id: str,
+    *,
+    last_step_applied_seq: int,
+) -> Path:
+    """Create the on-disk per-plan snapshot for an agent's active plan."""
+    from reyn.plan.plan_snapshot import PlanSnapshot, plan_snapshot_path
+    snap = PlanSnapshot.empty(
+        plan_id=plan_id, agent_name=agent_name, chain_id=f"plan_{plan_id}",
+        goal="g",
+    )
+    snap.last_step_applied_seq = last_step_applied_seq
+    snap_path = plan_snapshot_path(
+        registry._dir / agent_name / "state", plan_id,
+    )
+    snap.save(snap_path)
+    return snap_path
+
+
 def _wal_seqs(state_log: StateLog) -> set[int]:
     return {e["seq"] for e in state_log.iter_from(0) if isinstance(e.get("seq"), int)}
 
@@ -104,6 +125,47 @@ def test_compute_floor_includes_active_skill_snapshots(tmp_path):
 
     floor = registry._compute_truncate_floor()
     assert floor == 3  # min(10, 10, 2) + 1
+
+
+def test_compute_floor_includes_active_plan_snapshots(tmp_path):
+    """Tier 2: ADR-0023 §3.1 — plan_snapshot.last_step_applied_seq pins
+    the floor, preventing WAL truncation from dropping plan_step_*
+    events the resume analyzer needs."""
+    registry = _make_registry(tmp_path)
+    _seed_agent(registry, "alpha", applied_seq=10)
+    _seed_plan(registry, "alpha", "p001", last_step_applied_seq=4)
+
+    floor = registry._compute_truncate_floor()
+    assert floor == 5  # min(10, 4) + 1
+
+
+def test_compute_floor_min_across_skill_and_plan(tmp_path):
+    """Tier 2: multi-source floor — skill at 6 + plan at 3 + agent at 10
+    → floor=4 (= the plan watermark wins). Plans + skills participate
+    equally per ADR-0023 §3.1."""
+    registry = _make_registry(tmp_path)
+    _seed_agent(registry, "alpha", applied_seq=10)
+    _seed_skill(registry, "alpha", "run_xyz", last_phase_applied_seq=6)
+    _seed_plan(registry, "alpha", "p001", last_step_applied_seq=3)
+
+    floor = registry._compute_truncate_floor()
+    assert floor == 4  # min(10, 6, 3) + 1
+
+
+def test_compute_floor_zero_on_corrupt_plan_snapshot(tmp_path):
+    """Tier 2: malformed plan snapshot is conservative — returns 0,
+    no truncation. Mirrors the corrupt-skill-snapshot fail-closed
+    invariant."""
+    registry = _make_registry(tmp_path)
+    _seed_agent(registry, "alpha", applied_seq=10)
+    _seed_plan(registry, "alpha", "p001", last_step_applied_seq=5)
+    snap_path = (
+        registry._dir / "alpha" / "state" / "plans" / "p001.snapshot.json"
+    )
+    snap_path.write_text("{not valid json", encoding="utf-8")
+
+    floor = registry._compute_truncate_floor()
+    assert floor == 0
 
 
 def test_compute_floor_zero_when_no_persistent_agents(tmp_path):

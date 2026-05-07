@@ -700,6 +700,31 @@ class AgentRegistry:
                     except (TypeError, ValueError):
                         return 0
 
+        # ADR-0023 §3.1: per-active-plan last_step_applied_seq. Direct
+        # JSON read mirrors the skill block above. Plans live at
+        # state/plans/<plan_id>.snapshot.json (sibling to per-plan dirs).
+        # If a long-running plan exists, its watermark pins the floor so
+        # plan_step_* events the resume analyzer needs aren't truncated.
+        for name in self.list_names():
+            plans_dir = self._dir / name / "state" / "plans"
+            if not plans_dir.is_dir():
+                continue
+            for snap_file in plans_dir.glob("*.snapshot.json"):
+                try:
+                    data = json.loads(snap_file.read_text(encoding="utf-8"))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "WAL truncation: cannot read plan snapshot %s: %s",
+                        snap_file, e,
+                    )
+                    return 0
+                if isinstance(data, dict):
+                    val = data.get("last_step_applied_seq", 0)
+                    try:
+                        seqs.append(int(val))
+                    except (TypeError, ValueError):
+                        return 0
+
         if not seqs:
             return 0
         # Drop entries strictly below the lowest absorbed seq. The +1 makes
