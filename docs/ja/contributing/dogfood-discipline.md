@@ -449,6 +449,331 @@ Reyn の 3 つのツール (`REYN_LLM_TRACE_DUMP` / `dogfood_trace.py` / `llm_re
 
 ---
 
+## 6.5 Plan-mode dogfood の特殊観点
+
+> **このセクションは plan-mode がテスト対象に入った時点から適用します。** セクション 3 の 9 原則は変更なく適用されます。変わるのは観測軸です。plan-mode は非同期 dispatch / 並行 in-flight plan / resume 時の memo replay を導入します。これらは skill-side dogfood では決して現れない観測面です。
+
+---
+
+### 6.5.1 なぜ plan-mode には特別な discipline が必要か
+
+Skill-side dogfood は、skill の phase graph が LLM の確率的決定の下で正しく実行されるかを検証します。Plan-mode はそれに加えて、質的に異なる 3 つの関心事を導入します。
+
+**非同期 dispatch と completion 順序。** Plan は background の `asyncio.Task` として実行されます。プランが in-flight の間も、ユーザーは新しいメッセージを送れます。複数のプランが重複できます。 Outbox メッセージはユーザーが issue した順ではなく、completion 順に届きます。これらの性質は skill-side のトレースでは見えません。意図的に concurrent plan を実行して outbox を観測したときのみ現れます。
+
+**Resume 時の memo replay。** クラッシュ耐性 (ADR-0023 + ADR-0025) の価値はコードを読んでテストできません。プロセスを mid-step で kill し、再起動して、完了済みのステップが追加の LLM コストを発生させず同一の output を返すことを確認する必要があります。これは skill-side のいかなるテストとも異なる観測経路です。
+
+**ルーター側の LLM 呼び出し。** Plan-mode はチャットルーター LLM が `plan` ツールを選ぶことでトリガーされます。Skill-side dogfood とは異なり — そこではユーザーがどの skill を呼び出すかを制御する — plan-mode はルーター LLM が確率的に「分解が有益だ」と判断することに依存します。人間の判断では「十分複雑」なクエリでも、ルーター LLM が一貫して直接回答を好めば plan-mode はトリガーされません。プランの invocation 自体が観測ポイントであり、前提ではありません。
+
+セクション 3 の原則は引き続き適用されます — 特に原則 4 (先に観測 infra を作る)、原則 6 (verify-first / reproduce-first)、原則 3 (1 仮説 1 修正 1 検証) — ただし具体的な観測面は skill-side dogfood と異なります。
+
+---
+
+### 6.5.2 新しい観測面
+
+Plan-mode は 6 つの異なる場所に永続的な状態を生産します。それぞれ目的と decay ライフサイクルが異なります。
+
+| 観測面 | 場所 | 何を見るか |
+|---|---|---|
+| WAL | `state/wal.jsonl` | `plan_started` / `plan_completed` / `plan_aborted` / `plan_step_started` / `plan_step_completed` / `plan_step_failed` — resume の基盤 |
+| Events log (forensic 専用) | `events/<caller>/...` | `plan_emitted` / `plan_aggregated` / `plan_run_interrupted` / `plan_step_memoized` / `plan_step_memo_failed` / `plan_step_llm_memoized` |
+| Per-plan snapshot | `state/plans/<plan_id>.snapshot.json` | `step_results` / `step_result_refs` / `step_llm_calls` — resume を駆動する永続キャッシュ |
+| スピルした step 結果 | `state/plans/<plan_id>/step_results/<step_id>.txt` | ADR-0024 — 32 KB 超の output のみスピル、それ以外は inline |
+| スピルした LLM call 記録 | `state/plans/<plan_id>/step_llm_calls/<step_id>/<turn_idx>.json` | ADR-0025 — 32 KB 超の結果のみスピル |
+| Outbox (= UI / TUI) | `session.outbox` キュー、chat REPL でも可視 | `kind=status` per-step 進捗ナレーション; `kind=agent` 最終テキスト (`meta.plan_id` 付き) |
+| 実行中タスク | `session.running_plans: dict[plan_id, asyncio.Task]` | `/plan list` slash コマンドで確認 |
+
+**各観測面の読み方 discipline:**
+
+- **WAL を先に読む。** WAL は resume の primary な基盤であり、最速で読める観測面です。step が完了したと主張するなら、`plan_step_completed` が存在しなければなりません。存在しなければ、その step はコミットされていません — snapshot に古いデータが入っている可能性があります。
+- **次に snapshot を読む。** Snapshot は resume coordinator が読む対象です。memo 化を期待するステップに対して `step_results` (inline) または `step_result_refs` (スピル) が populated されているか確認します。
+- **因果関係には events log を使う。** `plan_step_memoized` と `plan_step_llm_memoized` は memo パスが実際に起動したことを確認します。結果が存在するだけでは不十分です。 Events log はこの forensic 用途にのみ使います — 運用チェックには使いません。
+- **User 向け正確性には outbox を使う。** Outbox はユーザーが見るものです。`meta.plan_id` タグが並行 plan の output を区別するメカニズムです。各 plan の最終テキストが正しい `plan_id` を持つか確認します。
+
+---
+
+### 6.5.3 ツール cheat sheet
+
+`dogfood_trace.py` ユーティリティは既存の skill-side モードに加えて plan 専用のモードを公開します。
+
+```bash
+# Plan-mode サマリー (= プラン数 / memo ヒット数 / 最大並行数)
+python scripts/dogfood_trace.py --mode plan-summary
+
+# Per-plan タイムライン (= 1 plan_id の WAL + events log + outbox)
+python scripts/dogfood_trace.py --mode plan-trace <plan_id>
+
+# Per-plan workspace dump (= decomposition + snapshot + スピルファイル)
+python scripts/dogfood_trace.py --mode plan-snapshot <plan_id>
+
+# Cost モード (= memo 節約額の見積もりが追加された)
+python scripts/dogfood_trace.py --mode cost
+```
+
+> 注: `--mode plan-summary` / `plan-trace` / `plan-snapshot` はこのセクションと同じ prep wave で追加されます。まだ landing していない場合、このドキュメントは forward-looking です。モードが landing するまでは WAL / snapshot の手動確認で同等の観測を行ってください。
+
+既存の skill-side モードはセクション 6 を参照してください。`--mode cost` の出力は共有です — skill-side と plan-side の LLM call コストを両方含み、plan の resume が firing した場合は memo 節約額が別途 breakdown されます。
+
+Attractor detector (`scripts/detect_attractor.py`) は plan-mode でも有用です。個別ステップの実行内の empty-stop / enum violation attractor を検出するために、sub-loop のトレース dump に対して実行します。
+
+```bash
+REYN_LLM_TRACE_DUMP=plan_trace.jsonl reyn chat
+python scripts/detect_attractor.py --root .reyn/  # step レベルの attractor をキャッチ
+```
+
+---
+
+### 6.5.4 Plan-mode 向け scenario 設計
+
+Batch 設計 (A1 ステップ) において、plan-mode は固有の性質を行使する意図的に構築されたシナリオを必要とします。5 つの scenario クラスが主要なリスク面をカバーします。
+
+#### クラス 1: 多ソース合成 (long-step)
+
+**目的。** ルーター LLM が分解を要するクエリに対して実際に plan-mode を呼び出すかを検証し、decomposition と aggregation が coherent であることを確認します。
+
+**クエリ例。** 「README と CLAUDE.md を比較して、新規コントリビューター向けに主な違いをまとめてください。」
+
+**観測するもの。**
+1. ルーター LLM が `plan` ツールを呼び出すか? (`REYN_LLM_TRACE_DUMP` でルーターのターンに `plan` ツール呼び出しがあるか確認)
+2. Decomposition が well-formed か (2〜7 ステップ、循環依存なし)?
+3. 最終集約ステップが両ソースを参照した coherent な回答を生産するか?
+
+**Verified の定義。** ルーターが `plan` を呼び出す; `state/plans/<plan_id>/decomposition.json` が存在する; outbox が `meta.plan_id` 付きの `kind=agent` メッセージを受け取る; コンテンツが両ドキュメントを参照している。
+
+**Refuted の定義。** ルーターが `plan` を呼ばずに直接回答する。これはバグではありません (ルーターが直接回答の方が適切と判断した可能性がある)。しかし、あなたのシナリオが plan-mode をテストできていないことを意味します。クエリをより明示的に多ソースに修正します。
+
+**Blocked の定義。** ルーターがツール呼び出しを生産する前にエラーになる。Plan-mode finding ではなく、prior-layer のバグとして扱います。
+
+#### クラス 2: 並行 plan (multi-plan UX)
+
+**目的。** 複数の in-flight plan が completion 順に正しくタグ付けされた outbox output を生産するかを検証します。Issue 順ではありません。
+
+**実行方法。** 2 つのユーザープロンプトを back-to-back で issue します (どちらの plan が完了する前に)。短い plan (2 ステップ) と長い plan (5 ステップ) を使います。Outbox の順序を観測します。
+
+**観測するもの。**
+1. Outbox が 2 つの別々の `meta.plan_id` タグ付き最終メッセージを受け取るか?
+2. 短い plan のメッセージが長い plan より先に届くか — どちらが先に issue されたかに関わらず?
+3. どちらかが完了する前に `/plan list` が両プランを active として表示するか?
+
+**Verified の定義。** 2 つの distinct な `plan_id` 値; 短い plan の `kind=agent` メッセージが先に届く; 両プランが state collision なく完了する。
+
+**Refuted の定義。** Duration に関わらず Issue 順に完了する — outbox 順序が誤っていることを示唆する。または state collision (一方の plan の step 結果が他方の snapshot に現れる)。
+
+**Blocked の定義。** ルーターが 2 つのクエリのうち 1 つのみで plan-mode をトリガーする。
+
+#### クラス 3: Crash + resume
+
+**目的。** ADR-0023 (step 結果 memoization) と ADR-0025 (sub-loop LLM call memoization) が resume 時に firing するかを検証します。これはクラッシュ耐性の信頼性にとって最も重要な scenario クラスです。
+
+**実行方法。**
+1. 複数ステップの plan を開始する (クラス 1 以上)。
+2. WAL でステップ 1 が `plan_step_completed` を emit するまで待つ。
+3. `reyn chat` プロセスを mid-step-2 で `kill -9` する。
+4. `reyn chat` を再起動する。
+5. Resume 挙動を観測する。
+
+**観測するもの。** (完全な手順は 6.5.5 を参照)
+
+**Verified の定義。** ステップ 1 が resume 時に新しい LLM コストを発生させない (`plan_step_memoized` event が firing する); ステップ 2 が中断地点から再実行される; プランが正しく完了する。
+
+**Refuted の定義。** ステップ 1 が resume 時に LLM コストを再発生させる (`plan_step_memoized` event なし、cost ledger にステップ 1 の呼び出しの新しいエントリ)。
+
+**Blocked の定義。** `_recover_plans_for_agent` が firing しない (ログメッセージが不在) — WAL replay または agent registry restore パスに plan-mode の upstream でバグがあることを示唆する。
+
+#### クラス 4: operator escape hatch
+
+**目的。** `/plan list` / `/plan discard <plan_id>` / `/plan resume <plan_id> --from <step_id>` が live および interrupted な plan に対して正しく動作するかを検証します。
+
+**観測するもの。**
+1. `/plan list` — in-flight plan 中に正しい `plan_id` / step 数 / running/pending 状態を表示するか。
+2. `/plan discard` — タスクをキャンセルし、`plan_aborted` を WAL に書き込み、decomposition artifact と snapshot を削除し、outbox 通知を送るか。
+3. `/plan resume --from <step_id>` — 指定したステップから再実行し、それ以前のステップが memo-replay され (LLM コストなし)、最終 output が再実行ステップを反映するか。
+
+**Verified の定義。** 各コマンドが期待される WAL エントリと outbox 状態変化を生産する。
+
+**Refuted の定義。** `/plan discard` が decomposition artifact を削除しない — stale artifact ghost のリスク (6.5.6 anti-pattern を参照)。
+
+#### クラス 5: long-tail step (> 32 KB output)
+
+**目的。** ステップが 32 KB を超える output を生産したときに、ADR-0024 step 結果スピルがデータロスなしにトリガーされるかを検証します。
+
+**実行方法。** 大きなテキスト output を合成するステップを構築します (例: 「`src/` 以下の全ファイルがエクスポートするシンボルを列挙してください」 — 中規模コードベースで通常 > 32 KB)。
+
+**観測するもの。**
+1. Snapshot に `step_results.<step_id>` ではなく `step_result_refs.<step_id>` が現れるか?
+2. `state/plans/<plan_id>/step_results/<step_id>.txt` が存在し、truncation なしに完全な output を含むか?
+3. Downstream の集約ステップが完全なコンテンツを受け取るか (= `get_step_result` による透過的解決)?
+
+**Verified の定義。** `step_result_refs` が populated; スピルファイルが存在する; downstream ステップのコンテンツがスピルファイル内にのみ存在するコンテンツを参照している (= truncation なし)。
+
+**Refuted の定義。** 32 KB 超にもかかわらず output が snapshot に inline で現れる — スピルがトリガーされなかった。または: スピルファイルが存在するが downstream ステップが truncated なバージョンを受け取った。
+
+---
+
+### 6.5.5 Memo ヒット検証手順
+
+これは ADR-0023 (step 結果 memoization) と ADR-0025 (sub-loop LLM call memoization) の両方が resume 時に正しく replay されることを確認するための step-by-step 手順です。クラス 3 scenario を実行するときにこの手順を実行します。
+
+**ステップ 1: plan を完走させる (baseline)。**
+
+クリーンな state directory から開始します (`state/plans/` が空または active plan を含まない)。複数ステップの plan (3 ステップ以上推奨) を実行し、完走させます。以下を記録します:
+- WAL または `/plan list` からの `plan_id`。
+- `python scripts/dogfood_trace.py --mode cost` の cost ledger output (新鮮な実行の LLM コストを比較用にキャプチャ)。
+
+**ステップ 2: 同じクエリを再実行し、mid-step-2 で kill する。**
+
+同じクエリを再実行します。これで新しい `plan_id` を持つ新しいプランが開始されます。WAL でステップ 1 (`s1`) の `plan_step_completed` を監視します。これが現れたら即座にプロセスを `kill -9` します。ステップ 2 (`s2`) は進行中または未開始のはずです。
+
+**ステップ 3: `reyn chat` を再起動する。**
+
+Resume パスは起動時に自動的にトリガーされます。ログ出力を観察します:
+```
+_recover_plans_for_agent fired for agent <name>, plan_id <id>
+```
+このメッセージが不在の場合、WAL replay または agent registry restore パスに plan-mode の upstream で問題があります — prior-layer のバグとして report します。
+
+**ステップ 4: per-plan snapshot を開く。**
+
+```bash
+cat state/plans/<plan_id>.snapshot.json | python -m json.tool
+```
+
+以下を確認します:
+- `step_results.s1` (inline) **または** `step_result_refs.s1` (スピル) がステップ 1 の最初の実行結果で populated されている。
+- `step_llm_calls.s1` が sub-loop の記録された LLM call エントリで populated されている。
+
+どちらかが不在の場合、kill 前に snapshot がコミットされませんでした — kill タイミングが早すぎました。より長いステップで再試行します。
+
+**ステップ 5: events log で `plan_step_memoized` を監視する。**
+
+再起動後、そのプランの events log を観察します:
+
+```bash
+python scripts/dogfood_trace.py --mode plan-trace <plan_id>
+```
+
+`s1` に対して (`plan_step_completed` ではなく) `plan_step_memoized` が現れることを確認します。区別:
+- `plan_step_completed` = ステップが新鮮に実行された。
+- `plan_step_memoized` = ステップが LLM 呼び出しなしに snapshot から replay された。
+
+代わりに `s1` に対して `plan_step_completed` が現れた場合、memo replay が firing しませんでした — ステップ 1 が再実行され、新しい LLM コストが発生しています。
+
+**ステップ 6: s1 内の sub-loop 呼び出しに対して `plan_step_llm_memoized` を監視する。**
+
+ステップ 1 が複数の sub-loop ターン (= ステップ executor 内の複数の LLM 呼び出し) を含む場合、kill 前に記録された各 sub-loop LLM 呼び出しが resume 時に `plan_step_llm_memoized` を emit するはずです。これが ADR-0025 のメカニズムです — ステップが部分的にしか完了していない場合でも、sub-loop の LLM コストの再支払いを防ぎます。
+
+**ステップ 7: s1 に追加 LLM コストがないことを確認する。**
+
+Resume 完了後、`python scripts/dogfood_trace.py --mode cost` を実行します。Resume された plan の cost ledger は以下を示すはずです:
+- ステップ 1 (`s1`): $0.00 (または 0 tokens) — memo ヒット。
+- ステップ 2 以降 (`s2`...): 新鮮なコスト — これらは再実行された。
+
+`s1` が非ゼロコストを示す場合、ステップ 1 の memoization が firing しませんでした。これは HIGH バグです: クラッシュ耐性の主張が満たされていません。
+
+**ステップ 8: plan が正しく完了することを確認する。**
+
+Resume された plan は baseline 実行 (ステップ 1) と同じ最終 output で完了するはずです。Output が実質的に異なる場合 (単なる空白 / トークンサンプリングの分散ではなく)、memo replay がデータの破損を導入しています。CRITICAL として report します。
+
+---
+
+### 6.5.6 Plan-mode 特有の patterns / anti-patterns
+
+このセクションはセクション 4 の patterns / anti-patterns を plan-mode 固有のケースに拡張します。skill-side の layer-by-layer パターンと downstream symptom パターンについてはセクション 4 を参照してください — それらは equally here に適用されます。
+
+#### Pattern: multi-plan の completion 順序は設計によるもの、偶然ではない
+
+2 つのプランが in-flight で、短い方が先に完了した場合、outbox の順序は**正しい挙動**です — タイミングの偶然ではありません。各 `kind=agent` メッセージの `meta.plan_id` タグが、順序が issue 順と異なる場合でも UI が正しいプランに output を帰属させるためのメカニズムです。
+
+scenario 設計への示唆: クラス 2 (concurrent plans) を実行する際、outbox メッセージの `meta.plan_id` 値を明示的に確認します。どのプランがどの output を生産したかを位置だけで判断しないでください。`meta.plan_id` 帰属なしに plan output を混在して表示する UI は UX バグです。Plan-mode のバグではありません。
+
+#### Pattern: 32 KB 閾値の境界で spill vs inline が混在するのは正常
+
+ステップ結果が snapshot に inline で入るか、ファイルにスピルするかは、書き込み時の output サイズで決まります。両方のパスが正しいです。あるステップがスピルし、別のステップが inline に収まるテスト batch は inconsistency のサインではありません — シナリオの実際の output サイズ分布を反映しているだけです。
+
+> 32 KB の output を生産するためにシナリオを意図的に構築した場合 (クラス 5) 以外は、「このステップは必ずスピルしなければならない」という特別ケースのアサーションを追加しないでください。汎用シナリオでは両方を有効なアウトカムとして扱い、downstream ステップがパスに関わらず正しいコンテンツを受け取ったかのみを確認します。
+
+#### Anti-pattern: `plan_step_failed` をハードエラーとして扱う
+
+Per-step の失敗は plan runtime によってキャッチされ記録されます。プランは後続のステップの実行を継続します (= 失敗したステップの output が downstream ステップに必要な場合を除く)。WAL で `plan_step_failed` が見つかった dogfood finding は**自動的に HIGH バグではありません** — 以下によります:
+1. 失敗が期待されていたか (ステップのクエリに有効な回答がなかった)。
+2. Downstream ステップが欠落した入力を gracefully に処理したか。
+3. 最終集約ステップが失敗にもかかわらず coherent な output を生産したか。
+
+`plan_step_failed` が現れた場合、severity をエスカレートする前に graceful degradation を確認します。プランが失敗を認識した coherent な output で完了した場合、severity は MED (劣化しているが壊れていない) です。プランが失敗を surfacing せずに誤った集約 output をサイレントに生産した場合、severity は HIGH (データ正確性の問題) です。
+
+cross-ref: これはセクション 4 の「downstream symptom のマスキング」の plan-mode 版です — 可視的な失敗 event が常に root-cause の finding とは限りません。
+
+#### Anti-pattern: stale decomposition artifact での再実行
+
+以前の実行の `state/plans/<plan_id>/decomposition.json` が残っている場合 (例: cleanly 完了しなかった `/plan discard` の後、または artifact が削除される前の手動 kill の後)、resume coordinator は新しい実行の `plan_id` に対して古いプラン形状を replay しようとします。結果は予測不能です: step ID が一致しない場合があり、memoization が誤ったステップに対して firing する場合があり、coordinator が corrupt artifact の通知でプランを完全に discard する場合があります。
+
+**フレッシュスタートシナリオを行使する batch 間は、`state/plans/` を完全にクリーンにしてください:**
+
+```bash
+rm -rf .reyn/state/plans/
+```
+
+これはクラス 3 (crash + resume) またはクラス 5 (long-tail) のシナリオを実行する前に必須です。それ以前の中断実行が artifact を残している場合。Batch 間に実行することは安全です — クリーンアップ後、WAL は削除された artifact を参照しません。
+
+---
+
+### 6.5.7 Plan-mode 向けの calibration 調整
+
+セクション 5 は 4 区分 outcome 分類 (verified / inconclusive / refuted / blocked) と一般的な base rate を確立します。Plan-mode batch では、各 batch の実行前に 3 つの per-scenario バイナリ予測を追加します。
+
+**バイナリ予測 1: 「Resume 時に memo が firing する」(クラス 3 scenario)**
+
+これはテスト可能なバイナリ主張です。次のように表現します: 「ステップ 1 完了後の mid-step-2 での kill-9 の後、resume 時にステップ 1 に対して `plan_step_memoized` が現れる。」
+
+最初の plan-mode batch の suggested prior: 60% verified (= メカニズムは存在するが、kill タイミングがコミットウィンドウを見逃す場合があり、blocked になる可能性がある)。そこからキャリブレートします。
+
+**バイナリ予測 2: 「Multi-plan の completion 順序が issue 順ではなく duration 順になる」(クラス 2 scenario)**
+
+次のように表現します: 「短い duration の plan の `kind=agent` メッセージが長い duration の plan より前に outbox に現れる。」
+
+Suggested prior: 70% verified (= 設計がこれを保証するが、並行 LLM タイミングにより両プランが 1 秒以内に完了して順序が曖昧になる場合がある)。「inconclusive」は両プランが 1 秒以内に完了する場合のアウトカムです。
+
+**バイナリ予測 3: 「手動介入なしに 32 KB スピルがトリガーされる」(クラス 5 scenario)**
+
+次のように表現します: 「32 KB 超の output を生産するステップが snapshot に `step_result_refs` を emit し、スピルファイルが `state/plans/<plan_id>/step_results/<step_id>.txt` に存在する。」
+
+Suggested prior: 75% verified (= 決定論的な閾値だが、特定のシナリオで LLM が確実に > 32 KB を生産するように構築するには、LLM の output verbosity の事前知識が必要であり、これは変動する)。
+
+**Plan-mode 予測の Brier スコアリング。**
+
+これら 3 つのバイナリをセクション 5 と同じ Brier 式で batch ごとにスコアリングします。Skill-side の予測と別々に追跡します — plan-mode と skill-side は異なる base rate プロファイルを持ち、十分なデータが揃うまでプールすべきではありません。
+
+Plan-mode batch の期待 Brier score 軌跡 (skill-side batch 7〜9 との構造的アナロジーによる rough prior):
+- Batch 1 (plan-mode): 0.7〜0.9 (観測面が馴染みなく、kill タイミングが不安定)
+- Batch 2〜3 (plan-mode): 0.3〜0.5 (観測面を習得し、kill タイミングを練習)
+- Batch 4 以降 (plan-mode): 9 原則を一貫して適用すれば 0.2〜0.3
+
+---
+
+### 6.5.8 やってはいけないこと (scope の discipline)
+
+Plan-mode は**チャットルーター側の機能**です。そのスコープは、単一エージェントの runtime 内でのプランの dispatch / execution / memoization / resume です。Skill-side dogfood やマルチエージェント連携と混同しないでください。
+
+**Sub-loop のツールオペレーション memoization 期待をテストしない。**
+
+ADR-0023 §3.4 はツールオペレーション (= 非 LLM ツール dispatch) の memoization を plan resume 設計から明示的に defer しています。Plan のステップが resume するとき、その sub-loop のツール dispatch (例: ファイル読み込み / workspace 書き込み) は**再実行します** — これは documented な設計であり、バグではありません。「ファイル読み込みが resume 時に繰り返された」という dogfood finding は `verified` (正しい挙動) と分類すべきです。バグではありません。
+
+この期待のテストは plan-mode dogfood スコープ外です。ツールオペレーションの再実行下での idempotency を検証したい場合、それは特定のツールオペレーションを対象とした別の skill-side scenario に属します。
+
+**Plan がユーザーターン間で状態を共有することを期待しない。**
+
+プランのスコープは、それをトリガーしたユーザーの単一ターンです (`/plan resume` 経由で明示的に resume された場合を除く)。あるプランのステップによって書き込まれた状態は、次のユーザーターンにトリガーされた後続のプランに自動的には利用できません。各プランは独自の `plan_id` / snapshot / decomposition artifact を持ちます。
+
+あるターンから次のターンへ状態が引き継がれているように見える場合、あるプランのステップが workspace ファイル (= P5 SSoT) に書き込み、別のプランがそれを読んでいないか調査してください — これは正しく期待される動作です。プラン内部の状態 (snapshot / decomposition) が共有されているように見える場合、それはバグです。
+
+**LLM が plan-mode を実際に呼び出すかどうかを必ず観測する。**
+
+これは plan-mode dogfood で最もよく見逃されるポイントです。ルーター LLM が `plan` ツールを呼び出さない場合、クエリがどれほど複雑でも、あなたのシナリオは plan-mode をテストしていません。plan-mode 固有の finding を分析する前に、`REYN_LLM_TRACE_DUMP` でルーターのターンに `plan` ツール呼び出しが含まれることを確認します。含まれない場合、そのシナリオは plan-mode ではなく skill-side のルーティングシナリオです。
+
+複数のクエリ表現を試みても一貫して plan-mode をトリガーできない場合、仮説を立てる前に原則 4 (観測 infra) を適用します。ルーターの system prompt と tool schema を dump し、`plan` ツールが存在することを確認し、ルーターが何を受け取ったかを確認します。セッション設定によってはルーターのカタログに `plan` ツールが含まれていない場合があります。
+
+---
+
 ## 7. 新規 dogfooder 向け quickstart
 
 ### 新 batch 開始時 — checklist

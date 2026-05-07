@@ -461,6 +461,331 @@ Reyn's three tools (`REYN_LLM_TRACE_DUMP`, `dogfood_trace.py`, `llm_replay.py`) 
 
 ---
 
+## 6.5 Plan-mode dogfood specifics
+
+> **This section applies once plan-mode is in your test scope.** The nine principles in Section 3 still apply without modification. What changes is the observation axis: plan-mode introduces async dispatch, concurrent in-flight plans, and memo replay on resume — surfaces that skill-side dogfood never exercises.
+
+---
+
+### 6.5.1 Why plan-mode needs special discipline
+
+Skill-side dogfood verifies that a skill's phase graph executes correctly under the LLM's probabilistic decisions. Plan-mode adds three qualitatively different concerns:
+
+**Async dispatch and completion ordering.** A plan runs as a background `asyncio.Task`. The user can issue new messages while the plan is in flight. Multiple plans can overlap. Outbox messages land in completion order, not user-issue order. These properties are invisible in skill-side traces — they only surface when you deliberately run concurrent plans and observe the outbox.
+
+**Memo replay on resume.** The value of crash resilience (ADR-0023 + ADR-0025) is not testable by reading code. It requires killing a process mid-step, restarting, and confirming that completed steps produce zero additional LLM cost and identical outputs. This is a distinct observation path from any skill-side test.
+
+**Router-side LLM invocation.** Plan-mode is triggered by the chat router LLM choosing the `plan` tool. Unlike skill-side dogfood — where the user controls which skill is invoked — plan-mode depends on the router LLM deciding, probabilistically, that decomposition is warranted. A scenario that is "complex enough" by human judgment may still not trigger plan-mode if the router LLM consistently prefers direct answers. This makes plan invocation itself an observation point, not an assumption.
+
+The principles in Section 3 still apply — in particular Principle 4 (build observation infrastructure first), Principle 6 (verify-first / reproduce-first), and Principle 3 (one hypothesis, one fix) — but the specific observation surfaces differ from skill-side dogfood.
+
+---
+
+### 6.5.2 New observation surfaces
+
+Plan-mode produces durable state across six distinct locations. Each has a different purpose and a different decay lifecycle.
+
+| Surface | Where | What to look for |
+|---|---|---|
+| WAL | `state/wal.jsonl` | `plan_started` / `plan_completed` / `plan_aborted` / `plan_step_started` / `plan_step_completed` / `plan_step_failed` — the resume substrate |
+| Events log (forensic-only) | `events/<caller>/...` | `plan_emitted` / `plan_aggregated` / `plan_run_interrupted` / `plan_step_memoized` / `plan_step_memo_failed` / `plan_step_llm_memoized` |
+| Per-plan snapshot | `state/plans/<plan_id>.snapshot.json` | `step_results` / `step_result_refs` / `step_llm_calls` — the durable cache that drives resume |
+| Spilled step results | `state/plans/<plan_id>/step_results/<step_id>.txt` | ADR-0024 — only outputs > 32 KB spill; inline otherwise |
+| Spilled LLM call records | `state/plans/<plan_id>/step_llm_calls/<step_id>/<turn_idx>.json` | ADR-0025 — only > 32 KB results spill |
+| Outbox (= UI / TUI) | `session.outbox` queue, also visible in chat REPL | `kind=status` per-step progress narration; `kind=agent` terminal text with `meta.plan_id` |
+| Running tasks | `session.running_plans: dict[plan_id, asyncio.Task]` | shown via `/plan list` slash command |
+
+**Reading discipline for each surface:**
+
+- **WAL first.** The WAL is the primary resume substrate and the fastest surface to read. If a step is claimed to have completed, `plan_step_completed` must be present. If it is not, the step never committed — the snapshot may contain stale data.
+- **Snapshot second.** The snapshot is what the resume coordinator reads. Confirm `step_results` (inline) or `step_result_refs` (spilled) are populated for the steps you expect to be memoized.
+- **Events log for causality.** `plan_step_memoized` and `plan_step_llm_memoized` confirm that the memo path fired, not just that the result is present. Use the events log only for this forensic use — not for operational checks.
+- **Outbox for user-facing correctness.** The outbox is what the user sees. `meta.plan_id` tagging is what distinguishes concurrent plan outputs. Verify that each plan's terminal text carries the right `plan_id`.
+
+---
+
+### 6.5.3 Tooling cheat sheet
+
+The `dogfood_trace.py` utility exposes plan-specific modes alongside the existing skill-side modes.
+
+```bash
+# Plan-mode summary (= count plans, memo hits, max concurrent)
+python scripts/dogfood_trace.py --mode plan-summary
+
+# Per-plan timeline (= WAL + events log + outbox for one plan_id)
+python scripts/dogfood_trace.py --mode plan-trace <plan_id>
+
+# Per-plan workspace dump (= decomposition + snapshot + spilled files)
+python scripts/dogfood_trace.py --mode plan-snapshot <plan_id>
+
+# Cost mode now includes memo savings estimate
+python scripts/dogfood_trace.py --mode cost
+```
+
+> Note: `--mode plan-summary`, `plan-trace`, and `plan-snapshot` are being added in the same prep wave as this section. If not yet landed, treat this as forward-looking documentation. Write scenarios that exercise the surfaces above using manual WAL / snapshot inspection until the modes land.
+
+For the existing skill-side modes, see Section 6. The `--mode cost` output is shared — it includes both skill-side and plan-side LLM call costs, with memo savings broken out separately when plan resumptions have fired.
+
+The attractor detector (`scripts/detect_attractor.py`) is useful for plan-mode too: run it against the sub-loop's trace dump to catch empty-stop or enum violation attractors inside individual step executions.
+
+```bash
+REYN_LLM_TRACE_DUMP=plan_trace.jsonl reyn chat
+python scripts/detect_attractor.py --root .reyn/  # catches step-level attractors
+```
+
+---
+
+### 6.5.4 Plan-mode-specific scenario design
+
+For batch design (A1 step), plan-mode requires deliberately constructed scenarios that exercise its distinct properties. Five scenario classes cover the main risk surface:
+
+#### Class 1: Multi-source synthesis (long-step)
+
+**Purpose.** Verify that the router LLM actually invokes plan-mode for a query that warrants it — and that the decomposition and aggregation are coherent.
+
+**Example query.** "Compare the README and CLAUDE.md and summarize the key differences for a new contributor."
+
+**What to observe.**
+1. Does the router LLM call the `plan` tool? (Check `REYN_LLM_TRACE_DUMP` for a `plan` tool call in the router's turn.)
+2. Is the decomposition well-formed (2–7 steps, no circular dependencies)?
+3. Does the terminal aggregator step produce a coherent answer that cites both sources?
+
+**Verified.** Router calls `plan`; decomposition is present at `state/plans/<plan_id>/decomposition.json`; outbox receives a `kind=agent` message with `meta.plan_id`; content references both documents.
+
+**Refuted.** Router answers directly without calling `plan`. This is not a bug (the router may legitimately decide direct answer is better), but it means your scenario is not testing plan-mode. Revise the query to be more explicitly multi-source.
+
+**Blocked.** Router errors before producing any tool call. Treat as a prior-layer bug, not a plan-mode finding.
+
+#### Class 2: Concurrent plans (multi-plan UX)
+
+**Purpose.** Verify that multiple in-flight plans produce correctly tagged outbox output in completion order, not issue order.
+
+**Execution.** Issue two user prompts back-to-back (before either plan completes) — one short plan (2 steps), one longer plan (5 steps). Observe outbox ordering.
+
+**What to observe.**
+1. Does the outbox receive two separate `meta.plan_id`-tagged final messages?
+2. Does the shorter plan's message arrive before the longer plan's — regardless of which was issued first?
+3. Does `/plan list` show both plans as active before either completes?
+
+**Verified.** Two distinct `plan_id` values; shorter plan's `kind=agent` message arrives first; both plans complete without state collision.
+
+**Refuted.** Plans complete in issue order regardless of duration — suggests outbox ordering is incorrect. Or: state collision (one plan's step results appear in the other's snapshot).
+
+**Blocked.** Router only triggers plan-mode for one of the two queries.
+
+#### Class 3: Crash + resume
+
+**Purpose.** Verify ADR-0023 (step-result memoization) and ADR-0025 (sub-loop LLM call memoization) fire on resume. This is the most important scenario class for crash resilience confidence.
+
+**Execution.**
+1. Start a multi-step plan (Class 1 or longer).
+2. Wait for step 1 to emit `plan_step_completed` in the WAL.
+3. `kill -9` the `reyn chat` process mid-step-2.
+4. Restart `reyn chat`.
+5. Observe resume behavior.
+
+**What to observe.** (See 6.5.5 for full procedure.)
+
+**Verified.** Step 1 does not incur new LLM cost on resume (`plan_step_memoized` event fires); step 2 re-executes from its interrupted point; the plan completes correctly.
+
+**Refuted.** Step 1 re-incurs LLM cost on resume (no `plan_step_memoized` event, new entries in cost ledger for step 1's calls).
+
+**Blocked.** `_recover_plans_for_agent` does not fire (log message absent) — suggests the WAL replay or agent registry restore path has a bug upstream of plan-mode.
+
+#### Class 4: Operator escape hatch
+
+**Purpose.** Verify `/plan list`, `/plan discard <plan_id>`, and `/plan resume <plan_id> --from <step_id>` operate correctly on live and interrupted plans.
+
+**What to observe.**
+1. `/plan list` — shows correct `plan_id`, step counts, and running/pending state during an in-flight plan.
+2. `/plan discard` — cancels the task, writes `plan_aborted` to WAL, removes decomposition artifact and snapshot, sends outbox notice.
+3. `/plan resume --from <step_id>` — re-executes from the specified step; earlier steps memo-replay; final output reflects the re-run step.
+
+**Verified.** Each command produces the expected WAL entry and outbox state change.
+
+**Refuted.** `/plan discard` does not remove the decomposition artifact — risk of stale artifact ghost (see 6.5.6 anti-pattern).
+
+#### Class 5: Long-tail step (> 32 KB output)
+
+**Purpose.** Verify ADR-0024 step-result spill triggers without data loss when a step produces output exceeding 32 KB.
+
+**Execution.** Construct a step that synthesizes a large text output (e.g., "list all symbols exported by every file in `src/`" — typically > 32 KB for a medium-size codebase).
+
+**What to observe.**
+1. Does `step_result_refs.<step_id>` appear in the snapshot (rather than `step_results.<step_id>`)?
+2. Does `state/plans/<plan_id>/step_results/<step_id>.txt` exist and contain the full output without truncation?
+3. Does the downstream aggregator step receive the full content (= transparent resolution via `get_step_result`)?
+
+**Verified.** `step_result_refs` populated; spilled file exists; downstream step content references content only present in the spilled file (= no truncation).
+
+**Refuted.** Output appears inline in snapshot despite being > 32 KB — spill did not trigger. Or: spilled file exists but downstream step received a truncated version.
+
+---
+
+### 6.5.5 Memo hit verification procedure
+
+This is the step-by-step procedure for confirming that both ADR-0023 (step-result memoization) and ADR-0025 (sub-loop LLM call memoization) replay correctly on resume. Run this procedure when executing a Class 3 scenario.
+
+**Step 1: Run a plan to completion (baseline).**
+
+Start with a clean state directory (`state/plans/` empty or containing no active plans). Run a multi-step plan (3+ steps recommended) and allow it to complete cleanly. Record:
+- The `plan_id` from the WAL or `/plan list`.
+- The cost ledger output from `python scripts/dogfood_trace.py --mode cost` (captures fresh-run LLM cost for comparison).
+
+**Step 2: Run the same query; kill mid-step-2.**
+
+Re-run the same query. This starts a new plan with a new `plan_id`. Watch the WAL for `plan_step_completed` for step 1 (`s1`). Once it appears, `kill -9` the process immediately. Step 2 (`s2`) should be in progress or not yet started.
+
+**Step 3: Restart `reyn chat`.**
+
+The resume path triggers automatically on startup. Observe the log output for:
+```
+_recover_plans_for_agent fired for agent <name>, plan_id <id>
+```
+If this message is absent, the WAL replay or agent registry restore path has a problem upstream of plan-mode — file a prior-layer bug.
+
+**Step 4: Open the per-plan snapshot.**
+
+```bash
+cat state/plans/<plan_id>.snapshot.json | python -m json.tool
+```
+
+Confirm:
+- `step_results.s1` (inline) **or** `step_result_refs.s1` (spilled) is populated with the result from step 1's first run.
+- `step_llm_calls.s1` is populated with the sub-loop's recorded LLM call entries.
+
+If either is absent, the snapshot did not commit before the kill — the kill timing was too early. Re-try with a longer step.
+
+**Step 5: Watch for `plan_step_memoized` in events log.**
+
+After restart, observe the events log for the plan:
+
+```bash
+python scripts/dogfood_trace.py --mode plan-trace <plan_id>
+```
+
+Confirm `plan_step_memoized` appears for `s1` (not `plan_step_completed`). The distinction:
+- `plan_step_completed` = step executed fresh.
+- `plan_step_memoized` = step was replayed from snapshot without LLM calls.
+
+If `plan_step_completed` appears for `s1` instead, memo replay did not fire — step 1 re-executed, incurring fresh LLM cost.
+
+**Step 6: Watch for `plan_step_llm_memoized` for sub-loop calls within s1.**
+
+If step 1 involved multiple sub-loop turns (= multiple LLM calls within the step executor), each sub-loop LLM call that was recorded before the kill should emit `plan_step_llm_memoized` on resume. This is the ADR-0025 mechanism — it prevents re-paying sub-loop LLM cost even when a step was only partially completed.
+
+**Step 7: Confirm no additional LLM cost for s1.**
+
+Run `python scripts/dogfood_trace.py --mode cost` after the resume completes. The cost ledger for the resumed plan should show:
+- Step 1 (`s1`): $0.00 (or 0 tokens) — memo hit.
+- Step 2+ (`s2`...): fresh cost — these re-executed.
+
+If `s1` shows non-zero cost, memoization did not fire for step 1. This is a HIGH bug: the crash resilience claim is not upheld.
+
+**Step 8: Verify plan completes correctly.**
+
+The resumed plan should complete with the same terminal output as the baseline run (Step 1). If the output differs materially (not just whitespace / token sampling variance), the memo replay introduced data corruption. File as CRITICAL.
+
+---
+
+### 6.5.6 Common patterns / anti-patterns specific to plan-mode
+
+This section extends Section 4's patterns and anti-patterns to plan-mode-specific cases. See Section 4 for the skill-side layer-by-layer and downstream symptom patterns, which apply equally here.
+
+#### Pattern: multi-plan completion order is correct by design, not coincidence
+
+When two plans are in flight and the shorter one completes first, the outbox ordering is **correct behavior** — not a timing coincidence. The `meta.plan_id` tag on each `kind=agent` message is the mechanism for the UI to attribute output to the correct plan even when ordering differs from issue order.
+
+Implication for scenario design: when running Class 2 (concurrent plans), explicitly verify the `meta.plan_id` values in the outbox messages. Do not rely on position alone to determine which plan produced which output. A UI that shows plan outputs in a mixed order without `meta.plan_id` attribution is a UX bug, not a plan-mode bug.
+
+#### Pattern: spill-vs-inline crossing the 32 KB threshold mid-run is normal
+
+Whether a step result lands inline in the snapshot or spills to a file is determined by the step's output size at the time it is written. Both paths are correct. A test batch in which some steps spill and others do not is not a sign of inconsistency — it reflects the actual output size distribution of the scenarios.
+
+Do not add special-case assertions for "this step must spill" unless you have constructed the scenario specifically to produce > 32 KB output (Class 5). For general-purpose scenarios, treat both as valid outcomes and verify only that the downstream step received the correct content regardless of path.
+
+#### Anti-pattern: treating `plan_step_failed` as a hard error
+
+Per-step failures are caught and recorded by the plan runtime. The plan continues to execute subsequent steps (unless the failed step's output is required by a downstream step). A dogfood finding that surfaces `plan_step_failed` in the WAL is **not automatically a HIGH bug** — it depends on whether:
+1. The failure was expected (the step's query had no valid answer).
+2. The downstream steps gracefully handled the missing input.
+3. The final aggregator produced a coherent output despite the failure.
+
+When `plan_step_failed` appears, verify graceful degradation before escalating severity. If the plan completes with a coherent output that acknowledges the failure, severity is MED (degraded, not broken). If the plan silently produces an incorrect aggregated output without surfacing the failure, severity is HIGH (data correctness issue).
+
+Cross-ref: this is the plan-mode analog of "downstream symptom masking" in Section 4 — a visible failure event is not always the root-cause finding.
+
+#### Anti-pattern: re-running with a stale decomposition artifact
+
+If `state/plans/<plan_id>/decomposition.json` lingers from a previous run (e.g., after a `/plan discard` that did not complete cleanly, or after a manual kill before the artifact was removed), the resume coordinator will attempt to replay the old plan shape for the new run's `plan_id`. The result is unpredictable: step IDs may not match, memoization may fire for the wrong steps, or the coordinator may discard the plan entirely with a corrupt-artifact notice.
+
+**Between batches that exercise fresh-start scenarios, clean `state/plans/` completely:**
+
+```bash
+rm -rf .reyn/state/plans/
+```
+
+This is mandatory before running Class 3 (crash + resume) or Class 5 (long-tail) scenarios if any prior interrupted run left artifacts behind. It is safe to run between batches — the WAL will not reference the removed artifacts after cleanup.
+
+---
+
+### 6.5.7 Calibration adjustments for plan-mode
+
+Section 5 establishes the four-category outcome classification (verified / inconclusive / refuted / blocked) and the general base rates. For plan-mode batches, add three per-scenario binary predictions before executing each batch:
+
+**Binary prediction 1: "Memo will fire on resume" (Class 3 scenario)**
+
+This is a testable binary claim. Express it as: "Given a kill-9 mid-step-2 after step-1 completion, `plan_step_memoized` will appear for step 1 on resume."
+
+Suggested prior for first plan-mode batch: 60% verified (= the mechanism exists but the kill timing may miss the commit window, causing blocked). Calibrate from there.
+
+**Binary prediction 2: "Multi-plan completion order matches duration order, not issue order" (Class 2 scenario)**
+
+Express as: "The shorter-duration plan's `kind=agent` message will appear in the outbox before the longer-duration plan's."
+
+Suggested prior: 70% verified (= the design guarantees this, but concurrent LLM timing may produce near-simultaneous completions where the order is ambiguous within a narrow window). The "inconclusive" outcome is when both plans complete within one second of each other.
+
+**Binary prediction 3: "32 KB spill triggers without manual intervention" (Class 5 scenario)**
+
+Express as: "A step producing > 32 KB output will emit `step_result_refs` in the snapshot, and the spilled file will exist at `state/plans/<plan_id>/step_results/<step_id>.txt`."
+
+Suggested prior: 75% verified (= deterministic threshold, but constructing a step that reliably produces > 32 KB on a given scenario requires knowing the LLM's output verbosity, which varies).
+
+**Brier scoring plan-mode predictions.**
+
+Score these three binaries per batch using the same Brier formula as Section 5. Track them separately from the skill-side predictions — plan-mode and skill-side have different base rate profiles and should not be pooled until you have enough data to confirm they behave similarly.
+
+Expected Brier score trajectory for plan-mode batches (rough prior based on structural analogy with skill-side batches 7–9):
+- Batch 1 (plan-mode): 0.7–0.9 (observation surfaces unfamiliar, kill timing unreliable)
+- Batch 2–3 (plan-mode): 0.3–0.5 (observation surfaces learned, kill timing practiced)
+- Batch 4+ (plan-mode): 0.2–0.3 if the nine principles are applied consistently
+
+---
+
+### 6.5.8 What NOT to do (scope discipline)
+
+Plan-mode is a **chat-router-side feature**. Its scope is the dispatch, execution, memoization, and resume of plans within a single agent's runtime. Do not conflate with skill-side dogfood or with multi-agent coordination.
+
+**DO NOT test sub-loop tool-op memoization expectations.**
+
+ADR-0023 §3.4 explicitly defers tool-op (= non-LLM tool dispatch) memoization from the plan resume design. When a plan step resumes, its sub-loop's tool dispatches (e.g., file reads, workspace writes) **re-execute** — this is the documented design, not a bug. A dogfood finding that observes "file read was repeated on resume" should be classified as `verified` (correct behavior), not as a bug.
+
+Testing this expectation falls outside plan-mode dogfood scope. If you want to verify tool-op idempotency under re-execution, that belongs in a separate skill-side scenario targeting the specific tool op.
+
+**DO NOT expect plans to share state across user turns.**
+
+A plan's scope is the single user turn that triggered it (unless explicitly resumed via `/plan resume`). State written by one plan's steps is not automatically available to a subsequent plan triggered by the next user turn. Each plan has its own `plan_id`, its own snapshot, and its own decomposition artifact.
+
+If you observe state appearing to carry over between turns, investigate whether a workspace file (= P5 SSoT) was written by one plan and read by another — this is correct and expected. If plan-internal state (snapshot, decomposition) appears shared, that is a bug.
+
+**DO observe whether plan-mode is invoked by the LLM at all.**
+
+This is the most common plan-mode dogfood miss. If the router LLM never calls the `plan` tool, your scenario is not testing plan-mode regardless of how complex the query is. Before analyzing any plan-mode-specific finding, confirm in `REYN_LLM_TRACE_DUMP` that the router's turn contains a `plan` tool call. If it does not, the scenario is a skill-side routing scenario, not a plan-mode scenario.
+
+If you consistently cannot trigger plan-mode across multiple query formulations, apply Principle 4 (observation infrastructure) before forming hypotheses: dump the router's system prompt and tool schema, confirm the `plan` tool is present, and inspect what the router received. The router may not have the tool in its catalog for a given session configuration.
+
+---
+
 ## 7. Quickstart for new dogfooders
 
 ### Starting a new batch — checklist

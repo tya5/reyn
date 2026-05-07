@@ -14,7 +14,7 @@ Usage:
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl --trace b.jsonl
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl,b.jsonl
 
-    # Time-travel replay modes (new):
+    # Time-travel replay modes:
     python scripts/dogfood_trace.py --mode replay --trace <path> [--scope step|phase|skill_run]
     python scripts/dogfood_trace.py --mode replay --trace <path> --at run_xyz:copy_to_work:3
     python scripts/dogfood_trace.py --mode compare --before <trace_a> --after <trace_b> [--scope phase]
@@ -25,6 +25,11 @@ Usage:
     python scripts/dogfood_trace.py --mode compare \\
         --before .reyn/state/wal.jsonl --before .reyn/llm_trace.jsonl \\
         --after .reyn/state/wal.jsonl.bak --after .reyn/llm_trace.jsonl.bak
+
+    # Plan-mode dogfood modes (ADR-0022/0023/0024/0025 awareness):
+    python scripts/dogfood_trace.py --mode plan-summary
+    python scripts/dogfood_trace.py --mode plan-trace <plan_id>
+    python scripts/dogfood_trace.py --mode plan-snapshot <plan_id>
 """
 from __future__ import annotations
 
@@ -110,6 +115,456 @@ def mode_cost(root: Path) -> None:
     print(f"  Total: ${total_usd:.6f}  |  {total_tokens:,} tokens  |  {len(entries)} calls\n  Per-model:")
     for model, m in sorted(per_model.items(), key=lambda x: -x[1]["usd"]):
         print(f"    {model}: ${m['usd']:.6f}  {m['tokens']:,} tokens  ({m['calls']} calls)")
+
+    # Plan-mode memo savings (ADR-0023 + ADR-0025) — count from events log.
+    evs = _all_events(root)
+    step_memo_hits = sum(1 for e in evs if e.get("type") == "plan_step_memoized")
+    llm_memo_hits = sum(1 for e in evs if e.get("type") == "plan_step_llm_memoized")
+    if step_memo_hits or llm_memo_hits:
+        n_calls = len(entries)
+        avg_usd = (total_usd / n_calls) if n_calls else 0.0
+        avg_tokens = (total_tokens / n_calls) if n_calls else 0
+        saved_usd = llm_memo_hits * avg_usd
+        saved_tokens = llm_memo_hits * avg_tokens
+        print(f"\nPlan-mode memo savings (ADR-0023 + ADR-0025):")
+        print(f"  step-result memoizations:  {step_memo_hits} events  (= step memo replay)")
+        print(f"  LLM-call memoizations:     {llm_memo_hits} events  (= sub-loop LLM memo replay)")
+        print(f"  estimated saved cost:      ${saved_usd:.4f}   (= {llm_memo_hits} LLM-call hits × ${avg_usd:.5f} avg)")
+        print(f"  estimated saved tokens:    ~{int(saved_tokens):,}    (= {llm_memo_hits} hits × {int(avg_tokens):,} avg per call)")
+
+
+# ---------------------------------------------------------------------------
+# Plan-mode dogfood modes (ADR-0022/0023/0024/0025)
+# ---------------------------------------------------------------------------
+
+_PLAN_WAL_KINDS = {
+    "plan_started", "plan_completed", "plan_aborted",
+    "plan_step_started", "plan_step_completed", "plan_step_failed",
+}
+_PLAN_FORENSIC_KINDS = {
+    "plan_emitted", "plan_aggregated", "plan_run_interrupted",
+    "plan_step_memoized", "plan_step_memo_failed", "plan_step_llm_memoized",
+}
+_ALL_PLAN_KINDS = _PLAN_WAL_KINDS | _PLAN_FORENSIC_KINDS
+
+
+def _load_wal(root: Path) -> list[dict]:
+    """Load WAL events from state/wal.jsonl, normalised to events-log shape.
+
+    Real WAL entries (per ``state_log.append``) have a flat structure:
+
+        {"seq": 42, "ts": "...", "kind": "plan_started", "plan_id": "ab12",
+         "goal": "...", "n_steps": 3, ...fields}
+
+    Events-log entries are nested:
+
+        {"type": "plan_step_started", "timestamp": "...",
+         "data": {"plan_id": "ab12", ...}}
+
+    This normalisation reshapes WAL entries into the events-log layout
+    (``type`` + ``timestamp`` + ``data``) so downstream code can handle
+    both uniformly. The original raw dict is preserved under
+    ``data["_wal_raw"]`` for callers that need it.
+    """
+    raw_entries = _load_jsonl(root / "state" / "wal.jsonl")
+    normalised: list[dict] = []
+    _META_KEYS = {"seq", "ts", "kind"}
+    for raw in raw_entries:
+        kind = raw.get("kind", "")
+        ts = raw.get("ts", "") or raw.get("timestamp", "")
+        # Pull every non-meta key into data so downstream "data.plan_id"
+        # access works on both shapes.
+        data = {k: v for k, v in raw.items() if k not in _META_KEYS}
+        data["_wal_raw"] = raw  # preserve for any caller that needs the original
+        normalised.append({
+            "type": kind,
+            "timestamp": ts,
+            "data": data,
+            # Keep "kind" too so callers that filter by either key work.
+            "kind": kind,
+        })
+    normalised.sort(key=lambda e: e.get("timestamp", ""))
+    return normalised
+
+
+def _parse_ts(ts: str | None) -> float | None:
+    """Parse ISO8601 timestamp to float seconds since epoch. Returns None on failure."""
+    if not ts:
+        return None
+    try:
+        from datetime import timezone
+        s = ts.replace("Z", "+00:00")
+        try:
+            from datetime import datetime as _dt
+            dt = _dt.fromisoformat(s)
+        except Exception:
+            dt = datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        return dt.timestamp()
+    except Exception:
+        return None
+
+
+def mode_plan_summary(root: Path) -> None:
+    """Aggregate plan-mode telemetry across WAL + events log.
+
+    Combines plan lifecycle from WAL (plan_started/completed/aborted) with
+    forensic events (plan_emitted, plan_aggregated, plan_run_interrupted,
+    plan_step_memoized, plan_step_llm_memoized) from the events log.
+    """
+    wal_evs = _load_wal(root)
+    log_evs = _all_events(root)
+
+    # Separate plan-relevant events from each source.
+    wal_plan = [e for e in wal_evs if e.get("kind") in _ALL_PLAN_KINDS]
+    # Events log uses "type" (not "kind") following the existing mode_chain convention.
+    log_plan = [e for e in log_evs if e.get("type") in _ALL_PLAN_KINDS]
+
+    all_plan_evs = sorted(wal_plan + log_plan, key=lambda e: e.get("timestamp", ""))
+
+    if not all_plan_evs:
+        print("no plan events found (no plan-mode runs recorded)")
+        return
+
+    # Collect per-plan info from WAL (lifecycle source of truth).
+    # WAL entries use "kind" as the event type field.
+    plans_started: dict[str, dict] = {}  # plan_id → {goal, ts, n_steps}
+    plans_completed: dict[str, str] = {}  # plan_id → ts
+    plans_aborted: dict[str, str] = {}   # plan_id → ts
+
+    for e in wal_evs:
+        kind = e.get("kind", "")
+        data = e.get("data", {}) or {}
+        ts = e.get("timestamp", "")
+        pid = data.get("plan_id", "")
+        if not pid:
+            continue
+        if kind == "plan_started":
+            plans_started[pid] = {"goal": data.get("goal", ""), "ts": ts, "n_steps": data.get("n_steps", "?")}
+        elif kind == "plan_completed":
+            plans_completed[pid] = ts
+        elif kind == "plan_aborted":
+            plans_aborted[pid] = ts
+
+    # Forensic-only: plan_run_interrupted (never in WAL).
+    plans_interrupted: set[str] = set()
+    for e in log_plan:
+        if e.get("type") == "plan_run_interrupted":
+            pid = (e.get("data") or {}).get("plan_id", "")
+            if pid:
+                plans_interrupted.add(pid)
+
+    # Step counters from WAL (plan_step_* promoted to WAL in Phase 2).
+    steps_started = sum(1 for e in wal_evs if e.get("kind") == "plan_step_started")
+    steps_completed = sum(1 for e in wal_evs if e.get("kind") == "plan_step_completed")
+    steps_failed = sum(1 for e in wal_evs if e.get("kind") == "plan_step_failed")
+
+    # Memo hits from events log only (never in WAL).
+    step_memo_hits = sum(1 for e in log_plan if e.get("type") == "plan_step_memoized")
+    llm_memo_hits = sum(1 for e in log_plan if e.get("type") == "plan_step_llm_memoized")
+
+    # Max concurrent plans: walk (started_ts, terminal_ts) intervals.
+    intervals: list[tuple[float, float]] = []
+    for pid, info in plans_started.items():
+        t0 = _parse_ts(info["ts"])
+        if t0 is None:
+            continue
+        terminal_ts = plans_completed.get(pid) or plans_aborted.get(pid)
+        t1 = _parse_ts(terminal_ts) if terminal_ts else None
+        if t1 is None:
+            t1 = t0 + 1e9  # still running / unknown end → treat as open
+        intervals.append((t0, t1))
+
+    max_concurrent = 0
+    if intervals:
+        events_tl = []
+        for t0, t1 in intervals:
+            events_tl.append((t0, +1))
+            events_tl.append((t1, -1))
+        events_tl.sort()
+        cur = 0
+        for _, delta in events_tl:
+            cur += delta
+            if cur > max_concurrent:
+                max_concurrent = cur
+
+    n_started = len(plans_started)
+    n_completed = len(plans_completed)
+    n_aborted = len(plans_aborted)
+    n_interrupted = len(plans_interrupted)
+
+    print("=== Plan-mode Summary ===")
+    print(f"  plans started:    {n_started}")
+    print(f"  plans completed:  {n_completed}")
+    print(f"  plans aborted:    {n_aborted}")
+    print(f"  plans interrupted (= plan_run_interrupted forensic event): {n_interrupted}")
+    print()
+    print(f"  steps:            {steps_started} started / {steps_completed} completed / {steps_failed} failed")
+    print(f"  step memoizations: {step_memo_hits} step-result + {llm_memo_hits} LLM-call (= {step_memo_hits + llm_memo_hits} memo hits)")
+    print()
+    print(f"  max concurrent plans (= max overlap of started→completed window): {max_concurrent}")
+    print()
+
+    if not plans_started:
+        print("  (no per-plan detail — no plan_started WAL entries found)")
+        return
+
+    print(f"{'plan_id':<10}  {'goal':<32}  {'n_steps':>7}  {'status':<12}  {'duration':>10}")
+    print("  " + "-" * 78)
+    for pid, info in sorted(plans_started.items(), key=lambda x: x[1]["ts"]):
+        goal = info["goal"]
+        goal_disp = (goal[:30] + "..") if len(goal) > 32 else goal
+        n_steps = info.get("n_steps", "?")
+        t0 = _parse_ts(info["ts"])
+        if pid in plans_completed:
+            status = "completed"
+            t1 = _parse_ts(plans_completed[pid])
+            dur = f"{t1 - t0:.1f}s" if (t0 and t1) else "?"
+        elif pid in plans_aborted:
+            status = "aborted"
+            t1 = _parse_ts(plans_aborted[pid])
+            dur = f"{t1 - t0:.1f}s" if (t0 and t1) else "?"
+        elif pid in plans_interrupted:
+            status = "interrupted"
+            dur = "?"
+        else:
+            status = "active?"
+            dur = "?"
+        print(f"  {pid:<10}  {goal_disp!r:<32}  {str(n_steps):>7}  {status:<12}  {dur:>10}")
+
+
+def mode_plan_trace(root: Path, plan_id: str) -> None:
+    """Per-plan timeline of WAL + events log entries for one plan_id.
+
+    Shows all plan_* events for this plan_id time-sorted with T+x.xs
+    relative timestamps. Also shows agent-kind outbox messages tagged
+    with meta.plan_id matching this plan.
+    """
+    wal_evs = _load_wal(root)
+    log_evs = _all_events(root)
+
+    # Gather matching events from both sources.
+    matched: list[dict] = []
+
+    for e in wal_evs:
+        kind = e.get("kind", "")
+        data = e.get("data", {}) or {}
+        if kind in _ALL_PLAN_KINDS and data.get("plan_id") == plan_id:
+            matched.append({"_src": "WAL", "_kind": kind, "_ts": e.get("timestamp"), "_data": data})
+
+    for e in log_evs:
+        ev_type = e.get("type", "")
+        data = e.get("data", {}) or {}
+        if ev_type in _ALL_PLAN_KINDS and data.get("plan_id") == plan_id:
+            matched.append({"_src": "events", "_kind": ev_type, "_ts": e.get("timestamp"), "_data": data})
+        elif ev_type == "agent_message_sent":
+            meta = data.get("meta", {}) or {}
+            if meta.get("plan_id") == plan_id:
+                matched.append({"_src": "events", "_kind": "agent_message_sent", "_ts": e.get("timestamp"), "_data": data})
+
+    if not matched:
+        print(f"no events found for plan_id={plan_id!r}")
+        return
+
+    matched.sort(key=lambda e: e["_ts"] or "")
+    base_ts = matched[0]["_ts"]
+
+    print(f"=== Plan Trace: {plan_id} ===")
+    print(f"  base_ts: {(base_ts or '?')[:19]}")
+    print()
+    for e in matched:
+        t = _ts_offset(base_ts, e["_ts"])
+        kind = e["_kind"]
+        data = e["_data"]
+        src = e["_src"]
+        if kind == "plan_started":
+            summary = f"goal={data.get('goal','')!r:.40}  n_steps={data.get('n_steps','?')}"
+        elif kind in ("plan_completed", "plan_aborted"):
+            summary = ""
+        elif kind in ("plan_step_started", "plan_step_completed", "plan_step_failed",
+                      "plan_step_memoized", "plan_step_memo_failed", "plan_step_llm_memoized"):
+            step_id = data.get("step_id", "?")
+            extra = ""
+            if kind == "plan_step_started":
+                extra = f"  n_tools={data.get('n_tools','?')}"
+            elif kind == "plan_step_completed":
+                extra = f"  content_len={data.get('content_len','?')}"
+            elif kind in ("plan_step_failed", "plan_step_memo_failed"):
+                extra = f"  error={str(data.get('error',''))[:40]!r}"
+            elif kind == "plan_step_memoized":
+                extra = f"  content_len={data.get('content_len','?')}"
+            summary = f"step_id={step_id}{extra}"
+        elif kind == "plan_emitted":
+            summary = f"goal={data.get('goal','')!r:.40}  n_steps={data.get('n_steps','?')}"
+        elif kind == "plan_aggregated":
+            summary = f"completed={data.get('n_completed','?')}  failed={data.get('n_failed','?')}  result_len={data.get('result_len','?')}"
+        elif kind == "plan_run_interrupted":
+            summary = f"exc_type={data.get('exc_type','?')}"
+        elif kind == "agent_message_sent":
+            text = str(data.get("text", data.get("content", "")))
+            summary = f"text={text[:60]!r}"
+        else:
+            summary = _exc(data, 80)
+        print(f"  [{t}]  [{src}]  {kind}  {summary}")
+
+
+def mode_plan_snapshot(root: Path, plan_id: str) -> None:
+    """Dump the on-disk per-plan workspace consolidated for one plan_id.
+
+    Walks all agents' state/plans/ dirs to find the matching plan_id.
+    Reads the .snapshot.json and decomposition.json, then reports step
+    results (inline vs spilled) and LLM call records.
+    """
+    agents_dir = root / "agents"
+    if not agents_dir.exists():
+        print(f"no agents dir found at {agents_dir}")
+        return
+
+    found_agent: str | None = None
+    found_state_dir: Path | None = None
+    found_plan_dir: Path | None = None
+    found_snapshot_path: Path | None = None
+    multiple: list[str] = []
+
+    for agent_dir in sorted(agents_dir.iterdir()):
+        if not agent_dir.is_dir():
+            continue
+        state_dir = agent_dir / "state"
+        plans_dir = state_dir / "plans"
+        if not plans_dir.exists():
+            continue
+        snap_path = plans_dir / f"{plan_id}.snapshot.json"
+        plan_dir = plans_dir / plan_id
+        if snap_path.exists() or plan_dir.exists():
+            multiple.append(agent_dir.name)
+            if found_agent is None:
+                found_agent = agent_dir.name
+                found_state_dir = state_dir
+                found_plan_dir = plan_dir
+                found_snapshot_path = snap_path
+
+    if found_agent is None:
+        print(f"plan_id {plan_id!r} not found in any agent's state/plans/ directory")
+        return
+
+    if len(multiple) > 1:
+        print(f"warning: plan_id {plan_id!r} found in multiple agents: {multiple}")
+        print(f"  using first match: {found_agent}")
+        print()
+
+    print(f"=== Plan Snapshot: {plan_id} ===")
+    print(f"  agent:        {found_agent}")
+    print(f"  state_dir:    {found_state_dir}")
+
+    # Load decomposition.json
+    decom_path = found_plan_dir / "decomposition.json" if found_plan_dir else None
+    decom: dict | None = None
+    steps: list[dict] = []
+    if decom_path and decom_path.exists():
+        try:
+            decom = json.loads(decom_path.read_text(encoding="utf-8"))
+            steps = decom.get("steps", [])
+        except Exception as exc:
+            print(f"  decomposition.json: unreadable ({exc})")
+    else:
+        decom = None
+
+    # Load snapshot
+    snap_data: dict = {}
+    if found_snapshot_path and found_snapshot_path.exists():
+        try:
+            snap_data = json.loads(found_snapshot_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(f"  snapshot: unreadable ({exc})")
+    inline_step_results: dict = snap_data.get("step_results", {}) or {}
+    step_result_refs: dict = snap_data.get("step_result_refs", {}) or {}
+    step_llm_calls: dict = snap_data.get("step_llm_calls", {}) or {}
+    step_failures: dict = snap_data.get("step_failures", {}) or {}
+
+    print()
+    if decom:
+        print(f"decomposition ({len(steps)} steps):")
+        for s in steps:
+            sid = s.get("id", "?")
+            desc = s.get("description", "")
+            desc_disp = (desc[:40] + "..") if len(desc) > 42 else desc
+            tools = s.get("tools", [])
+            deps = s.get("depends_on", [])
+            tools_str = f"tools={tools}" if tools else "tools=[]"
+            deps_str = f"deps={deps}" if deps else "deps=[]"
+            print(f"  {sid:<6}  {desc_disp!r:<44}  {tools_str:<24}  {deps_str}")
+    elif steps:
+        # fallback: steps from snapshot's steps_serialized
+        serialized = snap_data.get("steps_serialized", []) or []
+        print(f"decomposition ({len(serialized)} steps, from snapshot fallback):")
+        for s in serialized:
+            sid = s.get("id", "?")
+            desc = s.get("description", "")
+            desc_disp = (desc[:40] + "..") if len(desc) > 42 else desc
+            print(f"  {sid:<6}  {desc_disp!r}")
+    else:
+        print("decomposition: (not found)")
+
+    print()
+    print("per-plan snapshot:")
+    if snap_data:
+        for key in ("applied_seq", "last_step_applied_seq", "current_step_id",
+                    "last_committed_step_id", "goal"):
+            val = snap_data.get(key)
+            print(f"  {key:<30}  {val!r}")
+        spawned = snap_data.get("spawned_skill_run_ids", {}) or {}
+    else:
+        print("  (snapshot file not found)")
+        spawned = {}
+
+    print()
+    all_step_ids = [s.get("id", "?") for s in steps] if steps else (
+        list(set(list(inline_step_results) + list(step_result_refs) + list(step_llm_calls)))
+    )
+    if all_step_ids:
+        print("step results:")
+        for sid in all_step_ids:
+            if sid in inline_step_results:
+                chars = len(inline_step_results[sid])
+                print(f"  {sid:<8}  inline    {chars} chars")
+            elif sid in step_result_refs:
+                ref = step_result_refs[sid]
+                full_ref = (found_plan_dir / ref) if found_plan_dir else None
+                size_str = "?"
+                if full_ref and full_ref.exists():
+                    try:
+                        size_kb = full_ref.stat().st_size / 1024
+                        size_str = f"{size_kb:.1f} KB"
+                    except Exception:
+                        pass
+                print(f"  {sid:<8}  spilled   {ref}   {size_str}")
+            elif sid in step_failures:
+                print(f"  {sid:<8}  failed    {step_failures[sid][:60]}")
+            else:
+                print(f"  {sid:<8}  (not yet recorded)")
+
+    print()
+    if step_llm_calls:
+        print("step LLM calls:")
+        for sid in all_step_ids:
+            records = step_llm_calls.get(sid, [])
+            if not records:
+                print(f"  {sid:<8}  (no records)")
+                continue
+            n_inline = sum(1 for r in records if r.get("result_inline") is not None)
+            n_spilled = sum(1 for r in records if r.get("result_ref") is not None)
+            spill_detail = ""
+            if n_spilled:
+                refs = [r["result_ref"] for r in records if r.get("result_ref")]
+                spill_detail = f"  ({n_spilled} spilled: {', '.join(refs[:2])}{'...' if len(refs) > 2 else ''})"
+            print(f"  {sid:<8}  {len(records)} record(s) ({n_inline} inline, {n_spilled} spilled){spill_detail}")
+    else:
+        print("step LLM calls:  (none recorded)")
+
+    print()
+    if spawned:
+        print(f"spawned children: {spawned}")
+    else:
+        print("spawned children: (none)")
 
 
 def mode_full(root: Path, filter_kind: str | None) -> None:
@@ -817,8 +1272,10 @@ def main() -> None:
             "summary", "full", "chain", "cost",
             "llm-payloads", "llm-detail", "llm-tools-schema",
             "llm-context",
-            # New time-travel modes:
+            # Time-travel modes:
             "replay", "compare",
+            # Plan-mode dogfood modes (ADR-0022/0023/0024/0025):
+            "plan-summary", "plan-trace", "plan-snapshot",
         ],
         default="summary",
     )
@@ -902,6 +1359,29 @@ def main() -> None:
             )
             sys.exit(1)
         mode_compare(before_paths, after_paths, scope=args.scope)
+        return
+
+    # ── Plan-mode modes ───────────────────────────────────────────────────
+    if args.mode in ("plan-summary", "plan-trace", "plan-snapshot"):
+        root = Path(args.root)
+        if not root.exists():
+            print(f"no events found (root not found: {root})")
+            sys.exit(0)
+        if args.mode == "plan-summary":
+            mode_plan_summary(root)
+            return
+        # plan-trace and plan-snapshot require the positional plan_id argument.
+        if not args.request_id:
+            print(
+                f"usage error: --mode {args.mode} requires a <plan_id> positional argument\n"
+                f"  example: python scripts/dogfood_trace.py --mode {args.mode} ab12cd34",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if args.mode == "plan-trace":
+            mode_plan_trace(root, args.request_id)
+        else:
+            mode_plan_snapshot(root, args.request_id)
         return
 
     # ── LLM trace modes ───────────────────────────────────────────────────
