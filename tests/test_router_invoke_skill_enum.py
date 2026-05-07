@@ -156,15 +156,23 @@ def test_invoke_skill_present_when_skills_available():
 
 
 # ---------------------------------------------------------------------------
-# (d) System prompt has flat skill list injected
+# (d) System prompt — category-only catalog (= O(1) SP scaling)
+#
+# 2026-05-07 category-only retry: replaced inline `## Available skills (N)`
+# enumeration with 1 pointer line "## Skills (N available) — call list_skills
+# to browse". Hallucination defense is fully delegated to the schema enum
+# constraint at the build_tools layer (= structural defense, see (a) above).
+# Industry-aligned per Anthropic Tool Search Tool / OpenAI namespaces /
+# MCP-Zero hierarchical patterns.
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_contains_flat_skill_list():
-    """Tier 2: build_system_prompt injects a flat list of skill names.
+def test_system_prompt_does_not_inline_skill_names():
+    """Tier 2: system prompt does NOT enumerate skill names inline.
 
-    The LLM must see actual skill names (not just category counts) to avoid
-    zero-shot hallucination of skill names (RETRO-H1+H2 root cause).
+    Category-only retry contract: the SP shows category-level pointer + count
+    only, actual names are lazy-fetched via list_skills. Hallucination defense
+    is delegated to the invoke_skill enum (see (a) tests above).
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -173,20 +181,25 @@ def test_system_prompt_contains_flat_skill_list():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    # All three skill names must appear
+    # Skill names MUST NOT appear inline — that's the whole point of category-only.
     for skill in _SKILLS:
-        assert skill["name"] in prompt, (
-            f"Skill name '{skill['name']}' must appear in system prompt "
-            f"(flat list injection missing)"
+        assert skill["name"] not in prompt, (
+            f"Skill name {skill['name']!r} must NOT be inlined in SP under "
+            "category-only retry; access via list_skills."
         )
+    # Skill descriptions MUST NOT appear either (= they're behind list_skills /
+    # describe_skill).
+    assert "Direct LLM call" not in prompt, (
+        "Skill description 'Direct LLM call' must NOT be inlined in SP"
+    )
 
 
-def test_system_prompt_contains_skill_descriptions():
-    """Tier 2: flat skill list includes one-line descriptions alongside names.
+def test_system_prompt_has_skills_pointer_section():
+    """Tier 2: system prompt has a `## Skills` pointer section + count.
 
-    Descriptions give the LLM context to judge skill relevance, reducing
-    the attractor risk (RETRO-H1 post-PR37 regression was caused by showing
-    names without context).
+    Replaces the old `## Available skills (N)` inline enumeration. The
+    new section tells the LLM (i) how many skills exist, (ii) how to
+    browse them via list_skills, (iii) that names are validated by enum.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -195,29 +208,22 @@ def test_system_prompt_contains_skill_descriptions():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    # At least one description must appear alongside the name
-    assert "Direct LLM call" in prompt, (
-        "Skill description 'Direct LLM call' must appear in system prompt "
-        "(flat list must include descriptions)"
+    # Count visible
+    assert "## Skills (3 available)" in prompt, (
+        "SP must show '## Skills (N available)' header with skill count"
+    )
+    # list_skills is the canonical browse path
+    assert "list_skills" in prompt, (
+        "SP must point to list_skills for skill discovery"
+    )
+    # describe_skill / invoke_skill are the canonical drill-in / run paths
+    assert "describe_skill" in prompt and "invoke_skill" in prompt, (
+        "SP must reference describe_skill and invoke_skill"
     )
 
 
-def test_system_prompt_flat_list_available_skills_section():
-    """Tier 2: system prompt has an 'Available skills' section header."""
-    prompt = build_system_prompt(
-        agent_name="chat",
-        agent_role="assistant",
-        available_skills=_SKILLS,
-        available_agents=[],
-        memory_index=_EMPTY_MEMORY,
-    )
-    assert "Available skills" in prompt, (
-        "System prompt must have an 'Available skills' section (RETRO-H1+H2 fix)"
-    )
-
-
-def test_system_prompt_no_skills_shows_none():
-    """Tier 2: flat list shows '(none)' when no skills available."""
+def test_system_prompt_no_skills_shows_none_message():
+    """Tier 2: no-skill case shows an explicit none message."""
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
@@ -225,21 +231,53 @@ def test_system_prompt_no_skills_shows_none():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    assert "(none)" in prompt, (
-        "System prompt must indicate '(none)' when no skills are available"
+    assert "## Skills" in prompt, (
+        "SP must still have a '## Skills' header even when none available"
+    )
+    assert "none available" in prompt, (
+        "SP must indicate 'none available' when no skills are registered"
     )
 
 
-# ---------------------------------------------------------------------------
-# (e) Flat list preserves available_skills ordering, at least partially
-# ---------------------------------------------------------------------------
+def test_system_prompt_size_is_o1_in_skill_count():
+    """Tier 2: SP size is O(1) in the number of skills (= core scaling claim).
+
+    With 10 skills vs 50 skills, the SP size must be identical (= category
+    pointer is constant-cost). This is the headline benefit of category-only
+    retry: SP scales as the catalog grows.
+    """
+    skills_10 = [
+        {"name": f"skill_{i}", "description": f"Description {i}", "category": "general"}
+        for i in range(10)
+    ]
+    skills_50 = [
+        {"name": f"skill_{i}", "description": f"Description {i}", "category": "general"}
+        for i in range(50)
+    ]
+    prompt_10 = build_system_prompt(
+        agent_name="chat", agent_role="",
+        available_skills=skills_10, available_agents=[],
+        memory_index=_EMPTY_MEMORY,
+    )
+    prompt_50 = build_system_prompt(
+        agent_name="chat", agent_role="",
+        available_skills=skills_50, available_agents=[],
+        memory_index=_EMPTY_MEMORY,
+    )
+    # The skill count differs (10 vs 50) so the count tokens differ slightly,
+    # but the structural cost should be the same modulo the count digits.
+    assert abs(len(prompt_10) - len(prompt_50)) <= 5, (
+        f"SP size must be O(1) in skill count; got {len(prompt_10)} (N=10) "
+        f"vs {len(prompt_50)} (N=50). Difference must be ≤5 chars (= count digits only)."
+    )
 
 
-def test_system_prompt_flat_list_contains_multiple_skills():
-    """Tier 2: flat list contains all skills from available_skills (>= 3 here).
+def test_system_prompt_legacy_ordering_no_longer_visible():
+    """Tier 2: under category-only retry, ordering of skill names in SP is
+    structurally moot because no individual names appear.
 
-    A loose assertion: we don't pin exact line format, but we verify that
-    all three skill names appear in the section — not just category counts.
+    The schema-layer defense (= invoke_skill enum order) still preserves
+    ordering — see test_invoke_skill_name_enum_preserves_order in (a).
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -248,29 +286,6 @@ def test_system_prompt_flat_list_contains_multiple_skills():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    names_found = [s["name"] for s in _SKILLS if s["name"] in prompt]
-    assert len(names_found) >= 3, (
-        f"Expected all 3 skill names in prompt; found: {names_found}"
-    )
-
-
-def test_system_prompt_flat_list_first_skill_before_last():
-    """Tier 2: flat list preserves ordering — first skill appears before last.
-
-    We don't pin exact line numbers (algorithm-level), but we assert ordering
-    is preserved at the string level: direct_llm appears before skill_builder.
-    """
-    prompt = build_system_prompt(
-        agent_name="chat",
-        agent_role="assistant",
-        available_skills=_SKILLS,
-        available_agents=[],
-        memory_index=_EMPTY_MEMORY,
-    )
-    idx_first = prompt.index("direct_llm")
-    idx_last = prompt.index("skill_builder")
-    assert idx_first < idx_last, (
-        "Flat skill list must preserve caller-supplied order: "
-        f"direct_llm (pos {idx_first}) should appear before "
-        f"skill_builder (pos {idx_last})"
-    )
+    # No individual skill name appears inline
+    assert "direct_llm" not in prompt
+    assert "skill_builder" not in prompt

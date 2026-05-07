@@ -169,23 +169,27 @@ def test_list_skills_short_description_untouched():
 
 
 # ---------------------------------------------------------------------------
-# (d) System prompt inline skill list also truncates (Pattern C mitigation)
+# (d) System prompt no longer inlines descriptions (Pattern C obviated)
+#
+# Category-only retry (2026-05-07): Pattern C mitigation (= truncating
+# inline descriptions to ≤80 chars) is structurally obsolete because the
+# inline skill list itself was removed. SP shows only "## Skills (N
+# available)" pointer; descriptions live in list_skills tool response
+# (Pattern A truncation still applies there).
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_long_description_truncated():
-    """Tier 2: build_system_prompt truncates skill descriptions in the inline skill list.
+def test_system_prompt_no_descriptions_inlined():
+    """Tier 2: build_system_prompt does NOT inline descriptions in any form.
 
-    Pattern C trigger path: router does NOT call list_skills; description verbosity
-    in the system prompt's inline skill list triggers the empty-stop attractor
-    (B7 finding a947255e).  After fix, description in the prompt must be truncated.
+    Pattern C historically required truncating long descriptions to ≤80 chars
+    in the inline skill list. Under category-only retry, no descriptions are
+    inlined at all, so the long-vs-short distinction collapses. Pattern A
+    (= list_skills response) still truncates — see (a)/(b)/(c) above.
     """
     skills = [
-        {
-            "name": "verbose_skill",
-            "description": _LONG_DESC,
-            "category": "general",
-        }
+        {"name": "verbose_skill", "description": _LONG_DESC, "category": "general"},
+        {"name": "short_skill", "description": _SHORT_DESC, "category": "general"},
     ]
     prompt = build_system_prompt(
         agent_name="chat",
@@ -195,39 +199,19 @@ def test_system_prompt_long_description_truncated():
         memory_index={"status": "not_found", "content": ""},
     )
 
-    # The full long description must NOT appear in the prompt
+    # Neither full nor truncated descriptions appear inline.
     assert _LONG_DESC not in prompt, (
-        "Full long description must not appear in system prompt (truncation expected)"
+        "Long description must NOT appear inline (category-only contract)"
     )
-    # The truncated prefix MUST appear (with ellipsis)
-    expected_truncated = _LONG_DESC[:MAX_DESC_LEN_FOR_LISTING] + "..."
-    assert expected_truncated in prompt, (
-        f"Truncated description ({expected_truncated!r}) must appear in system prompt"
+    assert _LONG_DESC[:MAX_DESC_LEN_FOR_LISTING] + "..." not in prompt, (
+        "Truncated long description must NOT appear inline either"
     )
-
-
-def test_system_prompt_short_description_untouched():
-    """Tier 2: build_system_prompt leaves short descriptions verbatim in the inline list."""
-    skills = [
-        {
-            "name": "short_skill",
-            "description": _SHORT_DESC,
-            "category": "general",
-        }
-    ]
-    prompt = build_system_prompt(
-        agent_name="chat",
-        agent_role="assistant",
-        available_skills=skills,
-        available_agents=[],
-        memory_index={"status": "not_found", "content": ""},
+    assert _SHORT_DESC not in prompt, (
+        "Short description must NOT appear inline (category-only contract)"
     )
-
-    # Short description appears verbatim (no spurious ellipsis)
-    assert f"short_skill: {_SHORT_DESC}" in prompt, (
-        f"Short description must appear verbatim in system prompt; "
-        f"checked for 'short_skill: {_SHORT_DESC}'"
-    )
+    # And no skill names either
+    assert "verbose_skill" not in prompt
+    assert "short_skill" not in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -192,32 +192,31 @@ def build_system_prompt(
         parts.append("           tools: forget_memory")
     parts.append("- Reply — answer directly (no tool)")
     parts.append("")
-    # RETRO-H1+H2 fix: inject flat skill list so the LLM knows actual skill
-    # names and can't zero-shot hallucinate them. Paired with enum constraint
-    # in build_tools (schema layer) for defense in depth (P4).
+    # category-only catalog (= O(1) SP scaling、 industry-aligned per
+    # Anthropic Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical
+    # patterns). The previous design inlined skill names + truncated
+    # descriptions for hallucination defense (RETRO-H1+H2)、 but this scaled
+    # O(N_skills) and was duplicate of the `invoke_skill.name` enum
+    # constraint already in tool schema (= structural defense at build_tools).
+    # Now: SP describes only the **category catalog** (= what kinds of
+    # resources exist)、 actual names lazy-fetched via list_skills.
+    # Hallucination defense: schema enum (= invoke_skill rejects unknown
+    # name) + Behaviour rule "Never invent names; only use those returned by
+    # list_*". Verified by 2026-05-07 N=10 dogfood post-G12-envelope-fix.
     skill_count = len(available_skills)
-    parts.append(
-        f"## Available skills ({skill_count}) — use these exact names with invoke_skill"
-    )
-    if available_skills:
-        for skill in available_skills:
-            name = skill.get("name", "")
-            raw_desc = skill.get("description") or ""
-            # Truncate to MAX_DESC_LEN_FOR_LISTING chars to mitigate the G12
-            # empty-stop attractor (B7 finding — Pattern C: system prompt
-            # inline skill list verbosity triggers the attractor — a947255e).
-            if len(raw_desc) > MAX_DESC_LEN_FOR_LISTING:
-                desc = raw_desc[:MAX_DESC_LEN_FOR_LISTING] + "..."
-            else:
-                desc = raw_desc
-            # One-liner per skill: name + description (keeps prompt scannable)
-            if desc:
-                parts.append(f"  - {name}: {desc}")
-            else:
-                parts.append(f"  - {name}")
+    if skill_count > 0:
+        parts.append(
+            f"## Skills ({skill_count} available) — categories: {skill_section}"
+        )
+        parts.append(
+            "  Call list_skills(path) to browse names + descriptions, then"
+        )
+        parts.append(
+            "  describe_skill(name) for full schema or invoke_skill(name, input)"
+        )
+        parts.append("  to run. Skill names are validated by schema enum.")
     else:
-        parts.append("  (none)")
-    parts.append(f"  Categories: {skill_section}")
+        parts.append("## Skills — (none available in this session)")
     parts.append("")
     parts.append("## Agents (resource axis, clusters)")
     parts.append(f"  {agent_section}")
@@ -322,14 +321,17 @@ def build_system_prompt(
         "  - Reply directly only for chitchat and questions about yourself."
     )
     parts.append(
-        "    Domain tasks → Action. Do NOT ask clarifying questions if a skill name"
+        "    Domain tasks → Action. Do NOT ask clarifying questions if the user"
     )
     parts.append(
-        "    from the Available skills list appears in the user message — treat it as Action."
+        "    message contains a skill name (= valid invoke_skill enum value)."
     )
     # Bullet 2 (F3+F9+B3-H1+M3+B11-R3 — explicit-skill direct path):
+    # Post category-only retry (2026-05-07): inline skill list removed,
+    # now refers to `invoke_skill.name` enum which is the structural source
+    # of truth. LLM sees the enum in the tool schema.
     parts.append(
-        "  - If the user names a skill that appears in the Available skills list,"
+        "  - If the user names a skill (= matches invoke_skill's name enum),"
     )
     parts.append(
         "    call invoke_skill directly (skip list_skills). Any other entities"
@@ -339,10 +341,10 @@ def build_system_prompt(
     )
     # Bullet 2b (discovery path when skill name is unknown):
     parts.append(
-        "  - If the skill name is NOT in the Available skills list above,"
+        "  - If the user describes a domain task without naming a skill,"
     )
     parts.append(
-        "    call list_skills first, then invoke_skill."
+        "    call list_skills(path) first to discover, then invoke_skill."
     )
     # Bullet 3 (B3-H1+M3 — post-list_skills MUST):
     parts.append(
@@ -389,13 +391,13 @@ def build_system_prompt(
     # P7 compliance: examples use <skill_name> placeholder, not hardcoded names.
     parts.append("")
     parts.append(
-        "  ROUTING RULE (ABSOLUTE): When ANY Available skill name appears in the"
+        "  ROUTING RULE (ABSOLUTE): When the user message contains a skill"
     )
     parts.append(
-        "  user message, call invoke_skill with that skill name immediately."
+        "  name (= valid invoke_skill enum value), call invoke_skill"
     )
     parts.append(
-        "  NO clarifying questions. NO text replies. Examples:"
+        "  immediately. NO clarifying questions. NO text replies. Examples:"
     )
     parts.append(
         "    「<skill_name> で <target> を review して」 → invoke_skill(name=<skill_name>)"

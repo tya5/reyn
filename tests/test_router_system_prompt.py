@@ -164,14 +164,25 @@ class TestIntentAxisSectionAlwaysPresent:
         assert intent_fragment in prompt
 
 
-class TestSizeIsLinearInItems:
-    """RETRO-H1+H2 design change: the system prompt now injects a flat skill
-    list so the LLM knows exact skill names (prevents zero-shot hallucination).
-    Size is intentionally O(N) in skill count. The old O(1) invariant no longer
-    applies after this fix."""
+class TestSizeIsConstantInItems:
+    """Category-only retry (2026-05-07): SP size is **O(1)** in skill count.
 
-    def test_size_grows_with_skill_count(self):
-        """Tier 2: prompt with more skills is larger (flat list injected)."""
+    Inverts the previous TestSizeIsLinearInItems contract. Skills are no
+    longer enumerated in the SP — only a category-level pointer + count.
+    Industry-aligned per Anthropic Tool Search Tool / OpenAI namespaces /
+    MCP-Zero hierarchical patterns.
+
+    Hallucination defense moved to the schema enum (= invoke_skill rejects
+    unknown name); see test_invoke_skill_name_enum_matches_skill_list in
+    test_router_invoke_skill_enum.py.
+    """
+
+    def test_size_constant_in_skill_count(self):
+        """Tier 2: SP size is independent of skill count under category-only.
+
+        With 3 skills vs 30 skills, the SP must be the same size modulo
+        the count digits ("3 available" vs "30 available" = 1 char diff).
+        """
         skills_3 = [_make_skill(f"skill_{i}", "general") for i in range(3)]
         skills_30 = [_make_skill(f"skill_{i}", "general") for i in range(30)]
 
@@ -189,18 +200,14 @@ class TestSizeIsLinearInItems:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        # 30-skill prompt must be larger than 3-skill prompt
-        assert len(prompt_30) > len(prompt_3), (
-            "Expected 30-skill prompt to be larger than 3-skill prompt "
-            "(flat skill list grows linearly with skill count)"
-        )
-        # Growth should be approximately linear (not O(N²) or constant)
-        # 27 extra skills, each adding roughly the same number of chars
-        size_diff = len(prompt_30) - len(prompt_3)
-        # Each extra skill adds at least 5 chars (e.g. "  - skill_X\n")
-        assert size_diff >= 27 * 5, (
-            f"Expected at least {27 * 5} chars growth for 27 extra skills, "
-            f"got {size_diff}"
+        # SP size differs at most by count digits + category breakdown line
+        # (e.g. "general (3)" vs "general (30)" = +1 char, both in count
+        # tag and in category line).
+        size_diff = abs(len(prompt_30) - len(prompt_3))
+        assert size_diff <= 5, (
+            f"Expected SP to be O(1) in skill count under category-only retry; "
+            f"got size diff {size_diff} between N=3 ({len(prompt_3)}) and "
+            f"N=30 ({len(prompt_30)}). Difference must stay within count-digits."
         )
 
 
