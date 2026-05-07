@@ -60,6 +60,13 @@ InputBar {
     padding: 0 1;
 }
 
+/* Focus indicator: when the TextArea inside has focus, the input bar's
+   top border lights up coral — mirrors the right panel's left-edge
+   focus pattern, applied to the input bar's natural top edge. */
+InputBar:focus-within {
+    border-top: solid $primary;
+}
+
 InputBar TextArea {
     background: transparent;
     border: none;
