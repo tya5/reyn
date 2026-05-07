@@ -29,7 +29,7 @@ class ErrorBox(Widget):
 
     DEFAULT_CSS = """
     ErrorBox {
-        border: tall #cc4444;
+        border: solid #cc4444;
         padding: 1 2;
         height: auto;
         margin: 1 0;

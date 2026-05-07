@@ -32,7 +32,7 @@ class SlashPicker(Static):
         height: auto;
         max-height: 10;
         background: #1a1a1a;
-        border: tall $primary;
+        border: solid $primary;
         padding: 0 1;
         display: none;
     }

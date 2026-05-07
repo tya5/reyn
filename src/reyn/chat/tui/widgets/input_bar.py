@@ -54,7 +54,7 @@ class InputBar(Widget):
         height: auto;
         max-height: 22;
         background: #111111;
-        border-top: tall #2a2a2a;
+        border-top: solid #2a2a2a;
     }
     InputBar TextArea {
         background: transparent;

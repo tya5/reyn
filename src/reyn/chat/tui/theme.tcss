@@ -40,7 +40,7 @@ ReynHeader #status {
 ConversationView {
     width: 1fr;
     height: 100%;
-    border: tall #2a2a2a;
+    border: solid #2a2a2a;
     padding: 0 1;
     overflow-y: scroll;
     scrollbar-color: $primary;
@@ -57,7 +57,7 @@ InputBar {
     height: auto;
     max-height: 20;
     background: #111111;
-    border-top: tall #2a2a2a;
+    border-top: solid #2a2a2a;
     padding: 0 1;
 }
 
@@ -80,7 +80,7 @@ InputBar #hints {
 /* Intervention widget */
 InterventionWidget {
     background: #1e1510;
-    border: tall $primary;
+    border: solid $primary;
     padding: 1 2;
     height: auto;
     margin: 1 0;
