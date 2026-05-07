@@ -52,6 +52,7 @@ app.add_middleware(
 
 # ── mount REST routers ──────────────────────────────────────────────────────
 
+from reyn.web.routers import a2a as _a2a_router  # noqa: E402
 from reyn.web.routers import agents as _agents_router  # noqa: E402
 from reyn.web.routers import budget as _budget_router  # noqa: E402
 from reyn.web.routers import mcp as _mcp_router  # noqa: E402
@@ -85,6 +86,12 @@ except ImportError:  # pragma: no cover — `[mcp]` extra not installed
         "mcp SDK not installed; /mcp/messages POST endpoint disabled. "
         "Install with `pip install -e .[mcp]` to enable MCP-over-SSE."
     )
+
+# A2A (Agent2Agent) protocol: peer agents discover Reyn agents via
+# Agent Cards at GET /a2a/agents/<name>/.well-known/agent-card.json
+# and converse via JSON-RPC 2.0 POST /a2a/agents/<name>. Same backing
+# impl as MCP (send_to_agent_impl), different wire protocol.
+app.include_router(_a2a_router.router)
 
 
 # ── WebSocket routes ────────────────────────────────────────────────────────

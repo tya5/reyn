@@ -145,6 +145,7 @@ nav:
       - concepts/events.md
       - concepts/permission-model.md
       - concepts/mcp.md
+      - concepts/a2a.md
       - concepts/memory.md
       - concepts/multi-agent.md
       - concepts/topology.md

@@ -211,6 +211,76 @@ ask-user / sampling integration are tracked for future iterations.
 
 ---
 
+## Talk to Reyn from another agent (A2A)
+
+Where MCP exposes Reyn to an outer LLM as a tool provider, **A2A
+(Agent2Agent)** exposes Reyn agents as addressable peers — for other
+agents (LangGraph, CrewAI, custom A2A speakers) to discover and
+converse with directly.
+
+A2A is enabled out of the box on the same FastAPI gateway as the web
+UI and MCP-over-SSE — no extra process, no extra port:
+
+```bash
+reyn web --port 8080         # already running for the UI / MCP
+```
+
+### Discovery
+
+Each Reyn agent is published at the canonical A2A discovery URL:
+
+```
+GET http://localhost:8080/a2a/agents/<name>/.well-known/agent-card.json
+```
+
+For convenience, you can list all Reyn agents on this server:
+
+```
+GET http://localhost:8080/a2a/agents
+```
+
+### Conversation (JSON-RPC 2.0)
+
+Send a message to a Reyn agent:
+
+```bash
+curl -X POST http://localhost:8080/a2a/agents/default \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{"kind": "text", "text": "Hello"}]
+      }
+    }
+  }'
+```
+
+The reply comes back as a standard A2A `Message` (`role: agent`, with
+text parts). Multi-turn history is preserved across calls — same
+backing as MCP.
+
+### What's supported in v1
+
+- `message/send` (synchronous, returns final reply)
+- Agent Card discovery
+- Multi-turn history persistence
+
+### What's not (yet)
+
+- `message/stream` (streaming SSE responses)
+- Task lifecycle (`tasks/get`, `tasks/cancel`, push notifications)
+- Authentication
+- Non-text message parts (file / data)
+
+These are tracked as A2A v2 follow-ups. Spec reference:
+<https://google.github.io/A2A/>.
+
+---
+
 ## Project Status
 
 Reyn is **pre-1.0 alpha**. The DSL, CLI, and event log are stable enough to build skills against; APIs may still change before 1.0. See [CLAUDE.md](CLAUDE.md) for architectural constraints and the testing policy.
