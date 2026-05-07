@@ -22,6 +22,14 @@ from reyn.plan.plan_resume_analyzer import (
     PlanResumePlan,
     PlanStepState,
 )
+from reyn.plan.plan_resume_coordinator import (
+    PlanResumeAction,
+    PlanResumeChildAction,
+    PlanResumeConfig,
+    PlanResumeCoordinator,
+    PlanResumeDecision,
+    build_plan_resume_config,
+)
 from reyn.plan.plan_runtime import PlanRuntime
 from reyn.plan.plan_snapshot import (
     PLAN_SNAPSHOT_VERSION,
@@ -34,11 +42,17 @@ __all__ = [
     "DecompositionCorruptError",
     "PLAN_SNAPSHOT_VERSION",
     "PlanRegistry",
+    "PlanResumeAction",
     "PlanResumeAnalyzer",
+    "PlanResumeChildAction",
+    "PlanResumeConfig",
+    "PlanResumeCoordinator",
+    "PlanResumeDecision",
     "PlanResumePlan",
     "PlanRuntime",
     "PlanSnapshot",
     "PlanStepState",
+    "build_plan_resume_config",
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",
