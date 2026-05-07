@@ -103,6 +103,8 @@ class ReynTUIApp(App):
         self._turn_start_time: float = 0.0
         # Recent context for smart Ctrl+B target tab
         self._last_focal_tab: str | None = None  # "events" | "agents" | None
+        # Active streaming row id — shared between __stream_* handlers
+        self._current_stream_id: str | None = None
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -184,152 +186,16 @@ class ReynTUIApp(App):
     # ── outbox subscription (phases 3+) ────────────────────────────────────────
 
     async def _outbox_loop(self) -> None:
-        """Drain registry.repl_outbox and render each message."""
+        """Drain registry.repl_outbox via :class:`OutboxRouter`.
+
+        The full per-kind dispatch table + handlers live in ``app_outbox``;
+        this method just constructs the router. Keeps ``app.py`` focused on
+        composition / lifecycle.
+        """
         if self._agent_registry is None:
             return
-        conv = self.query_one("#conversation", ConversationView)
-        header = self.query_one("#header", ReynHeader)
-        current_stream_id: str | None = None
-
-        while True:
-            try:
-                msg = await self._agent_registry.repl_outbox.get()
-            except asyncio.CancelledError:
-                break
-
-            if msg.kind == "__end__":
-                break
-
-            if msg.kind == "__attach_request__":
-                # Handled by AgentRegistry._forwarder; we just update our state
-                new_name = msg.text
-                if new_name and self._agent_registry is not None:
-                    self._agent_name = new_name
-                    self.query_one("#header", ReynHeader).refresh_status(
-                        agent_name=new_name,
-                    )
-                continue
-
-            if msg.kind == "__matrix__":
-                from reyn.chat.tui.widgets.matrix import MatrixScreen
-                self.push_screen(MatrixScreen())
-                continue
-
-            if msg.kind == "__donut__":
-                from reyn.chat.tui.widgets.donut import DonutScreen
-                self.push_screen(DonutScreen())
-                continue
-
-            if msg.kind == "__cost_inline_toggle__":
-                # /cost-inline slash sets this. Body text is "on"/"off" or empty (toggle).
-                want = (msg.text or "").strip().lower()
-                if want == "on":
-                    self._cost_inline_enabled = True
-                elif want == "off":
-                    self._cost_inline_enabled = False
-                else:
-                    self._cost_inline_enabled = not self._cost_inline_enabled
-                state = "on" if self._cost_inline_enabled else "off"
-                conv.show_status(f"cost-inline {state}", kind="general")
-                # Auto-hide after a couple of seconds
-                self.set_timer(2.5, conv.hide_status)
-                continue
-
-            if msg.kind == "__expand_last_reply__":
-                # /expand slash command — flush the most recent truncated reply
-                if conv.expand_last_reply():
-                    pass  # silent success — content appears inline
-                else:
-                    conv.show_status("nothing to expand", kind="general")
-                    self.set_timer(2.0, conv.hide_status)
-                continue
-
-            if msg.kind == "__docs_filter__":
-                # /docs-filter <substr> — set or clear the docs tab filter
-                substr = (msg.text or "").strip()
-                try:
-                    panel = self.query_one("#right_panel", RightPanel)
-                    panel.set_docs_filter(substr)
-                    panel.set_panel_type("docs")
-                except Exception:
-                    pass
-                if substr:
-                    conv.show_status(f"docs filter: {substr}", kind="general")
-                else:
-                    conv.show_status("docs filter cleared", kind="general")
-                self.set_timer(2.0, conv.hide_status)
-                continue
-
-            if msg.kind == "__stream_start__":
-                current_stream_id = msg.meta.get("msg_id", id(msg))
-                # Hide the "thinking…" sticky now that the reply is starting
-                conv.hide_status()
-                agent = self._agent_name
-                conv.begin_stream(current_stream_id, agent)
-                continue
-
-            if msg.kind == "__stream_chunk__":
-                if current_stream_id is not None:
-                    conv.append_stream(current_stream_id, msg.text)
-                continue
-
-            if msg.kind == "__stream_end__":
-                if current_stream_id is not None:
-                    conv.end_stream(current_stream_id)
-                    current_stream_id = None
-                self._maybe_refresh_status(header)
-                # A4: render per-turn cost suffix when opt-in is enabled
-                self._maybe_render_cost_suffix(conv)
-                continue
-
-            if msg.kind == "intervention":
-                iv_id = msg.meta.get("intervention_id", "")
-                raw_choices = msg.meta.get("choices")
-                choices = None
-                if raw_choices:
-                    choices = [(c["label"], c["id"]) for c in raw_choices]
-                self._mount_intervention(conv, msg.text, iv_id, choices)
-                continue
-
-            # ── kind="status" → sticky bar (not log) ──────────────────────────
-            if msg.kind == "status":
-                conv.show_status(msg.text, kind="thinking")
-                continue
-
-            # ── kind="trace" → SkillActivityRow (driven from app) ─────────────
-            if msg.kind == "trace" and msg.meta.get("skill_name"):
-                self._handle_trace_for_skill_row(conv, msg)
-                self._update_skill_exec(msg)
-                self._push_exec_state()
-                continue
-
-            # ── kind="skill_done" → finish skill row + tab focus hint ────────
-            if msg.kind == "skill_done":
-                run_id = msg.meta.get("run_id", "")
-                if run_id:
-                    conv.finish_skill_row(
-                        run_id,
-                        success=True,
-                        reason=msg.meta.get("summary", "") or "",
-                    )
-                    self._skill_exec.pop(run_id, None)
-                    self._push_exec_state()
-                    self._last_focal_tab = "agents"
-                self._maybe_refresh_status(header)
-                continue
-
-            # ── kind="error" → ErrorBox + remember tab focus ─────────────────
-            if msg.kind == "error":
-                # ErrorBox is mounted inside conv.render_message() routing.
-                conv.render_message(msg)
-                self._last_focal_tab = "events"
-                continue
-
-            # Regular message (agent, intervention-fallback, unknown)
-            conv.render_message(msg)
-            if msg.kind == "agent":
-                self._maybe_refresh_status(header)
-                self._maybe_render_cost_suffix(conv)
+        from .app_outbox import OutboxRouter
+        await OutboxRouter(self).run()
 
     def _mount_intervention(
         self,

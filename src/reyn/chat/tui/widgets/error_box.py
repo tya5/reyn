@@ -8,11 +8,11 @@ Design: bright-red border, dim-coral hint text, display-only (no interaction).
 """
 from __future__ import annotations
 
-_CORAL = "#C8553D"  # used for hint text only, NOT border
-
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, Static
+
+from reyn.chat.tui._palette import _CORAL  # noqa: F401  (used for hint text)
 
 
 class ErrorBox(Widget):

@@ -27,14 +27,14 @@ Caller contract:
 """
 from __future__ import annotations
 
-_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
-
 import time
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
+
+from reyn.chat.tui._palette import _CORAL
 
 _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 

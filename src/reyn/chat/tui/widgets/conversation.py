@@ -36,14 +36,14 @@ Cost suffix (A4):
 """
 from __future__ import annotations
 
-_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
-
 import time
 
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
+
+from reyn.chat.tui._palette import _CORAL
 from textual.widgets import RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage

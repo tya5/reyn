@@ -29,12 +29,12 @@ from __future__ import annotations
 
 from time import monotonic
 
-_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
-
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
+
+from reyn.chat.tui._palette import _CORAL
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000

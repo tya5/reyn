@@ -1,6 +1,24 @@
 /* Reyn TUI — coral theme. One bundled theme, no user customisation in v1.
    Primary accent: $primary (warm coral matching the coral design's App primary)
-*/
+
+   Where CSS belongs (rule of thumb):
+     - This file (theme.tcss):
+         Layout-level rules — dock, position, size, screen-wide widgets
+         (ReynHeader, ConversationView, InputBar, InterventionWidget).
+         Loaded as ``App.CSS_PATH`` so it overrides per-widget DEFAULT_CSS.
+     - Widget DEFAULT_CSS (in each widget's `.py`):
+         Widget-internal rules — focus indicators, scrollbars, inner
+         children, default colours that travel with the widget.
+
+   When a rule appears in BOTH places, theme.tcss wins (App CSS_PATH has
+   higher specificity than DEFAULT_CSS). Avoid duplicating rules in both
+   to prevent the "what actually applies?" trap (we hit this when conv
+   pane border was defined in two places and only the theme.tcss one
+   was effective).
+
+   Colour values are documented in src/reyn/chat/tui/_palette.py — keep
+   `_palette.py` as the single source of truth and reference its values
+   here when a literal is needed. */
 
 Screen {
     layout: vertical;
