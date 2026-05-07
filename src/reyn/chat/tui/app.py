@@ -471,15 +471,34 @@ class ReynTUIApp(App):
         Smart targeting: when opening the panel, jump to the tab most relevant
         to the recent conv-pane focal point — events tab after an error,
         agents tab after skill activity. When closing, no tab change.
+
+        Focus rescue: if focus was inside the panel when we hide it, the
+        focused widget would otherwise become unreachable. Move focus back
+        to the input bar before hiding so the user can keep typing.
         """
         self._panel_visible = not self._panel_visible
         panel = self.query_one("#right_panel", RightPanel)
-        panel.display = self._panel_visible
-        if self._panel_visible and self._last_focal_tab:
-            try:
-                panel.set_panel_type(self._last_focal_tab)
-            except Exception:
-                pass
+
+        if self._panel_visible:
+            panel.display = True
+            if self._last_focal_tab:
+                try:
+                    panel.set_panel_type(self._last_focal_tab)
+                except Exception:
+                    pass
+        else:
+            # Closing: rescue focus if it lives inside the panel.
+            focused = self.focused
+            in_panel = focused is not None and (
+                focused is panel
+                or any(a is panel for a in focused.ancestors)
+            )
+            if in_panel:
+                try:
+                    self.query_one("#inputbar", InputBar).focus_input()
+                except Exception:
+                    pass
+            panel.display = False
 
     def action_prev_turn(self) -> None:
         """ctrl+p — scroll the conversation log to the previous agent turn."""
