@@ -87,17 +87,42 @@ def render_agents(
                         phase_label.append(f"  v{visits}", style="#444444")
                     skill_node.add(phase_label)
         else:
-            # idle: last activity
+            # idle: last activity + message count + recent user snippet
             try:
                 last = registry.last_activity_at(name)
-                if last:
-                    ts = last.strftime("%Y-%m-%d %H:%M")
-                    tree.add(RichText(f"last: {ts}", style="#555555"))
+                ts_str = last.strftime("%Y-%m-%d %H:%M") if last else None
             except Exception as exc:
                 logger.warning(
                     "right_panel agents: registry.last_activity_at(%s) failed: %s",
                     name, exc,
                 )
+                ts_str = None
+            try:
+                msg_count = registry.message_count(name)
+            except Exception:
+                msg_count = 0
+            try:
+                snippet = registry.recent_user_message(name)
+            except Exception:
+                snippet = ""
+            if ts_str:
+                count_part = (
+                    f"  ·  {msg_count} message{'s' if msg_count != 1 else ''}"
+                    if msg_count > 0 else ""
+                )
+                tree.add(RichText(
+                    f"last: {ts_str}{count_part}", style="#555555",
+                ))
+                if snippet:
+                    _max = 60
+                    short = (
+                        snippet if len(snippet) <= _max
+                        else snippet[:_max - 1] + "…"
+                    )
+                    line2 = RichText()
+                    line2.append("↳ ", style="#555555")
+                    line2.append(short, style="#444444")
+                    tree.add(line2)
 
         agent_trees.append(tree)
 

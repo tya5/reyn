@@ -5,8 +5,14 @@ import datetime
 import json
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from .base import _CORAL, _esc, logger
+
+# Budget progress-bar geometry
+_BAR_FILL = "█"
+_BAR_EMPTY = "░"
+_BAR_WIDTH = 24
 
 
 def _new_bucket() -> dict:
@@ -34,7 +40,62 @@ def _sparkline(values: list[float], width: int = 32) -> str:
     return f"[{_CORAL}]{bar}[/]"
 
 
-def render_cost(project_root: Path | None) -> str:
+def _budget_bar(used: float, cap: float) -> str:
+    """Render a 24-cell `█░` progress bar with colour thresholds.
+
+    Green below 75 %, coral 75–90 %, red above 90 %. Returns Rich markup.
+    """
+    ratio = min(1.0, used / cap) if cap > 0 else 0.0
+    filled = round(ratio * _BAR_WIDTH)
+    pct = int(ratio * 100)
+    if ratio >= 0.9:
+        colour = "#ff4444"
+    elif ratio >= 0.75:
+        colour = _CORAL
+    else:
+        colour = "#44cc88"
+    bar = _BAR_FILL * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+    return f"[{colour}]\\[{bar}][/] [{colour}]{pct:3d}%[/]"
+
+
+def _render_budget_caps(lines: list[str], budget_tracker: Any) -> None:
+    """Append daily token / cost progress bars when caps are configured.
+
+    Reads `daily_tokens.hard_limit` and `daily_cost_usd.hard_limit` from
+    ``budget_tracker.snapshot()["config"]``. Skips silently when caps are
+    unset or the snapshot shape changes.
+    """
+    try:
+        snap = budget_tracker.snapshot()
+        cfg = snap.get("config")
+        if cfg is None:
+            return
+        daily_tok_used = snap.get("daily_tokens", 0)
+        daily_cost_used = snap.get("daily_cost_usd", 0.0)
+        tok_cap_cfg = getattr(cfg, "daily_tokens", None)
+        cost_cap_cfg = getattr(cfg, "daily_cost_usd", None)
+        tok_hard = getattr(tok_cap_cfg, "hard_limit", None) if tok_cap_cfg else None
+        cost_hard = getattr(cost_cap_cfg, "hard_limit", None) if cost_cap_cfg else None
+        if tok_hard and tok_hard > 0:
+            label = f"{daily_tok_used:,} / {int(tok_hard):,}"
+            bar = _budget_bar(daily_tok_used, tok_hard)
+            lines.append(
+                f"[#555555]    tokens  [/][#aaaaaa]{label:<22}[/]  {bar}"
+            )
+        if cost_hard and cost_hard > 0:
+            label = f"${daily_cost_used:.4f} / ${cost_hard:.4f}"
+            bar = _budget_bar(daily_cost_used, cost_hard)
+            lines.append(
+                f"[#555555]    cost    [/][#aaaaaa]{label:<22}[/]  {bar}"
+            )
+    except Exception as exc:
+        logger.warning("right_panel cost: budget cap render failed: %s", exc)
+
+
+def render_cost(
+    project_root: Path | None,
+    budget_tracker: Any = None,
+) -> str:
     """Render the cost tab, summarising LLM usage from .reyn/events/*.jsonl."""
     lines: list[str] = []
 
@@ -56,6 +117,8 @@ def render_cost(project_root: Path | None) -> str:
     by_agent_skill: dict[str, dict[str, dict]] = defaultdict(
         lambda: defaultdict(_new_bucket)
     )
+    # Per-model bucket (parsed from llm_called events)
+    by_model: dict[str, dict] = defaultdict(_new_bucket)
 
     for jsonl in sorted(events_root.rglob("*.jsonl")):
         try:
@@ -104,6 +167,14 @@ def render_cost(project_root: Path | None) -> str:
                             bucket["has_cost"] = True
                         bucket["call_costs"].append(cost)
 
+                    # Per-model accumulation
+                    mb = by_model[pending_model]
+                    mb["p"] += pt; mb["c"] += ct
+                    mb["cost"] += cost; mb["calls"] += 1
+                    if has_cost:
+                        mb["has_cost"] = True
+                    mb["call_costs"].append(cost)
+
                     if ts.startswith(today_str):
                         today["p"] += pt; today["c"] += ct
                         today["cost"] += cost; today["calls"] += 1
@@ -115,8 +186,6 @@ def render_cost(project_root: Path | None) -> str:
                         "right_panel cost: malformed event in %s: %s",
                         jsonl, exc,
                     )
-            # pending_model retained for symmetry with future per-call attribution
-            del pending_model
         except Exception as exc:
             logger.warning(
                 "right_panel cost: read of %s failed: %s", jsonl, exc,
@@ -133,6 +202,9 @@ def render_cost(project_root: Path | None) -> str:
         spark = _sparkline(today["call_costs"])
         if spark:
             lines.append(f"[#555555]    trend   [/]{spark}")
+        # Budget cap progress bars (only when caps are configured)
+        if budget_tracker is not None:
+            _render_budget_caps(lines, budget_tracker)
     lines.append("")
 
     # ── ALL TIME ──────────────────────────────────────────────────────
@@ -184,6 +256,29 @@ def render_cost(project_root: Path | None) -> str:
             lines.append("")
     else:
         lines.append("[#555555]    (no skill runs yet)[/]")
+    lines.append("")
+
+    # ── BY MODEL ─────────────────────────────────────────────────────
+    lines.append("[bold #aaaaaa]  BY MODEL[/]")
+    if by_model:
+        sorted_models = sorted(
+            by_model.items(),
+            key=lambda kv: (-kv[1]["cost"], -(kv[1]["p"] + kv[1]["c"])),
+        )
+        for model_name, mb in sorted_models:
+            tok_total = mb["p"] + mb["c"]
+            cost_part = (
+                f"  [#44cc88]${mb['cost']:.4f}[/]"
+                if mb["has_cost"] else ""
+            )
+            lines.append(
+                f"[#aaaaaa]  {_esc(model_name):<28}[/]"
+                f"[#555555]{tok_total:>7,} tok[/]"
+                f"{cost_part}"
+                f"  [#777777]{mb['calls']}c[/]"
+            )
+    else:
+        lines.append("[#555555]    (no model data yet)[/]")
 
     return "\n".join(lines)
 

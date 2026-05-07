@@ -4,19 +4,18 @@ These are intentionally small wrappers around Static / Widget that:
 
   * delegate render() back to the parent ``RightPanel`` so we never store
     intermediate Rich strings in the visual pipeline (avoids type drift bugs);
-  * own preview-pane scroll/clear plumbing for the docs tab.
+  * own preview-pane scroll/clear plumbing for the docs / events / memory tabs.
 
 Kept here to keep ``__init__.py`` focused on the dispatcher itself.
 """
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult, RenderResult
 from textual.widget import Widget
-from textual.widgets import Label, RichLog, Static, Tabs
-from textual.widgets._tabs import Underline as _Underline
+from textual.widgets import Label, RichLog, Static
 
 from .base import _esc, logger
 
@@ -24,22 +23,14 @@ if TYPE_CHECKING:
     from . import RightPanel
 
 
-class _TopTabs(Tabs):
-    """Tabs with the underline indicator docked to the top instead of the bottom."""
-
-    def on_mount(self) -> None:
-        # Inline styles have highest priority — overrides DEFAULT_CSS dock:bottom
-        self.query_one(_Underline).styles.dock = "top"
-
-
 class _PanelHeader(Static):
-    """Fixed header strip — 1 line of text + symmetric padding = natural 3 rows."""
+    """Fixed header strip — 1 line of text + bottom border."""
 
     DEFAULT_CSS = """
     _PanelHeader {
         background: #1a1a1a;
         color: #aaaaaa;
-        padding: 0 2;
+        padding: 0 1;
         border-bottom: solid #333333;
     }
     """
@@ -85,11 +76,46 @@ class _PanelContent(Static):
         self.refresh(layout=True)
 
 
-class _PreviewPane(Widget):
-    """Lower-half preview pane toggled with 'f'.
+class _PanelTop(Widget):
+    """Wraps _PanelHeader + #panel-scroll so the focus indicator can be drawn
+    around the upper content region without including the tab strip below.
 
-    Generic: any tab can populate it. Currently docs tab shows the focused
-    file's Markdown content. Other tabs may use it in future.
+    On Ctrl+O (focus → tabs), the parent RightPanel toggles ``x-focused``
+    on this widget — the gray transparent borders flip to a 4-sided coral
+    ring that highlights the area whose tabs are active.
+    """
+
+    DEFAULT_CSS = """
+    _PanelTop {
+        height: 1fr;
+        layout: vertical;
+        border-left: solid #2a2a2a;
+        border-top: solid transparent;
+        border-right: solid transparent;
+        border-bottom: solid transparent;
+    }
+    _PanelTop.x-focused {
+        border: solid $primary;
+    }
+    """
+
+
+class _TabContent(Widget):
+    """Container holding _PanelTop + _PreviewPane (sits below the tab strip)."""
+
+    DEFAULT_CSS = """
+    _TabContent {
+        height: 1fr;
+        layout: vertical;
+    }
+    """
+
+
+class _PreviewPane(Widget):
+    """Lower-half preview pane toggled with Enter (on docs / events / memory).
+
+    Generic: any tab can populate it via ``show_markdown(path)`` (docs) or
+    ``show_text(title, renderable)`` (events JSON, memory body).
     """
 
     can_focus = True
@@ -98,7 +124,10 @@ class _PreviewPane(Widget):
     _PreviewPane {
         display: none;
         height: 1fr;
-        border-top: tall #2a2a2a;
+        border-top: solid #2a2a2a;
+        border-left: solid #2a2a2a;
+        border-right: solid transparent;
+        border-bottom: solid transparent;
         layout: vertical;
     }
     _PreviewPane.preview-visible {
@@ -111,7 +140,7 @@ class _PreviewPane(Widget):
         padding: 0 1;
     }
     _PreviewPane:focus {
-        border-top: tall $primary;
+        border: solid $primary;
     }
     _PreviewPane:focus #preview-header {
         color: $primary;
@@ -121,12 +150,19 @@ class _PreviewPane(Widget):
         height: 1fr;
         padding: 0 1;
         overflow-x: auto;
+        scrollbar-color: #2a2a2a;
+        scrollbar-color-hover: $primary;
+        scrollbar-color-active: $primary;
+        scrollbar-background: transparent;
+        scrollbar-size-vertical: 1;
+        scrollbar-size-horizontal: 1;
     }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._current_path: Path | None = None
+        self._current_title: str = ""
 
     def compose(self) -> ComposeResult:
         yield Label("", id="preview-header")
@@ -153,6 +189,7 @@ class _PreviewPane(Widget):
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
         self._current_path = path
+        self._current_title = path.name
         try:
             log = self.query_one("#preview-log", RichLog)
             log.clear()
@@ -161,6 +198,24 @@ class _PreviewPane(Widget):
             self._update_header()
         except Exception as exc:
             logger.warning("right_panel preview show_markdown(%s) failed: %s", path, exc)
+
+    def show_text(self, title: str, renderable: Any) -> None:
+        """Generic preview: any Rich-renderable content under a custom title.
+
+        Used by the events tab (JSON dumps) and memory tab (entry bodies).
+        Differs from show_markdown() by accepting any renderable + a title
+        string that doesn't have to be a filesystem path.
+        """
+        self._current_path = None
+        self._current_title = title
+        try:
+            log = self.query_one("#preview-log", RichLog)
+            log.clear()
+            log.write(renderable)
+            log.scroll_home(animate=False)
+            self._update_header()
+        except Exception as exc:
+            logger.warning("right_panel preview show_text failed: %s", exc)
 
     def scroll_line(self, delta: int) -> None:
         try:
@@ -178,6 +233,7 @@ class _PreviewPane(Widget):
 
     def clear(self) -> None:
         self._current_path = None
+        self._current_title = ""
         try:
             self.query_one("#preview-log", RichLog).clear()
             self._update_header()
@@ -185,7 +241,12 @@ class _PreviewPane(Widget):
             logger.warning("right_panel preview clear failed: %s", exc)
 
     def _update_header(self) -> None:
-        name = _esc(self._current_path.name) if self._current_path else "—"
+        if self._current_title:
+            name = _esc(self._current_title)
+        elif self._current_path:
+            name = _esc(self._current_path.name)
+        else:
+            name = "—"
         try:
             self.query_one("#preview-header", Label).update(
                 f"  {name}  │  j↓  k↑  h←  l→"
@@ -194,15 +255,4 @@ class _PreviewPane(Widget):
             logger.warning("right_panel preview header update failed: %s", exc)
 
 
-class _TabContent(Widget):
-    """Container below the tab bar: header + scroll area + preview pane."""
-
-    DEFAULT_CSS = """
-    _TabContent {
-        height: 1fr;
-        layout: vertical;
-    }
-    """
-
-
-__all__ = ["_TopTabs", "_PanelHeader", "_PanelContent", "_PreviewPane", "_TabContent"]
+__all__ = ["_PanelHeader", "_PanelContent", "_PanelTop", "_PreviewPane", "_TabContent"]

@@ -184,36 +184,82 @@ def _load_chain_replies(project_root: Path) -> dict[str, str]:
     return replies
 
 
+def _load_events_cached(
+    project_root: Path,
+    cache: dict[Path, tuple[float, list[dict]]],
+) -> list[dict]:
+    """Read all events/.jsonl with file-mtime caching (perf).
+
+    Each .jsonl file is parsed once and re-parsed only when its mtime
+    changes — events panel re-renders every 2 s and the events directory
+    grows monotonically with each turn, so re-reading every file every
+    refresh adds up.
+    """
+    events_root = project_root / ".reyn" / "events"
+    if not events_root.is_dir():
+        return []
+    all_events: list[dict] = []
+    seen: set[Path] = set()
+    for jsonl in sorted(events_root.rglob("*.jsonl")):
+        seen.add(jsonl)
+        try:
+            mtime = jsonl.stat().st_mtime
+        except OSError:
+            continue
+        cached = cache.get(jsonl)
+        if cached is not None and cached[0] == mtime:
+            all_events.extend(cached[1])
+            continue
+        parsed: list[dict] = []
+        try:
+            for raw in jsonl.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    parsed.append(json.loads(raw))
+                except Exception as exc:
+                    logger.warning(
+                        "right_panel events: malformed event JSON in %s: %s",
+                        jsonl, exc,
+                    )
+        except Exception as exc:
+            logger.warning("right_panel events: read of %s failed: %s", jsonl, exc)
+            continue
+        cache[jsonl] = (mtime, parsed)
+        all_events.extend(parsed)
+    # Drop cache entries for files that no longer exist
+    for stale in [p for p in cache if p not in seen]:
+        cache.pop(stale, None)
+    return all_events
+
+
 def render_events(
     project_root: Path | None,
     event_filter_idx: int,
     event_tail_idx: int,
-) -> str:
-    """Render the recent-events list for the events tab."""
+    *,
+    cursor: int = 0,
+    cache: dict | None = None,
+) -> tuple[str, list[dict]]:
+    """Render the recent-events list for the events tab.
+
+    Returns ``(rendered_markup, visible_events)`` so the orchestrator can
+    drive the cursor + Enter→preview integration without re-parsing files.
+    Consecutive events sharing a chain_id are visually grouped (a blank
+    line separates chain switches). The row at index ``cursor`` is
+    highlighted with a coral ▶ prefix.
+    """
     if project_root is None:
-        return "[#555555]  (no project root)[/]"
+        return "[#555555]  (no project root)[/]", []
 
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
-        return "[#555555]  (no events yet)[/]"
+        return "[#555555]  (no events yet)[/]", []
 
-    all_events: list[dict] = []
-    for jsonl in sorted(events_root.rglob("*.jsonl")):
-        try:
-            for raw in jsonl.read_text(encoding="utf-8").splitlines():
-                raw = raw.strip()
-                if raw:
-                    try:
-                        all_events.append(json.loads(raw))
-                    except Exception as exc:
-                        logger.warning(
-                            "right_panel events: malformed event JSON in %s: %s",
-                            jsonl, exc,
-                        )
-        except Exception as exc:
-            logger.warning(
-                "right_panel events: read of %s failed: %s", jsonl, exc,
-            )
+    if cache is None:
+        cache = {}
+    all_events = _load_events_cached(project_root, cache)
 
     filter_name, filter_set = _FILTER_GROUPS[event_filter_idx]
     tail = _TAIL_CYCLE[event_tail_idx]
@@ -224,22 +270,38 @@ def render_events(
         visible = all_events
 
     if not visible:
-        return "[#555555]  (no matching events)[/]"
+        return "[#555555]  (no matching events)[/]", []
+
+    # Newest-first window — also returned to the caller for cursor / preview
+    windowed = list(visible[-tail:])[::-1]
+    if cursor >= len(windowed):
+        cursor = max(0, len(windowed) - 1)
 
     chain_replies = _load_chain_replies(project_root)
 
     lines: list[str] = []
-    for ev in visible[-tail:][::-1]:
-        ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
+    prev_chain: str | None = None
+    for i, ev in enumerate(windowed):
         ev_type = ev.get("type", "?")
+        data = ev.get("data") or {}
+        chain_id = data.get("chain_id") or ""
+        # Chain grouping — blank line between chain switches
+        if prev_chain is not None and prev_chain != chain_id:
+            lines.append("")
+        prev_chain = chain_id
+
+        ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
         color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
         hint = _esc(_event_hint(ev))
         hint_part = f"  [#555555]{hint}[/]" if hint else ""
+        cursor_prefix = (
+            f"[bold {_CORAL}]▶ [/]" if i == cursor else "  "
+        )
         lines.append(
-            f"[#444444]  {ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
+            f"{cursor_prefix}[#444444]{ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
         )
         if ev_type == "user_message_received":
-            cid = (ev.get("data") or {}).get("chain_id")
+            cid = data.get("chain_id")
             if cid:
                 reply = chain_replies.get(cid)
                 if reply is None:
@@ -248,13 +310,13 @@ def render_events(
                     short = _esc(reply[:72]) + ("…" if len(reply) > 72 else "")
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
-    # filter_name kept for parity with header; unused locally to silence lint
     del filter_name
-    return "\n".join(lines)
+    return "\n".join(lines), windowed
 
 
 __all__ = [
     "render_events",
+    "_load_events_cached",
     "_FILTER_GROUPS",
     "_TAIL_CYCLE",
     "_EVENT_COLORS",

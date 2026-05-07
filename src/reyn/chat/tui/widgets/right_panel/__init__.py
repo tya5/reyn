@@ -24,7 +24,13 @@ from .docs_tab import build_docs_index, render_docs
 from .events_tab import _FILTER_GROUPS, _TAIL_CYCLE, render_events
 from .keys_tab import render_keys
 from .memory_tab import render_memory
-from .shells import _PanelContent, _PanelHeader, _PreviewPane, _TabContent, _TopTabs
+from .shells import (
+    _PanelContent,
+    _PanelHeader,
+    _PanelTop,
+    _PreviewPane,
+    _TabContent,
+)
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -56,15 +62,17 @@ class RightPanel(Widget):
     RightPanel {
         display: none;
         width: 33%;
-        border-left: tall #2a2a2a;
         background: #111111;
         layout: vertical;
         height: 100%;
     }
 
+    /* Tabs at the top of the panel via compose-order. Background uses the
+       panel's `#111111` (vs the screen header's `#1a1a1a`) so the boundary
+       between header and tabs is visible from colour delta alone. */
     RightPanel Tabs {
-        background: #1a1a1a;
-        height: 3;
+        background: #111111;
+        border-left: solid #2a2a2a;
     }
 
     RightPanel Tab {
@@ -81,10 +89,6 @@ class RightPanel(Widget):
         color: #aaaaaa;
     }
 
-    RightPanel .underline--bar {
-        color: #2a2a2a;
-    }
-
     RightPanel #panel-scroll {
         height: 1fr;
     }
@@ -92,7 +96,7 @@ class RightPanel(Widget):
     RightPanel #panel-content {
         height: auto;
         color: #666666;
-        padding: 1 1;
+        padding: 0 1;
     }
     """
 
@@ -112,26 +116,63 @@ class RightPanel(Widget):
         self._docs_cursor: int = 0
         self._docs_files: list[Path] = []
         self._docs_groups: dict[str, list[Path]] = {}
+        self._docs_filter: str = ""
         self._preview_visible: bool = False
         self._panel_width: int = 0  # 0 = use CSS default (33%); set on first resize
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
         self._exec_state: dict[str, dict] = {}
+        # Events tab state — mtime-based parse cache + cursor + visible-list cache
+        self._events_cache: dict[Path, tuple[float, list[dict]]] = {}
+        self._events_cursor: int = 0
+        self._events_visible: list[dict] = []
+        # Memory tab state — flat cursor over all entries
+        self._memory_cursor: int = 0
+        self._memory_entries: list[Any] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        with _TabContent(id="tab-content"):
-            yield _PanelHeader(self, id="panel-header")
-            with VerticalScroll(id="panel-scroll"):
-                yield _PanelContent(self, id="panel-content")
-            yield _PreviewPane(id="preview-pane")
-        yield _TopTabs(
+        # Tabs first (top of panel) — vertical compose order = render order.
+        yield Tabs(
             *[Tab(_PANEL_LABELS[t], id=t) for t in PANEL_TYPES],
             id="panel-tabs",
         )
+        with _TabContent(id="tab-content"):
+            with _PanelTop(id="panel-top"):
+                yield _PanelHeader(self, id="panel-header")
+                with VerticalScroll(id="panel-scroll"):
+                    yield _PanelContent(self, id="panel-content")
+            yield _PreviewPane(id="preview-pane")
 
     def on_mount(self) -> None:
         self.set_interval(_REFRESH_INTERVAL, self._refresh_live)
+
+    # ── focus indicator (X-focused on _PanelTop when tabs hold focus) ───────
+
+    def on_descendant_focus(self, event) -> None:
+        """A descendant gained focus — refresh the x-focused class on X."""
+        self._update_x_focused()
+
+    def on_descendant_blur(self, event) -> None:
+        """A descendant lost focus — re-evaluate (focus may have left panel)."""
+        self._update_x_focused()
+
+    def _update_x_focused(self) -> None:
+        """Light up _PanelTop's coral ring when (and only when) `#panel-tabs`
+        holds focus. Preview pane has its own :focus CSS; tabs themselves
+        stay gray — the eye is drawn upward to the content the tabs represent.
+        """
+        try:
+            top = self.query_one("#panel-top", _PanelTop)
+            tabs = self.query_one("#panel-tabs", Tabs)
+        except Exception:
+            return
+        focused = self.app.focused
+        if focused is None:
+            top.set_class(False, "x-focused")
+            return
+        is_tabs = focused is tabs or any(a is tabs for a in focused.ancestors)
+        top.set_class(is_tabs, "x-focused")
 
     # ── public API ───────────────────────────────────────────────────────────
 
@@ -145,7 +186,7 @@ class RightPanel(Widget):
 
     def cycle(self, delta: int) -> None:
         """Advance (delta=+1) or retreat (delta=-1) through tabs."""
-        tabs = self.query_one("#panel-tabs", _TopTabs)
+        tabs = self.query_one("#panel-tabs", Tabs)
         if delta > 0:
             tabs.action_next_tab()
         else:
@@ -153,9 +194,29 @@ class RightPanel(Widget):
 
     def focus_tabs(self) -> None:
         try:
-            self.query_one("#panel-tabs", _TopTabs).focus()
+            self.query_one("#panel-tabs", Tabs).focus()
         except Exception as exc:
             logger.warning("right_panel focus_tabs failed: %s", exc)
+
+    def set_panel_type(self, panel_type: str) -> None:
+        """Programmatically switch to a specific tab (e.g. 'events' / 'agents').
+
+        Used by ReynTUIApp.action_toggle_panel for smart Ctrl+B targeting and
+        by /docs-filter to jump the user to the docs tab.
+        """
+        if panel_type not in PANEL_TYPES:
+            return
+        try:
+            tabs = self.query_one("#panel-tabs", Tabs)
+            tabs.active = panel_type
+        except Exception as exc:
+            logger.warning("right_panel set_panel_type failed: %s", exc)
+
+    def set_docs_filter(self, substr: str) -> None:
+        """Set the docs-tab substring filter; empty clears."""
+        self._docs_filter = (substr or "").strip()
+        self._docs_cursor = 0
+        self._invalidate()
 
     def resize(self, delta: int) -> None:
         self._panel_resize(delta)
@@ -209,16 +270,30 @@ class RightPanel(Widget):
             if self._panel_type == "docs":
                 event.prevent_default()
                 self._toggle_preview()
+            elif self._panel_type == "events":
+                event.prevent_default()
+                self._events_show_selected()
+            elif self._panel_type == "memory":
+                event.prevent_default()
+                self._memory_show_selected()
         elif event.key == "j":
             event.prevent_default()
             if self._panel_type == "docs":
                 self._docs_move(+1)
+            elif self._panel_type == "events":
+                self._events_move(+1)
+            elif self._panel_type == "memory":
+                self._memory_move(+1)
             else:
                 self._scroll_panel(+1)
         elif event.key == "k":
             event.prevent_default()
             if self._panel_type == "docs":
                 self._docs_move(-1)
+            elif self._panel_type == "events":
+                self._events_move(-1)
+            elif self._panel_type == "memory":
+                self._memory_move(-1)
             else:
                 self._scroll_panel(-1)
         elif event.key == "l":
@@ -271,10 +346,106 @@ class RightPanel(Widget):
             pane = self.query_one("#preview-pane", _PreviewPane)
             if self._panel_type == "docs" and self._docs_files:
                 pane.show_markdown(self._docs_files[self._docs_cursor])
+            elif self._panel_type == "events" and self._events_visible:
+                self._show_event_in_preview(pane)
+            elif self._panel_type == "memory" and self._memory_entries:
+                self._show_memory_in_preview(pane)
             else:
                 pane.clear()
         except Exception as exc:
             logger.warning("right_panel update_preview failed: %s", exc)
+
+    # ── events / memory cursor + preview integration ─────────────────────────
+
+    def _events_move(self, delta: int) -> None:
+        """Move the events tab cursor and refresh; sync preview if open."""
+        if not self._events_visible:
+            return
+        self._events_cursor = max(
+            0, min(len(self._events_visible) - 1, self._events_cursor + delta),
+        )
+        self._invalidate()
+        if self._preview_visible:
+            self._update_preview()
+
+    def _events_show_selected(self) -> None:
+        """Enter on events tab — open the selected event in the preview pane."""
+        if not self._events_visible:
+            return
+        if not self._preview_visible:
+            self._toggle_preview()
+        else:
+            self._update_preview()
+
+    def _show_event_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's event as JSON in the preview pane."""
+        import json as _json
+        if not self._events_visible:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
+        ev = self._events_visible[idx]
+        from rich.syntax import Syntax  # lazy — keeps cold-start fast
+        title = f"event #{idx} · {ev.get('type', '?')}"
+        try:
+            body = _json.dumps(ev, indent=2, default=str, ensure_ascii=False)
+        except Exception:
+            body = repr(ev)
+        try:
+            renderable = Syntax(
+                body, "json",
+                theme="ansi_dark",
+                background_color="default",
+                line_numbers=False,
+                word_wrap=True,
+            )
+        except Exception:
+            from rich.text import Text as RichText
+            renderable = RichText(body)
+        pane.show_text(title, renderable)
+
+    def _memory_move(self, delta: int) -> None:
+        """Move the memory tab cursor; sync preview if open."""
+        if not self._memory_entries:
+            return
+        self._memory_cursor = max(
+            0, min(len(self._memory_entries) - 1, self._memory_cursor + delta),
+        )
+        self._invalidate()
+        if self._preview_visible:
+            self._update_preview()
+
+    def _memory_show_selected(self) -> None:
+        """Enter on memory tab — open the selected entry in the preview pane."""
+        if not self._memory_entries:
+            return
+        if not self._preview_visible:
+            self._toggle_preview()
+        else:
+            self._update_preview()
+
+    def _show_memory_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's memory entry's body as Markdown in the preview."""
+        if not self._memory_entries:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._memory_entries) - 1, self._memory_cursor))
+        entry = self._memory_entries[idx]
+        from rich.console import Group as RichGroup
+        from rich.markdown import Markdown as RichMarkdown
+        from rich.text import Text as RichText
+        head = RichText()
+        head.append(getattr(entry, "name", "") or "", style="bold " + _CORAL)
+        if getattr(entry, "type", ""):
+            head.append("  ")
+            head.append(f"[{entry.type}]", style="dim")
+        if getattr(entry, "description", ""):
+            head.append("\n")
+            head.append(entry.description, style="#aaaaaa")
+        head.append("\n")
+        body_md = RichMarkdown(getattr(entry, "body", "") or "")
+        title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
+        pane.show_text(title, RichGroup(head, body_md))
 
     # ── docs navigation ───────────────────────────────────────────────────────
 
@@ -332,7 +503,7 @@ class RightPanel(Widget):
         if self._panel_type == "agents":
             return f"[bold {_CORAL}]Agents[/]"
         if self._panel_type == "memory":
-            return f"[bold {_CORAL}]Memory[/]"
+            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓  k↑  enter=open[/]"
         if self._panel_type == "cost":
             return f"[bold {_CORAL}]Cost[/]"
         if self._panel_type == "docs":
@@ -352,6 +523,7 @@ class RightPanel(Widget):
                 f"[bold {_CORAL}]Events[/]"
                 f"  {kf}[#555555]ilter:[/]{filter_label}"
                 f"  {kt}[#555555]ail:[/][#aaaaaa]{tail}[/]"
+                f"  [#555555]j/k=move  enter=open[/]"
             )
         return ""
 
@@ -360,24 +532,42 @@ class RightPanel(Widget):
             if self._panel_type == "keys":
                 return render_keys(self.app)
             if self._panel_type == "events":
-                return render_events(
+                rendered, windowed = render_events(
                     self._project_root,
                     self._event_filter_idx,
                     self._event_tail_idx,
+                    cursor=self._events_cursor,
+                    cache=self._events_cache,
                 )
+                self._events_visible = windowed
+                if self._events_cursor >= len(windowed):
+                    self._events_cursor = max(0, len(windowed) - 1)
+                return rendered
             if self._panel_type == "agents":
                 return render_agents(self._registry, self._exec_state)
             if self._panel_type == "memory":
-                return render_memory(self._project_root)
+                rendered, flat_entries = render_memory(
+                    self._project_root, cursor=self._memory_cursor,
+                )
+                self._memory_entries = flat_entries
+                if self._memory_cursor >= len(flat_entries):
+                    self._memory_cursor = max(0, len(flat_entries) - 1)
+                return rendered
             if self._panel_type == "cost":
-                return render_cost(self._project_root)
+                budget_tracker = getattr(self.app, "_budget_tracker", None)
+                return render_cost(self._project_root, budget_tracker)
             if self._panel_type == "docs":
-                groups, ordered = build_docs_index(self._project_root)
+                groups, ordered = build_docs_index(
+                    self._project_root, self._docs_filter,
+                )
                 self._docs_groups = groups
                 self._docs_files = ordered
                 if self._docs_cursor >= len(ordered):
                     self._docs_cursor = max(0, len(ordered) - 1)
-                return render_docs(self._project_root, self._docs_cursor, groups)
+                return render_docs(
+                    self._project_root, self._docs_cursor, groups,
+                    docs_filter=self._docs_filter,
+                )
         except Exception as e:
             logger.warning("right_panel render dispatch failed: %s", e)
             return f"[red]error: {_esc(str(e))}[/red]"
