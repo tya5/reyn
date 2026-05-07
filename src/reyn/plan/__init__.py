@@ -16,6 +16,7 @@ from reyn.plan.decomposition import (
     read_decomposition,
     write_decomposition,
 )
+from reyn.plan.plan_registry import PlanRegistry
 from reyn.plan.plan_snapshot import (
     PLAN_SNAPSHOT_VERSION,
     PlanSnapshot,
@@ -26,6 +27,7 @@ __all__ = [
     "DECOMPOSITION_SCHEMA_VERSION",
     "DecompositionCorruptError",
     "PLAN_SNAPSHOT_VERSION",
+    "PlanRegistry",
     "PlanSnapshot",
     "decomposition_dir",
     "decomposition_path",
