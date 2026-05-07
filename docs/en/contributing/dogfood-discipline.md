@@ -357,6 +357,18 @@ A behavior change observed in N=1 is not stable until confirmed in N≥5 runs. T
 
 The reason for the N≥5 requirement: LLM-driven workflows have non-deterministic failure modes that may not manifest on every run. A single successful run is compatible with both "fixed" and "fixed on this particular sequence of LLM decisions, but not in general."
 
+### N≥10 for "deterministic" attractor claims (= post-OSS reinforcement)
+
+A separate threshold applies to the **opposite** claim: declaring an attractor or empty-stop pattern "deterministic" requires N≥10. This rule was added in 2026-05-07 after a methodological mistake: an analyst saw 0/5 empty-stops across 11 different patches and concluded "deterministic gemini quirk", then built increasingly complex hypothesis stacks (= LiteLLM translation bug, vendor-side defect, ADR-0021 boundary discussion). N=20 measurement on the same payload revealed the actual rate was ~85% narrate / ~15% empty stop — the "0/5 across 11 patches" was a streak artifact of running 5-shot batches when the underlying empty-stop rate happened to align with rapid-succession sampling.
+
+Rules:
+
+- For **rate measurement** (= "what fraction succeeds?"): N≥10 minimum, N=20 preferred when the claim affects design decisions.
+- Do not use N=5 to declare a behavior "always fails" or "always succeeds" — N=5 with a true 80% rate has a 0.2^5 ≈ 0.03% false-streak probability per run, but if you run that 11 times you have an 11 × 0.03% ≈ 0.35% chance of a streak somewhere. Across many hypothesis tests the streak probability compounds.
+- When tempted to invoke "vendor X has a public-unreported defect" or "library Y has a translation bug": apply Occam's razor first. The simpler hypothesis — "my testing methodology produced a streak that I'm misreading as deterministic" — is almost always more likely than the complex hypothesis. Verify the simpler one first by increasing N before chasing the complex one.
+
+cross-ref: `feedback_minimize_speculation.md`, `feedback_observe_before_speculate_llm.md`. The G12 entry in `docs/journal/dogfood/giveup-tracker.md` documents the specific case (= Pattern E observation, post-OSS HN dogfood 2026-05-07).
+
 ---
 
 ## 6. Reyn-specific tooling

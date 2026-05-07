@@ -33,6 +33,14 @@ export OPENAI_API_KEY=sk-...   # or set the key for your LiteLLM proxy
 reyn init                      # creates reyn.yaml + .reyn/config.yaml
 ```
 
+> **A note on weak default models.** Reyn's default `models.standard`
+> points at a low-cost LLM. With weak models, occasional empty replies
+> on tool-heavy queries (= "list available skills" / "explain how X
+> works") are normal — measured ~15% rate on `gemini-2.5-flash-lite`,
+> dissolves on stronger models. If the rate matters for your use, edit
+> `reyn.yaml`'s `models.standard` to point at a stronger model. This is
+> tracked as G12 in `docs/journal/dogfood/giveup-tracker.md`.
+
 Create a minimal skill under `reyn/local/my_skill/`:
 
 ```yaml
