@@ -81,10 +81,14 @@ class _PanelTop(Widget):
     """Wraps _PanelHeader + #panel-scroll so the focus indicator can be drawn
     around the upper content region without including the tab strip below.
 
-    On Ctrl+O (focus → tabs), the parent RightPanel toggles ``x-focused``
-    on this widget — the gray transparent borders flip to a 4-sided coral
-    ring that highlights the area whose tabs are active.
+    Focus model:
+      * Tabs has focus  → ``x-focused`` set by the parent → coral ring
+      * _PanelTop has focus (via close-preview restore) → same ``x-focused``
+        ring; key events bubble to RightPanel.on_key so j/k/space/Tab
+        all keep working.
     """
+
+    can_focus = True
 
     DEFAULT_CSS = """
     _PanelTop {

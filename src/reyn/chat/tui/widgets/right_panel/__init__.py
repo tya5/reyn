@@ -159,9 +159,11 @@ class RightPanel(Widget):
         self._update_x_focused()
 
     def _update_x_focused(self) -> None:
-        """Light up _PanelTop's coral ring when (and only when) `#panel-tabs`
-        holds focus. Preview pane has its own :focus CSS; tabs themselves
-        stay gray — the eye is drawn upward to the content the tabs represent.
+        """Light up _PanelTop's coral ring whenever the upper-right panel
+        region "owns" focus — i.e. `#panel-tabs` OR `_PanelTop` itself.
+
+        Preview pane has its own :focus CSS; tabs themselves stay gray —
+        the eye is drawn upward to the content the tabs represent.
         """
         try:
             top = self.query_one("#panel-top", _PanelTop)
@@ -172,8 +174,9 @@ class RightPanel(Widget):
         if focused is None:
             top.set_class(False, "x-focused")
             return
-        is_tabs = focused is tabs or any(a is tabs for a in focused.ancestors)
-        top.set_class(is_tabs, "x-focused")
+        in_tabs = focused is tabs or any(a is tabs for a in focused.ancestors)
+        in_top = focused is top or any(a is top for a in focused.ancestors)
+        top.set_class(in_tabs or in_top, "x-focused")
 
     # ── public API ───────────────────────────────────────────────────────────
 
@@ -268,19 +271,14 @@ class RightPanel(Widget):
             event.stop()
             self.cycle(-1)
         elif event.key == "space":
-            # Space toggles / opens the preview pane on docs / events /
-            # memory tabs. Enter is reserved for keystroke-passthrough on
-            # focused inputs (e.g. modal dialogs); Space is the standard
-            # "activate the highlighted row" key in TUIs.
-            if self._panel_type == "docs":
-                event.prevent_default()
-                self._toggle_preview()
-            elif self._panel_type == "events":
-                event.prevent_default()
-                self._events_show_selected()
-            elif self._panel_type == "memory":
-                event.prevent_default()
-                self._memory_show_selected()
+            # Space is a uniform preview toggle: works on any tab when
+            # focus is anywhere inside the right panel (tabs included).
+            # _update_preview() dispatches per-tab content (docs/events/
+            # memory); other tabs render a cleared preview pane.
+            event.prevent_default()
+            self._toggle_preview()
+            if self._preview_visible:
+                self._update_preview()
         elif event.key == "j":
             event.prevent_default()
             if self._panel_type == "docs":
@@ -320,13 +318,16 @@ class RightPanel(Widget):
     def _on_preview_close_requested(self, event) -> None:
         """Space pressed while the preview pane had focus — close the pane.
 
-        After hiding, pull focus back to the tab strip so further j/k/space
-        keystrokes are routed to the panel, not the now-hidden preview.
+        After hiding, focus moves to the upper-right panel region
+        (``_PanelTop``). Key events bubble to ``RightPanel.on_key`` so
+        j/k/space/Tab all keep working from there. The ``x-focused`` ring
+        is preserved because ``_update_x_focused`` recognises both
+        tabs-focused and _PanelTop-focused as "right-upper-panel active".
         """
         if self._preview_visible:
             self._toggle_preview()
         try:
-            self.query_one("#panel-tabs", Tabs).focus()
+            self.query_one("#panel-top", _PanelTop).focus()
         except Exception as exc:
             logger.warning("right_panel close-preview focus failed: %s", exc)
 
@@ -387,15 +388,6 @@ class RightPanel(Widget):
         if self._preview_visible:
             self._update_preview()
 
-    def _events_show_selected(self) -> None:
-        """Space on events tab — toggle preview pane (open with selected
-        event, or close if already open)."""
-        if not self._events_visible:
-            return
-        self._toggle_preview()
-        if self._preview_visible:
-            self._update_preview()
-
     def _show_event_in_preview(self, pane: _PreviewPane) -> None:
         """Render the cursor's event as JSON in the preview pane."""
         import json as _json
@@ -431,15 +423,6 @@ class RightPanel(Widget):
             0, min(len(self._memory_entries) - 1, self._memory_cursor + delta),
         )
         self._invalidate()
-        if self._preview_visible:
-            self._update_preview()
-
-    def _memory_show_selected(self) -> None:
-        """Space on memory tab — toggle preview pane (open with selected
-        entry, or close if already open)."""
-        if not self._memory_entries:
-            return
-        self._toggle_preview()
         if self._preview_visible:
             self._update_preview()
 
