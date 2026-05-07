@@ -18,6 +18,8 @@ ADR と journal の違い:
 | Section | 内容 |
 |---|---|
 | [dogfood/](dogfood/) | Reyn を Reyn で使った記録。 batch 単位、 finding 含む |
+| [insights/](insights/) | session を跨ぐ再利用可能な技術発見。 1 件 1 file、 long-term reusable |
+| [feature-verify/](feature-verify/) | 特定機能の verify ログ |
 
 ## 書き方
 

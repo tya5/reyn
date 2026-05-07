@@ -333,6 +333,7 @@ MCP client lifecycle を asyncio task group で wrap、 cancel scope を厳格�
 **Related findings**: B2-H1 / B3-H1 / B5-H1 / B5R2-H1 / B6-S2-observation.md (= 同 family の variant 系譜)
 **Spike record**: `docs/journal/dogfood/g4-trigger-evaluation-spike.md`
 **Design doc**: [ADR-0021](../../en/decisions/0021-g12-attractor-structural-fix-design.md) (2026-05-04)
+**Insight (Pattern E)**: [envelope-layer attractor fix + mutation isolation methodology](../insights/2026-05-07-envelope-layer-attractor-fix.md) (2026-05-07)
 
 #### Pattern E workaround (= post-tool empty-stop、 envelope-layer fix、 commit `aab6be2`)
 
@@ -1161,6 +1162,7 @@ complete** = production-grade phase 1 完了 milestone へ contribute。
 **Status**: **resolved-by-revert** at `589e50f` + **真因は G12 Pattern E と判明** (2026-05-07)、 envelope fix `aab6be2` で SP 圧縮系 retry の前提整備
 **Discovered**: 2026-05-07 Wave A dogfood verify (post-`dc8296f`)
 **Related**: [Wave A commit `dc8296f`](https://github.com/tya5/reyn/commit/dc8296f) (= reverted)、 [revert commit `589e50f`](https://github.com/tya5/reyn/commit/589e50f)、 [G12 envelope workaround `aab6be2`](https://github.com/tya5/reyn/commit/aab6be2)
+**Insights**: [envelope-layer attractor fix + mutation isolation methodology](../insights/2026-05-07-envelope-layer-attractor-fix.md) / [industry tool discovery patterns survey](../insights/2026-05-07-industry-tool-discovery-survey.md) (2026-05-07)
 
 #### 経緯
 
