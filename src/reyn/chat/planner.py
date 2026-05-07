@@ -435,11 +435,35 @@ class _PlanStepHost:
     async def file_write(self, path: str, content: str) -> dict:
         return await self._parent.file_write(path, content)
 
+    async def file_delete(self, path: str) -> dict:
+        return await self._parent.file_delete(path)
+
     async def file_regenerate_index(self, *args, **kwargs) -> dict:
         return await self._parent.file_regenerate_index(*args, **kwargs)
 
     async def file_list_directory(self, path: str) -> list[dict]:
         return await self._parent.file_list_directory(path)
+
+    # ── MCP passthroughs (= delegate to parent) ───────────────────────────
+
+    async def mcp_list_servers(self) -> list[dict]:
+        return await self._parent.mcp_list_servers()
+
+    async def mcp_list_tools(self, server: str) -> list[dict]:
+        return await self._parent.mcp_list_tools(server)
+
+    async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
+        return await self._parent.mcp_call_tool(server, tool, args)
+
+    # ── Model resolution (= required by RouterLoop for LLM call) ──────────
+    #
+    # 2026-05-07 dogfood bug fix: this method was missing from the original
+    # _PlanStepHost design (commit 6b41fd0). Without it, RouterLoop.run()
+    # raises AttributeError when computing the model spec, so every plan
+    # step fails. Discovered when "Read both README.md and CLAUDE.md, then
+    # build a comparison" produced 3-of-3 step_failures. Delegate to parent.
+    def resolve_model(self, name: str) -> str:
+        return self._parent.resolve_model(name)
 
     async def run_skill_awaitable(self, *, skill: str, input: dict, chain_id: str) -> dict:
         # Plan steps may run skills if invoke_skill is in step.tools.
@@ -527,6 +551,12 @@ async def execute_plan(
             router_model=router_model,
             budget=budget,
             system_prompt_override=sys_prompt,
+            # Drop `plan` from the step's tool catalog so the step LLM cannot
+            # recursively decompose into another plan. Without this, the step
+            # LLM sees `plan` as available and may self-decompose, causing
+            # unbounded recursion (= dogfood 2026-05-07: 3-step plan emitted
+            # 3 plan invocations because steps re-emitted plan).
+            exclude_tools={"plan"},
         )
         try:
             sub_usage = await sub_loop.run(

@@ -244,6 +244,7 @@ class RouterLoop:
         router_model: str = "light",  # config tier (light = intent classification)
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
         system_prompt_override: str | None = None,
+        exclude_tools: set[str] | None = None,
     ):
         self.host = host
         self.chain_id = chain_id
@@ -256,6 +257,13 @@ class RouterLoop:
         # of a plan") instead of the full chat router prompt. The host facade
         # still controls the tool catalog narrowing.
         self._system_prompt_override = system_prompt_override
+        # Tool names to drop from the catalog (= post-build filter). Used by
+        # plan executor to pass ``{"plan"}`` so plan steps cannot recursively
+        # call plan (= prevents unbounded nesting). Discovered 2026-05-07:
+        # without this, plan-mode dogfood "Read README and CLAUDE.md, then
+        # compare" produced 3 plan invocations because step LLMs saw plan
+        # in their tool catalog and self-decomposed.
+        self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -280,6 +288,11 @@ class RouterLoop:
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
         )
+        if self._exclude_tools:
+            tools = [
+                t for t in tools
+                if t.get("function", {}).get("name") not in self._exclude_tools
+            ]
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
         if self._system_prompt_override is not None:
