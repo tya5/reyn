@@ -683,12 +683,6 @@ class RouterLoop:
         if name == "reyn_src_read":
             return await self.host.reyn_src_read(path=args["path"])
 
-        # F3. discover_tools — synthesize the grouped catalog on demand
-        # (Wave A: replaces the inline intent-axis section in the system
-        # prompt). Deterministic, no LLM round-trip.
-        if name == "discover_tools":
-            return self._discover_tools()
-
         # G. Plan tool — decompose into sub-tasks, run each in a narrow
         # LLM call, return the aggregated text. See planner.py.
         if name == "plan":
@@ -709,79 +703,6 @@ class RouterLoop:
     # -----------------------------------------------------------------------
     # Discovery helpers (pure, no async host calls)
     # -----------------------------------------------------------------------
-
-    def _discover_tools(self) -> dict:
-        """Return the available tools grouped by intent.
-
-        Wave A: replaces the inline ``## What you can do (intent axis)``
-        section that was previously rendered into the system prompt on
-        every router turn. The grouping is derived from the host's current
-        permission state so file / mcp / web tools appear only when they
-        are actually exposed in this session.
-
-        P7-clean: no skill-specific or domain-specific names appear in this
-        method — the groupings use OS-level resource axis names (skills /
-        agents / reyn / web / files / mcp / memory) and the tool names are
-        the OS-level tool surface, not skill-specific concepts.
-        """
-        host = self.host
-        file_perms = host.get_file_permissions() or {}
-        has_file_read = bool(file_perms.get("read"))
-        has_file_write = bool(file_perms.get("write"))
-        has_mcp = bool(host.get_mcp_servers())
-        web_fetch_allowed = host.get_web_fetch_allowed()
-
-        action_resources: dict[str, list[str]] = {
-            "skills": ["list_skills", "describe_skill", "invoke_skill"],
-            "agents": ["list_agents", "describe_agent", "delegate_to_agent"],
-            "reyn": ["reyn_src_list", "reyn_src_read"],
-            "web": (
-                ["web_search", "web_fetch"] if web_fetch_allowed
-                else ["web_search"]
-            ),
-        }
-        if has_file_read:
-            file_action_tools = ["list_directory", "read_file"]
-            action_resources["files"] = file_action_tools
-        if has_mcp:
-            action_resources["mcp"] = [
-                "list_mcp_servers",
-                "list_mcp_tools",
-                "call_mcp_tool",
-            ]
-
-        save_tools = ["remember_shared", "remember_agent"]
-        if has_file_write:
-            save_tools = save_tools + ["write_file"]
-
-        forget_tools = ["forget_memory"]
-        if has_file_write:
-            forget_tools = forget_tools + ["delete_file"]
-
-        return {
-            "groups": {
-                "Action": {
-                    "purpose": "run external work",
-                    "tools_by_resource": action_resources,
-                },
-                "Recall": {
-                    "purpose": "read persisted facts",
-                    "tools": ["list_memory", "read_memory_body"],
-                },
-                "Save": {
-                    "purpose": "persist new facts",
-                    "tools": save_tools,
-                },
-                "Forget": {
-                    "purpose": "delete persisted facts",
-                    "tools": forget_tools,
-                },
-                "Reply": {
-                    "purpose": "answer directly (no tool)",
-                    "tools": [],
-                },
-            },
-        }
 
     @staticmethod
     def _skill_item(s: dict) -> dict:

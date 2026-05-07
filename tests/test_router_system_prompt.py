@@ -146,22 +146,14 @@ class TestMemoryEntriesInlined:
 
 
 class TestIntentAxisSectionAlwaysPresent:
-    """Wave A: the inline ``## What you can do (intent axis)`` section was
-    stripped from the system prompt. The intent vocabulary (Action / Recall
-    / Save / Forget / Reply) still appears in the Behaviour section's
-    decide-intent-first rule, but the verbose grouped catalog now lives
-    behind the on-demand ``discover_tools`` tool."""
-
-    @pytest.mark.parametrize("intent_word", [
-        "Action",
-        "Recall",
-        "Save",
-        "Forget",
-        "Reply",
+    @pytest.mark.parametrize("intent_fragment", [
+        "Action — run external work",
+        "Recall —",
+        "Save —",
+        "Forget —",
+        "Reply —",
     ])
-    def test_intent_words_still_referenced(self, intent_word: str):
-        """Tier 2: the OS-level intent vocabulary remains mentioned in the
-        Behaviour section so the LLM can still reason about intent."""
+    def test_intent_axis_always_present(self, intent_fragment: str):
         prompt = build_system_prompt(
             agent_name="bot",
             agent_role="test role",
@@ -169,29 +161,7 @@ class TestIntentAxisSectionAlwaysPresent:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        assert intent_word in prompt
-
-    def test_old_intent_axis_section_removed(self):
-        """Tier 2: the verbose inline catalog (``## What you can do (intent
-        axis)`` heading and per-resource tool-name enumeration) is no
-        longer rendered. The same view is exposed via ``discover_tools``."""
-        prompt = build_system_prompt(
-            agent_name="bot",
-            agent_role="test role",
-            available_skills=[],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        assert "## What you can do (intent axis)" not in prompt
-        # Per-resource tool-name enumeration lines must be gone.
-        assert "skills:  list_skills / describe_skill / invoke_skill" not in prompt
-        assert "agents:  list_agents / describe_agent / delegate_to_agent" not in prompt
-        # Per-intent "— purpose" lines from the stripped catalog are gone.
-        assert "Action — run external work" not in prompt
-        assert "Recall — read persisted facts" not in prompt
-        assert "Save — persist new facts" not in prompt
-        assert "Forget — delete persisted facts" not in prompt
-        assert "Reply — answer directly (no tool)" not in prompt
+        assert intent_fragment in prompt
 
 
 class TestSizeIsLinearInItems:
@@ -378,24 +348,19 @@ def _base_prompt(**kwargs) -> str:
 
 
 class TestIntentAxisDynamic:
-    """Wave A: the inline intent-axis section was stripped — tool names no
-    longer appear in the system prompt at all (the catalog is exposed via
-    discover_tools instead). These tests confirm the absence and pin a
-    soft pointer to discover_tools in the Behaviour rules."""
-
     def test_no_file_tool_names_when_no_file_permissions(self):
-        """Tier 2: file-class tool names never appear in the prompt without
-        permissions (still true post-strip — they were only in the intent
-        axis to begin with, and that section is gone).
+        """Tier 2: file-class tools absent from the prompt without an
+        explicit `file.*` declaration. The `reyn_src_*` family covers
+        the "explain Reyn" use case without the file-perm gate.
         """
         prompt = _base_prompt(file_permissions=None)
         assert "read_file" not in prompt
         assert "write_file" not in prompt
         assert "delete_file" not in prompt
         assert "list_directory" not in prompt
-        # reyn_src_* names still appear in the Identity preamble's deep-
-        # dive guidance (unconditional, by design).
-        assert "reyn_src" in prompt
+        # reyn_src_* DO appear (= unconditional).
+        assert "reyn_src_list" in prompt
+        assert "reyn_src_read" in prompt
 
     def test_no_mcp_tool_names_when_no_mcp_servers(self):
         prompt = _base_prompt(mcp_servers=[])
@@ -415,41 +380,40 @@ class TestIntentAxisDynamic:
         assert "(when mcp configured)" not in prompt
         assert "(when file write scope set)" not in prompt
 
-    def test_file_tool_names_absent_even_with_full_scope(self):
-        """Tier 2: post-Wave-A, even with file write scope configured, the
-        file tool names (write_file / delete_file / read_file /
-        list_directory) no longer appear in the system prompt — they are
-        exposed via the tools= array and the discover_tools catalog
-        instead."""
+    def test_write_file_only_when_write_scope(self):
         prompt = _base_prompt(
-            file_permissions={"read": ["src"], "write": ["output"]}
+            file_permissions={"read": ["src"], "write": []}
         )
-        assert "read_file" not in prompt
-        assert "list_directory" not in prompt
+        assert "read_file" in prompt
+        assert "list_directory" in prompt
         assert "write_file" not in prompt
         assert "delete_file" not in prompt
 
-    def test_mcp_tool_names_absent_even_when_servers_configured(self):
-        """Tier 2: post-Wave-A, MCP tool names no longer appear in the
-        system prompt (only the per-server name + description from the
-        ``## MCP servers`` block remains, plus ``list_mcp_tools`` mentioned
-        in that block's guidance text)."""
-        prompt = _base_prompt(mcp_servers=[{"name": "fs"}])
-        assert "list_mcp_servers" not in prompt
-        assert "call_mcp_tool" not in prompt
+    def test_full_file_scope_shows_all_file_tools(self):
+        prompt = _base_prompt(
+            file_permissions={"read": ["src"], "write": ["output"]}
+        )
+        assert "read_file" in prompt
+        assert "list_directory" in prompt
+        assert "write_file" in prompt
+        assert "delete_file" in prompt
 
-    def test_intent_axis_section_no_longer_rendered(self):
-        """Tier 2: Wave A — the verbose ``## What you can do (intent
-        axis)`` section is fully removed. The intent words still surface
-        in the Behaviour decide-intent-first rule, and a soft pointer to
-        ``discover_tools`` replaces the inline tool-name catalog."""
+    def test_mcp_tools_when_servers_configured(self):
+        prompt = _base_prompt(mcp_servers=[{"name": "fs"}])
+        assert "list_mcp_servers" in prompt
+        assert "list_mcp_tools" in prompt
+        assert "call_mcp_tool" in prompt
+
+    def test_intent_axis_still_renders_without_permissions(self):
+        """Core intent rows must remain even with no permissions."""
         prompt = _base_prompt()
-        # Old heading and tool-name enumeration lines must be gone.
-        assert "## What you can do (intent axis)" not in prompt
-        assert "skills:  list_skills / describe_skill / invoke_skill" not in prompt
-        assert "agents:  list_agents / describe_agent / delegate_to_agent" not in prompt
-        # Behaviour rule must point the LLM at discover_tools.
-        assert "discover_tools" in prompt
+        assert "Action — run external work" in prompt
+        assert "skills:  list_skills / describe_skill / invoke_skill" in prompt
+        assert "agents:  list_agents / describe_agent / delegate_to_agent" in prompt
+        assert "Recall — read persisted facts" in prompt
+        assert "Save — persist new facts" in prompt
+        assert "Forget — delete persisted facts" in prompt
+        assert "Reply — answer directly (no tool)" in prompt
 
 
 # ---------------------------------------------------------------------------

@@ -134,6 +134,8 @@ def build_system_prompt(
         f"Role: chat router for agent {agent_name} (role: {agent_role})."
     )
     parts.append("")
+    parts.append("## What you can do (intent axis)")
+    parts.append("")
     has_file_read = bool(
         file_permissions and file_permissions.get("read")
     )
@@ -141,14 +143,55 @@ def build_system_prompt(
         file_permissions and file_permissions.get("write")
     )
     has_mcp = bool(mcp_servers)
-    # Wave A: the inline 14-tool intent-axis catalog was stripped from this
-    # prompt to reduce per-turn context bloat. The same grouped view is now
-    # exposed as the on-demand `discover_tools` tool — call it when a
-    # categorized view of available tools is genuinely needed. The Behaviour
-    # rules below carry a soft pointer to that tool. The user-facing
-    # capability framing block (## When asked what you can do) below is a
-    # distinct surface and remains.
 
+    parts.append("- Action — run external work")
+    parts.append(
+        "           skills:  list_skills / describe_skill / invoke_skill"
+    )
+    parts.append(
+        "           agents:  list_agents / describe_agent / delegate_to_agent"
+    )
+    if has_file_read:
+        parts.append(
+            "           files:   list_directory / read_file"
+        )
+    # `reyn_src_*` is always present — it serves Reyn's own source/docs,
+    # not user files, and so has no permission-protected content. Used
+    # for "explain how Reyn works" / "summarize Reyn's README" queries.
+    parts.append(
+        "           reyn:    reyn_src_list / reyn_src_read"
+    )
+    # Web search is always exposed (low-risk, public queries). Web fetch
+    # requires operator opt-in (`web.fetch: allow`) and is included only
+    # when permitted.
+    if web_fetch_allowed:
+        parts.append(
+            "           web:     web_search / web_fetch"
+        )
+    else:
+        parts.append(
+            "           web:     web_search"
+        )
+    if has_mcp:
+        parts.append(
+            "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool"
+        )
+    parts.append("- Recall — read persisted facts")
+    parts.append("           tools: list_memory / read_memory_body")
+    parts.append("- Save — persist new facts")
+    if has_file_write:
+        parts.append(
+            "         tools: remember_shared / remember_agent / write_file"
+        )
+    else:
+        parts.append("         tools: remember_shared / remember_agent")
+    parts.append("- Forget — delete persisted facts")
+    if has_file_write:
+        parts.append("           tools: forget_memory / delete_file")
+    else:
+        parts.append("           tools: forget_memory")
+    parts.append("- Reply — answer directly (no tool)")
+    parts.append("")
     # RETRO-H1+H2 fix: inject flat skill list so the LLM knows actual skill
     # names and can't zero-shot hallucinate them. Paired with enum constraint
     # in build_tools (schema layer) for defense in depth (P4).
@@ -248,14 +291,9 @@ def build_system_prompt(
             "  Do NOT switch language even for error messages or clarifying questions."
         )
     parts.append(
-        "  - Decide intent first (Action / Recall / Save / Forget / Reply),"
+        "  - First decide intent (Action / Recall / Save / Forget / Reply),"
     )
-    parts.append(
-        "    then pick a tool. Call discover_tools if you need a grouped"
-    )
-    parts.append(
-        "    view of what's available."
-    )
+    parts.append("    then pick tools from that group.")
     # Behaviour rules — re-balanced from B5-H1 partial revert of e90c0f2.
     # History: F3+F9 (batch 1) added reply restriction + explicit-skill hint;
     # B2-H1 (batch 2) added post-describe_skill commit obligation;

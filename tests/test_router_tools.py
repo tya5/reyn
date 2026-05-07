@@ -41,10 +41,6 @@ EXPECTED_TOOL_NAMES = [
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_src_list",
     "reyn_src_read",
-    # discover_tools (F3, Wave A) — always exposed; returns the grouped
-    # tool catalog on demand. Replaces the inline intent-axis section
-    # that was previously rendered into the system prompt every turn.
-    "discover_tools",
 ]
 
 
@@ -90,15 +86,14 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_16_tools_when_no_extras():
+def test_build_tools_returns_15_tools_when_no_extras():
     """No file / MCP / web_fetch extras: 11 baseline + web_search (E1,
     always on) + reyn_src_list + reyn_src_read (F1/F2, always on) +
-    discover_tools (F3, always on) + plan (G1, always on). All file-
-    class tools and MCP / web_fetch remain gated, so 16 total at the
-    unconfigured baseline.
+    plan (G1, always on). All file-class tools and MCP / web_fetch
+    remain gated, so 15 total at the unconfigured baseline.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 16, f"Expected 16 tools, got {len(tools)}"
+    assert len(tools) == 15, f"Expected 15 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -264,8 +259,8 @@ def test_mcp_tools_present_when_servers_configured():
 
 def test_total_tool_count_with_full_permissions():
     """Full file + MCP + web permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 + 1 discover_tools F3
-    + 1 plan G1 = 24 tools total."""
+    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 + 1 plan G1 = 23
+    tools total."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -273,7 +268,7 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 24, f"Expected 24 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 23, f"Expected 23 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
@@ -293,28 +288,6 @@ def test_no_forbidden_schema_keywords_full_permissions():
             assert key not in FORBIDDEN_KEYS, (
                 f"Tool '{fn['name']}' contains forbidden schema key '{key}'"
             )
-
-
-def test_discover_tools_present_in_baseline():
-    """Tier 1: discover_tools (F3, Wave A) is unconditional — always present
-    even at the unconfigured baseline (no file / mcp / web_fetch extras)."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    names = _tool_names(tools)
-    assert "discover_tools" in names, (
-        f"discover_tools missing at baseline; got: {names}"
-    )
-
-
-def test_discover_tools_schema_no_params():
-    """Tier 1: discover_tools is a zero-arg introspection tool — its
-    parameters schema must declare an empty object (no properties, no
-    required fields)."""
-    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    tool_map = {t["function"]["name"]: t for t in tools}
-    params = tool_map["discover_tools"]["function"]["parameters"]
-    assert params.get("type") == "object"
-    assert params.get("properties") == {}
-    assert params.get("required") == []
 
 
 def test_nested_objects_max_depth_1_full_permissions():
