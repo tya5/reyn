@@ -22,6 +22,10 @@ reyn.local.yaml
 !reyn.local.yaml.example
 
 improver_state.json
+# Textual TUI export captures (= screenshots Textual emits via SVG
+# export / --screenshot). Land in repo root by default; never meant to
+# be committed.
+ReynTUIApp_*.svg
 .DS_Store
 .vscode/
 .idea/
