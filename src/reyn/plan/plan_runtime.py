@@ -25,7 +25,6 @@ API contract is fixed here (= ADR-0023 §3.4) so Step 6 can migrate
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, TYPE_CHECKING
 
 from reyn.chat.planner import (
@@ -33,30 +32,10 @@ from reyn.chat.planner import (
     PlanExecutionResult,
     execute_plan,
 )
+from reyn.plan.plan_resume_analyzer import PlanResumePlan
 
 if TYPE_CHECKING:
     from reyn.chat.router_loop import RouterLoopHost
-
-
-@dataclass(frozen=True)
-class PlanResumePlan:
-    """Resume directive for ``PlanRuntime`` (ADR-0023 §3.2).
-
-    Step 5 ships only the dataclass shape — Step 7 lands the analyzer
-    that produces it and the runtime memoization that consumes it.
-    Until then ``resume_plan=None`` is the only meaningful value.
-
-    Fields kept minimal in Step 5; richer ``PlanStepState`` substructure
-    is layered in Step 7.
-    """
-
-    plan_id: str
-    chain_id: str
-    goal: str
-    committed_step_ids: frozenset[str] = frozenset()
-    pending_step_ids: tuple[str, ...] = ()
-    step_results: dict[str, str] | None = None  # populated by analyzer
-    in_flight_child_step_id: str | None = None
 
 
 class PlanRuntime:
@@ -105,10 +84,9 @@ class PlanRuntime:
     async def run(self) -> PlanExecutionResult:
         """Execute the plan.
 
-        Step 6: threads ``plan_id`` from the constructor through to
-        ``execute_plan`` (= caller-allocated when ``dispatch_plan_tool``
-        wrote the decomposition artifact first). ``resume_plan`` is
-        accepted but still inert — Step 7 wires the memo replay path.
+        Step 7: threads ``resume_plan`` through to ``execute_plan`` for
+        memo replay of completed/failed steps. ``resume_plan=None`` keeps
+        the fresh-run path unchanged.
         """
         return await execute_plan(
             self._plan,
@@ -117,6 +95,7 @@ class PlanRuntime:
             budget=self._budget,
             router_model=self._router_model,
             plan_id=self._plan_id,
+            resume_plan=self._resume_plan,
         )
 
 

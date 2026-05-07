@@ -144,19 +144,23 @@ async def test_plan_runtime_run_returns_plan_execution_result() -> None:
 def test_plan_resume_plan_dataclass_shape() -> None:
     """Tier 2: PlanResumePlan exposes the documented fields (= analyzer
     output contract for Step 7). Frozen so accidental mutation surfaces."""
+    from reyn.plan import PlanStepState
+
     rp = PlanResumePlan(
         plan_id="p001",
         chain_id="c0",
         goal="g",
-        committed_step_ids=frozenset({"s1"}),
-        pending_step_ids=("s2",),
-        step_results={"s1": "r1"},
-        in_flight_child_step_id=None,
+        n_steps=2,
+        decomposition_artifact_path=None,
+        step_states=(
+            PlanStepState(step_id="s1", state="completed_with_result", result_text="r1"),
+            PlanStepState(step_id="s2", state="pending"),
+        ),
     )
     assert rp.plan_id == "p001"
     assert "s1" in rp.committed_step_ids
     assert rp.pending_step_ids == ("s2",)
-    assert rp.step_results == {"s1": "r1"}
+    assert rp.step_result_map() == {"s1": "r1"}
 
     with pytest.raises((AttributeError, Exception)):
         rp.plan_id = "mutate"  # frozen

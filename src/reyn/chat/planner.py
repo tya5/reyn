@@ -517,6 +517,61 @@ class _PlanStepHost:
 # ── Executor ────────────────────────────────────────────────────────────────
 
 
+# ── Resume classification helpers (ADR-0023 §3.4) ──────────────────────────
+
+
+def _build_resume_classifier(resume_plan: Any) -> Any:
+    """Return a callable ``step_id → Literal["memo", "memo_failed", "execute"]``.
+
+    When ``resume_plan`` is None (= fresh run), every step classifies
+    as ``"execute"``. Otherwise the per-step state from the analyzer
+    drives the decision:
+
+      - ``completed_with_result`` → ``"memo"`` (use cached text)
+      - ``failed`` → ``"memo_failed"`` (propagate recorded failure)
+      - ``pending`` / ``interrupted_with_child`` → ``"execute"``
+        (re-execute; coordinator handles child cancel/adopt before
+        the runtime gets here, so by the time we're executing the
+        spawn step is treated as a fresh run for memo purposes)
+
+    Kept as a free function (= no PlanRuntime coupling) so execute_plan
+    free function can also be exercised with resume_plan in tests.
+    """
+    if resume_plan is None:
+        return lambda _step_id: "execute"
+    state_by_id: dict[str, str] = {}
+    for s in getattr(resume_plan, "step_states", ()):
+        state_by_id[s.step_id] = s.state
+
+    def _classify(step_id: str) -> str:
+        kind = state_by_id.get(step_id, "pending")
+        if kind == "completed_with_result":
+            return "memo"
+        if kind == "failed":
+            return "memo_failed"
+        return "execute"
+
+    return _classify
+
+
+def _resume_memo_for(resume_plan: Any, step_id: str) -> str | None:
+    if resume_plan is None:
+        return None
+    for s in getattr(resume_plan, "step_states", ()):
+        if s.step_id == step_id and s.state == "completed_with_result":
+            return s.result_text
+    return None
+
+
+def _resume_failure_for(resume_plan: Any, step_id: str) -> str | None:
+    if resume_plan is None:
+        return None
+    for s in getattr(resume_plan, "step_states", ()):
+        if s.step_id == step_id and s.state == "failed":
+            return s.error_message
+    return None
+
+
 async def execute_plan(
     plan: Plan,
     *,
@@ -525,6 +580,7 @@ async def execute_plan(
     budget: Any = None,
     router_model: str = "light",
     plan_id: str | None = None,
+    resume_plan: Any = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -580,8 +636,39 @@ async def execute_plan(
     step_failures: dict[str, str] = {}
     total_usage = TokenUsage()
 
+    # ADR-0023 §3.4: classify each step against the resume_plan (if any)
+    # before emitting step events. Memoized steps populate step_results
+    # from the recorded text WITHOUT re-executing the sub-loop or
+    # re-emitting WAL step events (= those already landed pre-crash).
+    resume_classifier = _build_resume_classifier(resume_plan)
+
     try:
         for step in ordered:
+            classification = resume_classifier(step.id)
+            if classification == "memo":
+                # Step already completed pre-crash. Hydrate result from
+                # the resume plan; skip WAL emit + sub-loop entirely.
+                memo_text = _resume_memo_for(resume_plan, step.id)
+                step_results[step.id] = memo_text or ""
+                parent_host.events.emit(
+                    "plan_step_memoized",
+                    chain_id=chain_id,
+                    plan_id=plan_id,
+                    step_id=step.id,
+                    content_len=len(memo_text or ""),
+                )
+                continue
+            if classification == "memo_failed":
+                # Step recorded as failed pre-crash. Surface failure
+                # forward without re-executing.
+                memo_err = _resume_failure_for(resume_plan, step.id)
+                step_failures[step.id] = memo_err or "step_failed"
+                parent_host.events.emit(
+                    "plan_step_memo_failed",
+                    chain_id=chain_id, plan_id=plan_id, step_id=step.id,
+                    error=memo_err or "",
+                )
+                continue
             # ADR-0023 Phase 2 step 6: route plan_step_started through
             # host's WAL recorder (= persists on the durable log so the
             # resume analyzer can pair it with completed/failed). The

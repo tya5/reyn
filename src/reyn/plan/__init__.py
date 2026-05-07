@@ -17,7 +17,12 @@ from reyn.plan.decomposition import (
     write_decomposition,
 )
 from reyn.plan.plan_registry import PlanRegistry
-from reyn.plan.plan_runtime import PlanResumePlan, PlanRuntime
+from reyn.plan.plan_resume_analyzer import (
+    PlanResumeAnalyzer,
+    PlanResumePlan,
+    PlanStepState,
+)
+from reyn.plan.plan_runtime import PlanRuntime
 from reyn.plan.plan_snapshot import (
     PLAN_SNAPSHOT_VERSION,
     PlanSnapshot,
@@ -29,9 +34,11 @@ __all__ = [
     "DecompositionCorruptError",
     "PLAN_SNAPSHOT_VERSION",
     "PlanRegistry",
+    "PlanResumeAnalyzer",
     "PlanResumePlan",
     "PlanRuntime",
     "PlanSnapshot",
+    "PlanStepState",
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",
