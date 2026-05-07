@@ -56,8 +56,13 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/answer <id> <text>` | Answer a pending `ask_user` / permission prompt |
 | `/agents` | List loaded agents and which one is currently attached |
 | `/attach <name>` | Switch the REPL pointer to another agent (the previous one keeps running in the background) |
+| `/skill list` | Show active skill runs (id, name, current phase + parent lineage) |
+| `/skill discard <run_id>` | Abort a specific skill run + cleanup |
+| `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
+| `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
+| `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan (ADR-0023 §3.7) |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives.
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step.
 
 ## Multi-agent behavior
 
@@ -101,3 +106,5 @@ reyn chat --model strong
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
 - [Concepts: multi-agent](../../concepts/multi-agent.md)
 - [Concepts: memory](../../concepts/memory.md)
+- [Concepts: plan-mode](../../concepts/plan-mode.md)
+- [Concepts: skill-resume](../../concepts/skill-resume.md)

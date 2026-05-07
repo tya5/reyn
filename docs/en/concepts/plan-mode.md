@@ -116,13 +116,31 @@ break memoization).
 ## Operator commands
 
 ```
-/plan list                  — show active plans (running + pending resume)
-/plan discard <plan_id>     — abort + clean up state
+/plan list                                — show active plans (running + pending resume)
+/plan discard <plan_id>                   — abort + clean up state
+/plan resume <plan_id> --from <step_id>   — re-run from a specific step
 ```
 
 `/plan discard` cancels the asyncio.Task, records `plan_aborted` to
 the WAL, removes the decomposition artifact + snapshot, and notifies
 any peer agent waiting on the plan's chain (R-D14).
+
+`/plan resume --from` is the surgical escape hatch (= ADR-0023 §3.7)
+for the case where a step recorded a result the operator wants to
+redo (e.g. the LLM produced something wrong, or world state shifted
+in a way the recorded result no longer reflects). The handler:
+
+1. Cancels any in-flight task for the plan.
+2. Loads the decomposition artifact for topological step order.
+3. Clears `step_results` / `step_failures` / `spawned_skill_run_ids`
+   from `<step_id>` onward; preserves earlier steps.
+4. Rebuilds a `resume_plan` and re-launches via the standard auto-
+   resume path — earlier steps memo-replay (no LLM cost), the rest
+   re-execute.
+
+The sub-command rejects unknown plan IDs, missing decomposition
+artifacts (= directs to `/plan discard`), and step IDs not in the
+plan (= lists valid step IDs).
 
 ## Crash classification
 

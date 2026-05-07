@@ -20,13 +20,15 @@ if TYPE_CHECKING:
 
 
 _USAGE = (
-    "Usage: /plan <list|discard <plan_id>>\n"
-    "  list                 — show active plan runs\n"
-    "  discard <plan_id>    — abort a specific plan run"
+    "Usage: /plan <list|discard <plan_id>|resume <plan_id> --from <step_id>>\n"
+    "  list                                  — show active plan runs\n"
+    "  discard <plan_id>                     — abort a specific plan run\n"
+    "  resume <plan_id> --from <step_id>     — re-run from a specific step\n"
+    "                                          (ADR-0023 §3.7 escape hatch)"
 )
 
 
-@slash("plan", summary="Manage active plan-mode runs (list / discard)")
+@slash("plan", summary="Manage active plan-mode runs (list / discard / resume)")
 async def plan_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""
     parts = args.strip().split(maxsplit=1)
@@ -39,6 +41,8 @@ async def plan_cmd(session: "ChatSession", args: str) -> None:
         await _list_plan_runs(session)
     elif sub == "discard":
         await _discard_plan_run(session, sub_args)
+    elif sub == "resume":
+        await _resume_from_step(session, sub_args)
     else:
         await reply_error(session, _USAGE)
 
@@ -173,3 +177,170 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
             )
 
     await reply(session, f"discarded plan run: {plan_id}")
+
+
+def _parse_resume_args(args: str) -> tuple[str, str] | None:
+    """Parse ``<plan_id> --from <step_id>`` into ``(plan_id, step_id)``.
+
+    Returns None on parse failure so the caller can surface a usage
+    error. Tolerant of extra whitespace; rejects missing flag / value.
+    """
+    parts = args.strip().split()
+    if len(parts) < 3:
+        return None
+    plan_id = parts[0]
+    if "--from" not in parts[1:]:
+        return None
+    flag_idx = parts.index("--from")
+    if flag_idx + 1 >= len(parts):
+        return None
+    step_id = parts[flag_idx + 1]
+    if not plan_id or not step_id:
+        return None
+    return (plan_id, step_id)
+
+
+async def _resume_from_step(session: "ChatSession", args: str) -> None:
+    """Reset step results from <step_id> onward and re-launch the plan.
+
+    ADR-0023 §3.7 surgical operator escape hatch. Use cases:
+      - A step recorded a result but the operator wants to redo it
+        (= LLM produced something wrong, or world state shifted).
+      - Step N failed transiently; operator wants to retry from step N
+        without re-running steps 1..N-1.
+
+    Steps:
+      1. Validate args + plan existence.
+      2. Cancel any currently-running task for this plan.
+      3. Load the decomposition artifact (= for topological step order).
+      4. Call PlanRegistry.reset_from_step (mutates + persists snapshot).
+      5. Re-launch via ChatSession._spawn_resumed_plan with a fresh
+         resume_plan derived from the post-reset snapshot.
+
+    On any failure surface a /plan list-style hint so the operator
+    knows whether to retry vs discard.
+    """
+    parsed = _parse_resume_args(args)
+    if parsed is None:
+        await reply_error(
+            session,
+            "Usage: /plan resume <plan_id> --from <step_id>",
+        )
+        return
+    plan_id, step_id = parsed
+
+    # Cancel any in-flight task for this plan first.
+    task = session.running_plans.get(plan_id)
+    if task is not None and not task.done():
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+        session.running_plans.pop(plan_id, None)
+
+    # Build per-agent PlanRegistry against the on-disk plan snapshots.
+    from pathlib import Path
+    from reyn.plan import (
+        PlanRegistry,
+        PlanResumeAnalyzer,
+        PlanResumeCoordinator,
+        PlanResumeDecision,
+        read_decomposition,
+    )
+
+    agent_state_dir = (
+        Path(".reyn") / "agents" / session.agent_name / "state"
+    )
+    plan_registry = PlanRegistry(
+        agent_name=session.agent_name, agent_state_dir=agent_state_dir,
+    )
+    plan_registry.load_active()
+    if plan_registry.get(plan_id) is None:
+        await reply_error(session, f"unknown plan run: {plan_id}")
+        return
+
+    # Load the decomposition artifact for topological step order.
+    try:
+        decomposition = read_decomposition(agent_state_dir, plan_id)
+    except FileNotFoundError:
+        await reply_error(
+            session,
+            f"plan {plan_id}: decomposition artifact missing — "
+            "use /plan discard to clean up",
+        )
+        return
+    except Exception as exc:  # noqa: BLE001
+        await reply_error(
+            session,
+            f"plan {plan_id}: cannot load decomposition ({exc!r})",
+        )
+        return
+
+    step_order = [s.id for s in decomposition.steps]
+    if step_id not in step_order:
+        await reply_error(
+            session,
+            f"plan {plan_id}: step {step_id!r} not in plan "
+            f"(known: {step_order})",
+        )
+        return
+
+    # Mutate snapshot — clears results from step_id onward.
+    ok = plan_registry.reset_from_step(
+        plan_id=plan_id, from_step_id=step_id, step_order=step_order,
+    )
+    if not ok:
+        await reply_error(
+            session, f"plan {plan_id}: reset_from_step failed (see logs)",
+        )
+        return
+
+    # Build a resume_plan from the now-mutated snapshot via the
+    # analyzer (= empty WAL events; the snapshot's step_results is
+    # the source of truth post-reset).
+    analyzer = PlanResumeAnalyzer()
+    snap = plan_registry.get(plan_id)
+    # Synthetic events list: walk the snapshot's preserved
+    # step_results and present them as completed pairs to the analyzer
+    # so they classify as completed_with_result. Cleared steps have
+    # no events → pending.
+    synthetic_events: list[dict] = []
+    for i, sid in enumerate(step_order):
+        if sid in snap.step_results:
+            synthetic_events.append({
+                "seq": i * 2 + 1, "kind": "plan_step_started",
+                "plan_id": plan_id, "step_id": sid,
+            })
+            synthetic_events.append({
+                "seq": i * 2 + 2, "kind": "plan_step_completed",
+                "plan_id": plan_id, "step_id": sid,
+                "content_len": len(snap.step_results[sid]),
+            })
+
+    resume_plan = analyzer.analyze(
+        snapshot=snap, decomposition=decomposition,
+        wal_events=synthetic_events,
+    )
+
+    # Re-launch via the existing ChatSession._spawn_resumed_plan path.
+    decision = PlanResumeDecision(
+        plan=resume_plan,
+        action="retry_pending",
+        pending_step_ids=resume_plan.pending_step_ids,
+        child_actions={},
+    )
+    try:
+        await session._spawn_resumed_plan(decision=decision)
+    except Exception as exc:  # noqa: BLE001
+        await reply_error(
+            session,
+            f"plan {plan_id}: respawn failed ({exc!r})",
+        )
+        return
+
+    await reply(
+        session,
+        f"plan {plan_id}: resumed from step {step_id!r} "
+        f"({len(resume_plan.pending_step_ids)} step(s) to re-execute)",
+    )

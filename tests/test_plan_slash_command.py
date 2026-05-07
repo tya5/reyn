@@ -220,6 +220,149 @@ async def test_plan_no_subcommand_shows_usage(tmp_path, monkeypatch):
     assert "Usage:" in combined or "list" in combined
 
 
+# ── /plan resume --from <step_id> ────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_plan_resume_missing_args_shows_usage(tmp_path, monkeypatch):
+    """Tier 2: /plan resume without --from <step_id> → usage error."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    await session._maybe_handle_slash("/plan resume")
+    msgs = _drain_outbox(session)
+    err = [m for m in msgs if m.kind == "error"]
+    assert len(err) >= 1
+    assert "Usage" in err[0].text or "--from" in err[0].text
+
+
+@pytest.mark.asyncio
+async def test_plan_resume_unknown_plan_id_reports_error(tmp_path, monkeypatch):
+    """Tier 2: /plan resume nonexistent --from s1 → unknown plan error."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    await session._maybe_handle_slash("/plan resume nonexistent --from s1")
+    msgs = _drain_outbox(session)
+    err = [m for m in msgs if m.kind == "error"]
+    assert len(err) >= 1
+    assert "unknown plan run" in err[0].text
+
+
+@pytest.mark.asyncio
+async def test_plan_resume_missing_artifact_reports_error(tmp_path, monkeypatch):
+    """Tier 2: /plan resume on a plan whose decomposition artifact is
+    missing → descriptive error directing to /plan discard."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    # Set up a per-plan snapshot WITHOUT writing the decomposition artifact.
+    from pathlib import Path
+    from reyn.plan import PlanRegistry
+    agent_state_dir = (
+        Path(".reyn") / "agents" / session.agent_name / "state"
+    )
+    reg = PlanRegistry(
+        agent_name=session.agent_name, agent_state_dir=agent_state_dir,
+    )
+    reg.start(plan_id="p_no_art", chain_id="c1", goal="g", applied_seq=10)
+
+    await session._maybe_handle_slash("/plan resume p_no_art --from s1")
+    msgs = _drain_outbox(session)
+    err = [m for m in msgs if m.kind == "error"]
+    assert len(err) >= 1
+    assert (
+        "decomposition" in err[0].text or "discard" in err[0].text
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_resume_unknown_step_reports_error(tmp_path, monkeypatch):
+    """Tier 2: /plan resume with --from pointing at a step that's not in
+    the decomposition → error listing valid step IDs."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    from pathlib import Path
+    from reyn.chat.planner import Plan, PlanStep
+    from reyn.plan import PlanRegistry, write_decomposition
+    agent_state_dir = (
+        Path(".reyn") / "agents" / session.agent_name / "state"
+    )
+    plan = Plan(goal="g", steps=(
+        PlanStep("s1", "first", ()),
+        PlanStep("s2", "second", ()),
+    ))
+    write_decomposition(agent_state_dir, "p001", plan)
+    reg = PlanRegistry(
+        agent_name=session.agent_name, agent_state_dir=agent_state_dir,
+    )
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+
+    await session._maybe_handle_slash("/plan resume p001 --from nonexistent")
+    msgs = _drain_outbox(session)
+    err = [m for m in msgs if m.kind == "error"]
+    assert len(err) >= 1
+    assert "not in plan" in err[0].text or "nonexistent" in err[0].text
+
+
+@pytest.mark.asyncio
+async def test_plan_resume_clears_target_step_results(tmp_path, monkeypatch):
+    """Tier 2: /plan resume clears results from --from onward and reports
+    the count of steps to re-execute."""
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    from pathlib import Path
+    from reyn.chat.planner import Plan, PlanStep
+    from reyn.plan import PlanRegistry, write_decomposition
+    agent_state_dir = (
+        Path(".reyn") / "agents" / session.agent_name / "state"
+    )
+    plan = Plan(goal="g", steps=(
+        PlanStep("s1", "first", ()),
+        PlanStep("s2", "second", ()),
+        PlanStep("s3", "third", ()),
+    ))
+    write_decomposition(agent_state_dir, "p001", plan)
+
+    # Pre-populate snapshot with results for all 3 steps.
+    reg = PlanRegistry(
+        agent_name=session.agent_name, agent_state_dir=agent_state_dir,
+    )
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=15, result_text="r1",
+    )
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s2", applied_seq=20, result_text="r2",
+    )
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s3", applied_seq=25, result_text="r3",
+    )
+
+    await session._maybe_handle_slash("/plan resume p001 --from s2")
+
+    # Status confirmation in outbox.
+    msgs = _drain_outbox(session)
+    status_texts = [m.text for m in msgs if m.kind == "status"]
+    assert any("resumed from step" in t for t in status_texts)
+
+    # Reload registry and confirm s1 preserved, s2/s3 cleared.
+    reg2 = PlanRegistry(
+        agent_name=session.agent_name, agent_state_dir=agent_state_dir,
+    )
+    reg2.load_active()
+    snap = reg2.get("p001")
+    assert snap.step_results == {"s1": "r1"}
+    assert snap.last_committed_step_id == "s1"
+
+
 @pytest.mark.asyncio
 async def test_plan_unknown_subcommand_reports_error(tmp_path, monkeypatch):
     """Tier 2: unknown sub-command surfaces an error message."""

@@ -56,8 +56,13 @@ reyn chat researcher
 | `/answer <id> <text>` | 保留中の `ask_user` / Permission プロンプトに回答 |
 | `/agents` | 読み込まれた agent と現在アタッチされているものを一覧表示 |
 | `/attach <name>` | REPL ポインターを別の agent に切り替える（前の agent はバックグラウンドで実行し続ける） |
+| `/skill list` | 実行中の Skill 実行を表示（id / 名前 / current_phase + 親子関係） |
+| `/skill discard <run_id>` | 特定の Skill 実行を中止して cleanup を実行 |
+| `/plan list` | 実行中の Plan を表示（動作中 task と resume 待ちを組み合わせて表示） |
+| `/plan discard <plan_id>` | 特定の Plan を中止して cleanup を実行。R-D14 経由で待機中の peer agent に通知 |
+| `/plan resume <plan_id> --from <step_id>` | 特定 step から Plan を再実行するオペレーター向け escape hatch（ADR-0023 §3.7） |
 
-`/list` / `/cancel` / `/answer` は基盤となります。複数の Skill 実行と介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` はマルチエージェントワークフローのプリミティブです。
+`/list` / `/cancel` / `/answer` は基盤となります。複数の Skill 実行と介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` はマルチエージェントワークフローのプリミティブです。`/skill` / `/plan` は crash recovery オペレーターコマンドで、per-skill-run / per-plan-run のライフサイクルを surface します。
 
 ## マルチエージェントの動作
 
@@ -101,3 +106,5 @@ reyn chat --model strong
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所
 - [コンセプト: multi-agent](../../concepts/multi-agent.md)
 - [コンセプト: memory](../../concepts/memory.md)
+- [コンセプト: plan-mode](../../concepts/plan-mode.md)
+- [コンセプト: skill-resume](../../concepts/skill-resume.md)

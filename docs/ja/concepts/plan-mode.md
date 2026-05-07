@@ -105,13 +105,28 @@ auto-discard + 説明的 outbox notice。 planner LLM 再呼びはしない。
 ## Operator command
 
 ```
-/plan list                  — active plan 一覧 (running + resume pending)
-/plan discard <plan_id>     — abort + state cleanup
+/plan list                                — active plan 一覧 (running + resume pending)
+/plan discard <plan_id>                   — abort + state cleanup
+/plan resume <plan_id> --from <step_id>   — 特定 step から再実行
 ```
 
 `/plan discard` は asyncio.Task を cancel、 WAL に `plan_aborted` を
 記録、 decomposition artifact + snapshot を削除、 plan の chain で
 待っている peer agent に R-D14 notify。
+
+`/plan resume --from` は ADR-0023 §3.7 surgical escape hatch。 step が
+結果を記録したが operator が再実行したい場合 (= LLM 出力誤り / world
+state が変動して record 結果が陳腐化) 用。 handler の動作:
+
+1. 該当 plan の in-flight task を cancel
+2. decomposition artifact を load して topological step 順を取得
+3. `<step_id>` 以降の `step_results` / `step_failures` /
+   `spawned_skill_run_ids` を clear (= 前 step は preserve)
+4. `resume_plan` を再構築して通常 auto-resume path で起動 — 前 step は
+   memo replay (= LLM cost ゼロ)、 残り step を再実行
+
+未知 plan ID / decomposition artifact 欠落 (= `/plan discard` に誘導) /
+plan に存在しない step ID (= 有効 step ID 列挙) は明示エラー。
 
 ## Crash 分類
 

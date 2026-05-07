@@ -286,6 +286,117 @@ async def test_truncate_hook_fires_on_step_completed_and_complete(tmp_path: Path
     assert fired == ["hit", "hit", "hit"]
 
 
+# ── reset_from_step (= /plan resume escape hatch) ──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reset_from_step_clears_results_from_target_onward(tmp_path: Path) -> None:
+    """Tier 2: reset_from_step clears step_results / step_failures /
+    spawned_skill_run_ids for the target step and every step after it
+    in topological order. Steps before are preserved (= memo replay
+    on next launch)."""
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=15, result_text="r1",
+    )
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s2", applied_seq=20, result_text="r2",
+    )
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s3", applied_seq=25, result_text="r3",
+    )
+    reg.record_child_spawned(
+        plan_id="p001", step_id="s2", child_run_id="child_s2",
+    )
+
+    ok = reg.reset_from_step(
+        plan_id="p001", from_step_id="s2",
+        step_order=["s1", "s2", "s3"],
+    )
+    assert ok is True
+
+    snap = reg.get("p001")
+    # s1 preserved
+    assert snap.step_results.get("s1") == "r1"
+    # s2, s3 cleared
+    assert "s2" not in snap.step_results
+    assert "s3" not in snap.step_results
+    # spawned_skill_run_ids cleared for s2 too
+    assert "s2" not in snap.spawned_skill_run_ids
+    # last_committed_step_id rewinds to s1 (= step before from_step_id)
+    assert snap.last_committed_step_id == "s1"
+    assert snap.current_step_id is None
+
+
+def test_reset_from_step_first_step_clears_everything(tmp_path: Path) -> None:
+    """Tier 2: from_step_id == head step → all results cleared,
+    last_committed_step_id resets to None."""
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    snap = reg.get("p001")
+    snap.step_results["s1"] = "r1"
+    snap.step_results["s2"] = "r2"
+    snap.last_committed_step_id = "s2"
+
+    ok = reg.reset_from_step(
+        plan_id="p001", from_step_id="s1", step_order=["s1", "s2"],
+    )
+    assert ok is True
+    snap = reg.get("p001")
+    assert snap.step_results == {}
+    assert snap.last_committed_step_id is None
+
+
+def test_reset_from_step_unknown_plan_returns_false(tmp_path: Path) -> None:
+    """Tier 2: unknown plan_id → False, no mutation."""
+    reg = _make_registry(tmp_path)
+    ok = reg.reset_from_step(
+        plan_id="nonexistent", from_step_id="s1", step_order=["s1"],
+    )
+    assert ok is False
+
+
+def test_reset_from_step_unknown_step_returns_false(tmp_path: Path) -> None:
+    """Tier 2: from_step_id not in step_order → False, no mutation."""
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    snap = reg.get("p001")
+    snap.step_results["s1"] = "r1"
+
+    ok = reg.reset_from_step(
+        plan_id="p001", from_step_id="nonexistent",
+        step_order=["s1", "s2"],
+    )
+    assert ok is False
+    # Snapshot unchanged
+    assert reg.get("p001").step_results == {"s1": "r1"}
+
+
+@pytest.mark.asyncio
+async def test_reset_from_step_persists_to_disk(tmp_path: Path) -> None:
+    """Tier 2: mutated snapshot is persisted before return so a crash
+    mid-reset doesn't leave inconsistent state."""
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=15, result_text="r1",
+    )
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s2", applied_seq=20, result_text="r2",
+    )
+
+    reg.reset_from_step(
+        plan_id="p001", from_step_id="s2", step_order=["s1", "s2"],
+    )
+
+    # Reload from disk into a fresh registry — confirms persistence.
+    reg2 = _make_registry(tmp_path)
+    reg2.load_active()
+    snap2 = reg2.get("p001")
+    assert snap2.step_results == {"s1": "r1"}
+
+
 @pytest.mark.asyncio
 async def test_truncate_hook_exceptions_swallowed(tmp_path: Path) -> None:
     """Tier 2: hook raising an exception doesn't break the registry

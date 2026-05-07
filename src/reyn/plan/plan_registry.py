@@ -279,6 +279,71 @@ class PlanRegistry:
         self._save(snap)
         await self._fire_truncate_hook(trigger="plan_step_failed")
 
+    def reset_from_step(
+        self,
+        *,
+        plan_id: str,
+        from_step_id: str,
+        step_order: list[str],
+    ) -> bool:
+        """Surgical operator escape hatch — clear step results from
+        ``from_step_id`` onward so the runtime re-executes them.
+
+        ADR-0023 §3.7 ``resume_from_step`` operator-only path. Targets
+        the case where a step recorded a result but the operator wants
+        to redo it (= the LLM produced something wrong, or the world
+        state has changed in a way the recorded result doesn't reflect).
+
+        Args:
+            plan_id: target plan.
+            from_step_id: first step to clear (= and every step after
+                it in topological order).
+            step_order: the plan's topological step IDs (caller
+                provides — registry doesn't load decompositions).
+
+        Returns ``True`` on success, ``False`` if the plan is unknown
+        or ``from_step_id`` isn't in ``step_order``.
+
+        Persists the mutated snapshot before returning so a crash mid-
+        reset doesn't leave inconsistent state.
+        """
+        snap = self._snapshots.get(plan_id)
+        if snap is None:
+            logger.info(
+                "reset_from_step: unknown plan_id %r — skipping", plan_id,
+            )
+            return False
+        if from_step_id not in step_order:
+            logger.warning(
+                "reset_from_step: step %r not in plan %r step order",
+                from_step_id, plan_id,
+            )
+            return False
+        # Find indexes from from_step_id onward and clear their
+        # per-step state. Steps before from_step_id keep their results
+        # so the resume runtime memoizes them on the next launch.
+        idx = step_order.index(from_step_id)
+        to_clear = set(step_order[idx:])
+        for sid in list(snap.step_results.keys()):
+            if sid in to_clear:
+                snap.step_results.pop(sid, None)
+        for sid in list(snap.step_failures.keys()):
+            if sid in to_clear:
+                snap.step_failures.pop(sid, None)
+        for sid in list(snap.spawned_skill_run_ids.keys()):
+            if sid in to_clear:
+                snap.spawned_skill_run_ids.pop(sid, None)
+        # last_committed_step_id rewinds to the most recent kept step
+        # (= step immediately before from_step_id), or None when
+        # from_step_id is the head step.
+        if idx == 0:
+            snap.last_committed_step_id = None
+        else:
+            snap.last_committed_step_id = step_order[idx - 1]
+        snap.current_step_id = None
+        self._save(snap)
+        return True
+
     def record_child_spawned(
         self, *, plan_id: str, step_id: str, child_run_id: str,
     ) -> None:
