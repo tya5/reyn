@@ -27,6 +27,7 @@ insights だけで Reyn の deep technical lesson にアクセスできる。
 | 2026-05-07 | [envelope-layer attractor fix + mutation isolation methodology](2026-05-07-envelope-layer-attractor-fix.md) | stable | G12 Pattern E / commit `aab6be2` |
 | 2026-05-07 | [industry tool discovery patterns (Anthropic / OpenAI / Tool RAG / MCP-Zero)](2026-05-07-industry-tool-discovery-survey.md) | stable | G23 follow-up / Wave A revert wave |
 | 2026-05-07 | [category-only SP catalog landing — Wave A → revert → G12 fix → retry](2026-05-07-category-only-catalog-landing.md) | stable | G23 resolved / commit `f4c5df2` |
+| 2026-05-07 | [plan-mode dogfood — 3 bugs found via LLM context analysis discipline](2026-05-07-plan-mode-dogfood-findings.md) | stable | commits `ea97509` + `7d0d6a2` |
 
 ## How to add an insight
 
