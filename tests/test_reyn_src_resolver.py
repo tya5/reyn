@@ -52,15 +52,32 @@ def test_resolve_reyn_root_finds_repo_in_dev_install():
 
 
 def test_safe_resolve_inside_blocks_dotdot_escape():
-    """Tier 2: ``..`` that escapes ``root`` is refused.
+    """Tier 2: ``..`` that escapes ``root`` is refused, regardless of
+    where the ``..`` segments appear in the path.
 
-    Pins the safety boundary the chat router relies on. Without this
-    check, an LLM that emits ``reyn_src_read("../etc/passwd")`` could
-    read files outside the repo.
+    Pins the safety boundary against:
+
+      - leading ``..`` (= ``../etc/passwd``)
+      - middle ``..`` (= ``src/reyn/../../../etc/passwd``)
+      - trailing ``..`` after deep prefix (= ``docs/en/concepts/../../../../etc/passwd``)
+      - multi-bounce escape (= ``src/../../tmp/x``)
+
+    The protection mechanism (= ``Path.resolve()`` canonicalises every
+    ``..`` then ``relative_to(root)`` rejects out-of-root targets) covers
+    all positions; this test makes that contract explicit so a future
+    refactor can't silently weaken it to "leading only".
     """
     root = resolve_reyn_root()
-    with pytest.raises(ValueError, match="outside"):
-        safe_resolve_inside(root, "../../../etc/passwd")
+    escapes = [
+        "../etc/passwd",
+        "src/reyn/../../../etc/passwd",
+        "docs/en/concepts/../../../../etc/passwd",
+        "src/../../tmp/x",
+        "docs/../../etc/foo",
+    ]
+    for path in escapes:
+        with pytest.raises(ValueError, match="outside"):
+            safe_resolve_inside(root, path)
 
 
 def test_safe_resolve_inside_allows_internal_dotdot():

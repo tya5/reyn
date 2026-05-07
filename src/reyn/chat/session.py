@@ -3334,6 +3334,17 @@ class ChatSession:
         await self._put_outbox(OutboxMessage(kind=kind, text=text, meta=meta))
         # Persist agent (conversational) replies to history so the context
         # window stays coherent across turns.
+        #
+        # Note on empty-stop canned text: dogfood trace v6 showed that
+        # filtering router-empty-response text out of history (= the naive
+        # "don't pollute LLM context with failure notices" patch) creates
+        # a worse downstream pattern — the next turn's LLM sees two
+        # consecutive ``role="user"`` messages with no assistant between
+        # them, which is itself an attractor (= same shape as the
+        # commit 3732275 duplicate-user bug we fixed earlier). Keeping
+        # the canned text in history maintains alternation; the
+        # cascading-attractor mitigation needs to live elsewhere
+        # (= context build / classifier-side, tracked as follow-up).
         if kind == "agent" and text:
             self._append_history(ChatMessage(
                 role="agent", text=text, ts=_now_iso(), meta=meta,
