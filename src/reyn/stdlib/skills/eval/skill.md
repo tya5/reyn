@@ -3,13 +3,54 @@ type: skill
 name: eval
 description: Evaluate a target skill against a single test case using judge_phase as LLM-as-judge.
 entry: run_target
-final_output: eval_result
+final_output: eval_result_raw
 final_output_description: |
-  Evaluation result for one test case: overall pass/fail verdict, score, per-criterion summary, and weakest phase.
+  LLM-contract artifact: per-criterion judgments + prose. Deterministic
+  scoring fields are added by the skill postprocessor before the caller
+  receives the final eval_result.
 finish_criteria:
   - All phases with criteria have been evaluated by judge_phase via the preprocessor
-  - overall_score reflects the fraction of all criteria met across evaluated phases
+  - criteria_results captures one entry per criterion across every judged phase
   - weakest_phase identifies the lowest-scoring phase
+permissions:
+  python:
+    - module: ./postprocessor.py
+      function: compute_eval_score
+      mode: pure
+      timeout: 5
+postprocessor:
+  output_name: eval_result
+  output_description: |
+    Caller-facing eval result: deterministic scoring fields are added by the
+    python postprocessor step; the LLM-authored prose fields (summary,
+    weakest_phase, spec_path) pass through unchanged.
+  output_schema:
+    type: object
+    properties:
+      passed:           {type: boolean}
+      overall_score:    {type: number, minimum: 0.0, maximum: 1.0}
+      passed_criteria:  {type: integer, minimum: 0}
+      total_criteria:   {type: integer, minimum: 0}
+      weakest_phase:    {type: string}
+      spec_path:        {type: string}
+      summary:          {type: string}
+    required: [passed, overall_score, passed_criteria, total_criteria, weakest_phase, spec_path, summary]
+  steps:
+    - type: python
+      module: ./postprocessor.py
+      function: compute_eval_score
+      into: data
+      output_schema:
+        type: object
+        required: [passed_criteria, total_criteria, overall_score, passed, weakest_phase, spec_path, summary]
+        properties:
+          passed_criteria: {type: integer, minimum: 0}
+          total_criteria:  {type: integer, minimum: 0}
+          overall_score:   {type: number, minimum: 0.0, maximum: 1.0}
+          passed:          {type: boolean}
+          weakest_phase:   {type: string}
+          spec_path:       {type: string}
+          summary:         {type: string}
 graph:
   run_target: [evaluate]
 routing:

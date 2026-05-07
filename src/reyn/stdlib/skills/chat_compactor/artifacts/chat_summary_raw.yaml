@@ -1,0 +1,58 @@
+name: chat_summary_raw
+description: |
+  LLM-contract artifact emitted by the `compact` phase. Contains the
+  structured section content the LLM authors plus a verbatim list of seq
+  values copied from the input new_turns (`new_turn_seqs`). The
+  deterministic `covers_through_seq` field is derived by the skill
+  postprocessor from `new_turn_seqs` and added to the caller-facing
+  `chat_summary` artifact.
+
+  The LLM MUST NOT compute or output `covers_through_seq` here. Choosing
+  the maximum seq is delegated to a deterministic Python step because
+  weak LLMs sometimes pick a non-maximum value, which causes ChatSession
+  to either re-include already-covered turns (duplication) or skip turns
+  that have not yet been folded into a summary (loss).
+schema:
+  type: object
+  properties:
+    topic_arc:
+      type: string
+      description: |
+        1-3 sentences describing the current topic and conversational
+        arc. Update when topic shifts; drop the previous topic if the
+        conversation has clearly moved on.
+    decisions:
+      type: array
+      items: {type: string}
+      description: |
+        Bullet points of choices made in this session. Add new
+        decisions; drop the oldest minor decisions when over budget.
+        Never drop architectural decisions or anything labeled as final.
+    pending:
+      type: array
+      items: {type: string}
+      description: |
+        Open items: questions, unfinished tasks, follow-ups. Add new
+        ones; remove items the conversation has resolved.
+    session_user_facts:
+      type: array
+      items: {type: string}
+      description: |
+        User attributes learned this session that haven't been promoted
+        to MEMORY.md yet. Drop the oldest if over budget — durable
+        attributes belong in memory anyway.
+    artifacts_referenced:
+      type: array
+      items: {type: string}
+      description: |
+        Files, PRs, commits, issues mentioned this session and worth
+        keeping in scope. Drop ones no longer in focus.
+    new_turn_seqs:
+      type: array
+      items: {type: integer}
+      description: |
+        Verbatim copy of every `seq` value from the input `new_turns`
+        array. Do NOT compute, sort, dedupe, or filter — copy each seq
+        as-is. The postprocessor takes max() of this list to derive
+        `covers_through_seq`.
+  required: [topic_arc, new_turn_seqs]

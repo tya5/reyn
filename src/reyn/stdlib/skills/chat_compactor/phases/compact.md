@@ -35,8 +35,12 @@ information and dropping low-importance items per the retention rules.
 
 ## Output
 
-Produce a `chat_summary` artifact with all sections filled in. Set
-`covers_through_seq` to the **highest seq value among the new_turns**.
+Produce a `chat_summary_raw` artifact with all sections filled in. Set
+`new_turn_seqs` to a **verbatim list of every `seq` value** taken from
+the input `new_turns`. Do NOT compute the maximum yourself, do NOT sort,
+dedupe, or filter — just copy each `seq` from each entry of `new_turns`,
+in order.
+
 If `previous_summary` was provided, your output replaces it (the new
 summary covers everything the old one did **plus** the new_turns).
 
@@ -51,10 +55,12 @@ bullets, etc.) — infer language from the new_turns content.
 
 ## Constraints
 
-- Output ONLY the `chat_summary` artifact (decide turn). Do NOT emit ops.
-- `covers_through_seq` MUST equal the largest seq value seen in
-  `new_turns`. Setting it lower causes the slicer to re-include those
-  turns, defeating the compaction.
+- Output ONLY the `chat_summary_raw` artifact (decide turn). Do NOT emit ops.
+- `new_turn_seqs` MUST contain every seq from `new_turns`, copied verbatim.
+  The skill postprocessor takes `max()` of this list to derive
+  `covers_through_seq`. If you omit a seq the slicer may re-include the
+  corresponding turn (duplication); if you fabricate a higher seq the
+  slicer will skip turns that have not been folded into a summary (loss).
 - Do NOT include raw quotes from new_turns in the summary unless they
   are the verbatim text of a decision or pending item. Compaction is
   meant to abstract, not transcribe.

@@ -7,15 +7,40 @@ description: |
   while preserving the most important context per the Head/Body/Tail
   compaction strategy (see PR4 in the Reyn architecture plan).
 entry: compact
-final_output: chat_summary
+final_output: chat_summary_raw
 final_output_description: |
-  Updated rolling summary covering the new turns plus everything covered
-  by the previous summary (if any). Replaces the previous summary in
-  history.jsonl when ChatSession appends it.
+  LLM-contract artifact: structured section content + a verbatim
+  `new_turn_seqs` list. The skill postprocessor takes `max()` of that
+  list to derive `covers_through_seq` and emits the caller-facing
+  `chat_summary` artifact (which ChatSession appends to history.jsonl).
 finish_criteria:
   - All new_turns are reflected in the appropriate sections
   - No section blatantly exceeds its token cap
-  - covers_through_seq equals the highest seq in new_turns
+  - new_turn_seqs is the verbatim list of seq values from new_turns
+permissions:
+  python:
+    - module: ./postprocessor.py
+      function: compute_covers_through_seq
+      mode: pure
+      timeout: 5
+postprocessor:
+  output_schema: chat_summary
+  output_name: chat_summary
+  steps:
+    - type: python
+      module: ./postprocessor.py
+      function: compute_covers_through_seq
+      into: data
+      output_schema:
+        type: object
+        required: [topic_arc, covers_through_seq]
+        properties:
+          topic_arc:            {type: string}
+          decisions:            {type: array, items: {type: string}}
+          pending:              {type: array, items: {type: string}}
+          session_user_facts:   {type: array, items: {type: string}}
+          artifacts_referenced: {type: array, items: {type: string}}
+          covers_through_seq:   {type: integer, minimum: 0}
 graph:
   compact: []
 ---
@@ -32,7 +57,11 @@ per its retention rules. The output is appended to history.jsonl as a
 
 - Input: `history_chunk_to_compact` with `previous_summary` (optional)
   and `new_turns` (oldest first) and `section_token_caps`.
-- Output: `chat_summary` with structured sections + `covers_through_seq`.
+- LLM output: `chat_summary_raw` — structured sections + verbatim
+  `new_turn_seqs` list.
+- Caller-facing output: `chat_summary` — same sections plus
+  `covers_through_seq` (= `max(new_turn_seqs)`), derived deterministically
+  by the skill postprocessor.
 
 ## Notes
 
@@ -43,3 +72,6 @@ per its retention rules. The output is appended to history.jsonl as a
   meaningful overrun should be rare and self-correcting on next compaction.
 - The compactor is excluded from `available_skills` for the chat router
   (same as skill_router itself) — it is internal infrastructure.
+- `covers_through_seq` is derived by the postprocessor (not the LLM)
+  because getting it wrong causes turn duplication or loss in
+  ChatSession.history. See `postprocessor.py` for the derivation rules.

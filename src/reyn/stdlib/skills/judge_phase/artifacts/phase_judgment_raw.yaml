@@ -1,0 +1,34 @@
+name: phase_judgment_raw
+description: LLM-facing judgment output for judge_phase — per-criterion results, overall pass/fail, and prose summary. The deterministic `score` field is computed by the postprocessor and appears in the caller-facing `phase_judgment` artifact, not here.
+schema:
+  type: object
+  properties:
+    phase_name:
+      type: string
+      description: Name of the phase that was evaluated.
+    passed:
+      type: boolean
+      description: True if all required criteria are met.
+    criteria_results:
+      type: array
+      description: Per-criterion evaluation results.
+      items:
+        type: object
+        properties:
+          description:
+            type: string
+            description: The criterion text.
+          required:
+            type: boolean
+            description: Whether this criterion is required for overall pass.
+          met:
+            type: boolean
+            description: Whether the criterion is satisfied by the artifact.
+          reason:
+            type: string
+            description: Brief explanation of why the criterion is or is not met.
+        required: [description, met, reason]
+    summary:
+      type: string
+      description: One-sentence prose summary of the judgment outcome.
+  required: [phase_name, passed, criteria_results, summary]

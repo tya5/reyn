@@ -1,0 +1,61 @@
+name: eval_result_raw
+description: |
+  LLM-contract artifact emitted by the `evaluate` phase. Contains the
+  per-criterion judgment list and prose fields the LLM authors; the
+  deterministic scoring fields (passed_criteria, total_criteria, overall_score,
+  passed) are computed by the skill's postprocessor and added to the
+  caller-facing eval_result. The LLM MUST NOT compute or output those four
+  fields here.
+schema:
+  type: object
+  properties:
+    criteria_results:
+      type: array
+      description: |
+        Flattened per-criterion results aggregated from `data.judgments`.
+        Each entry corresponds to one criterion of one judged phase. The
+        postprocessor counts these to derive overall_score, passed_criteria,
+        total_criteria, and passed.
+      items:
+        type: object
+        properties:
+          phase_name:
+            type: string
+            description: Name of the phase the criterion belongs to.
+          description:
+            type: string
+            description: The criterion text (verbatim from the judgment).
+          required:
+            type: boolean
+            description: |
+              Whether this criterion is required for overall pass. A
+              criterion is treated as required when this field is true OR
+              absent — only an explicit `false` marks it optional.
+          met:
+            type: boolean
+            description: Whether the criterion is satisfied.
+          reason:
+            type: string
+            description: Brief explanation copied from the per-phase judgment.
+        required: [phase_name, description, met, reason]
+    weakest_phase:
+      type: string
+      description: |
+        Name of the phase with the lowest score among the judgments. Empty
+        string when no phases were evaluated (e.g. the target skill failed
+        before producing artifacts).
+    spec_path:
+      type: string
+      description: Path to the eval spec being run (passed through from input).
+    summary:
+      type: string
+      description: |
+        2–3 sentence prose summary describing what passed, what failed, and
+        any optional-criterion shortfalls worth flagging.
+    run_status:
+      type: string
+      description: |
+        Status returned by the target skill's run, copied from
+        case_run_result. The postprocessor uses this to short-circuit
+        scoring when the target run did not finish.
+  required: [criteria_results, weakest_phase, spec_path, summary, run_status]
