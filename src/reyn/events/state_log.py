@@ -60,6 +60,15 @@ WAL_EVENT_KINDS = (
     # second crash before the resuming skill consumes it
     "intervention_answer_buffered",
     "intervention_answer_consumed",
+    # NEW (ADR-0022) — plan-mode lifecycle (Phase 1: fail-safe + observability)
+    # Per-step events (plan_emitted / plan_step_started / plan_step_completed /
+    # plan_step_failed / plan_aggregated) stay in the events log — those are
+    # forensic, not recovery state. Only the plan-as-a-unit lifecycle goes
+    # through WAL so AgentSnapshot.active_plan_ids is reliable for crash
+    # cleanup discovery.
+    "plan_started",
+    "plan_completed",
+    "plan_aborted",
 )
 
 

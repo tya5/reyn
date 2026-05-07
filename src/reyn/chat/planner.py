@@ -39,11 +39,30 @@ validates structure.
 from __future__ import annotations
 
 import json
+import logging
+import sys
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 from reyn.chat.router_loop import RouterLoop, RouterLoopHost
 from reyn.llm.pricing import TokenUsage
+
+logger = logging.getLogger(__name__)
+
+
+# WorkflowAbortedError is raised by skills via DSL `abort` semantics; if a
+# plan step's invoked skill aborts cleanly, we treat the plan itself as
+# completed normally (= same posture as ADR-0013 runtime crash lifecycle).
+# Imported lazily inside the finally clause to avoid circular imports.
+def _is_workflow_abort(exc_type: type | None) -> bool:
+    if exc_type is None:
+        return False
+    try:
+        from reyn.kernel.runtime import WorkflowAbortedError
+        return issubclass(exc_type, WorkflowAbortedError)
+    except ImportError:
+        return False
 
 
 # Each step's narrow LLM call gets at most this many iterations before
@@ -519,9 +538,30 @@ async def execute_plan(
     explicit synthesis step return the last step's text (= still works,
     just less curated).
     """
+    # ADR-0022: allocate plan_id + record plan_started in WAL. plan_id is
+    # uuid4-hex[:8] following the existing run_id allocation precedent.
+    # The exception-aware finally clause mirrors ADR-0013's runtime
+    # crash lifecycle: normal return / WorkflowAbortedError → plan_completed,
+    # everything else (CancelledError, KeyboardInterrupt, generic Exception,
+    # kill -9 path skips finally) → preserve active_plan_ids for AgentRegistry
+    # restart cleanup.
+    plan_id = uuid.uuid4().hex[:8]
+    try:
+        await parent_host.record_plan_started(
+            plan_id=plan_id, goal=plan.goal, n_steps=len(plan.steps),
+        )
+    except AttributeError:
+        # Test stubs / older RouterLoopHost implementations may not provide
+        # the plan-lifecycle methods. Tolerate so plan-mode still functions
+        # in unit-test environments without a SnapshotJournal.
+        logger.debug("RouterLoopHost has no record_plan_started; skipping WAL")
+    except Exception as exc:  # noqa: BLE001 — defensive, log and continue
+        logger.warning("record_plan_started failed: %r", exc)
+
     parent_host.events.emit(
         "plan_emitted",
         chain_id=chain_id,
+        plan_id=plan_id,
         goal=plan.goal,
         n_steps=len(plan.steps),
         step_ids=[s.id for s in plan.steps],
@@ -532,78 +572,109 @@ async def execute_plan(
     step_failures: dict[str, str] = {}
     total_usage = TokenUsage()
 
-    for step in ordered:
-        parent_host.events.emit(
-            "plan_step_started",
-            chain_id=chain_id,
-            step_id=step.id,
-            depends_on=list(step.depends_on),
-            n_tools=len(step.tools),
-        )
-        narrow_host = _PlanStepHost(
-            plan=plan, step=step, prior_results=step_results, parent=parent_host,
-        )
-        sys_prompt = build_plan_step_system_prompt(plan, step, step_results)
-        sub_loop = RouterLoop(
-            host=narrow_host,
-            chain_id=chain_id,
-            max_iterations=_PLAN_STEP_MAX_ITERATIONS,
-            router_model=router_model,
-            budget=budget,
-            system_prompt_override=sys_prompt,
-            # Drop `plan` from the step's tool catalog so the step LLM cannot
-            # recursively decompose into another plan. Without this, the step
-            # LLM sees `plan` as available and may self-decompose, causing
-            # unbounded recursion (= dogfood 2026-05-07: 3-step plan emitted
-            # 3 plan invocations because steps re-emitted plan).
-            exclude_tools={"plan"},
-        )
-        try:
-            sub_usage = await sub_loop.run(
-                user_text=step.description, history=[],
-            )
-            if sub_usage is not None:
-                total_usage.prompt_tokens += sub_usage.prompt_tokens
-                total_usage.completion_tokens += sub_usage.completion_tokens
-        except Exception as exc:  # noqa: BLE001 — defensive, don't crash plan
-            step_failures[step.id] = repr(exc)
+    try:
+        for step in ordered:
             parent_host.events.emit(
-                "plan_step_failed",
+                "plan_step_started",
                 chain_id=chain_id,
+                plan_id=plan_id,
                 step_id=step.id,
-                error=repr(exc),
+                depends_on=list(step.depends_on),
+                n_tools=len(step.tools),
             )
-            continue
+            narrow_host = _PlanStepHost(
+                plan=plan, step=step, prior_results=step_results, parent=parent_host,
+            )
+            sys_prompt = build_plan_step_system_prompt(plan, step, step_results)
+            sub_loop = RouterLoop(
+                host=narrow_host,
+                chain_id=chain_id,
+                max_iterations=_PLAN_STEP_MAX_ITERATIONS,
+                router_model=router_model,
+                budget=budget,
+                system_prompt_override=sys_prompt,
+                # Drop `plan` from the step's tool catalog so the step LLM cannot
+                # recursively decompose into another plan. Without this, the step
+                # LLM sees `plan` as available and may self-decompose, causing
+                # unbounded recursion (= dogfood 2026-05-07: 3-step plan emitted
+                # 3 plan invocations because steps re-emitted plan).
+                exclude_tools={"plan"},
+            )
+            try:
+                sub_usage = await sub_loop.run(
+                    user_text=step.description, history=[],
+                )
+                if sub_usage is not None:
+                    total_usage.prompt_tokens += sub_usage.prompt_tokens
+                    total_usage.completion_tokens += sub_usage.completion_tokens
+            except Exception as exc:  # noqa: BLE001 — defensive, don't crash plan
+                step_failures[step.id] = repr(exc)
+                parent_host.events.emit(
+                    "plan_step_failed",
+                    chain_id=chain_id,
+                    plan_id=plan_id,
+                    step_id=step.id,
+                    error=repr(exc),
+                )
+                continue
 
-        text = narrow_host.captured_text
-        step_results[step.id] = text
+            text = narrow_host.captured_text
+            step_results[step.id] = text
+            parent_host.events.emit(
+                "plan_step_completed",
+                chain_id=chain_id,
+                plan_id=plan_id,
+                step_id=step.id,
+                content_len=len(text),
+            )
+
+        # Aggregator = the topologically-last step whose result is non-empty.
+        # If all steps failed, surface a synthesised error instead of empty.
+        final_text = ""
+        for step in reversed(ordered):
+            if step.id in step_results and step_results[step.id]:
+                final_text = step_results[step.id]
+                break
+        if not final_text:
+            final_text = (
+                f"Plan execution produced no aggregate reply. "
+                f"{len(step_failures)} of {len(ordered)} steps failed."
+            )
+
         parent_host.events.emit(
-            "plan_step_completed",
+            "plan_aggregated",
             chain_id=chain_id,
-            step_id=step.id,
-            content_len=len(text),
+            plan_id=plan_id,
+            n_completed=len(step_results),
+            n_failed=len(step_failures),
+            result_len=len(final_text),
         )
-
-    # Aggregator = the topologically-last step whose result is non-empty.
-    # If all steps failed, surface a synthesised error instead of empty.
-    final_text = ""
-    for step in reversed(ordered):
-        if step.id in step_results and step_results[step.id]:
-            final_text = step_results[step.id]
-            break
-    if not final_text:
-        final_text = (
-            f"Plan execution produced no aggregate reply. "
-            f"{len(step_failures)} of {len(ordered)} steps failed."
-        )
-
-    parent_host.events.emit(
-        "plan_aggregated",
-        chain_id=chain_id,
-        n_completed=len(step_results),
-        n_failed=len(step_failures),
-        result_len=len(final_text),
-    )
+    finally:
+        # ADR-0013 pattern: classify the exit by exc_info to decide whether
+        # to mark the plan completed (= normal/WorkflowAbortedError) or
+        # leave it in active_plan_ids for restart-time cleanup (= crash
+        # / cancel / generic Exception).
+        exc_type = sys.exc_info()[0]
+        if exc_type is None or _is_workflow_abort(exc_type):
+            try:
+                await parent_host.record_plan_completed(plan_id=plan_id)
+            except AttributeError:
+                pass  # test stub
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("record_plan_completed failed: %r", exc)
+        else:
+            # Crash / cancel: emit interrupted audit event but DO NOT prune
+            # active_plan_ids — AgentRegistry.restore_all post-replay will
+            # discover the orphan, cancel its child skills, and notify user.
+            try:
+                parent_host.events.emit(
+                    "plan_run_interrupted",
+                    chain_id=chain_id,
+                    plan_id=plan_id,
+                    exc_type=exc_type.__name__,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("plan_run_interrupted emit failed: %r", exc)
 
     return PlanExecutionResult(
         text=final_text,

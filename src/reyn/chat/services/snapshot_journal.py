@@ -253,6 +253,72 @@ class SnapshotJournal:
         self._snapshot.buffered_intervention_answers.pop(run_id, None)
         self.save()
 
+    # ── plan-mode lifecycle persistence (ADR-0022 Phase 1) ────────────────
+
+    async def record_plan_started(
+        self, *, plan_id: str, goal: str, n_steps: int,
+    ) -> None:
+        """Append ``plan_started`` to WAL + add to active_plan_ids.
+
+        Called at the top of ``execute_plan``. Crash between this call and
+        ``record_plan_completed`` leaves the plan_id in active_plan_ids,
+        which AgentRegistry.restore_all detects post-replay and treats as
+        an interrupted plan (= cancel orphan child skills + notify user).
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "plan_started",
+            target=self._agent_name,
+            plan_id=plan_id,
+            goal=goal,
+            n_steps=n_steps,
+        )
+        self._snapshot.applied_seq = seq
+        if plan_id not in self._snapshot.active_plan_ids:
+            self._snapshot.active_plan_ids.append(plan_id)
+        self.save()
+
+    async def record_plan_completed(self, *, plan_id: str) -> None:
+        """Append ``plan_completed`` to WAL + remove from active_plan_ids.
+
+        Idempotent — pop is a no-op when the entry is already gone (e.g.
+        duplicate WAL replay during recovery).
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "plan_completed",
+            target=self._agent_name,
+            plan_id=plan_id,
+        )
+        self._snapshot.applied_seq = seq
+        if plan_id in self._snapshot.active_plan_ids:
+            self._snapshot.active_plan_ids.remove(plan_id)
+        self.save()
+
+    async def record_plan_aborted(
+        self, *, plan_id: str, reason: str = "",
+    ) -> None:
+        """Append ``plan_aborted`` to WAL + remove from active_plan_ids.
+
+        Used by AgentRegistry.restore_all post-replay cleanup of orphan
+        plans, and (Phase 2) by explicit ``/plan discard`` user action.
+        Idempotent.
+        """
+        if self._state_log is None:
+            return
+        seq = await self._state_log.append(
+            "plan_aborted",
+            target=self._agent_name,
+            plan_id=plan_id,
+            reason=reason,
+        )
+        self._snapshot.applied_seq = seq
+        if plan_id in self._snapshot.active_plan_ids:
+            self._snapshot.active_plan_ids.remove(plan_id)
+        self.save()
+
     # ── restore / persist ─────────────────────────────────────────────────
 
     def install(self, snapshot: AgentSnapshot) -> None:

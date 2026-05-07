@@ -3395,6 +3395,27 @@ class ChatSession:
         """Resolve config model name (e.g. 'router') to actual model id."""
         return self._resolver.resolve(name).model
 
+    # --- Plan-mode lifecycle persistence (ADR-0022 Phase 1) ---
+    #
+    # RouterLoopHost methods that wire through to SnapshotJournal so plan-
+    # mode executions become crash-discoverable. Defensive: if the journal
+    # has no state_log, the journal methods are themselves no-ops.
+
+    async def record_plan_started(
+        self, *, plan_id: str, goal: str, n_steps: int,
+    ) -> None:
+        await self._journal.record_plan_started(
+            plan_id=plan_id, goal=goal, n_steps=n_steps,
+        )
+
+    async def record_plan_completed(self, *, plan_id: str) -> None:
+        await self._journal.record_plan_completed(plan_id=plan_id)
+
+    async def record_plan_aborted(
+        self, *, plan_id: str, reason: str = "",
+    ) -> None:
+        await self._journal.record_plan_aborted(plan_id=plan_id, reason=reason)
+
     # --- RouterLoop orchestration ---
 
     def _build_history_for_router(self) -> list[dict]:

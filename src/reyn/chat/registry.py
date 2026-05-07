@@ -240,14 +240,63 @@ class AgentRegistry:
         # restore — without it, an agent whose only stranded state is an
         # in-flight ask_user would be skipped here and the user could not
         # clear the queued intervention after restart.
+        # ADR-0022: active_plan_ids also triggers restore — needed so the
+        # cleanup hook can fire and notify the user that their plan was
+        # interrupted.
         for name, snap in snapshots.items():
             if (not snap.inbox
                     and not snap.pending_chains
-                    and not snap.outstanding_interventions):
+                    and not snap.outstanding_interventions
+                    and not snap.active_plan_ids):
                 continue
             session = self.get_or_load(name)
             session.restore_state(snap)
             await self.ensure_running(name)
+
+        # 6. ADR-0022 Phase 1: orphan plan cleanup. Plans that didn't reach
+        # `plan_completed` / `plan_aborted` before crash leave their plan_id
+        # in `active_plan_ids`. We have nothing to resume them from (Phase 1
+        # = fail-safe, not forward replay), so:
+        #   (a) emit `plan_aborted` to clear the snapshot entry
+        #   (b) surface a user-facing "interrupted, please retry" outbox
+        # Child-skill cancel is *not* attempted in Phase 1 — child skills
+        # have their own resume infrastructure and will auto-resume to
+        # completion (orphan), but we don't pretend to coordinate that
+        # here. Phase 2 will introduce per-plan child tracking + cancel.
+        for name, snap in snapshots.items():
+            if not snap.active_plan_ids:
+                continue
+            session = self._agents.get(name)
+            if session is None:
+                continue
+            for plan_id in list(snap.active_plan_ids):
+                try:
+                    await session._journal.record_plan_aborted(
+                        plan_id=plan_id, reason="restart_cleanup",
+                    )
+                except Exception as exc:  # noqa: BLE001 — defensive
+                    logger.warning(
+                        "plan cleanup (record_plan_aborted) failed for "
+                        "agent=%s plan_id=%s: %s",
+                        name, plan_id, exc,
+                    )
+                try:
+                    from reyn.chat.outbox import OutboxMessage
+                    await session._put_outbox(OutboxMessage(
+                        kind="error",
+                        text=(
+                            "A plan-mode reply was interrupted by a previous "
+                            "session crash. The partial work could not be "
+                            "preserved — please re-issue your request."
+                        ),
+                        meta={"plan_id": plan_id, "reason": "restart_cleanup"},
+                    ))
+                except Exception as exc:  # noqa: BLE001 — defensive
+                    logger.warning(
+                        "plan cleanup (notify outbox) failed for "
+                        "agent=%s plan_id=%s: %s",
+                        name, plan_id, exc,
+                    )
 
         return snapshots
 

@@ -60,6 +60,15 @@ class AgentSnapshot:
     # is the runtime cache; this field is its on-disk durable form).
     # Each value is ``{"text": str, "choice_id": str | None}``.
     buffered_intervention_answers: dict[str, dict] = field(default_factory=dict)
+    # ADR-0022 — plan-mode crash resilience Phase 1.
+    # plan_ids of in-flight plan-mode executions for this agent. Populated
+    # by `plan_started` WAL events; pruned by `plan_completed` /
+    # `plan_aborted`. AgentRegistry.restore_all uses non-empty
+    # active_plan_ids post-replay as the "interrupted plan" signal and
+    # discards orphan child skills + emits a user-facing outbox message.
+    # Additive field (no SNAPSHOT_VERSION bump) — follows the R-D13
+    # `parent_run_id` precedent on `load`: defaults to [] when absent.
+    active_plan_ids: list[str] = field(default_factory=list)
 
     # ── persistence ─────────────────────────────────────────────────────
 
@@ -102,6 +111,9 @@ class AgentSnapshot:
             buffered_intervention_answers=dict(
                 data.get("buffered_intervention_answers", {}) or {}
             ),
+            # ADR-0022: additive — defaults to [] when reading older snapshots
+            # written before the field existed. No SNAPSHOT_VERSION bump.
+            active_plan_ids=list(data.get("active_plan_ids", []) or []),
         )
 
     def save(self, path: Path) -> None:
@@ -116,6 +128,7 @@ class AgentSnapshot:
             "active_skill_run_ids": self.active_skill_run_ids,
             "outstanding_interventions": self.outstanding_interventions,
             "buffered_intervention_answers": self.buffered_intervention_answers,
+            "active_plan_ids": self.active_plan_ids,
         }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -205,6 +218,15 @@ class AgentSnapshot:
             run_id = event.get("run_id")
             if run_id:
                 self.buffered_intervention_answers.pop(run_id, None)
+        # ── ADR-0022: plan-mode lifecycle (Phase 1) ─────────────────────
+        elif kind == "plan_started":
+            plan_id = event.get("plan_id")
+            if plan_id and plan_id not in self.active_plan_ids:
+                self.active_plan_ids.append(plan_id)
+        elif kind in ("plan_completed", "plan_aborted"):
+            plan_id = event.get("plan_id")
+            if plan_id and plan_id in self.active_plan_ids:
+                self.active_plan_ids.remove(plan_id)
         # skill_phase_advanced, step_started/completed/failed, skill_resumed
         # mutate per-skill snapshot only — no agent-level state change here.
         # Unknown kinds: no-op (forward compatibility for future kinds)

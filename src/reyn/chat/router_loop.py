@@ -223,6 +223,21 @@ class RouterLoopHost(Protocol):
     # Resolve router model (config "router" → real model id)
     def resolve_model(self, name: str) -> str: ...
 
+    # Plan-mode lifecycle persistence (ADR-0022 Phase 1).
+    # Optional — implementations that don't support plan-mode crash
+    # recovery (e.g. test stubs) leave these as no-ops. Real chat
+    # session implementation (`session.py`) wires through to
+    # SnapshotJournal.record_plan_*.
+    async def record_plan_started(
+        self, *, plan_id: str, goal: str, n_steps: int,
+    ) -> None: ...
+
+    async def record_plan_completed(self, *, plan_id: str) -> None: ...
+
+    async def record_plan_aborted(
+        self, *, plan_id: str, reason: str = "",
+    ) -> None: ...
+
 
 # ---------------------------------------------------------------------------
 # RouterLoop
