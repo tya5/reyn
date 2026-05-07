@@ -611,6 +611,11 @@ class ChatSession:
         # initiated invocations that don't participate in a chain).
         self.running_skills_chain: dict[str, str | None] = {}
 
+        # ADR-0023 Phase 2 step 7d: per-plan resume task tracking.
+        # Populated by ``_spawn_resumed_plan`` after restart cleanup;
+        # tasks are awaited at shutdown like running_skills.
+        self.running_plans: dict[str, asyncio.Task] = {}
+
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
         # callbacks (_announce_intervention, _on_chain_timeout_fire) but holds
@@ -3472,6 +3477,86 @@ class ChatSession:
             logger.warning(
                 "delete_plan_decomposition failed for %s: %r", plan_id, exc,
             )
+
+    async def _spawn_resumed_plan(
+        self,
+        *,
+        decision: Any,
+        budget: Any = None,
+        router_model: str = "light",
+    ) -> None:
+        """Launch a PlanRuntime for a resume decision (ADR-0023 §3.4).
+
+        Reads the decomposition artifact for ``decision.plan.plan_id``,
+        constructs ``PlanRuntime(resume_plan=decision.plan)``, and
+        registers the resulting task on ``self.running_plans``. The
+        task is fire-and-forget; the runtime's finally clause emits
+        plan_completed / plan_run_interrupted as usual.
+
+        Errors during decomposition load surface as outbox notices and
+        the plan is marked aborted (= ADR-0023 §3.5 corruption fallback,
+        even after the coordinator earlier-validated path).
+        """
+        from reyn.plan import (
+            PlanRuntime,
+            read_decomposition,
+        )
+
+        plan_id = decision.plan.plan_id
+        agent_state_dir = (
+            Path(".reyn") / "agents" / self.agent_name / "state"
+        )
+        try:
+            decomposition = read_decomposition(agent_state_dir, plan_id)
+        except Exception as exc:  # noqa: BLE001 — defensive, surface to user
+            logger.warning(
+                "_spawn_resumed_plan: cannot load decomposition for %s: %r",
+                plan_id, exc,
+            )
+            try:
+                from reyn.chat.outbox import OutboxMessage
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=(
+                        "A plan-mode reply was interrupted; the saved "
+                        "decomposition could not be loaded — please "
+                        "re-issue your request."
+                    ),
+                    meta={"plan_id": plan_id, "reason": "decomposition_load_failed"},
+                ))
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                await self._journal.record_plan_aborted(
+                    plan_id=plan_id, reason="decomposition_load_failed",
+                )
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("plan_aborted emit failed: %r", exc2)
+            return
+
+        runtime = PlanRuntime(
+            decomposition,
+            host=self,
+            chain_id=decision.plan.chain_id,
+            plan_id=plan_id,
+            budget=budget,
+            router_model=router_model,
+            resume_plan=decision.plan,
+        )
+
+        async def _run_resumed_plan() -> None:
+            try:
+                await runtime.run()
+            except Exception as exc:  # noqa: BLE001 — top-level swallow
+                logger.warning(
+                    "_spawn_resumed_plan task crashed for %s: %r",
+                    plan_id, exc,
+                )
+            finally:
+                self.running_plans.pop(plan_id, None)
+
+        task = asyncio.create_task(_run_resumed_plan())
+        self.running_plans[plan_id] = task
 
     # --- RouterLoop orchestration ---
 

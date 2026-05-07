@@ -228,6 +228,11 @@ class ReynConfig:
     # Skill resume policy (PR-skill-resume) — how to handle ambiguous
     # steps on restart.
     skill_resume: SkillResumeConfig = field(default_factory=SkillResumeConfig)
+    # Plan resume policy (ADR-0023 Phase 2) — how the resume coordinator
+    # treats interrupted plan-mode runs on restart. Loaded as a raw dict
+    # and parsed lazily by the coordinator (= keeps PlanResumeConfig in
+    # the plan/ module rather than coupling config.py to it).
+    plan_resume_raw: dict | None = None
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -481,6 +486,10 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         events=_build_events_config(merged.get("events")),
         cost=_build_cost_config(merged.get("cost")),
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
+        plan_resume_raw=(
+            merged.get("plan_resume")
+            if isinstance(merged.get("plan_resume"), dict) else None
+        ),
     )
 
 
