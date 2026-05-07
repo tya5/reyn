@@ -615,6 +615,85 @@ def build_tools(
             },
         ]
 
+    # ── G. Plan tool (always present) ────────────────────────────────────────
+    #
+    # `plan` lets the LLM decompose a complex query into 2-7 sub-tasks
+    # that the OS executes in topological order, each in a narrow LLM
+    # call (= focused tool catalog + step-specific system prompt). The
+    # terminal step's reply becomes the user-facing answer.
+    #
+    # Why opt-in by the LLM (= just another tool, not a forced mode):
+    # simple chat queries should still work via direct reply or single
+    # tool call. Plan adds latency / cost (= 2-7 extra LLM calls per
+    # turn), so the description nudges the LLM to use it ONLY when the
+    # query genuinely needs multi-source synthesis.
+    #
+    # The schema enforces 2-7 steps, string ids, and strings-only tool
+    # arrays. Per-step tool name validity (= must be in current
+    # catalog) is checked at dispatch time by `parse_and_validate_plan`,
+    # not here, because the tool list is dynamic per-session. Cycle
+    # detection is also at dispatch time.
+    tools += [
+        # ── G1: plan ─────────────────────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "plan",
+                "description": (
+                    "Decompose a complex query into 2-7 independent "
+                    "sub-tasks. Use ONLY when the query needs multi-"
+                    "source synthesis (e.g. \"explain X with code "
+                    "references\", \"compare A vs B from multiple "
+                    "docs\", \"build a summary across these N "
+                    "files\"). For simple queries — chitchat, single-"
+                    "tool retrieval, single-source narration — reply "
+                    "directly or call one tool; do NOT use plan. The "
+                    "terminal step's text reply becomes the user-"
+                    "facing answer; design the last step to "
+                    "synthesise."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": (
+                                "1-sentence restatement of the user's overall query."
+                            ),
+                        },
+                        # steps is a JSON-encoded string instead of a nested
+                        # object array because the chat-router schema budget
+                        # forbids depth-2 object properties (= Gemini-safe
+                        # constraint, see test_nested_objects_max_depth_1).
+                        # The dispatch layer parses + validates the JSON.
+                        "steps_json": {
+                            "type": "string",
+                            "description": (
+                                "JSON-encoded array of 2-7 step objects. Each "
+                                "step has shape: "
+                                "{\"id\": str, \"description\": str, "
+                                "\"tools\": [str, ...], \"depends_on\": [str, ...]}. "
+                                "id: short unique identifier. description: what "
+                                "this step does. tools: names of tools this step "
+                                "needs (subset of available catalog; [] for "
+                                "narration-only steps). depends_on: ids of prior "
+                                "steps whose output this step needs (default []). "
+                                "The terminal step's text reply becomes the user-"
+                                "facing answer; design the last step to "
+                                "synthesise. Example: "
+                                "[{\"id\": \"s1\", \"description\": \"read README\", "
+                                "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
+                                "{\"id\": \"s2\", \"description\": \"summarise for user\", "
+                                "\"tools\": [], \"depends_on\": [\"s1\"]}]"
+                            ),
+                        },
+                    },
+                    "required": ["goal", "steps_json"],
+                },
+            },
+        },
+    ]
+
     # ── F. Reyn-source tools (always present, no permission) ────────────────
     #
     # `reyn_src_list` / `reyn_src_read` give the agent read access to

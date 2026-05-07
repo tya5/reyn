@@ -243,12 +243,19 @@ class RouterLoop:
         max_iterations: int = 5,
         router_model: str = "light",  # config tier (light = intent classification)
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
+        system_prompt_override: str | None = None,
     ):
         self.host = host
         self.chain_id = chain_id
         self.max_iterations = max_iterations
         self.router_model = router_model
         self.budget = budget
+        # When set, RouterLoop skips ``build_system_prompt(host=...)`` and uses
+        # this string verbatim as the system message. Plan executor uses this
+        # to inject a step-specific narrow prompt (= "you are executing step X
+        # of a plan") instead of the full chat router prompt. The host facade
+        # still controls the tool catalog narrowing.
+        self._system_prompt_override = system_prompt_override
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -275,18 +282,21 @@ class RouterLoop:
         )
         self._catalog = {t["function"]["name"]: t for t in tools}
         self._tool_names = frozenset(self._catalog.keys())  # backward compat
-        system_prompt = build_system_prompt(
-            agent_name=host.agent_name,
-            agent_role=host.agent_role,
-            available_skills=host.list_available_skills(),
-            available_agents=host.list_available_agents(),
-            memory_index=host.get_memory_index(),
-            file_permissions=host.get_file_permissions(),
-            mcp_servers=host.get_mcp_servers(),
-            web_fetch_allowed=host.get_web_fetch_allowed(),
-            output_language=host.output_language,
-            project_context=host.get_project_context(),
-        )
+        if self._system_prompt_override is not None:
+            system_prompt = self._system_prompt_override
+        else:
+            system_prompt = build_system_prompt(
+                agent_name=host.agent_name,
+                agent_role=host.agent_role,
+                available_skills=host.list_available_skills(),
+                available_agents=host.list_available_agents(),
+                memory_index=host.get_memory_index(),
+                file_permissions=host.get_file_permissions(),
+                mcp_servers=host.get_mcp_servers(),
+                web_fetch_allowed=host.get_web_fetch_allowed(),
+                output_language=host.output_language,
+                project_context=host.get_project_context(),
+            )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
         # caller's `history` argument already ends with this turn's user
@@ -356,6 +366,29 @@ class RouterLoop:
                         meta={"chain_id": self.chain_id},
                     )
                     return self._total_usage
+
+                # Plan tool: terminal dispatch. The plan executor already
+                # ran the per-step LLM calls and produced the user-facing
+                # text in result["text"]. Emit it directly to the user
+                # outbox without re-feeding to the outer LLM (= avoids a
+                # redundant aggregator call on top of the plan's terminal
+                # step). On validation failure we DO fall through to the
+                # normal message accumulation path so the LLM can re-
+                # emit a corrected plan.
+                for tc, r in zip(tool_calls, tool_results):
+                    if (
+                        tc["function"]["name"] == "plan"
+                        and isinstance(r, dict)
+                        and r.get("status") == "ok"
+                        and isinstance(r.get("text"), str)
+                        and r["text"]
+                    ):
+                        await self.host.put_outbox(
+                            kind="agent",
+                            text=r["text"],
+                            meta={"chain_id": self.chain_id, "source": "plan"},
+                        )
+                        return self._total_usage
                 # G10 / B2-M2 fix: intercept invoke_skill tool_failed results and
                 # emit a deterministic i18n message instead of letting the LLM
                 # generate an English fallback reply. Checked before accumulating
@@ -649,6 +682,19 @@ class RouterLoop:
             return await self.host.reyn_src_list(path=args.get("path", ""))
         if name == "reyn_src_read":
             return await self.host.reyn_src_read(path=args["path"])
+
+        # G. Plan tool — decompose into sub-tasks, run each in a narrow
+        # LLM call, return the aggregated text. See planner.py.
+        if name == "plan":
+            from reyn.chat.planner import dispatch_plan_tool
+            return await dispatch_plan_tool(
+                args=args,
+                parent_host=self.host,
+                chain_id=self.chain_id,
+                budget=self.budget,
+                router_model=self.router_model,
+                available_tool_names=set(self._tool_names) - {"plan"},  # no nested plans
+            )
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.
