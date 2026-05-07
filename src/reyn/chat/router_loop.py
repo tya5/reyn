@@ -225,9 +225,20 @@ class RouterLoop:
             web_fetch_allowed=host.get_web_fetch_allowed(),
             output_language=host.output_language,
         )
+        # ChatSession._handle_user_message appends the user turn to history
+        # BEFORE invoking _run_router_loop, so by the time we get here the
+        # caller's `history` argument already ends with this turn's user
+        # message. Appending it again as a trailing user message creates a
+        # consecutive-duplicate-user pair that confuses the LLM (= G12-style
+        # empty-stop attractor was reproduced via mcp_probe at ~80% rate
+        # against gemini-2.5-flash-lite). Use history as-is; only fall back
+        # to an explicit append if for some reason the latest history entry
+        # is NOT this turn's user text (= defensive — keeps tests that pass
+        # an empty / mismatched history alive).
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        messages.extend(history)  # prior chat turns
-        messages.append({"role": "user", "content": user_text})
+        messages.extend(history)
+        if not history or history[-1].get("role") != "user" or history[-1].get("content") != user_text:
+            messages.append({"role": "user", "content": user_text})
 
         for _iteration in range(self.max_iterations):
             result = await call_llm_tools(
