@@ -135,15 +135,6 @@ class ReynTUIApp(App):
         inputbar = self.query_one("#inputbar", InputBar)
         inputbar.update_slash_commands(SLASH_REGISTRY.all_commands())
 
-        # Initial conv pane thread-context bar (mirrors right panel tabs).
-        try:
-            self.query_one("#conversation", ConversationView).set_thread_context(
-                agent_name=self._agent_name,
-                model=self._model,
-            )
-        except Exception:
-            pass
-
         inputbar.focus_input()
 
         # Optional ASCII banner (neofetch style): gradient logo left, agent
@@ -217,12 +208,6 @@ class ReynTUIApp(App):
                     self.query_one("#header", ReynHeader).refresh_status(
                         agent_name=new_name,
                     )
-                    try:
-                        conv.set_thread_context(
-                            agent_name=new_name, model=self._model,
-                        )
-                    except Exception:
-                        pass
                 continue
 
             if msg.kind == "__matrix__":

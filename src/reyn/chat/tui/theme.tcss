@@ -31,6 +31,10 @@ ReynHeader #status {
 
 #content {
     height: 1fr;
+    /* 1-row dim divider between the screen header and panel content.
+       Without this, tabs (right panel) and the RichLog (conv pane)
+       both touch the screen header and visually "intrude" on it. */
+    border-top: solid #333333;
 }
 
 ConversationView {
