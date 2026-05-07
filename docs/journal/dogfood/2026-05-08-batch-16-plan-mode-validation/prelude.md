@@ -318,15 +318,27 @@ A5: fix wave または tracker へ登録
 retrospective: prediction calibration + Brier score + open issues
 ```
 
-### A3 並列 dispatch の隔離方針
+### A3 並列 dispatch の隔離方針 (= 実装版、 2026-05-08 改訂)
 
-各 sonnet session は:
-- 独立 worktree: `.claude/worktrees/batch16-s<N>/`
-- 独立 agent_state_dir: `.reyn-b16-s<N>/`
-- 環境変数: `REYN_LLM_TRACE_DUMP=/tmp/batch16/s<N>.jsonl`
-- 実行: `reyn chat --agent-state-dir .reyn-b16-s<N>/`
+**A2A JSON-RPC over HTTP driver** を採用 (= past hn_dogfood_v8.py pattern)。
+pexpect 経由 `reyn chat` よりも cleaner、 既稼働の web server を再利用。
 
-→ session 間の WAL / snapshot / event が干渉しない。
+各 scenario sonnet session:
+- **専用 agent**: `b16_s<N>` (= `.reyn/agents/b16_s<N>/profile.yaml` 直書きで作成済)
+- **driver**: `/tmp/batch16/driver.py` (= 共通 helpers: `send_message`,
+  `clean_state`, `snapshot_state`, `plan_summary`, `run_scenario`)
+- **endpoint**: `http://localhost:8080/a2a/agents/b16_s<N>` (= existing web)
+- **state isolation**: agent 名で隔離、 各 run 前に `clean_state()` で
+  `.reyn/agents/b16_s<N>/state/` + `events/` を rmtree
+- **per-run snapshot**: `/tmp/batch16/<scenario_id>/run_<i>/` に
+  `agent/` + `wal.jsonl` を copy 保存
+
+→ session 間の干渉源は **共有 web server process** だが、 agent state は完全
+独立。 これは production multi-agent と同じ shape なので、 干渉自体が
+data (= S2 concurrent plans の予行)。
+
+注意: `--agent-state-dir` flag は `reyn chat` に **存在しない** (= prelude 初版の
+仮定誤り)。 agent_name positional + デフォルト `.reyn/` が production 設計。
 
 ---
 

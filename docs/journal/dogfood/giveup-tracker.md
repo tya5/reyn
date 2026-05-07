@@ -1298,3 +1298,132 @@ Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical) に整合。
 ---
 
 各案件は **月 1 回** trigger 状況を review、 着手順序を再評価。
+
+---
+
+### G24: plan tool router-LLM attractor (= R1 family、 batch 16 で 100% materialized)
+
+**Categories**: C1 (model-capability-tradeoff、 主因) / C7 (prompt-vs-bloat-tradeoff、 副因)
+**Status**: active (= R1 base rate 解明 + 介入 trial 候補)
+**Discovered**: batch 16 (2026-05-08) — 5 scenario × N=5 = 25 runs で plan tool 0/25 invoked
+**History**: 30+ commit の plan-mode 実装 (ADR-0022/0023/0024/0025) は Tier 2 で全 verified、 ただし real LLM (gemini-2.5-flash-lite via LiteLLM proxy) で plan tool は **一度も invoke されず**
+
+#### 観測
+
+| scenario | N | invoked? | reply 種別 |
+|---|---|---|---|
+| S1 multi-source synthesis | 5 | 0/5 | direct text-reply (=training data 由来 synthesis) |
+| S2 concurrent (= 2 prompts back-to-back) | 5 | 0/5 | direct text-reply × 2 (= concurrent race も発生、 別途 G25) |
+| S3 crash + resume | 5 | 0/5 | direct text-reply (= crash sim ineffective、 plan が無いので resume なし) |
+| S4 operator commands | 5 | 0/5 | direct text-reply (= identical responses 5 runs across、 warm cache pattern) |
+| S5 32KB+ spill | 5 | 0/5 | direct text-reply (~4-5KB output、 ADR-0024 threshold 未到達) |
+
+**Brier**: 0.96 average (= prelude predicted refuted 10-30% range、 actual 100%)。 batches 13-14 の Brier 0.20 と比較で systemic miscalibration 確定。
+
+#### 真因 (= 推測 3 候補、 batch 17 で verify-first)
+
+1. **Plan tool description language mismatch**: prompt は Japanese、 description は English
+2. **「rare tool」 attractor**: plan tool は導入が新しく、 LLM の使い慣れた response pattern (= direct reply) が dominant。 G1 family の plan-mode 版
+3. **Prompt design 不適合**: batch 16 の prompts は「3 段落で書いて」 等の short-output 指示を含む → LLM が「one-shot で十分」 判断、 multi-step decomposition motivation 欠落
+
+#### 介入 trial 候補 (= batch 17 着手案)
+
+- **T1**: LLM context dump (= verify-first、 description が tools= に正しく載っているか) — $0.01 / risk 低
+- **T2**: Description rewrite (= JP-aware wording) — $0.05 / risk 低
+- **T3**: Prompt redesign (= "use plan tool", "use multiple steps") — risk: artificial、 real-user pattern との乖離
+- **T4**: `force_plan` reyn.yaml flag — 0.5 day / risk: production code に dogfood 機能混入
+- **T5**: Strong model (claude-3.7-sonnet) trial — $0.10 / G4 spike connection
+
+**着手 trigger**: batch 17 で T1 → T2 順、 T1 結果次第で T3-T5 優先度確定。 batch 17 着手は G25 (= concurrent A2A race) fix 後。
+
+#### Out-of-scope
+
+- T4 force_plan flag を production default 化 (= P3 / vision 違反)
+- prompt rule 累積で plan invoke 強要 (= G23 教訓に反する SP bloat trap)
+
+#### 教訓
+
+- **plan tool は新規 router LLM tool、 base rate 観測なしで Tier 2 検証だけで 進めると 30+ commit が無効化される risk**
+- **R1 attractor は G1 family の generalized form**: 個別 tool ごとの calibration が必要
+- **dogfood prediction prior は base rate 観測後に再 calibrate**: batch 16 prelude の 10-30% prior は過去 G1 経験の overfit、 plan-mode は new tool として独自 base rate (≥80%) を baked in すべきだった
+
+---
+
+### G25: 並行 A2A request 同 agent で `ChatSession.history` race + cross-talk
+
+**Categories**: C5 (consistency-vs-availability-tradeoff、 主因)
+**Status**: **resolved (2026-05-08, batch 16 同 wave、 mcp_server.py で fix landed)**
+**Discovered**: batch 16 S2 sonnet (2026-05-08) — `ThreadPoolExecutor` 並行 dispatch で reply cross-talk 観測
+**Severity**: HIGH (= production-impact、 user が wrong answer を receive)
+
+#### 観測
+
+S2 で 2 prompt を `ThreadPoolExecutor(max_workers=2)` で同時 send_message → 5 runs 中 3 (1, 2, 5) で cross-talk、 run 5 では reply の **完全 swap** 観測 (= P1 caller が P2 reply、 P2 caller が P1 reply 受信)。
+
+#### 真因 (= source code 解析確定)
+
+| layer | site | 問題 |
+|---|---|---|
+| 1 | `mcp_server.py:128 send_to_agent_impl` | per-session asyncio.Lock なし、 並行 call 同 session で race |
+| 2 | `mcp_server.py:80 _new_agent_history_entries` | `session.history[baseline:]` を chain_id filter なし、 baseline 同値で開始した 2 caller が両方の reply を取得 |
+| 3 | `session.py ChatMessage` | `chain_id` field 不在 (= meta dict はあるが history append 時に chain_id tag されない) |
+
+#### 真の解 (= 2 layer fix)
+
+**Layer A (= correctness, immediate)**: `send_to_agent_impl` に **per-session asyncio.Lock** 導入、 同 agent の concurrent A2A request を serialize。 concurrent UX 喪失と引き換えに correctness 確保。
+
+**Layer B (= concurrency restoration, follow-up)**: `ChatMessage.chain_id` field 追加 (= meta から昇格)、 history append 全 site で chain_id tag、 `_new_agent_history_entries` を chain_id filter 化。 Layer A の lock を removable に。
+
+#### 着手 trigger
+
+- ✅ **Layer A + Layer B が batch 16 同 wave で landing**: `_AGENT_LOCKS` per-agent asyncio.Lock + `_new_agent_history_entries` の chain_id filter parameter 追加。 regression test も `tests/test_mcp_server.py::test_concurrent_send_to_same_agent_does_not_cross_talk` で landing
+- 残: ChatMessage.chain_id を meta から first-class field に昇格は別 wave (= 既存 history.jsonl schema 互換維持で defer 可)
+
+#### 教訓
+
+- **A2A は LLM-to-LLM protocol、 同 agent への concurrent peer 想定** (= multi-agent topology + delegate_to_agent で頻発)、 per-session lock は **basic correctness primitive**
+- **dogfood driver 自体が integration test の役**: B16-S2-1 は Tier 2 test 範囲外、 ThreadPoolExecutor 並行 dispatch という dogfood 固有 path で初観測
+
+---
+
+### G26: slash command が A2A 越しに reply 戻らない (= architectural design boundary)
+
+**Categories**: C7 (protocol-surface-tradeoff)
+**Status**: tracker (= production user-impact なし、 dogfood methodology 上は HIGH)
+**Discovered**: batch 16 S4 sonnet (2026-05-08)
+
+#### 観測
+
+`/plan list` を A2A 越しに send → empty reply。 source 解析で **double barrier** 確定:
+
+1. `ChatSession._put_outbox` (session.py:1178) が `kind="status"` を `is_attached=False` で drop
+2. A2A path は `is_attached=True` を set しない (= TUI のみ set)
+3. `_new_agent_history_entries` (mcp_server.py:80) は `role="agent"` history のみ参照、 slash output は outbox 経由で history append しない
+
+#### Design boundary 解釈
+
+- slash commands は **operator-TUI concept** (= /list, /cancel, /skill, /plan)
+- A2A は **LLM-to-LLM protocol** (= no operator UI attached)
+
+→ **bug ではなく design choice**。 ただし dogfood driver が A2A を採用するなら、 operator command path は別 channel が必要。
+
+#### 候補 fix (= mutually exclusive)
+
+- **A1**: A2A response に slash output を attach — A2A protocol pollution
+- **A2**: 別 endpoint `GET /observe/agents/<name>/state` — clean separation
+- **A3**: slash 専用 dedicated CLI driver (= subprocess + stdin pipe) — driver 二重化の運用負荷
+- **A4**: doc 化 + dogfood_trace.py 経由 fallback — minimal effort、 現状はこれで十分
+
+**Recommendation**: A4 (= 即対応 doc) + A2 (= long-term)
+
+#### 着手 trigger
+
+- A4 doc 追記は batch 16 retro と同 commit で landing
+- A2 着手は dogfood batch が複雑化して direct trace で間に合わなくなった時点
+
+#### 教訓
+
+- **driver 選定は scenario 設計の前**: A2A driver で operator command scenario を planning した時点で gap 露呈
+- **architectural gap は bug でないが doc が必要**: 「動かない」 を「動かすべきでない」 と説明する doc がないと future contributor は bug と誤認
+
+---

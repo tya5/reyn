@@ -236,6 +236,72 @@ def test_send_to_agent_history_persists_across_calls(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_concurrent_send_to_same_agent_does_not_cross_talk(tmp_path, monkeypatch):
+    """Tier 2: B16-S2-1 / G25 regression net — two concurrent
+    ``send_to_agent_impl`` calls on the SAME agent must each receive only
+    their own reply, not the other caller's.
+
+    Discovered in batch 16 S2 dogfood (2026-05-08): with no per-agent
+    serialization and no chain_id filter on history harvest, both
+    concurrent A2A callers received both replies joined together —
+    in 3/5 runs the answers were swapped or duplicated. Fix landed in
+    same wave: per-agent ``asyncio.Lock`` in ``send_to_agent_impl`` +
+    ``_new_agent_history_entries(... chain_id=...)`` filter.
+
+    This test pins the contract by firing two ``asyncio.gather`` calls
+    against the same agent and asserting each reply contains the
+    expected per-call marker.
+    """
+    monkeypatch.chdir(tmp_path)
+    registry = _build_registry(tmp_path, [("default", "")])
+
+    # The fake LLM returns the user prompt itself so we can assert
+    # which reply each caller received.
+    async def echo_llm(*, messages, **kw):
+        # Last user message text
+        user_text = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                user_text = m.get("content", "") or ""
+                break
+        return _text_result(f"echo: {user_text[:40]}")
+
+    async def go() -> tuple[dict, dict]:
+        with patch(
+            "reyn.chat.router_loop.call_llm_tools",
+            side_effect=echo_llm,
+        ):
+            r1, r2 = await asyncio.gather(
+                send_to_agent_impl(
+                    registry, agent_name="default",
+                    message="ALPHA-MARKER", timeout=5.0,
+                ),
+                send_to_agent_impl(
+                    registry, agent_name="default",
+                    message="BETA-MARKER", timeout=5.0,
+                ),
+            )
+        return r1, r2
+
+    r1, r2 = asyncio.run(go())
+
+    # Each reply must contain its OWN marker, not the other call's.
+    # Cross-talk would manifest as both replies containing both markers
+    # (= what was observed pre-fix in batch 16 S2).
+    assert "ALPHA-MARKER" in r1["reply"], (
+        f"r1 should echo ALPHA-MARKER; got: {r1['reply']!r}"
+    )
+    assert "BETA-MARKER" not in r1["reply"], (
+        f"r1 must NOT contain BETA-MARKER (= cross-talk); got: {r1['reply']!r}"
+    )
+    assert "BETA-MARKER" in r2["reply"], (
+        f"r2 should echo BETA-MARKER; got: {r2['reply']!r}"
+    )
+    assert "ALPHA-MARKER" not in r2["reply"], (
+        f"r2 must NOT contain ALPHA-MARKER (= cross-talk); got: {r2['reply']!r}"
+    )
+
+
 def test_build_server_exposes_two_tools(tmp_path):
     """Tier 2: build_server registers exactly the two documented tools
     (list_agents, send_to_agent). Acts as a P7 detection net — adding a
