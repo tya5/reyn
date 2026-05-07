@@ -33,6 +33,11 @@ EXPECTED_TOOL_NAMES = [
     "remember_shared",
     "remember_agent",
     "forget_memory",
+    # File read tools are unconditional — aligned with the OS-level
+    # default-grant on paths within the project root. See router_tools.py:C
+    # for the rationale.
+    "list_directory",
+    "read_file",
     # web_search is always exposed (E1) — read-only public search.
     "web_search",
 ]
@@ -73,15 +78,21 @@ def _max_object_nesting(params: dict) -> int:
 
 
 FILE_TOOL_NAMES = {"list_directory", "read_file", "write_file", "delete_file"}
+FILE_READ_TOOL_NAMES = {"list_directory", "read_file"}
+FILE_WRITE_TOOL_NAMES = {"write_file", "delete_file"}
 MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_12_tools_when_no_extras():
-    """No file/MCP/web_fetch extras: 11 baseline + web_search (E1, always on)."""
+def test_build_tools_returns_14_tools_when_no_extras():
+    """No file.write / MCP / web_fetch extras: 11 baseline + web_search (E1)
+    + list_directory + read_file (unconditional read access aligned with
+    the OS-level default-grant). Write-class file tools and MCP/web_fetch
+    remain gated, so 14 total at the unconfigured baseline.
+    """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 12, f"Expected 12 tools, got {len(tools)}"
+    assert len(tools) == 14, f"Expected 14 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -173,12 +184,28 @@ def test_layer_enum():
 # ── File tool permission-gating tests ─────────────────────────────────────────
 
 
-def test_file_tools_omitted_when_no_permissions():
-    """No file_permissions kwarg → all file tools absent."""
+def test_file_read_tools_unconditional_when_no_permissions():
+    """No file_permissions kwarg → write-class file tools absent, but
+    read-class tools (list_directory, read_file) are unconditional.
+
+    Aligned with the OS-level default-grant in
+    `permissions._in_default_read_zone`: paths within project root are
+    always readable, so hiding the tools while the underlying op accepts
+    the call was a wiring inconsistency. With this contract, fresh
+    `reyn init` projects can answer "summarize the README" without any
+    file-permission setup.
+    """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     names = set(_tool_names(tools))
-    assert names.isdisjoint(FILE_TOOL_NAMES), (
-        f"Expected no file tools, but found: {names & FILE_TOOL_NAMES}"
+    # Read tools always present.
+    assert FILE_READ_TOOL_NAMES.issubset(names), (
+        f"Expected read tools always present, missing: "
+        f"{FILE_READ_TOOL_NAMES - names}"
+    )
+    # Write tools gated.
+    assert names.isdisjoint(FILE_WRITE_TOOL_NAMES), (
+        f"Expected no write tools without declaration, but found: "
+        f"{names & FILE_WRITE_TOOL_NAMES}"
     )
 
 

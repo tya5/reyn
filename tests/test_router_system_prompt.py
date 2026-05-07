@@ -348,12 +348,21 @@ def _base_prompt(**kwargs) -> str:
 
 
 class TestIntentAxisDynamic:
-    def test_no_file_tool_names_when_no_file_permissions(self):
+    def test_read_tools_unconditional_when_no_file_permissions(self):
+        """Tier 2: read_file / list_directory are always narrated even
+        when no `file.read` permission is declared. Aligned with the
+        OS-level default-grant policy (= paths within project root are
+        always readable). Hiding the tools while the underlying op
+        accepts the call was a wiring inconsistency that surfaced in
+        HN-style first-touch dogfood — agent claimed "I can't access
+        local files" while file ops would have been permitted.
+        """
         prompt = _base_prompt(file_permissions=None)
-        assert "read_file" not in prompt
+        assert "read_file" in prompt
+        assert "list_directory" in prompt
+        # Write tools remain gated on explicit file.write declaration.
         assert "write_file" not in prompt
         assert "delete_file" not in prompt
-        assert "list_directory" not in prompt
 
     def test_no_mcp_tool_names_when_no_mcp_servers(self):
         prompt = _base_prompt(mcp_servers=[])

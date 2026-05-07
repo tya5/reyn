@@ -97,6 +97,9 @@ class FakeRouterHost:
     def get_web_fetch_allowed(self) -> bool:
         return False
 
+    def get_project_context(self) -> str:
+        return ""
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         return {"kind": "web_search", "query": query, "results": []}
 
@@ -864,18 +867,21 @@ async def test_history_appended_to_messages():
 async def test_unknown_tool_name_returns_error_not_dispatched():
     """Tier 2: OS invariant — tool_call for a name absent from the current catalog returns status=error/kind=unknown_tool; underlying host method is never called.
 
-    LLM emits tool_call with name='read_file' (not in catalog for no-file host).
+    LLM emits tool_call with name='delete_file' (not in catalog when
+    file.write isn't declared; read_file IS unconditionally exposed
+    so we use a write-class tool to exercise the unknown-name path).
     """
-    # Host with no file_permissions → read_file not in catalog
+    # Host with no file_permissions → write_file / delete_file not in
+    # catalog (read_file / list_directory ARE, unconditionally).
     host = FakeRouterHost(
         skills=[{"name": "list_skills", "category": "general"}],
-        file_permissions=None,  # no file tools
+        file_permissions=None,
         mcp_servers=[],
     )
     loop = make_loop(host)
 
     rounds = [
-        tool_result([{"name": "read_file", "args": {"path": "/some/file.txt"}}]),
+        tool_result([{"name": "delete_file", "args": {"path": "/some/file.txt"}}]),
         text_result("Sorry, let me try differently."),
     ]
 
@@ -886,10 +892,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
         return rounds[len(messages_captured) - 1]
 
     with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
-        await loop.run("read README.md", [])
-
-    # host.file_read must NOT have been called
-    assert len(host.file_reads) == 0, "file_read must not be called for unknown tool"
+        await loop.run("delete the temp file", [])
 
     # The tool result fed back to the LLM should carry status=error, kind=unknown_tool
     round2_messages = messages_captured[1]
@@ -899,7 +902,7 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
     assert result_data.get("status") == "error"
     error = result_data.get("error", {})
     assert error.get("kind") == "unknown_tool"
-    assert "read_file" in error.get("message", "")
+    assert "delete_file" in error.get("message", "")
 
     # Loop recovered and produced a reply
     assert host.outbox[0]["text"] == "Sorry, let me try differently."
@@ -907,10 +910,13 @@ async def test_unknown_tool_name_returns_error_not_dispatched():
 
 @pytest.mark.asyncio
 async def test_tool_names_populated_per_run():
-    """Tier 1: tool catalog reflects host configuration — file tools absent without file_permissions, present with it. Tests catalog-build contract without LLM involvement.
+    """Tier 1: tool catalog reflects host configuration — write-class file
+    tools absent without file.write declaration, present with it.
 
-    First run: no file permissions, no MCP → file/mcp tools absent.
-    Second run: with file permissions → file tools present.
+    Read-class file tools (read_file, list_directory) are unconditional
+    by design (= aligned with the OS-level default-grant on paths within
+    the project root). Write-class tools (write_file, delete_file) are
+    gated on `file_permissions.write` being non-empty.
     """
     host_no_file = FakeRouterHost(file_permissions=None, mcp_servers=[])
     loop = RouterLoop(host=host_no_file, chain_id="chain-test")
@@ -920,22 +926,29 @@ async def test_tool_names_populated_per_run():
         await loop.run("hello", [])
 
     names_no_file = frozenset(loop._tool_names)
-    assert "read_file" not in names_no_file
+    # read tools always present
+    assert "read_file" in names_no_file
+    assert "list_directory" in names_no_file
+    # write tools gated
+    assert "write_file" not in names_no_file
+    assert "delete_file" not in names_no_file
     assert "list_skills" in names_no_file  # always present
 
-    # Second run with a host that has file permissions
-    host_with_file = FakeRouterHost(
-        file_permissions={"read": ["/docs"], "write": []},
+    # Second run with a host that has file.write permissions
+    host_with_write = FakeRouterHost(
+        file_permissions={"read": ["/docs"], "write": ["/tmp"]},
         mcp_servers=[],
     )
-    loop2 = RouterLoop(host=host_with_file, chain_id="chain-test-2")
+    loop2 = RouterLoop(host=host_with_write, chain_id="chain-test-2")
 
     scripted2 = _ScriptedLLM([text_result("ok")])
     with patch("reyn.chat.router_loop.call_llm_tools", scripted2):
         await loop2.run("hello", [])
 
-    names_with_file = frozenset(loop2._tool_names)
-    assert "read_file" in names_with_file
+    names_with_write = frozenset(loop2._tool_names)
+    assert "read_file" in names_with_write
+    assert "write_file" in names_with_write
+    assert "delete_file" in names_with_write
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ def build_system_prompt(
     mcp_servers: list[dict] | None = None,
     web_fetch_allowed: bool = False,
     output_language: str | None = None,
+    project_context: str = "",
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -62,15 +63,68 @@ def build_system_prompt(
 
     parts: list[str] = []
 
+    # ── OS-level identity preamble ──────────────────────────────────────────
+    #
+    # Without this, an agent with an empty `role:` falls back to the
+    # underlying LLM's baseline identity ("I am a large language model
+    # trained by Google", etc.) when asked "tell me about yourself" — a
+    # devastating first-touch experience that breaks the Reyn brand.
+    # This preamble is OS-provided (not user-editable, distinct from
+    # `project_context` / REYN.md which is operator-owned) and tells the
+    # agent what Reyn is so identity questions get a meaningful reply.
+    #
+    # Wording-strength note: weak LLMs (= gemini-2.5-flash-lite class)
+    # have a strong "tell me about yourself" attractor toward
+    # vendor-of-origin replies even with a Reyn-identity preamble in
+    # front. The explicit MUST NOT lines below are the empirical
+    # mitigation that pushes the rate from ~50% leak to near-zero on
+    # this attractor. Keep the imperative form; soft phrasing
+    # ("you are Reyn — not the vendor") was insufficient.
+    parts.append(
+        "# Identity"
+        "\n\n"
+        "You are a Reyn agent — running on the Reyn agent OS, an "
+        "open-source LLM workflow runtime that constrains the model with "
+        "explicit phase graphs, JSON-schema-validated outputs, and per-"
+        "skill permission scopes. Reyn's design value is predictability: "
+        "every run is replayable from an append-only event log, every "
+        "decision goes through a typed contract. The user is talking to "
+        "you via Reyn's chat interface."
+        "\n\n"
+        "**Identity rules (always apply):**"
+        "\n"
+        "- When the user asks who you are or what you are, you ARE a Reyn "
+        "agent. Lead the answer with that fact."
+        "\n"
+        "- You MUST NOT identify yourself as a model from Google, OpenAI, "
+        "Anthropic, or any other LLM vendor. The underlying model is an "
+        "implementation detail; the user is not asking about it."
+        "\n"
+        "- You MUST NOT begin a self-description with phrases like "
+        "\"I am a large language model\" — start with \"I am a Reyn "
+        "agent\" instead."
+    )
+    parts.append("")
+
+    # ── Project context (REYN.md) ──────────────────────────────────────────
+    #
+    # `project_context` carries the operator's REYN.md content (or whatever
+    # `project_context_path` points to). This is operator-editable
+    # surface — do NOT use it to inject Reyn's own identity (that's the
+    # preamble above). Inject only when non-empty so an unset / empty
+    # REYN.md doesn't leak placeholder text into the prompt.
+    if project_context.strip():
+        parts.append("## About this project (project_context)")
+        parts.append("")
+        parts.append(project_context.strip())
+        parts.append("")
+
     parts.append(
         f"Role: chat router for agent {agent_name} (role: {agent_role})."
     )
     parts.append("")
     parts.append("## What you can do (intent axis)")
     parts.append("")
-    has_file_read = bool(
-        file_permissions and file_permissions.get("read")
-    )
     has_file_write = bool(
         file_permissions and file_permissions.get("write")
     )
@@ -83,10 +137,12 @@ def build_system_prompt(
     parts.append(
         "           agents:  list_agents / describe_agent / delegate_to_agent"
     )
-    if has_file_read:
-        parts.append(
-            "           files:   list_directory / read_file"
-        )
+    # File read tools are unconditional — aligned with the OS-level
+    # default-grant on paths within the project root. See router_tools.py
+    # for the rationale.
+    parts.append(
+        "           files:   list_directory / read_file"
+    )
     # Web search is always exposed (low-risk, public queries). Web fetch
     # requires operator opt-in (`web.fetch: allow`) and is included only
     # when permitted.
@@ -173,8 +229,10 @@ def build_system_prompt(
     # tools that ARE actually exposed in this session (= avoids hallucinating
     # capabilities that aren't wired up).
     user_capabilities: list[str] = ["run skills, build new skills, and improve existing ones"]
-    if has_file_read:
-        user_capabilities.append("read files in your project")
+    # File read is unconditional (= aligned with OS-level default-grant on
+    # paths within project root); narrate it always so the LLM doesn't
+    # under-promise.
+    user_capabilities.append("read files in your project (README, source code, configs)")
     if has_file_write:
         user_capabilities.append("write files to approved paths")
     user_capabilities.append("search the web (DuckDuckGo)")

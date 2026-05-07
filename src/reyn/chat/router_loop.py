@@ -47,6 +47,45 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 }
 
 
+def _strip_frontmatter(content: str) -> str:
+    """Remove a leading YAML frontmatter block (``---\\n...\\n---\\n``) from
+    a memory file's text and return the body alone.
+
+    Used by :meth:`RouterLoop._read_memory_body` to give the LLM the
+    actual remembered text instead of metadata fields it doesn't need
+    (= ``name`` / ``description`` / ``type``). When the input doesn't
+    start with a frontmatter delimiter the original text is returned
+    unchanged — handles legacy memory files written before the frontmatter
+    convention existed.
+    """
+    text = content or ""
+    if not text.lstrip().startswith("---"):
+        return text
+    # Find first non-blank line; require it to be exactly "---".
+    lines = text.split("\n")
+    # Skip leading blanks.
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines) or lines[i].strip() != "---":
+        return text
+    # Find the closing "---" after the opening one.
+    close = -1
+    for j in range(i + 1, len(lines)):
+        if lines[j].strip() == "---":
+            close = j
+            break
+    if close == -1:
+        # No closing delimiter — leave content alone rather than truncating.
+        return text
+    body_lines = lines[close + 1:]
+    # Trim a single leading blank line that conventionally follows the
+    # closing delimiter; keep subsequent whitespace as authored.
+    if body_lines and body_lines[0].strip() == "":
+        body_lines = body_lines[1:]
+    return "\n".join(body_lines).rstrip("\n") + ("\n" if body_lines else "")
+
+
 def _is_empty_router_response(response: Any) -> bool:
     """OS-side detection: model emitted no text and no tool calls.
 
@@ -110,6 +149,15 @@ class RouterLoopHost(Protocol):
 
     def get_web_fetch_allowed(self) -> bool:
         """True if `web.fetch: allow` is in the operator's permissions."""
+        ...
+
+    def get_project_context(self) -> str:
+        """Project context text (= REYN.md / `project_context_path` content),
+        or empty string when the operator has not configured one. Threaded
+        into the router's system prompt so the chat reply path knows about
+        the user's project — without this, only the skill execution path
+        sees REYN.md and casual chat queries get answered without
+        project-specific context."""
         ...
 
     async def web_search(self, *, query: str, max_results: int) -> dict:
@@ -224,6 +272,7 @@ class RouterLoop:
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
             output_language=host.output_language,
+            project_context=host.get_project_context(),
         )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
@@ -620,19 +669,34 @@ class RouterLoop:
     def _list_skills(self, path: str) -> list[dict]:
         """Browse skill catalogue hierarchically.
 
-        path == "" → group by category, return [{category, count}, ...]
+        path == "" → group by category, return [{category, count, sample_names}, ...]
         path == "<category>" → return [{name, description, input_artifact?, input_fields?}, ...]
+
+        The ``sample_names`` preview (up to 5 names per category) was added to
+        defuse a G12 empty-stop attractor: with only ``count`` in the
+        response, the LLM had nothing concrete to narrate when answering
+        "list available skills" and exited with ``finish=stop`` /
+        ``content=""``. Surfacing actual skill names gives it material to
+        speak with — confirmed via dogfood trace re-run.
         """
         skills = self.host.list_available_skills()
 
         if not path:
-            # Group by category
+            # Group by category, with a small sample of names per category to
+            # defuse the empty-stop attractor on path="".
             categories: dict[str, list[dict]] = {}
             for skill in skills:
                 cat = skill.get("category") or "general"
                 categories.setdefault(cat, []).append(skill)
             return [
-                {"category": cat, "count": len(items)}
+                {
+                    "category": cat,
+                    "count": len(items),
+                    # Up to 5 names per category — concrete enough to narrate,
+                    # bounded enough to stay under the verbosity attractor
+                    # threshold for projects with hundreds of skills.
+                    "sample_names": [s.get("name", "") for s in items[:5]],
+                }
                 for cat, items in sorted(categories.items())
             ]
 
@@ -825,11 +889,40 @@ class RouterLoop:
         return items
 
     async def _read_memory_body(self, layer: str, slug: str) -> dict:
-        """Read the full body of a memory entry."""
+        """Read the full body of a memory entry.
+
+        Memory files are stored as Markdown with a YAML frontmatter (= the
+        ``name`` / ``description`` / ``type`` metadata fields written by
+        ``_remember``). Returning the full file content with the frontmatter
+        intact triggered a G12 empty-stop attractor: when the LLM asked
+        ``read_memory_body`` and got back e.g.::
+
+            ---
+            name: User Name
+            description: User Name
+            type: user
+            ---
+
+            Yasuda
+
+        it sometimes parsed the frontmatter as the content and exited with
+        ``finish=stop`` / ``content=""`` instead of narrating "Yasuda".
+        Confirmed via dogfood trace on Q10 ``who am I?`` — the recall
+        returned the body with frontmatter and produced an empty reply.
+
+        Stripping the frontmatter before returning gives the LLM clean
+        text to narrate. The metadata fields are not LLM-actionable here
+        (they were emitted at write time and are surfaced separately via
+        ``list_memory``), so dropping them costs nothing.
+        """
         path = self.host.memory_path(layer, slug)
         try:
             content = await self.host.file_read(path)
-            return {"content": content, "layer": layer, "slug": slug}
+            return {
+                "content": _strip_frontmatter(content),
+                "layer": layer,
+                "slug": slug,
+            }
         except Exception as exc:
             return {"error": str(exc), "layer": layer, "slug": slug}
 

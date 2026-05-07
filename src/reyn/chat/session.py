@@ -3219,6 +3219,15 @@ class ChatSession:
             or (web_block.get("fetch") == "allow")
         )
 
+    def get_project_context(self) -> str:
+        """RouterLoopHost: project context text (= REYN.md / whatever
+        ``project_context_path`` points to). Threaded into the chat
+        router's system prompt so casual chat (= the geometry-of-the-day,
+        not skill execution) sees the operator's project context. Empty
+        string when the operator has not configured one.
+        """
+        return self._project_context or ""
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: dispatch the OS-native web/search op (DuckDuckGo)
         from the chat router. Same handler as Control IR `web/search`; the

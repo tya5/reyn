@@ -462,51 +462,71 @@ def build_tools(
     ]
     # fmt: on
 
-    # ── C. File tools (permission-gated) ─────────────────────────────────────
-    _file_read = (file_permissions or {}).get("read") or []
+    # ── C. File tools ────────────────────────────────────────────────────────
+    #
+    # Read tools (list_directory, read_file) are exposed UNCONDITIONALLY —
+    # they're aligned with the OS-level default-grant policy in
+    # `permissions._in_default_read_zone` which already permits any path
+    # within the project root (CWD) without explicit declaration. Hiding the
+    # tools while the underlying op accepts the call was a wiring
+    # inconsistency that surfaced in dogfood: the agent saw no file tools
+    # and replied "I can't access local files" even when reading was
+    # actually permitted. With this alignment, "summarize the README" works
+    # out of the box for fresh `reyn init` projects without any
+    # permission-config step.
+    #
+    # Write tools (write_file, delete_file) remain gated on explicit
+    # `file.write` declaration — those are NOT default-granted at the OS
+    # layer (only `.reyn/`, `reyn/` are default-write zones), so surfacing
+    # them without a corresponding declaration would mislead the LLM into
+    # attempting writes that get rejected at dispatch.
     _file_write = (file_permissions or {}).get("write") or []
 
-    if _file_read or _file_write:
-        # C1 and C2 are always present when any file scope is configured
-        tools += [
-            # ── C1: list_directory ───────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_directory",
-                    "description": (
-                        "List contents of a directory under the agent's read scope. "
-                        "Returns names + types (file/dir)."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                        },
-                        "required": ["path"],
+    tools += [
+        # ── C1: list_directory ───────────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "list_directory",
+                "description": (
+                    "List contents of a directory in the project. Paths are "
+                    "resolved relative to the project root. Use \".\" for "
+                    "the project root itself. Returns names + types "
+                    "(file/dir)."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
                     },
+                    "required": ["path"],
                 },
             },
-            # ── C2: read_file ────────────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "description": (
-                        "Read a file's contents under the agent's read scope."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                        },
-                        "required": ["path"],
+        },
+        # ── C2: read_file ────────────────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": (
+                    "Read a file's contents. Paths are resolved relative to "
+                    "the project root, e.g. \"README.md\" reads the README "
+                    "at the top of the project. Use this for project "
+                    "documentation, source code, configuration, or any text "
+                    "file the user references."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
                     },
+                    "required": ["path"],
                 },
             },
-        ]
+        },
+    ]
 
-        if _file_write:
+    if _file_write:
             # C3 and C4 only when write scope is configured
             tools += [
                 # ── C3: write_file ───────────────────────────────────────────
