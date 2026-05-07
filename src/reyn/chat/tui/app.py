@@ -244,6 +244,22 @@ class ReynTUIApp(App):
                     self.set_timer(2.0, conv.hide_status)
                 continue
 
+            if msg.kind == "__docs_filter__":
+                # /docs-filter <substr> — set or clear the docs tab filter
+                substr = (msg.text or "").strip()
+                try:
+                    panel = self.query_one("#right_panel", RightPanel)
+                    panel.set_docs_filter(substr)
+                    panel.set_panel_type("docs")
+                except Exception:
+                    pass
+                if substr:
+                    conv.show_status(f"docs filter: {substr}", kind="general")
+                else:
+                    conv.show_status("docs filter cleared", kind="general")
+                self.set_timer(2.0, conv.hide_status)
+                continue
+
             if msg.kind == "__stream_start__":
                 current_stream_id = msg.meta.get("msg_id", id(msg))
                 # Hide the "thinking…" sticky now that the reply is starting

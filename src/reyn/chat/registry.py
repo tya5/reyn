@@ -167,6 +167,55 @@ class AgentRegistry:
         # removed entirely.
         self._cascade_agent_removal(name)
 
+    def recent_user_message(self, name: str) -> str:
+        """Return the most recent user-role text from the agent's history, or "".
+
+        Reads history.jsonl synchronously (read-only). Returns "" on any
+        failure or when no user message exists. Used by the right-panel
+        Agents tab to surface idle-state context.
+        """
+        history_path = self._dir / name / "history.jsonl"
+        if not history_path.is_file():
+            return ""
+        last_text: str = ""
+        try:
+            with history_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict) and entry.get("role") == "user":
+                        last_text = str(entry.get("text", ""))
+        except OSError:
+            return ""
+        return last_text
+
+    def message_count(self, name: str) -> int:
+        """Return the total number of conversation messages in history, or 0."""
+        history_path = self._dir / name / "history.jsonl"
+        if not history_path.is_file():
+            return 0
+        count = 0
+        try:
+            with history_path.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(entry, dict) and entry.get("role") in ("user", "agent"):
+                        count += 1
+        except OSError:
+            return 0
+        return count
+
     def last_activity_at(self, name: str) -> datetime | None:
         """Last mtime across history.jsonl and any chat events file.
 
