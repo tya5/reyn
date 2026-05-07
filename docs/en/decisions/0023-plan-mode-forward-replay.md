@@ -1,6 +1,7 @@
 # ADR-0023: Plan-Mode Crash Resilience — Phase 2 (Forward Replay)
 
-**Status**: Accepted + Implemented (2026-05-07)
+**Status**: Accepted + Implemented (2026-05-07);
+**amended 2026-05-08** (Phase 2.1 — async dispatch + multi-plan).
 **Track**: Plan-mode crash recovery — successor to ADR-0022 Phase 1.
 **Synthesized from**: 4 parallel design proposals (snapshot / analyzer / policy
 / runtime), authored 2026-05-07.
@@ -12,6 +13,102 @@
 → `5279341` (coordinator + reyn.yaml policy) → `1e529d7` (ChatSession +
 AgentRegistry integration). 1279 → 1373 passed (= 94 new Tier 2 tests).
 Phase 1 tests (10) + planner tests survived unchanged.
+
+## Phase 2.1 amendment (2026-05-08) — async dispatch + multi-plan
+
+**Motivation**: Phase 2 v1 dispatched the `plan` tool synchronously
+inside RouterLoop — the chat turn blocked until every step completed.
+This produced a worst-of-both UX: LLM narration was already bypassed
+(see `router_loop.py:428-449` plan special-case), but the await held
+the chat hostage. The async fix aligns plan-mode with the existing
+async patterns (`delegate_to_agent` / user-initiated `_spawn_skill` /
+auto-resume tasks) so the agent can answer quick follow-ups while a
+long plan completes in the background — human-like dispatch order.
+
+This amendment supersedes:
+
+- **§3.6** "ChainManager / cross-agent notify (preserved divergence)"
+  — plan now allocates its own `chain_id` per run, so cross-agent
+  notify (R-D14) and `/plan discard <plan_id>` work without special-
+  casing. The "implicit user-as-waiter" rationale is dropped.
+
+- **§3.7** "ADR-0012 carryover (no prompt at restart)" — the
+  "one-in-flight plan per chat session" premise no longer holds.
+  ADR-0012's no-prompt rationale stands on its remaining legs
+  (per-purity policy resolves adopt/cancel offline; child resume
+  handles ambiguity at the appropriate layer; slash discard is the
+  surgical escape hatch); the bulk-pressure argument no longer needs
+  the one-plan crutch.
+
+Other Phase 2 substrate (PlanSnapshot / PlanRegistry / analyzer /
+coordinator / WAL events) is unchanged — Phase 2 was already shaped
+around `list[plan_id]` / `dict[plan_id, ...]` so multi-plan correctness
+falls out without structural churn.
+
+### 2.1.1 Async dispatch contract
+
+`_DISPATCH_KIND["plan"] = "async"` joins `delegate_to_agent`. The
+RouterLoop tool dispatcher exits on async tool result; plan output
+flows back to the user via `host.put_outbox` from inside the runtime
+task, not via the tool result.
+
+`dispatch_plan_tool` returns `{"status": "spawned", "plan_id": ...}`
+immediately after `asyncio.create_task(PlanRuntime(...).run())`. The
+RouterLoop sees the spawn ack and exits — its job is done.
+
+The `router_loop.py:428-449` plan special-case (= "if status ok and
+text is set, emit directly to outbox") is removed. The runtime owns
+the outbox interaction:
+
+- per-step `kind="status"` narration ("step <sid> done") for
+  progress visibility (UI may suppress)
+- terminal aggregator → `kind="agent"` outbox with the final text
+  + `meta={plan_id, chain_id}` for UI tagging
+
+### 2.1.2 Per-plan chain_id
+
+Each plan run allocates a new `chain_id` in `dispatch_plan_tool`
+(`f"plan_{plan_id}"` or uuid-derived). PlanSnapshot's existing
+`chain_id` field carries it; resume restores the same chain_id so
+R-D14 cross-agent notify (`notify_chain_discarded`) fires for the
+right waiter on `/plan discard <plan_id>`.
+
+Implication for §3.6: plans now register a chain (= via
+ChainManager.register equivalent if the plan's child skills delegate
+to peers). The "preserved divergence" of Phase 2 v1 (= plan does NOT
+register its own chain_id) is replaced by full participation in the
+chain mechanism.
+
+### 2.1.3 Multi-plan crash semantics
+
+A user turn may yield multiple `plan` tool_calls (= LLM emits 2 in a
+single round, both spawn). Each gets its own `plan_id` + `chain_id`
++ snapshot dir. Crash mid-flight: `AgentSnapshot.active_plan_ids`
+holds N entries; `restore_all` calls `_recover_plans_for_agent` which
+iterates and spawns each via `_spawn_resumed_plan`.
+
+Memo replay across N plans is independent — analyzer filters WAL by
+`plan_id`, coordinator decides per-plan, no cross-plan coupling.
+
+WAL truncation floor extends naturally: `min(全 PlanSnapshot.last_step_applied_seq)`
+across all active plans + skills (= ADR-0001 single-floor invariant
+preserved).
+
+### 2.1.4 Outbox interleaving + ordering
+
+Multi-plan completions land in the outbox in **completion order**,
+not arrival order. UI distinguishes via `meta.plan_id`. This matches
+`_spawn_skill` semantics already familiar to users (= a skill
+spawned by a different turn can complete while the user types a new
+prompt). Race: none — outbox is a single writer queue per session.
+
+### 2.1.5 Test posture
+
+Multi-plan resume race is intentionally **not** covered by Tier 3
+e2e in the v1 cutover; it surfaces in dogfood (= 2-plan parallel
+spawn → kill -9 → restart → both resume to completion). Tier 2
+covers single-plan and the multi-plan registry/coordinator paths
+(already green from Phase 2 base).
 
 ## Context
 
@@ -454,7 +551,13 @@ coordinator forces `action="discard"` regardless of policy. A distinct
 outbox reason ("plan decomposition artifact missing or corrupt; please
 retry") clarifies the failure mode for the user.
 
-### 3.6 ChainManager / cross-agent notify (preserved divergence)
+### 3.6 ChainManager / cross-agent notify
+
+> **Superseded 2026-05-08 by Phase 2.1 §2.1.2 — per-plan chain_id.**
+> Each plan now allocates its own `chain_id`; R-D14 cross-agent
+> notify fires for plan abort directly. The "implicit user-as-waiter"
+> divergence below was the v1 design and is retained for historical
+> context only.
 
 ADR-0022 documented: plan-mode does **not** register its own
 `chain_id`; the user is the implicit waiter via outbox; R-D14
@@ -471,6 +574,13 @@ needed in plan-mode.
 
 ### 3.7 ADR-0012 carryover (no prompt at restart)
 
+> **Amended 2026-05-08 by Phase 2.1 §2.1 — multi-plan UX.** The
+> "one-in-flight plan per chat session at most" premise is dropped.
+> The remaining no-prompt arguments stand: per-purity policy is
+> offline, child resume handles its own ambiguity, slash discard is
+> the escape hatch. Bullet (i) is retained for historical context;
+> the no-prompt conclusion is unchanged.
+
 ADR-0012 retired skill bulk resume prompts because (i) ADR-0011's
 world-purity invalidation removed the structural ambiguity prompts
 were trying to rescue, (ii) binary "continue all / abort all" had no
@@ -479,8 +589,8 @@ author's `description` bore inappropriate UX weight.
 
 Plan-mode applies the same logic, with a stronger frequency argument:
 
-- One in-flight plan per chat session at most (= much lower bulk
-  pressure than skills).
+- ~~One in-flight plan per chat session at most~~ (superseded; multi-
+  plan is the default UX in Phase 2.1).
 - Per-purity policy resolves adopt-vs-cancel offline; no per-restart
   user input adds value.
 - Children's own `skill_resume` policy already handles their internal
