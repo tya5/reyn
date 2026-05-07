@@ -16,13 +16,21 @@ from reyn.plan.decomposition import (
     read_decomposition,
     write_decomposition,
 )
+from reyn.plan.plan_snapshot import (
+    PLAN_SNAPSHOT_VERSION,
+    PlanSnapshot,
+    plan_snapshot_path,
+)
 
 __all__ = [
     "DECOMPOSITION_SCHEMA_VERSION",
     "DecompositionCorruptError",
+    "PLAN_SNAPSHOT_VERSION",
+    "PlanSnapshot",
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",
+    "plan_snapshot_path",
     "read_decomposition",
     "write_decomposition",
 ]
