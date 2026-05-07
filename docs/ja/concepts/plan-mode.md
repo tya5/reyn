@@ -51,8 +51,16 @@ chat turn は block しない:
 |---|---|---|
 | Decomposition (= plan 形状) | `agents/<name>/state/plans/<plan_id>/decomposition.json` | 残る |
 | Per-plan progress (= 完走 step + 結果) | `agents/<name>/state/plans/<plan_id>.snapshot.json` | 残る |
+| Step output (≤32 KB) | 上記 snapshot に inline | 残る |
+| Step output (>32 KB) | `agents/<name>/state/plans/<plan_id>/step_results/<step_id>.txt` | 残る |
 | Plan lifecycle event | `.reyn/state/wal.jsonl` (`plan_started` / `plan_step_*` / `plan_completed`) | 残る |
 | Active asyncio.Task | in-memory only | 失う — restart で auto-resume |
+
+32 KB を超える step output は per-plan workspace file へ spill する
+([ADR-0024](../decisions/0024-plan-step-result-spill.md)) ので、
+snapshot は小さいまま + truncation なしで完全 preserve。 read 側は
+`get_step_result(snap, agent_state_dir, step_id)` accessor が inline
+/ spilled を透過解決。
 
 `reyn chat` 起動時 `AgentRegistry.restore_all` が:
 

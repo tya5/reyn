@@ -192,6 +192,7 @@ class PlanResumeCoordinator:
         wal_events: Iterable[dict],
         decomposition_loader: Callable[[str], Any],
         child_skill_lookup: Callable[[str], str | None] | None = None,
+        agent_state_dir: "Any" = None,
     ) -> list[PlanResumeDecision]:
         """Scan the registry's active plans and produce decisions.
 
@@ -238,6 +239,7 @@ class PlanResumeCoordinator:
                 snapshot=snap, decomposition=decomposition,
                 wal_events=events,
                 child_skill_lookup=child_skill_lookup,
+                agent_state_dir=agent_state_dir,
             )
             decisions.append(self.decide_for_plan(analyzed))
         return decisions

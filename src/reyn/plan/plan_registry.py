@@ -27,11 +27,16 @@ Design invariants (mirror SkillRegistry):
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
-from reyn.plan.decomposition import delete_decomposition
-from reyn.plan.plan_snapshot import PlanSnapshot, plan_snapshot_path
+from reyn.plan.decomposition import delete_decomposition, delete_plan_workspace
+from reyn.plan.plan_snapshot import (
+    PlanSnapshot,
+    plan_snapshot_path,
+    step_result_file_path,
+)
 
 if TYPE_CHECKING:
     pass
@@ -39,23 +44,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Step 3: bound the persisted text of a step result so a multi-page
-# scrape doesn't blow up the snapshot file. Phase 2 v1 uses inline
-# truncation (= ADR-0023 "Open issues: Step result size cap"). Future
-# work may spill to side files mirroring R-D10's llm_results pattern.
-_STEP_RESULT_MAX_CHARS = 32_768
-_STEP_RESULT_TRUNC_SUFFIX = "\n[truncated]"
-
-
-def _bound_step_result(text: str) -> str:
-    """Bound a step result text to keep snapshot files small (= ADR-0023
-    "Open issues: Step result size cap")."""
-    if not isinstance(text, str):
-        text = str(text)
-    if len(text) <= _STEP_RESULT_MAX_CHARS:
-        return text
-    cap = _STEP_RESULT_MAX_CHARS - len(_STEP_RESULT_TRUNC_SUFFIX)
-    return text[:cap] + _STEP_RESULT_TRUNC_SUFFIX
+# ADR-0024: spill threshold. Step results ≤ this are inline on
+# PlanSnapshot.step_results (= cheap read path); larger results spill
+# to a per-plan-dir file (= state/plans/<plan_id>/step_results/<step_id>.txt)
+# with PlanSnapshot.step_result_refs holding the relative path.
+# Mirrors R-D10's `llm_result_ref` skill-side threshold.
+_SPILL_THRESHOLD_CHARS = 32_768
 
 
 class PlanRegistry:
@@ -190,11 +184,16 @@ class PlanRegistry:
                 snap_path, e,
             )
         if delete_artifact:
+            # ADR-0024: workspace-wide cleanup removes decomposition.json
+            # AND spilled step_results/<step>.txt files in one rmtree.
+            # delete_decomposition is no longer sufficient — with
+            # per-plan workspace files the parent dir isn't empty so
+            # the legacy rmdir path leaves an orphan tree.
             try:
-                delete_decomposition(self._state_dir, plan_id)
+                delete_plan_workspace(self._state_dir, plan_id)
             except OSError as e:
                 logger.warning(
-                    "complete: cannot remove decomposition artifact for %s: %s",
+                    "complete: cannot remove plan workspace for %s: %s",
                     plan_id, e,
                 )
         self._snapshots.pop(plan_id, None)
@@ -232,8 +231,20 @@ class PlanRegistry:
         """Record durable step completion.
 
         Bumps ``applied_seq`` AND ``last_step_applied_seq`` (= durable
-        progress, gates WAL truncation per ADR-0023 §3.1). Stores
-        bounded ``result_text`` in ``step_results``.
+        progress, gates WAL truncation per ADR-0023 §3.1).
+
+        ADR-0024 spill: ``result_text`` ≤ 32 KB stays inline on
+        ``snap.step_results``; larger text writes to
+        ``state/plans/<plan_id>/step_results/<step_id>.txt`` with the
+        relative path stored in ``snap.step_result_refs``. Truncation is
+        no longer applied at any size — the file path is the failover.
+
+        Atomic write: the spill file goes through ``tmp + fsync +
+        rename`` mirroring ``PlanSnapshot.save``. Snapshot is rewritten
+        *after* the file write succeeds, so a crash between the two
+        leaves the file orphaned but the snapshot in pre-write state
+        (= the step classifies as ``pending`` on resume → re-execute,
+        the orphan file gets reaped on plan completion).
         """
         snap = self._snapshots.get(plan_id)
         if snap is None:
@@ -241,15 +252,50 @@ class PlanRegistry:
                 "record_step_completed: unknown plan_id %r — skipping", plan_id,
             )
             return
+        if not isinstance(result_text, str):
+            result_text = str(result_text)
+
+        # Branch on size: inline vs spill-to-file.
+        if len(result_text) <= _SPILL_THRESHOLD_CHARS:
+            snap.step_results[step_id] = result_text
+            # Clear stale ref if a previous attempt had spilled.
+            stale_ref = snap.step_result_refs.pop(step_id, None)
+            if stale_ref:
+                self._unlink_spilled_step_result(plan_id, stale_ref)
+        else:
+            # Spill: atomic write to per-plan workspace dir.
+            target = step_result_file_path(self._state_dir, plan_id, step_id)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(target.suffix + ".tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                f.write(result_text)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp.replace(target)
+            snap.step_result_refs[step_id] = f"step_results/{step_id}.txt"
+            # Clear stale inline if a previous attempt was small.
+            snap.step_results.pop(step_id, None)
+
         snap.applied_seq = max(snap.applied_seq, applied_seq)
         snap.last_step_applied_seq = max(snap.last_step_applied_seq, applied_seq)
-        snap.step_results[step_id] = _bound_step_result(result_text)
         snap.last_committed_step_id = step_id
         if snap.current_step_id == step_id:
             # Clear forward-replay anchor: the executor is between steps.
             snap.current_step_id = None
         self._save(snap)
         await self._fire_truncate_hook(trigger="plan_step_completed")
+
+    def _unlink_spilled_step_result(self, plan_id: str, rel: str) -> None:
+        """Remove a spilled step result file (= used when re-running a
+        step that previously spilled, so the stale file doesn't linger
+        until plan completion)."""
+        full = self._state_dir / "plans" / plan_id / rel
+        try:
+            full.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning(
+                "could not remove spilled step result %s: %s", full, e,
+            )
 
     async def record_step_failed(
         self,
@@ -327,6 +373,12 @@ class PlanRegistry:
         for sid in list(snap.step_results.keys()):
             if sid in to_clear:
                 snap.step_results.pop(sid, None)
+        # ADR-0024: clear refs + delete spilled files so re-execution
+        # starts with no stale state on disk.
+        for sid in list(snap.step_result_refs.keys()):
+            if sid in to_clear:
+                rel = snap.step_result_refs.pop(sid)
+                self._unlink_spilled_step_result(plan_id, rel)
         for sid in list(snap.step_failures.keys()):
             if sid in to_clear:
                 snap.step_failures.pop(sid, None)

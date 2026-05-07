@@ -117,10 +117,14 @@ async def test_record_step_completed_bumps_truncation_watermark(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_record_step_completed_bounds_long_result(tmp_path: Path) -> None:
-    """Tier 2: step_results entries are bounded so a multi-page scrape
-    doesn't blow up the snapshot file (= ADR-0023 Open issues: Step result
-    size cap)."""
+async def test_record_step_completed_spills_long_result_to_file(tmp_path: Path) -> None:
+    """Tier 2: ADR-0024 — step results > 32 KB spill to a per-plan
+    workspace file (= state/plans/<plan_id>/step_results/<step_id>.txt)
+    and snapshot.step_results does NOT contain the entry; instead
+    snapshot.step_result_refs holds the relative path. Full text is
+    preserved (no [truncated] suffix)."""
+    from reyn.plan import get_step_result, step_result_file_path
+
     reg = _make_registry(tmp_path)
     reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
     huge = "x" * 100_000
@@ -128,8 +132,79 @@ async def test_record_step_completed_bounds_long_result(tmp_path: Path) -> None:
         plan_id="p001", step_id="s1", applied_seq=20, result_text=huge,
     )
     snap = reg.get("p001")
-    assert len(snap.step_results["s1"]) <= 32_768
-    assert snap.step_results["s1"].endswith("[truncated]")
+    # Inline dict does NOT contain s1 (= spilled, not inline).
+    assert "s1" not in snap.step_results
+    # Ref dict has the relative path.
+    assert snap.step_result_refs["s1"] == "step_results/s1.txt"
+    # File on disk contains the full text (= no truncation).
+    spilled_path = step_result_file_path(tmp_path, "p001", "s1")
+    assert spilled_path.exists()
+    assert spilled_path.read_text(encoding="utf-8") == huge
+    # Read accessor returns the full text transparently.
+    assert get_step_result(snap, tmp_path, "s1") == huge
+
+
+@pytest.mark.asyncio
+async def test_record_step_completed_inline_for_small_result(tmp_path: Path) -> None:
+    """Tier 2: ADR-0024 — small step results stay inline on
+    snapshot.step_results without touching the file system (= cheap
+    read path for chat-like steps)."""
+    from reyn.plan import step_result_file_path
+
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    small = "short reply"
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=20, result_text=small,
+    )
+    snap = reg.get("p001")
+    assert snap.step_results["s1"] == small
+    assert "s1" not in snap.step_result_refs
+    # No file written for small results.
+    assert not step_result_file_path(tmp_path, "p001", "s1").exists()
+
+
+@pytest.mark.asyncio
+async def test_record_step_completed_re_run_clears_stale_inline(tmp_path: Path) -> None:
+    """Tier 2: re-running a step that previously was small with a now-
+    large output spills to file AND removes the stale inline entry."""
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=15, result_text="small",
+    )
+    huge = "x" * 50_000
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=20, result_text=huge,
+    )
+    snap = reg.get("p001")
+    assert "s1" not in snap.step_results          # stale inline cleared
+    assert snap.step_result_refs["s1"] == "step_results/s1.txt"
+
+
+@pytest.mark.asyncio
+async def test_record_step_completed_re_run_clears_stale_spill(tmp_path: Path) -> None:
+    """Tier 2: re-running a previously spilled step with a small result
+    moves to inline AND deletes the stale spilled file."""
+    from reyn.plan import step_result_file_path
+
+    reg = _make_registry(tmp_path)
+    reg.start(plan_id="p001", chain_id="c1", goal="g", applied_seq=10)
+    huge = "x" * 50_000
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=15, result_text=huge,
+    )
+    spilled_path = step_result_file_path(tmp_path, "p001", "s1")
+    assert spilled_path.exists()
+
+    await reg.record_step_completed(
+        plan_id="p001", step_id="s1", applied_seq=20, result_text="small",
+    )
+    snap = reg.get("p001")
+    assert snap.step_results["s1"] == "small"
+    assert "s1" not in snap.step_result_refs
+    # Stale spilled file deleted.
+    assert not spilled_path.exists()
 
 
 @pytest.mark.asyncio

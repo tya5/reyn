@@ -152,6 +152,8 @@ def test_save_emits_documented_schema(tmp_path: Path) -> None:
         "decomposition_artifact_path",
         "steps_serialized",
         "step_results",
+        # ADR-0024: spill ref dict (additive, no version bump)
+        "step_result_refs",
         "step_failures",
         "current_step_id",
         "last_committed_step_id",

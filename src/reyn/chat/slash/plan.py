@@ -321,6 +321,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
     resume_plan = analyzer.analyze(
         snapshot=snap, decomposition=decomposition,
         wal_events=synthetic_events,
+        agent_state_dir=agent_state_dir,
     )
 
     # Re-launch via the existing ChatSession._spawn_resumed_plan path.

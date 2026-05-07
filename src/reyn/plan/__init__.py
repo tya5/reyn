@@ -13,6 +13,7 @@ from reyn.plan.decomposition import (
     decomposition_dir,
     decomposition_path,
     delete_decomposition,
+    delete_plan_workspace,
     read_decomposition,
     write_decomposition,
 )
@@ -34,7 +35,9 @@ from reyn.plan.plan_runtime import PlanRuntime
 from reyn.plan.plan_snapshot import (
     PLAN_SNAPSHOT_VERSION,
     PlanSnapshot,
+    get_step_result,
     plan_snapshot_path,
+    step_result_file_path,
 )
 
 __all__ = [
@@ -56,7 +59,10 @@ __all__ = [
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",
+    "delete_plan_workspace",
+    "get_step_result",
     "plan_snapshot_path",
     "read_decomposition",
+    "step_result_file_path",
     "write_decomposition",
 ]

@@ -56,8 +56,16 @@ concurrently.
 |---|---|---|
 | Decomposition (plan shape) | `agents/<name>/state/plans/<plan_id>/decomposition.json` | yes |
 | Per-plan progress (steps completed, results) | `agents/<name>/state/plans/<plan_id>.snapshot.json` | yes |
+| Step output (≤32 KB) | inline on the snapshot above | yes |
+| Step output (>32 KB) | `agents/<name>/state/plans/<plan_id>/step_results/<step_id>.txt` | yes |
 | Plan lifecycle events | `.reyn/state/wal.jsonl` (`plan_started` / `plan_step_*` / `plan_completed`) | yes |
 | Active asyncio.Task | in-memory only | no — auto-resumes on next startup |
+
+Step outputs > 32 KB spill to a per-plan workspace file ([ADR-0024](../decisions/0024-plan-step-result-spill.md))
+so the snapshot stays small and outputs are preserved verbatim
+(= no truncation, no data loss). Read access goes via
+`get_step_result(snap, agent_state_dir, step_id)` which transparently
+resolves inline-vs-spilled.
 
 When `reyn chat` next starts, `AgentRegistry.restore_all`:
 

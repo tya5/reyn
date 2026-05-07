@@ -349,11 +349,15 @@ class AgentRegistry:
                 return "unknown"
             return "in_flight"
 
+        # ADR-0024: thread agent_state_dir so analyzer's get_step_result
+        # path can resolve spilled-to-file step results. Coordinator
+        # forwards to PlanResumeAnalyzer.analyze.
         decisions = coordinator.discover_and_decide(
             plan_registry=plan_registry,
             wal_events=wal_events,
             decomposition_loader=_decomposition_loader,
             child_skill_lookup=_child_skill_lookup,
+            agent_state_dir=agent_state_dir,
         )
 
         async def _on_outbox_notice(plan_id: str, message: str) -> None:

@@ -24,8 +24,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Iterable, Literal
 
+from pathlib import Path
+
 from reyn.chat.planner import Plan, PlanStep
-from reyn.plan.plan_snapshot import PlanSnapshot
+from reyn.plan.plan_snapshot import PlanSnapshot, get_step_result
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +166,7 @@ class PlanResumeAnalyzer:
         decomposition: Plan,
         wal_events: Iterable[dict],
         child_skill_lookup: Callable[[str], str | None] | None = None,
+        agent_state_dir: Path | None = None,
     ) -> PlanResumePlan:
         """Produce a PlanResumePlan for the given plan_id.
 
@@ -299,14 +302,42 @@ class PlanResumeAnalyzer:
                 # Hit completed. Recover result_text from snapshot.
                 # (WAL doesn't carry the text — only content_len. The
                 # snapshot, populated by PlanRegistry.record_step_completed,
-                # is the source of truth for the bounded text.)
-                step_states.append(PlanStepState(
-                    step_id=sid, state="completed_with_result",
-                    started_seq=started_seq,
-                    result_text=snapshot.step_results.get(sid, ""),
-                    is_effectful=_step_is_effectful(step),
-                    step_signature=sig,
-                ))
+                # is the source of truth.)
+                #
+                # ADR-0024: get_step_result transparently resolves
+                # inline vs spilled-to-file. None return = ref present
+                # but file unreadable → classify as failed
+                # (= step_result_file_missing) per ADR-0024 §4.
+                if agent_state_dir is not None:
+                    text = get_step_result(snapshot, agent_state_dir, sid)
+                else:
+                    # Backward-compat: callers that don't supply
+                    # agent_state_dir get the inline-only path. Spilled
+                    # entries surface as None → failed below.
+                    text = snapshot.step_results.get(sid)
+                if text is None and sid in snapshot.step_result_refs:
+                    # Spilled but unreadable.
+                    step_states.append(PlanStepState(
+                        step_id=sid, state="failed",
+                        started_seq=started_seq,
+                        error_kind="step_result_file_missing",
+                        error_message=(
+                            f"step result file referenced "
+                            f"({snapshot.step_result_refs[sid]!r}) but "
+                            "could not be read"
+                        ),
+                        is_effectful=_step_is_effectful(step),
+                        step_signature=sig,
+                    ))
+                    any_ambig = True
+                else:
+                    step_states.append(PlanStepState(
+                        step_id=sid, state="completed_with_result",
+                        started_seq=started_seq,
+                        result_text=text or "",
+                        is_effectful=_step_is_effectful(step),
+                        step_signature=sig,
+                    ))
             else:
                 # Hit failed.
                 fail_seq, error_str = fail_list[0]

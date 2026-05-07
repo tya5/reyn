@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 from reyn.chat.planner import Plan, PlanStep
@@ -224,12 +225,38 @@ def delete_decomposition(agent_state_dir: Path, plan_id: str) -> bool:
     return existed
 
 
+def delete_plan_workspace(agent_state_dir: Path, plan_id: str) -> bool:
+    """Recursively remove the per-plan directory + every artifact in it.
+
+    ADR-0024 cleanup helper. Used by ``PlanRegistry.complete`` and
+    ``/plan discard`` so the per-plan workspace (= decomposition.json
+    + step_results/<step>.txt files + any future per-plan artifacts)
+    is reclaimed atomically when the plan is no longer needed.
+
+    Idempotent. Returns ``True`` if the directory existed (and is now
+    gone), ``False`` if there was nothing to clean up.
+
+    Distinct from ``delete_decomposition``: that helper removes only
+    the decomposition.json + the per-plan dir if empty. With ADR-0024
+    spilled step result files, the per-plan dir is rarely empty, so
+    we need a recursive cleanup. Both helpers stay in the surface
+    so call sites that intentionally want to preserve workspace
+    artifacts (= forensics) keep that option.
+    """
+    plan_dir = decomposition_dir(agent_state_dir, plan_id)
+    if not plan_dir.exists():
+        return False
+    shutil.rmtree(plan_dir, ignore_errors=True)
+    return not plan_dir.exists()
+
+
 __all__ = [
     "DECOMPOSITION_SCHEMA_VERSION",
     "DecompositionCorruptError",
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",
+    "delete_plan_workspace",
     "read_decomposition",
     "write_decomposition",
 ]

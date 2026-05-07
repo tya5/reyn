@@ -82,6 +82,14 @@ class PlanSnapshot:
     decomposition_artifact_path: str | None = None
     steps_serialized: list[dict] = field(default_factory=list)
     step_results: dict[str, str] = field(default_factory=dict)
+    # ADR-0024: large step results (> threshold) spill to
+    # ``state/plans/<plan_id>/step_results/<step_id>.txt``; this dict
+    # holds the per-plan-dir-relative path. Read access via
+    # :func:`get_step_result` transparently resolves the file. Empty
+    # for old snapshots and for plans whose every step is small —
+    # backward-compatible additive field, no PLAN_SNAPSHOT_VERSION
+    # bump needed.
+    step_result_refs: dict[str, str] = field(default_factory=dict)
     step_failures: dict[str, str] = field(default_factory=dict)
     current_step_id: str | None = None
     last_committed_step_id: str | None = None
@@ -154,6 +162,7 @@ class PlanSnapshot:
             decomposition_artifact_path=data.get("decomposition_artifact_path"),
             steps_serialized=list(data.get("steps_serialized", []) or []),
             step_results=dict(data.get("step_results", {}) or {}),
+            step_result_refs=dict(data.get("step_result_refs", {}) or {}),
             step_failures=dict(data.get("step_failures", {}) or {}),
             current_step_id=data.get("current_step_id"),
             last_committed_step_id=data.get("last_committed_step_id"),
@@ -184,6 +193,7 @@ class PlanSnapshot:
             "decomposition_artifact_path": self.decomposition_artifact_path,
             "steps_serialized": self.steps_serialized,
             "step_results": self.step_results,
+            "step_result_refs": self.step_result_refs,
             "step_failures": self.step_failures,
             "current_step_id": self.current_step_id,
             "last_committed_step_id": self.last_committed_step_id,
@@ -207,8 +217,55 @@ def plan_snapshot_path(agent_state_dir: Path, plan_id: str) -> Path:
     return Path(agent_state_dir) / "plans" / f"{plan_id}.snapshot.json"
 
 
+def step_result_file_path(
+    agent_state_dir: Path, plan_id: str, step_id: str,
+) -> Path:
+    """ADR-0024: per-plan-dir-relative path for a spilled step result.
+
+    ``<agent_state>/plans/<plan_id>/step_results/<step_id>.txt``.
+
+    The path is relative-to-state-dir for storage in
+    ``PlanSnapshot.step_result_refs`` (only the
+    ``step_results/<step_id>.txt`` suffix is stored — see
+    :func:`get_step_result`); this helper returns the absolute path
+    for I/O.
+    """
+    return (
+        Path(agent_state_dir) / "plans" / plan_id
+        / "step_results" / f"{step_id}.txt"
+    )
+
+
+def get_step_result(
+    snap: "PlanSnapshot", agent_state_dir: Path, step_id: str,
+) -> str | None:
+    """ADR-0024 read-side accessor — returns the step's recorded text.
+
+    Reads inline first (= cheap path for ≤ threshold), falls back to
+    the spilled file. Missing-file or unreadable-file → ``None`` so
+    the caller treats the case uniformly (= step classifies as
+    ``failed`` with ``step_result_file_missing`` cause, ADR-0024 §4).
+
+    ``None`` distinguishes "not recorded" from "empty string" — the
+    latter is a legitimate recorded value (= a step that produced no
+    output text but still completed).
+    """
+    if step_id in snap.step_results:
+        return snap.step_results[step_id]
+    rel = snap.step_result_refs.get(step_id)
+    if rel is None:
+        return None
+    full = Path(agent_state_dir) / "plans" / snap.plan_id / rel
+    try:
+        return full.read_text(encoding="utf-8")
+    except (OSError, FileNotFoundError):
+        return None
+
+
 __all__ = [
     "PLAN_SNAPSHOT_VERSION",
     "PlanSnapshot",
+    "get_step_result",
     "plan_snapshot_path",
+    "step_result_file_path",
 ]
