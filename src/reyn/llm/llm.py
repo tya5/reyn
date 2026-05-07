@@ -180,6 +180,80 @@ def _dump_llm_request(payload: dict) -> str | None:
     return request_id
 
 
+def _extract_provider_response_fields(response) -> dict:
+    """Extract provider-side response fields the OS doesn't otherwise surface.
+
+    The narrow ``content / tool_calls / finish_reason / usage`` payload
+    written to the trace is enough for happy-path debugging, but it
+    discards the fields needed to diagnose **empty-stop** cases:
+
+      * ``vertex_ai_safety_results`` — was the response filtered for safety?
+      * ``provider_specific_fields.refusal`` — did the model refuse?
+      * ``completion_tokens_details`` — reasoning vs. text token split,
+        relevant for thinking-mode models.
+      * ``system_fingerprint`` — provider build identity, useful when an
+        attractor only fires on a specific provider revision.
+
+    Without these, an operator looking at a trace dump can't tell the
+    difference between "model literally output nothing" and "provider
+    blocked the response with a safety filter". Origin: dogfood v7
+    diagnosis of Q4 empty-stop required `litellm.acompletion(...).model_dump()`
+    to confirm `safety_results=[]` and `refusal=null` — the existing
+    trace alone was insufficient.
+
+    Returns a dict of useful provider fields (= empty when the response
+    object doesn't expose them, which is fine — providers vary).
+    Best-effort: never raises, drops fields it can't read.
+    """
+    out: dict = {}
+    try:
+        choice = response.choices[0]
+    except Exception:
+        return out
+
+    # Provider-specific message-level fields (Vertex AI / Anthropic / etc.).
+    msg = getattr(choice, "message", None)
+    if msg is not None:
+        psf = getattr(msg, "provider_specific_fields", None)
+        if isinstance(psf, dict) and psf:
+            out["provider_specific_fields"] = psf
+
+    # Vertex AI / Gemini specific top-level fields.
+    for attr in (
+        "vertex_ai_safety_results",
+        "vertex_ai_grounding_metadata",
+        "vertex_ai_citation_metadata",
+        "vertex_ai_url_context_metadata",
+    ):
+        val = getattr(response, attr, None)
+        # Skip empty lists / None — they're noise.
+        if val:
+            out[attr] = val
+
+    # OpenAI-specific fields.
+    sf = getattr(response, "system_fingerprint", None)
+    if sf:
+        out["system_fingerprint"] = sf
+    st = getattr(response, "service_tier", None)
+    if st:
+        out["service_tier"] = st
+
+    # Reasoning / completion token details (= present on thinking-mode
+    # models like o1, claude-3.7-sonnet thinking).
+    usage_obj = getattr(response, "usage", None)
+    if usage_obj is not None:
+        ctd = getattr(usage_obj, "completion_tokens_details", None)
+        if ctd is not None:
+            try:
+                out["completion_tokens_details"] = (
+                    ctd.model_dump() if hasattr(ctd, "model_dump") else dict(ctd)
+                )
+            except Exception:
+                pass
+
+    return out
+
+
 def _dump_llm_response(request_id: str | None, payload: dict) -> None:
     """If REYN_LLM_TRACE_DUMP is set and request_id is non-None, append response record.
 
@@ -649,6 +723,7 @@ async def call_llm(
                 "prompt_tokens": usage.prompt_tokens if usage else None,
                 "completion_tokens": usage.completion_tokens if usage else None,
             },
+            **_extract_provider_response_fields(response),
         })
 
         result = LLMCallResult(data=parsed, usage=usage)
@@ -779,7 +854,10 @@ async def call_llm_tools(
     except Exception as exc:
         logger.warning("finish_reason unavailable — budget tracking may be affected: %s", exc)
 
-    # Payload trace dump (response)
+    # Payload trace dump (response). Includes provider-specific fields
+    # (= safety_results, refusal, system_fingerprint, …) so empty-stop
+    # diagnosis doesn't have to re-call the LLM via llm_replay.py to see
+    # whether the response was content-empty vs. safety-blocked.
     _dump_llm_response(_trace_rid, {
         "content": msg.content,
         "tool_calls": tool_calls,
@@ -788,6 +866,7 @@ async def call_llm_tools(
             "prompt_tokens": usage.prompt_tokens,
             "completion_tokens": usage.completion_tokens,
         },
+        **_extract_provider_response_fields(response),
     })
 
     return LLMToolCallResult(

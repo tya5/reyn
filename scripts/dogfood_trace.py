@@ -565,11 +565,8 @@ def mode_llm_context(records: list[dict], request_id: str) -> None:
         return
     print(f"finish_reason:     {resp.get('finish_reason')!r}")
     content = resp.get("content")
+    print(f"content:           {content!r}")
     print(f"content_len:       {len(content) if content else 0}")
-    if content:
-        print("--- content ---")
-        print(content)
-        print("--- /content ---")
     tcs = resp.get("tool_calls") or []
     if tcs:
         print(f"tool_calls:        {len(tcs)}")
@@ -579,7 +576,7 @@ def mode_llm_context(records: list[dict], request_id: str) -> None:
                 f"  [{i}] {fn.get('name')}({fn.get('arguments', '')})"
             )
     else:
-        print("tool_calls:        (none)")
+        print(f"tool_calls:        {tcs!r}")
     usage = resp.get("usage") or {}
     if isinstance(usage, dict):
         print(
@@ -590,6 +587,34 @@ def mode_llm_context(records: list[dict], request_id: str) -> None:
             f"completion_tokens: "
             f"{usage.get('completion_tokens', '?')}"
         )
+
+    # Provider-specific fields surfaced by _extract_provider_response_fields.
+    # Skip silently when absent (= older trace format without the extension).
+    extras: dict[str, object] = {}
+    for key in (
+        "provider_specific_fields",
+        "vertex_ai_safety_results",
+        "vertex_ai_grounding_metadata",
+        "vertex_ai_citation_metadata",
+        "vertex_ai_url_context_metadata",
+        "system_fingerprint",
+        "service_tier",
+        "completion_tokens_details",
+    ):
+        if key in resp and resp[key] not in (None, [], {}):
+            extras[key] = resp[key]
+    if extras:
+        print()
+        print("--- provider-specific ---")
+        for k, v in extras.items():
+            # Pretty-print dicts; show repr for primitives.
+            if isinstance(v, (dict, list)):
+                rendered = json.dumps(v, ensure_ascii=False)
+                if len(rendered) > 300:
+                    rendered = rendered[:297] + "..."
+                print(f"  {k}: {rendered}")
+            else:
+                print(f"  {k}: {v!r}")
 
 
 def mode_llm_tools_schema(records: list[dict], request_id: str) -> None:
