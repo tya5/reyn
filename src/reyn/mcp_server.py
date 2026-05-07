@@ -46,19 +46,20 @@ _IDLE_POLL_INTERVAL_SECONDS: float = 0.05
 _IDLE_GRACE_SECONDS: float = 0.05
 
 
-async def _ensure_running(registry: "AgentRegistry", name: str) -> "object":
-    """Return the live ChatSession for `name`, starting its run-loop task
-    if not already running. Mirrors ``AgentRegistry.ensure_running`` but
-    skips the outbox forwarder — the MCP path drains the session's outbox
-    directly.
+async def _get_session(registry: "AgentRegistry", name: str) -> "object":
+    """Return a loaded ChatSession for `name`.
+
+    Note: unlike `reyn chat`, the MCP path does NOT spawn a long-lived
+    ``session.run()`` task. The MCP SDK's stdio transport (under
+    anyio/asyncio) starves an `asyncio.create_task`-spawned background
+    coroutine while the request handler is awaiting — the LLM call
+    inside the agent never makes progress, the handler hits its
+    timeout with an empty reply. Driving ``_handle_user_message``
+    inline from the request handler keeps everything on the single
+    event loop / task that the SDK is actively scheduling, and the
+    LLM call awaits cleanly through to completion.
     """
-    session = registry.get_or_load(name)
-    # Re-use the registry's task table so multiple send calls share one
-    # background task (the same way `reyn chat` does).
-    tasks = registry._tasks  # noqa: SLF001 — registry exposes no public hook
-    if name not in tasks or tasks[name].done():
-        tasks[name] = asyncio.create_task(session.run())
-    return session
+    return registry.get_or_load(name)
 
 
 def _new_agent_history_entries(session, baseline: int) -> list[str]:
@@ -149,13 +150,23 @@ async def send_to_agent_impl(
             f"create it with `reyn agent new {agent_name}`"
         )
 
-    session = await _ensure_running(registry, agent_name)
+    session = await _get_session(registry, agent_name)
     baseline = len(session.history)
-    await session.submit_user_text(message)
 
-    idle = await _await_turn_complete(
-        session, baseline=baseline, timeout=timeout
-    )
+    # Drive the user-message handler inline rather than going through
+    # session.inbox + session.run(). See `_get_session` docstring for the
+    # asyncio-starvation rationale.
+    from reyn.chat.session import _new_chain_id  # noqa: PLC0415 — lazy import
+    chain_id = _new_chain_id()
+    try:
+        await asyncio.wait_for(
+            session._handle_user_message(message, chain_id=chain_id),
+            timeout=timeout,
+        )
+        idle = True
+    except asyncio.TimeoutError:
+        idle = False
+
     new_replies = _new_agent_history_entries(session, baseline)
     reply_text = "\n\n".join(new_replies).strip()
 
