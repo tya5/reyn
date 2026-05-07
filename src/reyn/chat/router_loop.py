@@ -268,6 +268,19 @@ class RouterLoopHost(Protocol):
         """Remove the plan decomposition artifact (= P5 cleanup on success)."""
         ...
 
+    async def spawn_plan_task(
+        self, *, plan_id: str, runtime: "Any", chain_id: str,
+    ) -> None:
+        """Register a PlanRuntime as a background task (ADR-0023 Phase 2.1).
+
+        ChatSession owns the task lifecycle (= ``running_plans`` dict)
+        and the wrap-around finally that emits the terminal aggregator
+        text via ``put_outbox(kind="agent")`` and cleans up the
+        decomposition artifact on clean exit. dispatch_plan_tool hands
+        the constructed runtime here and returns immediately.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # RouterLoop
@@ -425,14 +438,12 @@ class RouterLoop:
                     )
                     return self._total_usage
 
-                # Plan tool: terminal dispatch. The plan executor already
-                # ran the per-step LLM calls and produced the user-facing
-                # text in result["text"]. Emit it directly to the user
-                # outbox without re-feeding to the outer LLM (= avoids a
-                # redundant aggregator call on top of the plan's terminal
-                # step). On validation failure we DO fall through to the
-                # normal message accumulation path so the LLM can re-
-                # emit a corrected plan.
+                # ADR-0023 Phase 2.1: plan dispatch is now async — the
+                # async tool exit branch above already returned. The
+                # legacy synchronous "status=ok with text" special-case
+                # is preserved as a safety net for hosts that lack
+                # spawn_plan_task (= test stubs running planner sync via
+                # the AttributeError fallback in dispatch_plan_tool).
                 for tc, r in zip(tool_calls, tool_results):
                     if (
                         tc["function"]["name"] == "plan"

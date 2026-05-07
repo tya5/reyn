@@ -641,6 +641,22 @@ async def execute_plan(
     # from the recorded text WITHOUT re-executing the sub-loop or
     # re-emitting WAL step events (= those already landed pre-crash).
     resume_classifier = _build_resume_classifier(resume_plan)
+    n_total = len(ordered)
+    n_done = 0
+
+    # ADR-0023 §2.1.1: surface plan-start narration so the user sees
+    # progress while the plan runs in the background. Defensive — old
+    # hosts may not implement put_outbox at this layer.
+    try:
+        await parent_host.put_outbox(
+            kind="status",
+            text=f"plan started ({n_total} steps)",
+            meta={"plan_id": plan_id, "chain_id": chain_id, "source": "plan"},
+        )
+    except AttributeError:
+        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("plan start outbox emit failed: %r", exc)
 
     try:
         for step in ordered:
@@ -745,6 +761,22 @@ async def execute_plan(
                 pass
             except Exception as exc:  # noqa: BLE001
                 logger.warning("record_plan_step_completed failed: %r", exc)
+            # ADR-0023 §2.1.1: emit step progress narration so the user
+            # sees the plan progressing while it runs in the background.
+            n_done += 1
+            try:
+                await parent_host.put_outbox(
+                    kind="status",
+                    text=f"plan step {n_done}/{n_total} done ({step.id})",
+                    meta={
+                        "plan_id": plan_id, "chain_id": chain_id,
+                        "step_id": step.id, "source": "plan",
+                    },
+                )
+            except AttributeError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("plan step outbox emit failed: %r", exc)
             parent_host.events.emit(
                 "plan_step_completed",
                 chain_id=chain_id,
@@ -823,27 +855,33 @@ async def dispatch_plan_tool(
 ) -> dict:
     """Entry point invoked from the chat router's ``plan`` tool dispatch.
 
-    ADR-0023 Phase 2 step 6 lifecycle ordering:
+    **ADR-0023 Phase 2.1: async dispatch.** ``plan`` is registered in
+    ``_DISPATCH_KIND`` as async; this function spawns the runtime as
+    a background task and returns the spawn ack immediately. The
+    RouterLoop sees an async tool result and exits the chat turn —
+    the user gets quick replies first while the plan runs in the
+    background, mirroring ``_spawn_skill`` UX.
+
+    Lifecycle ordering (= ADR-0023 §3.5 invariant preserved):
 
       1. Validate plan.
-      2. Allocate ``plan_id`` upfront.
+      2. Allocate ``plan_id`` + per-plan ``chain_id`` (= ADR-0023
+         §2.1.2 — each plan registers its own chain so R-D14
+         cross-agent notify works for ``/plan discard``).
       3. Write decomposition artifact (= P5 SSoT for resume).
-      4. Construct ``PlanRuntime(plan_id=plan_id)``.
-      5. Run.
-      6. On success / abort: delete the decomposition artifact.
-      7. On crash / cancel: leave the artifact in place so
-         ``AgentRegistry.restore_all`` can rehydrate the plan and the
-         resume coordinator (Step 7) can serve a memo replay.
+      4. Construct ``PlanRuntime(plan_id=…, chain_id=plan_chain_id)``.
+      5. Hand off to ``host.spawn_plan_task`` — ChatSession owns the
+         task lifecycle, terminal-text outbox emit, and decomposition
+         cleanup on clean exit.
+      6. Return ``{"status": "spawned", "plan_id": ..., ...}``.
 
-    Returns a dict in the shape RouterLoop expects from any tool
-    handler: ``{status, ...}``. On success the ``text`` field carries
-    the aggregated user-facing reply.
+    On crash mid-flight: ``running_plans`` task dies, decomposition
+    artifact stays for restart-time resume (= ADR-0023 §3.4 / §3.5).
 
-    The chat router_loop dispatcher will treat this differently from a
-    regular tool: instead of round-tripping the result back into the
-    LLM for narration, it forwards ``text`` directly to the user
-    outbox. This avoids a redundant aggregator LLM call on top of the
-    plan's own terminal step.
+    The ``chain_id`` parameter is the **chat-turn** chain (= caller
+    context). The plan-internal chain_id is allocated here as
+    ``plan_<plan_id>`` so R-D14 notifications target the right
+    waiter on plan discard.
     """
     try:
         plan = parse_and_validate_plan(args, allowed_tool_names=available_tool_names)
@@ -857,6 +895,8 @@ async def dispatch_plan_tool(
     # ``plan_started`` lands in WAL. Any plan in ``active_plan_ids`` MUST
     # have a discoverable decomposition (= ADR-0023 §3.5).
     plan_id = uuid.uuid4().hex[:8]
+    plan_chain_id = f"plan_{plan_id}"  # ADR-0023 §2.1.2 — per-plan chain
+
     try:
         await parent_host.write_plan_decomposition(plan_id=plan_id, plan=plan)
     except AttributeError:
@@ -868,26 +908,53 @@ async def dispatch_plan_tool(
     except Exception as exc:  # noqa: BLE001
         logger.warning("write_plan_decomposition failed: %r", exc)
 
-    # Construct the runtime and execute. PlanRuntime threads plan_id
-    # through to execute_plan, avoiding the auto-allocation path.
+    # Construct the runtime; ChatSession spawns it as a task and owns
+    # the lifecycle (= terminal outbox emit + artifact cleanup).
     from reyn.plan import PlanRuntime
     runtime = PlanRuntime(
         plan,
         host=parent_host,
-        chain_id=chain_id,
+        chain_id=plan_chain_id,           # per-plan chain
         plan_id=plan_id,
         budget=budget,
         router_model=router_model,
+    )
+
+    # Capability detection via hasattr (= NOT try/except) so the
+    # synchronous fallback runs in clean exception context. If the
+    # fallback ran inside an except AttributeError block, execute_plan's
+    # finally clause's sys.exc_info() check would mis-classify the
+    # outer-caught AttributeError as a "crash" and skip
+    # record_plan_completed. ADR-0023 §2.1.1 async path is the
+    # production path; the sync fallback is a test-stub safety net.
+    if hasattr(parent_host, "spawn_plan_task"):
+        await parent_host.spawn_plan_task(
+            plan_id=plan_id, runtime=runtime, chain_id=plan_chain_id,
+        )
+        return {
+            "status": "spawned",
+            "plan_id": plan_id,
+            "chain_id": plan_chain_id,
+            "n_steps": len(plan.steps),
+        }
+
+    # Synchronous fallback for hosts without spawn_plan_task (= test
+    # stubs / lightweight integrations). Same lifecycle as Phase 2 v1.
+    logger.debug(
+        "RouterLoopHost has no spawn_plan_task; running plan synchronously",
     )
     clean_exit = False
     try:
         result = await runtime.run()
         clean_exit = True
+        return {
+            "status": "ok",
+            "text": result.text,
+            "step_results": result.step_results,
+            "step_failures": result.step_failures,
+            "n_steps": len(plan.steps),
+        }
     except BaseException as exc:
-        # Per ADR-0013 / ADR-0023 §3.4: WorkflowAbortedError is a clean
-        # abort (= treat as completion). Any other exception (cancel,
-        # crash, KeyboardInterrupt) preserves the artifact for restart
-        # cleanup or memo-replay resume.
         if _is_workflow_abort(type(exc)):
             clean_exit = True
         raise
@@ -899,14 +966,6 @@ async def dispatch_plan_tool(
                 pass
             except Exception as exc:  # noqa: BLE001
                 logger.warning("delete_plan_decomposition failed: %r", exc)
-
-    return {
-        "status": "ok",
-        "text": result.text,
-        "step_results": result.step_results,
-        "step_failures": result.step_failures,
-        "n_steps": len(plan.steps),
-    }
 
 
 __all__ = [

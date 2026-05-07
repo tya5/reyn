@@ -71,6 +71,13 @@ _DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({"routing", "category"}
 # 拡張 → ToolSpec dataclass formalize).
 _DISPATCH_KIND: dict[str, str] = {
     "delegate_to_agent": "async",
+    # ADR-0023 Phase 2.1: plan-mode dispatch is fire-and-forget so the
+    # chat turn doesn't block on multi-step LLM work. dispatch_plan_tool
+    # spawns the PlanRuntime as a background task and returns the
+    # spawn ack immediately; outbox narration carries progress + final
+    # text. RouterLoop exits after dispatch (= same posture as
+    # delegate_to_agent).
+    "plan": "async",
 }
 
 

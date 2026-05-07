@@ -3478,6 +3478,69 @@ class ChatSession:
                 "delete_plan_decomposition failed for %s: %r", plan_id, exc,
             )
 
+    async def spawn_plan_task(
+        self, *, plan_id: str, runtime: Any, chain_id: str,
+    ) -> None:
+        """Run a PlanRuntime as a background task (ADR-0023 Phase 2.1).
+
+        Tracks the task in ``self.running_plans`` for `/plan discard`
+        and shutdown await. On clean exit, emits the runtime's
+        aggregated text to the user outbox + cleans up the
+        decomposition artifact (= P5 cleanup mirror of
+        dispatch_plan_tool's old finally clause).
+
+        Errors during runtime.run() are logged and swallowed (= the
+        task is fire-and-forget; the runtime's own finally emits
+        plan_run_interrupted via events for forensic visibility, and
+        crash cases preserve the artifact for restart resume).
+        """
+
+        async def _run_plan_task() -> None:
+            from reyn.chat.planner import _is_workflow_abort
+            clean_exit = False
+            result_text: str | None = None
+            try:
+                result = await runtime.run()
+                clean_exit = True
+                result_text = result.text if result is not None else None
+            except BaseException as exc:
+                if _is_workflow_abort(type(exc)):
+                    clean_exit = True
+                else:
+                    logger.warning(
+                        "plan task crashed for %s: %r", plan_id, exc,
+                    )
+            # Emit terminal aggregator text on clean exit.
+            if clean_exit and result_text:
+                try:
+                    await self.put_outbox(
+                        kind="agent",
+                        text=result_text,
+                        meta={
+                            "plan_id": plan_id,
+                            "chain_id": chain_id,
+                            "source": "plan",
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "plan task outbox emit failed for %s: %r",
+                        plan_id, exc,
+                    )
+            # Artifact cleanup mirrors the old dispatch_plan_tool finally.
+            if clean_exit:
+                try:
+                    await self.delete_plan_decomposition(plan_id=plan_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "plan task delete_decomposition failed for %s: %r",
+                        plan_id, exc,
+                    )
+            self.running_plans.pop(plan_id, None)
+
+        task = asyncio.create_task(_run_plan_task())
+        self.running_plans[plan_id] = task
+
     async def _spawn_resumed_plan(
         self,
         *,
