@@ -232,6 +232,13 @@ Reyn の `intent-axis section + per-category list_*` family は (a) 派の
 - G12 envelope fix が下にあれば list_skills 増加を吸収可能
 - N≥10 dogfood で W1 baseline 死守 + 大 N simulate scenario 追加 verify
 
+> **Update 2026-05-07**: 上記 path を **同日中に implement + verify 完了** at
+> `f4c5df2` (= category-only catalog landing)。 N=10 dogfood で全 7 scenario
+> zero regression、 SP size O(1) (= 10 skills も 50 skills も 5151 chars)。
+> Reyn は (a) Anthropic 派 simplified version + envelope-layer G12 workaround
+> という hybrid stack で「業界 lazy loading 路線」 着地。 詳細 commit message
+> `f4c5df2` 参照。
+
 ### 長期 (= ~1000 skills、 marketplace etc.)
 
 - **Tool Search Tool migration** or **Tool RAG infra**: trigger 条件が出てから
