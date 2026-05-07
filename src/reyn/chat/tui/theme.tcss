@@ -40,7 +40,6 @@ ReynHeader #status {
 ConversationView {
     width: 1fr;
     height: 100%;
-    border: solid #2a2a2a;
     padding: 0 1;
     overflow-y: scroll;
     scrollbar-color: $primary;
