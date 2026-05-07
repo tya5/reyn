@@ -524,6 +524,7 @@ async def execute_plan(
     chain_id: str,
     budget: Any = None,
     router_model: str = "light",
+    plan_id: str | None = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -537,6 +538,12 @@ async def execute_plan(
     its captured text is the user-facing reply. Plans without an
     explicit synthesis step return the last step's text (= still works,
     just less curated).
+
+    ``plan_id``: Phase 2 step 6 — when the caller has already allocated
+    the id (= ``dispatch_plan_tool`` writes the decomposition artifact
+    before calling here, and the artifact is keyed on ``plan_id``), the
+    caller passes it in. ``None`` keeps Phase 1 backward compat: the
+    function auto-allocates uuid4-hex[:8].
     """
     # ADR-0022: allocate plan_id + record plan_started in WAL. plan_id is
     # uuid4-hex[:8] following the existing run_id allocation precedent.
@@ -545,7 +552,8 @@ async def execute_plan(
     # everything else (CancelledError, KeyboardInterrupt, generic Exception,
     # kill -9 path skips finally) → preserve active_plan_ids for AgentRegistry
     # restart cleanup.
-    plan_id = uuid.uuid4().hex[:8]
+    if plan_id is None:
+        plan_id = uuid.uuid4().hex[:8]
     try:
         await parent_host.record_plan_started(
             plan_id=plan_id, goal=plan.goal, n_steps=len(plan.steps),
@@ -574,6 +582,20 @@ async def execute_plan(
 
     try:
         for step in ordered:
+            # ADR-0023 Phase 2 step 6: route plan_step_started through
+            # host's WAL recorder (= persists on the durable log so the
+            # resume analyzer can pair it with completed/failed). The
+            # forensic events.emit stays for the legacy events log.
+            try:
+                await parent_host.record_plan_step_started(
+                    plan_id=plan_id, step_id=step.id,
+                    depends_on=list(step.depends_on),
+                    n_tools=len(step.tools),
+                )
+            except AttributeError:
+                pass  # test stub without record_plan_step_*
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("record_plan_step_started failed: %r", exc)
             parent_host.events.emit(
                 "plan_step_started",
                 chain_id=chain_id,
@@ -609,6 +631,14 @@ async def execute_plan(
                     total_usage.completion_tokens += sub_usage.completion_tokens
             except Exception as exc:  # noqa: BLE001 — defensive, don't crash plan
                 step_failures[step.id] = repr(exc)
+                try:
+                    await parent_host.record_plan_step_failed(
+                        plan_id=plan_id, step_id=step.id, error=repr(exc),
+                    )
+                except AttributeError:
+                    pass
+                except Exception as exc2:  # noqa: BLE001
+                    logger.warning("record_plan_step_failed failed: %r", exc2)
                 parent_host.events.emit(
                     "plan_step_failed",
                     chain_id=chain_id,
@@ -620,6 +650,14 @@ async def execute_plan(
 
             text = narrow_host.captured_text
             step_results[step.id] = text
+            try:
+                await parent_host.record_plan_step_completed(
+                    plan_id=plan_id, step_id=step.id, content_len=len(text),
+                )
+            except AttributeError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("record_plan_step_completed failed: %r", exc)
             parent_host.events.emit(
                 "plan_step_completed",
                 chain_id=chain_id,
@@ -698,6 +736,18 @@ async def dispatch_plan_tool(
 ) -> dict:
     """Entry point invoked from the chat router's ``plan`` tool dispatch.
 
+    ADR-0023 Phase 2 step 6 lifecycle ordering:
+
+      1. Validate plan.
+      2. Allocate ``plan_id`` upfront.
+      3. Write decomposition artifact (= P5 SSoT for resume).
+      4. Construct ``PlanRuntime(plan_id=plan_id)``.
+      5. Run.
+      6. On success / abort: delete the decomposition artifact.
+      7. On crash / cancel: leave the artifact in place so
+         ``AgentRegistry.restore_all`` can rehydrate the plan and the
+         resume coordinator (Step 7) can serve a memo replay.
+
     Returns a dict in the shape RouterLoop expects from any tool
     handler: ``{status, ...}``. On success the ``text`` field carries
     the aggregated user-facing reply.
@@ -715,13 +765,54 @@ async def dispatch_plan_tool(
             "status": "error",
             "error": {"kind": "plan_invalid", "message": str(exc)},
         }
-    result = await execute_plan(
+
+    # Step 6: allocate plan_id + write decomposition artifact BEFORE
+    # ``plan_started`` lands in WAL. Any plan in ``active_plan_ids`` MUST
+    # have a discoverable decomposition (= ADR-0023 §3.5).
+    plan_id = uuid.uuid4().hex[:8]
+    try:
+        await parent_host.write_plan_decomposition(plan_id=plan_id, plan=plan)
+    except AttributeError:
+        # Test stub without artifact persistence — Phase 2 v1 tolerates,
+        # resume won't be possible but fresh-run path still works.
+        logger.debug(
+            "RouterLoopHost has no write_plan_decomposition; skipping artifact",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("write_plan_decomposition failed: %r", exc)
+
+    # Construct the runtime and execute. PlanRuntime threads plan_id
+    # through to execute_plan, avoiding the auto-allocation path.
+    from reyn.plan import PlanRuntime
+    runtime = PlanRuntime(
         plan,
-        parent_host=parent_host,
+        host=parent_host,
         chain_id=chain_id,
+        plan_id=plan_id,
         budget=budget,
         router_model=router_model,
     )
+    clean_exit = False
+    try:
+        result = await runtime.run()
+        clean_exit = True
+    except BaseException as exc:
+        # Per ADR-0013 / ADR-0023 §3.4: WorkflowAbortedError is a clean
+        # abort (= treat as completion). Any other exception (cancel,
+        # crash, KeyboardInterrupt) preserves the artifact for restart
+        # cleanup or memo-replay resume.
+        if _is_workflow_abort(type(exc)):
+            clean_exit = True
+        raise
+    finally:
+        if clean_exit:
+            try:
+                await parent_host.delete_plan_decomposition(plan_id=plan_id)
+            except AttributeError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("delete_plan_decomposition failed: %r", exc)
+
     return {
         "status": "ok",
         "text": result.text,

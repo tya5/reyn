@@ -103,22 +103,20 @@ class PlanRuntime:
         return self._resume_plan
 
     async def run(self) -> PlanExecutionResult:
-        """Execute the plan. Step 5: delegates to execute_plan.
+        """Execute the plan.
 
-        Steps 6 + 7 move the execution body inline so the runtime can
-        thread ``plan_id`` (= no auto-allocation when set), perform
-        decomposition-artifact writes, and route ``plan_step_*`` events
-        through the host's WAL recorders.
+        Step 6: threads ``plan_id`` from the constructor through to
+        ``execute_plan`` (= caller-allocated when ``dispatch_plan_tool``
+        wrote the decomposition artifact first). ``resume_plan`` is
+        accepted but still inert — Step 7 wires the memo replay path.
         """
-        # Step 5 cut: ignore plan_id / resume_plan — execute_plan owns
-        # plan_id allocation and runs fresh. Behavior must be identical
-        # to direct execute_plan() invocation so Phase 1 tests survive.
         return await execute_plan(
             self._plan,
             parent_host=self._host,
             chain_id=self._chain_id,
             budget=self._budget,
             router_model=self._router_model,
+            plan_id=self._plan_id,
         )
 
 

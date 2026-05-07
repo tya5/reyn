@@ -3416,6 +3416,63 @@ class ChatSession:
     ) -> None:
         await self._journal.record_plan_aborted(plan_id=plan_id, reason=reason)
 
+    # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
+    # Mirrors the plan_started/completed/aborted wiring above.
+
+    async def record_plan_step_started(
+        self, *, plan_id: str, step_id: str, depends_on: list[str],
+        n_tools: int,
+    ) -> None:
+        await self._journal.record_plan_step_started(
+            plan_id=plan_id, step_id=step_id,
+            depends_on=depends_on, n_tools=n_tools,
+        )
+
+    async def record_plan_step_completed(
+        self, *, plan_id: str, step_id: str, content_len: int,
+    ) -> None:
+        await self._journal.record_plan_step_completed(
+            plan_id=plan_id, step_id=step_id, content_len=content_len,
+        )
+
+    async def record_plan_step_failed(
+        self, *, plan_id: str, step_id: str, error: str,
+    ) -> None:
+        await self._journal.record_plan_step_failed(
+            plan_id=plan_id, step_id=step_id, error=error,
+        )
+
+    # Decomposition artifact persistence (ADR-0023 §3.5). Resolves the
+    # agent-specific state directory and delegates to the standalone
+    # reyn.plan.decomposition helpers.
+
+    async def write_plan_decomposition(
+        self, *, plan_id: str, plan: Any,
+    ) -> str | None:
+        from reyn.plan import write_decomposition
+        agent_state_dir = (
+            Path(".reyn") / "agents" / self.agent_name / "state"
+        )
+        try:
+            return str(write_decomposition(agent_state_dir, plan_id, plan))
+        except OSError as exc:
+            logger.warning(
+                "write_plan_decomposition failed for %s: %r", plan_id, exc,
+            )
+            return None
+
+    async def delete_plan_decomposition(self, *, plan_id: str) -> None:
+        from reyn.plan import delete_decomposition
+        agent_state_dir = (
+            Path(".reyn") / "agents" / self.agent_name / "state"
+        )
+        try:
+            delete_decomposition(agent_state_dir, plan_id)
+        except OSError as exc:
+            logger.warning(
+                "delete_plan_decomposition failed for %s: %r", plan_id, exc,
+            )
+
     # --- RouterLoop orchestration ---
 
     def _build_history_for_router(self) -> list[dict]:

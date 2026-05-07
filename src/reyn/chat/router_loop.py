@@ -238,6 +238,36 @@ class RouterLoopHost(Protocol):
         self, *, plan_id: str, reason: str = "",
     ) -> None: ...
 
+    # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
+    # Optional — test stubs may omit. ChatSession routes these through
+    # SnapshotJournal.record_plan_step_*.
+    async def record_plan_step_started(
+        self, *, plan_id: str, step_id: str, depends_on: list[str],
+        n_tools: int,
+    ) -> None: ...
+
+    async def record_plan_step_completed(
+        self, *, plan_id: str, step_id: str, content_len: int,
+    ) -> None: ...
+
+    async def record_plan_step_failed(
+        self, *, plan_id: str, step_id: str, error: str,
+    ) -> None: ...
+
+    # Decomposition artifact persistence (ADR-0023 §3.5).
+    # The artifact is the canonical SSoT for the plan shape on resume.
+    # ChatSession threads this through reyn.plan.decomposition with the
+    # agent-specific state directory; test stubs may no-op.
+    async def write_plan_decomposition(
+        self, *, plan_id: str, plan: "Any",
+    ) -> str | None:
+        """Persist the plan decomposition. Returns the artifact path or None."""
+        ...
+
+    async def delete_plan_decomposition(self, *, plan_id: str) -> None:
+        """Remove the plan decomposition artifact (= P5 cleanup on success)."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # RouterLoop
