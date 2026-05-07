@@ -108,7 +108,6 @@ class ConversationView(Widget):
     DEFAULT_CSS = """
     ConversationView {
         height: 1fr;
-        border: tall #2a2a2a;
         padding: 0 0;
     }
     ConversationView RichLog {
@@ -131,7 +130,7 @@ class ConversationView(Widget):
     }
     ConversationView #empty-hint {
         color: #555555;
-        padding: 1 2;
+        padding: 0 1;
         height: auto;
     }
     """
