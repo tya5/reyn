@@ -760,6 +760,45 @@ def build_tools(
                 },
             },
         },
+        # ── F3: discover_tools (Wave A: replaces inline intent-axis catalog) ─
+        #
+        # The previous router system prompt embedded a ~58-line
+        # "## What you can do (intent axis)" section listing all 14 tools
+        # grouped by intent (Action / Recall / Save / Forget / Reply). That
+        # text shipped on every router turn and bloated context.
+        #
+        # `discover_tools` returns the same grouped catalog on demand. The
+        # synthesis is deterministic (no LLM round-trip) and reflects the
+        # session's current permission state (file/mcp/web tools appear only
+        # when their config gates allow). Most queries don't need this — the
+        # individual tool descriptions are usually self-explanatory; the LLM
+        # is nudged to call discover_tools only when it needs the grouping.
+        #
+        # Dispatch kind: default ("sync") — no entry in _DISPATCH_KIND
+        # because the handler in router_loop.py returns the catalog
+        # synchronously in the same turn.
+        {
+            "type": "function",
+            "function": {
+                "name": "discover_tools",
+                "description": (
+                    "Return the available tools grouped by intent (Action / "
+                    "Recall / Save / Forget / Reply). Use when you need a "
+                    "categorized view of what's available. The grouping "
+                    "reflects the current session's permission state "
+                    "(file/mcp/web tools appear only when their config "
+                    "gates allow). Most queries don't need this — the tool "
+                    "descriptions are usually self-explanatory; call "
+                    "discover_tools only when uncertain which intent group "
+                    "a tool belongs to."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+            },
+        },
     ]
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────

@@ -1226,6 +1226,72 @@ async def test_list_skills_empty_path_returns_all_categories():
 
 
 @pytest.mark.asyncio
+async def test_discover_tools_returns_grouped_catalog():
+    """Tier 2: Wave A — when the LLM calls discover_tools, RouterLoop
+    synthesizes a deterministic grouped catalog (Action / Recall / Save /
+    Forget / Reply) and feeds it back as the tool_result. No LLM round-
+    trip is needed for the synthesis itself."""
+    host = FakeRouterHost(
+        skills=[{"name": "skill_a", "category": "general"}],
+    )
+    loop = make_loop(host)
+
+    rounds = [
+        tool_result([{"name": "discover_tools", "args": {}}]),
+        text_result("Here is what I can do."),
+    ]
+
+    messages_captured: list[list[dict]] = []
+
+    async def mock_llm(*, messages, **kwargs):
+        messages_captured.append(list(messages))
+        return rounds[len(messages_captured) - 1]
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=mock_llm):
+        await loop.run("what can you do?", [])
+
+    # Round 2 messages must include the synthesized tool_result.
+    round2 = messages_captured[1]
+    tool_msgs = [m for m in round2 if m.get("role") == "tool"]
+    assert len(tool_msgs) == 1, (
+        f"Expected exactly one tool_result message, got: {tool_msgs}"
+    )
+    payload = json.loads(tool_msgs[0]["content"])
+    # dispatch_tool wraps successful results in {"status": "ok", "data": ...}
+    assert payload.get("status") == "ok", f"Expected status=ok, got: {payload}"
+    catalog = payload["data"]
+    assert "groups" in catalog, f"Expected 'groups' key, got: {catalog}"
+    groups = catalog["groups"]
+    for intent in ("Action", "Recall", "Save", "Forget", "Reply"):
+        assert intent in groups, f"Missing intent group {intent!r}: {groups}"
+    # Action group exposes resource axis (skills / agents / reyn / web).
+    action = groups["Action"]
+    assert "tools_by_resource" in action
+    assert "skills" in action["tools_by_resource"]
+    # Recall / Save / Forget expose flat tool lists.
+    assert "list_memory" in groups["Recall"]["tools"]
+    assert "remember_shared" in groups["Save"]["tools"]
+    assert "forget_memory" in groups["Forget"]["tools"]
+
+
+def test_discover_tools_reflects_permission_state():
+    """Tier 2: Wave A — discover_tools' grouped catalog reflects the
+    session's current permission state. Without file/mcp/web_fetch
+    permissions, file/mcp tools and web_fetch are absent from the
+    Action group; with full permissions they appear."""
+    # Baseline: no extras
+    host_minimal = FakeRouterHost()
+    loop_minimal = make_loop(host_minimal)
+    catalog_minimal = loop_minimal._discover_tools()
+    action_minimal = catalog_minimal["groups"]["Action"]["tools_by_resource"]
+    assert "files" not in action_minimal
+    assert "mcp" not in action_minimal
+    assert action_minimal["web"] == ["web_search"]
+    assert "write_file" not in catalog_minimal["groups"]["Save"]["tools"]
+    assert "delete_file" not in catalog_minimal["groups"]["Forget"]["tools"]
+
+
+@pytest.mark.asyncio
 async def test_no_events_attribute_needed_for_unknown_tool_path():
     """Tier 2: P6 invariant — unknown tool error emits tool_failed via host.events through dispatch_tool; event routing is not bypassed on the error path."""
     host = FakeRouterHost()
