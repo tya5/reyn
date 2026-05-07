@@ -46,6 +46,21 @@ _IDLE_POLL_INTERVAL_SECONDS: float = 0.05
 _IDLE_GRACE_SECONDS: float = 0.05
 
 
+# Per-agent serialization lock. Concurrent FastAPI request handlers (e.g.
+# the A2A endpoint) can reach ``send_to_agent_impl`` in parallel for the
+# same agent; without serialization both coroutines race on
+# ``session.history[-1]`` (RouterLoop reads the wrong prompt) and on
+# reply harvesting (each picks up the other's ``role="agent"`` entries).
+# This is the conservative short-term fix consistent with the existing
+# serial ``session.run()`` inbox architecture — the long-term shape is
+# to push these calls through the inbox like the chat path does.
+_AGENT_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _get_agent_lock(agent_name: str) -> asyncio.Lock:
+    return _AGENT_LOCKS.setdefault(agent_name, asyncio.Lock())
+
+
 async def _get_session(registry: "AgentRegistry", name: str) -> "object":
     """Return a loaded ChatSession for `name`.
 
@@ -62,13 +77,24 @@ async def _get_session(registry: "AgentRegistry", name: str) -> "object":
     return registry.get_or_load(name)
 
 
-def _new_agent_history_entries(session, baseline: int) -> list[str]:
+def _new_agent_history_entries(
+    session, baseline: int, *, chain_id: str | None = None,
+) -> list[str]:
     """Return text of every history entry past `baseline` whose role is
-    ``agent``. Order-preserving."""
+    ``agent``. Order-preserving.
+
+    When ``chain_id`` is provided, only entries whose ``meta["chain_id"]``
+    matches are returned. This scopes reply harvesting to the caller's
+    own chain so concurrent ``send_to_agent_impl`` calls (e.g. via the
+    A2A FastAPI router) don't pick up each other's replies.
+    """
     out: list[str] = []
     for msg in session.history[baseline:]:
-        if msg.role == "agent" and msg.text:
-            out.append(msg.text)
+        if msg.role != "agent" or not msg.text:
+            continue
+        if chain_id is not None and (msg.meta or {}).get("chain_id") != chain_id:
+            continue
+        out.append(msg.text)
     return out
 
 
@@ -151,23 +177,31 @@ async def send_to_agent_impl(
         )
 
     session = await _get_session(registry, agent_name)
-    baseline = len(session.history)
 
     # Drive the user-message handler inline rather than going through
     # session.inbox + session.run(). See `_get_session` docstring for the
     # asyncio-starvation rationale.
     from reyn.chat.session import _new_chain_id  # noqa: PLC0415 — lazy import
     chain_id = _new_chain_id()
-    try:
-        await asyncio.wait_for(
-            session._handle_user_message(message, chain_id=chain_id),
-            timeout=timeout,
-        )
-        idle = True
-    except asyncio.TimeoutError:
-        idle = False
 
-    new_replies = _new_agent_history_entries(session, baseline)
+    # Serialize concurrent calls to the same agent — see _AGENT_LOCKS for
+    # why. The lock is acquired AFTER session lookup (cheap) and AROUND
+    # both the handler call and the reply harvest so the baseline →
+    # _handle_user_message → history-read window is atomic per agent.
+    async with _get_agent_lock(agent_name):
+        baseline = len(session.history)
+        try:
+            await asyncio.wait_for(
+                session._handle_user_message(message, chain_id=chain_id),
+                timeout=timeout,
+            )
+            idle = True
+        except asyncio.TimeoutError:
+            idle = False
+
+        new_replies = _new_agent_history_entries(
+            session, baseline, chain_id=chain_id,
+        )
     reply_text = "\n\n".join(new_replies).strip()
 
     if not idle and not reply_text:
