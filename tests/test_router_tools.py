@@ -33,13 +33,12 @@ EXPECTED_TOOL_NAMES = [
     "remember_shared",
     "remember_agent",
     "forget_memory",
-    # File read tools are unconditional — aligned with the OS-level
-    # default-grant on paths within the project root. See router_tools.py:C
-    # for the rationale.
-    "list_directory",
-    "read_file",
     # web_search is always exposed (E1) — read-only public search.
     "web_search",
+    # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
+    # public OSS repo, not the user's files, so no permission gate.
+    "reyn_src_list",
+    "reyn_src_read",
 ]
 
 
@@ -86,10 +85,10 @@ SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
 def test_build_tools_returns_14_tools_when_no_extras():
-    """No file.write / MCP / web_fetch extras: 11 baseline + web_search (E1)
-    + list_directory + read_file (unconditional read access aligned with
-    the OS-level default-grant). Write-class file tools and MCP/web_fetch
-    remain gated, so 14 total at the unconfigured baseline.
+    """No file / MCP / web_fetch extras: 11 baseline + web_search (E1,
+    always on) + reyn_src_list + reyn_src_read (F1/F2, always on). All
+    file-class tools and MCP / web_fetch remain gated, so 14 total at
+    the unconfigured baseline.
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     assert len(tools) == 14, f"Expected 14 tools, got {len(tools)}"
@@ -184,29 +183,27 @@ def test_layer_enum():
 # ── File tool permission-gating tests ─────────────────────────────────────────
 
 
-def test_file_read_tools_unconditional_when_no_permissions():
-    """No file_permissions kwarg → write-class file tools absent, but
-    read-class tools (list_directory, read_file) are unconditional.
+def test_file_tools_omitted_when_no_permissions():
+    """No file_permissions kwarg → all file-class tools absent.
 
-    Aligned with the OS-level default-grant in
-    `permissions._in_default_read_zone`: paths within project root are
-    always readable, so hiding the tools while the underlying op accepts
-    the call was a wiring inconsistency. With this contract, fresh
-    `reyn init` projects can answer "summarize the README" without any
-    file-permission setup.
+    Per the design contract: file_* tools touch the user's project
+    files, which sit behind the operator's permission boundary. The
+    chat router does NOT auto-grant file access just because the OS
+    dispatch layer would permit it — surfacing the tool implies the
+    operator opted in.
+
+    For "explain Reyn itself" use cases, the always-on `reyn_src_*`
+    tools cover the gap (= reading Reyn's own OSS repo, not user
+    files).
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
     names = set(_tool_names(tools))
-    # Read tools always present.
-    assert FILE_READ_TOOL_NAMES.issubset(names), (
-        f"Expected read tools always present, missing: "
-        f"{FILE_READ_TOOL_NAMES - names}"
+    assert names.isdisjoint(FILE_TOOL_NAMES), (
+        f"Expected no file tools, but found: {names & FILE_TOOL_NAMES}"
     )
-    # Write tools gated.
-    assert names.isdisjoint(FILE_WRITE_TOOL_NAMES), (
-        f"Expected no write tools without declaration, but found: "
-        f"{names & FILE_WRITE_TOOL_NAMES}"
-    )
+    # reyn_src_* DO show up (= unconditional, by design).
+    assert "reyn_src_list" in names
+    assert "reyn_src_read" in names
 
 
 def test_file_read_only_tools_present():
@@ -259,8 +256,8 @@ def test_mcp_tools_present_when_servers_configured():
 
 
 def test_total_tool_count_with_full_permissions():
-    """Full file + MCP + web permissions → 11 + 4 + 2 + 3 = 20 tools total
-    (11 baseline, 4 file C1-C4, 2 web E1+E2, 3 MCP D1-D3)."""
+    """Full file + MCP + web permissions → 11 baseline + 4 file C1-C4
+    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 = 22 tools total."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -268,7 +265,7 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 20, f"Expected 20 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 22, f"Expected 22 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────

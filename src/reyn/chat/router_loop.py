@@ -168,6 +168,19 @@ class RouterLoopHost(Protocol):
         """RouterLoopHost: invoke the OS-native web/fetch op."""
         ...
 
+    async def reyn_src_list(self, *, path: str) -> dict:
+        """RouterLoopHost: list entries under ``<reyn_root>/path``.
+
+        ``reyn_root`` resolves to the directory containing
+        ``pyproject.toml`` for the running Reyn install (= dev install /
+        source clone). For wheel installs without a discoverable
+        repo root, returns an error result so the LLM can fall back."""
+        ...
+
+    async def reyn_src_read(self, *, path: str) -> dict:
+        """RouterLoopHost: read the file at ``<reyn_root>/path`` as text."""
+        ...
+
     # Memory file paths (for list_memory / read_memory_body)
     def memory_path(self, layer: str, slug: str) -> str:
         """Resolve layer ('shared'|'agent') + slug to file path"""
@@ -628,6 +641,14 @@ class RouterLoop:
                 url=args["url"],
                 max_length=args.get("max_length", 50_000),
             )
+
+        # F. Reyn-source tools — read Reyn's own repo (no permission gate;
+        # the tree is public OSS content). See router_tools.py:F for the
+        # rationale.
+        if name == "reyn_src_list":
+            return await self.host.reyn_src_list(path=args.get("path", ""))
+        if name == "reyn_src_read":
+            return await self.host.reyn_src_read(path=args["path"])
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.

@@ -462,71 +462,62 @@ def build_tools(
     ]
     # fmt: on
 
-    # ── C. File tools ────────────────────────────────────────────────────────
+    # ── C. File tools (permission-gated) ─────────────────────────────────────
     #
-    # Read tools (list_directory, read_file) are exposed UNCONDITIONALLY —
-    # they're aligned with the OS-level default-grant policy in
-    # `permissions._in_default_read_zone` which already permits any path
-    # within the project root (CWD) without explicit declaration. Hiding the
-    # tools while the underlying op accepts the call was a wiring
-    # inconsistency that surfaced in dogfood: the agent saw no file tools
-    # and replied "I can't access local files" even when reading was
-    # actually permitted. With this alignment, "summarize the README" works
-    # out of the box for fresh `reyn init` projects without any
-    # permission-config step.
-    #
-    # Write tools (write_file, delete_file) remain gated on explicit
-    # `file.write` declaration — those are NOT default-granted at the OS
-    # layer (only `.reyn/`, `reyn/` are default-write zones), so surfacing
-    # them without a corresponding declaration would mislead the LLM into
-    # attempting writes that get rejected at dispatch.
+    # File access tools are gated on the operator's `permissions.file.*`
+    # declaration. The OS-level dispatch layer
+    # (`permissions._in_default_read_zone`) does grant reads within the
+    # project root by default, but exposing the tools without a matching
+    # config declaration mixes "operator opt-in" with "OS auto-grant" in a
+    # way that makes the safety boundary fuzzy — a previous attempt to
+    # align the two layers (= unconditional tool exposure) was reverted
+    # because it dragged the chat router into the user-file protection
+    # surface. Reyn's own source / docs are accessed via the dedicated
+    # `reyn_src_*` tools (see section F below), which carry no
+    # permission-protected content and so don't need this gate.
+    _file_read = (file_permissions or {}).get("read") or []
     _file_write = (file_permissions or {}).get("write") or []
 
-    tools += [
-        # ── C1: list_directory ───────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "list_directory",
-                "description": (
-                    "List contents of a directory in the project. Paths are "
-                    "resolved relative to the project root. Use \".\" for "
-                    "the project root itself. Returns names + types "
-                    "(file/dir)."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
+    if _file_read or _file_write:
+        tools += [
+            # ── C1: list_directory ───────────────────────────────────────────
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_directory",
+                    "description": (
+                        "List contents of a directory under the agent's read scope. "
+                        "Returns names + types (file/dir)."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                        },
+                        "required": ["path"],
                     },
-                    "required": ["path"],
                 },
             },
-        },
-        # ── C2: read_file ────────────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": (
-                    "Read a file's contents. Paths are resolved relative to "
-                    "the project root, e.g. \"README.md\" reads the README "
-                    "at the top of the project. Use this for project "
-                    "documentation, source code, configuration, or any text "
-                    "file the user references."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
+            # ── C2: read_file ────────────────────────────────────────────────
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": (
+                        "Read a file's contents under the agent's read scope."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                        },
+                        "required": ["path"],
                     },
-                    "required": ["path"],
                 },
             },
-        },
-    ]
+        ]
 
-    if _file_write:
+        if _file_write:
             # C3 and C4 only when write scope is configured
             tools += [
                 # ── C3: write_file ───────────────────────────────────────────
@@ -623,6 +614,74 @@ def build_tools(
                 },
             },
         ]
+
+    # ── F. Reyn-source tools (always present, no permission) ────────────────
+    #
+    # `reyn_src_list` / `reyn_src_read` give the agent read access to
+    # **Reyn's own** repository (= the project where pyproject.toml
+    # declares Reyn). They serve a single use case: when the user asks
+    # how Reyn works or wants a deep-dive into its implementation, the
+    # agent should answer from Reyn's source/docs, not web search.
+    #
+    # Why no permission gate: the resolver scopes paths to the Reyn
+    # repository tree, which is by definition public open-source content
+    # (= GitHub secret-scanning blocks credentials at push time, so
+    # nothing in the tree is sensitive). Operators don't configure this
+    # — it's an OS-internal capability, distinct from `file_*` (= which
+    # accesses the *user's* project files and IS permission-gated).
+    #
+    # Why two tools, not one: `list` lets the LLM discover the layout
+    # before reading; `read` returns the file body. Mirrors the file_*
+    # pair so the LLM's tool-use pattern is consistent across both
+    # Reyn-source and user-file access.
+    tools += [
+        # ── F1: reyn_src_list ────────────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "reyn_src_list",
+                "description": (
+                    "List entries under a path inside Reyn's own repository "
+                    "(= the project that built this agent). Pass \"\" for "
+                    "the repo root. Returns names + types (file/dir). Use "
+                    "this to discover Reyn's source/doc layout before "
+                    "reading specific files. Examples: list \"\" for the "
+                    "top-level layout, \"docs/en/concepts\" for concept "
+                    "docs, \"src/reyn/chat\" for the chat layer source."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        # ── F2: reyn_src_read ────────────────────────────────────────────────
+        {
+            "type": "function",
+            "function": {
+                "name": "reyn_src_read",
+                "description": (
+                    "Read a text file from Reyn's own repository. Path is "
+                    "repo-root-relative (= same paths the user sees on "
+                    "GitHub). Start with reyn_src_read(\"README.md\") for "
+                    "an overview and a curated index of deep-dive paths. "
+                    "Use this for any \"how does Reyn / how does Reyn's X "
+                    "work?\" question — Reyn's source is the authoritative "
+                    "answer, not web search."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+    ]
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     if mcp_servers:

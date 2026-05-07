@@ -281,6 +281,82 @@ These are tracked as A2A v2 follow-ups. Spec reference:
 
 ---
 
+## Read Reyn from the inside (agent navigation)
+
+The Reyn agent can read **its own repository** to answer questions like
+"how does Reyn's chat router work?" or "show me the postprocessor
+implementation". Two router tools, always present, no permission setup
+required:
+
+```
+reyn_src_list(path)   # list entries under <reyn_root>/path
+reyn_src_read(path)   # read text of <reyn_root>/path
+```
+
+`<reyn_root>` is the directory holding the running Reyn install's
+`pyproject.toml` (= a clone or `pip install -e .` checkout). `path` is
+the same path you'd see on GitHub. Pass `""` to list the repo top
+level. Path traversal outside the root is refused; binaries and
+oversized files are refused. There is **no permission gate** — Reyn's
+own repo is public OSS content (= GitHub secret-scanning blocks
+credentials at push time, so nothing in the tree is sensitive).
+
+The chat agent's system prompt directs it to **start every "explain
+Reyn" question from `reyn_src_read("README.md")`** — i.e. this
+document. Below is the curated index it'll follow next.
+
+### Top-level layout
+
+| Path | What's there |
+|---|---|
+| `src/reyn/` | The Python package (= chat, kernel, op_runtime, permissions, schemas). |
+| `src/stdlib/skills/` | Bundled stdlib skills (eval, skill_builder, chat_compactor, etc.). |
+| `docs/` | Diátaxis docs site source — concepts, how-to, reference, ADRs. |
+| `cookbook/` | Example skills and configurations. |
+| `tests/` | Tier 1/2/3 tests. See `docs/en/contributing/testing.md` for the policy. |
+| `pyproject.toml` | Package metadata + tool config (ruff, pytest). |
+
+### Recommended deep-dive entry points
+
+For "what is Reyn?" / architectural questions:
+
+- `docs/en/concepts/architecture.md` — User → Agent → Skill → OS →
+  Phase → Workspace overview.
+- `docs/en/concepts/principles.md` — P1–P8 invariants (= the rules
+  the OS enforces).
+- `docs/en/concepts/phase-vs-skill-vs-os.md` — boundary between the
+  three layers.
+- `CLAUDE.md` — Tier 1 hard rules for code-writing agents.
+
+For "how does X work?" / implementation questions:
+
+- `src/reyn/chat/router_loop.py` — chat router (= what the user is
+  talking to right now). Tool catalog, dispatch, empty-stop handling.
+- `src/reyn/chat/router_system_prompt.py` — how the system prompt
+  is assembled.
+- `src/reyn/chat/session.py` — `ChatSession` (= the per-agent
+  state, history, intervention queue).
+- `src/reyn/kernel/runtime.py` — phase execution loop.
+- `src/reyn/kernel/control_ir_executor.py` — Control IR dispatch.
+- `src/reyn/op_runtime/` — op handlers (file, web, mcp, ask_user, …).
+- `src/reyn/permissions/permissions.py` — permission model.
+
+For design rationale:
+
+- `docs/en/decisions/` — 23 ADRs. Each one explains a specific
+  decision and the alternatives considered.
+
+For testing / contribution:
+
+- `docs/en/contributing/testing.md` — Tier 1/2/3 test policy.
+- `docs/en/contributing/dogfood-discipline.md` — how Reyn was
+  iterated via its own dogfood batches.
+
+When in doubt: `reyn_src_list("")` to see the top, `reyn_src_list("docs/en")`
+to browse the docs tree, and `reyn_src_read(<path>)` to dive in.
+
+---
+
 ## Project Status
 
 Reyn is **pre-1.0 alpha**. The DSL, CLI, and event log are stable enough to build skills against; APIs may still change before 1.0. See [CLAUDE.md](CLAUDE.md) for architectural constraints and the testing policy.

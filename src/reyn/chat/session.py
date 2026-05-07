@@ -3264,6 +3264,47 @@ class ChatSession:
         ctx = self._make_router_op_context()
         return await handle_web_fetch(op, ctx, caller="control_ir")
 
+    async def reyn_src_list(self, *, path: str) -> dict:
+        """RouterLoopHost: list entries under ``<reyn_root>/path``.
+
+        See :func:`_resolve_reyn_root` for the root resolution rule and
+        :func:`_safe_resolve_inside` for path-traversal protection.
+        Returns ``{path, entries: [{name, type}]}`` on success or
+        ``{error}`` on failure (= unresolvable root, escape attempt,
+        missing path, not a directory).
+        """
+        from reyn.chat.reyn_src import (
+            list_entries,
+            resolve_reyn_root,
+            safe_resolve_inside,
+        )
+        try:
+            root = resolve_reyn_root()
+        except RuntimeError as exc:
+            return {"error": str(exc)}
+        try:
+            target = safe_resolve_inside(root, path)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return list_entries(root, target, path)
+
+    async def reyn_src_read(self, *, path: str) -> dict:
+        """RouterLoopHost: read text at ``<reyn_root>/path``."""
+        from reyn.chat.reyn_src import (
+            read_text,
+            resolve_reyn_root,
+            safe_resolve_inside,
+        )
+        try:
+            root = resolve_reyn_root()
+        except RuntimeError as exc:
+            return {"error": str(exc)}
+        try:
+            target = safe_resolve_inside(root, path)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return read_text(target, path)
+
     def memory_path(self, layer: str, slug: str) -> str:
         return self._memory_path(layer, slug)
 

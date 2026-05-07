@@ -103,6 +103,17 @@ def build_system_prompt(
         "- You MUST NOT begin a self-description with phrases like "
         "\"I am a large language model\" — start with \"I am a Reyn "
         "agent\" instead."
+        "\n\n"
+        "**Explaining Reyn (deep-dive entry point):**"
+        "\n"
+        "- When the user asks how Reyn works or wants to understand any "
+        "part of Reyn's implementation, your authoritative source is "
+        "Reyn's own repository — call `reyn_src_read('README.md')` first."
+        "\n"
+        "- The README contains a curated map of paths under `reyn_src_*` "
+        "— follow those for deep-dive (architecture, skill DSL, source code, "
+        "ADRs). Do NOT reach for `web_search` to learn about Reyn — use "
+        "`reyn_src_*`. Web search is for things outside Reyn."
     )
     parts.append("")
 
@@ -125,6 +136,9 @@ def build_system_prompt(
     parts.append("")
     parts.append("## What you can do (intent axis)")
     parts.append("")
+    has_file_read = bool(
+        file_permissions and file_permissions.get("read")
+    )
     has_file_write = bool(
         file_permissions and file_permissions.get("write")
     )
@@ -137,11 +151,15 @@ def build_system_prompt(
     parts.append(
         "           agents:  list_agents / describe_agent / delegate_to_agent"
     )
-    # File read tools are unconditional — aligned with the OS-level
-    # default-grant on paths within the project root. See router_tools.py
-    # for the rationale.
+    if has_file_read:
+        parts.append(
+            "           files:   list_directory / read_file"
+        )
+    # `reyn_src_*` is always present — it serves Reyn's own source/docs,
+    # not user files, and so has no permission-protected content. Used
+    # for "explain how Reyn works" / "summarize Reyn's README" queries.
     parts.append(
-        "           files:   list_directory / read_file"
+        "           reyn:    reyn_src_list / reyn_src_read"
     )
     # Web search is always exposed (low-risk, public queries). Web fetch
     # requires operator opt-in (`web.fetch: allow`) and is included only
@@ -229,12 +247,14 @@ def build_system_prompt(
     # tools that ARE actually exposed in this session (= avoids hallucinating
     # capabilities that aren't wired up).
     user_capabilities: list[str] = ["run skills, build new skills, and improve existing ones"]
-    # File read is unconditional (= aligned with OS-level default-grant on
-    # paths within project root); narrate it always so the LLM doesn't
-    # under-promise.
-    user_capabilities.append("read files in your project (README, source code, configs)")
+    if has_file_read:
+        user_capabilities.append("read files in your project")
     if has_file_write:
         user_capabilities.append("write files to approved paths")
+    # reyn_src_* is unconditional — agent can always explain Reyn itself.
+    user_capabilities.append(
+        "read Reyn's own source and docs to explain how Reyn works"
+    )
     user_capabilities.append("search the web (DuckDuckGo)")
     if web_fetch_allowed:
         user_capabilities.append("fetch a specific web page")
