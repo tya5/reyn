@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widget import Widget
@@ -315,6 +316,20 @@ class RightPanel(Widget):
             if self._preview_visible:
                 self._update_preview()
 
+    @on(_PreviewPane.CloseRequested)
+    def _on_preview_close_requested(self, event) -> None:
+        """Space pressed while the preview pane had focus — close the pane.
+
+        After hiding, pull focus back to the tab strip so further j/k/space
+        keystrokes are routed to the panel, not the now-hidden preview.
+        """
+        if self._preview_visible:
+            self._toggle_preview()
+        try:
+            self.query_one("#panel-tabs", Tabs).focus()
+        except Exception as exc:
+            logger.warning("right_panel close-preview focus failed: %s", exc)
+
     # ── content refresh ──────────────────────────────────────────────────────
 
     def _refresh_live(self) -> None:
@@ -373,12 +388,12 @@ class RightPanel(Widget):
             self._update_preview()
 
     def _events_show_selected(self) -> None:
-        """Enter on events tab — open the selected event in the preview pane."""
+        """Space on events tab — toggle preview pane (open with selected
+        event, or close if already open)."""
         if not self._events_visible:
             return
-        if not self._preview_visible:
-            self._toggle_preview()
-        else:
+        self._toggle_preview()
+        if self._preview_visible:
             self._update_preview()
 
     def _show_event_in_preview(self, pane: _PreviewPane) -> None:
@@ -420,12 +435,12 @@ class RightPanel(Widget):
             self._update_preview()
 
     def _memory_show_selected(self) -> None:
-        """Enter on memory tab — open the selected entry in the preview pane."""
+        """Space on memory tab — toggle preview pane (open with selected
+        entry, or close if already open)."""
         if not self._memory_entries:
             return
-        if not self._preview_visible:
-            self._toggle_preview()
-        else:
+        self._toggle_preview()
+        if self._preview_visible:
             self._update_preview()
 
     def _show_memory_in_preview(self, pane: _PreviewPane) -> None:

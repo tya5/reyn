@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from textual.app import ComposeResult, RenderResult
+from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label, RichLog, Static
 
@@ -112,13 +113,23 @@ class _TabContent(Widget):
 
 
 class _PreviewPane(Widget):
-    """Lower-half preview pane toggled with Enter (on docs / events / memory).
+    """Lower-half preview pane toggled with Space (on docs / events / memory).
 
     Generic: any tab can populate it via ``show_markdown(path)`` (docs) or
     ``show_text(title, renderable)`` (events JSON, memory body).
+
+    When the preview pane itself has focus, pressing Space posts a
+    :class:`CloseRequested` message to the parent RightPanel, which then
+    closes the preview. This keeps the toggle key consistent across
+    "tabs focused" and "preview focused" states.
     """
 
     can_focus = True
+
+    class CloseRequested(Message):
+        """Posted when the user presses Space inside the focused preview."""
+
+        pass
 
     DEFAULT_CSS = """
     _PreviewPane {
@@ -185,6 +196,13 @@ class _PreviewPane(Widget):
             event.prevent_default()
             event.stop()
             self.scroll_col(-1)
+        elif event.key == "space":
+            # Space when the preview itself has focus: ask the parent to
+            # close the preview pane (consistent with the panel-tabs Space
+            # toggle).
+            event.prevent_default()
+            event.stop()
+            self.post_message(self.CloseRequested())
 
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
