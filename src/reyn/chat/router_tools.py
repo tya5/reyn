@@ -674,16 +674,27 @@ def build_tools(
                                 "{\"id\": str, \"description\": str, "
                                 "\"tools\": [str, ...], \"depends_on\": [str, ...]}. "
                                 "id: short unique identifier. description: what "
-                                "this step does. tools: names of tools this step "
-                                "needs (subset of available catalog; [] for "
-                                "narration-only steps). depends_on: ids of prior "
+                                "this step does. "
+                                # 2026-05-07 dogfood fix: clarify step.tools field —
+                                # LLM was confusing skill names (= invoke_skill enum
+                                # values like \"direct_llm\") with top-level tool
+                                # names. Be explicit about both the source of truth
+                                # AND the empty-list semantics for synthesis steps.
+                                "tools: list of TOP-LEVEL tool names this step "
+                                "calls (e.g. \"reyn_src_read\", \"web_search\", "
+                                "\"invoke_skill\"). Use [] for steps that just "
+                                "synthesise / compare / summarise from prior step "
+                                "outputs — the step's LLM does that natively without "
+                                "any tool. To run a skill, use [\"invoke_skill\"], "
+                                "NOT the skill's name. depends_on: ids of prior "
                                 "steps whose output this step needs (default []). "
                                 "The terminal step's text reply becomes the user-"
                                 "facing answer; design the last step to "
-                                "synthesise. Example: "
+                                "synthesise (= tools: []). Example: "
                                 "[{\"id\": \"s1\", \"description\": \"read README\", "
                                 "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
-                                "{\"id\": \"s2\", \"description\": \"summarise for user\", "
+                                "{\"id\": \"s2\", \"description\": \"compare and "
+                                "summarise for user\", "
                                 "\"tools\": [], \"depends_on\": [\"s1\"]}]"
                             ),
                         },
