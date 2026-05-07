@@ -111,6 +111,18 @@ class ConversationView(Widget):
         border: tall #2a2a2a;
         padding: 0 0;
     }
+    /* Thread context bar — visual mirror of the right panel's tab strip.
+       Two rows total: 1 row of context label + 1 row separator (the
+       border-bottom). Together they balance the 2-row tabs widget on
+       the other side so the conv pane's first content row aligns with
+       the right panel's content row. */
+    ConversationView #thread-header {
+        height: 1;
+        background: #111111;
+        color: #888888;
+        padding: 0 2;
+        border-bottom: solid #333333;
+    }
     ConversationView RichLog {
         background: transparent;
         height: 1fr;
@@ -157,6 +169,10 @@ class ConversationView(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
+        # Thread context bar — visual counterpart to the right panel's tab
+        # strip; shows the current agent name + transient status. Updated
+        # via set_thread_context() from app.py.
+        yield Static("  → —", id="thread-header", markup=True)
         yield RichLog(highlight=False, markup=False, wrap=True, id="log")
         # B5: empty-state hint, removed on first message
         yield Static(
@@ -167,6 +183,34 @@ class ConversationView(Widget):
         )
         # A3: sticky status pinned to bottom of conv pane
         yield StickyStatus(id="sticky-status")
+
+    def set_thread_context(
+        self,
+        *,
+        agent_name: str = "",
+        model: str = "",
+        message_count: int | None = None,
+    ) -> None:
+        """Update the conv-pane top context bar.
+
+        Mirrors the right panel's tab strip in visual weight. Format:
+            → <agent_name>   ·  <model>   ·  <N> messages
+        Empty / None fields are omitted.
+        """
+        parts: list[str] = []
+        if agent_name:
+            parts.append(f"[bold {_CORAL}]→ {agent_name}[/]")
+        if model:
+            parts.append(f"[dim]{model}[/]")
+        if message_count is not None and message_count > 0:
+            parts.append(
+                f"[dim]{message_count} message{'s' if message_count != 1 else ''}[/]"
+            )
+        body = "  ·  ".join(parts) if parts else "[dim]—[/]"
+        try:
+            self.query_one("#thread-header", Static).update(f"  {body}")
+        except Exception:
+            pass
 
     def _log(self) -> RichLog:
         return self.query_one("#log", RichLog)
