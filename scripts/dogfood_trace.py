@@ -8,6 +8,7 @@ Usage:
     python scripts/dogfood_trace.py --mode llm-payloads --trace .reyn/llm_trace.jsonl
     python scripts/dogfood_trace.py --mode llm-detail <request_id> --trace .reyn/llm_trace.jsonl [--full]
     python scripts/dogfood_trace.py --mode llm-tools-schema <request_id> --trace .reyn/llm_trace.jsonl
+    python scripts/dogfood_trace.py --mode llm-context <request_id> --trace .reyn/llm_trace.jsonl
 
     # Multiple trace files (merged chronologically):
     python scripts/dogfood_trace.py --mode llm-payloads --trace a.jsonl --trace b.jsonl
@@ -466,6 +467,131 @@ def mode_llm_detail(records: list[dict], request_id: str, full: bool = False) ->
         print("\n  (no response record found)")
 
 
+def mode_llm_context(records: list[dict], request_id: str) -> None:
+    """Render the LLM context (= system + messages + tools + response) for
+    one request_id in a human-readable layout.
+
+    Distinct from ``llm-detail`` which truncates message contents — this
+    mode emits the FULL untruncated payload so an operator (or a
+    code-writing agent) can scan the actual prompt the LLM saw without
+    having to write per-trace inspector scripts. Origin: dogfood found
+    that reading the raw JSONL via ad-hoc Python burned analyst attention
+    and missed structural bugs (= history duplication caused by a
+    slicing off-by-one was invisible until the trace was formatted into
+    indexed message rows). Adding this mode makes the formatted view a
+    one-command operation so future debugging starts from the right
+    grain.
+
+    The output mirrors what dogfood batch retrospectives consistently
+    end up writing manually: numbered messages, role headers,
+    tool_call lines, tool_call_id annotations, separators, then the
+    response with finish_reason / token counts. Searches across all
+    records (handles multi-file traces).
+    """
+    req: dict | None = None
+    resp: dict | None = None
+
+    for rec in records:
+        if rec.get("request_id") == request_id:
+            if rec.get("kind") == "request":
+                req = rec
+            elif rec.get("kind") == "response":
+                resp = rec
+
+    if req is None:
+        print(f"request_id not found: {request_id}")
+        sys.exit(1)
+
+    messages = req.get("messages", []) or []
+    tools = req.get("tools", []) or []
+
+    print(f"REQUEST_ID: {req.get('request_id', '?')}")
+    print(f"MODEL:      {req.get('model', '?')}")
+    print(f"messages:   {len(messages)} entries")
+    print(f"tools:      {len(tools)} entries")
+    if req.get("_source_file"):
+        print(f"source:     {req['_source_file']}")
+    print()
+    print("=" * 72)
+    print("MESSAGES (= what the LLM sees)")
+    print("=" * 72)
+    print()
+
+    for i, m in enumerate(messages):
+        role = m.get("role", "?")
+        content = m.get("content", "")
+        if isinstance(content, list):
+            content = "".join(
+                x.get("text", "") for x in content if isinstance(x, dict)
+            )
+        tcs = m.get("tool_calls") or []
+        tcid = m.get("tool_call_id", "")
+
+        header = f"--- [{i:2d}] role={role}"
+        if tcid:
+            header += f"  tool_call_id={tcid}"
+        header += " ---"
+        print(header)
+        if content:
+            print(content)
+        for tc in tcs:
+            fn = tc.get("function", {})
+            print(
+                f"  TOOL_CALL: {fn.get('name')}({fn.get('arguments', '')})"
+            )
+        print()
+
+    print("=" * 72)
+    print(f"TOOLS ({len(tools)} total)")
+    print("=" * 72)
+    print()
+    for t in tools:
+        fn = t.get("function", t)
+        name = fn.get("name", "?")
+        desc = (fn.get("description") or "").splitlines()[0] if fn.get(
+            "description"
+        ) else ""
+        if len(desc) > 100:
+            desc = desc[:97] + "..."
+        print(f"  - {name}: {desc}" if desc else f"  - {name}")
+
+    print()
+    print("=" * 72)
+    print("RESPONSE")
+    print("=" * 72)
+    print()
+    if resp is None:
+        print("  (no response record found)")
+        return
+    print(f"finish_reason:     {resp.get('finish_reason')!r}")
+    content = resp.get("content")
+    print(f"content_len:       {len(content) if content else 0}")
+    if content:
+        print("--- content ---")
+        print(content)
+        print("--- /content ---")
+    tcs = resp.get("tool_calls") or []
+    if tcs:
+        print(f"tool_calls:        {len(tcs)}")
+        for i, tc in enumerate(tcs):
+            fn = tc.get("function", {})
+            print(
+                f"  [{i}] {fn.get('name')}({fn.get('arguments', '')})"
+            )
+    else:
+        print("tool_calls:        (none)")
+    usage = resp.get("usage") or {}
+    if isinstance(usage, dict):
+        print(
+            f"prompt_tokens:     "
+            f"{usage.get('prompt_tokens', '?')}"
+        )
+        print(
+            f"completion_tokens: "
+            f"{usage.get('completion_tokens', '?')}"
+        )
+
+
 def mode_llm_tools_schema(records: list[dict], request_id: str) -> None:
     """Pretty-print the full tools schema for a single request_id.
 
@@ -665,6 +791,7 @@ def main() -> None:
         choices=[
             "summary", "full", "chain", "cost",
             "llm-payloads", "llm-detail", "llm-tools-schema",
+            "llm-context",
             # New time-travel modes:
             "replay", "compare",
         ],
@@ -753,7 +880,7 @@ def main() -> None:
         return
 
     # ── LLM trace modes ───────────────────────────────────────────────────
-    if args.mode in ("llm-payloads", "llm-detail", "llm-tools-schema"):
+    if args.mode in ("llm-payloads", "llm-detail", "llm-tools-schema", "llm-context"):
         trace_paths = _resolve_trace_paths(args.trace)
         if not trace_paths:
             trace_paths = [".reyn/llm_trace.jsonl"]
@@ -776,6 +903,13 @@ def main() -> None:
                 print("llm-tools-schema requires a request_id argument")
                 sys.exit(1)
             mode_llm_tools_schema(records, args.request_id)
+            return
+
+        if args.mode == "llm-context":
+            if not args.request_id:
+                print("llm-context requires a request_id argument")
+                sys.exit(1)
+            mode_llm_context(records, args.request_id)
             return
 
     # ── Event-based modes ─────────────────────────────────────────────────

@@ -3407,27 +3407,39 @@ class ChatSession:
 
         Only user/agent conversational turns are included. The compaction
         head_size + tail_size governs which turns to keep.
+
+        Slicing correctness: when ``len(turns) <= head_size + tail_size``,
+        ``head`` and ``tail`` overlap (= the same turns appear at both
+        slice ends). Concatenating ``head + tail`` in that regime
+        produces a fully-duplicated history — observed via dogfood
+        trace v6 as the ROOT CAUSE of the Q4 ``list_skills`` empty-stop
+        attractor (= the LLM saw the same user query twice with the
+        history reset between them, got confused, exited silently).
+        Pre-fix had no overlap guard; this branch returns the full
+        ``turns`` unchanged when no slicing is needed and only takes
+        the head+tail (with optional summary bridge) when the history
+        actually exceeds the window.
         """
         cfg = self._compaction
         turns = [m for m in self.history if m.role in ("user", "agent")]
 
-        # Apply the same head/body/tail windowing as the compaction slicer:
-        # always keep first head_size turns (HEAD) and last tail_size turns (TAIL).
-        head = turns[:cfg.head_size]
-        tail = turns[-cfg.tail_size:] if cfg.tail_size else []
-
-        # Use summary as a bridge when body is compacted.
-        summary = self._latest_summary()
-        if summary and len(turns) > cfg.head_size + cfg.tail_size:
-            bridge = [ChatMessage(
-                role="agent",
-                text=f"[summary of earlier conversation]\n{summary.text}",
-                ts=summary.ts,
-            )]
+        if len(turns) <= cfg.head_size + cfg.tail_size:
+            # No compaction needed — head+tail would overlap and duplicate.
+            selected = turns
         else:
-            bridge = []
-
-        selected = head + bridge + tail if bridge else head + tail
+            # Head+tail with optional summary bridge for the elided middle.
+            head = turns[:cfg.head_size]
+            tail = turns[-cfg.tail_size:] if cfg.tail_size else []
+            summary = self._latest_summary()
+            if summary:
+                bridge = [ChatMessage(
+                    role="agent",
+                    text=f"[summary of earlier conversation]\n{summary.text}",
+                    ts=summary.ts,
+                )]
+                selected = head + bridge + tail
+            else:
+                selected = head + tail
 
         messages: list[dict] = []
         for m in selected:
