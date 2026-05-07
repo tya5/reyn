@@ -1,9 +1,17 @@
 # ADR-0023: Plan-Mode Crash Resilience — Phase 2 (Forward Replay)
 
-**Status**: Draft (2026-05-07)
+**Status**: Accepted + Implemented (2026-05-07)
 **Track**: Plan-mode crash recovery — successor to ADR-0022 Phase 1.
 **Synthesized from**: 4 parallel design proposals (snapshot / analyzer / policy
 / runtime), authored 2026-05-07.
+
+**Landing**: 7-step migration completed across commits `bcf1105`
+(decomposition artifact) → `65160e3` (PlanSnapshot) → `c1a953d` (PlanRegistry)
+→ `c2c3b24` (plan_step_* WAL promotion) → `488bfa9` (PlanRuntime thin wrapper)
+→ `c58840e` (dispatch_plan_tool migration) → `f1d81e3` (analyzer + memo replay)
+→ `5279341` (coordinator + reyn.yaml policy) → `1e529d7` (ChatSession +
+AgentRegistry integration). 1279 → 1373 passed (= 94 new Tier 2 tests).
+Phase 1 tests (10) + planner tests survived unchanged.
 
 ## Context
 
