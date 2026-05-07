@@ -39,6 +39,11 @@ from reyn.plan.plan_snapshot import (
     plan_snapshot_path,
     step_result_file_path,
 )
+from reyn.plan.sub_loop_memo import (
+    SubLoopMemoProvider,
+    compute_sub_loop_args_hash,
+    extract_step_llm_call_records,
+)
 
 __all__ = [
     "DECOMPOSITION_SCHEMA_VERSION",
@@ -55,7 +60,10 @@ __all__ = [
     "PlanRuntime",
     "PlanSnapshot",
     "PlanStepState",
+    "SubLoopMemoProvider",
     "build_plan_resume_config",
+    "compute_sub_loop_args_hash",
+    "extract_step_llm_call_records",
     "decomposition_dir",
     "decomposition_path",
     "delete_decomposition",

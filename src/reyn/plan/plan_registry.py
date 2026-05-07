@@ -379,6 +379,26 @@ class PlanRegistry:
             if sid in to_clear:
                 rel = snap.step_result_refs.pop(sid)
                 self._unlink_spilled_step_result(plan_id, rel)
+        # ADR-0025: clear recorded LLM calls + delete any spilled
+        # records so re-execution starts with a fresh sub-loop memo
+        # state (= no stale args_hash hits from the prior run).
+        for sid in list(snap.step_llm_calls.keys()):
+            if sid in to_clear:
+                records = snap.step_llm_calls.pop(sid, []) or []
+                for rec in records:
+                    rel = rec.get("ref") if isinstance(rec, dict) else None
+                    if rel:
+                        self._unlink_spilled_step_result(plan_id, rel)
+                # Also try to remove the empty step_llm_calls/<step>/ dir.
+                step_dir = (
+                    self._state_dir / "plans" / plan_id
+                    / "step_llm_calls" / sid
+                )
+                try:
+                    if step_dir.is_dir() and not any(step_dir.iterdir()):
+                        step_dir.rmdir()
+                except OSError:
+                    pass
         for sid in list(snap.step_failures.keys()):
             if sid in to_clear:
                 snap.step_failures.pop(sid, None)
@@ -395,6 +415,49 @@ class PlanRegistry:
         snap.current_step_id = None
         self._save(snap)
         return True
+
+    async def record_step_llm_call(
+        self,
+        *,
+        plan_id: str,
+        step_id: str,
+        args_hash: str,
+        inline: dict | None,
+        ref: str | None,
+        usage: dict | None = None,
+    ) -> None:
+        """ADR-0025: record one sub-loop LLM call for memo replay.
+
+        Called by ``SubLoopMemoProvider.record`` after each
+        ``call_llm_tools`` invocation in a plan step's sub-loop. The
+        provider already wrote the spill file (when ref is set) and
+        computed args_hash; this method only updates
+        ``snap.step_llm_calls[step_id]`` and persists the snapshot.
+
+        Persistence is snapshot-only — no WAL events. The atomic save
+        cost (~1 ms) is negligible relative to the LLM call itself.
+
+        Idempotent on duplicate args_hash: if the same hash is
+        recorded twice (= retry within same step), the new record
+        appends; the lookup walks the list, returns the first match
+        which is the original. No deduplication; future re-runs after
+        ``reset_from_step`` start from a cleared list.
+        """
+        snap = self._snapshots.get(plan_id)
+        if snap is None:
+            logger.info(
+                "record_step_llm_call: unknown plan_id %r — skipping",
+                plan_id,
+            )
+            return
+        bucket = snap.step_llm_calls.setdefault(step_id, [])
+        bucket.append({
+            "args_hash": args_hash,
+            "inline": inline,
+            "ref": ref,
+            "usage": usage or {},
+        })
+        self._save(snap)
 
     def record_child_spawned(
         self, *, plan_id: str, step_id: str, child_run_id: str,

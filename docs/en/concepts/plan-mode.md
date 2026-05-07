@@ -67,6 +67,13 @@ so the snapshot stays small and outputs are preserved verbatim
 `get_step_result(snap, agent_state_dir, step_id)` which transparently
 resolves inline-vs-spilled.
 
+Sub-loop LLM calls within each step are also recorded
+([ADR-0025](../decisions/0025-plan-step-llm-memoization.md)) so a
+crash mid-step doesn't re-pay the LLM cost on resume. The sub-loop's
+`call_llm_tools` invocations are keyed by `args_hash`; on resume the
+recorded results replay before the LLM is invoked, only the crashed
+turn pays fresh.
+
 When `reyn chat` next starts, `AgentRegistry.restore_all`:
 
 1. Replays the WAL onto each agent's snapshot.

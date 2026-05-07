@@ -572,6 +572,47 @@ def _resume_failure_for(resume_plan: Any, step_id: str) -> str | None:
     return None
 
 
+def _build_sub_loop_memo_provider(
+    *,
+    parent_host: Any,
+    plan_id: str,
+    step_id: str,
+    resume_plan: Any,
+) -> Any:
+    """ADR-0025: construct a SubLoopMemoProvider for one step's sub-loop.
+
+    Best-effort: if the host doesn't expose ``_get_plan_registry`` (=
+    test stub) or no PlanRegistry is available (= state_log not wired),
+    returns None so RouterLoop runs without memoization. The plan still
+    executes correctly; resume just re-pays LLM cost on crashed steps.
+
+    Seed records on resume: extracted from
+    ``resume_plan.step_llm_call_log[step_id]`` (= populated by analyzer
+    from PlanSnapshot.step_llm_calls).
+    """
+    plan_registry = None
+    getter = getattr(parent_host, "_get_plan_registry", None)
+    if getter is not None:
+        try:
+            plan_registry = getter()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_plan_registry failed: %r", exc)
+    if plan_registry is None:
+        return None
+    seed: list = []
+    if resume_plan is not None:
+        from reyn.plan import extract_step_llm_call_records
+        log = getattr(resume_plan, "step_llm_call_log", None) or {}
+        seed = extract_step_llm_call_records(log, step_id)
+    from reyn.plan import SubLoopMemoProvider
+    return SubLoopMemoProvider(
+        plan_registry=plan_registry,
+        plan_id=plan_id,
+        step_id=step_id,
+        seed_records=seed,
+    )
+
+
 async def execute_plan(
     plan: Plan,
     *,
@@ -711,6 +752,20 @@ async def execute_plan(
                 plan=plan, step=step, prior_results=step_results, parent=parent_host,
             )
             sys_prompt = build_plan_step_system_prompt(plan, step, step_results)
+
+            # ADR-0025: construct a per-step SubLoopMemoProvider so the
+            # sub-loop's LLM calls are memoized (= recorded on every fresh
+            # call, replayed on resume). seed_records carries any
+            # previously-recorded LLM call results from
+            # resume_plan.step_llm_call_log[step.id] (= None for fresh
+            # runs, populated for resume hits).
+            memo_provider = _build_sub_loop_memo_provider(
+                parent_host=parent_host,
+                plan_id=plan_id,
+                step_id=step.id,
+                resume_plan=resume_plan,
+            )
+
             sub_loop = RouterLoop(
                 host=narrow_host,
                 chain_id=chain_id,
@@ -724,6 +779,7 @@ async def execute_plan(
                 # unbounded recursion (= dogfood 2026-05-07: 3-step plan emitted
                 # 3 plan invocations because steps re-emitted plan).
                 exclude_tools={"plan"},
+                memo_provider=memo_provider,
             )
             try:
                 sub_usage = await sub_loop.run(
@@ -756,9 +812,20 @@ async def execute_plan(
             try:
                 await parent_host.record_plan_step_completed(
                     plan_id=plan_id, step_id=step.id, content_len=len(text),
+                    result_text=text,
                 )
             except AttributeError:
                 pass
+            except TypeError:
+                # ADR-0023 Phase 2 v1 signature compat: hosts that
+                # don't take result_text get the legacy 3-arg call.
+                try:
+                    await parent_host.record_plan_step_completed(
+                        plan_id=plan_id, step_id=step.id,
+                        content_len=len(text),
+                    )
+                except AttributeError:
+                    pass
             except Exception as exc:  # noqa: BLE001
                 logger.warning("record_plan_step_completed failed: %r", exc)
             # ADR-0023 §2.1.1: emit step progress narration so the user

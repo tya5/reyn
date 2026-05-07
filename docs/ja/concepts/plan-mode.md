@@ -62,6 +62,13 @@ snapshot は小さいまま + truncation なしで完全 preserve。 read 側は
 `get_step_result(snap, agent_state_dir, step_id)` accessor が inline
 / spilled を透過解決。
 
+各 step の sub-loop LLM 呼び出しも記録される
+([ADR-0025](../decisions/0025-plan-step-llm-memoization.md))。 step
+途中の crash で resume した際 LLM cost を再支払いしない。 sub-loop の
+`call_llm_tools` 呼び出しは `args_hash` で識別され、 resume 時は
+記録された結果を replay してから fresh call は crash した turn のみ
+が支払い対象になる。
+
 `reyn chat` 起動時 `AgentRegistry.restore_all` が:
 
 1. WAL を replay して各 agent の snapshot に反映

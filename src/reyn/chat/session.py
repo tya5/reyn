@@ -543,6 +543,11 @@ class ChatSession:
         # when an AgentRegistry back-reference is wired (production path);
         # tests with registry=None see no truncation triggers (acceptable).
         self._skill_registry: SkillRegistry | None = None
+        # ADR-0023 Phase 2 + ADR-0025: lazy per-agent PlanRegistry. Created
+        # on first plan-mode invocation so per-plan snapshots persist
+        # alongside SnapshotJournal's WAL-side bookkeeping. Mirrors the
+        # SkillRegistry lazy-init pattern.
+        self._plan_registry: "Any" = None
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
@@ -1100,6 +1105,42 @@ class ChatSession:
                 truncate_eligible_hook=hook,
             )
         return self._skill_registry
+
+    def _get_plan_registry(self) -> "Any":
+        """Return the per-agent PlanRegistry, lazily constructed on first call.
+
+        ADR-0023 Phase 2 + ADR-0025: per-plan snapshots persist
+        alongside SnapshotJournal's WAL-side bookkeeping. Without this
+        registry hook, ADR-0023 forward replay has nothing to read on
+        resume (PlanRegistry.load_active() returns empty), and ADR-0025
+        sub-loop LLM memoization has nowhere to record.
+
+        Returns None when no state_log is wired — test / standalone
+        mode without persistence.
+
+        Truncate hook mirrors _get_skill_registry: fires
+        AgentRegistry.truncate_wal_if_eligible after every durable
+        per-plan mutation (= last_step_applied_seq bump).
+        """
+        if self._state_log is None:
+            return None
+        if self._plan_registry is None:
+            from reyn.plan import PlanRegistry
+            agent_state_dir = (
+                Path(".reyn") / "agents" / self.agent_name / "state"
+            )
+            hook = None
+            if self._registry is not None:
+                async def _truncate_hook() -> None:
+                    if self._registry is not None:
+                        await self._registry.truncate_wal_if_eligible()
+                hook = _truncate_hook
+            self._plan_registry = PlanRegistry(
+                agent_name=self.agent_name,
+                agent_state_dir=agent_state_dir,
+                truncate_eligible_hook=hook,
+            )
+        return self._plan_registry
 
     def _build_agent(
         self,
@@ -3412,14 +3453,64 @@ class ChatSession:
         await self._journal.record_plan_started(
             plan_id=plan_id, goal=goal, n_steps=n_steps,
         )
+        # ADR-0023 Phase 2 + ADR-0025 wiring: per-plan snapshot is
+        # created here so on-disk state mirrors AgentSnapshot's
+        # active_plan_ids. Without this, the resume coordinator's
+        # PlanRegistry.load_active() returns empty and forward replay
+        # silently degrades to legacy discard.
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None:
+            try:
+                # Stamp applied_seq from the agent snapshot the journal
+                # just bumped. Non-blocking on errors — registry is the
+                # cache, the WAL append is the source of truth.
+                applied = self._journal.snapshot.applied_seq
+                # Stash decomposition artifact path for §3.5 SSoT.
+                from pathlib import Path
+                agent_state_dir = (
+                    Path(".reyn") / "agents" / self.agent_name / "state"
+                )
+                from reyn.plan import decomposition_path
+                artifact = decomposition_path(agent_state_dir, plan_id)
+                plan_reg.start(
+                    plan_id=plan_id,
+                    chain_id=f"plan_{plan_id}",  # ADR-0023 §2.1.2 per-plan chain
+                    goal=goal,
+                    applied_seq=applied,
+                    decomposition_artifact_path=str(artifact)
+                    if artifact.exists()
+                    else None,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "PlanRegistry.start failed for %s: %r", plan_id, exc,
+                )
 
     async def record_plan_completed(self, *, plan_id: str) -> None:
         await self._journal.record_plan_completed(plan_id=plan_id)
+        # ADR-0023 Phase 2 wiring: per-plan workspace cleanup.
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None:
+            try:
+                await plan_reg.complete(plan_id=plan_id, status="completed")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "PlanRegistry.complete failed for %s: %r", plan_id, exc,
+                )
 
     async def record_plan_aborted(
         self, *, plan_id: str, reason: str = "",
     ) -> None:
         await self._journal.record_plan_aborted(plan_id=plan_id, reason=reason)
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None:
+            try:
+                await plan_reg.complete(plan_id=plan_id, status="aborted")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "PlanRegistry.complete (abort) failed for %s: %r",
+                    plan_id, exc,
+                )
 
     # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
     # Mirrors the plan_started/completed/aborted wiring above.
@@ -3428,24 +3519,50 @@ class ChatSession:
         self, *, plan_id: str, step_id: str, depends_on: list[str],
         n_tools: int,
     ) -> None:
-        await self._journal.record_plan_step_started(
+        seq = await self._journal.record_plan_step_started(
             plan_id=plan_id, step_id=step_id,
             depends_on=depends_on, n_tools=n_tools,
         )
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None and seq is not None:
+            plan_reg.record_step_started(
+                plan_id=plan_id, step_id=step_id, applied_seq=seq,
+            )
 
     async def record_plan_step_completed(
         self, *, plan_id: str, step_id: str, content_len: int,
+        result_text: str | None = None,
     ) -> None:
-        await self._journal.record_plan_step_completed(
+        """Record durable step completion.
+
+        ADR-0023 Phase 2 + ADR-0024: ``result_text`` is the optional
+        full text — passed through to PlanRegistry which inlines or
+        spills based on size. Callers (= execute_plan) supply this so
+        the per-plan snapshot carries the data; analyzer reads it back
+        on resume.
+        """
+        seq = await self._journal.record_plan_step_completed(
             plan_id=plan_id, step_id=step_id, content_len=content_len,
         )
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None and seq is not None:
+            await plan_reg.record_step_completed(
+                plan_id=plan_id, step_id=step_id, applied_seq=seq,
+                result_text=result_text or "",
+            )
 
     async def record_plan_step_failed(
         self, *, plan_id: str, step_id: str, error: str,
     ) -> None:
-        await self._journal.record_plan_step_failed(
+        seq = await self._journal.record_plan_step_failed(
             plan_id=plan_id, step_id=step_id, error=error,
         )
+        plan_reg = self._get_plan_registry()
+        if plan_reg is not None and seq is not None:
+            await plan_reg.record_step_failed(
+                plan_id=plan_id, step_id=step_id, applied_seq=seq,
+                error_repr=error,
+            )
 
     # Decomposition artifact persistence (ADR-0023 §3.5). Resolves the
     # agent-specific state directory and delegates to the standalone

@@ -248,6 +248,7 @@ class RouterLoopHost(Protocol):
 
     async def record_plan_step_completed(
         self, *, plan_id: str, step_id: str, content_len: int,
+        result_text: str | None = None,
     ) -> None: ...
 
     async def record_plan_step_failed(
@@ -303,6 +304,7 @@ class RouterLoop:
         budget: Any = None,  # BudgetTracker | None — process-shared cost tracker
         system_prompt_override: str | None = None,
         exclude_tools: set[str] | None = None,
+        memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
     ):
         self.host = host
         self.chain_id = chain_id
@@ -322,6 +324,13 @@ class RouterLoop:
         # compare" produced 3 plan invocations because step LLMs saw plan
         # in their tool catalog and self-decomposed.
         self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
+        # ADR-0025: optional sub-loop LLM call memoization. When set,
+        # ``call_llm_tools`` invocations consult the provider before
+        # invoking — args_hash hit returns the recorded LLMToolCallResult
+        # without paying LLM cost. Used by plan-mode resume so a crashed
+        # mid-step sub-loop replays its earlier LLM turns from snapshot
+        # rather than re-paying. ``None`` = normal execution (no memo).
+        self._memo_provider = memo_provider
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -384,16 +393,56 @@ class RouterLoop:
             messages.append({"role": "user", "content": user_text})
 
         for _iteration in range(self.max_iterations):
-            result = await call_llm_tools(
-                model=host.resolve_model(self.router_model),
-                messages=messages,
-                tools=tools,
-                tool_choice="auto",
-                skill_name="router",
-                budget=self.budget,
-                budget_agent=host.agent_name,
-                trace_caller="router",
-            )
+            resolved_model = host.resolve_model(self.router_model)
+            # ADR-0025: memo lookup — a recorded LLMToolCallResult for
+            # this exact (model, messages, tools, tool_choice) tuple
+            # short-circuits the call. Used by plan-mode resume so a
+            # crashed mid-step sub-loop replays earlier LLM turns
+            # without re-paying. memo_provider is None for non-resume
+            # paths (= chat router main loop, fresh plan runs).
+            result = None
+            args_hash: str | None = None
+            if self._memo_provider is not None:
+                from reyn.plan.sub_loop_memo import compute_sub_loop_args_hash
+                args_hash = compute_sub_loop_args_hash(
+                    model=resolved_model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                )
+                memo = self._memo_provider.get_recorded_result(args_hash)
+                if memo is not None:
+                    host.events.emit(
+                        "plan_step_llm_memoized",
+                        chain_id=self.chain_id,
+                        plan_id=getattr(self._memo_provider, "plan_id", None),
+                        step_id=getattr(self._memo_provider, "step_id", None),
+                        args_hash=args_hash,
+                    )
+                    result = memo
+            if result is None:
+                result = await call_llm_tools(
+                    model=resolved_model,
+                    messages=messages,
+                    tools=tools,
+                    tool_choice="auto",
+                    skill_name="router",
+                    budget=self.budget,
+                    budget_agent=host.agent_name,
+                    trace_caller="router",
+                )
+                # Record the fresh result for future resume hit. Defensive:
+                # never let recording failure break the loop.
+                if self._memo_provider is not None and args_hash is not None:
+                    try:
+                        await self._memo_provider.record(
+                            args_hash=args_hash, result=result,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "sub-loop memo record failed: %r", exc,
+                        )
             if result.usage:
                 self._total_usage += result.usage
             if result.tool_calls:

@@ -90,6 +90,16 @@ class PlanSnapshot:
     # backward-compatible additive field, no PLAN_SNAPSHOT_VERSION
     # bump needed.
     step_result_refs: dict[str, str] = field(default_factory=dict)
+    # ADR-0025: per-step recorded LLM calls within the sub-loop.
+    # Populated by ``SubLoopMemoProvider.record`` so a crash mid-step
+    # doesn't re-pay the LLM cost on resume. Each entry is a list of
+    # records; each record has the shape:
+    #   {args_hash, inline, ref, usage}
+    # Inline records hold the full LLMToolCallResult dict (≤32 KB);
+    # spilled records hold None for inline and a relative path for ref
+    # (= ADR-0024 spill pattern; same per-plan workspace dir, cleaned
+    # up by delete_plan_workspace).
+    step_llm_calls: dict[str, list[dict]] = field(default_factory=dict)
     step_failures: dict[str, str] = field(default_factory=dict)
     current_step_id: str | None = None
     last_committed_step_id: str | None = None
@@ -163,6 +173,7 @@ class PlanSnapshot:
             steps_serialized=list(data.get("steps_serialized", []) or []),
             step_results=dict(data.get("step_results", {}) or {}),
             step_result_refs=dict(data.get("step_result_refs", {}) or {}),
+            step_llm_calls=dict(data.get("step_llm_calls", {}) or {}),
             step_failures=dict(data.get("step_failures", {}) or {}),
             current_step_id=data.get("current_step_id"),
             last_committed_step_id=data.get("last_committed_step_id"),
@@ -194,6 +205,7 @@ class PlanSnapshot:
             "steps_serialized": self.steps_serialized,
             "step_results": self.step_results,
             "step_result_refs": self.step_result_refs,
+            "step_llm_calls": self.step_llm_calls,
             "step_failures": self.step_failures,
             "current_step_id": self.current_step_id,
             "last_committed_step_id": self.last_committed_step_id,

@@ -154,6 +154,8 @@ def test_save_emits_documented_schema(tmp_path: Path) -> None:
         "step_results",
         # ADR-0024: spill ref dict (additive, no version bump)
         "step_result_refs",
+        # ADR-0025: sub-loop LLM call log (additive, no version bump)
+        "step_llm_calls",
         "step_failures",
         "current_step_id",
         "last_committed_step_id",

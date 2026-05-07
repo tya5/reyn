@@ -118,6 +118,10 @@ class PlanResumePlan:
     step_states: tuple[PlanStepState, ...] = ()
     has_ambiguity: bool = False
     has_in_flight_child: bool = False
+    # ADR-0025: per-step recorded sub-loop LLM call log, copied from
+    # PlanSnapshot.step_llm_calls. execute_plan constructs a
+    # SubLoopMemoProvider per pending step seeded from this map.
+    step_llm_call_log: dict = field(default_factory=dict)
 
     @property
     def committed_step_ids(self) -> frozenset[str]:
@@ -359,6 +363,9 @@ class PlanResumeAnalyzer:
             step_states=tuple(step_states),
             has_ambiguity=any_ambig,
             has_in_flight_child=any_in_flight_child,
+            # ADR-0025: forward the per-step LLM call log so the runtime
+            # can seed a SubLoopMemoProvider per pending step.
+            step_llm_call_log=dict(snapshot.step_llm_calls),
         )
 
     def _step_signature(self, step: PlanStep) -> str:
