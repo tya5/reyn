@@ -319,6 +319,67 @@ class SnapshotJournal:
             self._snapshot.active_plan_ids.remove(plan_id)
         self.save()
 
+    # ── plan-step lifecycle persistence (ADR-0023 Phase 2 step 4) ─────────
+    #
+    # Step events are promoted from events-log to WAL so the resume
+    # analyzer can pair (plan_step_started, plan_step_completed |
+    # plan_step_failed) deterministically across restart. Returns the
+    # assigned WAL seq so the caller can stamp it onto PlanRegistry's
+    # per-plan snapshot (PlanRegistry.record_step_*).
+
+    async def record_plan_step_started(
+        self, *, plan_id: str, step_id: str, depends_on: list[str],
+        n_tools: int,
+    ) -> int | None:
+        """Append ``plan_step_started`` to WAL. Returns the assigned seq."""
+        if self._state_log is None:
+            return None
+        seq = await self._state_log.append(
+            "plan_step_started",
+            target=self._agent_name,
+            plan_id=plan_id,
+            step_id=step_id,
+            depends_on=list(depends_on),
+            n_tools=n_tools,
+        )
+        self._snapshot.applied_seq = seq
+        self.save()
+        return seq
+
+    async def record_plan_step_completed(
+        self, *, plan_id: str, step_id: str, content_len: int,
+    ) -> int | None:
+        """Append ``plan_step_completed`` to WAL. Returns the assigned seq."""
+        if self._state_log is None:
+            return None
+        seq = await self._state_log.append(
+            "plan_step_completed",
+            target=self._agent_name,
+            plan_id=plan_id,
+            step_id=step_id,
+            content_len=content_len,
+        )
+        self._snapshot.applied_seq = seq
+        self.save()
+        return seq
+
+    async def record_plan_step_failed(
+        self, *, plan_id: str, step_id: str, error: str,
+    ) -> int | None:
+        """Append ``plan_step_failed`` to WAL. Returns the assigned seq."""
+        if self._state_log is None:
+            return None
+        seq = await self._state_log.append(
+            "plan_step_failed",
+            target=self._agent_name,
+            plan_id=plan_id,
+            step_id=step_id,
+            error=error,
+        )
+        self._snapshot.applied_seq = seq
+        self.save()
+        return seq
+
     # ── restore / persist ─────────────────────────────────────────────────
 
     def install(self, snapshot: AgentSnapshot) -> None:

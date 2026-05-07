@@ -61,14 +61,18 @@ WAL_EVENT_KINDS = (
     "intervention_answer_buffered",
     "intervention_answer_consumed",
     # NEW (ADR-0022) — plan-mode lifecycle (Phase 1: fail-safe + observability)
-    # Per-step events (plan_emitted / plan_step_started / plan_step_completed /
-    # plan_step_failed / plan_aggregated) stay in the events log — those are
-    # forensic, not recovery state. Only the plan-as-a-unit lifecycle goes
-    # through WAL so AgentSnapshot.active_plan_ids is reliable for crash
-    # cleanup discovery.
     "plan_started",
     "plan_completed",
     "plan_aborted",
+    # NEW (ADR-0023 Phase 2 step 4) — per-step events promoted from
+    # events-log into WAL for resume determinism. The analyzer pairs
+    # (plan_step_started, plan_step_completed | plan_step_failed) by
+    # (plan_id, step_id) to derive each step's recovery state. Forensic-
+    # only events (plan_emitted / plan_aggregated / plan_run_interrupted)
+    # remain in the events log — they don't drive resume decisions.
+    "plan_step_started",
+    "plan_step_completed",
+    "plan_step_failed",
 )
 
 
