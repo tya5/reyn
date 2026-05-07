@@ -138,7 +138,34 @@ external MCP servers; this lets external clients _consume_ Reyn back.
 
 ### Wire it up (Claude Desktop example)
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
+Reyn supports two MCP transports; pick whichever fits your setup.
+
+**Recommended — SSE (shared with the web UI, dev-loop friendly):**
+
+```bash
+reyn web --port 8080         # leave running in any terminal
+# add `--reload` for the dev loop
+```
+
+Then in `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "reyn": {
+      "transport": {"type": "sse", "url": "http://localhost:8080/mcp/sse"}
+    }
+  }
+}
+```
+
+The same `AgentRegistry` / `BudgetTracker` backs the browser UI and
+external MCP clients, so a `reyn web` already running for the UI
+doubles as your MCP endpoint at no extra cost. With `--reload`,
+edits to Reyn's source restart the server in-place; MCP clients
+reconnect automatically — no Claude Desktop restart on each change.
+
+**Fallback — stdio (subprocess, no port required):**
 
 ```json
 {
@@ -159,7 +186,13 @@ similar MCP clients don't honour a `cwd` field in their server config,
 so the spawned process can land in `/`. Pass the project path as a CLI
 argument instead.
 
-Restart the MCP host fully (= Quit, not just close window).
+Restart the MCP host fully (= Quit, not just close window) after
+changing the config in either case.
+
+**Why two?** Stdio = no network, no port, simplest in air-gapped
+or headless setups. SSE = shared lifecycle with the web UI, hot
+reload during development, and no per-client subprocess. Pick stdio
+when you need isolation, SSE when you're already running `reyn web`.
 
 ### Tools exposed
 

@@ -54,6 +54,7 @@ app.add_middleware(
 
 from reyn.web.routers import agents as _agents_router  # noqa: E402
 from reyn.web.routers import budget as _budget_router  # noqa: E402
+from reyn.web.routers import mcp as _mcp_router  # noqa: E402
 from reyn.web.routers import permissions as _perms_router  # noqa: E402
 from reyn.web.routers import runs as _runs_router  # noqa: E402
 from reyn.web.routers import skills as _skills_router  # noqa: E402
@@ -69,6 +70,21 @@ app.include_router(_perms_router.router, prefix="/api")
 app.include_router(_budget_router.router, prefix="/api")
 app.include_router(_web_config_router.router, prefix="/api")
 app.include_router(_web_data_router.router, prefix="/api")
+
+# MCP-over-SSE: GET /mcp/sse (event stream) + POST /mcp/messages (client → server).
+# The router carries the GET; the POST endpoint is a Starlette Mount because
+# SseServerTransport.handle_post_message is itself an ASGI app.
+# Mounting is best-effort: skip if `[mcp]` extra isn't installed so the rest
+# of the gateway still boots.
+app.include_router(_mcp_router.router)
+try:
+    app.router.routes.append(_mcp_router.get_mcp_message_mount())
+except ImportError:  # pragma: no cover — `[mcp]` extra not installed
+    import logging as _logging
+    _logging.getLogger(__name__).info(
+        "mcp SDK not installed; /mcp/messages POST endpoint disabled. "
+        "Install with `pip install -e .[mcp]` to enable MCP-over-SSE."
+    )
 
 
 # ── WebSocket routes ────────────────────────────────────────────────────────
