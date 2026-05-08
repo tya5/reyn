@@ -127,9 +127,72 @@ After describe_skill, MUST call invoke_skill if the user asked for Action.
 
 care boundary はこれら 4 つを統合するメタ原則。
 
+## Downstream tooling — Reyn の上に build されるもの
+
+上記の 3 区分は OS boundary が LLM 挙動に対してどこに位置するかを説明する。もう一つ名指しする価値のある境界がある: Reyn が終わり、その上に build されるエコシステムが始まる場所だ。
+
+### パターン
+
+Reyn は OS 層に一連の raw primitive を公開する:
+
+- **Events log** — 全状態変化を記録した、構造化・機械可読な JSONL ストリーム ([events.md](events.md) 参照)。
+- **WAL および skill snapshot** — crash を生き残る workspace state; P5 の workspace-as-source-of-truth の産物。
+- **Cost tracker** — run 単位・skill 単位のトークン数とコスト集計を event として emit。
+- **Phase trace** — run ごとに記録された phase 順序、LLM call、Control IR 実行の系列。
+- **control_ir results** — phase 実行ごとに event log に書き込まれる op レベルの実行結果。
+
+これらの primitive は、LLM-agent エコシステムが現在活発に build している一連の downstream product にとって十分な基盤だ: conversation analytics platform、durable agent runtime、eval-as-a-service、observability dashboard、agent marketplace。Reyn が substrate を提供し、それらの product が consumer layer となる。
+
+### なぜこれが意図的なものか
+
+P7 は OS コードが skill 固有の文字列を含んではならないと定める。同じロジックが一段上にも適用される: OS はあらゆる隣接 product ニーズを吸収してはならない。吸収された機能はそれぞれ、OS が何かしら skill 固有あるいは consumer 固有のことを知ることを要求し、Reyn を拡張可能にしている抽象を破壊する。
+
+したがって care boundary は上述の LLM-behavior split だけを意味するのではない — 上位 product が自分で build すべきものの下方限界も定義する。Reyn を基盤として使えるほど小さく保つことが、基盤としての有用性を守る。analytics platform であり deployment runtime であり eval service でもある OS は、あらゆる場面で skill 固有の知識を必要とし — P7 違反の連鎖を生む。
+
+### Landscape からの具体例
+
+2025-2026 年の HN AI-agent landscape から 2 つの product がこのパターンを例示する。
+
+**Conversation analytics platform (Lenzy AI を一例として)**
+
+Lenzy AI は「product analytics for AI agents」— agent とユーザーの会話を分析して product insight を抽出する。Reyn の primitive として消費するのは events log だ: `workflow_started`、`phase_completed`、`llm_called`、および per-skill 集計は、会話の弧を再構成して analytics を導出するために必要なものをすべて持っている。
+
+Reyn が行うこと: 安定した envelope を持つ、run 単位の構造化 event を emit すること。意図的にスコープ外とすること: それらの event をユーザー・run・skill をまたいで集計し、dashboard、トレンドライン、product insight レポートを生成すること。そのレイヤーには product 固有の schema 知識が必要だ (この skill にとって「成功した会話」とは何か?) — OS が encode してはならないもの。
+
+**Stateful agent runtime (Agentainer を一例として)**
+
+Agentainer (「Vercel for stateful AI agents」) は durable agent container を persistent state、auto-recovery、proxy routing 付きで zero-DevOps で提供する。消費する Reyn primitive は WAL + skill snapshot + state-dir contract — P5 crash recovery を可能にするのと同じ機構だ。
+
+Reyn が行うこと: crash を生き残る workspace の維持; 最後の一貫した WAL checkpoint から run を resume すること。意図的にスコープ外とすること: zero-DevOps container 管理、HTTP proxy routing、マルチテナント state 分離、インフラ障害モードに合わせた retry policy。これらは deployment layer の関心事であり、agent OS の関心事ではない。
+
+**Eval-as-a-service product**
+
+Reyn が行うこと: phase 単位・skill 単位のテスト実行のために `LLMReplay` と eval framework を提供すること。意図的にスコープ外とすること: hosted eval pipeline、組織横断の benchmark 集計、rubric marketplace。Reyn を消費する eval service は `LLMReplay` を API 経由で駆動する — Reyn が hosting インフラを ship することを要求しない。
+
+**Observability dashboard**
+
+Reyn が行うこと: 安定した envelope (`ts`、`kind`、`phase`、`run_id`、payload) を持つ構造化 JSONL として event を emit すること。意図的にスコープ外とすること: それらの event をクエリ可能な database に保存し、時系列 dashboard をレンダリングし、異常をアラートすること。JSONL 互換の observability tool であれば、Reyn が embedded dashboard を ship することなく log を ingestion できる。
+
+### これが意味する contract
+
+downstream consumer が events log、WAL、state-dir format に依存しているため、それらの format は public API と同等の慎重さで進化させるべきだ。event envelope への破壊的変更 — `kind` のリネーム、`run_id` format の変更、payload フィールドの再構築 — は、その上に build されたすべての analytics・observability integration への破壊的変更となる。
+
+pre-1.0 の安定性注意書きが適用される: これらの contract はまだ frozen されていない。しかし方向性は安定性と明示性に向かっており、churn ではない。追加は安全; 削除とリネームには deprecation window が必要だ。
+
+### contributor へのソフトな境界線
+
+新機能を評価するとき、問う: 「これを提供するために Reyn は skill 固有あるいは consumer 固有のことを知る必要があるか?」
+
+もし yes なら — 「成功した会話」が何を意味するかを OS が理解する必要がある、あるいはどの consumer のためにどの event を集計するかを知る必要がある、あるいはどの deployment 環境にどの retry policy が合うかを知る必要がある — それは downstream layer に属し、OS には属さない。これはニーズの否定ではない; 責任の正しい割り当てだ。OS が primitive を提供し、downstream layer が product を提供する。
+
+もし no なら — OS が特定の skill あるいは consumer について何も知ることなく提供できる汎用の structural 機能なら — OS layer の候補だ。
+
+この問いは P7 をコード境界だけでなく product 境界に適用したものだ。
+
 ## See also
 
 - [principles.md](principles.md) — P1–P8 (特に P3、P4、P7)
 - [phase-vs-skill-vs-os.md](phase-vs-skill-vs-os.md) — レイヤー境界アーキテクチャ
 - [llm-as-decision-engine.md](llm-as-decision-engine.md) — LLM を制約する理由、レスキューしない理由
 - [events.md](events.md) — post-call の道具としての observability (P6)
+- [architecture.md](architecture.md) — component layer と OS-as-constant モデル

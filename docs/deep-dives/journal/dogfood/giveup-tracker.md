@@ -1549,3 +1549,52 @@ trace 観測で diverge point pinpoint:
 - **真の rate 測定には driver 設計の見直しが必要**: 既存 dogfood pattern (= per-run clean_state) は R1 type attractor (= LLM 拒否) の測定に最適化、 G12 type (= context bloat empty) は long-session pattern が必要
 
 ---
+
+### G30: multi-agent debate primitive を追加しない (negative-space decision)
+
+**Cat: C5 (= design-choice-explicit)**
+
+#### 観測
+
+2026-05-09 dogfood セッションで `site:news.ycombinator.com AI agent` の HN 横断調査時、 「AI agents that argue with each other to improve decisions」 (HATS、 HN id 47903471、 2026-04-25、 28 pts、 19 comments、 [https://github.com/rockcat/HATS](https://github.com/rockcat/HATS)) を読み込み。 multi-agent **debate** (= 複数 agent が互いに議論して合意形成) を design primitive として提案するプロダクト。
+
+HN 上位コメント:
+- "Sounds like a less efficient version of the mixture of experts approach." (oldsecondhand)
+- "How does mixture of experts architecture work? Are they debating, or merely delegating?" (gavmor)
+- "I am struggling to put that in a polite manner. When I go into the repo and find out that it does stuff like lip syncing of talking avatars then I start to think what percentage of the development effort goes into marketing?" (zby)
+
+= HN expert 層は **debate より delegation (= MoE 的選択)** を効率的と評価。 debate ベース multi-agent は engagement のためのギミックと見られる傾向。
+
+#### 真の解 (= 採用しない選択)
+
+Reyn の現 multi-agent 設計 = **delegation only**:
+- `delegate_to_agent` op (= agent A → agent B にメッセージ送信、 B の reply を受信)
+- skill allowlist (= 各 agent ごとに利用可能 skill を制限)
+- topology (= 通信可能な agent ペアを宣言)
+
+debate primitive (= 例: 「両 agent が同時に意見を出して、 第 3 agent が合意形成 phase で merge」) は **意図的に追加しない** 選択。
+
+#### Recommendation: 追加しない (= G30 = negative-space decision)
+
+理由:
+
+1. **delegation で多くの use case が解ける** — 「専門 agent に投げて結果を統合」 は委任で十分
+2. **debate は MoE 比で非効率** — HN consensus + token budget 観点で複数 LLM 同時呼び出しは cost も latency も悪化
+3. **engagement gimmick の risk** — HATS の HN 評価が示す通り、 「 agent 同士が話す」 は marketing 受けは良いが production utility は薄い
+4. **Reyn vision (= predictability + constrained reasoning) と整合しない** — debate は LLM の創造性を増幅する方向、 Reyn は制約を増やす方向
+
+#### Counter-argument を検討すべき trigger
+
+- enterprise customer から具体 use case 提示 (= 「以下の理由で debate が delegation で代替できない」 を伴う)
+- debate ベース pattern が実証的に delegation を outperform する benchmark 出現
+- multi-agent benchmarking 領域で「 debate 必要」 が学術的に確立
+
+これらが起きたら G30 を re-open。 投機的な「あったら良さそう」 では re-open しない。
+
+#### 教訓
+
+- **negative-space decision を first-class entry として記録する価値**: 「採用しなかった理由」 を tracker に明示することで、 後から contributor が同じ提案を再投入したとき即時 reply 可能 (= 「過去に検討、 現状の judgement は不採用」)。 plan file の「採用しなかったもの」 section と二重管理にせず、 dogfood 由来の negative decisions は giveup-tracker に集約する規律を確立
+- **HN expert consensus を data point として活用**: 単一の批判コメントは noise だが、 28 pts スレッドで複数の technical commenter が同方向の批判をしている事実は、 design 判断に組み込める evidence weight を持つ
+- **insight extraction → tracker entry の流れ**: HN insights doc (`docs/deep-dives/journal/insights/2026-05-09-hn-ai-agent-landscape-insights.md` Insight 4) で抽出 → tracker に landing。 この pipeline を industry observation の standard flow として確立
+
+---

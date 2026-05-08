@@ -127,9 +127,72 @@ Each rule targets a specific scenario. They overlap, contradict, and confuse wea
 
 The care boundary is the meta-principle that unifies these four.
 
+## Downstream tooling — what builds on Reyn
+
+The three care regions above describe where the OS boundary sits relative to LLM behavior. There is a fourth boundary worth naming: where Reyn ends and the ecosystem that builds *on top of it* begins.
+
+### The pattern
+
+Reyn exposes a set of raw primitives at the OS layer:
+
+- **Events log** — a JSONL stream of every state change, structured and machine-readable (see [events.md](events.md)).
+- **WAL and skill snapshots** — the workspace state that survives a crash; the artifact of P5's workspace-as-source-of-truth.
+- **Cost tracker** — per-run and per-skill token and cost aggregations emitted as events.
+- **Phase trace** — the sequence of phases, LLM calls, and Control IR executions recorded per run.
+- **control_ir results** — op-level outcomes written into the event log per phase execution.
+
+These primitives are sufficient for a range of downstream products that the LLM-agent ecosystem is actively building: conversation-analytics platforms, durable agent runtimes, eval-as-a-service, observability dashboards, agent marketplaces. Reyn provides the substrate; those products are the consumer layer.
+
+### Why this is intentional, not accidental
+
+P7 says OS code must not contain skill-specific strings. The same logic extends one level up: the OS must not absorb every adjacent product need. Each absorbed feature would require the OS to know something skill-specific or consumer-specific in order to provide it, defeating the abstraction that makes Reyn extensible.
+
+The care boundary is therefore not just about the LLM-behavior split described above — it also defines the downward limit of what upstream products are expected to build themselves. Keeping Reyn small enough to be a foundation is what preserves the foundation's usefulness. An OS that tries to be the analytics platform, the deployment runtime, and the eval service simultaneously would need skill-specific knowledge at every turn — a cascade of P7 violations.
+
+### Concrete examples from the landscape
+
+Two products from the 2025-2026 HN AI-agent landscape illustrate the pattern:
+
+**Conversation-analytics platforms (Lenzy AI as one example)**
+
+Lenzy AI offers "product analytics for AI agents" — analyzing user-agent conversations to extract product insights. The Reyn primitive it would consume is the events log: `workflow_started`, `phase_completed`, `llm_called`, and per-skill aggregations already carry everything needed to reconstruct a conversation arc and derive analytics.
+
+What Reyn does: emit structured, per-run events with stable envelopes. What is deliberately out of scope: aggregating those events across users, runs, or skills into dashboards, trend lines, or product-insight reports. That layer requires product-specific schema knowledge (what does "a successful conversation" mean for *this* skill?) that the OS must not encode.
+
+**Stateful agent runtimes (Agentainer as one example)**
+
+Agentainer ("Vercel for stateful AI agents") offers durable agent containers with persistent state, auto-recovery, and proxy routing. The Reyn primitives it would consume are WAL + skill snapshots + the state-dir contract — the same machinery that enables P5 crash recovery.
+
+What Reyn does: maintain a workspace that survives a crash; resume a run from the last consistent WAL checkpoint. What is deliberately out of scope: zero-DevOps container management, HTTP proxy routing, multi-tenant state isolation, and retry policies tuned to infrastructure failure modes. Those concerns belong to the deployment layer, not the agent OS.
+
+**Eval-as-a-service products**
+
+What Reyn does: provide `LLMReplay` and the eval framework for per-phase, per-skill test execution. What is deliberately out of scope: hosted eval pipelines, cross-organization benchmark aggregation, or rubric marketplaces. An eval service consuming Reyn would drive `LLMReplay` via API, not require Reyn to ship the hosting infrastructure.
+
+**Observability dashboards**
+
+What Reyn does: emit events as structured JSONL with a stable envelope (`ts`, `kind`, `phase`, `run_id`, payload). What is deliberately out of scope: storing those events in a queryable database, rendering time-series dashboards, or alerting on anomalies. Any JSONL-compatible observability tool can ingest the log without Reyn shipping an embedded dashboard.
+
+### The contract this implies
+
+Because downstream consumers depend on the events log, WAL, and state-dir formats, those formats should evolve with the same care as a public API. A breaking change to the event envelope — renaming `kind`, changing `run_id` format, restructuring payload fields — is a breaking change for every analytics or observability integration built on top.
+
+The pre-1.0 stability caveat applies: these contracts are not yet frozen. But the direction is toward stability and explicitness, not churn. Additions are safe; removals and renames require a deprecation window.
+
+### A soft boundary line for contributors
+
+When evaluating a proposed feature, ask: "Does providing this require Reyn to know skill-specific or consumer-specific things?"
+
+If yes — if the feature would require the OS to understand what a "successful conversation" means, or which events to aggregate for which consumer, or what retry policy fits which deployment environment — it belongs in a downstream layer, not in the OS. That is not a rejection of the need; it is a correct assignment of responsibility. The OS provides the primitive; the downstream layer provides the product.
+
+If no — if the feature is a general-purpose structural capability the OS can provide without knowing anything about any specific skill or consumer — it is a candidate for the OS layer.
+
+This question is P7 applied to the product boundary, not just the code boundary.
+
 ## See also
 
 - [principles.md](principles.md) — P1–P8 (especially P3, P4, P7)
 - [phase-vs-skill-vs-os.md](phase-vs-skill-vs-os.md) — layer boundary architecture
 - [llm-as-decision-engine.md](llm-as-decision-engine.md) — why the LLM is constrained, not rescued
 - [events.md](events.md) — observability as the post-call tool (P6)
+- [architecture.md](architecture.md) — component layers and the OS-as-constant model

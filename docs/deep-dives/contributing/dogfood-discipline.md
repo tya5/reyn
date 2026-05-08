@@ -448,6 +448,15 @@ python scripts/detect_attractor.py --root .reyn/
 
 Run this after every dogfood batch to catch attractor patterns that might not be visible in the high-level scenario outcome. A scenario can "complete" (produce a final output) while containing one or more attractor events at intermediate phases.
 
+### scripts/hn_research.py
+
+Industry-research tool: runs a site-scoped DuckDuckGo search for a topic on `news.ycombinator.com`, fetches full thread JSON from the Algolia HN API, and prints a digest of top posts with their top comments. Use for repeatable positioning / design research waves (see `docs/deep-dives/journal/insights/2026-05-09-hn-ai-agent-landscape-insights.md` for the motivating example).
+
+```bash
+python scripts/hn_research.py --topic "AI agent" --max-results 10 --top-comments 5
+python scripts/hn_research.py --ids 47733217,48035677 --top-comments 3
+```
+
 ### `reyn web` A2A endpoint — script-friendly chat exercise
 
 The TUI is not the only way to drive Reyn. `reyn web` starts a FastAPI server on `localhost:8080` that exposes every registered agent as an A2A (Agent2Agent) JSON-RPC endpoint. This is the right surface for:
