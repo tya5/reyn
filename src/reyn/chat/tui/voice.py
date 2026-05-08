@@ -99,15 +99,19 @@ class VoiceInput:
         *,
         model: str = "small",
         language: str | None = None,
-        device: str = "auto",
+        device: str = "cpu",
         compute_type: str = "int8",
         sample_rate: int = 16000,
+        cpu_threads: int = 4,
+        num_workers: int = 1,
     ) -> None:
         self._model_name = model
         self._language = language
         self._device = device
         self._compute_type = compute_type
         self._sample_rate = sample_rate
+        self._cpu_threads = cpu_threads
+        self._num_workers = num_workers
 
         # Lazily-imported handles (None until first use)
         self._sd: Any = None
@@ -317,6 +321,44 @@ class VoiceInput:
                 logger.debug("voice stream close: %s", exc)
             self._stream = None
 
+    def _model_cache_dir(self) -> "Path | None":
+        """Best-effort discovery of the HuggingFace cache dir for our model.
+
+        Used by the auto-recovery path in ``_ensure_model`` to wipe a
+        partially-downloaded model on construction failure. Returns
+        ``None`` when the dir is unidentifiable (= we won't try to clean).
+        """
+        from pathlib import Path
+        try:
+            from huggingface_hub.constants import HF_HUB_CACHE  # type: ignore[import]
+            cache_root = Path(HF_HUB_CACHE)
+        except Exception:
+            cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+        if not cache_root.is_dir():
+            return None
+        # faster-whisper canonical repos: ``Systran/faster-whisper-<size>``.
+        # HF Hub flattens repo names into ``models--Systran--faster-whisper-<size>``.
+        candidate = cache_root / f"models--Systran--faster-whisper-{self._model_name}"
+        return candidate if candidate.exists() else None
+
+    def _clear_model_cache(self) -> None:
+        """Remove the cached model dir so the next load triggers a fresh download.
+
+        No-op when the cache dir isn't found. Errors are logged and swallowed
+        so a failed cleanup never propagates as a TUI exception — worst
+        case the user retries manually.
+        """
+        target = self._model_cache_dir()
+        if target is None:
+            _vlog("cache cleanup: no cache dir to clean")
+            return
+        try:
+            import shutil
+            shutil.rmtree(target, ignore_errors=True)
+            _vlog(f"cache cleanup: removed {target}")
+        except Exception as exc:
+            _vlog(f"cache cleanup failed: {exc}")
+
     def _ensure_model(self) -> Any:
         """Lazy-load the faster-whisper model; cache for subsequent calls.
 
@@ -327,6 +369,11 @@ class VoiceInput:
         Thread-safe: ``self._model_lock`` serialises the constructor so the
         BG pre-warm and a foreground transcribe call can't race on the
         cache files / inflate two CTranslate2 contexts at once.
+
+        Self-healing: a cancelled / interrupted download leaves a partial
+        file in the HF cache that breaks the next load with an opaque
+        error or hang. We catch the load failure, wipe the cache dir, and
+        retry exactly once with a forced fresh download.
         """
         # Fast path: already loaded, no lock needed (single pointer read).
         if self._whisper_model is not None:
@@ -341,17 +388,47 @@ class VoiceInput:
                 raise VoiceUnavailable(
                     "faster-whisper not installed; run: pip install \"reyn[voice]\""
                 ) from exc
-            _vlog(
-                f"loading WhisperModel({self._model_name!r}, "
-                f"device={self._device!r}, compute_type={self._compute_type!r})"
-            )
-            self._whisper_model = WhisperModel(
+            self._whisper_model = self._construct_whisper_model(WhisperModel)
+            return self._whisper_model
+
+    def _construct_whisper_model(self, WhisperModel) -> Any:
+        """Build a WhisperModel with one cache-reset retry on failure.
+
+        Caller must hold ``self._model_lock``.
+        """
+        _vlog(
+            f"loading WhisperModel({self._model_name!r}, "
+            f"device={self._device!r}, compute_type={self._compute_type!r}, "
+            f"cpu_threads={self._cpu_threads}, num_workers={self._num_workers})"
+        )
+        try:
+            model = WhisperModel(
                 self._model_name,
                 device=self._device,
                 compute_type=self._compute_type,
+                cpu_threads=self._cpu_threads,
+                num_workers=self._num_workers,
             )
             _vlog("WhisperModel loaded")
-            return self._whisper_model
+            return model
+        except Exception as exc:
+            _vlog(
+                f"WhisperModel load failed ({exc!r}) — clearing cache and retrying"
+            )
+            self._clear_model_cache()
+            try:
+                model = WhisperModel(
+                    self._model_name,
+                    device=self._device,
+                    compute_type=self._compute_type,
+                    cpu_threads=self._cpu_threads,
+                    num_workers=self._num_workers,
+                )
+                _vlog("WhisperModel loaded after cache reset")
+                return model
+            except Exception as exc2:
+                _vlog(f"WhisperModel load failed even after cache reset: {exc2!r}")
+                raise
 
     def _transcribe_sync(self, audio) -> str:  # noqa: C901
         # Debug-mode visibility into exactly what the in-memory path sees.

@@ -102,9 +102,17 @@ class VoiceConfig:
     enabled: bool = True              # set False to hard-disable Ctrl+R even if deps installed
     model: str = "small"              # tiny | base | small | medium | large-v3
     language: str | None = "ja"       # ISO code; "" or null in YAML = auto-detect
-    device: str = "auto"              # auto | cpu | cuda | metal
+    device: str = "cpu"               # cpu | cuda  (faster-whisper has no metal backend
+                                      # — "auto" silently picks the wrong thing on
+                                      # some Mac setups, so default to explicit cpu)
     compute_type: str = "int8"        # int8 | float16 | float32
     sample_rate: int = 16000          # Whisper expects 16 kHz mono
+    cpu_threads: int = 4              # 0 = OpenMP default (= os.cpu_count()); pinning
+                                      # to 4 on Mac avoids the OpenMP/Python-threading
+                                      # deadlock seen with high core counts on Apple
+                                      # Silicon. Override per-machine if needed.
+    num_workers: int = 1              # parallel transcribe streams; we only ever run
+                                      # one at a time, so 1 keeps memory + threads low
 
 
 @dataclass
@@ -546,6 +554,8 @@ def _build_voice_config(raw: object) -> VoiceConfig:
         device=str(raw.get("device", defaults.device)),
         compute_type=str(raw.get("compute_type", defaults.compute_type)),
         sample_rate=int(raw.get("sample_rate", defaults.sample_rate)),
+        cpu_threads=int(raw.get("cpu_threads", defaults.cpu_threads)),
+        num_workers=int(raw.get("num_workers", defaults.num_workers)),
     )
 
 

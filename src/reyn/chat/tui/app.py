@@ -623,6 +623,8 @@ class ReynTUIApp(App):
                     "device": cfg_voice.device,
                     "compute_type": cfg_voice.compute_type,
                     "sample_rate": cfg_voice.sample_rate,
+                    "cpu_threads": cfg_voice.cpu_threads,
+                    "num_workers": cfg_voice.num_workers,
                 }
             self._voice_input = VoiceInput(**kwargs)
 
