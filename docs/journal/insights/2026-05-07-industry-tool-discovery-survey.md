@@ -265,3 +265,4 @@ Reyn の `intent-axis section + per-category list_*` family は (a) 派の
 - [G23: intent-axis section is load-bearing routing scaffold](../dogfood/giveup-tracker.md#g23) (= 同 session の Wave A revert evidence)
 - [envelope-layer attractor fix + mutation isolation methodology](2026-05-07-envelope-layer-attractor-fix.md) (= 同 session の sibling insight)
 - [Reyn vision project memory](../../../memory/project_reyn_vision.md) (= P3 + predictability over autonomy framing)
+- [agent-framework-trends.md](../../research/landscape/agent-framework-trends.md) (= この survey を参照する Researcher ロール成果物)
