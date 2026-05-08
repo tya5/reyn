@@ -1,7 +1,9 @@
 """Agents tab — Rich Tree view of registered agents and their running skills."""
 from __future__ import annotations
 
+import json
 import time as _time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rich.console import Group as RichGroup
@@ -12,6 +14,220 @@ from .base import _CORAL, logger
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
+
+
+# How many recent completed items to surface per agent. Two of each keeps
+# the tab compact even with several agents loaded.
+_RECENT_LIMIT = 2
+
+
+def _recent_skill_runs_for_agent(
+    project_root: Path | None,
+    agent_name: str,
+    running_run_ids: set[str],
+    limit: int = _RECENT_LIMIT,
+) -> list[dict]:
+    """Return up to ``limit`` recently-completed skill runs for ``agent_name``.
+
+    Each entry: ``skill_name``, ``run_id`` (8-char prefix), ``status``,
+    ``duration_s`` (float, may be 0 when timestamps unparseable), ``ts``
+    (ISO string of completion).
+
+    Source: ``.reyn/events/agents/<name>/skill_runs/*.jsonl``. Filenames
+    encode start timestamp + skill name; we read the LAST event in each
+    file to derive completion timestamp + status.
+    """
+    out: list[dict] = []
+    if project_root is None:
+        return out
+    skill_dir = (
+        project_root / ".reyn" / "events"
+        / "agents" / agent_name / "skill_runs"
+    )
+    if not skill_dir.is_dir():
+        return out
+
+    # Collect the candidate files newest-first by mtime, skip currently-
+    # running runs (= those whose run_id is in ``running_run_ids``), then
+    # cap at ``limit``. Reading mtime up-front avoids parsing files we
+    # won't display.
+    files: list[tuple[float, Path]] = []
+    for jsonl in skill_dir.glob("*.jsonl"):
+        try:
+            files.append((jsonl.stat().st_mtime, jsonl))
+        except OSError:
+            continue
+    files.sort(reverse=True)
+
+    for _mtime, jsonl in files:
+        if len(out) >= limit:
+            break
+        # Filename: "<isots>_<skill_name>_<run_id8>.jsonl" (stable for the
+        # last several PRs). Be defensive — split by underscores and trust
+        # only the first chunk as ts; everything between is the skill name;
+        # the last chunk is run_id (or filename stem if missing).
+        stem = jsonl.stem
+        parts = stem.split("_")
+        run_id = parts[-1] if len(parts) >= 3 else ""
+        if run_id in running_run_ids:
+            continue
+        skill_name = "_".join(parts[1:-1]) if len(parts) >= 3 else stem
+        start_iso = parts[0] if parts else ""
+
+        # Read last non-empty line for completion event.
+        last_event: dict | None = None
+        try:
+            for raw in jsonl.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    last_event = json.loads(raw)
+                except Exception:
+                    continue
+        except OSError as exc:
+            logger.warning(
+                "right_panel agents: read of %s failed: %s", jsonl, exc,
+            )
+            continue
+        if last_event is None:
+            continue
+
+        ev_type = last_event.get("type", "")
+        data = last_event.get("data") or {}
+        ts = str(last_event.get("timestamp", ""))
+        # Status mapping: skill_run_completed = ok | error | aborted; fall
+        # back to the event type itself when status field is absent (older
+        # event payloads).
+        status = str(data.get("status") or "")
+        if not status and ev_type == "skill_run_completed":
+            status = "ok"
+        if ev_type in ("workflow_finished", "skill_run_completed") and not status:
+            status = "ok"
+
+        # Duration via lexical compare on iso timestamps — wrong only when
+        # the run spans a leap second, which we accept.
+        duration_s = 0.0
+        if start_iso and ts:
+            try:
+                from datetime import datetime
+                t0 = datetime.fromisoformat(start_iso.replace("T", "T"))
+                t1 = datetime.fromisoformat(ts.replace("Z", "+00:00").split(".")[0])
+                duration_s = max(0.0, (t1 - t0).total_seconds())
+            except Exception:
+                duration_s = 0.0
+
+        out.append({
+            "skill_name": skill_name or "?",
+            "run_id": (run_id or stem)[:8],
+            "status": status or ev_type or "unknown",
+            "duration_s": duration_s,
+            "ts": ts[:19].replace("T", " "),
+        })
+    return out
+
+
+def _recent_plans_for_agent(
+    project_root: Path | None,
+    agent_name: str,
+    running_plan_ids: set[str],
+    limit: int = _RECENT_LIMIT,
+) -> list[dict]:
+    """Return up to ``limit`` recently-finished plans for ``agent_name``.
+
+    Reads plan_aggregated / plan_run_interrupted events from the agent's
+    chat events log (= where forensic plan_* events land — see planner.py).
+    Skips plans whose plan_id is still in ``running_plan_ids`` so the
+    "RECENT" section is strictly past tense.
+    """
+    out: list[dict] = []
+    if project_root is None:
+        return out
+    agent_dir = project_root / ".reyn" / "events" / "agents" / agent_name
+    if not agent_dir.is_dir():
+        return out
+
+    # Newest-first scan across all the agent's event files. Plans usually
+    # finish in the same chat-events file they started in; iterate the most
+    # recently modified first so we hit recent completions quickly.
+    files: list[tuple[float, Path]] = []
+    for jsonl in agent_dir.rglob("*.jsonl"):
+        if "skill_runs" in jsonl.parts:
+            continue  # skill files don't carry plan events
+        try:
+            files.append((jsonl.stat().st_mtime, jsonl))
+        except OSError:
+            continue
+    files.sort(reverse=True)
+
+    # We track the most recent plan_emitted (for goal) and plan_aggregated /
+    # plan_run_interrupted (for completion + counts) per plan_id.
+    seen: set[str] = set()
+    candidates: list[dict] = []  # newest-first
+    plan_goals: dict[str, str] = {}
+
+    for _mtime, jsonl in files:
+        if len(candidates) >= limit:
+            break
+        # Read the file once; collect plan_emitted goals first, then walk
+        # backwards through the lines to find the most recent terminal
+        # event(s) for unseen plan_ids.
+        raw_lines: list[str] = []
+        try:
+            raw_lines = jsonl.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            logger.warning(
+                "right_panel agents: read of %s failed: %s", jsonl, exc,
+            )
+            continue
+        # Forward pass: capture goals.
+        for raw in raw_lines:
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except Exception:
+                continue
+            if ev.get("type") == "plan_emitted":
+                d = ev.get("data") or {}
+                pid = str(d.get("plan_id", ""))
+                if pid:
+                    plan_goals[pid] = str(d.get("goal", ""))
+        # Reverse pass: pick terminal events (newest first within file).
+        for raw in reversed(raw_lines):
+            if len(candidates) >= limit:
+                break
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                ev = json.loads(raw)
+            except Exception:
+                continue
+            ev_type = ev.get("type", "")
+            if ev_type not in ("plan_aggregated", "plan_run_interrupted"):
+                continue
+            d = ev.get("data") or {}
+            pid = str(d.get("plan_id", ""))
+            if not pid or pid in seen or pid in running_plan_ids:
+                continue
+            seen.add(pid)
+            candidates.append({
+                "plan_id": pid[:8],
+                "goal": plan_goals.get(pid, ""),
+                "ts": str(ev.get("timestamp", ""))[:19].replace("T", " "),
+                "status": (
+                    "ok" if ev_type == "plan_aggregated"
+                    and (d.get("n_failed", 0) or 0) == 0
+                    else "interrupted" if ev_type == "plan_run_interrupted"
+                    else "partial"
+                ),
+                "n_completed": int(d.get("n_completed", 0) or 0),
+                "n_failed": int(d.get("n_failed", 0) or 0),
+                "exc_type": str(d.get("exc_type", "")),
+            })
+    return candidates
 
 
 def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
@@ -99,8 +315,16 @@ def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
 def render_agents(
     registry: "AgentRegistry | None",
     exec_state: dict[str, dict],
+    *,
+    project_root: Path | None = None,
 ) -> Any:
-    """Return a Rich renderable describing each agent and its running skills."""
+    """Return a Rich renderable describing each agent and its running skills.
+
+    ``project_root`` is optional — when provided, the RECENT subsection
+    surfaces the last few completed skill runs and finished plans by reading
+    `.reyn/events/agents/<name>/`. When omitted, the renderer degrades to
+    just running + idle context (= original behaviour).
+    """
     if registry is None:
         return "[#555555]  (no registry)[/]"
 
@@ -195,6 +419,62 @@ def render_agents(
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
                     plan_node.add(RichText(goal, style="#555555"))
+
+        # ── recently completed (skills + plans) ────────────────────
+        # Always shown when project_root is supplied — gives the user
+        # at-a-glance context about "what just happened" even while a new
+        # skill/plan is running. Skipped silently when project_root is
+        # missing (= test harnesses) or both lists are empty.
+        running_run_ids = {rid for rid, _info in agent_skills}
+        running_plan_ids = {p["plan_id"] for p in agent_plans}
+        # Plan ids in agent_plans are 8-char prefixes; expand to a guard
+        # set that also catches full-length matches against the same
+        # prefix space.
+        recent_skills = _recent_skill_runs_for_agent(
+            project_root, name, running_run_ids,
+        )
+        recent_plans = _recent_plans_for_agent(
+            project_root, name, running_plan_ids,
+        )
+        if recent_skills or recent_plans:
+            recent_node = tree.add(
+                RichText("recent", style="#777777")
+            )
+            for s in recent_skills:
+                line = RichText()
+                # status colour: ok green, anything else red/coral.
+                status_colour = (
+                    "#44cc88" if s["status"] == "ok" else "#ff6644"
+                )
+                line.append("✓ " if s["status"] == "ok" else "✗ ", style=status_colour)
+                line.append(s["skill_name"], style="#bbbbbb")
+                if s["duration_s"] > 0:
+                    line.append(f"  {s['duration_s']:.1f}s", style="#555555")
+                if s["status"] != "ok":
+                    line.append(f"  ({s['status']})", style="#aa6655")
+                if s["ts"]:
+                    line.append(f"  {s['ts']}", style="#444444")
+                recent_node.add(line)
+            for p in recent_plans:
+                line = RichText()
+                ok = p["status"] == "ok"
+                line.append("✓ " if ok else "✗ ", style="#44cc88" if ok else "#ff6644")
+                line.append("plan ", style="#888888")
+                line.append(p["plan_id"], style="#ff9944")
+                line.append(
+                    f"  {p['n_completed']}/{p['n_completed'] + p['n_failed']}",
+                    style="#bbbbbb",
+                )
+                if p["status"] == "interrupted" and p["exc_type"]:
+                    line.append(f"  {p['exc_type']}", style="#aa6655")
+                elif p["status"] == "partial":
+                    line.append(f"  ({p['n_failed']} failed)", style="#aa6655")
+                if p["ts"]:
+                    line.append(f"  {p['ts']}", style="#444444")
+                node = recent_node.add(line)
+                if p["goal"]:
+                    goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
+                    node.add(RichText(goal, style="#555555"))
 
         if not agent_skills and not agent_plans:
             # idle: last activity + message count + recent user snippet

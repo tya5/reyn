@@ -546,7 +546,10 @@ class RightPanel(Widget):
                     self._events_cursor = max(0, len(windowed) - 1)
                 return rendered
             if self._panel_type == "agents":
-                return render_agents(self._registry, self._exec_state)
+                return render_agents(
+                    self._registry, self._exec_state,
+                    project_root=self._project_root,
+                )
             if self._panel_type == "memory":
                 rendered, flat_entries = render_memory(
                     self._project_root, cursor=self._memory_cursor,
