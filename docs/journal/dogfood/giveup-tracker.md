@@ -1477,3 +1477,60 @@ regression test: `tests/test_mcp_server.py::test_send_to_agent_waits_for_plan_te
 - **architectural gap は bug でないが doc が必要**: 「動かない」 を「動かすべきでない」 と説明する doc がないと future contributor は bug と誤認
 
 ---
+
+### G28: dogfood-induced empty A2A reply (= G12 Pattern E manifestation)
+
+**Categories**: C7 (driver-vs-production-tradeoff)、 C1 (model-capability LLM context bloat)
+**Status**: tracked (= production user-impact ゼロ、 dogfood methodology メモ)
+**Discovered**: batch 16 retest 後 G28 hunt (2026-05-08、 main HEAD `18274b6`)
+
+#### 観測
+
+batch 16 retest で 25 runs 中 2 件 (= S1-r3, S4-r1、 8%) が plan invoke + step 完走後に reply_len=0。 別 web (port 8082) で REYN_LLM_TRACE_DUMP 有効化 + N=10 cold loop で **再現率 1/10** 確定。
+
+trace 観測で diverge point pinpoint:
+
+- empty run の router LLM request が **trace 上で orphan** (= request logged、 response 行が全 trace 中で唯一欠落)
+- WAL に当該 run の agent event ゼロ
+- A2A endpoint は `200 OK` で empty body を返却
+- LLM context = **system + (user + assistant) × 7 重複構造** (= 25 messages、 5 prior runs の蓄積)
+- empty run の elapsed 2.0s (= early fail-fast、 cold start でも slow phase でもない)
+
+#### Bug chain (= 観測事実から)
+
+1. dogfood driver の `clean_state` が disk side (`history.jsonl`) を unlink するが、 reyn web process の **ChatSession in-memory `_history`** は invalidate されない
+2. 5 round 以上蓄積で session memory に "user prompt + agent reply" pair 重複
+3. LLM context bloat → **G12 Pattern E (= empty completion attractor)** 発火
+4. RouterLoop が empty 受領 → no-op exit (= history append なし、 plan invoke なし、 outbox emit なし)
+5. A2A endpoint は session._history 差分なしを harvest → 200 OK empty body 返却
+
+#### 真因 + Severity
+
+- **真因 1 (= G12 Pattern E manifestation)**: weak LLM (= gemini-2.5-flash-lite) は 25 messages 重複 context で empty completion を確率的に発火。 G12 の envelope `(answered)` workaround は role=tool 受信 turn 限定で、 context bloat triggered empty には効かない
+- **真因 2 (= dogfood driver design)**: `clean_state` が disk vs memory の semantics 不整合を作る。 production user は agent 背中で `rm` しないので invariant holds
+- **production user impact: ゼロ** — 多 turn 会話で context 蓄積は normal、 G12 envelope fix が role=tool turn の主要 case を吸収済、 empty stop の base rate は dogfood data から分離不能
+
+#### 候補 fix (= mutually exclusive)
+
+- **α**: G28 を tracker entry のみ、 production fix なし (= 推奨)
+- **β**: A2A endpoint に `force_fresh` flag 追加 (= per-call session memory reset)、 dogfood-only utility、 0.5 day
+- **γ**: session 自動 detect (= disk history 不在で in-memory invalidate)、 1+ day、 state semantics 複雑
+
+#### Recommendation: α
+
+- production user 影響ゼロ
+- batch 16 retest の 8% empty rate は **driver-induced**、 真の production rate ではないと明示
+- 真の production base rate を測りたい場合は long-lived session で N=20+ shot、 disk reset しない pattern が必要 (= future dogfood methodology 改善)
+
+#### 着手 trigger
+
+- enterprise long-session で empty completion による UX issue が報告された時点で **真の base rate 測定** wave (= driver pattern 改善 + N≥20)
+- production rate ≥ 5% なら β / γ を検討、 < 5% なら G12 受容 + 強モデル併用 (= G4 spike)
+
+#### 教訓
+
+- **dogfood driver は production behavior の代理ではない**: clean_state per-run pattern は test isolation 価値はあるが session lifecycle 不変条件を破壊。 driver が exposed する rate は production rate と必ずしも一致しない
+- **observe-first で 8% を 0% に分解できた**: trace dump なしには 「2/25 empty は G27 fix の不完全」 と誤推測したまま batch 17 description rewrite を着手していた可能性。 実際は driver-induced + G12 manifestation で description rewrite では解消しない
+- **真の rate 測定には driver 設計の見直しが必要**: 既存 dogfood pattern (= per-run clean_state) は R1 type attractor (= LLM 拒否) の測定に最適化、 G12 type (= context bloat empty) は long-session pattern が必要
+
+---
