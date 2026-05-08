@@ -1,0 +1,67 @@
+---
+type: landing
+topic: skill-authoring
+audience: [human]
+---
+
+# Skill 開発者向け
+
+Skill / agent / それを支えるランタイムを構築するためのタスク指向ハウツー集です。やりたいことに応じてクラスタを選んでください。
+
+まだ済ませていなければ、[Getting started](../getting-started/01-installation.md) を先に進めてください。これらのハウツーは Reyn がインストール済みで、[コンセプト: phase vs skill vs OS](../../concepts/phase-vs-skill-vs-os.md) を一読していることを前提にしています。
+
+## Foundation（基礎）
+
+チュートリアルを終え、自分で Skill をオーサリングしたい人はここから。
+
+- **[自作 skill をゼロから書く](write-your-first-custom-skill.md)** — `skill.md` / `phases/<name>.md` / `artifacts/<name>.yaml` を手書きで構築する完結した例。
+- **[既存の Skill を import する](import-an-existing-skill.md)** — `skill_importer` でプロンプトや他フレームワークの仕様を Reyn DSL に持ち込む。
+
+## Composition & multi-agent（合成・マルチエージェント）
+
+Skill 同士、 agent 同士の組み立て方。
+
+- **[`run_skill` で Skill を合成](compose-skills-with-run-skill.md)** — Skill から別の Skill を呼び出す。
+- **[fan-out で iterate](iterate-with-fan-out.md)** — リストに対してサブステップを適用し結果を収集。
+- **[Agent チームを構築](build-an-agent-team.md)** — 役割ごとに Skill allowlist を持つ複数 agent をセットアップ。
+- **[Multi-hop delegation](multi-hop-delegation.md)** — 委任を複数 agent でチェイン。
+- **[Agent の Skill を制限](restrict-agent-skills.md)** — チーム内 agent ごとに実行可能な Skill を絞る。
+
+## Phase mechanics（Phase 内部）
+
+Phase 内の決定論的コントロール — pre-LLM ステップ、 スキーマ検証、 state 永続化。
+
+- **[Python preprocessor を追加](add-a-python-preprocessor.md)** — `pure` / `trusted` モード、 関数シグネチャ、 sandbox 境界。
+- **[Artifact を検証](validate-artifacts.md)** — strict モードのチェックとスキーマパターン。
+- **[State を永続化](persist-state.md)** — 実行をまたいで何が残るか、 Workspace がどう保存するか。
+
+## Operations（運用）
+
+デバッグ、 外部サービス連携。
+
+- **[Events でデバッグ](debug-with-events.md)** — JSONL ログを読んで何が起きたかを理解する。
+- **[MCP server を使う](use-an-mcp-server.md)** — `mcp` Control IR op で外部ツールを phase に組み込む。
+
+## UX & polish（仕上げ）
+
+完成した Skill のユーザー側面。
+
+- **[Design をオーサリング](author-a-design.md)** — Claude Design 連携でビジュアル artifact を作る。
+- **[出力をローカライズ](localize-output.md)** — `output_language` と phase 単位のロケール扱い。
+- **[音声入力を有効化](enable-voice-input.md)** — 音声駆動の chat モード。
+
+## stdlib オーサリングツールと付き合う
+
+LLM 駆動オーサリング stdlib（`skill_builder` / `skill_improver` / `skill_importer` / `eval_builder`）のルーブリックと参考資料。 主読者は Reyn の Skill ですが、 何かが想定どおり動かなかったときに人間も読みます。
+
+- **[skill-builder checklist](skill-builder-checklist.md)**
+- **[eval-builder rubric](eval-builder-rubric.md)**
+- **[skill-importer mapping](skill-importer-mapping.md)**
+- **[skill-improver criteria](skill-improver-criteria.md)**
+- **[Glossary](glossary.md)** — ルーブリック横断の用語集。
+
+## See also
+
+- [コンセプト](../../concepts/principles.md) — これらのハウツーが使うパターンの「なぜ」。
+- [Reference / DSL](../../reference/dsl/skill-md.md) — frontmatter と YAML スキーマの厳密な定義。
+- [Reference / CLI](../../reference/cli/run.md) — `reyn run` / `reyn lint` / `reyn eval` / `reyn chat`。

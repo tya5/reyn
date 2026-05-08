@@ -25,6 +25,7 @@ theme:
   custom_dir: overrides
   features:
     - navigation.sections
+    - navigation.indexes
     - navigation.top
     - search.suggest
     - content.code.copy
@@ -76,6 +77,7 @@ nav:
           - guide/for-users/manage-permissions.md
           - guide/for-users/ask-user-mid-phase.md
       - For skill authors:
+          - guide/for-skill-authors/index.md
           - Foundation:
               - guide/for-skill-authors/write-your-first-custom-skill.md
               - guide/for-skill-authors/import-an-existing-skill.md
