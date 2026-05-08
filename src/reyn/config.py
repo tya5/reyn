@@ -90,13 +90,18 @@ from reyn.budget.budget import CostConfig, CostLimitConfig  # noqa: E402
 class VoiceConfig:
     """`voice:` — chat TUI voice-input (Whisper) settings.
 
-    Lazy-loaded only when the user presses the record key (F2) so the optional
-    deps (`sounddevice`, `faster-whisper`) stay opt-in. See the user guide at
-    `docs/guide/for-skill-authors/enable-voice-input.md`.
+    Lazy-loaded only when the user presses the record key (Ctrl+R) so the
+    optional deps (`sounddevice`, `faster-whisper`) stay opt-in. See the
+    user guide at `docs/guide/for-skill-authors/enable-voice-input.md`.
+
+    Defaults reflect Reyn's Japanese-enterprise focus (project_reyn_vision):
+    `language="ja"` so short clips don't get auto-detected as a wrong
+    language and produce empty transcripts. Set `language: ""` (empty
+    string) or `null` in YAML to opt back into auto-detect.
     """
-    enabled: bool = True              # set False to hard-disable F2 even if deps installed
+    enabled: bool = True              # set False to hard-disable Ctrl+R even if deps installed
     model: str = "small"              # tiny | base | small | medium | large-v3
-    language: str | None = None       # ISO code or None for auto-detect
+    language: str | None = "ja"       # ISO code; "" or null in YAML = auto-detect
     device: str = "auto"              # auto | cpu | cuda | metal
     compute_type: str = "int8"        # int8 | float16 | float32
     sample_rate: int = 16000          # Whisper expects 16 kHz mono
@@ -514,17 +519,30 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
 
 
 def _build_voice_config(raw: object) -> VoiceConfig:
-    """Parse `voice:` block. Unknown keys are ignored; bad types fall back to defaults."""
+    """Parse `voice:` block. Unknown keys are ignored; bad types fall back to defaults.
+
+    ``language`` semantics:
+      - omitted          → defaults.language (= "ja")
+      - explicit string  → that ISO code
+      - "" / null in YAML → ``None`` (= Whisper auto-detect)
+    """
     defaults = VoiceConfig()
     if not isinstance(raw, dict):
         return defaults
-    lang = raw.get("language", defaults.language)
-    if lang is not None and not isinstance(lang, str):
+    if "language" in raw:
+        lang_raw = raw["language"]
+        if lang_raw is None:
+            lang: str | None = None
+        elif isinstance(lang_raw, str):
+            lang = lang_raw.strip() or None
+        else:
+            lang = defaults.language
+    else:
         lang = defaults.language
     return VoiceConfig(
         enabled=bool(raw.get("enabled", defaults.enabled)),
         model=str(raw.get("model", defaults.model)),
-        language=lang if (lang is None or lang.strip()) else None,
+        language=lang,
         device=str(raw.get("device", defaults.device)),
         compute_type=str(raw.get("compute_type", defaults.compute_type)),
         sample_rate=int(raw.get("sample_rate", defaults.sample_rate)),
