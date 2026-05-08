@@ -162,6 +162,7 @@ nav:
       - contributing/style-guide.md
       - contributing/testing.md
       - contributing/dogfood-discipline.md
+      - contributing/release-process.md
   - Decisions:
       - decisions/README.md
       - decisions/0001-state-model-wal-snapshot.md

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+<!--
+  Release marker (rename, do not duplicate).
+  At release time the maintainer renames the `[Unreleased]` header below to
+  `## [0.1.0a2] — 2026-05-08` and inserts a new empty `[Unreleased]` block
+  on top. See `docs/en/contributing/release-process.md`.
+-->
+
 ## [Unreleased]
 
 ### Added
@@ -101,3 +108,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Wave A` strip-inline-catalog + `discover_tools` (reverted) (= `589e50f`)
 - `stdlib_root()` default read zone addition (reverted as doc-violating) (= `3c3db08`)
 - Non-interactive `startup_guard` auto-approve (reverted as doc-violating) (= `70257f2`)
+
+[Unreleased]: https://github.com/tya5/reyn/compare/v0.1.0a2...HEAD
+[0.1.0a2]: https://github.com/tya5/reyn/releases/tag/v0.1.0a2

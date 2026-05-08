@@ -1,0 +1,200 @@
+name: Release
+
+# Tag-driven release pipeline.
+#
+#   v0.1.0a2-test → build + publish to TestPyPI (dry-run rehearsal)
+#   v0.1.0a2      → build + publish to PyPI + create GitHub Release
+#
+# Both flows attach the built sdist + wheel as workflow artifacts so a
+# maintainer can download them even if the publish step fails.
+#
+# Secrets required (set by the maintainer in repo settings):
+#   PYPI_API_TOKEN          — production PyPI token (scope = project:reyn)
+#   TEST_PYPI_API_TOKEN     — TestPyPI token (optional, for *-test tags)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "v*.*.*-test"
+
+# Default to least-privilege; jobs that need more opt in explicitly.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      version: ${{ steps.derive.outputs.version }}
+      is_testpypi: ${{ steps.derive.outputs.is_testpypi }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install build tooling
+        run: pip install --upgrade build twine
+
+      - name: Derive version metadata from tag
+        id: derive
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF#refs/tags/}"
+          # strip leading 'v' and optional '-test' suffix
+          stripped="${tag#v}"
+          if [[ "$stripped" == *-test ]]; then
+            version="${stripped%-test}"
+            is_testpypi="true"
+          else
+            version="$stripped"
+            is_testpypi="false"
+          fi
+          echo "tag=$tag"               >> "$GITHUB_OUTPUT"
+          echo "version=$version"       >> "$GITHUB_OUTPUT"
+          echo "is_testpypi=$is_testpypi" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$tag version=$version testpypi=$is_testpypi"
+
+      - name: Verify pyproject version matches tag
+        run: |
+          set -euo pipefail
+          py_version=$(python -c "import tomllib,sys; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          want="${{ steps.derive.outputs.version }}"
+          if [[ "$py_version" != "$want" ]]; then
+            echo "::error::pyproject.toml version ($py_version) != tag version ($want)"
+            exit 1
+          fi
+          echo "pyproject version = $py_version (matches tag)"
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Twine check
+        run: twine check dist/*
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    if: needs.build.outputs.is_testpypi == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/reyn/
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install twine
+        run: pip install --upgrade twine
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to TestPyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: needs.build.outputs.is_testpypi == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/reyn/
+
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install twine
+        run: pip install --upgrade twine
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Upload to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: twine upload dist/*
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build, publish-pypi]
+    if: needs.build.outputs.is_testpypi == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Extract release notes from CHANGELOG
+        id: notes
+        run: |
+          set -euo pipefail
+          version="${{ needs.build.outputs.version }}"
+          # Pull the section for this version from CHANGELOG.md. The
+          # section header looks like:  ## [0.1.0a2] — 2026-05-08
+          # We capture lines until the next "## [" header.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { capture=1; print; next }
+            capture && /^## \[/ { exit }
+            capture { print }
+          ' CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "::warning::No CHANGELOG section found for $version; falling back to auto-generated notes"
+            echo "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details." > release-notes.md
+          fi
+          echo "Release notes preview:"
+          head -40 release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Reyn ${{ needs.build.outputs.version }}
+          body_path: release-notes.md
+          files: dist/*
+          generate_release_notes: true
+          prerelease: ${{ contains(needs.build.outputs.version, 'a') || contains(needs.build.outputs.version, 'b') || contains(needs.build.outputs.version, 'rc') }}

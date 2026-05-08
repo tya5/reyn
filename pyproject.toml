@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reyn"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "LLM-driven phase execution engine with a Markdown DSL"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -74,6 +74,10 @@ web = [
     "websockets>=12",
 ]
 mcp = ["mcp>=1.0"]
+release = [
+    "build>=1.0",
+    "twine>=5.0",
+]
 
 [project.scripts]
 reyn = "reyn._cli:main"
