@@ -230,23 +230,11 @@ class FileIROp(BaseModel):
     header: str | None = None        # optional preamble prepended before the entries (e.g. "# Memory Index\n\n")
 
 
-class ToolIROp(BaseModel):
-    kind: Literal["tool"]
-    name: str
-    args: dict[str, Any] = Field(default_factory=dict)
-
-
 class MCPIROp(BaseModel):
     kind: Literal["mcp"]
     server: str
     tool: str
     args: dict[str, Any] = Field(default_factory=dict)
-
-
-class SubAgentIROp(BaseModel):
-    kind: Literal["subagent"]
-    agent: str
-    input: dict[str, Any] = Field(default_factory=dict)
 
 
 class AskUserIROp(BaseModel):
@@ -297,9 +285,10 @@ class WebSearchIROp(BaseModel):
 
 
 # Discriminated union — Pydantic selects the variant via the "kind" field.
-# "file", "ask_user", "shell", "lint", "run_skill", "web_fetch", and "web_search" are implemented; others are safely skipped.
+# All variants below are implemented in `op_runtime/`:
+#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search.
 ControlIROp = Annotated[
-    Union[FileIROp, ToolIROp, MCPIROp, SubAgentIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp, WebSearchIROp],
+    Union[FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp, WebSearchIROp],
     Field(discriminator="kind"),
 ]
 

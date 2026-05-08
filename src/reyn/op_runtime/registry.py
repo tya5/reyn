@@ -3,9 +3,8 @@
 This module centralises the three previously scattered op kind definitions:
 
   1. ``OP_KIND_MODEL_MAP``  (was ``_IROP_MODEL_MAP`` in kernel/control_ir_executor.py)
-     Maps each op kind to its typed Pydantic IROp model, or ``None`` when the
-     kind has no dedicated model (tool, subagent).  Used by the control IR
-     executor to derive tool-parameter JSON schemas.
+     Maps each op kind to its typed Pydantic IROp model.  Used by the control
+     IR executor to derive tool-parameter JSON schemas.
 
   2. ``ALL_OP_KINDS``  (was ``_KNOWN_OP_KINDS`` in compiler/linter.py)
      Frozenset of every valid op kind.  Used by the DSL linter to flag
@@ -27,7 +26,6 @@ op kinds.  They are a different concern and intentionally stay local.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Type
 
 from pydantic import BaseModel
 
@@ -74,12 +72,11 @@ class OpPurity(str, Enum):
 # OP_KIND_MODEL_MAP
 # ---------------------------------------------------------------------------
 # Maps op kind → IROp Pydantic model used for JSON schema derivation.
-# ``None`` means the kind is valid but has no typed model (no arg validation).
 # Add a new entry here whenever a new op kind is introduced — the kernel
 # executor and DSL linter both derive from this single source.
 # ---------------------------------------------------------------------------
 
-OP_KIND_MODEL_MAP: dict[str, Type[BaseModel] | None] = {
+OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "file":       FileIROp,
     "mcp":        MCPIROp,
     "run_skill":  RunSkillIROp,
@@ -88,9 +85,6 @@ OP_KIND_MODEL_MAP: dict[str, Type[BaseModel] | None] = {
     "ask_user":   AskUserIROp,
     "web_fetch":  WebFetchIROp,
     "web_search": WebSearchIROp,
-    # Kinds with no dedicated typed model (handled generically):
-    "tool":     None,
-    "subagent": None,
 }
 
 # ---------------------------------------------------------------------------
@@ -118,8 +112,6 @@ OP_PURITY: dict[str, OpPurity] = {
     "mcp":        OpPurity.external,
     "shell":      OpPurity.external,
     "run_skill":  OpPurity.external,
-    "subagent":   OpPurity.external,
-    "tool":       OpPurity.external,
     # User interaction (state-changing for the user).
     "ask_user":   OpPurity.side_effect,
 }

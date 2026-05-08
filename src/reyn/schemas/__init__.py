@@ -30,8 +30,6 @@ from .models import (
     Skill,
     SkillGraph,
     SkillNodeSpec,
-    SubAgentIROp,
-    ToolIROp,
     # Preprocessor step types
     ValidateStep,
     WebFetchIROp,
@@ -44,6 +42,6 @@ __all__ = [
     "ContextFrame", "ExecutionState", "CandidateOutput", "ControlIROpSpec",
     "LLMOutput", "ActOutput", "ControlDecision", "ControlReason",
     "ControlIROp", "FileIROp", "ShellIROp", "WebFetchIROp", "WebSearchIROp",
-    "RunSkillIROp", "AskUserIROp", "LintIROp", "MCPIROp", "ToolIROp", "SubAgentIROp",
+    "RunSkillIROp", "AskUserIROp", "LintIROp", "MCPIROp",
     "Event",
 ]
