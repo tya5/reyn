@@ -284,35 +284,30 @@ class VoiceInput:
     def _transcribe_sync(self, audio) -> str:
         """Run Whisper on a numpy float32 mono buffer.
 
-        Three things matter for "the mic captured something but Whisper
-        returns empty":
+        We deliberately do NOT normalise the audio amplitude here.
+        Empirically, rescaling the buffer to peak ≈ 0.95 before transcribe
+        produced empty results on real mic input (= the dogfood log dated
+        2026-05-09: same WAV transcribed fine standalone with the same
+        params, but the in-memory normalised version returned ""). Whisper
+        is tolerant of a wide range of speech amplitudes; better to let
+        it see the raw signal.
 
-        1. **Volume normalisation** — built-in mics on laptops often peak
-           at 0.05–0.15 even with normal speech. Whisper's internal
-           ``no_speech_threshold`` (default 0.6) rejects low-energy clips.
-           We rescale the buffer to peak ≈ 0.95 before transcription so
-           Whisper sees a consistent signal level regardless of the mic.
-        2. **Threshold relaxation** — explicit
-           ``no_speech_threshold=0.3`` (vs default 0.6) and
-           ``log_prob_threshold=-1.5`` (vs -1.0) accept quieter / lower-
-           confidence speech. Trade-off: occasional spurious word on
-           pure-noise input — mitigated by the upstream peak gate in
-           ``stop_recording``.
-        3. **VAD off** — see prior change comment. Silero VAD is the #1
-           cause of false "no speech" on quiet-but-real input.
+        Settings:
 
-        ``temperature=0.0`` + ``condition_on_previous_text=False`` keep
-        the call deterministic and fast — no fallback temperature passes
-        and no streaming context (we transcribe one buffer at a time).
+        * ``vad_filter=False`` — Silero VAD is the #1 cause of false
+          "no speech" on quiet-but-real input. We do our own peak gate
+          upstream in ``stop_recording`` (peak < 0.005 → skip the model
+          call entirely).
+        * ``no_speech_threshold=0.3`` (vs default 0.6) — accept quieter
+          speech. The upstream peak gate keeps spurious transcriptions
+          from pure noise.
+        * ``log_prob_threshold=-1.5`` (vs -1.0) — accept lower-confidence
+          decoding.
+        * ``temperature=0.0`` + ``condition_on_previous_text=False`` —
+          one-shot dictation: deterministic single pass, no streaming
+          context across calls.
         """
         model = self._ensure_model()
-        if self._np is not None:
-            try:
-                peak = float(self._np.max(self._np.abs(audio)))
-                if peak > 0:
-                    audio = (audio / peak * 0.95).astype("float32")
-            except Exception:
-                pass
         segments, _info = model.transcribe(
             audio,
             language=self._language,
