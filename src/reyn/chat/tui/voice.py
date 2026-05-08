@@ -286,7 +286,7 @@ class VoiceInput:
           * ``duration_s``  — wall length of the captured audio
           * ``peak``        — max absolute sample amplitude (0.0–1.0)
           * ``rms``         — root-mean-square (rough loudness)
-          * ``reason``      — ``"ok" | "no_audio" | "silent" | "error"``
+          * ``reason``      — ``"ok" | "no_audio" | "silent" | "error" | "timeout"``
 
         Errors during transcription are logged and surfaced as an empty
         string + ``reason="error"`` so the TUI never crashes.
@@ -294,23 +294,49 @@ class VoiceInput:
         diag: dict = {"duration_s": 0.0, "peak": 0.0, "rms": 0.0, "reason": "no_audio"}
         if not self._recording:
             return "", diag
-        self._close_stream()
+
+        # PortAudio's ``InputStream.stop()`` / ``close()`` can block for
+        # multiple seconds on macOS when the audio subsystem is grumpy
+        # (= other apps holding the input device, AirPods reconnecting,
+        # CoreAudio HAL contention). Calling them inline freezes the
+        # entire event loop. Run the cleanup in a worker thread with a
+        # 5-second timeout; if it doesn't complete we orphan the stream
+        # and continue with the chunks we already have — the next
+        # ``start_recording`` will create a fresh stream.
+        _vlog("stop_recording: closing audio stream")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._close_stream),
+                timeout=5.0,
+            )
+            _vlog("stop_recording: stream closed cleanly")
+        except asyncio.TimeoutError:
+            _vlog("stop_recording: stream close timed out (5s) — orphaning stream")
+            self._stream = None
+        except Exception as exc:
+            _vlog(f"stop_recording: stream close raised {exc!r} — continuing")
+            self._stream = None
+
         self._recording = False
 
         if self._np is None or not self._chunks:
+            _vlog("stop_recording: no chunks to process")
             return "", diag
 
         # Concatenate captured chunks into one (n_samples,) float32 array.
+        _vlog(f"stop_recording: concatenating {len(self._chunks)} chunks")
         try:
             audio = self._np.concatenate(self._chunks, axis=0).reshape(-1)
         except Exception as exc:
             logger.warning("voice concat failed: %s", exc)
+            _vlog(f"stop_recording: concat failed: {exc!r}")
             self._chunks = []
             diag["reason"] = "error"
             return "", diag
         self._chunks = []
 
         if audio.size == 0:
+            _vlog("stop_recording: audio.size=0")
             return "", diag
 
         diag["duration_s"] = float(audio.size) / float(self._sample_rate)
@@ -319,6 +345,10 @@ class VoiceInput:
             diag["rms"] = float(self._np.sqrt(self._np.mean(audio.astype("float64") ** 2)))
         except Exception:
             pass
+        _vlog(
+            f"stop_recording: audio prepared duration={diag['duration_s']:.2f}s "
+            f"peak={diag['peak']:.3f}"
+        )
 
         # Optional debug-dump: save the captured buffer to /tmp/ as a 16-bit
         # PCM WAV file so the user can play it back and confirm the audio
@@ -374,13 +404,25 @@ class VoiceInput:
     # ── internals ───────────────────────────────────────────────────────────
 
     def _close_stream(self) -> None:
-        if self._stream is not None:
-            try:
-                self._stream.stop()
-                self._stream.close()
-            except Exception as exc:
-                logger.debug("voice stream close: %s", exc)
-            self._stream = None
+        """Tear down the active sounddevice InputStream.
+
+        Uses ``abort()`` (= immediate, drops in-flight frames) instead of
+        ``stop()`` (= waits for the callback to drain). The drain on macOS
+        sometimes takes seconds when CoreAudio HAL is contended, and we'd
+        rather lose a few trailing milliseconds of audio than block the
+        event loop. ``close()`` after abort is fast.
+        """
+        if self._stream is None:
+            return
+        try:
+            self._stream.abort()
+        except Exception as exc:
+            _vlog(f"_close_stream: abort raised {exc!r}")
+        try:
+            self._stream.close()
+        except Exception as exc:
+            _vlog(f"_close_stream: close raised {exc!r}")
+        self._stream = None
 
     def _model_cache_dir(self) -> "Path | None":
         """Best-effort discovery of the HuggingFace cache dir for our model.
