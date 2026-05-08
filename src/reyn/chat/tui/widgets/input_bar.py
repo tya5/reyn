@@ -136,6 +136,27 @@ class InputBar(Widget):
         except Exception:
             pass
 
+    def append_text(self, text: str) -> None:
+        """Append text to the current input (used by voice dictation).
+
+        Adds a single space separator if existing text doesn't already end
+        with whitespace, so successive F2 sessions concatenate naturally.
+        """
+        if not text:
+            return
+        try:
+            ta = self.query_one("#input", TextArea)
+        except Exception:
+            return
+        existing = ta.text
+        sep = "" if (not existing or existing[-1].isspace()) else " "
+        new_text = existing + sep + text
+        ta.load_text(new_text)
+        # Move cursor to end so Enter sends or user can continue typing
+        lines = new_text.split("\n")
+        last_row = len(lines) - 1
+        ta.move_cursor((last_row, len(lines[last_row])))
+
     # ── input events ─────────────────────────────────────────────────────────
 
     @on(TextArea.Changed, "#input")
@@ -310,5 +331,5 @@ class InputBar(Widget):
         return (
             "  Enter send  │  Ctrl+J newline  │  Ctrl+D quit  │  "
             "Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  "
-            "Ctrl+O focus panel  │  Ctrl+\\ shot"
+            "Ctrl+O focus panel  │  Ctrl+R voice  │  Ctrl+\\ shot"
         )

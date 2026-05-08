@@ -103,6 +103,7 @@ nav:
       - how-to/multi-hop-delegation.md
       - how-to/author-a-design.md
       - how-to/use-an-mcp-server.md
+      - how-to/enable-voice-input.md
   - Reference:
       - CLI:
           - reference/cli/run.md

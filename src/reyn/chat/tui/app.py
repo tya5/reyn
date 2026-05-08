@@ -60,6 +60,12 @@ class ReynTUIApp(App):
         Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
+        # Primary voice toggle: ctrl+r (Record). F2 kept as alias because it
+        # ships with the user guide, but many terminals — and macOS by default
+        # — intercept F-keys before they reach Textual.
+        Binding("ctrl+r", "voice_toggle", "Voice", priority=True, show=False),
+        Binding("f2", "voice_toggle", "Voice (alias)", priority=True, show=False),
+        Binding("escape", "voice_cancel", "Voice cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
 
@@ -105,6 +111,10 @@ class ReynTUIApp(App):
         self._last_focal_tab: str | None = None  # "events" | "agents" | None
         # Active streaming row id — shared between __stream_* handlers
         self._current_stream_id: str | None = None
+        # Voice input (lazy — created on first F2 press so import-time cost is
+        # zero for users who don't have the `reyn[voice]` extras installed).
+        self._voice_input = None  # type: ignore[var-annotated]
+        self._voice_busy: bool = False  # True while transcription is running
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -563,6 +573,132 @@ class ReynTUIApp(App):
         """t — rotate event tail count (gated: events tab visible)."""
         self.query_one("#right_panel", RightPanel).cycle_event_tail()
 
+    # ── voice input (F2 / Esc) ─────────────────────────────────────────────
+
+    def _voice_status(self, text: str, *, style: str = "dim #aaaaaa") -> None:
+        """Write a short status line into the conversation pane."""
+        try:
+            from rich.text import Text as RichText
+            t = RichText()
+            t.append(text, style=style)
+            self.query_one("#conversation", ConversationView)._write_log(t)
+        except Exception:
+            pass
+
+    async def action_voice_toggle(self) -> None:
+        """F2 — toggle dictation (start ↔ stop+transcribe→inject into InputBar).
+
+        Errors are surfaced as conv-pane status lines; never crash the TUI.
+        """
+        # Lazy import + lazy instantiation to keep base install dep-free.
+        if self._voice_input is None:
+            try:
+                from .voice import VoiceInput
+            except Exception as exc:
+                self._voice_status(
+                    f"✗ voice input unavailable ({exc}); install with: "
+                    "pip install \"reyn[voice]\"",
+                    style="bold red",
+                )
+                return
+            cfg_voice = self._voice_config()
+            if cfg_voice is not None and not cfg_voice.enabled:
+                self._voice_status(
+                    "✗ voice input disabled in config (set voice.enabled: true)",
+                    style="bold red",
+                )
+                return
+            if not VoiceInput.available():
+                self._voice_status(
+                    "✗ voice extras not installed; run: "
+                    "pip install \"reyn[voice]\"  (and brew install portaudio)",
+                    style="bold red",
+                )
+                return
+            kwargs = {}
+            if cfg_voice is not None:
+                kwargs = {
+                    "model": cfg_voice.model,
+                    "language": cfg_voice.language,
+                    "device": cfg_voice.device,
+                    "compute_type": cfg_voice.compute_type,
+                    "sample_rate": cfg_voice.sample_rate,
+                }
+            self._voice_input = VoiceInput(**kwargs)
+
+        if self._voice_busy:
+            return  # already transcribing — ignore re-presses
+
+        if not self._voice_input.is_recording:
+            try:
+                self._voice_input.start_recording()
+            except Exception as exc:
+                self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
+                return
+            self._voice_status("🔴 recording — F2 to stop · Esc to cancel")
+        else:
+            self._voice_busy = True
+            self._voice_status("⏳ transcribing…")
+            try:
+                text, diag = await self._voice_input.stop_recording()
+            except Exception as exc:
+                self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
+                self._voice_busy = False
+                return
+            self._voice_busy = False
+            if not text:
+                # Build an actionable diagnostic line so the user knows
+                # whether the mic actually captured anything.
+                dur = diag.get("duration_s", 0.0)
+                peak = diag.get("peak", 0.0)
+                reason = diag.get("reason", "silent")
+                if reason == "no_audio" or dur < 0.3:
+                    self._voice_status(
+                        "(no audio captured — mic permission? wrong device?)",
+                        style="dim #aa6666",
+                    )
+                elif reason == "silent" or peak < 0.01:
+                    self._voice_status(
+                        f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
+                        "check mic gain / system input device",
+                        style="dim #aa6666",
+                    )
+                else:
+                    self._voice_status(
+                        f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
+                        "try speaking closer / louder, or set a larger model",
+                        style="dim #aa6666",
+                    )
+                return
+            try:
+                self.query_one("#inputbar", InputBar).append_text(text)
+            except Exception:
+                pass
+            preview = text if len(text) <= 60 else text[:57] + "…"
+            dur = diag.get("duration_s", 0.0)
+            self._voice_status(
+                f"✓ inserted ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+            )
+
+    def action_voice_cancel(self) -> None:
+        """Esc — discard the current recording without transcribing.
+
+        Gated so it doesn't shadow the InputBar's own Esc handler when
+        nothing is being recorded.
+        """
+        if self._voice_input is None or not self._voice_input.is_recording:
+            return
+        self._voice_input.cancel()
+        self._voice_status("✗ recording cancelled", style="dim #555555")
+
+    def _voice_config(self):
+        """Best-effort fetch of the user's voice config block."""
+        try:
+            from reyn.config import load_config
+            return load_config().voice
+        except Exception:
+            return None
+
     def check_action(self, action: str, parameters):
         """Gate panel-scoped bindings to when the panel is visible/relevant."""
         if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
@@ -574,6 +710,10 @@ class ReynTUIApp(App):
                 return self.query_one("#right_panel", RightPanel).panel_type == "events"
             except Exception:
                 return False
+        if action == "voice_cancel":
+            # Only intercept Esc while we're actually recording — otherwise
+            # the InputBar / SlashPicker / preview pane should keep using it.
+            return self._voice_input is not None and self._voice_input.is_recording
         return True
 
     # ── helpers ───────────────────────────────────────────────────────────────
