@@ -1304,7 +1304,7 @@ Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical) に整合。
 ### G24: plan tool router-LLM attractor (= R1 family、 batch 16 で 100% materialized)
 
 **Categories**: C1 (model-capability-tradeoff、 主因) / C7 (prompt-vs-bloat-tradeoff、 副因)
-**Status**: active (= R1 base rate 解明 + 介入 trial 候補)
+**Status**: tracker (= retest で 0/25 confirmed、 trial T1-T5 deprioritise)
 **Discovered**: batch 16 (2026-05-08) — 5 scenario × N=5 = 25 runs で plan tool 0/25 invoked
 **History**: 30+ commit の plan-mode 実装 (ADR-0022/0023/0024/0025) は Tier 2 で全 verified、 ただし real LLM (gemini-2.5-flash-lite via LiteLLM proxy) で plan tool は **一度も invoke されず**
 
@@ -1341,11 +1341,24 @@ Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical) に整合。
 - T4 force_plan flag を production default 化 (= P3 / vision 違反)
 - prompt rule 累積で plan invoke 強要 (= G23 教訓に反する SP bloat trap)
 
+#### retest 結果 (2026-05-08、 G27 fix 後)
+
+G27 fix (`3a59d8c`) landing 後に batch 16 25 runs を再測定 (= 同 5 scenario × N=5):
+
+- **真の R1 attractor rate: 0/25 = 0%** (= LLM が plan tool を拒否する case ゼロ)
+- 元 25/25 refuted は **G27 plumbing artifact** (= plan terminal text が A2A reply に届いていなかった) で driver の verdict logic 誤分類
+- 残 2/25 empty-reply は G28 (= dogfood-induced G12 Pattern E manifestation) と判明、 R1 とは独立
+
+**Implication**: T1-T5 trial (= description rewrite / strong model trial) は base rate なしで投機性高い、 deprioritise。 G4 spike (= 強モデル併用 ROI 評価) は別 motivation で着手余地あり。
+
+**着手 trigger 更新**: production user で plan invoke 拒否を観測した時点 (= 真 R1 が再浮上した時点)。 dogfood data からは現状不可検出。
+
 #### 教訓
 
 - **plan tool は新規 router LLM tool、 base rate 観測なしで Tier 2 検証だけで 進めると 30+ commit が無効化される risk**
 - **R1 attractor は G1 family の generalized form**: 個別 tool ごとの calibration が必要
 - **dogfood prediction prior は base rate 観測後に再 calibrate**: batch 16 prelude の 10-30% prior は過去 G1 経験の overfit、 plan-mode は new tool として独自 base rate (≥80%) を baked in すべきだった
+- **observe-first で false alarm 回避**: G27 fix なしでは batch 17 description rewrite に投機していた。 plumbing artifact と true attractor の分離は trace dump 必須
 
 ---
 
@@ -1433,6 +1446,8 @@ regression test: `tests/test_mcp_server.py::test_send_to_agent_waits_for_plan_te
 - **batch 16 の Brier 0.96 は misclassification 含み**: A2A path で plan 不可視だった分が refuted 計上、 真の R1 attractor rate は再測定 (= G24 の T1-T5 trial で更新)
 - **observe-first 原則の真価**: phase 1 LLM context dump なしには「plan invoked but invisible」 を分離できなかった。 batch 16 retro 段階では mixed signal 解釈不能、 trace 観測で初めて 2 因子分解可能になった
 - **architectural plumbing は dogfood で初めて exercised**: Tier 2 test は ChatSession ↔ A2A の async/sync 境界を直接 cover しない。 dogfood driver (= A2A path) が production user の代わりに gap を露呈
+
+**G24 retest との関係**: G27 fix landing 後の batch 16 retest で R1 attractor 真の rate が 0/25 と判明、 G27 が batch 16 元実行で R1 false-positive を生んでいた真因。
 
 ---
 
