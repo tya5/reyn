@@ -160,6 +160,7 @@ nav:
       - concepts/multi-agent.md
       - concepts/topology.md
       - concepts/plan-mode.md
+      - concepts/preprocessor.md
       - concepts/postprocessor.md
       - concepts/skill-resume.md
       - Agent engineering — seven lenses:

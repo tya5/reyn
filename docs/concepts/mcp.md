@@ -6,7 +6,7 @@ audience: [human, agent]
 
 # MCP (Model Context Protocol)
 
-reyn speaks MCP so skills can call out to external tools — read files, search the web, query a database, hit GitHub — without bespoke per-vendor wiring.
+reyn speaks MCP in both directions: it can call out to external MCP servers (as a client), and it can expose its own agents to external LLM clients (as a server). The two roles are distinct and both are implemented.
 
 ## What is MCP
 
@@ -14,7 +14,18 @@ MCP is a JSON-RPC protocol for AI agents to connect to "servers" that expose too
 
 The point: your skill says "call the `read_text_file` tool on the `filesystem` server", not "shell out to `cat`". Swapping the backend is a config change, not a code change.
 
-## How reyn integrates MCP
+## Two roles Reyn plays
+
+| Role | Direction | How |
+|------|-----------|-----|
+| **MCP client** — Reyn calls external servers | Outbound | The `mcp` Control IR op + `permissions.mcp:` declaration in a phase. A skill says "call this tool on this server"; the OS dispatches via `MCPClient` (stdio / http / sse). Example: a skill reads files through the `filesystem` MCP server. |
+| **MCP server** — external clients call Reyn | Inbound | `reyn mcp serve --project .` launches Reyn as a JSON-RPC server. Claude Code, Cursor, OpenAI Agents SDK, or any MCP-aware client can then call INTO Reyn's agents using two tools: `list_agents()` and `send_to_agent(agent_name, message)`. |
+
+The rest of this page covers each role in turn.
+
+## Role 1: MCP client — Reyn calls external servers
+
+When a skill needs an external tool, the flow is:
 
 ```
 phase frontmatter         LLM emits Control IR        OS dispatches
@@ -107,6 +118,37 @@ Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .rey
 Treat it as the template to copy when authoring your own MCP-backed skill: declare `permissions.mcp: [filesystem]` in the phase, emit `mcp` ops with `tool: read_text_file` (or whatever the server advertises), and let the OS handle the rest.
 
 See the [reference page](../reference/stdlib/read_local_files.md) for phase shapes and the [how-to](../guide/for-skill-authors/use-an-mcp-server.md) for a full quickstart.
+
+## Role 2: MCP server — external clients call Reyn
+
+When you run `reyn mcp serve`, Reyn becomes an MCP server. External MCP-aware clients — Claude Code, Cursor, OpenAI Agents SDK, or anything that speaks the MCP protocol — can then submit messages to your Reyn agents as if they were just another MCP tool.
+
+### Starting the server
+
+```sh
+reyn mcp serve --project /path/to/your/project
+```
+
+`--project` points at the directory containing `reyn.yaml`. Because MCP clients typically spawn the server process with `cwd=/`, this flag is required in most client configs — the server has no other way to locate your project. `--timeout` (default 60 s) controls how long `send_to_agent` blocks before returning a partial reply; the agent keeps working in the background.
+
+The server speaks JSON-RPC over stdio. There is no port. The MCP client launches the process itself and owns the transport.
+
+### Tools exposed
+
+Two tools are registered:
+
+| Tool | Signature | What it does |
+|------|-----------|--------------|
+| `list_agents` | `()` | Returns a JSON array of `{name, role}` objects — one entry per agent declared in `reyn.yaml`. |
+| `send_to_agent` | `(agent_name, message)` | Submits one user-style message to the named agent and blocks (up to `--timeout` seconds) for the final reply text. Returns `{reply, partial, agent}`. If `partial=true`, the agent is still working; call again to receive more. |
+
+Multi-turn continuity is preserved: each agent's `ChatSession` keeps its `history.jsonl` between calls, so a conversation that starts in Claude Code can be resumed from `reyn chat` — or vice versa.
+
+### What "via MCP" means for your skills
+
+External clients see agents, not the skill graph. From the outside, there are only two operations: list agents and send a message. The OS contract still applies on Reyn's side: permissions are checked, events are emitted, and all the normal validation runs. Skills can be approved non-interactively if `permissions: allow` is set in `reyn.yaml` (the MCP server runs without a human at stdin, so interactive prompts would block indefinitely).
+
+This is part of Reyn's "talks-out + talked-to" multi-agent surface. See [multi-agent.md](multi-agent.md) for how agents relate to each other within a single Reyn process.
 
 ## What MCP is NOT for
 

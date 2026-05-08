@@ -1,0 +1,170 @@
+---
+type: concept
+topic: integration
+audience: [human, agent]
+---
+
+# MCP (Model Context Protocol)
+
+reyn は MCP を双方向で実装しています。外部の MCP サーバーを呼び出すクライアントとして機能し、かつ自分自身のエージェントを外部の LLM クライアントに公開するサーバーとしても機能します。この 2 つのロールは独立しており、どちらも実装済みです。
+
+## MCP とは
+
+MCP は AI エージェントがツールを公開する「サーバー」に接続するための JSON-RPC プロトコルです。仕様は Anthropic が [modelcontextprotocol.io](https://modelcontextprotocol.io) で公開しています。公式のサーバー実装（`filesystem`、`git`、`github`、`fetch`、`brave-search` など）が多数あり、サードパーティも多数提供しています。サーバーはツールリスト（`tools/list`）を公開し、呼び出し（`tools/call`）を実行します。エージェント側はベンダー非依存のままです。
+
+要点：Skill は「`filesystem` サーバーの `read_text_file` ツールを呼んでほしい」と宣言するだけです。「`cat` を実行してほしい」とは言いません。バックエンドを差し替えるのは設定変更であり、コード変更ではありません。
+
+## Reyn が担う 2 つのロール
+
+| ロール | 方向 | 仕組み |
+|--------|------|--------|
+| **MCP クライアント** — Reyn が外部サーバーを呼ぶ | アウトバウンド | Phase の `mcp` Control IR op + `permissions.mcp:` 宣言。Skill は「このサーバーのこのツールを呼んでほしい」と指示し、OS が `MCPClient`（stdio / http / sse）経由でディスパッチします。例：Skill が `filesystem` MCP サーバーを通じてファイルを読む。 |
+| **MCP サーバー** — 外部クライアントが Reyn を呼ぶ | インバウンド | `reyn mcp serve --project .` を実行すると Reyn が JSON-RPC サーバーになります。Claude Code、Cursor、OpenAI Agents SDK など MCP に対応した任意のクライアントが、`list_agents()` と `send_to_agent(agent_name, message)` の 2 つのツールを通じて Reyn のエージェントを呼び出せます。 |
+
+このページでは以降、各ロールを順に解説します。
+
+## ロール 1：MCP クライアント — Reyn が外部サーバーを呼ぶ
+
+Skill が外部ツールを必要とするときの流れは次のとおりです：
+
+```
+phase frontmatter         LLM が Control IR を発行    OS がディスパッチ
+  permissions:        →     {kind: mcp,           →   MCPClient
+    mcp: [filesystem]        server: filesystem,        (stdio | http | sse)
+                             tool: read_text_file,
+                             args: {path: ...}}
+```
+
+1. Skill の Phase は frontmatter で `permissions.mcp: [server_name]` を宣言します。宣言がなければ、ランタイムはそのサーバーへのすべての呼び出しを拒否します。
+2. LLM は `mcp` Control IR op として `{server, tool, args}` を発行します。サーバー名を勝手に作ることはできません。`reyn.yaml` で設定され Phase のパーミッションに宣言されたサーバーだけが到達可能です。
+3. OS はサーバーのトランスポート（`stdio`、`http`、`sse`）を解決し、`MCPClient` 経由でディスパッチして、ツールの結果を Phase ループに返します。
+4. 呼び出しごとに event が発行されます。呼び出し前に `mcp_called`、正常終了後に `mcp_completed`（またはエラー時に `mcp_failed`）。監査証跡は他の op と同一です。
+
+境界が明確なのは意図的です。Skill は何が必要かを記述し、OS がどう取得するかを決めます。新しい MCP サーバーを追加しても OS コードには一切触れません（P7）。
+
+## トランスポートの選択（stdio vs HTTP）
+
+公式の MCP サーバーの大多数は stdio 経由で起動するローカルプロセスです。一部のホスト型サービスは HTTP エンドポイントを公開しています。SSE トランスポートは将来のリリース向けです。
+
+| トランスポート | 用途 | reyn の起動方法 |
+|--------------|------|----------------|
+| `stdio` | ローカル CLI サーバー（大多数の公式サーバー — `filesystem`、`git`、`github`、`fetch`） | `command` を `args` と `env` 付きで起動し、stdin/stdout 越しに JSON-RPC を話す |
+| `http` | ホスト型サービス（自前バックエンド、組織内ツールレジストリ） | `url` に `headers` 付きで POST し、実行中はセッションを再利用 |
+| `sse` | HTTP のストリーミング変種。用途はまれ | `http` と同様にイベントストリームを追加 |
+
+`npx` や `pip install` でローカル実行するものには `stdio` を選んでください。サーバーを他者が運用していて URL を渡されている場合は `http` を選んでください。
+
+## 設定
+
+MCP サーバーは `reyn.yaml` の `mcp.servers:` 配下で宣言します。各エントリには `type` が必須で、残りはトランスポートによって異なります。
+
+```yaml
+# reyn.yaml
+mcp:
+  servers:
+    # stdio: ローカルプロセス、stdin/stdout 越しに JSON-RPC を話す
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      env:
+        # 任意。${VAR} は起動時に os.environ から展開されます。
+        FS_LOG_LEVEL: "info"
+
+    # http: ホスト型サーバー、Streamable HTTP 越しの JSON-RPC
+    internal_tools:
+      type: http
+      url: https://tools.example.internal/mcp
+      headers:
+        Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
+```
+
+| フィールド | stdio | http | 説明 |
+|-----------|-------|------|------|
+| `type` | 必須 | 必須 | `stdio` \| `http` \| `sse` |
+| `command` | 必須 | — | 起動する実行ファイル（例：`npx`、`python`、絶対パス） |
+| `args` | 任意 | — | `command` に渡す引数リスト |
+| `env` | 任意 | — | 起動プロセスへの追加環境変数 |
+| `url` | — | 必須 | エンドポイント URL |
+| `headers` | — | 任意 | 静的ヘッダー。値は `${VAR}` 展開に対応 |
+
+`${VAR}` の展開は op ディスパッチ時に `os.environ` を使って行われます。変数が存在しない場合は `""` に展開され警告が出ますが、ハードエラーにはなりません。オプショナルなトークンが欠けていても実行はクラッシュしません。
+
+API キーは環境変数に置き、`reyn.yaml` にインラインで書かないでください（[reyn.yaml: API keys](../reference/config/reyn-yaml.md#api-keys) 参照）。
+
+## セキュリティモデル
+
+MCP 呼び出しはプロセスを離れる前に 2 つのゲートを通過します：
+
+1. **Phase 宣言。** Phase は frontmatter の `permissions.mcp` に使用したいサーバーを必ずリストアップしなければなりません。ランタイムは `require_mcp(decl, server, ...)` を呼び出し、`server not in decl.mcp` の場合は宣言欠落を明示したエラーで失敗します。
+2. **承認。** 他のケイパビリティと同様に、Skill ごとの初回呼び出しでプロンプトが表示されます（`y` / `j` / `r` / `N`）。永続的な承認は `.reyn/approvals.yaml` に `<skill>/mcp.<server>` キーで保存されます。プロジェクト全体を信頼できる場合は `reyn.yaml` で `permissions.mcp: allow` と設定して事前承認できます。
+
+これは reyn の一般的なパーミッションモデルと一致します（[permission-model.md](permission-model.md) 参照）。ある Skill の MCP 承認が別の Skill に漏れることはなく、`run_skill` 経由で起動したサブスキルは独自にパーミッションを要求します。
+
+呼び出しごとに 3 つの監査 event が発行されます：
+
+| Event | タイミング | ペイロード |
+|-------|-----------|-----------|
+| `mcp_called` | リクエストがプロセスを離れる前 | `server`、`tool`、`args` |
+| `mcp_completed` | 正常返却時 | `server`、`tool`、`is_error` |
+| `mcp_failed` | トランスポート / プロトコルエラー時 | `server`、`tool`、`error` |
+
+`reyn events tail | grep mcp_` または `grep '"mcp_called"' .reyn/events.jsonl` でフィルタリングできます。
+
+## 最初の stdlib Skill：`read_local_files`
+
+`read_local_files` は MCP サーバーを中心に構築された Skill の典型例です。`filesystem` MCP サーバーと組み合わせてプロジェクト内のファイルを読み、セクションを要約し、内容に関する質問に答えます。普通の `cat` がすることをすべてパーミッションシステムと監査ログ経由で行います。
+
+独自の MCP バックエンド Skill を作るときのテンプレートとして使ってください。Phase で `permissions.mcp: [filesystem]` を宣言し、`tool: read_text_file`（またはサーバーが公開するツール名）で `mcp` op を発行し、あとは OS に任せます。
+
+Phase の形については [リファレンスページ](../reference/stdlib/read_local_files.md)、完全なクイックスタートは [how-to](../guide/for-skill-authors/use-an-mcp-server.md) を参照してください。
+
+## ロール 2：MCP サーバー — 外部クライアントが Reyn を呼ぶ
+
+`reyn mcp serve` を実行すると Reyn が MCP サーバーになります。Claude Code、Cursor、OpenAI Agents SDK など MCP プロトコルに対応した任意の外部クライアントが、Reyn のエージェントにメッセージを送れるようになります。
+
+### サーバーの起動
+
+```sh
+reyn mcp serve --project /path/to/your/project
+```
+
+`--project` は `reyn.yaml` が置かれているディレクトリを指します。MCP クライアントはサーバープロセスを `cwd=/` で起動することが多いため、ほとんどのクライアント設定でこのフラグが必須になります。これがないとサーバーはプロジェクトを見つけられません。`--timeout`（デフォルト 60 秒）は `send_to_agent` が部分的な返答を返すまでブロックする最大時間を制御します。エージェントはタイムアウト後もバックグラウンドで作業を継続します。
+
+サーバーは stdio 越しに JSON-RPC を話します。ポートはありません。MCP クライアント自身がプロセスを起動してトランスポートを所有します。
+
+### 公開されるツール
+
+2 つのツールが登録されます：
+
+| ツール | シグネチャ | 動作 |
+|--------|-----------|------|
+| `list_agents` | `()` | `reyn.yaml` に登録されたエージェントの `{name, role}` 配列を JSON で返します。 |
+| `send_to_agent` | `(agent_name, message)` | 指定したエージェントにユーザー形式のメッセージを 1 件送信し、最終の返答テキストを（`--timeout` 秒まで）ブロックして返します。`{reply, partial, agent}` を返します。`partial=true` の場合はエージェントがまだ作業中です。続きを受け取るには再度呼び出してください。 |
+
+マルチターンの継続性は自動で保たれます。各エージェントの `ChatSession` は呼び出し間も `history.jsonl` を保持するため、Claude Code で始めた会話を `reyn chat` で再開することも、その逆も可能です。
+
+### Skill から見た「MCP 経由」の意味
+
+外部クライアントはエージェントを見るのみで、Skill グラフは見えません。外部から操作できるのは「エージェント一覧の取得」と「メッセージ送信」だけです。Reyn 側では OS コントラクトが通常通り適用されます。パーミッションのチェック、event の発行、バリデーションはすべて実行されます。MCP サーバーは stdin に人間がいない状態で動作するため、対話的なプロンプトは無限にブロックします。`reyn.yaml` で `permissions: allow` を設定すれば非対話的に事前承認できます。
+
+これは Reyn の「外に話しかける + 話しかけられる」マルチエージェントサーフェスの一部です。単一の Reyn プロセス内でエージェント同士がどう関連するかは [multi-agent.md](multi-agent.md) を参照してください。
+
+## MCP が適さない用途
+
+MCP は *外部ケイパビリティへのアクセス* に適したツールです。以下のケースでは使わないでください：
+
+- **重い計算が必要な場合。** Python プリプロセッサー（`python` op）を使ってください。MCP 呼び出しは毎回プロセス境界を越えます。インラインの NumPy ステップの方がはるかに高速です。
+- **再利用可能なワークフローを実現したい場合。** それは MCP サーバーではなく Skill です。`skill_builder` で新しい Skill を作ってください。
+- **エージェント間メッセージングが必要な場合。** `messages_to_agents` とトポロジールールを使ってください。MCP はエージェントのアイデンティティやチェーンをモデル化しません。
+- **呼び出し間の状態が必要な場合。** MCP サーバーはステートレスにもステートフルにもできますが、reyn は各呼び出しを独立したものとして扱います。永続的な状態はワークスペースに置いてください。
+
+これらの用途で MCP を使いたいと思ったら、レイヤーを間違えています。
+
+## 関連項目
+
+- [How-to: MCP サーバーの使い方](../guide/for-skill-authors/use-an-mcp-server.md) — filesystem サーバーのクイックスタート
+- [リファレンス: `read_local_files`](../reference/stdlib/read_local_files.md) — 最初の stdlib MCP Skill
+- [リファレンス: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — `mcp.servers:` の完全なスキーマ
+- [コンセプト: パーミッションモデル](permission-model.md) — `permissions.mcp` の位置づけ
+- [modelcontextprotocol.io](https://modelcontextprotocol.io) — 仕様、サーバーレジストリ、公式 SDK
