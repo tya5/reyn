@@ -143,6 +143,56 @@ Use `prompt` to hint what to extract (informational only).
 
 ---
 
+### 2-C. Phase Preprocessor の全体像が docs にない
+
+**問題**: `reference/dsl/preprocessor.md` は DSL 構文のリファレンスとして存在するが、
+「どんな preprocessor 種別があり、それぞれ何ができるか」の概観ドキュメントがない。
+`CLAUDE.md` は「stdlib skills の実装を読め」と指示するのみ。
+
+利用可能な preprocessor 種別:
+- `run_op` — Control IR op を Phase 実行前に確定論的に実行
+- `iterate` — リスト入力を展開してループ
+- `validate` — スキーマ検証
+- `lint_plan` — plan DSL の lint
+- `python` — 任意 Python 関数
+
+**影響**: Phase Preprocessor は「LLM に委ねなくてよい処理を LLM から切り離す」Reyn の
+差別化設計の核心（P3 + deterministic_split 原則）。ドキュメントがなければ
+Skill 著者が活用できず、LLM に委ねるべきでない処理まで LLM に流してしまう。
+
+**推奨アクション**:
+- `docs/en/concepts/postprocessor.md` に相当する `docs/en/concepts/preprocessor.md` 新規作成
+  （「なぜ確定論的処理を LLM から切り離すか」の設計思想 + 各種別の用途早見表）
+- `reference/dsl/preprocessor.md` はそのまま DSL リファレンスとして残す
+- 日本語版も同様
+
+**コスト**: small（半日〜1 日）
+
+---
+
+### 2-D. `concepts/mcp.md` が MCP server / client の役割を区別していない
+
+**問題**: `docs/en/concepts/mcp.md`（および ja 版）が、
+Reyn の MCP における 2 つの役割を明確に区別していない。
+
+| 役割 | 実装状況 | 説明 |
+|---|---|---|
+| **MCP server** | 実装済み | `reyn mcp serve` — 外部 LLM クライアント（Claude Code 等）から Reyn を呼べる |
+| **MCP client** | Phase 2 | `mcp` Control IR op — Reyn から外部 MCP server を呼ぶ |
+
+**影響**: Researcher がこのドキュメントを読んで「MCP は未実装」と誤判定した直接原因。
+OSS ローンチ後に同様の誤認が広まる可能性が高い。
+「Reyn は Claude Code から呼べる」という killer feature が認識されない。
+
+**推奨アクション**:
+- `concepts/mcp.md` の冒頭に上記の 2 役割表を追加
+- MCP server（実装済み）と MCP client（Phase 2 予定）をセクション分けして記述
+- `reyn mcp serve` の起動手順と使用例を追加（現状ゼロ）
+
+**コスト**: small（2〜3 時間）
+
+---
+
 ## P1: OSS ローンチ前に必要（日本語版 missing ファイル）
 
 ### 3-A. 英語版のみ存在し日本語版がないファイル（11 件）
@@ -214,7 +264,35 @@ Layer 4: reyn mcp serve（外部 LLM クライアントから Reyn を呼ぶ MCP
 
 ---
 
-### 4-C. `control-ir.md` への `mcp` op（Phase 2 後）の追加
+### 4-C. Phase 実行フロー（LLM 出力 → Control IR 実行）のシーケンス図がない
+
+**問題**: 「LLM が `control_ir` を出力してから実際に実行されるまでの流れ」を図示したドキュメントがない。
+個別の概念ドキュメント（`events.md`, `workspace.md`, `control-ir.md`）は存在するが、
+1 回の Phase 実行の全体シーケンスが追えない。
+
+具体的に不明なフロー:
+1. OS が LLM を呼ぶ（何を渡すか）
+2. LLM が JSON を返す（`control` + `artifact` + `control_ir`）
+3. OS が `control_ir` ops を順次実行する
+4. 結果を workspace に書き込む（P5）
+5. イベントを emit する（P6）
+6. 次フェーズへ遷移する（または finish）
+
+**影響**: 「点（個別ドキュメント）はあるが線（つながり）がない」状態。
+アーキテクチャに興味ある読者（競合評価者・新規コントリビューター）が
+Reyn の設計の実際を把握できない。
+`architecture.md` の理解と実装の接続が困難。
+
+**推奨アクション**:
+- `concepts/architecture.md` に Phase 実行のシーケンス図（Mermaid sequence diagram）を追加
+  または `docs/en/concepts/phase-lifecycle.md` として新規作成
+- OS の各ステップ（context build → LLM call → validation → IR execution → event emit → transition）を可視化
+
+**コスト**: small（半日）
+
+---
+
+### 4-D. `control-ir.md` への `mcp` op（Phase 2 後）の追加
 
 **問題**: `MCPIROp`（`kind: "mcp"`）は `models.py` に定義済みだが未実装
 （Phase 2 ロードマップ）。MCP client 実装後、docs に追加が必要。
@@ -256,6 +334,9 @@ Layer 4: reyn mcp serve（外部 LLM クライアントから Reyn を呼ぶ MCP
 |---|---|
 | control-ir.md web ops 追加 | Phase 著者が web_search/web_fetch を活用できる。stdlib スキルの品質が上がる |
 | Skill Authoring ガイド | tutorials → 自作 skill のコンバージョン率向上。新規コントリビューター獲得 |
+| Phase Preprocessor 概観 | 確定論的処理を LLM から切り離すパターンが普及する |
+| concepts/mcp.md 役割分担 | MCP server（実装済み）が killer feature として認識される |
 | 日本語版 4 ファイル | 日本エンタープライズの社内提案を容易にする |
 | multi-agent 4 層図 | 競合比較での訴求力向上。「閉じた OS」という誤解の払拭 |
+| Phase 実行シーケンス図 | アーキテクチャ興味読者が設計を正確に把握できる |
 | README 比較表 | GitHub 流入時の離脱率低下 |
