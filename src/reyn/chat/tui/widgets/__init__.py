@@ -1,4 +1,17 @@
-"""Textual widget collection for ReynTUIApp."""
+"""Textual widget collection for ReynTUIApp.
+
+CSS placement rule (see also ``../theme.tcss`` header):
+- ``theme.tcss`` (App CSS_PATH) — layout / dock / size for screen-level
+  widgets (ReynHeader, ConversationView, InputBar, InterventionWidget).
+- ``DEFAULT_CSS`` on each widget class — widget-internal rules that
+  travel with the widget (focus indicators, scrollbar styling, child
+  composition). Used by widgets composed inside other widgets where
+  theme.tcss can't reach naturally.
+
+Colour values: import from ``reyn.chat.tui._palette`` rather than
+hard-coding hex literals. ``_palette.py`` is the single source of
+truth; re-themeing means editing that one file.
+"""
 from __future__ import annotations
 
 from .conversation import ConversationView

@@ -87,6 +87,22 @@ from reyn.budget.budget import CostConfig, CostLimitConfig  # noqa: E402
 
 
 @dataclass
+class VoiceConfig:
+    """`voice:` — chat TUI voice-input (Whisper) settings.
+
+    Lazy-loaded only when the user presses the record key (F2) so the optional
+    deps (`sounddevice`, `faster-whisper`) stay opt-in. See the user guide at
+    `docs/en/how-to/enable-voice-input.md`.
+    """
+    enabled: bool = True              # set False to hard-disable F2 even if deps installed
+    model: str = "small"              # tiny | base | small | medium | large-v3
+    language: str | None = None       # ISO code or None for auto-detect
+    device: str = "auto"              # auto | cpu | cuda | metal
+    compute_type: str = "int8"        # int8 | float16 | float32
+    sample_rate: int = 16000          # Whisper expects 16 kHz mono
+
+
+@dataclass
 class EventsConfig:
     """`events:` — audit log rotation policy (PR20).
 
@@ -233,6 +249,9 @@ class ReynConfig:
     # and parsed lazily by the coordinator (= keeps PlanResumeConfig in
     # the plan/ module rather than coupling config.py to it).
     plan_resume_raw: dict | None = None
+    # Voice input (Whisper) settings for the chat TUI. Optional feature gated
+    # by the `reyn[voice]` extras; the OS itself never depends on this block.
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     # When true, attach Anthropic-style cache_control markers to the system
     # prompt so providers that support prompt caching (Anthropic, AWS Bedrock
     # Claude) can reuse the prefix across calls. Ignored by providers that
@@ -490,6 +509,25 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
             merged.get("plan_resume")
             if isinstance(merged.get("plan_resume"), dict) else None
         ),
+        voice=_build_voice_config(merged.get("voice")),
+    )
+
+
+def _build_voice_config(raw: object) -> VoiceConfig:
+    """Parse `voice:` block. Unknown keys are ignored; bad types fall back to defaults."""
+    defaults = VoiceConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    lang = raw.get("language", defaults.language)
+    if lang is not None and not isinstance(lang, str):
+        lang = defaults.language
+    return VoiceConfig(
+        enabled=bool(raw.get("enabled", defaults.enabled)),
+        model=str(raw.get("model", defaults.model)),
+        language=lang if (lang is None or lang.strip()) else None,
+        device=str(raw.get("device", defaults.device)),
+        compute_type=str(raw.get("compute_type", defaults.compute_type)),
+        sample_rate=int(raw.get("sample_rate", defaults.sample_rate)),
     )
 
 

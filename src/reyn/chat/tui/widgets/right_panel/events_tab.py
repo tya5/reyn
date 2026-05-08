@@ -47,6 +47,17 @@ _EVENT_COLORS: dict[str, str] = {
     "web_search_completed":        "#888888",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
+    # Plan-mode (ADR-0022 / 0023 / 0024 / 0025) — orange family so a plan's
+    # forensic events stand out from the blue skill_run / workflow events
+    # while still reading as a sibling concept.
+    "plan_emitted":                "#ff9944",
+    "plan_step_started":           "#ffaa66",
+    "plan_step_completed":         "#ffaa66",
+    "plan_step_failed":            "#ff6644",
+    "plan_step_memoized":          "#cc8855",
+    "plan_step_memo_failed":       "#cc8855",
+    "plan_aggregated":             "#ff9944",
+    "plan_run_interrupted":        "#ff4444",
 }
 _DEFAULT_EVENT_COLOR = "#666666"
 
@@ -67,9 +78,18 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "workflow_started", "workflow_finished",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
+    # Plan-mode group — every forensic plan_* event the runtime emits to the
+    # events log (WAL-only types like plan_started/plan_completed live in
+    # state_log.jsonl and don't appear here).
+    ("plan", frozenset({
+        "plan_emitted", "plan_aggregated", "plan_run_interrupted",
+        "plan_step_started", "plan_step_completed", "plan_step_failed",
+        "plan_step_memoized", "plan_step_memo_failed",
+    })),
     ("error", frozenset({
         "validation_error", "phase_retry", "permission_denied",
         "router_retry_exhausted", "tool_failed",
+        "plan_step_failed", "plan_step_memo_failed", "plan_run_interrupted",
     })),
     ("user", frozenset({
         "user_message_received",
@@ -151,6 +171,51 @@ def _event_hint(ev: dict) -> str:
         return str(d.get("query", ""))[:40]
     if t == "web_search_completed":
         return f"{d.get('result_count', '')} results"
+    # Plan-mode (ADR-0022 / 0023 / 0024 / 0025). plan_id is a stable suffix —
+    # show only the leading 8 chars so it stays readable; pair with step_id
+    # where present so events from the same plan visually thread together.
+    if t == "plan_emitted":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        n = d.get("n_steps", 0)
+        goal = str(d.get("goal", ""))
+        goal = goal[:32] + ("…" if len(goal) > 32 else "")
+        return f"[{plan_id}] {n} steps · {goal}"
+    if t == "plan_step_started":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        step_id = d.get("step_id", "")
+        deps = d.get("depends_on") or []
+        dep_part = f" ← {','.join(deps)}" if deps else ""
+        return f"[{plan_id}] {step_id}{dep_part}"
+    if t == "plan_step_completed":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        step_id = d.get("step_id", "")
+        nbytes = d.get("content_len", 0)
+        return f"[{plan_id}] {step_id} · {nbytes}b"
+    if t == "plan_step_failed":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        step_id = d.get("step_id", "")
+        err = str(d.get("error", ""))[:30]
+        return f"[{plan_id}] {step_id} ✗ {err}"
+    if t == "plan_step_memoized":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        step_id = d.get("step_id", "")
+        nbytes = d.get("content_len", 0)
+        return f"[{plan_id}] {step_id} · replay ({nbytes}b)"
+    if t == "plan_step_memo_failed":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        step_id = d.get("step_id", "")
+        err = str(d.get("error", ""))[:30]
+        return f"[{plan_id}] {step_id} · replay ✗ {err}"
+    if t == "plan_aggregated":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        ok = d.get("n_completed", 0)
+        bad = d.get("n_failed", 0)
+        rlen = d.get("result_len", 0)
+        return f"[{plan_id}] {ok} ok / {bad} fail · {rlen}b"
+    if t == "plan_run_interrupted":
+        plan_id = str(d.get("plan_id", ""))[:8]
+        exc_type = d.get("exc_type", "")
+        return f"[{plan_id}] interrupted ({exc_type})"
     return ""
 
 
@@ -184,36 +249,82 @@ def _load_chain_replies(project_root: Path) -> dict[str, str]:
     return replies
 
 
+def _load_events_cached(
+    project_root: Path,
+    cache: dict[Path, tuple[float, list[dict]]],
+) -> list[dict]:
+    """Read all events/.jsonl with file-mtime caching (perf).
+
+    Each .jsonl file is parsed once and re-parsed only when its mtime
+    changes — events panel re-renders every 2 s and the events directory
+    grows monotonically with each turn, so re-reading every file every
+    refresh adds up.
+    """
+    events_root = project_root / ".reyn" / "events"
+    if not events_root.is_dir():
+        return []
+    all_events: list[dict] = []
+    seen: set[Path] = set()
+    for jsonl in sorted(events_root.rglob("*.jsonl")):
+        seen.add(jsonl)
+        try:
+            mtime = jsonl.stat().st_mtime
+        except OSError:
+            continue
+        cached = cache.get(jsonl)
+        if cached is not None and cached[0] == mtime:
+            all_events.extend(cached[1])
+            continue
+        parsed: list[dict] = []
+        try:
+            for raw in jsonl.read_text(encoding="utf-8").splitlines():
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    parsed.append(json.loads(raw))
+                except Exception as exc:
+                    logger.warning(
+                        "right_panel events: malformed event JSON in %s: %s",
+                        jsonl, exc,
+                    )
+        except Exception as exc:
+            logger.warning("right_panel events: read of %s failed: %s", jsonl, exc)
+            continue
+        cache[jsonl] = (mtime, parsed)
+        all_events.extend(parsed)
+    # Drop cache entries for files that no longer exist
+    for stale in [p for p in cache if p not in seen]:
+        cache.pop(stale, None)
+    return all_events
+
+
 def render_events(
     project_root: Path | None,
     event_filter_idx: int,
     event_tail_idx: int,
-) -> str:
-    """Render the recent-events list for the events tab."""
+    *,
+    cursor: int = 0,
+    cache: dict | None = None,
+) -> tuple[str, list[dict]]:
+    """Render the recent-events list for the events tab.
+
+    Returns ``(rendered_markup, visible_events)`` so the orchestrator can
+    drive the cursor + Enter→preview integration without re-parsing files.
+    Consecutive events sharing a chain_id are visually grouped (a blank
+    line separates chain switches). The row at index ``cursor`` is
+    highlighted with a coral ▶ prefix.
+    """
     if project_root is None:
-        return "[#555555]  (no project root)[/]"
+        return "[#555555]  (no project root)[/]", []
 
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
-        return "[#555555]  (no events yet)[/]"
+        return "[#555555]  (no events yet)[/]", []
 
-    all_events: list[dict] = []
-    for jsonl in sorted(events_root.rglob("*.jsonl")):
-        try:
-            for raw in jsonl.read_text(encoding="utf-8").splitlines():
-                raw = raw.strip()
-                if raw:
-                    try:
-                        all_events.append(json.loads(raw))
-                    except Exception as exc:
-                        logger.warning(
-                            "right_panel events: malformed event JSON in %s: %s",
-                            jsonl, exc,
-                        )
-        except Exception as exc:
-            logger.warning(
-                "right_panel events: read of %s failed: %s", jsonl, exc,
-            )
+    if cache is None:
+        cache = {}
+    all_events = _load_events_cached(project_root, cache)
 
     filter_name, filter_set = _FILTER_GROUPS[event_filter_idx]
     tail = _TAIL_CYCLE[event_tail_idx]
@@ -224,22 +335,38 @@ def render_events(
         visible = all_events
 
     if not visible:
-        return "[#555555]  (no matching events)[/]"
+        return "[#555555]  (no matching events)[/]", []
+
+    # Newest-first window — also returned to the caller for cursor / preview
+    windowed = list(visible[-tail:])[::-1]
+    if cursor >= len(windowed):
+        cursor = max(0, len(windowed) - 1)
 
     chain_replies = _load_chain_replies(project_root)
 
     lines: list[str] = []
-    for ev in visible[-tail:][::-1]:
-        ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
+    prev_chain: str | None = None
+    for i, ev in enumerate(windowed):
         ev_type = ev.get("type", "?")
+        data = ev.get("data") or {}
+        chain_id = data.get("chain_id") or ""
+        # Chain grouping — blank line between chain switches
+        if prev_chain is not None and prev_chain != chain_id:
+            lines.append("")
+        prev_chain = chain_id
+
+        ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
         color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
         hint = _esc(_event_hint(ev))
         hint_part = f"  [#555555]{hint}[/]" if hint else ""
+        cursor_prefix = (
+            f"[bold {_CORAL}]▶ [/]" if i == cursor else "  "
+        )
         lines.append(
-            f"[#444444]  {ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
+            f"{cursor_prefix}[#444444]{ts}[/]  [{color}]{_esc(ev_type)}[/]{hint_part}"
         )
         if ev_type == "user_message_received":
-            cid = (ev.get("data") or {}).get("chain_id")
+            cid = data.get("chain_id")
             if cid:
                 reply = chain_replies.get(cid)
                 if reply is None:
@@ -248,13 +375,13 @@ def render_events(
                     short = _esc(reply[:72]) + ("…" if len(reply) > 72 else "")
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
-    # filter_name kept for parity with header; unused locally to silence lint
     del filter_name
-    return "\n".join(lines)
+    return "\n".join(lines), windowed
 
 
 __all__ = [
     "render_events",
+    "_load_events_cached",
     "_FILTER_GROUPS",
     "_TAIL_CYCLE",
     "_EVENT_COLORS",

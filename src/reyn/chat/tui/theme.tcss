@@ -1,6 +1,24 @@
 /* Reyn TUI — coral theme. One bundled theme, no user customisation in v1.
    Primary accent: $primary (warm coral matching the coral design's App primary)
-*/
+
+   Where CSS belongs (rule of thumb):
+     - This file (theme.tcss):
+         Layout-level rules — dock, position, size, screen-wide widgets
+         (ReynHeader, ConversationView, InputBar, InterventionWidget).
+         Loaded as ``App.CSS_PATH`` so it overrides per-widget DEFAULT_CSS.
+     - Widget DEFAULT_CSS (in each widget's `.py`):
+         Widget-internal rules — focus indicators, scrollbars, inner
+         children, default colours that travel with the widget.
+
+   When a rule appears in BOTH places, theme.tcss wins (App CSS_PATH has
+   higher specificity than DEFAULT_CSS). Avoid duplicating rules in both
+   to prevent the "what actually applies?" trap (we hit this when conv
+   pane border was defined in two places and only the theme.tcss one
+   was effective).
+
+   Colour values are documented in src/reyn/chat/tui/_palette.py — keep
+   `_palette.py` as the single source of truth and reference its values
+   here when a literal is needed. */
 
 Screen {
     layout: vertical;
@@ -31,12 +49,15 @@ ReynHeader #status {
 
 #content {
     height: 1fr;
+    /* 1-row dim divider between the screen header and panel content.
+       Without this, tabs (right panel) and the RichLog (conv pane)
+       both touch the screen header and visually "intrude" on it. */
+    border-top: solid #333333;
 }
 
 ConversationView {
     width: 1fr;
     height: 100%;
-    border: tall #2a2a2a;
     padding: 0 1;
     overflow-y: scroll;
     scrollbar-color: $primary;
@@ -53,8 +74,15 @@ InputBar {
     height: auto;
     max-height: 20;
     background: #111111;
-    border-top: tall #2a2a2a;
+    border-top: solid #2a2a2a;
     padding: 0 1;
+}
+
+/* Focus indicator: when the TextArea inside has focus, the input bar's
+   top border lights up coral — mirrors the right panel's left-edge
+   focus pattern, applied to the input bar's natural top edge. */
+InputBar:focus-within {
+    border-top: solid $primary;
 }
 
 InputBar TextArea {
@@ -76,7 +104,7 @@ InputBar #hints {
 /* Intervention widget */
 InterventionWidget {
     background: #1e1510;
-    border: tall $primary;
+    border: solid $primary;
     padding: 1 2;
     height: auto;
     margin: 1 0;

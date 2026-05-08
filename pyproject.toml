@@ -78,6 +78,11 @@ release = [
     "build>=1.0",
     "twine>=5.0",
 ]
+voice = [
+    "sounddevice>=0.4.6",
+    "numpy>=1.24",
+    "faster-whisper>=1.0.0",
+]
 
 [project.scripts]
 reyn = "reyn._cli:main"

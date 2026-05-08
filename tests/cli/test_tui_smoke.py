@@ -483,35 +483,43 @@ async def test_user_message_uses_richlog():
 
 
 @pytest.mark.asyncio
-async def test_status_message_uses_richlog():
-    """kind=status goes through RichLog (existing path)."""
+async def test_status_message_routes_to_sticky_status():
+    """kind=status no longer pollutes RichLog — it activates StickyStatus instead."""
+    from reyn.chat.tui.widgets.sticky_status import StickyStatus
     from textual.widgets import RichLog
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
-        before = len(log.lines)
-        msg = OutboxMessage(kind="status", text="thinking...")
-        conv.render_message(msg)
+        sticky = conv.query_one("#sticky-status", StickyStatus)
+        before_lines = len(log.lines)
+        # Drive status via the public API (matches what the outbox loop does)
+        conv.show_status("thinking...", kind="thinking")
         await pilot.pause()
-        assert len(log.lines) > before
+        # Sticky activated, and the RichLog stayed clean
+        assert sticky.has_class("active")
+        assert len(log.lines) == before_lines
 
 
 @pytest.mark.asyncio
-async def test_error_message_uses_richlog():
-    """kind=error goes through RichLog (existing path)."""
+async def test_error_message_mounts_error_box():
+    """kind=error mounts an ErrorBox widget (no longer a RichLog line)."""
+    from reyn.chat.tui.widgets.error_box import ErrorBox
     from textual.widgets import RichLog
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
         log = conv.query_one(RichLog)
-        before = len(log.lines)
+        before_lines = len(log.lines)
         msg = OutboxMessage(kind="error", text="something broke")
         conv.render_message(msg)
         await pilot.pause()
-        assert len(log.lines) > before
+        # ErrorBox is mounted as a child; RichLog stays clean
+        boxes = list(conv.query(ErrorBox))
+        assert len(boxes) == 1
+        assert len(log.lines) == before_lines
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,9 @@ Coalescing strategy:
   - A lightweight set_interval (16 ms) drives `_flush_render()` which
     re-renders only when dirty. This decouples engine chunk rate from
     Textual's render rate.
+  - A blinking block cursor (▍) is appended during streaming; it toggles
+    every ~30 flush ticks (~480 ms). If no new chunk arrives for >5 s, the
+    cursor is replaced with a dim ` …` stall indicator.
 
 seal() behaviour:
   - Streaming text (raw Rich text) is displayed during streaming.
@@ -24,12 +27,14 @@ seal() behaviour:
 """
 from __future__ import annotations
 
-_CORAL = "#C8553D"  # primary theme colour — matches Theme(primary=...)
+from time import monotonic
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
+
+from reyn.chat.tui._palette import _CORAL
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000
@@ -76,6 +81,10 @@ class StreamingRow(Widget):
         self._static: Static | None = None
         # True once the widget is in the DOM (compose + on_mount have run)
         self._mounted = False
+        # Cursor blink state
+        self._cursor_visible: bool = True
+        self._last_chunk_at: float = 0.0
+        self._cursor_tick_count: int = 0
 
     def compose(self) -> ComposeResult:
         self._static = Static(id="streaming_text")
@@ -97,6 +106,11 @@ class StreamingRow(Widget):
 
     def _flush_render(self) -> None:
         """Render pending chunks if dirty. Called every 16 ms by interval."""
+        if not self._sealed:
+            self._cursor_tick_count += 1
+            if self._cursor_tick_count % 30 == 0:
+                self._cursor_visible = not self._cursor_visible
+                self._dirty = True
         if self._dirty and self._static is not None:
             self._dirty = False
             self._static.update(self._build_renderable())
@@ -105,6 +119,15 @@ class StreamingRow(Widget):
         t = Text()
         t.append(self._prefix, style="bold " + _CORAL)
         t.append("".join(self._chunks))
+        if not self._sealed:
+            idle = (monotonic() - self._last_chunk_at) if self._last_chunk_at != 0.0 else 0.0
+            if idle > 5.0:
+                t.append(" …", style="dim")
+            else:
+                if self._cursor_visible:
+                    t.append("▍", style="bold " + _CORAL)
+                else:
+                    t.append(" ")
         return t
 
     def _apply_markdown_swap(self) -> None:
@@ -134,6 +157,7 @@ class StreamingRow(Widget):
         """Accumulate a token chunk. Actual re-render happens on next flush."""
         if self._sealed:
             return
+        self._last_chunk_at = monotonic()
         self._chunks.append(text)
         self._dirty = True
 

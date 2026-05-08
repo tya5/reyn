@@ -5,8 +5,14 @@ import datetime
 import json
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from .base import _CORAL, _esc, logger
+
+# Budget progress-bar geometry
+_BAR_FILL = "█"
+_BAR_EMPTY = "░"
+_BAR_WIDTH = 24
 
 
 def _new_bucket() -> dict:
@@ -34,7 +40,62 @@ def _sparkline(values: list[float], width: int = 32) -> str:
     return f"[{_CORAL}]{bar}[/]"
 
 
-def render_cost(project_root: Path | None) -> str:
+def _budget_bar(used: float, cap: float) -> str:
+    """Render a 24-cell `█░` progress bar with colour thresholds.
+
+    Green below 75 %, coral 75–90 %, red above 90 %. Returns Rich markup.
+    """
+    ratio = min(1.0, used / cap) if cap > 0 else 0.0
+    filled = round(ratio * _BAR_WIDTH)
+    pct = int(ratio * 100)
+    if ratio >= 0.9:
+        colour = "#ff4444"
+    elif ratio >= 0.75:
+        colour = _CORAL
+    else:
+        colour = "#44cc88"
+    bar = _BAR_FILL * filled + _BAR_EMPTY * (_BAR_WIDTH - filled)
+    return f"[{colour}]\\[{bar}][/] [{colour}]{pct:3d}%[/]"
+
+
+def _render_budget_caps(lines: list[str], budget_tracker: Any) -> None:
+    """Append daily token / cost progress bars when caps are configured.
+
+    Reads `daily_tokens.hard_limit` and `daily_cost_usd.hard_limit` from
+    ``budget_tracker.snapshot()["config"]``. Skips silently when caps are
+    unset or the snapshot shape changes.
+    """
+    try:
+        snap = budget_tracker.snapshot()
+        cfg = snap.get("config")
+        if cfg is None:
+            return
+        daily_tok_used = snap.get("daily_tokens", 0)
+        daily_cost_used = snap.get("daily_cost_usd", 0.0)
+        tok_cap_cfg = getattr(cfg, "daily_tokens", None)
+        cost_cap_cfg = getattr(cfg, "daily_cost_usd", None)
+        tok_hard = getattr(tok_cap_cfg, "hard_limit", None) if tok_cap_cfg else None
+        cost_hard = getattr(cost_cap_cfg, "hard_limit", None) if cost_cap_cfg else None
+        if tok_hard and tok_hard > 0:
+            label = f"{daily_tok_used:,} / {int(tok_hard):,}"
+            bar = _budget_bar(daily_tok_used, tok_hard)
+            lines.append(
+                f"[#555555]    tokens  [/][#aaaaaa]{label:<22}[/]  {bar}"
+            )
+        if cost_hard and cost_hard > 0:
+            label = f"${daily_cost_used:.4f} / ${cost_hard:.4f}"
+            bar = _budget_bar(daily_cost_used, cost_hard)
+            lines.append(
+                f"[#555555]    cost    [/][#aaaaaa]{label:<22}[/]  {bar}"
+            )
+    except Exception as exc:
+        logger.warning("right_panel cost: budget cap render failed: %s", exc)
+
+
+def render_cost(
+    project_root: Path | None,
+    budget_tracker: Any = None,
+) -> str:
     """Render the cost tab, summarising LLM usage from .reyn/events/*.jsonl."""
     lines: list[str] = []
 
@@ -56,6 +117,19 @@ def render_cost(project_root: Path | None) -> str:
     by_agent_skill: dict[str, dict[str, dict]] = defaultdict(
         lambda: defaultdict(_new_bucket)
     )
+    # Per-model bucket (parsed from llm_called events)
+    by_model: dict[str, dict] = defaultdict(_new_bucket)
+    # Plan-mode (ADR-0022 / 0023). Cost attribution: while we're inside a
+    # plan_step (= between plan_step_started and plan_step_{completed,failed}
+    # within the same file), each llm_response_received contributes to both
+    # the (plan_id) and the (plan_id, step_id) buckets. plan_emitted gives us
+    # the human-readable goal so the BY PLAN section shows what the plan was
+    # actually trying to do, not just an opaque uuid.
+    by_plan: dict[str, dict] = defaultdict(_new_bucket)
+    by_plan_step: dict[str, dict[str, dict]] = defaultdict(
+        lambda: defaultdict(_new_bucket)
+    )
+    plan_goals: dict[str, str] = {}
 
     for jsonl in sorted(events_root.rglob("*.jsonl")):
         try:
@@ -77,6 +151,11 @@ def render_cost(project_root: Path | None) -> str:
                 skill = "(chat)"
 
             pending_model: str = "unknown"
+            # Plan attribution state (per-file). When inside an active step
+            # (= we've seen plan_step_started without a matching completion),
+            # llm_response_received also contributes to that plan + step.
+            current_plan_id: str | None = None
+            current_step_id: str | None = None
             for raw in jsonl.read_text(encoding="utf-8").splitlines():
                 raw = raw.strip()
                 if not raw:
@@ -85,6 +164,21 @@ def render_cost(project_root: Path | None) -> str:
                     ev = json.loads(raw)
                     ev_type = ev.get("type")
                     d = ev.get("data") or {}
+                    if ev_type == "plan_emitted":
+                        pid = str(d.get("plan_id", ""))
+                        if pid:
+                            plan_goals[pid] = str(d.get("goal", ""))
+                        continue
+                    if ev_type == "plan_step_started":
+                        current_plan_id = str(d.get("plan_id", "")) or None
+                        current_step_id = str(d.get("step_id", "")) or None
+                        continue
+                    if ev_type in ("plan_step_completed", "plan_step_failed"):
+                        # Close the active step. Defensive: if plan_id changed
+                        # mid-stream (shouldn't happen) we still reset both.
+                        current_plan_id = None
+                        current_step_id = None
+                        continue
                     if ev_type == "llm_called":
                         pending_model = str(d.get("model", "unknown"))
                         continue
@@ -104,6 +198,27 @@ def render_cost(project_root: Path | None) -> str:
                             bucket["has_cost"] = True
                         bucket["call_costs"].append(cost)
 
+                    # Per-model accumulation
+                    mb = by_model[pending_model]
+                    mb["p"] += pt; mb["c"] += ct
+                    mb["cost"] += cost; mb["calls"] += 1
+                    if has_cost:
+                        mb["has_cost"] = True
+                    mb["call_costs"].append(cost)
+
+                    # Plan attribution — additive view on top of by_agent/skill,
+                    # not a replacement. Same call counts toward both.
+                    if current_plan_id:
+                        for bucket in (
+                            by_plan[current_plan_id],
+                            by_plan_step[current_plan_id][current_step_id or "?"],
+                        ):
+                            bucket["p"] += pt; bucket["c"] += ct
+                            bucket["cost"] += cost; bucket["calls"] += 1
+                            if has_cost:
+                                bucket["has_cost"] = True
+                            bucket["call_costs"].append(cost)
+
                     if ts.startswith(today_str):
                         today["p"] += pt; today["c"] += ct
                         today["cost"] += cost; today["calls"] += 1
@@ -115,8 +230,6 @@ def render_cost(project_root: Path | None) -> str:
                         "right_panel cost: malformed event in %s: %s",
                         jsonl, exc,
                     )
-            # pending_model retained for symmetry with future per-call attribution
-            del pending_model
         except Exception as exc:
             logger.warning(
                 "right_panel cost: read of %s failed: %s", jsonl, exc,
@@ -133,6 +246,9 @@ def render_cost(project_root: Path | None) -> str:
         spark = _sparkline(today["call_costs"])
         if spark:
             lines.append(f"[#555555]    trend   [/]{spark}")
+        # Budget cap progress bars (only when caps are configured)
+        if budget_tracker is not None:
+            _render_budget_caps(lines, budget_tracker)
     lines.append("")
 
     # ── ALL TIME ──────────────────────────────────────────────────────
@@ -184,6 +300,75 @@ def render_cost(project_root: Path | None) -> str:
             lines.append("")
     else:
         lines.append("[#555555]    (no skill runs yet)[/]")
+    lines.append("")
+
+    # ── BY PLAN ──────────────────────────────────────────────────────
+    # Only show when plans have actually run (avoid noise when nobody is
+    # using plan-mode). Sort plans by descending cost so the expensive
+    # ones surface first.
+    if by_plan:
+        lines.append("[bold #aaaaaa]  BY PLAN[/]")
+        sorted_plans = sorted(
+            by_plan.items(),
+            key=lambda kv: (-kv[1]["cost"], -(kv[1]["p"] + kv[1]["c"])),
+        )
+        for plan_id, pb in sorted_plans:
+            tok_total = pb["p"] + pb["c"]
+            cost_part = (
+                f"  [bold #44cc88]${pb['cost']:.4f}[/]"
+                if pb["has_cost"] else ""
+            )
+            short_pid = plan_id[:8]
+            goal = plan_goals.get(plan_id, "")
+            goal_part = (
+                f"  [#666666]{_esc(goal[:32] + ('…' if len(goal) > 32 else ''))}[/]"
+                if goal else ""
+            )
+            lines.append(
+                f"[bold #ff9944]  {short_pid:<8}[/]"
+                f"  [#aaaaaa]{tok_total:>7,} tok[/]"
+                f"{cost_part}"
+                f"  [#777777]{pb['calls']}c[/]"
+                f"{goal_part}"
+            )
+            steps = by_plan_step.get(plan_id, {})
+            for step_id in sorted(steps):
+                sb = steps[step_id]
+                step_tok = sb["p"] + sb["c"]
+                step_cost_part = (
+                    f"  [#2d7a4f]${sb['cost']:.4f}[/]"
+                    if sb["has_cost"] else ""
+                )
+                lines.append(
+                    f"[#555555]    {_esc(step_id):<22}[/]"
+                    f"[#555555]{step_tok:>7,} tok[/]"
+                    f"{step_cost_part}"
+                    f"  [#444444]{sb['calls']}c[/]"
+                )
+            lines.append("")
+        lines.append("")
+
+    # ── BY MODEL ─────────────────────────────────────────────────────
+    lines.append("[bold #aaaaaa]  BY MODEL[/]")
+    if by_model:
+        sorted_models = sorted(
+            by_model.items(),
+            key=lambda kv: (-kv[1]["cost"], -(kv[1]["p"] + kv[1]["c"])),
+        )
+        for model_name, mb in sorted_models:
+            tok_total = mb["p"] + mb["c"]
+            cost_part = (
+                f"  [#44cc88]${mb['cost']:.4f}[/]"
+                if mb["has_cost"] else ""
+            )
+            lines.append(
+                f"[#aaaaaa]  {_esc(model_name):<28}[/]"
+                f"[#555555]{tok_total:>7,} tok[/]"
+                f"{cost_part}"
+                f"  [#777777]{mb['calls']}c[/]"
+            )
+    else:
+        lines.append("[#555555]    (no model data yet)[/]")
 
     return "\n".join(lines)
 

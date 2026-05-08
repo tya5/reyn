@@ -32,7 +32,7 @@ class InterventionWidget(Widget):
     DEFAULT_CSS = """
     InterventionWidget {
         background: #1e1510;
-        border: tall $primary;
+        border: solid $primary;
         padding: 1 2;
         height: auto;
         margin: 1 0;
@@ -65,7 +65,7 @@ class InterventionWidget(Widget):
     InterventionWidget Input {
         margin-top: 1;
         background: #2a1a10;
-        border: tall $primary;
+        border: solid $primary;
         color: #ffffff;
         height: 1;
     }

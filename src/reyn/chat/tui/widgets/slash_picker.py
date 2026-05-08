@@ -19,8 +19,8 @@ from rich.text import Text
 from textual.widgets import Static
 
 from reyn.chat.slash import SlashCommand
+from reyn.chat.tui._palette import _CORAL
 
-_CORAL = "#C8553D"
 _MAX_VISIBLE = 8
 
 
@@ -32,7 +32,7 @@ class SlashPicker(Static):
         height: auto;
         max-height: 10;
         background: #1a1a1a;
-        border: tall $primary;
+        border: solid $primary;
         padding: 0 1;
         display: none;
     }

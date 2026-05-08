@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from time import monotonic as _now_monotonic
 from typing import TYPE_CHECKING
 
 from textual.app import App, ComposeResult
@@ -55,8 +56,16 @@ class ReynTUIApp(App):
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
         Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
+        Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
         Binding("t", "event_tail_cycle", "Tail events", priority=True, show=False),
+        # Primary voice toggle: ctrl+r (Record). F2 kept as alias because it
+        # ships with the user guide, but many terminals — and macOS by default
+        # — intercept F-keys before they reach Textual.
+        Binding("ctrl+r", "voice_toggle", "Voice", priority=True, show=False),
+        Binding("f2", "voice_toggle", "Voice (alias)", priority=True, show=False),
+        Binding("escape", "voice_cancel", "Voice cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
 
@@ -93,6 +102,19 @@ class ReynTUIApp(App):
         self._cancel_event: asyncio.Event = asyncio.Event()
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
         self._skill_exec: dict[str, dict] = {}
+        # Per-turn cost tracking (A4 — opt-in via /cost-inline)
+        self._cost_inline_enabled = False
+        self._turn_start_cost_usd: float = 0.0
+        self._turn_start_tokens: int = 0
+        self._turn_start_time: float = 0.0
+        # Recent context for smart Ctrl+B target tab
+        self._last_focal_tab: str | None = None  # "events" | "agents" | None
+        # Active streaming row id — shared between __stream_* handlers
+        self._current_stream_id: str | None = None
+        # Voice input (lazy — created on first F2 press so import-time cost is
+        # zero for users who don't have the `reyn[voice]` extras installed).
+        self._voice_input = None  # type: ignore[var-annotated]
+        self._voice_busy: bool = False  # True while transcription is running
 
     # ── composition ───────────────────────────────────────────────────────────
 
@@ -174,91 +196,16 @@ class ReynTUIApp(App):
     # ── outbox subscription (phases 3+) ────────────────────────────────────────
 
     async def _outbox_loop(self) -> None:
-        """Drain registry.repl_outbox and render each message."""
+        """Drain registry.repl_outbox via :class:`OutboxRouter`.
+
+        The full per-kind dispatch table + handlers live in ``app_outbox``;
+        this method just constructs the router. Keeps ``app.py`` focused on
+        composition / lifecycle.
+        """
         if self._agent_registry is None:
             return
-        conv = self.query_one("#conversation", ConversationView)
-        header = self.query_one("#header", ReynHeader)
-        current_stream_id: str | None = None
-
-        while True:
-            try:
-                msg = await self._agent_registry.repl_outbox.get()
-            except asyncio.CancelledError:
-                break
-
-            if msg.kind == "__end__":
-                break
-
-            if msg.kind == "__attach_request__":
-                # Handled by AgentRegistry._forwarder; we just update our state
-                new_name = msg.text
-                if new_name and self._agent_registry is not None:
-                    self._agent_name = new_name
-                    self.query_one("#header", ReynHeader).refresh_status(
-                        agent_name=new_name,
-                    )
-                continue
-
-            if msg.kind == "__matrix__":
-                # Easter egg: /matrix slash command lands here.
-                from reyn.chat.tui.widgets.matrix import MatrixScreen
-                self.push_screen(MatrixScreen())
-                continue
-
-            if msg.kind == "__donut__":
-                # Easter egg: /donut slash command lands here.
-                from reyn.chat.tui.widgets.donut import DonutScreen
-                self.push_screen(DonutScreen())
-                continue
-
-            if msg.kind == "__stream_start__":
-                # Begin a streaming row
-                current_stream_id = msg.meta.get("msg_id", id(msg))
-                agent = self._agent_name
-                conv.begin_stream(current_stream_id, agent)
-                continue
-
-            if msg.kind == "__stream_chunk__":
-                # Append to the current streaming row
-                if current_stream_id is not None:
-                    conv.append_stream(current_stream_id, msg.text)
-                continue
-
-            if msg.kind == "__stream_end__":
-                if current_stream_id is not None:
-                    conv.end_stream(current_stream_id)
-                    current_stream_id = None
-                # Update status line after stream ends
-                self._maybe_refresh_status(header)
-                continue
-
-            # Intervention: mount inline widget for structured response
-            if msg.kind == "intervention":
-                iv_id = msg.meta.get("intervention_id", "")
-                raw_choices = msg.meta.get("choices")
-                choices = None
-                if raw_choices:
-                    choices = [(c["label"], c["id"]) for c in raw_choices]
-                self._mount_intervention(conv, msg.text, iv_id, choices)
-                continue
-
-            # Regular message
-            conv.render_message(msg)
-
-            # Refresh status after agent/skill_done messages
-            if msg.kind in {"agent", "skill_done"}:
-                self._maybe_refresh_status(header)
-
-            # Track live skill execution state for Agents tab
-            if msg.kind == "trace" and msg.meta.get("skill_name"):
-                self._update_skill_exec(msg)
-                self._push_exec_state()
-            elif msg.kind == "skill_done":
-                run_id = msg.meta.get("run_id", "")
-                if run_id:
-                    self._skill_exec.pop(run_id, None)
-                    self._push_exec_state()
+        from .app_outbox import OutboxRouter
+        await OutboxRouter(self).run()
 
     def _mount_intervention(
         self,
@@ -353,6 +300,67 @@ class ReynTUIApp(App):
         except Exception:
             pass
 
+    def _handle_trace_for_skill_row(self, conv: ConversationView, msg) -> None:
+        """Mount or update a SkillActivityRow from a `kind="trace"` message.
+
+        Recognised text patterns from ChatEventForwarder:
+          - "phase started: <phase_name>" → start row (if missing) + set_phase
+          - "<phase> → <next> ..."         → ignored (phase-completed details
+            are visible in the right panel events tab)
+        """
+        run_id = msg.meta.get("run_id", "")
+        skill_name = msg.meta.get("skill_name", "") or ""
+        if not run_id:
+            return
+        text = msg.text or ""
+        if text.startswith("phase started: "):
+            phase = text[len("phase started: "):].strip()
+            # Lazy-create the row if first trace
+            conv.start_skill_row(run_id, skill_name)
+            # Track phase visit count from existing exec state
+            existing = self._skill_exec.get(run_id) or {}
+            visit = int(existing.get("phase_visits", 0)) + 1
+            conv.update_skill_phase(run_id, phase, visit=visit)
+            self._last_focal_tab = "agents"
+
+    def _maybe_render_cost_suffix(self, conv: ConversationView) -> None:
+        """A4 — emit a dim per-turn cost suffix line when /cost-inline is on."""
+        if not self._cost_inline_enabled:
+            return
+        if self._budget_tracker is None:
+            return
+        try:
+            snap = self._budget_tracker.snapshot()
+            cost_now = float(snap.get("daily_cost_usd", 0.0))
+            tokens_now = int(snap.get("daily_tokens", 0))
+        except Exception:
+            return
+        delta_cost = max(0.0, cost_now - self._turn_start_cost_usd)
+        delta_tokens = max(0, tokens_now - self._turn_start_tokens)
+        elapsed = max(0.0, _now_monotonic() - self._turn_start_time)
+        # Suppress when the delta is exactly zero (no model call this turn)
+        if delta_cost == 0.0 and delta_tokens == 0:
+            return
+        try:
+            conv.render_cost_suffix(delta_tokens, delta_cost, elapsed)
+        except Exception:
+            pass
+
+    def _record_turn_start(self) -> None:
+        """Capture cost / token / time snapshot at the start of a user turn."""
+        self._turn_start_time = _now_monotonic()
+        if self._budget_tracker is not None:
+            try:
+                snap = self._budget_tracker.snapshot()
+                self._turn_start_cost_usd = float(snap.get("daily_cost_usd", 0.0))
+                self._turn_start_tokens = int(snap.get("daily_tokens", 0))
+            except Exception:
+                self._turn_start_cost_usd = 0.0
+                self._turn_start_tokens = 0
+        else:
+            self._turn_start_cost_usd = 0.0
+            self._turn_start_tokens = 0
+
     # ── message handlers from widgets ─────────────────────────────────────────
 
     async def on_input_bar_user_submitted(self, msg: InputBar.UserSubmitted) -> None:
@@ -361,14 +369,11 @@ class ReynTUIApp(App):
         if not text:
             return
 
-        # Show user message in conversation
         conv = self.query_one("#conversation", ConversationView)
-        from rich.text import Text
-
-        from reyn.chat.tui.widgets.conversation import _msg_header
-        conv._write_log(_msg_header("you", "bold #4abbb5", "#1f5856"))
-        conv._write_log(Text(text))
-        conv._write_log(Text(""))
+        # B1: render with grouped header
+        conv.render_user_message(text)
+        # A4: snapshot cost/tokens/time at turn start
+        self._record_turn_start()
 
         # Get the attached session
         session = self._get_session()
@@ -471,9 +476,53 @@ class ReynTUIApp(App):
                 task.cancel()
 
     def action_toggle_panel(self) -> None:
-        """ctrl+b — open or close the right panel."""
+        """ctrl+b — open or close the right panel.
+
+        Smart targeting: when opening the panel, jump to the tab most relevant
+        to the recent conv-pane focal point — events tab after an error,
+        agents tab after skill activity. When closing, no tab change.
+
+        Focus rescue: if focus was inside the panel when we hide it, the
+        focused widget would otherwise become unreachable. Move focus back
+        to the input bar before hiding so the user can keep typing.
+        """
         self._panel_visible = not self._panel_visible
-        self.query_one("#right_panel", RightPanel).display = self._panel_visible
+        panel = self.query_one("#right_panel", RightPanel)
+
+        if self._panel_visible:
+            panel.display = True
+            if self._last_focal_tab:
+                try:
+                    panel.set_panel_type(self._last_focal_tab)
+                except Exception:
+                    pass
+        else:
+            # Closing: rescue focus if it lives inside the panel.
+            focused = self.focused
+            in_panel = focused is not None and (
+                focused is panel
+                or any(a is panel for a in focused.ancestors)
+            )
+            if in_panel:
+                try:
+                    self.query_one("#inputbar", InputBar).focus_input()
+                except Exception:
+                    pass
+            panel.display = False
+
+    def action_prev_turn(self) -> None:
+        """ctrl+p — scroll the conversation log to the previous agent turn."""
+        try:
+            self.query_one("#conversation", ConversationView).jump_prev_turn()
+        except Exception:
+            pass
+
+    def action_next_turn(self) -> None:
+        """ctrl+n — scroll the conversation log to the next agent turn."""
+        try:
+            self.query_one("#conversation", ConversationView).jump_next_turn()
+        except Exception:
+            pass
 
     def action_focus_toggle_panel(self) -> None:
         """ctrl+o — cycle focus: input → panel tabs → preview pane → input."""
@@ -524,6 +573,132 @@ class ReynTUIApp(App):
         """t — rotate event tail count (gated: events tab visible)."""
         self.query_one("#right_panel", RightPanel).cycle_event_tail()
 
+    # ── voice input (F2 / Esc) ─────────────────────────────────────────────
+
+    def _voice_status(self, text: str, *, style: str = "dim #aaaaaa") -> None:
+        """Write a short status line into the conversation pane."""
+        try:
+            from rich.text import Text as RichText
+            t = RichText()
+            t.append(text, style=style)
+            self.query_one("#conversation", ConversationView)._write_log(t)
+        except Exception:
+            pass
+
+    async def action_voice_toggle(self) -> None:
+        """F2 — toggle dictation (start ↔ stop+transcribe→inject into InputBar).
+
+        Errors are surfaced as conv-pane status lines; never crash the TUI.
+        """
+        # Lazy import + lazy instantiation to keep base install dep-free.
+        if self._voice_input is None:
+            try:
+                from .voice import VoiceInput
+            except Exception as exc:
+                self._voice_status(
+                    f"✗ voice input unavailable ({exc}); install with: "
+                    "pip install \"reyn[voice]\"",
+                    style="bold red",
+                )
+                return
+            cfg_voice = self._voice_config()
+            if cfg_voice is not None and not cfg_voice.enabled:
+                self._voice_status(
+                    "✗ voice input disabled in config (set voice.enabled: true)",
+                    style="bold red",
+                )
+                return
+            if not VoiceInput.available():
+                self._voice_status(
+                    "✗ voice extras not installed; run: "
+                    "pip install \"reyn[voice]\"  (and brew install portaudio)",
+                    style="bold red",
+                )
+                return
+            kwargs = {}
+            if cfg_voice is not None:
+                kwargs = {
+                    "model": cfg_voice.model,
+                    "language": cfg_voice.language,
+                    "device": cfg_voice.device,
+                    "compute_type": cfg_voice.compute_type,
+                    "sample_rate": cfg_voice.sample_rate,
+                }
+            self._voice_input = VoiceInput(**kwargs)
+
+        if self._voice_busy:
+            return  # already transcribing — ignore re-presses
+
+        if not self._voice_input.is_recording:
+            try:
+                self._voice_input.start_recording()
+            except Exception as exc:
+                self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
+                return
+            self._voice_status("🔴 recording — F2 to stop · Esc to cancel")
+        else:
+            self._voice_busy = True
+            self._voice_status("⏳ transcribing…")
+            try:
+                text, diag = await self._voice_input.stop_recording()
+            except Exception as exc:
+                self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
+                self._voice_busy = False
+                return
+            self._voice_busy = False
+            if not text:
+                # Build an actionable diagnostic line so the user knows
+                # whether the mic actually captured anything.
+                dur = diag.get("duration_s", 0.0)
+                peak = diag.get("peak", 0.0)
+                reason = diag.get("reason", "silent")
+                if reason == "no_audio" or dur < 0.3:
+                    self._voice_status(
+                        "(no audio captured — mic permission? wrong device?)",
+                        style="dim #aa6666",
+                    )
+                elif reason == "silent" or peak < 0.01:
+                    self._voice_status(
+                        f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
+                        "check mic gain / system input device",
+                        style="dim #aa6666",
+                    )
+                else:
+                    self._voice_status(
+                        f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
+                        "try speaking closer / louder, or set a larger model",
+                        style="dim #aa6666",
+                    )
+                return
+            try:
+                self.query_one("#inputbar", InputBar).append_text(text)
+            except Exception:
+                pass
+            preview = text if len(text) <= 60 else text[:57] + "…"
+            dur = diag.get("duration_s", 0.0)
+            self._voice_status(
+                f"✓ inserted ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+            )
+
+    def action_voice_cancel(self) -> None:
+        """Esc — discard the current recording without transcribing.
+
+        Gated so it doesn't shadow the InputBar's own Esc handler when
+        nothing is being recorded.
+        """
+        if self._voice_input is None or not self._voice_input.is_recording:
+            return
+        self._voice_input.cancel()
+        self._voice_status("✗ recording cancelled", style="dim #555555")
+
+    def _voice_config(self):
+        """Best-effort fetch of the user's voice config block."""
+        try:
+            from reyn.config import load_config
+            return load_config().voice
+        except Exception:
+            return None
+
     def check_action(self, action: str, parameters):
         """Gate panel-scoped bindings to when the panel is visible/relevant."""
         if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
@@ -535,6 +710,10 @@ class ReynTUIApp(App):
                 return self.query_one("#right_panel", RightPanel).panel_type == "events"
             except Exception:
                 return False
+        if action == "voice_cancel":
+            # Only intercept Esc while we're actually recording — otherwise
+            # the InputBar / SlashPicker / preview pane should keep using it.
+            return self._voice_input is not None and self._voice_input.is_recording
         return True
 
     # ── helpers ───────────────────────────────────────────────────────────────
