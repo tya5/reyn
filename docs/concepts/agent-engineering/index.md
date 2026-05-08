@@ -77,6 +77,6 @@ The agent as a product: CLI affordances, cost discipline, predictable UX. Model 
 
 ## See also
 
-- [principles.md](../../../concepts/principles.md) — the eight design principles that shape these lenses
-- [architecture.md](../../../concepts/architecture.md) — the layered diagram in full
-- [phase-vs-skill-vs-os.md](../../../concepts/phase-vs-skill-vs-os.md) — the responsibility split
+- [principles.md](../principles.md) — the eight design principles that shape these lenses
+- [architecture.md](../architecture.md) — the layered diagram in full
+- [phase-vs-skill-vs-os.md](../phase-vs-skill-vs-os.md) — the responsibility split

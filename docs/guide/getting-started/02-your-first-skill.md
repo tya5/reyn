@@ -78,6 +78,7 @@ It reads your skill, plans changes, and proposes diffs. You approve before any f
 
 ## Next
 
+- [How-to: Write your first custom skill](../for-skill-authors/write-your-first-custom-skill.md) — build the same shape by hand, knowing what each file does.
 - Tutorial 03 — Running a skill (CLI flags and inputs in depth) — Phase 2
 - Tutorial 04 — Writing an eval — Phase 2
 - [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)

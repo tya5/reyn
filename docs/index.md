@@ -18,7 +18,7 @@ reyn runs LLM workflows as a state machine. Phases are stateless and reusable; a
 | Solve a specific problem (skill author) | [Guide / for skill authors](guide/for-skill-authors/validate-artifacts.md) |
 | Look up exact behavior | [Reference](reference/cli/run.md) |
 | Understand the design | [Concepts](concepts/principles.md) |
-| Read reyn through agent-engineering lenses | [Seven lenses](guide/for-skill-authors/agent-engineering/index.md) |
+| Read reyn through agent-engineering lenses | [Seven lenses](concepts/agent-engineering/index.md) |
 | Read LLM-targeted rubrics | [Skill-builder checklist](guide/for-skill-authors/skill-builder-checklist.md) |
 | Contribute | See `docs/deep-dives/contributing/` in the repository |
 

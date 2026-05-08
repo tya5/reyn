@@ -60,9 +60,9 @@ The five Control IR kinds cover most workflows but more are likely needed as the
 
 ## See also
 
-- [Reference: control-ir](../../../reference/runtime/control-ir.md)
-- [Reference: llm-output-contract](../../../reference/runtime/llm-output-contract.md)
-- [Reference: preprocessor](../../../reference/dsl/preprocessor.md)
-- [Reference: artifact-yaml](../../../reference/dsl/artifact-yaml.md)
+- [Reference: control-ir](../../reference/runtime/control-ir.md)
+- [Reference: llm-output-contract](../../reference/runtime/llm-output-contract.md)
+- [Reference: preprocessor](../../reference/dsl/preprocessor.md)
+- [Reference: artifact-yaml](../../reference/dsl/artifact-yaml.md)
 - [system-design.md](system-design.md) — what the contract makes possible
 - [reliability-engineering.md](reliability-engineering.md) — how rejection is handled

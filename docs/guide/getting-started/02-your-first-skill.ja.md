@@ -78,6 +78,7 @@ skill を読み、変更を計画し、diff を提示します。ファイル書
 
 ## 次のステップ
 
+- [ハウツー: 自作 skill をゼロから書く](../for-skill-authors/write-your-first-custom-skill.md) — 同じ形を手書きで構築し、各ファイルの役割を理解する（英語版にフォールバック）
 - Tutorial 03 — Running a skill（Phase 2）
 - Tutorial 04 — Writing an eval（Phase 2）
 - [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)（英語版にフォールバック）

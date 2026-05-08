@@ -51,8 +51,8 @@ Skill authors are nudged toward `pure`; reaching for `trusted` is a deliberate c
 
 ## See also
 
-- [permission-model.md](../../../concepts/permission-model.md) — concept
-- [Reference: permissions](../../../reference/config/permissions.md) — full schema
-- [Reference: reyn.yaml](../../../reference/config/reyn-yaml.md) — `permissions:` key
-- [How-to: manage permissions](../../for-users/manage-permissions.md)
+- [permission-model.md](../permission-model.md) — concept
+- [Reference: permissions](../../reference/config/permissions.md) — full schema
+- [Reference: reyn.yaml](../../reference/config/reyn-yaml.md) — `permissions:` key
+- [How-to: manage permissions](../../guide/for-users/manage-permissions.md)
 - [reliability-engineering.md](reliability-engineering.md) — what happens when an op is denied

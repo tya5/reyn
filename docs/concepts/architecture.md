@@ -71,4 +71,4 @@ Three properties fall out of the layering:
 - [phase-vs-skill-vs-os.md](phase-vs-skill-vs-os.md) — responsibility boundaries
 - [Reference: control-ir](../reference/runtime/control-ir.md) — Control IR ops
 - [Reference: events](../reference/runtime/events.md) — event types
-- [Agent engineering — seven lenses](../guide/for-skill-authors/agent-engineering/index.md) — the same architecture through external engineering perspectives
+- [Agent engineering — seven lenses](agent-engineering/index.md) — the same architecture through external engineering perspectives
