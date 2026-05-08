@@ -18,7 +18,6 @@ import pytest
 from reyn.chat.planner import Plan, PlanStep, dispatch_plan_tool
 from reyn.chat.router_tools import _DISPATCH_KIND, get_dispatch_kind
 
-
 # ── basic registry checks ─────────────────────────────────────────────────
 
 

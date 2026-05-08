@@ -39,7 +39,6 @@ from reyn.plan import (
     plan_snapshot_path,
 )
 
-
 # ── stub RouterLoop (= mirror existing plan tests) ───────────────────────
 
 

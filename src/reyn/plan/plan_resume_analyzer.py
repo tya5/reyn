@@ -22,9 +22,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, Literal
-
 from pathlib import Path
+from typing import Callable, Iterable, Literal
 
 from reyn.chat.planner import Plan, PlanStep
 from reyn.plan.plan_snapshot import PlanSnapshot, get_step_result

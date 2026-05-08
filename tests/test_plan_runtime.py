@@ -18,7 +18,6 @@ import pytest
 from reyn.chat.planner import Plan, PlanStep
 from reyn.plan import PlanResumePlan, PlanRuntime
 
-
 # ── stub host (= mirror test_plan_lifecycle_crash._RecordingHost) ───────
 
 

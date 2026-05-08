@@ -25,7 +25,7 @@ API contract is fixed here (= ADR-0023 §3.4) so Step 6 can migrate
 """
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from reyn.chat.planner import (
     Plan,

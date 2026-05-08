@@ -27,7 +27,6 @@ from reyn.chat.reyn_src import (
     safe_resolve_inside,
 )
 
-
 # ── repo-root resolution ────────────────────────────────────────────────────
 
 

@@ -29,8 +29,7 @@ from typing import Any
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep, execute_plan
-from reyn.events.agent_snapshot import AgentSnapshot, SNAPSHOT_VERSION
-
+from reyn.events.agent_snapshot import SNAPSHOT_VERSION, AgentSnapshot
 
 # ── Stub host that records lifecycle calls ──────────────────────────────────
 

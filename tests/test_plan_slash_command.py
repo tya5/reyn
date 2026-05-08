@@ -261,6 +261,7 @@ async def test_plan_resume_missing_artifact_reports_error(tmp_path, monkeypatch)
 
     # Set up a per-plan snapshot WITHOUT writing the decomposition artifact.
     from pathlib import Path
+
     from reyn.plan import PlanRegistry
     agent_state_dir = (
         Path(".reyn") / "agents" / session.agent_name / "state"
@@ -288,6 +289,7 @@ async def test_plan_resume_unknown_step_reports_error(tmp_path, monkeypatch):
     session.is_attached = True
 
     from pathlib import Path
+
     from reyn.chat.planner import Plan, PlanStep
     from reyn.plan import PlanRegistry, write_decomposition
     agent_state_dir = (
@@ -319,6 +321,7 @@ async def test_plan_resume_clears_target_step_results(tmp_path, monkeypatch):
     session.is_attached = True
 
     from pathlib import Path
+
     from reyn.chat.planner import Plan, PlanStep
     from reyn.plan import PlanRegistry, write_decomposition
     agent_state_dir = (

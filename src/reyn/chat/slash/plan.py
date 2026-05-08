@@ -145,6 +145,7 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
     # on a previous restart but never adopted by _spawn_resumed_plan).
     try:
         from pathlib import Path
+
         from reyn.plan.plan_snapshot import plan_snapshot_path
         agent_state_dir = (
             Path(".reyn") / "agents" / session.agent_name / "state"
@@ -241,6 +242,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
 
     # Build per-agent PlanRegistry against the on-disk plan snapshots.
     from pathlib import Path
+
     from reyn.plan import (
         PlanRegistry,
         PlanResumeAnalyzer,

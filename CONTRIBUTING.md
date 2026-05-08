@@ -18,7 +18,7 @@ If you plan a large change, open an issue first to align on scope.
 ## Development setup
 
 ```bash
-git clone https://github.com/your-org/reyn.git
+git clone https://github.com/tya5/reyn.git
 cd reyn
 pip install -e ".[dev]"
 ```

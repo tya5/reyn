@@ -25,7 +25,6 @@ from reyn.chat.planner import (
     dispatch_plan_tool,
 )
 
-
 # ── stub host with full Step 6 surface ────────────────────────────────────
 
 
