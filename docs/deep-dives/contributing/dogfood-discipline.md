@@ -379,7 +379,7 @@ cross-ref: `feedback_minimize_speculation.md`, `feedback_observe_before_speculat
 
 Before batch 7, LLM behavior analysis at Reyn was conducted without any mechanism to observe what the LLM actually received. Hypotheses about the LLM's behavior were formed by reading code. This produced a five-deep speculation stack that took multiple batches to unwind and cost several wrong-layer fixes.
 
-The batch 7 observation infrastructure investment changed the iteration speed from "days per hypothesis" to "minutes per hypothesis." The four-tool kit covers: full payload capture, payload inspection, payload replay, and attractor auto-detection.
+The batch 7 observation infrastructure investment changed the iteration speed from "days per hypothesis" to "minutes per hypothesis." The toolkit covers: full payload capture, payload inspection, payload replay, attractor auto-detection, and a script-friendly chat surface for non-TTY exercise.
 
 ### REYN_LLM_TRACE_DUMP
 
@@ -447,6 +447,58 @@ python scripts/detect_attractor.py --root .reyn/
 ```
 
 Run this after every dogfood batch to catch attractor patterns that might not be visible in the high-level scenario outcome. A scenario can "complete" (produce a final output) while containing one or more attractor events at intermediate phases.
+
+### `reyn web` A2A endpoint — script-friendly chat exercise
+
+The TUI is not the only way to drive Reyn. `reyn web` starts a FastAPI server on `localhost:8080` that exposes every registered agent as an A2A (Agent2Agent) JSON-RPC endpoint. This is the right surface for:
+
+- **Scripted reproduction of a chat flow** during fix verification — `curl` from a shell loop is much easier than scripting the TUI.
+- **Sanity-checking a tutorial example query** from a non-TTY environment (CI, agent harness, this very session).
+- **Exercising a specific agent without `--attach` ceremony** — every agent is addressable by name in the URL.
+- **Driving Reyn from another LLM** (Claude Code, Cursor) when MCP isn't set up but HTTP is.
+
+**Start the server:**
+
+```bash
+reyn web                  # binds 127.0.0.1:8080 by default
+reyn web --port 9000      # override port
+```
+
+The server reads the same `reyn.yaml` and registry as `reyn chat` — no separate config.
+
+**List the agents (server-level discovery):**
+
+```bash
+curl -s http://localhost:8080/a2a/agents | jq
+```
+
+Returns every registered agent (`default`, anything you created with `reyn agent new`, plus any `_default` topology auto-creates).
+
+**Send a message and read the reply (single round-trip):**
+
+```bash
+curl -s -X POST http://localhost:8080/a2a/agents/default \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "message/send",
+    "params": {
+      "message": {
+        "kind": "message",
+        "role": "user",
+        "messageId": "t1",
+        "parts": [{"kind": "text", "text": "what is this project about?"}]
+      }
+    }
+  }' | jq -r '.result.parts[0].text'
+```
+
+The reply is the agent's final synthesised text — exactly what the TUI would render. Multi-turn history persists across calls within the same agent, so a follow-up `POST` on the same agent continues the conversation.
+
+**When to reach for `dogfood_trace.py` / `llm_replay.py` instead.** The A2A endpoint exercises the full chat path including routing, skill spawn, and multi-turn synthesis. If you only want to inspect or replay the LLM payload of a single phase, the trace/replay tools are more surgical. Use A2A when the question is "what does the user see end-to-end"; use trace/replay when the question is "what did the LLM see, and what does it produce on a different prompt."
+
+**Why this is easy to forget.** The web server isn't part of the dogfood batch driver scripts (those drive `reyn chat --cui` via subprocess for parity with real users). The A2A endpoint is the operator's hand-driven debug tool; reach for it when piping into `reyn chat --cui` is awkward (TUI buffering issues, missing terminal, etc.).
 
 ### Adapting to other LLM-driven systems
 
