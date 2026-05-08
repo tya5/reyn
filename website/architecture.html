@@ -352,11 +352,18 @@ flowchart TB
 sequenceDiagram
     participant U as User
     participant A as Agent (ChatSession)
+    participant PL as Planner (optional)
     participant SK as Skill graph
     participant PH as Phase loop
     participant WS as Workspace + Events
     U->>A: message
-    A->>A: RouterLoop picks Skill
+    alt Complex multi-step request
+        A->>PL: plan_task(goal)
+        PL-->>A: Plan { steps: [S1, S2, ...] }
+        Note over A: each step → skill invocation
+    else Simple request
+        Note over A: RouterLoop picks Skill directly
+    end
     A->>SK: invoke skill
     SK->>PH: enter entry phase
     loop Until transition or finish
