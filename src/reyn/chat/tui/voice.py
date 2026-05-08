@@ -1,5 +1,12 @@
 """Voice input via local Whisper for `reyn chat` TUI.
 
+Debug mode: set ``REYN_VOICE_DEBUG=1`` (any truthy value) before launching
+``reyn chat`` and every captured buffer will be saved to ``/tmp/reyn-voice-
+debug-<ts>.wav`` before transcription. Useful when the mic looks healthy
+(peak > 0.05) but Whisper still returns empty — playing the WAV back
+confirms the audio is intelligible, narrowing the bug to model / config.
+
+
 This module is **optional**. It is imported lazily by ``app.py`` only when the
 user actually presses F2, so a base install (without the ``reyn[voice]``
 extra) never pays the dependency cost and never crashes on import.
@@ -35,6 +42,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time as _time
+import wave
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -198,6 +208,29 @@ class VoiceInput:
             diag["rms"] = float(self._np.sqrt(self._np.mean(audio.astype("float64") ** 2)))
         except Exception:
             pass
+
+        # Optional debug-dump: save the captured buffer to /tmp/ as a 16-bit
+        # PCM WAV file so the user can play it back and confirm the audio
+        # is intelligible. Gated by ``REYN_VOICE_DEBUG`` so it never runs
+        # for normal users. Path is logged at WARNING so it surfaces in
+        # `reyn chat` stderr without touching the conv pane.
+        if os.environ.get("REYN_VOICE_DEBUG"):
+            try:
+                ts = int(_time.time())
+                wav_path = f"/tmp/reyn-voice-debug-{ts}.wav"
+                pcm = (audio.clip(-1.0, 1.0) * 32767.0).astype("int16")
+                with wave.open(wav_path, "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(self._sample_rate)
+                    w.writeframes(pcm.tobytes())
+                diag["wav_path"] = wav_path
+                logger.warning(
+                    "voice debug: saved %.2fs / peak=%.3f to %s",
+                    diag["duration_s"], diag["peak"], wav_path,
+                )
+            except Exception as exc:
+                logger.warning("voice debug WAV dump failed: %s", exc)
 
         # If the capture is essentially silence, skip the model call entirely
         # — Whisper hallucinates on pure-noise input.
