@@ -60,7 +60,17 @@
     width: 26px; height: 26px; display: block; object-fit: contain;
     filter: brightness(0) saturate(100%) invert(38%) sepia(48%) saturate(1100%) hue-rotate(338deg) brightness(92%) contrast(86%);
   }
-  .topnav-back { font-size: 14px; color: var(--fg-3); }
+  .nav-links {
+    display: flex; align-items: center; gap: 32px;
+  }
+  .nav-links a {
+    font-size: 14px; font-weight: 400;
+    color: var(--fg-2);
+    transition: color 200ms var(--ease);
+  }
+  .nav-links a:hover { color: var(--fg); }
+  .nav-links a.is-current { color: var(--clay); }
+  .topnav-back { font-size: 14px; color: var(--fg-3); display: none; }
   .topnav-back:hover { color: var(--fg); }
 
   .wrap { max-width: var(--max); margin: 0 auto; padding-left: var(--pad-x); padding-right: var(--pad-x); }
@@ -136,11 +146,102 @@
     background: var(--bg-card);
     border: 1px solid var(--line);
     border-radius: 4px;
-    padding: 24px;
+    padding: 32px 24px;
     overflow-x: auto;
   }
   .diagram-card .mermaid { display: flex; justify-content: center; min-width: 0; }
   .diagram-card .mermaid svg { max-width: 100%; height: auto !important; }
+
+  /* Refine mermaid output to match brand aesthetic */
+  .diagram-card .mermaid .node rect,
+  .diagram-card .mermaid .node polygon,
+  .diagram-card .mermaid .node circle,
+  .diagram-card .mermaid .node ellipse,
+  .diagram-card .mermaid .node path {
+    stroke-width: 1px !important;
+    rx: 2; ry: 2;
+  }
+  .diagram-card .mermaid .cluster rect {
+    stroke-width: 1px !important;
+    rx: 3; ry: 3;
+    fill: #FAF8F6 !important;
+    stroke: #E0DBD7 !important;
+  }
+  .diagram-card .mermaid .cluster text,
+  .diagram-card .mermaid .cluster .nodeLabel {
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+    letter-spacing: 0.08em !important;
+    text-transform: uppercase !important;
+    fill: #6B6B6B !important;
+    font-weight: 500 !important;
+  }
+  .diagram-card .mermaid .nodeLabel,
+  .diagram-card .mermaid .edgeLabel {
+    font-family: var(--font-sans) !important;
+    font-size: 13px !important;
+  }
+  .diagram-card .mermaid .edgeLabel {
+    background-color: #FFFFFF !important;
+    color: #6B6B6B !important;
+    font-size: 12px !important;
+  }
+  .diagram-card .mermaid .edgeLabel rect { fill: #FFFFFF !important; }
+  .diagram-card .mermaid .flowchart-link,
+  .diagram-card .mermaid .messageLine0,
+  .diagram-card .mermaid .messageLine1 {
+    stroke-width: 1.25px !important;
+  }
+  .diagram-card .mermaid .marker { fill: #C8553D !important; stroke: #C8553D !important; }
+  /* Sequence diagram refinements */
+  .diagram-card .mermaid .actor {
+    stroke: #E0DBD7 !important;
+    fill: #FFFFFF !important;
+    stroke-width: 1px !important;
+  }
+  .diagram-card .mermaid text.actor > tspan {
+    font-family: var(--font-mono) !important;
+    font-size: 11px !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    fill: #1A1A1A !important;
+    font-weight: 500 !important;
+  }
+  .diagram-card .mermaid .actor-line {
+    stroke: #E0DBD7 !important;
+    stroke-dasharray: 2 4 !important;
+    stroke-width: 1px !important;
+  }
+  .diagram-card .mermaid .messageText {
+    fill: #4A4A4A !important;
+    font-family: var(--font-sans) !important;
+    font-size: 12px !important;
+  }
+  .diagram-card .mermaid .loopLine,
+  .diagram-card .mermaid .loopText > tspan,
+  .diagram-card .mermaid .labelText > tspan {
+    stroke: #C8553D !important;
+    fill: #C8553D !important;
+  }
+  .diagram-card .mermaid .loopText > tspan,
+  .diagram-card .mermaid .labelText > tspan {
+    stroke: none !important;
+    font-family: var(--font-mono) !important;
+    font-size: 10px !important;
+    letter-spacing: 0.1em !important;
+    text-transform: uppercase !important;
+  }
+  .diagram-card .mermaid .note {
+    fill: #FAF8F6 !important;
+    stroke: #E0DBD7 !important;
+    stroke-width: 1px !important;
+  }
+  .diagram-card .mermaid .noteText > tspan {
+    fill: #6B6B6B !important;
+    font-family: var(--font-sans) !important;
+    font-size: 11px !important;
+    font-style: italic !important;
+  }
 
   .diagram-grid {
     display: grid;
@@ -233,7 +334,10 @@
       <img src="assets/reyn-mark-white.png" alt="" />
       <span>Reyn</span>
     </a>
-    <a href="index.html" class="topnav-back">← Landing</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="{{ARCH_CTA_DOCS_HREF}}">Docs</a>
+      <a href="{{NAV_GITHUB_HREF}}">GitHub</a>
+    </nav>
   </div>
 </header>
 
@@ -470,7 +574,7 @@ flowchart LR
     startOnLoad: true,
     theme: 'base',
     themeVariables: {
-      primaryColor: '#FAF8F6',
+      primaryColor: '#FFFFFF',
       primaryTextColor: '#1A1A1A',
       primaryBorderColor: '#E0DBD7',
       lineColor: '#C8553D',
