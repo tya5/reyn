@@ -48,6 +48,22 @@ import time as _time
 import wave
 from typing import Any
 
+# IMPORTANT: these env vars must be set BEFORE faster-whisper / huggingface_hub /
+# tqdm import, because they're read at import time, not at call time. We do it at
+# module level so they're in place by the time `_ensure_model` invokes WhisperModel.
+#
+# Why we need them: Textual replaces sys.stdout/stderr with custom stream objects
+# whose .fileno() returns -1 (no real OS file descriptor). When huggingface_hub
+# (faster-whisper's downloader) tries to render a tqdm progress bar, tqdm spawns
+# a helper subprocess via _posixsubprocess.fork_exec(...). That call validates
+# every fd in fds_to_keep is ≥ 0 — and our wrapped streams' -1 explodes with the
+# observed `ValueError('bad value(s) in fds_to_keep')`.
+#
+# Setting these three is belt-and-braces: each lib reads a different env var.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("DISABLE_TQDM", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+
 logger = logging.getLogger(__name__)
 
 # Optional sink for REYN_VOICE_DEBUG — write directly to a file so the
@@ -65,6 +81,51 @@ def _vlog(msg: str) -> None:
             f.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
     except Exception:
         pass
+
+
+class _real_stdio_during_load:  # noqa: N801 — context-manager naming intentional
+    """Context manager: swap sys.stdout/stderr to /dev/null during model load.
+
+    Textual replaces ``sys.stdout`` / ``sys.stderr`` with stream objects whose
+    ``.fileno()`` returns -1. When faster-whisper / huggingface_hub / tokenizers
+    transitively spawn a subprocess (progress bar helper, tokenizer warm-up,
+    telemetry probe), Python's ``_posixsubprocess.fork_exec`` validates every
+    fd in ``fds_to_keep`` and rejects -1 with::
+
+        ValueError("bad value(s) in fds_to_keep")
+
+    Swapping in real ``open(os.devnull, "w")`` handles for the duration of the
+    load gives any such subprocess a valid fileno to inherit. The OS-level
+    fds 0/1/2 (which Textual *doesn't* touch — it only wraps the Python
+    objects) stay untouched, so the terminal's actual rendering pipeline is
+    unaffected.
+
+    Best-effort: swallows its own setup errors so the caller still attempts
+    the load even if /dev/null can't be opened (some sandbox environments).
+    """
+
+    def __enter__(self) -> "_real_stdio_during_load":
+        import sys
+        self._saved_stdout = sys.stdout
+        self._saved_stderr = sys.stderr
+        self._devnull: Any = None
+        try:
+            self._devnull = open(os.devnull, "w")
+            sys.stdout = self._devnull
+            sys.stderr = self._devnull
+        except Exception as exc:
+            _vlog(f"stdio swap setup failed ({exc!r}) — continuing without it")
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        import sys
+        sys.stdout = self._saved_stdout
+        sys.stderr = self._saved_stderr
+        if self._devnull is not None:
+            try:
+                self._devnull.close()
+            except Exception:
+                pass
 
 
 class VoiceUnavailable(RuntimeError):
@@ -396,26 +457,26 @@ class VoiceInput:
 
         Caller must hold ``self._model_lock``.
         """
+        # Defensive disable of progress bars — handles the case where
+        # huggingface_hub / tqdm were already imported before our module-
+        # level env-var setdefaults could take effect.
+        try:
+            from huggingface_hub.utils import disable_progress_bars  # type: ignore[import]
+            disable_progress_bars()
+        except Exception:
+            pass
+        try:
+            from tqdm import tqdm  # type: ignore[import]
+            tqdm.disable = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
         _vlog(
             f"loading WhisperModel({self._model_name!r}, "
             f"device={self._device!r}, compute_type={self._compute_type!r}, "
             f"cpu_threads={self._cpu_threads}, num_workers={self._num_workers})"
         )
-        try:
-            model = WhisperModel(
-                self._model_name,
-                device=self._device,
-                compute_type=self._compute_type,
-                cpu_threads=self._cpu_threads,
-                num_workers=self._num_workers,
-            )
-            _vlog("WhisperModel loaded")
-            return model
-        except Exception as exc:
-            _vlog(
-                f"WhisperModel load failed ({exc!r}) — clearing cache and retrying"
-            )
-            self._clear_model_cache()
+        with _real_stdio_during_load():
             try:
                 model = WhisperModel(
                     self._model_name,
@@ -424,11 +485,26 @@ class VoiceInput:
                     cpu_threads=self._cpu_threads,
                     num_workers=self._num_workers,
                 )
-                _vlog("WhisperModel loaded after cache reset")
+                _vlog("WhisperModel loaded")
                 return model
-            except Exception as exc2:
-                _vlog(f"WhisperModel load failed even after cache reset: {exc2!r}")
-                raise
+            except Exception as exc:
+                _vlog(
+                    f"WhisperModel load failed ({exc!r}) — clearing cache and retrying"
+                )
+                self._clear_model_cache()
+                try:
+                    model = WhisperModel(
+                        self._model_name,
+                        device=self._device,
+                        compute_type=self._compute_type,
+                        cpu_threads=self._cpu_threads,
+                        num_workers=self._num_workers,
+                    )
+                    _vlog("WhisperModel loaded after cache reset")
+                    return model
+                except Exception as exc2:
+                    _vlog(f"WhisperModel load failed even after cache reset: {exc2!r}")
+                    raise
 
     def _transcribe_sync(self, audio) -> str:  # noqa: C901
         # Debug-mode visibility into exactly what the in-memory path sees.
@@ -482,18 +558,21 @@ class VoiceInput:
           context across calls.
         """
         model = self._ensure_model()
-        segments, info = model.transcribe(
-            audio,
-            language=self._language,
-            beam_size=1,
-            vad_filter=False,
-            temperature=0.0,
-            no_speech_threshold=0.3,
-            log_prob_threshold=-1.5,
-            condition_on_previous_text=False,
-        )
-        # Materialise the segment generator so we can both log AND return.
-        seg_list = list(segments)
+        with _real_stdio_during_load():
+            segments, info = model.transcribe(
+                audio,
+                language=self._language,
+                beam_size=1,
+                vad_filter=False,
+                temperature=0.0,
+                no_speech_threshold=0.3,
+                log_prob_threshold=-1.5,
+                condition_on_previous_text=False,
+            )
+            # Materialise the segment generator INSIDE the stdio swap —
+            # generator iteration runs the actual decode, which is where
+            # any tokenizer subprocess would spawn.
+            seg_list = list(segments)
         text = "".join(s.text for s in seg_list).strip()
         if os.environ.get("REYN_VOICE_DEBUG"):
             try:
