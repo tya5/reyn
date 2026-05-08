@@ -70,8 +70,11 @@
       {% endif %}
     {% endif %}
 
-    {# Top nav links: Docs + GitHub #}
+    {# Top nav links: Architecture + Docs + GitHub (cross-link with LP / arch page) #}
     <nav class="reyn-topnav-links" aria-label="Site navigation">
+      {% if config.extra.homepage %}
+        <a href="{{ config.extra.homepage }}architecture.html" class="reyn-topnav-link">Architecture</a>
+      {% endif %}
       <a href="{{ nav.homepage.url | url }}" class="reyn-topnav-link reyn-topnav-link--active">Docs</a>
       {% if config.repo_url %}
         <a href="{{ config.repo_url }}" class="reyn-topnav-link" target="_blank" rel="noopener">GitHub</a>
