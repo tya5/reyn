@@ -150,6 +150,10 @@ class ConversationView(Widget):
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
         self._last_long_reply: str | None = None
+        # Full text of the most recent agent reply (any length). Consumed by
+        # the /copy slash command so users don't have to fight the TUI's
+        # mouse-capture to grab text out of the log.
+        self._last_reply_full: str | None = None
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
 
@@ -280,7 +284,13 @@ class ConversationView(Widget):
         appended pointing the user at /expand. The full text is stashed in
         self._last_long_reply so expand_last_reply() can flush the rest.
         Replies that fit are rendered as-is and clear any pending fold.
+
+        Side effect: stores ``text`` in ``self._last_reply_full`` so the
+        /copy slash command can hand it to the system clipboard (no need
+        to fight TUI mouse-capture for selection).
         """
+        # Always remember the full text — independent of fold thresholds.
+        self._last_reply_full = text
         log = self._log()
         lines = text.split("\n")
         if len(lines) <= _FOLD_THRESHOLD_LINES:
@@ -320,6 +330,14 @@ class ConversationView(Widget):
     @property
     def has_pending_expand(self) -> bool:
         return self._last_long_reply is not None
+
+    def last_reply_text(self) -> str | None:
+        """Return the full text of the most recent agent reply (any length).
+
+        Used by the /copy slash command. Returns None when there has been no
+        agent reply in this session yet.
+        """
+        return self._last_reply_full
 
     def _write_log(self, text: Text) -> None:
         log = self._log()

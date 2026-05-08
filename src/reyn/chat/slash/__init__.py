@@ -137,6 +137,7 @@ from reyn.chat.slash import zen as _zen_mod  # noqa: E402, F401
 from reyn.chat.slash import cost_inline as _cost_inline_mod  # noqa: E402, F401
 from reyn.chat.slash import docs_filter as _docs_filter_mod  # noqa: E402, F401
 from reyn.chat.slash import expand as _expand_mod  # noqa: E402, F401
+from reyn.chat.slash import copy as _copy_mod  # noqa: E402, F401
 
 __all__ = [
     "REGISTRY",

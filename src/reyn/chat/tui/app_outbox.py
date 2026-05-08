@@ -35,6 +35,44 @@ if TYPE_CHECKING:
 _STOP = "stop"
 
 
+# Order of clipboard tools we try for /copy. First match that succeeds wins.
+# Each entry is (binary_name, argv_tail, label).
+_CLIPBOARD_TOOLS: tuple[tuple[str, list[str], str], ...] = (
+    ("pbcopy",   [],            "pbcopy"),         # macOS
+    ("wl-copy",  [],            "wl-copy"),        # Wayland
+    ("xclip",    ["-selection", "clipboard"], "xclip"),  # X11
+    ("xsel",     ["--clipboard", "--input"], "xsel"),    # X11 fallback
+    ("clip",     [],            "clip"),           # Windows
+)
+
+
+def _copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Pipe ``text`` to a platform clipboard tool. Returns ``(ok, tool_label)``.
+
+    Looked up via ``shutil.which`` so the user only needs one of them on
+    PATH. We avoid hard-coding the OS because users may run, e.g., xclip
+    inside a Linux VM regardless of the host platform.
+    """
+    import shutil
+    import subprocess
+
+    for binary, tail, label in _CLIPBOARD_TOOLS:
+        path = shutil.which(binary)
+        if path is None:
+            continue
+        try:
+            subprocess.run(
+                [path, *tail],
+                input=text.encode("utf-8"),
+                check=True,
+                timeout=2.0,
+            )
+            return True, label
+        except Exception:
+            continue
+    return False, ""
+
+
 class OutboxRouter:
     """Drain + dispatch loop for the registry's outbox queue."""
 
@@ -49,6 +87,7 @@ class OutboxRouter:
             "__donut__":                self._on_donut,
             "__cost_inline_toggle__":   self._on_cost_inline_toggle,
             "__expand_last_reply__":    self._on_expand_last_reply,
+            "__copy_last_reply__":      self._on_copy_last_reply,
             "__docs_filter__":          self._on_docs_filter,
             "__stream_start__":         self._on_stream_start,
             "__stream_chunk__":         self._on_stream_chunk,
@@ -148,6 +187,35 @@ class OutboxRouter:
         if not conv.expand_last_reply():
             conv.show_status("nothing to expand", kind="general")
             self._app.set_timer(2.0, conv.hide_status)
+
+    def _on_copy_last_reply(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`__copy_last_reply__` — /copy slash; pipe last reply to OS clipboard.
+
+        Workaround for the TUI's mouse-capture preventing native click-and-
+        drag selection. Tries platform-native binaries in order; if none
+        succeed, surfaces a status line so the user knows the workaround
+        wasn't available.
+        """
+        text = conv.last_reply_text()
+        if not text:
+            conv.show_status("nothing to copy yet", kind="general")
+            self._app.set_timer(2.0, conv.hide_status)
+            return
+        ok, label = _copy_to_clipboard(text)
+        if ok:
+            n_chars = len(text)
+            conv.show_status(
+                f"copied {n_chars} chars via {label}", kind="general",
+            )
+        else:
+            conv.show_status(
+                "no clipboard tool found "
+                "(install pbcopy / xclip / wl-copy / xsel)",
+                kind="error",
+            )
+        self._app.set_timer(2.5, conv.hide_status)
 
     def _on_docs_filter(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
