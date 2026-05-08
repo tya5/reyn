@@ -23,7 +23,7 @@ from reyn.budget.budget import (
     format_warn_message,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services import ChainManager, InterventionRegistry, SnapshotJournal
+from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, SnapshotJournal
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -551,24 +551,16 @@ class ChatSession:
 
         # PR22: budget / rate-limit tracker (process-shared). When None,
         # checks are noops and counters are not maintained.
+        # Kept as a direct reference so RouterLoop and other callers that
+        # receive the tracker by value can continue to do so unchanged.
         self._budget_tracker = budget_tracker
 
-        # Per-turn cap on consecutive skill_router invocations. Prevents the
-        # S4 dogfood runaway (16 router calls / 245k prompt tokens for one
-        # user paste). The counter is reset at the top of each new turn
-        # (`_handle_user_message` or `_handle_agent_request`); subsequent
-        # in-chain re-invocations (agent_response continuation,
-        # chain_resolve) accumulate against the same budget.
-        if budget_tracker is not None:
-            self._router_cap: int = int(
-                getattr(
-                    budget_tracker.config, "router_invocations_per_turn", 3
-                )
-            )
-        else:
-            self._router_cap = 3
-        self._router_invocations_this_turn: int = 0
-        self._router_last_reason: str = ""
+        # Per-turn router cap: read from tracker config when present.
+        _router_cap: int = (
+            int(getattr(budget_tracker.config, "router_invocations_per_turn", 3))
+            if budget_tracker is not None
+            else 3
+        )
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -595,16 +587,23 @@ class ChatSession:
         # agents don't accumulate display noise.
         self.is_attached: bool = False
 
-        from reyn.llm.pricing import TokenUsage
-        self._total_usage: TokenUsage = TokenUsage()
-        self._total_cost_usd: float = 0.0
-
         self._event_store = EventStore(
             self.events_dir,
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
         )
         self._chat_events = EventLog(subscribers=[self._event_store])
+
+        # PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
+        # Absorbs total_usage / total_cost_usd / router-cap state that
+        # previously lived as scattered attributes on ChatSession.
+        self._budget = BudgetGateway(
+            budget_tracker=budget_tracker,
+            events=self._chat_events,
+            agent_name=self.agent_name,
+            default_router_cap=_router_cap,
+        )
+
         self.running_skills: dict[str, asyncio.Task] = {}
         # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
         self.running_skills_started_at: dict[str, float] = {}
@@ -650,18 +649,15 @@ class ChatSession:
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
-        if result.token_usage is not None:
-            self._total_usage += result.token_usage
-        if result.cost_usd is not None:
-            self._total_cost_usd += result.cost_usd
+        self._budget.accumulate(result)
 
     @property
     def total_usage(self):
-        return self._total_usage
+        return self._budget.total_usage
 
     @property
     def total_cost_usd(self) -> float:
-        return self._total_cost_usd
+        return self._budget.total_cost_usd
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -1404,32 +1400,35 @@ class ChatSession:
         Re-entrant in-chain paths (`_handle_agent_response` continuation,
         `_resolve_pending_chain`) intentionally do NOT reset — their
         invocations count against the same budget."""
-        self._router_invocations_this_turn = 0
-        self._router_last_reason = ""
+        self._budget.reset_router_turn_counter()
 
     def _check_and_increment_router_cap(self, user_text: str) -> None:
         """Increment the per-turn router invocation counter and enforce the
         cap. Raises RouterCapExceeded when the counter would exceed the
         configured cap. cap=0 disables the check.
         """
-        if self._router_cap <= 0:
-            return
-        # If we're already at the cap, the next attempt is rejected.
-        if self._router_invocations_this_turn >= self._router_cap:
-            count = self._router_invocations_this_turn
-            self._chat_events.emit(
-                "router_retry_exhausted",
-                user_message=user_text[:200],
-                count=count,
-                cap=self._router_cap,
-                last_reason=self._router_last_reason,
-            )
-            raise RouterCapExceeded(
-                count=count,
-                cap=self._router_cap,
-                last_reason=self._router_last_reason,
-            )
-        self._router_invocations_this_turn += 1
+        self._budget.check_and_increment_router_cap(user_text)
+
+    # ── backward-compat shims for Tier-4 scaffold tests ─────────────────────
+    # These proxy the gateway's private counter/reason through the session
+    # surface so existing tests that directly read/write these attributes
+    # continue to pass until the Tier-4 tests are replaced.
+
+    @property
+    def _router_invocations_this_turn(self) -> int:
+        return self._budget._router_invocations_this_turn
+
+    @_router_invocations_this_turn.setter
+    def _router_invocations_this_turn(self, value: int) -> None:
+        self._budget._router_invocations_this_turn = value
+
+    @property
+    def _router_last_reason(self) -> str:
+        return self._budget._router_last_reason
+
+    @_router_last_reason.setter
+    def _router_last_reason(self, value: str) -> None:
+        self._budget._router_last_reason = value
 
     async def _invoke_narrator(
         self, skill_name: str, status: str, result: dict, state_subdir: str,
@@ -2415,28 +2414,26 @@ class ChatSession:
 
     async def _slash_cost(self, args: str) -> None:
         """`/cost` — quick token + USD line for the attached agent."""
-        if self._budget_tracker is None:
+        line = self._budget.cost_line()
+        if line is None:
             await self._put_outbox(OutboxMessage(
                 kind="status",
                 text="budget tracker is disabled (no `cost:` config or non-chat mode)",
             ))
             return
-        snap = self._budget_tracker.snapshot()
-        line = format_cost_line(snap, self.agent_name)
         await self._put_outbox(OutboxMessage(kind="status", text=line))
 
     async def _slash_budget(self, args: str) -> None:
         """`/budget` (full breakdown) / `/budget reset` (clear counters)."""
-        if self._budget_tracker is None:
-            await self._put_outbox(OutboxMessage(
-                kind="status",
-                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
-            ))
-            return
         sub = args.strip()
         if sub == "reset":
-            before = self._budget_tracker.reset_all()
-            self._chat_events.emit("budget_reset", before=before)
+            before = self._budget.reset_all()
+            if before is None:
+                await self._put_outbox(OutboxMessage(
+                    kind="status",
+                    text="budget tracker is disabled (no `cost:` config or non-chat mode)",
+                ))
+                return
             lines = ["Budget counters reset."]
             if before.get("agent_tokens"):
                 for a, t in before["agent_tokens"].items():
@@ -2454,8 +2451,13 @@ class ChatSession:
             lines.append("Use `/budget` to verify.")
             await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
             return
-        snap = self._budget_tracker.snapshot()
-        text = format_budget_full(snap, attached=self.agent_name)
+        text = self._budget.budget_full()
+        if text is None:
+            await self._put_outbox(OutboxMessage(
+                kind="status",
+                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
+            ))
+            return
         await self._put_outbox(OutboxMessage(kind="status", text=text))
 
     # ── skill spawn ─────────────────────────────────────────────────────────────
@@ -2490,8 +2492,8 @@ class ChatSession:
 
         # PR22: per-chain per-skill cap check. Refuse spawn if hard limit
         # reached. Warn dimensions are emitted via events + outbox status.
-        if self._budget_tracker is not None and chain_id is not None:
-            check = self._budget_tracker.check_pre_spawn(
+        if chain_id is not None:
+            check = self._budget.check_pre_spawn(
                 chain_id=chain_id, skill=skill_name,
             )
             if not check.allowed:
@@ -2519,7 +2521,7 @@ class ChatSession:
                     text=format_warn_message(dim, check.context),
                     meta={"chain_id": chain_id, "skill": skill_name},
                 ))
-            self._budget_tracker.record_spawn(chain_id=chain_id, skill=skill_name)
+            self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
 
         run_id = (
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
@@ -3839,20 +3841,11 @@ class ChatSession:
         history = self._build_history_for_router()
         router_usage = await loop.run(user_text=user_text, history=history)
 
-        # F4 Bug 2: accumulate router LLM usage into session totals.
-        if router_usage is not None and router_usage.total_tokens > 0:
-            self._total_usage += router_usage
-            # F4 Bug 1: strip proxy prefix so estimate_cost lookup succeeds.
-            # Use loop.router_model ("light") — not "router" — so the resolver
-            # finds the actual model string (e.g. "openai/gemini-2.5-flash-lite").
-            from reyn.llm.llm import proxy_kwargs
-            from reyn.llm.pricing import estimate_cost
-            resolved = self._resolver.resolve(loop.router_model).model
-            pricing_model = (
-                resolved.split("/", 1)[1]
-                if "/" in resolved and proxy_kwargs()
-                else resolved
+        # F4 Bug 2 / F4 Bug 1: accumulate router LLM usage (with proxy-prefix
+        # stripping) into per-session totals via the gateway.
+        if router_usage is not None:
+            self._budget.add_router_usage(
+                usage=router_usage,
+                resolver=self._resolver,
+                router_model_name=loop.router_model,
             )
-            cost_usd, _ = estimate_cost(pricing_model, router_usage)
-            if cost_usd is not None:
-                self._total_cost_usd += cost_usd
