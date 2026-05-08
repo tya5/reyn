@@ -75,8 +75,8 @@ S02_BODY_P1: >-
   contract and runs to completion under a permission scope you control.
 S02_BODY_P2: >-
   The LLM picks only from candidates the OS provides. Output is validated
-  against the next Phase's input schema, and every decision lands in an
-  append-only event log.
+  against the next Phase's input schema. Workspace and Events make every
+  step replayable.
 
 # ── section 03: Key concepts ────────────────────────────────────────────────
 S03_NUM: "03"
@@ -99,7 +99,7 @@ S03_C3_LABEL: "OS"
 S03_C3_TITLE: "An auditable runtime."
 S03_C3_BODY: >-
   Builds context, validates every output, executes Control IR ops under
-  permission gates, and logs everything for replay.
+  permission gates. Owns Workspace and Events for state and audit.
 
 # ── section 04: Get started ─────────────────────────────────────────────────
 S04_NUM: "04"
