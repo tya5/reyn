@@ -590,7 +590,13 @@ def build_tools(
                 "name": "web_search",
                 "description": (
                     "Search the public web with DuckDuckGo and return "
-                    "structured results. query: search string. "
+                    "structured results. Standard search operators are "
+                    "supported in `query`: `site:<domain>` to scope to "
+                    "one site (e.g. `site:news.ycombinator.com`), "
+                    "`\"phrase\"` for exact match, `-term` to exclude. "
+                    "Use them when the user's intent is site-specific "
+                    "or phrase-anchored; plain keywords work otherwise. "
+                    "query: search string. "
                     "max_results: cap on returned results (default 5)."
                 ),
                 "parameters": {
