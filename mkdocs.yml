@@ -18,6 +18,11 @@ exclude_docs: |
   # Engineering journals — dogfood batch logs, feature-verify notes
   journal/
 
+  # Internal research notes — competitive analysis / positioning /
+  # strategic priorities / doc improvement proposals. Not user-facing
+  # OSS docs (= same category as journal/).
+  research/
+
   # OpenUI = internal contract for Reyn's web UI. Not yet a neutral
   # multi-vendor protocol (see docs/openui/README.md framing).
   openui/
