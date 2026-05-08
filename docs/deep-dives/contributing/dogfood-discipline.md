@@ -460,9 +460,12 @@ The TUI is not the only way to drive Reyn. `reyn web` starts a FastAPI server on
 **Start the server:**
 
 ```bash
-reyn web                  # binds 127.0.0.1:8080 by default
+reyn web --reload         # binds 127.0.0.1:8080, auto-reloads on code edit
 reyn web --port 9000      # override port
+reyn web                  # plain mode — does NOT reload on edit
 ```
+
+**Use `--reload` for dev/debug iteration.** Without it, edits to tool descriptions, system prompts, or any router code stay invisible until you manually `kill` the process and re-`reyn web`. With `--reload`, uvicorn picks up file changes within ~2 s. The dogfood feedback loop (edit `router_tools.py` → re-curl the A2A endpoint) becomes hands-free.
 
 The server reads the same `reyn.yaml` and registry as `reyn chat` — no separate config.
 
