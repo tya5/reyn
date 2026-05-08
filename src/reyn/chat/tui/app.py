@@ -635,10 +635,30 @@ class ReynTUIApp(App):
             except Exception as exc:
                 self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
                 return
-            self._voice_status("🔴 recording — F2 to stop · Esc to cancel")
+            self._voice_status("🔴 recording — Ctrl+R to stop · Esc to cancel")
+            # Start the model load in the background while the user is
+            # speaking. First-time load is ~30 s (download + CTranslate2
+            # init). Without this pre-warm the user hits a long opaque
+            # block on the second Ctrl+R press; with it the second press
+            # usually returns in ~1 s.
+            asyncio.create_task(self._voice_input.preload_model())
         else:
             self._voice_busy = True
-            self._voice_status("⏳ transcribing…")
+            # Choose a status message that sets honest expectations: if
+            # the model isn't hot yet the wait will be long, so say so.
+            if self._voice_input.model_loaded:
+                self._voice_status("⏳ transcribing…")
+            else:
+                self._voice_status(
+                    "⏳ transcribing… (loading model — first run only, "
+                    "~30 s on slow connection)",
+                )
+            # Yield to the event loop so Textual flushes the status line
+            # to the screen BEFORE we kick off the (potentially long)
+            # transcription. Without this, the previous "🔴 recording"
+            # line stays on screen and the TUI looks frozen until the
+            # transcribe returns.
+            await asyncio.sleep(0)
             try:
                 text, diag = await self._voice_input.stop_recording()
             except Exception as exc:

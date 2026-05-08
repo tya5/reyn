@@ -182,6 +182,29 @@ class VoiceInput:
         self._chunks = []
         self._recording = False
 
+    @property
+    def model_loaded(self) -> bool:
+        """True iff the Whisper model has already been loaded into memory."""
+        return self._whisper_model is not None
+
+    async def preload_model(self) -> None:
+        """Force-load the Whisper model in a worker thread.
+
+        Called from the TUI right after the user starts recording, so the
+        slow first-time model load (= 460 MB download for `small`, then
+        CTranslate2 init) overlaps with the user actually speaking. By the
+        time they press Ctrl+R the second time, the model is hot and the
+        transcribe call returns in ~1 s instead of ~30 s+.
+
+        Idempotent — repeat calls are no-ops once the model is cached.
+        """
+        if self._whisper_model is not None:
+            return
+        try:
+            await asyncio.to_thread(self._ensure_model)
+        except Exception as exc:
+            logger.warning("voice preload_model failed: %s", exc)
+
     async def stop_recording(self) -> tuple[str, dict]:
         """Stop the stream, return ``(transcribed_text, diagnostics)``.
 
