@@ -135,13 +135,13 @@ ARCH_S01_BODY: >-
 # ── section 02: agent / routerloop / planner ─────────────────────────────────
 ARCH_S02_NUM: "02"
 ARCH_S02_LABEL: "Agent"
-ARCH_S02_HEADING_HTML: "Agent = <em>ChatSession.</em>"
+ARCH_S02_HEADING_HTML: "One agent.<br/>Or <em>a team.</em>"
 ARCH_S02_BODY: >-
   An Agent is a long-lived ChatSession: a RouterLoop that dispatches messages
   to Skills, an optional Planner that decomposes complex goals into ordered
   steps, a memory scope, and a curated skill allowlist.
-  The Planner is chat-scoped and transient — it lives only for the duration
-  of one planning request.
+  Agents are named and registered — a RouterLoop can delegate work to a peer
+  asynchronously, assembling teams without touching the OS.
 
 # ── section 03: OS / phase execution ─────────────────────────────────────────
 ARCH_S03_NUM: "03"
