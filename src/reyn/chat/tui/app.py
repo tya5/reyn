@@ -822,27 +822,75 @@ class ReynTUIApp(App):
             )
 
     def _voice_watchdog_tick(self) -> None:
-        """Per-second tick: auto-cancel runaway recordings.
+        """Per-second tick: auto-stop runaway recordings, preserving audio.
 
         Triggered by ``set_interval(1.0, ...)`` after the first VoiceInput
         is created. Self-disarming — does nothing when no recording is
         active. Caps memory growth (16 kHz mono float32 ≈ 64 KB/s, so an
         8-hour idle recording would otherwise pile up ~1.8 GB of buffer).
+
+        Behaviour at the cap: instead of dropping the buffer, we run the
+        same stop+transcribe+append path as a manual second-Ctrl+R press.
+        The transcript lands in the InputBox so nothing the user already
+        said is lost, and a follow-up Ctrl+R session will concatenate
+        further dictation into the same input field via
+        ``InputBar.append_text``.
         """
         if self._voice_input is None or not self._voice_input.is_recording:
             return
+        if self._voice_busy:
+            return  # already transcribing — let it finish
         cap = self._voice_input.max_duration_s
         if cap <= 0:
             return  # 0 = uncapped, opt-out
         elapsed = self._voice_input.recording_elapsed_s
         if elapsed < cap:
             return
-        # Cap reached — cancel and warn the user.
-        self._voice_input.cancel()
+        # Cap reached — kick off transcribe-and-insert as a fire-and-forget
+        # task. Setting _voice_busy here (= synchronously) prevents a
+        # subsequent watchdog tick from racing into a second start.
+        self._voice_busy = True
         self._voice_status(
-            f"✗ recording auto-cancelled (exceeded {cap:.0f}s cap) — "
-            "press Ctrl+R to start a new one",
+            f"⏰ recording cap reached ({cap:.0f}s) — transcribing & inserting…",
             style="dim #aa6666",
+        )
+        asyncio.create_task(self._voice_auto_stop_and_insert())
+
+    async def _voice_auto_stop_and_insert(self) -> None:
+        """Watchdog continuation — transcribe the captured buffer + append
+        to the InputBox + leave the input bar focused so Ctrl+R can extend.
+
+        Mirrors the second-Ctrl+R path in ``action_voice_toggle`` but
+        without re-checking ``_voice_busy`` (the caller already set it).
+        """
+        if self._voice_input is None:
+            self._voice_busy = False
+            return
+        await self._yield_for_render()
+        try:
+            text, diag = await self._voice_input.stop_recording()
+        except Exception as exc:
+            self._voice_status(
+                f"✗ auto-stop transcription failed: {exc}", style="bold red",
+            )
+            self._voice_busy = False
+            return
+        self._voice_busy = False
+        if not text:
+            self._voice_show_empty_diagnostic(diag)
+            return
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inputbar.append_text(text)
+            inputbar.focus_input()
+        except Exception:
+            pass
+        preview = text if len(text) <= 60 else text[:57] + "…"
+        dur = diag.get("duration_s", 0.0)
+        self._voice_status(
+            f"✓ inserted ({dur:.1f}s, auto-stopped): {preview}  — "
+            "Ctrl+R to continue dictating, Enter to send",
+            style="dim #aaaaaa",
         )
 
     def action_voice_cancel(self) -> None:
