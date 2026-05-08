@@ -995,9 +995,23 @@ async def dispatch_plan_tool(
     # record_plan_completed. ADR-0023 §2.1.1 async path is the
     # production path; the sync fallback is a test-stub safety net.
     if hasattr(parent_host, "spawn_plan_task"):
-        await parent_host.spawn_plan_task(
-            plan_id=plan_id, runtime=runtime, chain_id=plan_chain_id,
-        )
+        # Batch 16 / G27: pass parent_chain_id so spawn_plan_task's
+        # history append for the terminal text is tagged with the
+        # caller's (= A2A / chat turn) chain, not the per-plan chain.
+        # This makes _new_agent_history_entries filter pick up the
+        # plan reply for the original A2A request. Backward-compatible
+        # via try/except for hosts that don't accept the new kwarg.
+        try:
+            await parent_host.spawn_plan_task(
+                plan_id=plan_id, runtime=runtime,
+                chain_id=plan_chain_id,
+                parent_chain_id=chain_id,
+            )
+        except TypeError:
+            # Older host signature without parent_chain_id — fall back.
+            await parent_host.spawn_plan_task(
+                plan_id=plan_id, runtime=runtime, chain_id=plan_chain_id,
+            )
         return {
             "status": "spawned",
             "plan_id": plan_id,

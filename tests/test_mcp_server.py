@@ -302,6 +302,74 @@ def test_concurrent_send_to_same_agent_does_not_cross_talk(tmp_path, monkeypatch
     )
 
 
+def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
+    """Tier 2: G27 regression net — when the chat router invokes the
+    ``plan`` async tool, ``send_to_agent_impl`` must wait for the plan
+    task's terminal text (= via spawn_plan_task → outbox + history
+    append) before returning to the A2A caller.
+
+    Discovered in batch 17 G24 attractor investigation (2026-05-08):
+    plan-mode async dispatch (ADR-0023 §2.1.1) returns from RouterLoop
+    on spawn ack only; the terminal text comes asynchronously via
+    spawn_plan_task. Pre-fix, send_to_agent_impl harvested history
+    immediately after _handle_user_message returned, missing the
+    plan's terminal text. A2A callers got empty replies.
+
+    Fix: send_to_agent_impl now awaits all running_plans before
+    harvest, within the remaining timeout budget. spawn_plan_task
+    appends terminal text to history (= alongside the existing
+    put_outbox call) so the harvested entries include the plan reply.
+
+    This test pins the contract by simulating a plan task that
+    asynchronously appends a terminal text to history, and asserting
+    the A2A caller receives it.
+    """
+    monkeypatch.chdir(tmp_path)
+    registry = _build_registry(tmp_path, [("default", "")])
+
+    # Stub LLM: not invoked because we directly simulate plan dispatch
+    # via a fake _handle_user_message that schedules a background task.
+    async def _fake_handle_user_message(self, message, *, chain_id):
+        from reyn.chat.session import ChatMessage
+        # Append the user message (= mirror real path)
+        self._append_history(ChatMessage(
+            role="user", text=message, ts="2026-05-08T00:00:00",
+            meta={"chain_id": chain_id},
+        ))
+        # Schedule a background "plan task" that appends terminal
+        # text after a tiny delay (= simulates async plan dispatch).
+        async def _plan_task():
+            await asyncio.sleep(0.05)
+            self._append_history(ChatMessage(
+                role="agent", text=f"PLAN_RESULT_FOR:{message[:20]}",
+                ts="2026-05-08T00:00:01",
+                meta={"chain_id": chain_id, "source": "plan"},
+            ))
+        task = asyncio.create_task(_plan_task())
+        # Track in running_plans so send_to_agent_impl awaits it.
+        self.running_plans["fake_plan_id"] = task
+
+    from reyn.chat.session import ChatSession
+    monkeypatch.setattr(
+        ChatSession, "_handle_user_message", _fake_handle_user_message,
+    )
+
+    async def go():
+        return await send_to_agent_impl(
+            registry, agent_name="default",
+            message="test_prompt_marker",
+            timeout=5.0,
+        )
+
+    result = asyncio.run(go())
+    assert result["agent"] == "default"
+    # The plan terminal text MUST be in the reply (= waited for it)
+    assert "PLAN_RESULT_FOR:test_prompt_marker" in result["reply"], (
+        f"Expected plan terminal text in reply; got: {result['reply']!r}"
+    )
+    assert result["partial"] is False  # idle by completion
+
+
 def test_build_server_exposes_two_tools(tmp_path):
     """Tier 2: build_server registers exactly the two documented tools
     (list_agents, send_to_agent). Acts as a P7 detection net — adding a

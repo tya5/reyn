@@ -3597,6 +3597,7 @@ class ChatSession:
 
     async def spawn_plan_task(
         self, *, plan_id: str, runtime: Any, chain_id: str,
+        parent_chain_id: str | None = None,
     ) -> None:
         """Run a PlanRuntime as a background task (ADR-0023 Phase 2.1).
 
@@ -3642,6 +3643,34 @@ class ChatSession:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "plan task outbox emit failed for %s: %r",
+                        plan_id, exc,
+                    )
+                # Batch 16 / G27: also append to history so the
+                # terminal text is visible to A2A reply harvesting,
+                # `dogfood_trace --mode plan-trace`, and any future
+                # caller iterating session.history. Mirror the regular
+                # agent-reply pattern (= _put_outbox + _append_history
+                # always together for kind="agent").
+                #
+                # The history meta uses ``parent_chain_id`` (= the
+                # chat-turn / A2A caller's chain) so chain_id-filtered
+                # harvest picks up this entry. ``plan_chain_id`` is
+                # internal plan-mode bookkeeping (per-plan chain) —
+                # tracked in meta.plan_id for forensic continuity.
+                history_chain_id = parent_chain_id or chain_id
+                try:
+                    self._append_history(ChatMessage(
+                        role="agent", text=result_text, ts=_now_iso(),
+                        meta={
+                            "plan_id": plan_id,
+                            "chain_id": history_chain_id,
+                            "plan_chain_id": chain_id,
+                            "source": "plan",
+                        },
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "plan task history append failed for %s: %r",
                         plan_id, exc,
                     )
             # Artifact cleanup mirrors the old dispatch_plan_tool finally.

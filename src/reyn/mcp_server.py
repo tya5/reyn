@@ -188,6 +188,8 @@ async def send_to_agent_impl(
     # why. The lock is acquired AFTER session lookup (cheap) and AROUND
     # both the handler call and the reply harvest so the baseline →
     # _handle_user_message → history-read window is atomic per agent.
+    import time as _time
+    start = _time.monotonic()
     async with _get_agent_lock(agent_name):
         baseline = len(session.history)
         try:
@@ -198,6 +200,26 @@ async def send_to_agent_impl(
             idle = True
         except asyncio.TimeoutError:
             idle = False
+
+        # Batch 16 / G27: plan-mode async dispatch (ADR-0023 §2.1.1)
+        # returns from RouterLoop immediately after spawn ack — the
+        # plan task continues in the background and emits its terminal
+        # text via spawn_plan_task (outbox + history append). For A2A
+        # synchronous return semantics, await those tasks before
+        # harvesting so the caller sees the plan reply (within the
+        # remaining timeout budget).
+        plan_tasks = list(getattr(session, "running_plans", {}).values())
+        active_plans = [t for t in plan_tasks if not t.done()]
+        if active_plans:
+            elapsed = _time.monotonic() - start
+            remaining = max(0.1, timeout - elapsed)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*active_plans, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                idle = False
 
         new_replies = _new_agent_history_entries(
             session, baseline, chain_id=chain_id,
