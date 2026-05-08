@@ -133,7 +133,12 @@ class OutboxRouter:
     def _on_end(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> str:
-        """`__end__` — registry signals shutdown; loop should break."""
+        """`__end__` — registry signals shutdown; loop should break.
+
+        Also clears any leftover ``⟳ thinking…`` sticky so the final
+        TUI frame on shutdown isn't a phantom indicator.
+        """
+        conv.hide_status()
         return _STOP
 
     def _on_attach_request(
@@ -266,7 +271,13 @@ class OutboxRouter:
     def _on_intervention(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`intervention` — mount inline ask_user widget."""
+        """`intervention` — mount inline ask_user widget.
+
+        Hides the sticky ``⟳ thinking…`` indicator first: while the
+        agent is waiting for a human answer, "thinking" is misleading
+        — the system is blocked on user input, not on the model.
+        """
+        conv.hide_status()
         iv_id = msg.meta.get("intervention_id", "")
         raw_choices = msg.meta.get("choices")
         choices = None
@@ -311,7 +322,13 @@ class OutboxRouter:
     def _on_error(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`error` — render via conv (mounts ErrorBox) + remember focal tab."""
+        """`error` — render via conv (mounts ErrorBox) + remember focal tab.
+
+        Also clears the sticky ``⟳ thinking…`` indicator: a turn that
+        ends in error never reaches `__stream_start__` / `agent`, so
+        without this the indicator would stick around indefinitely.
+        """
+        conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"
 

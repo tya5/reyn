@@ -471,7 +471,18 @@ class ReynTUIApp(App):
             pass
 
     def action_cancel_inflight(self) -> None:
-        """Cancel the in-flight skill/model call on the attached session."""
+        """Cancel the in-flight skill/model call on the attached session.
+
+        Also clears the sticky ``⟳ thinking…`` indicator immediately —
+        cancellation may not produce a downstream `error` event in
+        every code path, and even when it does, the user benefits from
+        the indicator disappearing the moment they hit Ctrl+C rather
+        than waiting for the cancel to propagate.
+        """
+        try:
+            self.query_one("#conversation", ConversationView).hide_status()
+        except Exception:
+            pass
         session = self._get_session()
         if session is None:
             return
