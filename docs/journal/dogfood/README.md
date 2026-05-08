@@ -105,6 +105,17 @@ model class fallback) で LLM hallucinate を OS が救済する operational evi
 確立。 documented design 整合性復帰 + Brier 0.18 で calibration discipline best。
 B14 retro 参照: `2026-05-06-batch-14-stability-extension/retrospective.md`
 
+🏆 **2026-05-08 batch 16 retest — plan-mode 真の R1 attractor rate 0/25 = 0% confirm**:
+batch 16 元判定 25/25 refuted は G27 plumbing artifact だったことが G27 fix
+(= `3a59d8c`) 後 retest (= 同 5 scenario × N=5) で判明。 「LLM が plan invoke
+を拒否する」 真の R1 case は 0/25、 plan-mode infra は production-grade 動作。
+batch 17 R1 description rewrite は CANCEL (= 0% base rate で ROI ゼロ)、
+**observe-first discipline で false alarm 救出**。 副次発見 G28 (driver-induced
+context bloat) は production user 影響ゼロ、 G29 候補 / driver-scenario quality
+improvement が次 wave。 真の calibration は driver / scenario improvement 後に
+再測定が必要 (= retest classification 自体に design bug を含むため)。
+B16 retro Addendum 参照: `2026-05-08-batch-16-plan-mode-validation/retrospective.md`
+
 ### Provisional milestone (= 経過記録)
 
 🏆 **2026-05-05 batch 10 — Reyn dogfood 史上初の chain 完走 via `reyn chat`**
@@ -149,6 +160,7 @@ Calibration progression: Brier 0.96 → 0.55 → 0.30 → 0.65 → 0.40 → 0.20
 | [batch-12-real-milestone](2026-05-06-batch-12-real-milestone/) | 2026-05-06 | verify-first 4-step (R1 fix + R2 diagnose + M1 milestone hygiene + M2 fixture audit + S3 N=5) | B11-NEW-1 真因が **worktree CWD vs `stdlib_root()` 乖離** (= editable install + worktree path divergence) と判明、 R1 で `stdlib_root()` を default zone 追加 (後に doc 違反として batch 13 で revert)。 N=5 で 0/5 complete、 routing 100% / partial 100% で **B12-NEW-1 (= python step non-interactive auto-approve gap)** が真の dominant blocker と確定。 R3 fix の retroactive verified 格上げ (= batch 11 inconclusive 訂正)。 Brier 0.65 → 0.40 復帰 | B12-NEW-1 (CRITICAL: python step approval gap) + M2 audit B12-NEW-2/3/4/5 (= 4 wrong-layer fixture trap) |
 | [batch-13-revert-and-real-milestone](2026-05-06-batch-13-revert-and-real-milestone/) | 2026-05-06 | revert + V3 wording + N=5 (= user 「permission system 簡潔に説明できますか?」 介入で軌道修正) | **user simplicity smell test 介入** で documented design 違反 fix 群を発見、 G15 (`651a053`) + R1 (`2219b20`) を **revert** (= 不具合修正)。 B12-NEW-1 候補は **却下** (= doc 違反の symmetric 拡張)。 V3 wording fix (= ABSOLUTE rule + JA examples) で routing-fail 40-50% → 5% (= 仕様変更)、 reyn.local.yaml pre-approval pattern (= layer 3 mechanism 運用) 確立。 N=5 で **4/5 (80%) complete** で **real milestone CONFIRMED** ✅。 Brier 0.40 → 0.20 で 13 batch 中 best、 「documented design 整合性 audit」 + 「修正分類明示」 新原則確立 | B13-NEW-1 (MED: eval.run_target literal model string) + G15/R1 revert + V3 wording landed |
 | [batch-14-stability-extension](2026-05-06-batch-14-stability-extension/) | 2026-05-06 | 3 並列 fix (R1 model class / R2 fixture / R3 doc) + N=5 (= 仕様変更ゼロ batch) | 🏆 **production-grade phase 1 完了 declaration**。 N=5 で **5/5 (100%) complete** 達成 (= batch 13 80% → batch 14 100% で +20pp)。 R1 (= `run_skill` literal model fallback) が 3 fire 観察、 LLM hallucinate を OS が transparent 救済する operational evidence 確立。 R2 = wrong-layer fixture 修正、 R3 = reyn.local.yaml pattern doc 化。 全 fix が 🔵 不具合修正 / doc 追加 で 仕様変更ゼロ batch、 production user 影響なし。 Brier 0.20 → 0.18 で 8 batch 中 best | (なし、 chain 完走 path 完成) + observation: Run 2 phase skip (= LLM の graph navigation variance、 monitor 候補) |
+| [batch-16-plan-mode-validation](2026-05-08-batch-16-plan-mode-validation/) | 2026-05-08 | 5 件 (plan-mode N=5) | batch 16 元判定 25/25 refuted は **plumbing artifact** (= G27 A2A async-dispatch return mismatch)、 G27 fix 後 retest で **真の R1 attractor rate 0/25 = 0%** confirm。 残 2/25 empty reply は **G28 driver-induced** (= clean_state が session in-memory `_history` invalidate せず context bloat)。 副次発見 G27 / G28 / G29 候補 (S2 max_concurrent=1)。 batch 17 R1 description rewrite は **CANCEL** (= base rate 0% で ROI ゼロ) | retest: 9V/6I/10R/0B、 真 R1 = 0% (= plumbing artifact 排除後)、 G27 plumbing fix landed (`3a59d8c`)、 G28 driver-induced empty reply (= production 影響ゼロ)、 driver / scenario design quality issue (S3 instrumentation + S5 verdict logic) も顕在化 |
 
 ## こちらの心境
 
