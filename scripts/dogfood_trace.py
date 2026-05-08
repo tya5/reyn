@@ -126,7 +126,7 @@ def mode_cost(root: Path) -> None:
         avg_tokens = (total_tokens / n_calls) if n_calls else 0
         saved_usd = llm_memo_hits * avg_usd
         saved_tokens = llm_memo_hits * avg_tokens
-        print(f"\nPlan-mode memo savings (ADR-0023 + ADR-0025):")
+        print("\nPlan-mode memo savings (ADR-0023 + ADR-0025):")
         print(f"  step-result memoizations:  {step_memo_hits} events  (= step memo replay)")
         print(f"  LLM-call memoizations:     {llm_memo_hits} events  (= sub-loop LLM memo replay)")
         print(f"  estimated saved cost:      ${saved_usd:.4f}   (= {llm_memo_hits} LLM-call hits × ${avg_usd:.5f} avg)")
