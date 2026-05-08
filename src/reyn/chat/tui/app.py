@@ -662,12 +662,7 @@ class ReynTUIApp(App):
                     "⏳ transcribing… (loading model — first run only, "
                     "~30 s on slow connection)",
                 )
-            # Yield to the event loop so Textual flushes the status line
-            # to the screen BEFORE we kick off the (potentially long)
-            # transcription. Without this, the previous "🔴 recording"
-            # line stays on screen and the TUI looks frozen until the
-            # transcribe returns.
-            await asyncio.sleep(0)
+            await self._yield_for_render()
             try:
                 text, diag = await self._voice_input.stop_recording()
             except Exception as exc:
@@ -708,7 +703,7 @@ class ReynTUIApp(App):
             self._voice_status(
                 "⏳ transcribing & sending… (loading model — first run only)"
             )
-        await asyncio.sleep(0)
+        await self._yield_for_render()
         try:
             text, diag = await self._voice_input.stop_recording()
         except Exception as exc:
@@ -741,6 +736,29 @@ class ReynTUIApp(App):
         self._voice_status(
             f"✓ sent ({dur:.1f}s): {preview}", style="dim #aaaaaa"
         )
+
+    async def _yield_for_render(self) -> None:
+        """Make absolutely sure a just-written status line reaches the screen
+        before we begin a long synchronous operation.
+
+        Single ``await asyncio.sleep(0)`` is sometimes not enough — it yields
+        once, but Textual's compositor schedules across multiple ticks
+        (widget refresh → layout → render → flush). When we then enter
+        ``asyncio.to_thread(...)`` the worker thread can hold the GIL long
+        enough to starve those follow-up ticks, leaving the previous
+        "🔴 recording" frame on screen until transcribe returns — visually
+        identical to a TUI freeze.
+
+        Belt + braces: explicit ``self.refresh()`` to mark the screen
+        dirty, then a ``sleep(0.05)`` (= ~3 frames at 60fps) to let the
+        compositor actually run. 50 ms is imperceptible to the user but
+        guaranteed-enough for the status line to materialise.
+        """
+        try:
+            self.refresh()
+        except Exception:
+            pass
+        await asyncio.sleep(0.05)
 
     def _voice_show_empty_diagnostic(self, diag: dict) -> None:
         """Build an actionable status line for an empty transcription.
