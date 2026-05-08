@@ -219,8 +219,8 @@ SECTION 06 — MCP server / client
   - Section number + label: {{ARCH_S06_NUM}} / {{ARCH_S06_LABEL}}
   - Heading: {{ARCH_S06_HEADING_HTML}}
   - Two-column layout on desktop: left = MCP server card, right = MCP client card
-  - Left card body: {{ARCH_S06_SERVER_BODY}}
-  - Right card body: {{ARCH_S06_CLIENT_BODY}}
+  - Left card body: {{ARCH_S06_SERVER_BODY}}   (implemented)
+  - Right card body: {{ARCH_S06_CLIENT_BODY}}  (implemented — stdio + HTTP; SSE deferred)
   - Mermaid diagram (MCP symmetry):
     ```
     flowchart LR
@@ -232,7 +232,7 @@ SECTION 06 — MCP server / client
             AR["AgentRegistry → ChatSession"]
             EXT --> STDIO --> TOOLS --> AR
         end
-        subgraph CLI2["MCP Client — Phase 2 roadmap"]
+        subgraph CLI2["MCP Client — implemented (stdio · HTTP)"]
             direction TB
             PHASE["Reyn Phase (control_ir)"]
             MCIROP["MCPIROp  kind: mcp"]

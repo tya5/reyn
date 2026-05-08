@@ -248,7 +248,7 @@ flowchart LR
         EXT --> STDIO --> TOOLS --> AR
     end
 
-    subgraph CLI["MCP Client — Phase 2 roadmap"]
+    subgraph CLI["MCP Client — implemented (stdio · HTTP)"]
         direction TB
         PHASE["Reyn Phase\n(control_ir)"]
         MCIROP["MCPIROp\nkind: mcp"]

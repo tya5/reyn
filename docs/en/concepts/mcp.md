@@ -33,7 +33,7 @@ The boundary is sharp on purpose: skills describe what they want, the OS decides
 
 ## Transport choice (stdio vs HTTP)
 
-Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE exists but is uncommon. <!-- TODO: confirm SSE support lands in PR32 or stays deferred. -->
+Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE transport is reserved for a future release.
 
 | Transport | When | How reyn launches it |
 |-----------|------|----------------------|
@@ -106,7 +106,7 @@ Filter for them with `reyn events tail | grep mcp_` or `grep '"mcp_called"' .rey
 
 Treat it as the template to copy when authoring your own MCP-backed skill: declare `permissions.mcp: [filesystem]` in the phase, emit `mcp` ops with `tool: read_text_file` (or whatever the server advertises), and let the OS handle the rest.
 
-See the [reference page](../reference/stdlib/read_local_files.md) for phase shapes and the [how-to](../how-to/use-an-mcp-server.md) for a full quickstart.
+See the [reference page](../reference/stdlib/read_local_files.md) for phase shapes and the [how-to](../guide/for-skill-authors/use-an-mcp-server.md) for a full quickstart.
 
 ## What MCP is NOT for
 
@@ -121,7 +121,7 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 
 ## See also
 
-- [How-to: use an MCP server](../how-to/use-an-mcp-server.md) — quickstart with the filesystem server
+- [How-to: use an MCP server](../guide/for-skill-authors/use-an-mcp-server.md) — quickstart with the filesystem server
 - [Reference: `read_local_files`](../reference/stdlib/read_local_files.md) — the first stdlib MCP skill
 - [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — full `mcp.servers:` schema
 - [Concepts: permission model](permission-model.md) — where `permissions.mcp` fits

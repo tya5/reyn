@@ -206,10 +206,10 @@ ARCH_S06_SERVER_BODY: >-
   The AgentRegistry handles routing from there.
 
 ARCH_S06_CLIENT_BODY: >-
-  <strong>MCPIROp</strong> — Phase 2 roadmap.<br/>
+  <strong>MCPIROp</strong> — implemented today.<br/>
   A Control IR op that calls an external MCP server from inside a Phase.
-  Reyn becomes an MCP client, delegating tool calls to any MCP-compatible
-  service over stdio or HTTP transport.
+  Supports stdio and HTTP (Streamable HTTP) transports.
+  SSE transport is reserved for a future release.
 
 # ── CTA ──────────────────────────────────────────────────────────────────────
 ARCH_CTA_HEADING_HTML: "Go deeper in the <em>docs.</em>"
