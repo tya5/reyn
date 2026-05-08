@@ -109,7 +109,116 @@ S04_DOCS_LINK: "Read the docs"
 # `pip install reyn` once 1.0 ships on PyPI.
 S04_INSTALL_CMD: "git clone https://github.com/tya5/reyn"
 
-# ── footer ──────────────────────────────────────────────────────────────────
+# ── architecture.html ───────────────────────────────────────────────────────
+# All tokens use the ARCH_ prefix to avoid collision with index.html tokens.
+
+ARCH_PAGE_TITLE: "Reyn — How it works"
+
+# ── hero ─────────────────────────────────────────────────────────────────────
+ARCH_HERO_EYEBROW: "Architecture"
+ARCH_HERO_H1_HTML: "Seven layers.<br/>One <em>constant.</em>"
+ARCH_HERO_LEDE: >-
+  Reyn is structured as a seven-layer stack. The OS — context build, LLM call,
+  validation, event emit — is the only layer that never changes.
+  Skills and Phases come and go; the OS stays.
+
+# ── section 01: layer structure ──────────────────────────────────────────────
+ARCH_S01_NUM: "01"
+ARCH_S01_LABEL: "Layer structure"
+ARCH_S01_HEADING_HTML: "From user to <em>persistence.</em>"
+ARCH_S01_BODY: >-
+  Each layer has one job. Interface translates user input into messages.
+  AgentRegistry routes those messages to the right ChatSession.
+  The OS executes Skill graphs. Workspace and Events make everything
+  inspectable and replayable.
+
+# ── section 02: agent / routerloop / planner ─────────────────────────────────
+ARCH_S02_NUM: "02"
+ARCH_S02_LABEL: "Agent"
+ARCH_S02_HEADING_HTML: "Agent = <em>ChatSession.</em>"
+ARCH_S02_BODY: >-
+  An Agent is a long-lived ChatSession: a RouterLoop that dispatches messages
+  to Skills, an optional Planner that decomposes complex goals into ordered
+  steps, a memory scope, and a curated skill allowlist.
+  The Planner is chat-scoped and transient — it lives only for the duration
+  of one planning request.
+
+# ── section 03: OS / phase execution ─────────────────────────────────────────
+ARCH_S03_NUM: "03"
+ARCH_S03_LABEL: "OS — the constant"
+ARCH_S03_HEADING_HTML: "The OS runs everything.<br/>Skills <em>describe.</em> LLMs <em>decide.</em>"
+ARCH_S03_BODY: >-
+  Each act turn: the OS builds context, calls the LLM with a closed candidate
+  set, validates the response against the next Phase's input schema, executes
+  Control IR ops under permission gates, and emits an event.
+  Nothing executes without the OS; nothing mutates state without an event.
+
+# ── section 04: skill & phase ─────────────────────────────────────────────────
+ARCH_S04_NUM: "04"
+ARCH_S04_LABEL: "Skill & Phase"
+ARCH_S04_HEADING_HTML: "A directed graph<br/>of <em>phases.</em>"
+ARCH_S04_BODY: >-
+  A Skill is a directed graph: it owns the transitions, the entry phase, and
+  the final-output schema. A Phase owns only its input contract, its
+  preprocessor steps, and its instructions. Phases are intentionally blind
+  to where they sit in the graph — the Skill connects them.
+
+# ── section 05: multi-agent ──────────────────────────────────────────────────
+ARCH_S05_NUM: "05"
+ARCH_S05_LABEL: "Multi-agent"
+ARCH_S05_HEADING_HTML: "Four layers of <em>delegation.</em>"
+ARCH_S05_BODY: >-
+  Reyn's multi-agent model is layered, not flat. Static embedding at compile
+  time, dynamic invocation at runtime, topology-gated agent-to-agent
+  messaging, and an external MCP server interface — each layer adds reach
+  without increasing OS complexity.
+
+ARCH_S05_C1_LABEL: "Layer 1 — @sub_skill"
+ARCH_S05_C1_BODY: >-
+  A sub-skill node embedded directly into a Skill graph.
+  Resolved at compile time; runs as part of the parent graph.
+
+ARCH_S05_C2_LABEL: "Layer 2 — run_skill"
+ARCH_S05_C2_BODY: >-
+  A Control IR op that invokes a sub-skill dynamically at runtime.
+  Parent run ID is tracked for lineage; workspace can be isolated or shared.
+
+ARCH_S05_C3_LABEL: "Layer 3 — delegate_to_agent"
+ARCH_S05_C3_BODY: >-
+  The RouterLoop issues a delegate_to_agent action.
+  The Topology gate routes it; hop depth is capped at 3; chain_id threads
+  the conversation across agents.
+
+ARCH_S05_C4_LABEL: "Layer 4 — reyn mcp serve"
+ARCH_S05_C4_BODY: >-
+  Reyn exposes itself as an MCP server over stdio / JSON-RPC 2.0.
+  External LLM clients — Claude Code, Cursor, OpenAI SDK — call
+  list_agents() and send_to_agent() to drive Reyn from outside.
+
+# ── section 06: MCP ──────────────────────────────────────────────────────────
+ARCH_S06_NUM: "06"
+ARCH_S06_LABEL: "MCP"
+ARCH_S06_HEADING_HTML: "Reyn as server.<br/>Reyn as <em>client.</em>"
+ARCH_S06_SERVER_BODY: >-
+  <strong>reyn mcp serve</strong> — implemented today.<br/>
+  Any MCP-compatible LLM client can connect over stdio and call
+  list_agents() to discover agents, then send_to_agent() to delegate work.
+  The AgentRegistry handles routing from there.
+
+ARCH_S06_CLIENT_BODY: >-
+  <strong>MCPIROp</strong> — Phase 2 roadmap.<br/>
+  A Control IR op that calls an external MCP server from inside a Phase.
+  Reyn becomes an MCP client, delegating tool calls to any MCP-compatible
+  service over stdio or HTTP transport.
+
+# ── CTA ──────────────────────────────────────────────────────────────────────
+ARCH_CTA_HEADING_HTML: "Go deeper in the <em>docs.</em>"
+ARCH_CTA_BODY: >-
+  The concepts section covers each layer in detail — with design rationale,
+  edge cases, and cross-references to the implementation.
+ARCH_CTA_DOCS_HREF: "https://tya5.github.io/reyn/en/concepts/architecture/"
+
+# ── footer ───────────────────────────────────────────────────────────────────
 # Powered by AI is intentional double-meaning: Reyn (a) runs on LLMs at
 # runtime by design, and (b) was substantially co-authored with AI tooling
 # (Claude Code + Claude Design). Both are honest disclosures; the wording
