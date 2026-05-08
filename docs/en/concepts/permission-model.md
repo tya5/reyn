@@ -101,4 +101,4 @@ The reason is composition safety. Skill A might be trusted; skill A invoking sub
 - [Reference: permissions](../reference/config/permissions.md) — full schema
 - [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` key
 - [Reference: state-dir](../reference/config/state-dir.md) — `.reyn/approvals.yaml`
-- [How-to: manage permissions](../how-to/manage-permissions.md)
+- [How-to: manage permissions](../guide/for-users/manage-permissions.md)

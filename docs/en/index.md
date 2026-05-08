@@ -13,22 +13,22 @@ reyn runs LLM workflows as a state machine. Phases are stateless and reusable; a
 
 | If you want to... | Go to |
 |---|---|
-| Install and run your first skill | [Tutorials](tutorials/01-installation.md) |
-| Solve a specific problem | [How-to](how-to/validate-artifacts.md) |
+| Install and run your first skill | [Getting started](guide/getting-started/01-installation.md) |
+| Solve a specific problem (chat user) | [Guide / for users](guide/for-users/manage-permissions.md) |
+| Solve a specific problem (skill author) | [Guide / for skill authors](guide/for-skill-authors/validate-artifacts.md) |
 | Look up exact behavior | [Reference](reference/cli/run.md) |
 | Understand the design | [Concepts](concepts/principles.md) |
-| Read reyn through agent-engineering lenses | [Seven lenses](concepts/agent-engineering/index.md) |
-| Read agent-only docs | [/agent/](../agent/README.md) |
+| Read reyn through agent-engineering lenses | [Seven lenses](guide/for-skill-authors/agent-engineering/index.md) |
+| Read LLM-targeted rubrics | [Skill-builder checklist](guide/for-skill-authors/skill-builder-checklist.md) |
 | Contribute | [Contributing](contributing/style-guide.md) |
 
 ## The four reading modes (Diátaxis)
 
-- **Tutorials** — learning-oriented, ordered. Read these first.
-- **How-to** — task-oriented recipes. Skim by problem.
+- **Guide** — task-oriented. *Getting started* for onboarding, *for users* for chat-mode usage, *for skill authors* for building skills.
 - **Reference** — information-oriented. Look up and leave.
 - **Concepts** — understanding-oriented. The "why" of reyn.
 
-`agent/` is a fifth mode reserved for documents whose primary reader is a reyn skill (e.g. `skill_builder`).
+LLM-targeted rubrics (skill-builder checklist, eval-builder rubric, etc.) live under `guide/for-skill-authors/` — their primary reader is a reyn skill (e.g. `skill_builder`), but humans read them too.
 
 ## Project status
 

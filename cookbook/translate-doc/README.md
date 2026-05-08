@@ -29,7 +29,7 @@ cp -r cookbook/translate-doc/translate_doc reyn/local/translate_doc
 Pass the document text on stdin (cleanest for multi-line):
 
 ```bash
-cat docs/en/how-to/build-an-agent-team.md | reyn run translate_doc
+cat docs/en/guide/for-skill-authors/build-an-agent-team.md | reyn run translate_doc
 ```
 
 Or inline for a short snippet:
@@ -70,5 +70,5 @@ A `translated_document` artifact:
 
 ## See also
 
-- [Tutorial: your first skill](../../docs/en/tutorials/02-your-first-skill.md)
-- [How-to: localize output](../../docs/en/how-to/localize-output.md)
+- [Tutorial: your first skill](../../docs/en/guide/getting-started/02-your-first-skill.md)
+- [How-to: localize output](../../docs/en/guide/for-skill-authors/localize-output.md)

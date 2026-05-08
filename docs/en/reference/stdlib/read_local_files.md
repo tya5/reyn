@@ -47,7 +47,7 @@ mcp:
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
 
-See [How-to: use an MCP server](../../how-to/use-an-mcp-server.md) for the full setup walkthrough, including installing the `[mcp]` extra.
+See [How-to: use an MCP server](../../guide/for-skill-authors/use-an-mcp-server.md) for the full setup walkthrough, including installing the `[mcp]` extra.
 
 ## Phases
 
@@ -89,5 +89,5 @@ Sample prompts that DO NOT route here:
 ## See also
 
 - [Concepts: MCP](../../concepts/mcp.md) — how reyn integrates the protocol
-- [How-to: use an MCP server](../../how-to/use-an-mcp-server.md) — the quickstart this skill exercises
+- [How-to: use an MCP server](../../guide/for-skill-authors/use-an-mcp-server.md) — the quickstart this skill exercises
 - [Reference: `reyn.yaml` § MCP servers](../config/reyn-yaml.md#mcp-servers)

@@ -82,4 +82,4 @@ permissions:
 - [Reference: permissions](../reference/config/permissions.md) — 完全なスキーマ
 - [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` キー
 - [Reference: state-dir](../reference/config/state-dir.md) — `.reyn/approvals.yaml`
-- [How-to: manage permissions](../how-to/manage-permissions.md)
+- [How-to: manage permissions](../guide/for-users/manage-permissions.md)

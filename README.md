@@ -85,7 +85,7 @@ reyn run my_skill '{"type":"request","data":{"topic":"AI in education"}}'
 reyn run my_skill "Summarize AI trends in education."
 ```
 
-Full tutorial: [docs/en/tutorials/02-your-first-skill.md](docs/en/tutorials/02-your-first-skill.md)
+Full tutorial: [docs/en/guide/getting-started/02-your-first-skill.md](docs/en/guide/getting-started/02-your-first-skill.md)
 
 ---
 
@@ -122,8 +122,8 @@ Built with MkDocs Material; English + Japanese (translation in progress).
 
 | Section | Live | Source |
 |---|---|---|
-| Tutorials | [tya5.github.io/reyn/docs/tutorials/](https://tya5.github.io/reyn/docs/tutorials/01-installation/) | [docs/en/tutorials/](docs/en/tutorials/) |
-| How-to | [/docs/how-to/](https://tya5.github.io/reyn/docs/how-to/validate-artifacts/) | [docs/en/how-to/](docs/en/how-to/) |
+| Tutorials | [tya5.github.io/reyn/docs/guide/getting-started/](https://tya5.github.io/reyn/docs/guide/getting-started/01-installation/) | [docs/en/guide/getting-started/](docs/en/guide/getting-started/) |
+| How-to | [/docs/guide/for-skill-authors/](https://tya5.github.io/reyn/docs/guide/for-skill-authors/validate-artifacts/) | [docs/en/guide/for-skill-authors/](docs/en/guide/for-skill-authors/) |
 | Reference | [/docs/reference/](https://tya5.github.io/reyn/docs/reference/cli/run/) | [docs/en/reference/](docs/en/reference/) |
 | Concepts | [/docs/concepts/](https://tya5.github.io/reyn/docs/concepts/principles/) | [docs/en/concepts/](docs/en/concepts/) |
 

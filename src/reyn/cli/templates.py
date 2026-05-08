@@ -77,7 +77,7 @@ permissions:
 # `filesystem` server. Uncomment below to enable, or see the full example at
 # cookbook/configs/with-mcp.yaml.  Run the server manually first to verify:
 #   npx -y @modelcontextprotocol/server-filesystem .
-# Full setup guide: docs/en/how-to/use-an-mcp-server.md
+# Full setup guide: docs/en/guide/for-skill-authors/use-an-mcp-server.md
 # ───────────────────────────────────────────────────────────────────────────
 # mcp:
 #   servers:

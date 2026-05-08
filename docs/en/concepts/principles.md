@@ -119,4 +119,4 @@ Phase instructions MUST NOT enumerate output artifact fields, and MUST NOT descr
 - [workspace.md](workspace.md) — Workspace in depth (P5)
 - [events.md](events.md) — Events in depth (P6)
 - [Reference: llm-output-contract](../reference/runtime/llm-output-contract.md)
-- [Agent engineering — seven lenses](agent-engineering/index.md) — reyn read through external engineering perspectives
+- [Agent engineering — seven lenses](../guide/for-skill-authors/agent-engineering/index.md) — reyn read through external engineering perspectives

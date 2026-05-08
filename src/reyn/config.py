@@ -92,7 +92,7 @@ class VoiceConfig:
 
     Lazy-loaded only when the user presses the record key (F2) so the optional
     deps (`sounddevice`, `faster-whisper`) stay opt-in. See the user guide at
-    `docs/en/how-to/enable-voice-input.md`.
+    `docs/en/guide/for-skill-authors/enable-voice-input.md`.
     """
     enabled: bool = True              # set False to hard-disable F2 even if deps installed
     model: str = "small"              # tiny | base | small | medium | large-v3

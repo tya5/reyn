@@ -27,11 +27,9 @@ exclude_docs: |
   # multi-vendor protocol (see docs/deep-dives/spec/openui/README.md framing).
   deep-dives/spec/openui/
 
-  # LLM-targeted rubrics. Primary reader is a reyn skill, not a human.
-  agent/
-
   # Web mode design / handoff docs. User-facing pieces live under
-  # en/how-to/author-a-design.md; the rest is internal contract.
+  # en/guide/for-skill-authors/author-a-design.md; the rest is internal
+  # contract.
   deep-dives/spec/design/
 
   # CLI redesign draft — tracked for design history, not policy.
@@ -81,29 +79,46 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Tutorials:
-      - tutorials/01-installation.md
-      - tutorials/02-your-first-skill.md
-      - tutorials/03-running-a-skill.md
-      - tutorials/04-writing-an-eval.md
-      - tutorials/05-chat-mode.md
-  - How-to:
-      - how-to/validate-artifacts.md
-      - how-to/compose-skills-with-run-skill.md
-      - how-to/iterate-with-fan-out.md
-      - how-to/add-a-python-preprocessor.md
-      - how-to/ask-user-mid-phase.md
-      - how-to/manage-permissions.md
-      - how-to/debug-with-events.md
-      - how-to/persist-state.md
-      - how-to/localize-output.md
-      - how-to/import-an-existing-skill.md
-      - how-to/build-an-agent-team.md
-      - how-to/restrict-agent-skills.md
-      - how-to/multi-hop-delegation.md
-      - how-to/author-a-design.md
-      - how-to/use-an-mcp-server.md
-      - how-to/enable-voice-input.md
+  - Guide:
+      - Getting started:
+          - guide/getting-started/01-installation.md
+          - guide/getting-started/02-your-first-skill.md
+          - guide/getting-started/03-running-a-skill.md
+          - guide/getting-started/04-writing-an-eval.md
+          - guide/getting-started/05-chat-mode.md
+      - For users:
+          - guide/for-users/manage-permissions.md
+          - guide/for-users/ask-user-mid-phase.md
+      - For skill authors:
+          - guide/for-skill-authors/import-an-existing-skill.md
+          - guide/for-skill-authors/compose-skills-with-run-skill.md
+          - guide/for-skill-authors/iterate-with-fan-out.md
+          - guide/for-skill-authors/add-a-python-preprocessor.md
+          - guide/for-skill-authors/validate-artifacts.md
+          - guide/for-skill-authors/persist-state.md
+          - guide/for-skill-authors/debug-with-events.md
+          - guide/for-skill-authors/build-an-agent-team.md
+          - guide/for-skill-authors/multi-hop-delegation.md
+          - guide/for-skill-authors/restrict-agent-skills.md
+          - guide/for-skill-authors/use-an-mcp-server.md
+          - guide/for-skill-authors/localize-output.md
+          - guide/for-skill-authors/author-a-design.md
+          - guide/for-skill-authors/enable-voice-input.md
+          - Agent engineering:
+              - guide/for-skill-authors/agent-engineering/index.md
+              - guide/for-skill-authors/agent-engineering/system-design.md
+              - guide/for-skill-authors/agent-engineering/tool-contract-design.md
+              - guide/for-skill-authors/agent-engineering/retrieval-engineering.md
+              - guide/for-skill-authors/agent-engineering/reliability-engineering.md
+              - guide/for-skill-authors/agent-engineering/security.md
+              - guide/for-skill-authors/agent-engineering/evaluation-and-observability.md
+              - guide/for-skill-authors/agent-engineering/product-think.md
+          - LLM rubrics:
+              - guide/for-skill-authors/skill-builder-checklist.md
+              - guide/for-skill-authors/eval-builder-rubric.md
+              - guide/for-skill-authors/skill-importer-mapping.md
+              - guide/for-skill-authors/skill-improver-criteria.md
+              - guide/for-skill-authors/glossary.md
   - Reference:
       - CLI:
           - reference/cli/run.md
@@ -155,15 +170,6 @@ nav:
       - concepts/memory.md
       - concepts/multi-agent.md
       - concepts/topology.md
-      - Agent engineering:
-          - concepts/agent-engineering/index.md
-          - concepts/agent-engineering/system-design.md
-          - concepts/agent-engineering/tool-contract-design.md
-          - concepts/agent-engineering/retrieval-engineering.md
-          - concepts/agent-engineering/reliability-engineering.md
-          - concepts/agent-engineering/security.md
-          - concepts/agent-engineering/evaluation-and-observability.md
-          - concepts/agent-engineering/product-think.md
   - Contributing:
       - contributing/style-guide.md
       - contributing/testing.md

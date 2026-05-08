@@ -311,7 +311,7 @@ Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` 
 
 The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in the official `mcp` Python SDK. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
 
-See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to: use an MCP server](../../how-to/use-an-mcp-server.md) for the end-to-end quickstart.
+See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to: use an MCP server](../../guide/for-skill-authors/use-an-mcp-server.md) for the end-to-end quickstart.
 
 ## See also
 

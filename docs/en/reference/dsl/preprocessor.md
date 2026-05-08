@@ -123,4 +123,4 @@ Required. The LLM-visible enrichment shape — declared explicitly because we wo
 
 - [phase-md.md](phase-md.md) — Phase frontmatter
 - [Reference: permissions](../config/permissions.md) — declaring `python` permissions
-- [How-to: add a Python preprocessor](../../how-to/add-a-python-preprocessor.md)
+- [How-to: add a Python preprocessor](../../guide/for-skill-authors/add-a-python-preprocessor.md)

@@ -65,4 +65,4 @@ with the v1.x version.
 
 - [Concepts: workspace](../../docs/en/concepts/workspace.md) — where
   cross-run state lives today.
-- [How-to: persist state](../../docs/en/how-to/persist-state.md)
+- [How-to: persist state](../../docs/en/guide/for-skill-authors/persist-state.md)

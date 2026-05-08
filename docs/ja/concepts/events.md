@@ -65,4 +65,4 @@ run_id    — 実行の uuid
 
 - [Reference: events](../reference/runtime/events.md) — 完全な event 分類
 - [Reference: events CLI](../reference/cli/run.md) — `reyn run` の `--events` フラグ
-- [How-to: debug with events](../how-to/debug-with-events.md)
+- [How-to: debug with events](../guide/for-skill-authors/debug-with-events.md)

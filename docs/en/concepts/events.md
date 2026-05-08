@@ -65,4 +65,4 @@ You don't need a debugger; the log already has the information.
 
 - [Reference: events](../reference/runtime/events.md) — the full event taxonomy
 - [Reference: events CLI](../reference/cli/run.md) — `--events` flag on `reyn run`
-- [How-to: debug with events](../how-to/debug-with-events.md)
+- [How-to: debug with events](../guide/for-skill-authors/debug-with-events.md)

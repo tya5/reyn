@@ -61,6 +61,6 @@ A `final_output` of type `eval_result`:
 
 - [stdlib/eval](../../src/reyn/stdlib/skills/eval/skill.md)
 - [stdlib/judge_phase](../../src/reyn/stdlib/skills/judge_phase/skill.md)
-- [Tutorial: writing an eval](../../docs/en/tutorials/04-writing-an-eval.md)
+- [Tutorial: writing an eval](../../docs/en/guide/getting-started/04-writing-an-eval.md)
 - Next: [improve-a-skill](../improve-a-skill/) — feed eval results into
   `skill_improver` to actually raise the score.
