@@ -129,6 +129,13 @@ def build_system_prompt(
         parts.append("")
         parts.append(project_context.strip())
         parts.append("")
+        parts.append(
+            "Prefer project_context (above) as the primary source when "
+            "answering questions about this project. Use web_search only as "
+            "a supplementary source when project_context lacks the "
+            "information needed."
+        )
+        parts.append("")
 
     parts.append(
         f"Role: chat router for agent {agent_name} (role: {agent_role})."

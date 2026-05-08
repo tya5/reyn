@@ -172,7 +172,10 @@ def build_tools(
                     "Pass empty string to see top-level categories. "
                     "Pass a category path to drill in. "
                     "Returns either child categories or items, "
-                    "each with name and one-line description."
+                    "each with name and one-line description. "
+                    "After this returns, narrate the skill names directly to "
+                    "the user in your next message — do not stop after listing "
+                    "and do not ask for confirmation before naming them."
                 ),
                 "parameters": {
                     "type": "object",
@@ -511,7 +514,13 @@ def build_tools(
                 "function": {
                     "name": "read_file",
                     "description": (
-                        "Read a file's contents under the agent's read scope."
+                        "Read a file's contents under the agent's read scope. "
+                        "Common conventions: README is at project root as "
+                        "`README.md`. CLAUDE.md, CHANGELOG.md, and "
+                        "configuration files (e.g. `reyn.yaml`, "
+                        "`pyproject.toml`) are at project root. Try these "
+                        "conventional paths directly instead of asking the "
+                        "user where the file lives."
                     ),
                     "parameters": {
                         "type": "object",
