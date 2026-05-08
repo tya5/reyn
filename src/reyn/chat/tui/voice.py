@@ -165,6 +165,7 @@ class VoiceInput:
         sample_rate: int = 16000,
         cpu_threads: int = 4,
         num_workers: int = 1,
+        max_duration_s: float = 300.0,
     ) -> None:
         self._model_name = model
         self._language = language
@@ -173,6 +174,7 @@ class VoiceInput:
         self._sample_rate = sample_rate
         self._cpu_threads = cpu_threads
         self._num_workers = num_workers
+        self._max_duration_s = max_duration_s
 
         # Lazily-imported handles (None until first use)
         self._sd: Any = None
@@ -189,6 +191,9 @@ class VoiceInput:
         self._stream: Any = None
         self._chunks: list[Any] = []
         self._recording: bool = False
+        # Wall-clock start of the current recording, for the
+        # ``max_duration_s`` safeguard. ``0.0`` when not recording.
+        self._recording_started_at: float = 0.0
 
     # ── availability ─────────────────────────────────────────────────────────
 
@@ -205,6 +210,18 @@ class VoiceInput:
     @property
     def is_recording(self) -> bool:
         return self._recording
+
+    @property
+    def recording_elapsed_s(self) -> float:
+        """Seconds since the current recording started (0 when not recording)."""
+        if not self._recording or self._recording_started_at <= 0.0:
+            return 0.0
+        return _time.monotonic() - self._recording_started_at
+
+    @property
+    def max_duration_s(self) -> float:
+        """Configured cap on recording length (0 = no cap)."""
+        return self._max_duration_s
 
     # ── recording control ───────────────────────────────────────────────────
 
@@ -242,6 +259,7 @@ class VoiceInput:
             )
             self._stream.start()
             self._recording = True
+            self._recording_started_at = _time.monotonic()
         except Exception as exc:
             logger.warning("voice start_recording failed: %s", exc)
             self._stream = None
@@ -253,6 +271,7 @@ class VoiceInput:
         self._close_stream()
         self._chunks = []
         self._recording = False
+        self._recording_started_at = 0.0
 
     @property
     def model_loaded(self) -> bool:
@@ -318,6 +337,7 @@ class VoiceInput:
             self._stream = None
 
         self._recording = False
+        self._recording_started_at = 0.0
 
         if self._np is None or not self._chunks:
             _vlog("stop_recording: no chunks to process")

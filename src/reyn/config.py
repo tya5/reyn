@@ -113,6 +113,11 @@ class VoiceConfig:
                                       # Silicon. Override per-machine if needed.
     num_workers: int = 1              # parallel transcribe streams; we only ever run
                                       # one at a time, so 1 keeps memory + threads low
+    max_duration_s: float = 300.0     # auto-cancel recordings longer than this
+                                      # (= 5 min default). Prevents runaway memory
+                                      # growth + multi-GB transcribe calls if the
+                                      # user walks away mid-recording. 16 kHz mono
+                                      # float32 ≈ 64 KB/s, so 5 min is ~19 MB.
 
 
 @dataclass
@@ -556,6 +561,7 @@ def _build_voice_config(raw: object) -> VoiceConfig:
         sample_rate=int(raw.get("sample_rate", defaults.sample_rate)),
         cpu_threads=int(raw.get("cpu_threads", defaults.cpu_threads)),
         num_workers=int(raw.get("num_workers", defaults.num_workers)),
+        max_duration_s=float(raw.get("max_duration_s", defaults.max_duration_s)),
     )
 
 

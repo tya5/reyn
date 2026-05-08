@@ -630,8 +630,15 @@ class ReynTUIApp(App):
                     "sample_rate": cfg_voice.sample_rate,
                     "cpu_threads": cfg_voice.cpu_threads,
                     "num_workers": cfg_voice.num_workers,
+                    "max_duration_s": cfg_voice.max_duration_s,
                 }
             self._voice_input = VoiceInput(**kwargs)
+            # Watchdog: every second, check whether the active recording
+            # has exceeded its configured `max_duration_s`. If so, cancel
+            # so we don't accumulate gigabytes of audio when the user
+            # walks away mid-dictation. Cheap (one comparison) and self-
+            # disarming when no recording is active.
+            self.set_interval(1.0, self._voice_watchdog_tick)
 
         if self._voice_busy:
             return  # already transcribing — ignore re-presses
@@ -813,6 +820,30 @@ class ReynTUIApp(App):
                 "try speaking closer / louder, or set a larger model",
                 style="dim #aa6666",
             )
+
+    def _voice_watchdog_tick(self) -> None:
+        """Per-second tick: auto-cancel runaway recordings.
+
+        Triggered by ``set_interval(1.0, ...)`` after the first VoiceInput
+        is created. Self-disarming — does nothing when no recording is
+        active. Caps memory growth (16 kHz mono float32 ≈ 64 KB/s, so an
+        8-hour idle recording would otherwise pile up ~1.8 GB of buffer).
+        """
+        if self._voice_input is None or not self._voice_input.is_recording:
+            return
+        cap = self._voice_input.max_duration_s
+        if cap <= 0:
+            return  # 0 = uncapped, opt-out
+        elapsed = self._voice_input.recording_elapsed_s
+        if elapsed < cap:
+            return
+        # Cap reached — cancel and warn the user.
+        self._voice_input.cancel()
+        self._voice_status(
+            f"✗ recording auto-cancelled (exceeded {cap:.0f}s cap) — "
+            "press Ctrl+R to start a new one",
+            style="dim #aa6666",
+        )
 
     def action_voice_cancel(self) -> None:
         """Esc — discard the current recording without transcribing.
