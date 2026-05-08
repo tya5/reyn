@@ -32,6 +32,7 @@ def test_empty_defaults():
     assert snap.visit_counts == {}
     assert snap.history == []
     assert snap.awaiting_intervention_id is None
+    assert snap.awaiting_since is None
     assert snap.last_committed_step_id is None
 
 
@@ -46,6 +47,7 @@ def test_save_load_roundtrip(tmp_path: Path):
     snap.visit_counts = {"phase_a": 2, "phase_b": 1}
     snap.history = ["phase_a", "phase_b"]
     snap.awaiting_intervention_id = "iv-777"
+    snap.awaiting_since = 12345.678
     snap.last_committed_step_id = "step-003"
 
     snap.save(path)
@@ -61,6 +63,7 @@ def test_save_load_roundtrip(tmp_path: Path):
     assert loaded.visit_counts == {"phase_a": 2, "phase_b": 1}
     assert loaded.history == ["phase_a", "phase_b"]
     assert loaded.awaiting_intervention_id == "iv-777"
+    assert loaded.awaiting_since == 12345.678
     assert loaded.last_committed_step_id == "step-003"
 
 
@@ -116,6 +119,7 @@ def test_load_old_file_missing_new_fields(tmp_path: Path):
     assert snap.visit_counts == {}
     assert snap.history == []
     assert snap.awaiting_intervention_id is None
+    assert snap.awaiting_since is None
     assert snap.last_committed_step_id is None
 
 

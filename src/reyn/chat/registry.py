@@ -609,6 +609,16 @@ class AgentRegistry:
                 )
         return notified
 
+    # R-D16: skills awaiting an intervention longer than this many seconds
+    # are excluded from the WAL truncation floor calc. Without this, a
+    # single skill stuck on ``ask_user`` (e.g. user away from terminal)
+    # pins the floor at its ``last_phase_applied_seq`` indefinitely and
+    # the WAL grows unbounded. Long-await skills accept memo loss for the
+    # awaited window — at resume they fall through to re-execute the op
+    # whose memo was truncated, which is the same behaviour as a memo
+    # cache miss.
+    _LONG_AWAIT_THRESHOLD_SEC: float = 300.0
+
     def _compute_truncate_floor(self) -> int:
         """Return the lowest seq that MUST remain in the WAL.
 
@@ -684,6 +694,14 @@ class AgentRegistry:
         # SkillSnapshot dataclass here — only need one int field. Direct
         # JSON read sidesteps any future schema bumps from breaking
         # truncation just to extract a number.
+        #
+        # R-D16: skills awaiting an intervention for longer than
+        # ``_LONG_AWAIT_THRESHOLD_SEC`` are excluded from the floor calc.
+        # ``awaiting_since`` is a monotonic timestamp captured by
+        # ``SkillRegistry.mark_awaiting`` when a run begins to wait;
+        # ``None`` (= field absent in older snapshots) means not awaiting
+        # and the skill remains pinned (same as R-D4).
+        now = time.monotonic()
         for name in self.list_names():
             skills_dir = self._dir / name / "state" / "skills"
             if not skills_dir.is_dir():
@@ -697,12 +715,25 @@ class AgentRegistry:
                         snap_file, e,
                     )
                     return 0
-                if isinstance(data, dict):
-                    val = data.get("last_phase_applied_seq", 0)
+                if not isinstance(data, dict):
+                    continue
+                awaiting_since = data.get("awaiting_since")
+                if awaiting_since is not None:
                     try:
-                        seqs.append(int(val))
+                        elapsed = now - float(awaiting_since)
                     except (TypeError, ValueError):
-                        return 0
+                        elapsed = 0.0
+                    if elapsed >= self._LONG_AWAIT_THRESHOLD_SEC:
+                        # Long-await skill — exclude from floor so the
+                        # WAL can keep advancing. Memo entries below the
+                        # new floor are dropped; resume re-executes the
+                        # awaited op (cache miss behaviour).
+                        continue
+                val = data.get("last_phase_applied_seq", 0)
+                try:
+                    seqs.append(int(val))
+                except (TypeError, ValueError):
+                    return 0
 
         # ADR-0023 §3.1: per-active-plan last_step_applied_seq. Direct
         # JSON read mirrors the skill block above. Plans live at

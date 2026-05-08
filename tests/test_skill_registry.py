@@ -340,6 +340,52 @@ def test_truncate_hook_exception_does_not_propagate(tmp_path):
     assert snap.current_phase == "draft"  # advance_phase still completed
 
 
+# ---------------------------------------------------------------------------
+# mark_awaiting / clear_awaiting (R-D16)
+# ---------------------------------------------------------------------------
+
+
+def test_mark_awaiting_stamps_snapshot(tmp_path):
+    """Tier 2: mark_awaiting() sets ``awaiting_since`` (monotonic) and
+    ``awaiting_intervention_id`` on the per-skill snapshot."""
+    reg, _log = _make_registry(tmp_path)
+
+    async def go():
+        await reg.start(run_id="run_a", skill_name="s", skill_input={})
+        reg.mark_awaiting(run_id="run_a", intervention_id="iv-1")
+        return reg.get("run_a")
+
+    snap = asyncio.run(go())
+    assert snap.awaiting_since is not None
+    assert isinstance(snap.awaiting_since, float)
+    assert snap.awaiting_intervention_id == "iv-1"
+
+
+def test_clear_awaiting_resets_snapshot(tmp_path):
+    """Tier 2: clear_awaiting() restores both fields to None."""
+    reg, _log = _make_registry(tmp_path)
+
+    async def go():
+        await reg.start(run_id="run_b", skill_name="s", skill_input={})
+        reg.mark_awaiting(run_id="run_b", intervention_id="iv-2")
+        reg.clear_awaiting(run_id="run_b")
+        return reg.get("run_b")
+
+    snap = asyncio.run(go())
+    assert snap.awaiting_since is None
+    assert snap.awaiting_intervention_id is None
+
+
+def test_mark_clear_awaiting_unknown_run_id_is_noop(tmp_path):
+    """Tier 2: marking/clearing a non-tracked run is a no-op (defensive)."""
+    reg, _log = _make_registry(tmp_path)
+
+    # Should not raise
+    reg.mark_awaiting(run_id="ghost", intervention_id="iv")
+    reg.clear_awaiting(run_id="ghost")
+    assert reg.get("ghost") is None
+
+
 def test_lifecycle_works_without_state_log(tmp_path):
     """Tier 2: start/advance/complete are all no-ops on the WAL when state_log is None, but the in-memory cache and snapshot file still update.
 

@@ -30,6 +30,7 @@ Design invariants:
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
@@ -248,6 +249,59 @@ class SkillRegistry:
         llm_result_ref.cleanup_for_run(self._state_dir, run_id)
         self._snapshots.pop(run_id, None)
         await self._fire_truncate_hook(trigger=kind)
+
+    # ── intervention await tracking (R-D16) ──────────────────────────────
+
+    def mark_awaiting(
+        self,
+        *,
+        run_id: str,
+        intervention_id: str | None = None,
+    ) -> None:
+        """Stamp the run's snapshot with the moment it began awaiting an
+        intervention.
+
+        Sets ``awaiting_since`` to ``time.monotonic()`` and records
+        ``awaiting_intervention_id``. Read by
+        ``AgentRegistry._compute_truncate_floor`` to skip long-awaiting
+        runs from the WAL truncation floor (R-D16).
+
+        No-op if ``run_id`` is unknown — defensive, matches the same
+        pattern used by ``advance_phase``. Re-marking a run that is
+        already awaiting refreshes ``awaiting_since`` to "now" (caller
+        should normally ``clear_awaiting`` before re-marking; the no-op
+        write keeps callers simple).
+        """
+        snap = self._snapshots.get(run_id)
+        if snap is None:
+            logger.info(
+                "mark_awaiting: unknown run_id %r — skipping snapshot update",
+                run_id,
+            )
+            return
+        snap.awaiting_since = time.monotonic()
+        snap.awaiting_intervention_id = intervention_id
+        self._save(snap)
+
+    def clear_awaiting(self, *, run_id: str) -> None:
+        """Reset awaiting state — called when an intervention is resolved.
+
+        Sets ``awaiting_since`` and ``awaiting_intervention_id`` back to
+        ``None``. After this call the run is once again included in the
+        WAL truncation floor calc (R-D16).
+
+        Idempotent: clearing a non-awaiting run is a no-op write.
+        """
+        snap = self._snapshots.get(run_id)
+        if snap is None:
+            logger.info(
+                "clear_awaiting: unknown run_id %r — skipping snapshot update",
+                run_id,
+            )
+            return
+        snap.awaiting_since = None
+        snap.awaiting_intervention_id = None
+        self._save(snap)
 
     # ── read access ──────────────────────────────────────────────────────
 

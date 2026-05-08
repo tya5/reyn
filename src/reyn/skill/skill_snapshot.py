@@ -45,6 +45,16 @@ class SkillSnapshot:
     visit_counts: dict[str, int] = field(default_factory=dict)
     history: list[str] = field(default_factory=list)
     awaiting_intervention_id: str | None = None
+    # R-D16: monotonic timestamp captured when this run started awaiting an
+    # intervention (e.g. ``ask_user``). ``None`` when not awaiting. Read by
+    # ``AgentRegistry._compute_truncate_floor`` to exclude long-awaiting
+    # skills from the WAL truncation floor: a single skill stuck on
+    # ``ask_user`` for hours would otherwise pin the floor at its
+    # ``last_phase_applied_seq`` indefinitely. Long-await skills accept
+    # memo loss for the awaited window in exchange for unbounded WAL.
+    # Optional / additive — old snapshots without this field load with
+    # ``awaiting_since=None`` (= treated as not awaiting, matches R-D4).
+    awaiting_since: float | None = None
     last_committed_step_id: str | None = None  # forward-replay anchor
     # R-D13: when this run was spawned by another skill via the
     # ``run_skill`` op, ``parent_run_id`` records the parent's run_id.
@@ -112,6 +122,7 @@ class SkillSnapshot:
             visit_counts=dict(data.get("visit_counts", {}) or {}),
             history=list(data.get("history", []) or []),
             awaiting_intervention_id=data.get("awaiting_intervention_id"),
+            awaiting_since=data.get("awaiting_since"),
             last_committed_step_id=data.get("last_committed_step_id"),
             parent_run_id=data.get("parent_run_id"),
         )
@@ -136,6 +147,7 @@ class SkillSnapshot:
             "visit_counts": self.visit_counts,
             "history": self.history,
             "awaiting_intervention_id": self.awaiting_intervention_id,
+            "awaiting_since": self.awaiting_since,
             "last_committed_step_id": self.last_committed_step_id,
             "parent_run_id": self.parent_run_id,
         }
