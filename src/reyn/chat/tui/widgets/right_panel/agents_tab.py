@@ -16,9 +16,11 @@ if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
 
 
-# How many recent completed items to surface per agent. Two of each keeps
-# the tab compact even with several agents loaded.
-_RECENT_LIMIT = 2
+# How many recent completed items to surface per agent. Bumped from 2
+# to 5 after dogfood feedback ("直近 N 個のヒストリ対応してたっけ？").
+# 5 still keeps the tab readable on a typical 24-row terminal even with
+# 2-3 agents.
+_RECENT_LIMIT = 5
 
 
 def _recent_skill_runs_for_agent(
@@ -30,12 +32,22 @@ def _recent_skill_runs_for_agent(
     """Return up to ``limit`` recently-completed skill runs for ``agent_name``.
 
     Each entry: ``skill_name``, ``run_id`` (8-char prefix), ``status``,
-    ``duration_s`` (float, may be 0 when timestamps unparseable), ``ts``
-    (ISO string of completion).
+    ``duration_s``, ``ts`` (ISO string of completion).
 
-    Source: ``.reyn/events/agents/<name>/skill_runs/*.jsonl``. Filenames
-    encode start timestamp + skill name; we read the LAST event in each
-    file to derive completion timestamp + status.
+    Source layout (as of 2026-05): ::
+
+        .reyn/events/agents/<name>/skill_runs/<YYYY-MM>/<isots>_<skill>.jsonl
+
+    The file name is ``<isots-no-tz>_<skill_name>.jsonl`` — there's no
+    run_id in the filename, so we pull it out of the FIRST event in
+    the file (``workflow_started.data.run_id``). The LAST event tells
+    us the terminal type:
+
+      * ``workflow_finished``  → status "ok"
+      * ``workflow_aborted``   → status "aborted"
+      * (anything else)        → fall back to the event type as a label
+
+    ``rglob`` (not ``glob``) so we recurse into the YYYY-MM subdirs.
     """
     out: list[dict] = []
     if project_root is None:
@@ -47,12 +59,11 @@ def _recent_skill_runs_for_agent(
     if not skill_dir.is_dir():
         return out
 
-    # Collect the candidate files newest-first by mtime, skip currently-
-    # running runs (= those whose run_id is in ``running_run_ids``), then
-    # cap at ``limit``. Reading mtime up-front avoids parsing files we
-    # won't display.
+    # Collect candidate files newest-first by mtime. rglob to walk the
+    # YYYY-MM subdirectories. Reading mtime up front avoids parsing
+    # files we won't display.
     files: list[tuple[float, Path]] = []
-    for jsonl in skill_dir.glob("*.jsonl"):
+    for jsonl in skill_dir.rglob("*.jsonl"):
         try:
             files.append((jsonl.stat().st_mtime, jsonl))
         except OSError:
@@ -62,19 +73,18 @@ def _recent_skill_runs_for_agent(
     for _mtime, jsonl in files:
         if len(out) >= limit:
             break
-        # Filename: "<isots>_<skill_name>_<run_id8>.jsonl" (stable for the
-        # last several PRs). Be defensive — split by underscores and trust
-        # only the first chunk as ts; everything between is the skill name;
-        # the last chunk is run_id (or filename stem if missing).
+        # Filename: "<isots>_<skill_name>.jsonl". The skill name itself
+        # may contain underscores (web_search_display, skill_narrator,
+        # etc.), so split only ONCE — the head is the timestamp, the
+        # tail is the entire skill name.
         stem = jsonl.stem
-        parts = stem.split("_")
-        run_id = parts[-1] if len(parts) >= 3 else ""
-        if run_id in running_run_ids:
+        if "_" not in stem:
             continue
-        skill_name = "_".join(parts[1:-1]) if len(parts) >= 3 else stem
-        start_iso = parts[0] if parts else ""
+        start_iso, skill_name = stem.split("_", 1)
 
-        # Read last non-empty line for completion event.
+        # Read the file once: keep the first event (for run_id) and the
+        # last event (for completion timestamp + terminal type).
+        first_event: dict | None = None
         last_event: dict | None = None
         try:
             for raw in jsonl.read_text(encoding="utf-8").splitlines():
@@ -82,45 +92,77 @@ def _recent_skill_runs_for_agent(
                 if not raw:
                     continue
                 try:
-                    last_event = json.loads(raw)
+                    ev = json.loads(raw)
                 except Exception:
                     continue
+                if first_event is None:
+                    first_event = ev
+                last_event = ev
         except OSError as exc:
             logger.warning(
                 "right_panel agents: read of %s failed: %s", jsonl, exc,
             )
             continue
-        if last_event is None:
+        if first_event is None or last_event is None:
+            continue
+
+        # run_id lives in workflow_started.data.run_id; fall back to
+        # last event if that's missing for any reason.
+        run_id = ""
+        for ev in (first_event, last_event):
+            data = ev.get("data") or {}
+            rid = data.get("run_id", "")
+            if rid:
+                run_id = str(rid)
+                break
+        if run_id and run_id in running_run_ids:
             continue
 
         ev_type = last_event.get("type", "")
-        data = last_event.get("data") or {}
         ts = str(last_event.get("timestamp", ""))
-        # Status mapping: skill_run_completed = ok | error | aborted; fall
-        # back to the event type itself when status field is absent (older
-        # event payloads).
-        status = str(data.get("status") or "")
-        if not status and ev_type == "skill_run_completed":
+        # Terminal-type → status mapping. Includes legacy
+        # `skill_run_completed` shape for forward-compat with future
+        # event renames; new code emits workflow_finished/aborted.
+        if ev_type in ("workflow_finished", "skill_run_completed"):
             status = "ok"
-        if ev_type in ("workflow_finished", "skill_run_completed") and not status:
-            status = "ok"
+        elif ev_type in ("workflow_aborted", "skill_run_failed"):
+            status = "aborted"
+        else:
+            status = ev_type or "unknown"
 
-        # Duration via lexical compare on iso timestamps — wrong only when
-        # the run spans a leap second, which we accept.
+        # Duration — both timestamps include timezone offsets in the
+        # current event format (e.g. "2026-05-09T08:44:43.210059+09:00").
+        # The filename's ts is ALSO local time but without a tz suffix,
+        # so parse it as naive and pretend it matches the event tz.
         duration_s = 0.0
         if start_iso and ts:
             try:
                 from datetime import datetime
-                t0 = datetime.fromisoformat(start_iso.replace("T", "T"))
-                t1 = datetime.fromisoformat(ts.replace("Z", "+00:00").split(".")[0])
+                t0 = datetime.fromisoformat(start_iso)
+                t1_str = ts
+                # `datetime.fromisoformat` accepts the +HH:MM suffix
+                # natively; drop fractional microseconds beyond 6 digits
+                # if present (= some platforms emit nanoseconds).
+                t1 = datetime.fromisoformat(t1_str)
+                # Normalise to naive for the diff if mismatched.
+                if t0.tzinfo is None and t1.tzinfo is not None:
+                    t1 = t1.replace(tzinfo=None)
                 duration_s = max(0.0, (t1 - t0).total_seconds())
             except Exception:
                 duration_s = 0.0
 
+        # ``run_id`` here is e.g. "20260508T234443Z_skill_narrator"; the
+        # leading 8 chars ("20260508") are date-only and identical across
+        # runs of the same skill on the same day, which makes the agents
+        # tab unreadable. Use the time chunk (after the "T") so each
+        # entry's badge is genuinely unique within a tab refresh.
+        rid_compact = run_id
+        if "T" in run_id:
+            rid_compact = run_id.split("T", 1)[1][:6]
         out.append({
             "skill_name": skill_name or "?",
-            "run_id": (run_id or stem)[:8],
-            "status": status or ev_type or "unknown",
+            "run_id": (rid_compact or stem)[:8],
+            "status": status,
             "duration_s": duration_s,
             "ts": ts[:19].replace("T", " "),
         })
