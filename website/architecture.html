@@ -482,6 +482,9 @@ sequenceDiagram
             SK->>PH: enter next phase
         else decision = finish
             Note over SK: validate against final_output_schema
+            opt postprocessor declared (skill-level)
+                SK->>WS: postprocessor steps · emit events
+            end
             SK-->>A: final output
         end
     end
