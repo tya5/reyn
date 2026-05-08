@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 05 — Chat mode
+# 02 — Chat mode
 
-`reyn chat` is an interactive REPL attached to an *agent*. Each turn runs through `skill_router`, which classifies the intent and either replies, runs a skill, or delegates to another agent. Memory is recalled and written automatically.
+`reyn chat` is an interactive REPL attached to an *agent* — the lowest-friction way to see Reyn in action before you author your own skill. Each turn runs through `skill_router`, which classifies the intent and either replies, runs a stdlib skill, or delegates to another agent. Memory is recalled and written automatically.
 
 ## Start a session
 
@@ -97,9 +97,10 @@ The OS doesn't know about "chat" — it just runs a skill. `skill_router` is a n
 
 ## Where to go next
 
-You've covered: skill creation, running, eval, chat. From here:
+You've seen Reyn working end-to-end as a chat agent. From here:
 
-- **Multi-agent**: read [concepts/multi-agent](../../concepts/multi-agent.md) and [concepts/topology](../../concepts/topology.md) to learn how to compose specialist agents into a team.
-- **Build something real.** Replace one of your prompt-based workflows with a multi-phase skill.
+- **[Tutorial 03 — Your first skill](03-your-first-skill.md)** — author a skill from a one-line description with `skill_builder`.
+- **[Tutorial 04 — Running a skill](04-running-a-skill.md)** — run a skill from the CLI in depth (input formats, flags, event log).
+- **[Tutorial 05 — Writing an eval](05-writing-an-eval.md)** — pin behaviour with a rubric.
+- **Multi-agent**: read [concepts/multi-agent](../../concepts/multi-agent.md) and [concepts/topology](../../concepts/topology.md) to compose specialist agents into a team.
 - **Read the [principles](../../concepts/principles.md).** Understanding the eight principles makes everything in the reference make sense.
-- **Browse [how-to](../for-skill-authors/validate-artifacts.md).** Pick a guide for whatever specific need comes up first.

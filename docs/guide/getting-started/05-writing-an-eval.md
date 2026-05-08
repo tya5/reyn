@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 04 — Writing an eval
+# 05 — Writing an eval
 
-Evals turn "the output looked good" into "the output passed N criteria across M cases." This tutorial covers building a rubric for `my_explainer` (the skill from tutorial 02) and running it.
+Evals turn "the output looked good" into "the output passed N criteria across M cases." This tutorial covers building a rubric for `my_explainer` (the skill from [Tutorial 03](03-your-first-skill.md)) and running it.
 
 ## The shape of an eval
 
@@ -97,6 +97,6 @@ For each failed criterion, the report includes the judge's reasoning. Use it to 
 
 ## Next
 
-- [Tutorial 05 — Chat mode](05-chat-mode.md)
+- [Tutorial 02 — Chat mode](02-chat-mode.md) — if you skipped it earlier.
 - [Reference: stdlib/eval](../../reference/stdlib/eval.md)
 - [Reference: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)

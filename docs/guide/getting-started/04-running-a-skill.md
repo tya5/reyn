@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 03 — Running a skill
+# 04 — Running a skill
 
-You wrote `my_explainer` in tutorial 02. This tutorial covers the runtime side: input formats, common flags, and reading the event log.
+You wrote `my_explainer` in [Tutorial 03](03-your-first-skill.md). This tutorial covers the runtime side: input formats, common flags, and reading the event log.
 
 ## Three ways to feed input
 
@@ -93,6 +93,6 @@ The [debug-with-events](../for-skill-authors/debug-with-events.md) how-to walks 
 
 ## Next
 
-- [Tutorial 04 — Writing an eval](04-writing-an-eval.md)
+- [Tutorial 05 — Writing an eval](05-writing-an-eval.md)
 - [How-to: debug with events](../for-skill-authors/debug-with-events.md)
 - [Reference: run](../../reference/cli/run.md)

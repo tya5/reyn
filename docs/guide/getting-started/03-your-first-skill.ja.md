@@ -4,7 +4,7 @@ topic: getting-started
 audience: [human]
 ---
 
-# 02 — はじめての skill を作る
+# 03 — はじめての skill を作る
 
 `skill_builder` を使って、エンドツーエンドで動く skill を作ります。最後には、トピックを受け取って一段落の解説を返す skill が完成します。
 
@@ -78,7 +78,7 @@ skill を読み、変更を計画し、diff を提示します。ファイル書
 
 ## 次のステップ
 
+- [チュートリアル 04 — Skill を実行する](04-running-a-skill.md) — 入力フォーマット、よく使うフラグ、イベントログの読み方
+- [チュートリアル 05 — eval を書く](05-writing-an-eval.md) — ルーブリックで挙動を固定する
 - [ハウツー: 自作 skill をゼロから書く](../for-skill-authors/write-your-first-custom-skill.md) — 同じ形を手書きで構築し、各ファイルの役割を理解する（英語版にフォールバック）
-- Tutorial 03 — Running a skill（Phase 2）
-- Tutorial 04 — Writing an eval（Phase 2）
 - [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)（英語版にフォールバック）

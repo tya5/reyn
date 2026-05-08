@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 03 — Skill を実行する
+# 04 — Skill を実行する
 
-チュートリアル 02 で `my_explainer` を作成しました。このチュートリアルでは、ランタイム側をカバーします: 入力フォーマット、よく使うフラグ、イベントログの読み方。
+[チュートリアル 03](03-your-first-skill.md) で `my_explainer` を作成しました。このチュートリアルでは、ランタイム側をカバーします: 入力フォーマット、よく使うフラグ、イベントログの読み方。
 
 ## 3 つの入力方法
 
@@ -93,6 +93,6 @@ reyn events .reyn/events/<run_id>.jsonl --filter validation_error
 
 ## 次へ
 
-- [チュートリアル 04 — eval を書く](04-writing-an-eval.md)
+- [チュートリアル 05 — eval を書く](05-writing-an-eval.md)
 - [ハウツー: events によるデバッグ](../for-skill-authors/debug-with-events.md)
 - [リファレンス: run](../../reference/cli/run.md)

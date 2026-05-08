@@ -68,10 +68,10 @@ nav:
   - Guide:
       - Getting started:
           - guide/getting-started/01-installation.md
-          - guide/getting-started/02-your-first-skill.md
-          - guide/getting-started/03-running-a-skill.md
-          - guide/getting-started/04-writing-an-eval.md
-          - guide/getting-started/05-chat-mode.md
+          - guide/getting-started/02-chat-mode.md
+          - guide/getting-started/03-your-first-skill.md
+          - guide/getting-started/04-running-a-skill.md
+          - guide/getting-started/05-writing-an-eval.md
       - For users:
           - guide/for-users/manage-permissions.md
           - guide/for-users/ask-user-mid-phase.md

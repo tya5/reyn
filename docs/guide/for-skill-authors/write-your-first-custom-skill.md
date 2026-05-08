@@ -11,7 +11,7 @@ applies_to: [reyn/local/, reyn/project/]
 
 ## When to use this how-to
 
-- You followed [Tutorial 02 — Your first skill](../getting-started/02-your-first-skill.md) and now want to understand the pieces directly.
+- You followed [Tutorial 03 — Your first skill](../getting-started/03-your-first-skill.md) and now want to understand the pieces directly.
 - You want a degree of control `skill_builder` doesn't give (specific phase names, an unusual graph shape, hand-tuned instructions).
 - You're porting a workflow from another framework where the structure is already decided.
 
@@ -221,7 +221,7 @@ The smallest stdlib skills are good starting templates:
 
 ## Promotion to `reyn/project/`
 
-Once `reyn lint` is clean and you have at least one happy-path eval case (see [Tutorial 04](../getting-started/04-writing-an-eval.md)), move the directory:
+Once `reyn lint` is clean and you have at least one happy-path eval case (see [Tutorial 05](../getting-started/05-writing-an-eval.md)), move the directory:
 
 ```bash
 git mv reyn/local/react_to_text reyn/project/react_to_text

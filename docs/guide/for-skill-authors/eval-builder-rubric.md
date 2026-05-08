@@ -79,4 +79,4 @@ When you finish:
 
 - [Reference: stdlib/eval](../../reference/stdlib/eval.md)
 - [Reference: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)
-- [Tutorial: writing an eval](../getting-started/04-writing-an-eval.md)
+- [Tutorial: writing an eval](../getting-started/05-writing-an-eval.md)

@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 04 — eval を書く
+# 05 — eval を書く
 
-Eval は「出力が良さそうだった」を「出力が M ケースにわたって N 基準を通過した」に変えます。このチュートリアルでは `my_explainer`（チュートリアル 02 の Skill）のルーブリックを構築して実行する方法を説明します。
+Eval は「出力が良さそうだった」を「出力が M ケースにわたって N 基準を通過した」に変えます。このチュートリアルでは `my_explainer`（[チュートリアル 03](03-your-first-skill.md) の Skill）のルーブリックを構築して実行する方法を説明します。
 
 ## eval の形式
 
@@ -97,6 +97,6 @@ cat .reyn/eval_reports/my_explainer/<timestamp>.json
 
 ## 次へ
 
-- [チュートリアル 05 — Chat モード](05-chat-mode.md)
+- [チュートリアル 02 — Chat モード](02-chat-mode.md) — まだ見ていなければ。
 - [リファレンス: stdlib/eval](../../reference/stdlib/eval.md)
 - [リファレンス: stdlib/eval_builder](../../reference/stdlib/eval_builder.md)

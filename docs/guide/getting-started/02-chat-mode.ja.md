@@ -4,9 +4,9 @@ topic: getting-started
 audience: [human]
 ---
 
-# 05 — Chat モード
+# 02 — Chat モード
 
-`reyn chat` は *agent* にアタッチされたインタラクティブな REPL です。各ターンは `skill_router` を通り、意図を分類して返信、Skill の実行、または他の agent への委任を行います。Memory は自動的に検索・書き込みされます。
+`reyn chat` は *agent* にアタッチされたインタラクティブな REPL です。自分で Skill を作る前に Reyn を体感する最も摩擦の低い方法です。各ターンは `skill_router` を通り、意図を分類して返信、stdlib Skill の実行、または他の agent への委任を行います。Memory は自動的に検索・書き込みされます。
 
 ## セッションを開始する
 
@@ -97,9 +97,10 @@ OS は「chat」を知りません。ただ Skill を実行するだけです。
 
 ## 次に進む
 
-Skill の作成、実行、eval、chat をカバーしました。ここから:
+Reyn が chat agent としてエンドツーエンドで動作することを確認しました。ここから:
 
+- **[チュートリアル 03 — はじめての Skill](03-your-first-skill.md)** — `skill_builder` を使って一行の説明から Skill を作成します。
+- **[チュートリアル 04 — Skill を実行する](04-running-a-skill.md)** — 入力フォーマット、フラグ、イベントログを含む CLI 実行の詳細。
+- **[チュートリアル 05 — eval を書く](05-writing-an-eval.md)** — ルーブリックで挙動を固定します。
 - **マルチエージェント**: [コンセプト/multi-agent](../../concepts/multi-agent.md) と [コンセプト/topology](../../concepts/topology.md) を読んで、specialist agent をチームに組み合わせる方法を学びます。
-- **本物のものを構築する。** プロンプトベースのワークフローの 1 つを複数 Phase の Skill に置き換えます。
 - **[principles](../../concepts/principles.md) を読む。** 8 つの原則を理解すると、リファレンス内のすべてが意味をなします。
-- **[how-to](../for-skill-authors/validate-artifacts.md) を見る。** 最初に出てきた具体的なニーズに合ったガイドを選びます。
