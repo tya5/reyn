@@ -33,7 +33,7 @@ The boundary is sharp on purpose: skills describe what they want, the OS decides
 
 ## Transport choice (stdio vs HTTP)
 
-Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE exists but is uncommon. <!-- TODO: confirm SSE support lands in PR32 or stays deferred. -->
+Most official MCP servers are local processes you launch over stdio. A few hosted services expose HTTP endpoints. SSE transport is reserved for a future release.
 
 | Transport | When | How reyn launches it |
 |-----------|------|----------------------|

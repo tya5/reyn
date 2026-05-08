@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Reyn Architecture Diagrams</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  body { font-family: Inter, sans-serif; background: #FAF8F6; color: #1A1A1A; padding: 40px; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 24px; font-weight: 500; color: #C8553D; margin-bottom: 8px; }
+  h2 { font-size: 16px; font-weight: 500; color: #6B6B6B; margin: 48px 0 16px; border-top: 1px solid #E0DBD7; padding-top: 24px; }
+  .mermaid { background: #fff; border: 1px solid #E0DBD7; border-radius: 4px; padding: 24px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<h1>Reyn — Architecture Diagrams</h1>
+
+<h2>1. 全体レイヤー構造</h2>
+<div class="mermaid">
+flowchart TB
+    U(["User / External System"])
+    subgraph I01["01 · Interface"]
+        direction LR
+        CLI["CLI"] ~~~ TUI["TUI (Textual)"] ~~~ WEB["Web UI (FastAPI + WebSocket)"]
+    end
+    subgraph I02["02 · Agent Registry"]
+        direction LR
+        AM["manages named agents"] ~~~ TG["Topology gate — network · team · pipeline"]
+    end
+    subgraph I03["03 · Agent = ChatSession"]
+        direction LR
+        RL["RouterLoop (LLM-driven dispatch)"] ~~~ PL["Planner (optional · plan mode)"] ~~~ MEM["memory scope · skill allowlist"]
+    end
+    subgraph I04["04 · OS — the constant"]
+        direction LR
+        CB["Context Build"] ~~~ LC["LLM Call"] ~~~ VA["Output Validation"] ~~~ EE["Event Emit"]
+    end
+    subgraph I05["05 · Skill"]
+        direction LR
+        PG["Phase Graph + Transitions"] ~~~ FO["final_output_schema"] ~~~ PP["Postprocessor"]
+    end
+    subgraph I06["06 · Phase"]
+        direction LR
+        PRE["Preprocessor"] ~~~ LO["LLM + Control IR ops"] ~~~ LP["↺ loops until transition/finish"]
+    end
+    subgraph I07["07 · Persistence"]
+        direction LR
+        WS["Workspace (artifacts · files)"] ~~~ EV["Events (append-only log)"]
+    end
+    U --> I01 --> I02 --> I03 --> I04 --> I05 --> I06 --> I07
+</div>
+
+<h2>2. Phase 実行シーケンス</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant OS as OS / Engine
+    participant PRE as Preprocessor
+    participant LLM as LLM
+    participant OPS as Control IR ops
+    participant WS as Workspace + Events
+    OS->>PRE: run preprocessor steps
+    PRE-->>OS: enriched input artifact
+    loop act turns (max_act_turns)
+        OS->>LLM: context + artifact + allowed_ops + candidate_outputs
+        LLM-->>OS: { control, artifact, control_ir[] }
+        OS->>OPS: execute control_ir ops
+        OPS->>WS: write results (P5)
+        OPS-->>OS: op results
+        alt decision = continue (act)
+            Note over OS,LLM: updated context → loop
+        else decision = transition
+            OS->>WS: emit phase_completed event (P6)
+            Note over OS: enter next phase
+        else decision = finish
+            OS->>WS: emit skill_finished event (P6)
+            Note over OS: Postprocessor (Skill level)
+        end
+    end
+</div>
+
+<h2>3. Skill グラフ構造</h2>
+<div class="mermaid">
+flowchart LR
+    EP(["entry_phase"])
+    subgraph SK["Skill — directed phase graph"]
+        PA["Phase A\ninput_schema · preprocessor\ninstructions · allowed_ops"]
+        PB["Phase B"]
+        PC["Phase C (can_finish)"]
+        SUB["@sub_skill node\n(embedded skill)"]
+    end
+    FO["final_output_schema"]
+    POSTP["Postprocessor (optional)"]
+    OUT(["Output to caller"])
+    EP --> PA
+    PA -->|"transition: proceed"| PB
+    PA -->|"transition: delegate"| SUB
+    SUB -->|"result"| PB
+    PB -->|"transition: revise"| PA
+    PB -->|"transition: proceed"| PC
+    PC -->|"finish"| FO
+    FO --> POSTP
+    POSTP --> OUT
+</div>
+
+<h2>4. Control IR ops フロー</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph FRONT["Two frontends — one shared backend"]
+        direction LR
+        subgraph STATIC["Preprocessor (static · before LLM)"]
+            PS["PreprocessorExecutor"]
+        end
+        subgraph DYNAMIC["Control IR (dynamic · LLM-driven)"]
+            CD["ControlIRExecutor"]
+        end
+    end
+    GATE["Permission Gate (PermissionResolver)"]
+    EX["execute_op()"]
+    subgraph HANDLERS["Handler Registry"]
+        direction LR
+        FILE["file\nread·write·edit·grep·glob·delete"]
+        WEB["web_search\nweb_fetch"]
+        SHELL["shell"]
+        ASK["ask_user\n※ControlIR only"]
+        RS["run_skill"]
+        LINT["lint"]
+        MCP["mcp"]
+    end
+    PS --> GATE
+    CD --> GATE
+    GATE --> EX
+    EX --> FILE & WEB & SHELL & ASK & RS & LINT & MCP
+</div>
+
+<h2>5. Preprocessor / Postprocessor 対称図</h2>
+<div class="mermaid">
+flowchart LR
+    subgraph PRE["PREPROCESSOR · Phase level · fires before LLM"]
+        direction TB
+        PI["Phase input artifact"]
+        PSTEPS["run_op / iterate\nvalidate / lint_plan / python"]
+        PO["Enriched artifact → LLM"]
+        PI --> PSTEPS --> PO
+    end
+    subgraph POST["POSTPROCESSOR · Skill level · fires after finish"]
+        direction TB
+        QI["final_output artifact"]
+        QSTEPS["run_op / iterate\nvalidate / lint_plan / python\n+ WAL memoization"]
+        QO["Caller-facing artifact\n(postprocessor.output_schema)"]
+        QI --> QSTEPS --> QO
+    end
+</div>
+
+<h2>6. マルチエージェント 4 層構造</h2>
+<div class="mermaid">
+flowchart TB
+    TITLE["Reyn multi-agent mechanisms"]
+    subgraph L1["Layer 1 · @sub_skill — static"]
+        S1["Skill graph に埋め込まれた sub-skill ノード\nコンパイル時に解決 · 親 Skill グラフの一部"]
+    end
+    subgraph L2["Layer 2 · run_skill op — dynamic"]
+        S2["Phase の control_ir から動的にサブスキルを呼び出す\nparent_run_id で系譜追跡"]
+    end
+    subgraph L3["Layer 3 · delegate_to_agent — A2A"]
+        S3["RouterLoop が delegate_to_agent を発行\nTopology gate でルーティング · hop depth ≤ 3"]
+    end
+    subgraph L4["Layer 4 · reyn mcp serve — external MCP server"]
+        S4["外部 LLM クライアント (Claude Code · Cursor · OpenAI SDK)\nが stdio/JSON-RPC で Reyn を呼ぶ"]
+    end
+    TITLE --> L1 & L2 & L3 & L4
+</div>
+
+<h2>7. A2A 委譲チェーン</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User (depth=0)
+    participant A as Agent A (depth=1)
+    participant B as Agent B (depth=2)
+    participant C as Agent C (depth=3=limit)
+    U->>A: message
+    Note over A: RouterLoop → delegate_to_agent
+    A->>B: send(to=B, depth=1, chain_id=xyz)
+    Note over B: RouterLoop → delegate_to_agent
+    B->>C: send(to=C, depth=2, chain_id=xyz)
+    Note over C: depth=3 = max_hop_depth
+    C-->>B: result (chain_id=xyz)
+    B-->>A: result (chain_id=xyz)
+    A-->>U: final reply
+    Note over A,C: chain timeout = 60s
+</div>
+
+<h2>8. MCP server / client 対称図</h2>
+<div class="mermaid">
+flowchart LR
+    subgraph SRV["MCP Server — 実装済み (reyn mcp serve)"]
+        direction TB
+        EXT["External LLM Client\nClaude Code · Cursor · OpenAI SDK"]
+        STDIO["stdio / JSON-RPC 2.0"]
+        TOOLS["list_agents() · send_to_agent()"]
+        AR["AgentRegistry → ChatSession"]
+        EXT --> STDIO --> TOOLS --> AR
+    end
+    subgraph CLI2["MCP Client — implemented (stdio · HTTP)"]
+        direction TB
+        PHASE["Reyn Phase (control_ir)"]
+        MCIROP["MCPIROp  kind: mcp"]
+        MCLIENT["MCPClient\nstdio / HTTP transport"]
+        EXTMCP["External MCP Server"]
+        PHASE --> MCIROP --> MCLIENT --> EXTMCP
+    end
+</div>
+
+<h2>9. Memory スコープ</h2>
+<div class="mermaid">
+flowchart TB
+    subgraph ROOT[".reyn/  (project root)"]
+        direction TB
+        subgraph SHARED[".reyn/memory/  — プロジェクト共有"]
+            SM["MEMORY.md (index)\n+ slug.md × n\n(type: user / feedback / project / reference)"]
+        end
+        subgraph AGENTS[".reyn/agents/"]
+            subgraph A1["agents/alice/memory/"]
+                AM1["MEMORY.md + slug.md"]
+            end
+            subgraph A2["agents/bob/memory/"]
+                AM2["MEMORY.md + slug.md"]
+            end
+        end
+        subgraph WSP[".reyn/artifacts/  — Workspace (≠ Memory)"]
+            WSN["per-run artifacts · skill-scoped · ephemeral"]
+        end
+    end
+    LLM["LLM (Phase 実行中)"]
+    LLM -->|"file/write Control IR"| SHARED
+    LLM -->|"file/write Control IR"| A1
+    LLM -->|"file/write Control IR"| A2
+</div>
+
+<h2>10. Planner フロー</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant RL as RouterLoop
+    participant RLLLM as Router LLM
+    participant PL as Planner
+    participant SLLM as Step LLM (narrow context)
+    U->>RL: 複雑な複数ステップのリクエスト
+    RL->>RLLLM: tools (including plan_task)
+    RLLLM-->>RL: tool_call: plan_task(goal, steps[])
+    RL->>PL: parse_and_validate_plan()
+    PL-->>RL: Plan { goal, steps: [S1, S2, S3] }
+    loop 各ステップ (依存関係順)
+        RL->>SLLM: step description + narrow tool catalog
+        SLLM-->>RL: step result
+    end
+    RL->>RLLLM: 全ステップ結果を集約
+    RLLLM-->>U: final reply
+    Note over PL: chat-scoped · transient
+</div>
+
+<h2>11. Request end-to-end (architecture page S03 用)</h2>
+<div class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant A as Agent (ChatSession)
+    participant PL as Planner (optional)
+    participant SK as Skill graph
+    participant PH as Phase loop
+    participant WS as Workspace + Events
+    U->>A: message
+    alt Complex multi-step request
+        A->>PL: plan_task(goal)
+        PL-->>A: Plan { steps: [S1, S2, ...] }
+        Note over A: each step → skill invocation
+    else Simple request
+        Note over A: RouterLoop picks Skill directly
+    end
+    A->>SK: invoke skill
+    SK->>PH: enter entry phase
+    loop Until transition or finish
+        PH->>PH: preprocessor (deterministic)
+        PH->>PH: LLM call (closed candidate set)
+        PH->>PH: validate output against schema
+        PH->>WS: execute Control IR ops · emit events
+        PH-->>SK: result + control decision
+        alt decision = transition
+            Note over SK: validate against next.input_schema
+            SK->>PH: enter next phase
+        else decision = finish
+            Note over SK: validate against final_output_schema
+            SK-->>A: final output
+        end
+    end
+    A-->>U: reply
+</div>
+
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: {
+    primaryColor: '#FAF8F6', primaryBorderColor: '#E0DBD7',
+    lineColor: '#C8553D', fontFamily: 'Inter, sans-serif'
+  }});
+</script>
+</body>
+</html>
