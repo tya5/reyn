@@ -43,6 +43,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 import time as _time
 import wave
 from typing import Any
@@ -112,6 +113,12 @@ class VoiceInput:
         self._sd: Any = None
         self._np: Any = None
         self._whisper_model: Any = None
+        # Serialise WhisperModel construction across worker threads. Without
+        # this, the BG `preload_model()` thread and the foreground transcribe
+        # thread can both observe `self._whisper_model is None` and BOTH call
+        # WhisperModel(...) concurrently — racing on the model-cache files
+        # and (empirically, 2026-05-09) deadlocking inside CTranslate2.
+        self._model_lock = threading.Lock()
 
         # Recording state
         self._stream: Any = None
@@ -277,9 +284,20 @@ class VoiceInput:
             diag["reason"] = "silent"
             return "", diag
 
-        # Run transcription off the Textual event loop.
+        # Run transcription off the Textual event loop. Wrap in a timeout
+        # so a hung worker (network stall, CTranslate2 deadlock, partial
+        # model file, etc.) surfaces as a clean error instead of leaving
+        # the TUI frozen on "⏳ transcribing…".
         try:
-            text = await asyncio.to_thread(self._transcribe_sync, audio)
+            text = await asyncio.wait_for(
+                asyncio.to_thread(self._transcribe_sync, audio),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("voice transcribe timed out after 120s")
+            diag["reason"] = "timeout"
+            _vlog("transcribe timed out (120s)")
+            return "", diag
         except Exception as exc:
             logger.warning("voice transcribe failed: %s", exc)
             diag["reason"] = "error"
@@ -303,22 +321,37 @@ class VoiceInput:
         """Lazy-load the faster-whisper model; cache for subsequent calls.
 
         First call may take seconds (model download + CTranslate2 init) so it
-        always runs inside ``asyncio.to_thread`` via ``stop_recording``.
+        always runs inside ``asyncio.to_thread`` via ``stop_recording``
+        — or, when pre-warm is enabled, via ``preload_model``.
+
+        Thread-safe: ``self._model_lock`` serialises the constructor so the
+        BG pre-warm and a foreground transcribe call can't race on the
+        cache files / inflate two CTranslate2 contexts at once.
         """
+        # Fast path: already loaded, no lock needed (single pointer read).
         if self._whisper_model is not None:
             return self._whisper_model
-        try:
-            from faster_whisper import WhisperModel  # type: ignore[import]
-        except Exception as exc:
-            raise VoiceUnavailable(
-                "faster-whisper not installed; run: pip install \"reyn[voice]\""
-            ) from exc
-        self._whisper_model = WhisperModel(
-            self._model_name,
-            device=self._device,
-            compute_type=self._compute_type,
-        )
-        return self._whisper_model
+        with self._model_lock:
+            # Re-check inside the lock (double-checked locking).
+            if self._whisper_model is not None:
+                return self._whisper_model
+            try:
+                from faster_whisper import WhisperModel  # type: ignore[import]
+            except Exception as exc:
+                raise VoiceUnavailable(
+                    "faster-whisper not installed; run: pip install \"reyn[voice]\""
+                ) from exc
+            _vlog(
+                f"loading WhisperModel({self._model_name!r}, "
+                f"device={self._device!r}, compute_type={self._compute_type!r})"
+            )
+            self._whisper_model = WhisperModel(
+                self._model_name,
+                device=self._device,
+                compute_type=self._compute_type,
+            )
+            _vlog("WhisperModel loaded")
+            return self._whisper_model
 
     def _transcribe_sync(self, audio) -> str:  # noqa: C901
         # Debug-mode visibility into exactly what the in-memory path sees.
