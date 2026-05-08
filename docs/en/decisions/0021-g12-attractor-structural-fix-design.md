@@ -507,7 +507,7 @@ measurement.
 
 **Measurement date**: 2026-05-04  
 **Instrument**: `llm_replay.py --n 10 --diff` on a freshly captured attractor request  
-**Source finding**: `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
+**Source finding**: `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
 
 ### Setup
 
@@ -546,11 +546,11 @@ All empty-stop runs returned `completion_tokens=0, content=null`.
 
 ## References
 
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H4-attractor-prompt-evidence.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H4-attractor-prompt-evidence.md`
   — observation evidence closing the root cause
-- `docs/journal/dogfood/giveup-tracker.md` G12 — full attractor history,
+- `docs/deep-dives/journal/dogfood/giveup-tracker.md` G12 — full attractor history,
   prior design rationale, and OS-state-machine withdrawal reasoning
-- `docs/journal/dogfood/g4-trigger-evaluation-spike.md` — G4 spike status
+- `docs/deep-dives/journal/dogfood/g4-trigger-evaluation-spike.md` — G4 spike status
   (blocked) and proxy setup instructions
 - `scripts/detect_attractor.py` — `_is_empty_response` / Heuristic 1 logic
   that Option B and C reuse
@@ -563,21 +563,21 @@ All empty-stop runs returned `completion_tokens=0, content=null`.
 - [ADR-0013](0013-exception-aware-crash-lifecycle.md) — exception-aware
   lifecycle (retry policy precedent)
 - [ADR-0020](0020-skill-only-permissions.md) — precedent ADR format
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-empty-stop-frequency.md`
   — empty-stop frequency measurement (n=10, rate=50%, probabilistic verdict)
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H1-fix-verify.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-RETRO-H1-fix-verify.md`
   — `--patch` replay verification pattern (different attractor, same
   observation methodology; hallucination rate 57% → 0% confirmed)
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-S1-fresh-retest.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-S1-fresh-retest.md`
   — Option F e2e behavior post-implementation (chain advances, empty stop
   surfaces clean failure UX)
 - `docs/en/concepts/care-boundary.md` — Reyn の care 範囲 (structural /
   behavioral / gray) framework、 Option F 採用の design philosophy 根拠
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-context-root-cause.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-context-root-cause.md`
   — N-shot --patch experiment proving description verbosity as the decisive
   trigger (4 hypotheses tested, only H-b shows effect; H-a MUST rule removal
   shows zero effect)
-- `docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-cross-attractor-pattern.md`
+- `docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/findings/B7-G12-cross-attractor-pattern.md`
   — two trigger paths (list_skills tool_response / system prompt inline)
   confirmed across 5 attractor instances; both paths must be truncated for
   full rescue

@@ -830,7 +830,7 @@ scenario を書く前に:
 ### batch ディレクトリ構造
 
 ```
-docs/journal/dogfood/
+docs/deep-dives/journal/dogfood/
 └── YYYY-MM-DD-batch-N-{label}/
     ├── prelude.md          ← batch 開始時の状態 + carry-over findings
     ├── scenarios.md        ← 予測付きの具体的な scenario
@@ -843,7 +843,7 @@ docs/journal/dogfood/
 
 finding ID フォーマット: `B{batch}-{Severity}{rank}-{slug}`。 Severity prefix: `H` (HIGH) / `M` (MED) / `L` (LOW) / `INFO`。 例: `B13-H1-permission-revert.md`。
 
-複数 batch にわたる cross-batch 課題 (解決なしに追跡) については giveup tracker を使います: `docs/journal/dogfood/giveup-tracker.md`。
+複数 batch にわたる cross-batch 課題 (解決なしに追跡) については giveup tracker を使います: `docs/deep-dives/journal/dogfood/giveup-tracker.md`。
 
 ### ペーシング: 最初の batch は practice batch
 
@@ -863,10 +863,10 @@ scenario が成功裏に完了したとしても、最初の batch から milest
 
 以下の retrospective は、本ガイドで説明した原則の詳細な case study を確立順に提供します。
 
-- **Batch 7** (`docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/retrospective.md`): 観測 infra 確立; care boundary 言語化; 推測スタック解体。
-- **Batch 9** (`docs/journal/dogfood/2026-05-05-batch-9-fix-wave/retrospective.md`): Wrong-layer trap 発見; verify-first 原則確立。
-- **Batch 10** (`docs/journal/dogfood/2026-05-05-batch-10-residual-fix-wave/retrospective.md`): Reproduce-first 原則確立; resolved-indirectly 分類の形式化。
-- **Batch 13** (`docs/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/retrospective.md`): Documented design audit 確立; 修正分類 discipline 形式化; simplicity smell test 言語化。
-- **Batch 14** (`docs/journal/dogfood/2026-05-06-batch-14-stability-extension/retrospective.md`): Production-grade phase 1 完了; full discipline 稼働。
+- **Batch 7** (`docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/retrospective.md`): 観測 infra 確立; care boundary 言語化; 推測スタック解体。
+- **Batch 9** (`docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/retrospective.md`): Wrong-layer trap 発見; verify-first 原則確立。
+- **Batch 10** (`docs/deep-dives/journal/dogfood/2026-05-05-batch-10-residual-fix-wave/retrospective.md`): Reproduce-first 原則確立; resolved-indirectly 分類の形式化。
+- **Batch 13** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/retrospective.md`): Documented design audit 確立; 修正分類 discipline 形式化; simplicity smell test 言語化。
+- **Batch 14** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/retrospective.md`): Production-grade phase 1 完了; full discipline 稼働。
 
-full batch index と operational log については `docs/journal/dogfood/README.md` を参照してください。
+full batch index と operational log については `docs/deep-dives/journal/dogfood/README.md` を参照してください。

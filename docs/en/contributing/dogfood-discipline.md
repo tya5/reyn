@@ -367,7 +367,7 @@ Rules:
 - Do not use N=5 to declare a behavior "always fails" or "always succeeds" — N=5 with a true 80% rate has a 0.2^5 ≈ 0.03% false-streak probability per run, but if you run that 11 times you have an 11 × 0.03% ≈ 0.35% chance of a streak somewhere. Across many hypothesis tests the streak probability compounds.
 - When tempted to invoke "vendor X has a public-unreported defect" or "library Y has a translation bug": apply Occam's razor first. The simpler hypothesis — "my testing methodology produced a streak that I'm misreading as deterministic" — is almost always more likely than the complex hypothesis. Verify the simpler one first by increasing N before chasing the complex one.
 
-cross-ref: `feedback_minimize_speculation.md`, `feedback_observe_before_speculate_llm.md`. The G12 entry in `docs/journal/dogfood/giveup-tracker.md` documents the specific case (= Pattern E observation, post-OSS HN dogfood 2026-05-07).
+cross-ref: `feedback_minimize_speculation.md`, `feedback_observe_before_speculate_llm.md`. The G12 entry in `docs/deep-dives/journal/dogfood/giveup-tracker.md` documents the specific case (= Pattern E observation, post-OSS HN dogfood 2026-05-07).
 
 ---
 
@@ -842,7 +842,7 @@ Before dispatching each fix:
 ### Batch directory structure
 
 ```
-docs/journal/dogfood/
+docs/deep-dives/journal/dogfood/
 └── YYYY-MM-DD-batch-N-{label}/
     ├── prelude.md          ← state at batch start + carry-over findings
     ├── scenarios.md        ← concrete scenarios with predictions
@@ -855,7 +855,7 @@ docs/journal/dogfood/
 
 Finding ID format: `B{batch}-{Severity}{rank}-{slug}`. Severity prefixes: `H` (HIGH), `M` (MED), `L` (LOW), `INFO`. Example: `B13-H1-permission-revert.md`.
 
-For cross-batch issues (tracked across multiple batches without resolution), use the giveup tracker: `docs/journal/dogfood/giveup-tracker.md`.
+For cross-batch issues (tracked across multiple batches without resolution), use the giveup tracker: `docs/deep-dives/journal/dogfood/giveup-tracker.md`.
 
 ### Pacing: the first batch is a calibration batch
 
@@ -875,10 +875,10 @@ Do not declare a milestone from the first batch, even if a scenario completes su
 
 The following retrospectives provide detailed case studies of the principles described in this guide, in the order they were established:
 
-- **Batch 7** (`docs/journal/dogfood/2026-05-04-batch-7-post-infra-verify/retrospective.md`): Observation infrastructure established; care boundary articulated; speculation stack dissolved.
-- **Batch 9** (`docs/journal/dogfood/2026-05-05-batch-9-fix-wave/retrospective.md`): Wrong-layer trap discovered; verify-first principle established.
-- **Batch 10** (`docs/journal/dogfood/2026-05-05-batch-10-residual-fix-wave/retrospective.md`): Reproduce-first principle established; resolved-indirectly classification formalized.
-- **Batch 13** (`docs/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/retrospective.md`): Documented design audit established; fix classification discipline formalized; simplicity smell test articulated.
-- **Batch 14** (`docs/journal/dogfood/2026-05-06-batch-14-stability-extension/retrospective.md`): Production-grade phase 1 completion; full discipline operational.
+- **Batch 7** (`docs/deep-dives/journal/dogfood/2026-05-04-batch-7-post-infra-verify/retrospective.md`): Observation infrastructure established; care boundary articulated; speculation stack dissolved.
+- **Batch 9** (`docs/deep-dives/journal/dogfood/2026-05-05-batch-9-fix-wave/retrospective.md`): Wrong-layer trap discovered; verify-first principle established.
+- **Batch 10** (`docs/deep-dives/journal/dogfood/2026-05-05-batch-10-residual-fix-wave/retrospective.md`): Reproduce-first principle established; resolved-indirectly classification formalized.
+- **Batch 13** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/retrospective.md`): Documented design audit established; fix classification discipline formalized; simplicity smell test articulated.
+- **Batch 14** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/retrospective.md`): Production-grade phase 1 completion; full discipline operational.
 
-For the full batch index and operational log, see `docs/journal/dogfood/README.md`.
+For the full batch index and operational log, see `docs/deep-dives/journal/dogfood/README.md`.

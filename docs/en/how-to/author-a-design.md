@@ -99,9 +99,9 @@ globals on `window`:
 
 Specified canonically in:
 
-- Component contracts: `docs/openui/schemas/reyn-ui-v1/components.md`
-- Data shape (`ReynUiData`): `docs/openui/schemas/reyn-ui-v1/data.types.ts`
-- Actions / channels: `docs/openui/schemas/reyn-ui-v1/manifest.yaml`
+- Component contracts: `docs/deep-dives/spec/openui/schemas/reyn-ui-v1/components.md`
+- Data shape (`ReynUiData`): `docs/deep-dives/spec/openui/schemas/reyn-ui-v1/data.types.ts`
+- Actions / channels: `docs/deep-dives/spec/openui/schemas/reyn-ui-v1/manifest.yaml`
 
 Treat as the contract: every required component must be exported,
 prop shapes must match, action / channel names must be used as defined.
@@ -252,10 +252,10 @@ Avoid: anything saturated
 
 ## See also
 
-- [`design-author-guide.md`](../../web/design-author-guide.md) — the
+- [`design-author-guide.md`](../../deep-dives/spec/design/design-author-guide.md) — the
   full operational guide (richer than this how-to)
-- [`multi-design-selection.md`](../../web/multi-design-selection.md) —
+- [`multi-design-selection.md`](../../deep-dives/spec/design/multi-design-selection.md) —
   three-root layout (`local` / `project` / bundled), selection priority
-- [`docs/openui/`](../../openui/) — the OpenUI Layer 0 protocol spec
+- [`docs/deep-dives/spec/openui/`](../../deep-dives/spec/openui/) — the OpenUI Layer 0 protocol spec
   (you don't need to read it to author a design; it's the contract
   the locked zone enforces)

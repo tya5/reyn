@@ -491,7 +491,7 @@ and resolve in phase 3 or later:
 
 ## See also
 
-- [docs/openui/](../openui/) — separate web UI work, unrelated to
+- [docs/deep-dives/spec/openui/](../deep-dives/spec/openui/) — separate web UI work, unrelated to
   CLI but parallel infrastructure
 - [feedback_model_delegation_routing.md](in memory) — Sonnet/Opus
   routing for implementation phases

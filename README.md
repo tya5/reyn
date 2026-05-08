@@ -39,7 +39,7 @@ reyn init                      # creates reyn.yaml + .reyn/config.yaml
 > works") are normal — measured ~15% rate on `gemini-2.5-flash-lite`,
 > dissolves on stronger models. If the rate matters for your use, edit
 > `reyn.yaml`'s `models.standard` to point at a stronger model. This is
-> tracked as G12 in `docs/journal/dogfood/giveup-tracker.md`.
+> tracked as G12 in `docs/deep-dives/journal/dogfood/giveup-tracker.md`.
 
 Create a minimal skill under `reyn/local/my_skill/`:
 

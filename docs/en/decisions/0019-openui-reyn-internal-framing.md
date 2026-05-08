@@ -10,7 +10,7 @@ multi-vendor protocol for separating engine from design", with the
 implication that other agent frameworks could adopt it as a shared
 standard (mirroring how MCP became a cross-vendor LLM ↔ tool
 protocol). The naming, governance language ("spec-first, neutral
-naming"), and the path to lift `docs/openui/` into a standalone
+naming"), and the path to lift `docs/deep-dives/spec/openui/` into a standalone
 `openui-spec` repository all reinforced that framing.
 
 External review (the `tmp/external-review-*.md` series, contributed
@@ -54,17 +54,17 @@ demand is uncertain.
 
 Documentation changes (commit `b98272d`):
 
-- `docs/openui/README.md`: removed "neutral multi-vendor" governance
+- `docs/deep-dives/spec/openui/README.md`: removed "neutral multi-vendor" governance
   language. Added explicit "this is Reyn's web UI contract; the
   protocol claim is earned, not claimed". Section reordered so App /
   Studio split is the headline product value; design swappability is
   framed as a "secondary capability" the layered model enables.
-- `docs/web/engine-design-contract.md`: AG-UI rationale rewritten
+- `docs/deep-dives/spec/design/engine-design-contract.md`: AG-UI rationale rewritten
   ("headline value = App / Studio split, not design swap"). MCP
   rationale rewritten ("we borrow the layered contract style; we do
   **not** borrow MCP's neutral-protocol governance posture — that
   is earned by adoption").
-- `docs/web/multi-design-selection.md` and `docs/web/design-distribution.md`:
+- `docs/deep-dives/spec/design/multi-design-selection.md` and `docs/deep-dives/spec/design/design-distribution.md`:
   top banner added marking these as **Deprioritised to v1.x**. Reyn
   web v0 ships with one bundled design (`reyn-default`); the
   multi-design CLI / directory / runtime picker is an explicit v0
@@ -80,7 +80,7 @@ Implementation consequences:
 - Layer 0 + Layer 1 spec stays general-purpose so later swap remains
   cheap.
 
-The `git mv docs/openui/ openui-spec/` path remains structurally
+The `git mv docs/deep-dives/spec/openui/ openui-spec/` path remains structurally
 viable but is a hypothetical, not a roadmap item.
 
 ## Consequences
@@ -117,5 +117,5 @@ viable but is a hypothetical, not a roadmap item.
 - Commit `b98272d` — documentation changes
 - `tmp/external-review-*.md` (Claude Cowork analysis) — the external
   framing critique
-- `docs/openui/README.md` — current canonical framing
+- `docs/deep-dives/spec/openui/README.md` — current canonical framing
 - discussion-log Phase 14

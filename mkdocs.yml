@@ -16,23 +16,23 @@ edit_uri: edit/main/docs/
 # repo without exposing them on the public docs site.
 exclude_docs: |
   # Engineering journals — dogfood batch logs, feature-verify notes
-  journal/
+  deep-dives/journal/
 
   # Internal research notes — competitive analysis / positioning /
   # strategic priorities / doc improvement proposals. Not user-facing
   # OSS docs (= same category as journal/).
-  research/
+  deep-dives/research/
 
   # OpenUI = internal contract for Reyn's web UI. Not yet a neutral
-  # multi-vendor protocol (see docs/openui/README.md framing).
-  openui/
+  # multi-vendor protocol (see docs/deep-dives/spec/openui/README.md framing).
+  deep-dives/spec/openui/
 
   # LLM-targeted rubrics. Primary reader is a reyn skill, not a human.
   agent/
 
   # Web mode design / handoff docs. User-facing pieces live under
   # en/how-to/author-a-design.md; the rest is internal contract.
-  web/
+  deep-dives/spec/design/
 
   # CLI redesign draft — tracked for design history, not policy.
   contributing/cli-redesign.md
