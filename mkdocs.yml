@@ -86,6 +86,7 @@ nav:
               - guide/for-skill-authors/iterate-with-fan-out.md
               - guide/for-skill-authors/build-an-agent-team.md
               - guide/for-skill-authors/multi-hop-delegation.md
+              - guide/for-skill-authors/use-plan-mode.md
               - guide/for-skill-authors/restrict-agent-skills.md
           - Phase mechanics:
               - guide/for-skill-authors/add-a-python-preprocessor.md

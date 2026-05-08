@@ -89,6 +89,66 @@ Full tutorial: [docs/guide/getting-started/02-your-first-skill.md](docs/guide/ge
 
 ---
 
+## How Reyn compares
+
+Most agent frameworks expose the act → sense → re-act loop as a **programmable
+surface**: the developer writes the graph, the LLM decides what to do next, and
+keeping the loop coherent is the developer's responsibility. Reyn encodes the
+loop as a **validated runtime contract**: every transition is validated by the
+OS against the Skill graph (P4), every state change is written to the Workspace
+before the next phase sees it (P5), and every state change emits an event into
+an append-only log (P6). The LLM is a constrained decision engine — it picks
+from an OS-provided candidate set, not from an unbounded option space. The
+trade-off is explicit: predictability and auditability over maximum autonomy.
+
+| Framework | Loop enforcement | State persistence | Replay | Strength |
+|---|---|---|---|---|
+| **LangGraph** | Code-defined Python graph; conditional edges; LLM can pick arbitrary transitions when using `Command()` API | Checkpointer (SQLite / PostgreSQL) per super-step | Time-travel from any checkpoint | Expressiveness; LangChain ecosystem (600+ integrations) |
+| **CrewAI** | Role-driven (sequential / hierarchical / Flow event-driven); no OS-level candidate constraint | Flow `@persist` (SQLite); manual resume on crash | Task replay (last run only) | Role-orchestration ergonomics; 30+ built-in tools; RAG and memory out of the box |
+| **AutoGen** | Conversational multi-agent (message bus); LLM selects next speaker freely in SelectorGroupChat | `save_state()` / `load_state()` — application-managed, no built-in auto-checkpoint | OpenTelemetry spans (not replay-capable) | Multi-agent dialog patterns; actor model for distributed agents |
+| **Semantic Kernel** | Plugin- / planner-driven; loop structure defined by planner and middleware hooks | Semantic memory; state via conversation history | Kernel logs (not append-only replay) | Enterprise integration; plugin architecture; .NET + Python parity |
+| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; MCP server + client |
+
+**Reyn is more constrained.** If you want maximum LLM autonomy and creative
+agent behavior, LangGraph or AutoGen will feel less restrictive.
+
+**Reyn is smaller.** No vector store, no built-in RAG, no chain abstractions —
+those live downstream (see [care-boundary.md](docs/concepts/care-boundary.md)).
+
+**Reyn is opinionated about state.** The Workspace is the only inter-phase data
+channel; Events are the only audit log. Other frameworks let you pass state
+in-memory or through callbacks — convenient, but invisible to crash recovery and
+audit trails.
+
+### Reyn fits when
+
+- You need every LLM decision to be replayable and auditable (regulated,
+  enterprise, or production environments where explainability matters).
+- You want weak models to be reliable — the structural constraints (P4, P5)
+  compensate for capability gaps without requiring prompt-level workarounds.
+- You need predictable cost: the closed candidate set prevents surprise tool
+  invention and unbounded loops.
+- You want to integrate with Claude Code, Claude Desktop, Cursor, or any
+  MCP-aware client — Reyn ships as an MCP server out of the box.
+
+### Reyn does not fit when
+
+- You want quick prototyping with maximum flexibility — LangGraph + LangChain's
+  ecosystem is substantially denser.
+- Your agent is single-shot and stateless — use a plain LLM call; the OS
+  overhead is not worth it.
+- You need built-in RAG or vector retrieval — Reyn delegates those to MCP
+  servers or external tools; they are not bundled.
+- You want a UI or dashboard out of the box — that is downstream territory
+  (see [care-boundary.md](docs/concepts/care-boundary.md#downstream-tooling--what-builds-on-reyn)).
+
+**Further reading:**
+[Why this design — principles](docs/concepts/principles.md) |
+[What Reyn cares about — care boundary](docs/concepts/care-boundary.md) |
+[Architecture, including the act-sense-react loop](docs/concepts/architecture.md)
+
+---
+
 ## Architecture
 
 The OS is the constant. Skills come and go; OS code never changes when a new skill is added.

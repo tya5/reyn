@@ -25,6 +25,7 @@ Skill 同士、 agent 同士の組み立て方。
 - **[fan-out で iterate](iterate-with-fan-out.md)** — リストに対してサブステップを適用し結果を収集。
 - **[Agent チームを構築](build-an-agent-team.md)** — 役割ごとに Skill allowlist を持つ複数 agent をセットアップ。
 - **[Multi-hop delegation](multi-hop-delegation.md)** — 委任を複数 agent でチェイン。
+- **[マルチステップタスクに Plan mode を使う](use-plan-mode.md)** — 複雑な chat リクエストを非同期 step に分解し、crash recovery とオペレーター介入を実現する。
 - **[Agent の Skill を制限](restrict-agent-skills.md)** — チーム内 agent ごとに実行可能な Skill を絞る。
 
 ## Phase mechanics（Phase 内部）
