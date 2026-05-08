@@ -25,9 +25,10 @@ You are a visual designer creating a technical architecture page for an open-sou
 </role>
 
 <task>
-Design a single-page architecture explainer for Reyn — an open-source AI agent orchestration system.
-Deliver an interactive prototype as a single HTML file with inline CSS and embedded Mermaid diagrams.
-The page lives at `website/architecture.html` in the same repo as the landing page.
+Design a single-page architecture overview for Reyn — an open-source AI agent
+orchestration system. Deliver an interactive prototype as a single HTML file
+with inline CSS and embedded Mermaid diagrams. The page lives at
+`website/architecture.html` in the same repo as the landing page.
 </task>
 
 <context>
@@ -39,19 +40,23 @@ Brand identity (derived from uploaded files):
 - Body text: #1A1A1A
 - Muted text: #6B6B6B
 - Design philosophy: subtraction over addition — clean, structured, no decorative gradients
-- Audience: engineers who want to understand the internal design of an AI agent OS
+- Audience: engineers visiting Reyn for the first time who want a bird's-eye view
 
-Page tone: long-form technical explainer. Think "architecture.md rendered beautifully."
-Not a marketing page — a deep technical reference with clear visual diagrams.
+Page purpose: give a first-time visitor a clear mental model of what Reyn is
+made of and how those pieces coordinate to execute one request. Depth lives
+in the docs — this page is the overview that makes the docs worth reading.
+
+Tone: confident, declarative, structural. No marketing fluff, no excessive
+detail. Each section answers one question.
 </context>
 
 <page_structure>
-The page is a vertical scroll composed of the following sections, top to bottom.
-Each section carries a unique background treatment (see bg-* assets) and a Mermaid diagram.
-Follow this exact order:
+The page is a vertical scroll composed of HEADER, HERO, four content
+sections, a CTA, and a FOOTER. Follow this exact order.
 
 HEADER (sticky)
-  - Logo top-left (logo-primary.svg tinted #C8553D), nav link "← Landing" to index.html
+  - Logo top-left (logo-primary.svg tinted #C8553D)
+  - Single nav link "← Landing" pointing to index.html
   - No other nav items
 
 HERO
@@ -60,12 +65,13 @@ HERO
   - Large H1: {{ARCH_HERO_H1_HTML}}
   - Lede paragraph: {{ARCH_HERO_LEDE}}
 
-SECTION 01 — 全体レイヤー構造 (Overall layer structure)
+SECTION 01 — At a glance
+  Question answered: "What is Reyn made of?"
   - Section number + label on left: {{ARCH_S01_NUM}} / {{ARCH_S01_LABEL}}
   - Heading: {{ARCH_S01_HEADING_HTML}}
   - Body paragraph: {{ARCH_S01_BODY}}
-  - Mermaid diagram: full-width, card with 1px border, bg #FFFFFF
-    The diagram shows the 7-layer stack from User down to Persistence.
+  - One large Mermaid diagram below the body, full-width white card with
+    1px border #E0DBD7. This is THE overview diagram of the page.
     Diagram code (embed as-is inside a .mermaid div):
     ```
     flowchart TB
@@ -101,102 +107,70 @@ SECTION 01 — 全体レイヤー構造 (Overall layer structure)
         U --> I01 --> I02 --> I03 --> I04 --> I05 --> I06 --> I07
     ```
 
-SECTION 02 — Agent / RouterLoop / Planner
+SECTION 02 — The pieces
+  Question answered: "What does each component do?"
   - Section number + label: {{ARCH_S02_NUM}} / {{ARCH_S02_LABEL}}
   - Heading: {{ARCH_S02_HEADING_HTML}}
-  - Two-column layout on desktop (text left, diagram right), single column on mobile
-  - Body: {{ARCH_S02_BODY}}
-  - Mermaid diagram (Planner flow):
+  - Body paragraph: {{ARCH_S02_BODY}}
+  - Five component cards, arranged in a responsive grid (3 columns on
+    desktop, 2 on tablet, 1 on mobile). Each card:
+    - Small label in clay (#C8553D) — e.g. "Agent"
+    - Short title-card body — 2 to 3 sentences, body weight
+    - Subtle 1px border, 4px radius, 24px padding
+  - Card 1: {{ARCH_S02_C1_LABEL}} / {{ARCH_S02_C1_BODY}}
+  - Card 2: {{ARCH_S02_C2_LABEL}} / {{ARCH_S02_C2_BODY}}
+  - Card 3: {{ARCH_S02_C3_LABEL}} / {{ARCH_S02_C3_BODY}}
+  - Card 4: {{ARCH_S02_C4_LABEL}} / {{ARCH_S02_C4_BODY}}
+  - Card 5: {{ARCH_S02_C5_LABEL}} / {{ARCH_S02_C5_BODY}}
+  - No diagram — the cards ARE the visual
+
+SECTION 03 — A request, end to end
+  Question answered: "How do these pieces work together?"
+  - Section number + label: {{ARCH_S03_NUM}} / {{ARCH_S03_LABEL}}
+  - Heading: {{ARCH_S03_HEADING_HTML}}
+  - Mermaid sequence diagram first, then body paragraph below
+  - Body: {{ARCH_S03_BODY}}
+  - Diagram shows one user message flowing all the way through the system
+    and back out as a reply. This is the climax of the page — the
+    "everything connects" moment.
+    Diagram code:
     ```
     sequenceDiagram
         participant U as User
-        participant RL as RouterLoop
-        participant RLLLM as Router LLM
-        participant PL as Planner
-        participant SLLM as Step LLM (narrow context)
-        U->>RL: complex multi-step request
-        RL->>RLLLM: tools (including plan_task)
-        RLLLM-->>RL: tool_call: plan_task(goal, steps[])
-        RL->>PL: parse_and_validate_plan()
-        PL-->>RL: Plan { goal, steps: [S1, S2, S3] }
-        loop Each step (dependency order)
-            RL->>SLLM: step description + narrow tool catalog
-            SLLM-->>RL: step result
-        end
-        RL->>RLLLM: aggregate all step results
-        RLLLM-->>U: final reply
-        Note over PL: chat-scoped · transient
-    ```
-
-SECTION 03 — OS — the constant (Phase execution flow)
-  - Section number + label: {{ARCH_S03_NUM}} / {{ARCH_S03_LABEL}}
-  - Heading: {{ARCH_S03_HEADING_HTML}}
-  - Full-width diagram first, then body text below
-  - Body: {{ARCH_S03_BODY}}
-  - Mermaid diagram (Phase execution sequence):
-    ```
-    sequenceDiagram
-        participant OS as OS / Engine
-        participant PRE as Preprocessor
-        participant LLM as LLM
-        participant OPS as Control IR ops
+        participant A as Agent (ChatSession)
+        participant SK as Skill graph
+        participant PH as Phase loop
         participant WS as Workspace + Events
-        OS->>PRE: run preprocessor steps
-        PRE-->>OS: enriched input artifact
-        loop act turns (max_act_turns)
-            OS->>LLM: context + artifact + allowed_ops + candidate_outputs
-            LLM-->>OS: { control, artifact, control_ir[] }
-            OS->>OPS: execute control_ir ops
-            OPS->>WS: write results
-            OPS-->>OS: op results
-            alt decision = continue (act)
-                Note over OS,LLM: updated context → loop
-            else decision = transition
-                OS->>WS: emit phase_completed event
-                Note over OS: enter next phase
+        U->>A: message
+        A->>A: RouterLoop picks Skill
+        A->>SK: invoke skill
+        SK->>PH: enter entry phase
+        loop Until transition or finish
+            PH->>PH: preprocessor (deterministic)
+            PH->>PH: LLM call (closed candidate set)
+            PH->>PH: validate output against schema
+            PH->>WS: execute Control IR ops · emit events
+            PH-->>SK: result + control decision
+            alt decision = transition
+                Note over SK: validate against next.input_schema
+                SK->>PH: enter next phase
             else decision = finish
-                OS->>WS: emit skill_finished event
-                Note over OS: Postprocessor (Skill level)
+                Note over SK: validate against final_output_schema
+                SK-->>A: final output
             end
         end
+        A-->>U: reply
     ```
 
-SECTION 04 — Skill & Phase graph structure
+SECTION 04 — Beyond a single agent
+  Question answered: "What happens when one agent isn't enough?"
   - Section number + label: {{ARCH_S04_NUM}} / {{ARCH_S04_LABEL}}
   - Heading: {{ARCH_S04_HEADING_HTML}}
-  - Two-column layout on desktop (diagram left, text right), single column on mobile
-  - Body: {{ARCH_S04_BODY}}
-  - Mermaid diagram (Skill graph):
-    ```
-    flowchart LR
-        EP(["entry_phase"])
-        subgraph SK["Skill — directed phase graph"]
-            PA["Phase A\ninput_schema · preprocessor\ninstructions · allowed_ops"]
-            PB["Phase B"]
-            PC["Phase C (can_finish)"]
-            SUB["@sub_skill node\n(embedded skill)"]
-        end
-        FO["final_output_schema"]
-        POSTP["Postprocessor (optional)"]
-        OUT(["Output to caller"])
-        EP --> PA
-        PA -->|"transition: proceed"| PB
-        PA -->|"transition: delegate"| SUB
-        SUB -->|"result"| PB
-        PB -->|"transition: revise"| PA
-        PB -->|"transition: proceed"| PC
-        PC -->|"finish"| FO
-        FO --> POSTP
-        POSTP --> OUT
-    ```
-
-SECTION 05 — Multi-agent — 4 layers
-  - Section number + label: {{ARCH_S05_NUM}} / {{ARCH_S05_LABEL}}
-  - Heading: {{ARCH_S05_HEADING_HTML}}
-  - Full-width layout: 4 horizontal cards, one per layer, then body text below
-  - Each card has a small label (L1 / L2 / L3 / L4) and text: {{ARCH_S05_C1_LABEL}} / {{ARCH_S05_C1_BODY}} ... through C4
-  - Body paragraph below cards: {{ARCH_S05_BODY}}
-  - Mermaid diagram (A2A delegation chain):
+  - Body paragraph: {{ARCH_S04_BODY}}
+  - Two diagrams side by side on desktop, stacked on mobile.
+    Left = A2A delegation chain. Right = MCP server/client symmetry.
+    Each in its own white card with 1px border.
+    Left diagram code:
     ```
     sequenceDiagram
         participant U as User (depth=0)
@@ -214,14 +188,7 @@ SECTION 05 — Multi-agent — 4 layers
         A-->>U: final reply
         Note over A,C: chain timeout = 60s
     ```
-
-SECTION 06 — MCP server / client
-  - Section number + label: {{ARCH_S06_NUM}} / {{ARCH_S06_LABEL}}
-  - Heading: {{ARCH_S06_HEADING_HTML}}
-  - Two-column layout on desktop: left = MCP server card, right = MCP client card
-  - Left card body: {{ARCH_S06_SERVER_BODY}}   (implemented)
-  - Right card body: {{ARCH_S06_CLIENT_BODY}}  (implemented — stdio + HTTP; SSE deferred)
-  - Mermaid diagram (MCP symmetry):
+    Right diagram code:
     ```
     flowchart LR
         subgraph SRV["MCP Server — implemented (reyn mcp serve)"]
@@ -254,10 +221,10 @@ FOOTER
 </page_structure>
 
 <visual_treatment>
-Section backgrounds (alternate to create rhythm):
+Section background rhythm (keep readers oriented):
 - HERO: bg-hero-reyn-light.png
-- S01, S03, S05: bg-neutral-flow-light.png (subtle warm off-white texture)
-- S02, S04, S06: plain white #FFFFFF
+- S01, S03: bg-neutral-flow-light.png (subtle warm off-white texture)
+- S02, S04: plain white #FFFFFF
 - CTA: bg-neutral-flow-dark.png
 
 Diagram cards:
@@ -280,7 +247,7 @@ Typography scale (consistent with landing page):
 - Body: 16-17px
 - Label/eyebrow: 11-12px uppercase tracked
 
-Responsive: all two-column layouts collapse to single column below 768px.
+Responsive: all multi-column layouts collapse to single column below 768px.
 </visual_treatment>
 
 <constraints>
@@ -290,13 +257,14 @@ Responsive: all two-column layouts collapse to single column below 768px.
 - Mermaid is loaded from CDN: https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js
 - Output: single self-contained architecture.html with all CSS inlined
 - The page must share the same visual language as index.html (same fonts, same colors, same component patterns)
+- The page must be SHORT enough to read in 2 minutes — depth lives in the docs
 </constraints>
 
 <copy_placeholder_convention>
 All visible body copy must use {{TOKEN}} placeholders, never literal copy.
 The build script `website/build.py` substitutes them from `website/copy.yaml`.
 
-New tokens for this page (use ARCH_ prefix to avoid collision with index.html tokens):
+Tokens for this page (ARCH_ prefix to avoid collision with index.html tokens):
 
 HERO:
 - {{ARCH_PAGE_TITLE}}        — <title> text
@@ -304,32 +272,25 @@ HERO:
 - {{ARCH_HERO_H1_HTML}}      — main H1 (HTML allowed, wrap accents in <em>)
 - {{ARCH_HERO_LEDE}}         — paragraph below H1
 
-Section 01 (Layer structure):
+Section 01 (At a glance):
 - {{ARCH_S01_NUM}}            — "01"
 - {{ARCH_S01_LABEL}}          — section label
 - {{ARCH_S01_HEADING_HTML}}   — section heading
 - {{ARCH_S01_BODY}}           — body paragraph
 
-Section 02 (Agent / RouterLoop / Planner):
+Section 02 (The pieces):
 - {{ARCH_S02_NUM}}, {{ARCH_S02_LABEL}}, {{ARCH_S02_HEADING_HTML}}, {{ARCH_S02_BODY}}
+- {{ARCH_S02_C1_LABEL}}, {{ARCH_S02_C1_BODY}}  — Agent card
+- {{ARCH_S02_C2_LABEL}}, {{ARCH_S02_C2_BODY}}  — Skill card
+- {{ARCH_S02_C3_LABEL}}, {{ARCH_S02_C3_BODY}}  — Phase card
+- {{ARCH_S02_C4_LABEL}}, {{ARCH_S02_C4_BODY}}  — OS card
+- {{ARCH_S02_C5_LABEL}}, {{ARCH_S02_C5_BODY}}  — State card
 
-Section 03 (OS / Phase execution):
+Section 03 (A request, end to end):
 - {{ARCH_S03_NUM}}, {{ARCH_S03_LABEL}}, {{ARCH_S03_HEADING_HTML}}, {{ARCH_S03_BODY}}
 
-Section 04 (Skill & Phase graph):
+Section 04 (Beyond a single agent):
 - {{ARCH_S04_NUM}}, {{ARCH_S04_LABEL}}, {{ARCH_S04_HEADING_HTML}}, {{ARCH_S04_BODY}}
-
-Section 05 (Multi-agent):
-- {{ARCH_S05_NUM}}, {{ARCH_S05_LABEL}}, {{ARCH_S05_HEADING_HTML}}, {{ARCH_S05_BODY}}
-- {{ARCH_S05_C1_LABEL}}, {{ARCH_S05_C1_BODY}}  — Layer 1 card (@sub_skill)
-- {{ARCH_S05_C2_LABEL}}, {{ARCH_S05_C2_BODY}}  — Layer 2 card (run_skill)
-- {{ARCH_S05_C3_LABEL}}, {{ARCH_S05_C3_BODY}}  — Layer 3 card (delegate_to_agent)
-- {{ARCH_S05_C4_LABEL}}, {{ARCH_S05_C4_BODY}}  — Layer 4 card (reyn mcp serve)
-
-Section 06 (MCP):
-- {{ARCH_S06_NUM}}, {{ARCH_S06_LABEL}}, {{ARCH_S06_HEADING_HTML}}
-- {{ARCH_S06_SERVER_BODY}}   — MCP server card body
-- {{ARCH_S06_CLIENT_BODY}}   — MCP client card body
 
 CTA:
 - {{ARCH_CTA_HEADING_HTML}}  — CTA heading

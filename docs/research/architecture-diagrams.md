@@ -319,3 +319,40 @@ sequenceDiagram
 
     Note over PL: chat-scoped · transient\nWorkspace には永続化しない
 ```
+
+---
+
+## 11. Request end-to-end (architecture page S03 用)
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant A as Agent (ChatSession)
+    participant SK as Skill graph
+    participant PH as Phase loop
+    participant WS as Workspace + Events
+
+    U->>A: message
+    A->>A: RouterLoop picks Skill
+    A->>SK: invoke skill
+    SK->>PH: enter entry phase
+
+    loop Until transition or finish
+        PH->>PH: preprocessor (deterministic)
+        PH->>PH: LLM call (closed candidate set)
+        PH->>PH: validate output against schema
+        PH->>WS: execute Control IR ops · emit events
+        PH-->>SK: result + control decision
+
+        alt decision = transition
+            Note over SK: validate against next.input_schema
+            SK->>PH: enter next phase
+        else decision = finish
+            Note over SK: validate against final_output_schema
+            SK-->>A: final output
+        end
+    end
+
+    A-->>U: reply
+```
+
