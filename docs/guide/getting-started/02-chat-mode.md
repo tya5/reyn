@@ -6,7 +6,9 @@ audience: [human]
 
 # 02 — Chat mode
 
-`reyn chat` is an interactive REPL attached to an *agent* — the lowest-friction way to see Reyn in action before you author your own skill. Each turn runs through `skill_router`, which classifies the intent and either replies, runs a stdlib skill, or delegates to another agent. Memory is recalled and written automatically.
+`reyn chat` is the lowest-friction way to see Reyn in action — talk to it, watch it route your request to a stdlib skill, and read the answer back. No authoring required.
+
+This tutorial uses only the auto-created `default` agent. Multi-agent setup is a later topic; pointers at the end.
 
 ## Start a session
 
@@ -14,93 +16,80 @@ audience: [human]
 reyn chat
 ```
 
-That attaches to the auto-created `default` agent. To attach to a specific named agent:
+The first time you run this, Reyn auto-creates a `default` agent under `.reyn/agents/default/`. Subsequent runs reuse it.
 
-```bash
-reyn chat researcher
-```
+You'll get a `>` prompt.
 
-Type a turn:
+## Type a turn
 
 ```
 > summarize the README of this project
 ```
 
-The router picks `text_summarizer` (or whatever stdlib/project skill best matches), runs it, and prints the result. Each turn stays in the same session, persisted under `.reyn/agents/<name>/`.
+What happens:
+
+1. `skill_router` (a stdlib skill) classifies the intent.
+2. It picks the best-matching skill — for a "summarize README" request, that's typically `read_local_files` followed by `text_summarizer`, or `read_local_files` alone if the model already summarises inline.
+3. The skill runs and the answer prints below the prompt.
+4. The session stays open. Type the next turn.
+
+Try a few:
+
+```
+> what skills are available?
+> what's in src/reyn/?
+> say hi in three languages
+```
+
+Each turn is logged under `.reyn/agents/default/`.
+
+## Exit
+
+`Ctrl+D` or `/quit` ends the session. Re-running `reyn chat` resumes the same agent — its memory and history persist.
 
 ## Slash commands
 
-Lines starting with `/` are intercepted as control commands, not routed:
+Lines starting with `/` are intercepted as control commands, not routed to the LLM:
 
-- `/list` — running skill spawns and pending interventions
-- `/cancel <id>` — cancel a skill spawn
-- `/answer <id> <text>` — answer a pending `ask_user` / permission prompt
-- `/agents` — list loaded agents in this process
-- `/attach <name>` — switch the REPL to another agent
+- `/list` — show currently running skill spawns and any pending user prompts.
+- `/cancel <id>` — cancel a running skill spawn (id from `/list`).
+- `/answer <id> <text>` — answer a pending `ask_user` or permission prompt.
 
-## Multiple agents
-
-You can spin up named agents with their own roles and skill allowlists:
-
-```bash
-reyn agent new researcher --role "deep technical research, prefers primary sources"
-reyn agent new writer     --role "concise long-form prose"
-```
-
-In a chat session attached to `default`, the router may decide a request is better handled by `researcher` and emit a delegation. The reply auto-routes back; you'll see an interim acknowledgement followed by a synthesized final answer. Use `/attach researcher` to watch progress mid-chain.
-
-For structural restrictions on who-can-talk-to-whom, see [topology CLI](../../reference/cli/topology.md) and [concepts/topology](../../concepts/topology.md).
-
-## How the router picks
-
-`skill_router` reads `user_message`, the available skills (filtered by `profile.allowed_skills` if set), reachable peer agents (filtered by topology rules), and the merged memory index. It picks one path: skill, agent, or direct reply. If you want to force a particular skill, ask explicitly ("use skill_builder to ...") — the router uses the cue.
+These three are the only ones you need for default-mode use. More slash commands (`/agents`, `/attach`, `/plan`, …) become useful once you have multiple agents or long-running plans — see [reference/cli/chat](../../reference/cli/chat.md) when you get there.
 
 ## Memory is automatic
 
-The router phase reads two memory layers on every turn (no extra config needed):
+The router reads memory on every turn (no setup required) and writes durable facts back when it detects them. Two layers:
 
-- **Shared** — `.reyn/memory/` — facts visible to every agent
-- **Agent** — `.reyn/agents/<name>/memory/` — facts scoped to this agent
+- **Shared** — `.reyn/memory/` — facts visible to every agent.
+- **Agent** — `.reyn/agents/default/memory/` — facts scoped to this agent.
 
-Writes happen inside the same router turn that detected something durable. See [concepts/memory](../../concepts/memory.md) for the full model.
-
-## Inspecting and managing memory
-
-The `reyn memory` CLI operates on the **shared** layer by default:
+You can inspect what's been remembered:
 
 ```bash
-reyn memory list             # show all stored memories
-reyn memory show <slug>      # print one
-reyn memory edit <slug>      # open in $EDITOR
-reyn memory delete <slug>    # remove
+reyn memory list
+reyn memory show <slug>
 ```
 
-Pass `--agent <name>` to operate on an agent-scoped layer instead:
+See [concepts/memory](../../concepts/memory.md) for the full model.
 
-```bash
-reyn memory list --agent researcher
-reyn memory delete --agent researcher feedback_arxiv
-```
+## What's actually happening
 
-Mutating commands (`edit`, `delete`, `import`) automatically rebuild the layer's `MEMORY.md` after the change — the index never drifts from the on-disk body files.
-
-## Why chat mode is just a router skill
-
-The OS doesn't know about "chat" — it just runs a skill. `skill_router` is a normal stdlib skill that happens to choose another skill (or peer agent) to delegate to. This is the same composition pattern as any other reyn skill (P7).
+The OS doesn't know about "chat". It just runs a skill — `skill_router` — that happens to pick another skill (or, in multi-agent setups, a peer agent) to delegate to. The router skill is a normal stdlib skill, not special tooling. This is the same composition pattern any of your skills would use ([P7](../../concepts/principles.md#p7-os-is-skill-agnostic-critical)).
 
 ## What you learned
 
-- `reyn chat [agent_name]` attaches a REPL to an agent.
-- Slash commands manage spawns, interventions, and agent switching.
-- The router can delegate to peer agents; chains synthesize back to the user.
-- Memory is two-layered (shared + agent), read and written automatically.
+- `reyn chat` attaches a REPL to the auto-created `default` agent.
+- Each turn goes through `skill_router`, which picks a stdlib skill and runs it.
+- Memory is two-layered (shared + agent) and read/written automatically.
+- `/list`, `/cancel`, `/answer` are the slash commands you need at this stage.
 
 ## Where to go next
 
-You've seen Reyn working end-to-end as a chat agent. From here:
+You've seen Reyn deliver value as a chat agent. From here:
 
-- **[Tutorial 03 — Your first skill](03-your-first-skill.md)** — author a skill from a one-line description with `skill_builder`.
+- **[Tutorial 03 — Your first skill](03-your-first-skill.md)** — author a skill of your own with `skill_builder`.
 - **[Tutorial 04 — Running a skill](04-running-a-skill.md)** — run a skill from the CLI in depth (input formats, flags, event log).
 - **[Tutorial 05 — Writing an eval](05-writing-an-eval.md)** — pin behaviour with a rubric.
-- **Multi-agent**: read [concepts/multi-agent](../../concepts/multi-agent.md) and [concepts/topology](../../concepts/topology.md) to compose specialist agents into a team.
-- **Read the [principles](../../concepts/principles.md).** Understanding the eight principles makes everything in the reference make sense.
+- **Multi-agent (later):** [How-to: Build an agent team](../for-skill-authors/build-an-agent-team.md) walks through `reyn agent new`, role-specific allowlists, and `/attach`. Background reading: [concepts/multi-agent](../../concepts/multi-agent.md), [concepts/topology](../../concepts/topology.md).
+- **The why:** [concepts/principles](../../concepts/principles.md).

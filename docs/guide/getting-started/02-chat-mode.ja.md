@@ -6,7 +6,9 @@ audience: [human]
 
 # 02 — Chat モード
 
-`reyn chat` は *agent* にアタッチされたインタラクティブな REPL です。自分で Skill を作る前に Reyn を体感する最も摩擦の低い方法です。各ターンは `skill_router` を通り、意図を分類して返信、stdlib Skill の実行、または他の agent への委任を行います。Memory は自動的に検索・書き込みされます。
+`reyn chat` は Reyn を体感する最も摩擦の低い方法です。話しかけて、 stdlib Skill にルーティングされる様子を見て、 返ってきた答えを読む。 自分で何も作らずに済みます。
+
+このチュートリアルは自動作成される `default` agent のみを使います。 マルチエージェントは後のトピックです（最後にポインタを示します）。
 
 ## セッションを開始する
 
@@ -14,93 +16,80 @@ audience: [human]
 reyn chat
 ```
 
-これで自動作成された `default` agent にアタッチされます。特定の名前の agent にアタッチするには:
+初回実行時、 Reyn は `.reyn/agents/default/` 配下に `default` agent を自動作成します。 以降の実行ではこれを再利用します。
 
-```bash
-reyn chat researcher
-```
+`>` プロンプトが表示されます。
 
-ターンを入力します:
+## ターンを入力する
 
 ```
 > このプロジェクトの README を要約してください
 ```
 
-ルーターは `text_summarizer`（またはその他最もよくマッチする stdlib/project Skill）を選択し、実行して結果を表示します。各ターンは `.reyn/agents/<name>/` 配下に永続化された同じセッションにとどまります。
+何が起こるか:
+
+1. `skill_router`（stdlib Skill）が意図を分類します。
+2. 最もマッチする Skill を選びます — 「README を要約」 のような要求なら、 典型的には `read_local_files` のあとに `text_summarizer` が走るか、 モデルが返答内でインライン要約するなら `read_local_files` 単独で完結することもあります。
+3. Skill が実行され、 プロンプトの下に答えが表示されます。
+4. セッションは継続。 次のターンを入力できます。
+
+いくつか試してみてください:
+
+```
+> どんな Skill が使える？
+> src/reyn/ の中身は？
+> 3 か国語で挨拶して
+```
+
+各ターンは `.reyn/agents/default/` 配下に記録されます。
+
+## 終了する
+
+`Ctrl+D` か `/quit` でセッションを終わります。 もう一度 `reyn chat` を実行すると同じ agent が再開され、 memory と履歴は保持されています。
 
 ## スラッシュコマンド
 
-`/` で始まる行はルーティングされず、制御コマンドとして処理されます:
+`/` で始まる行は LLM にルーティングされず、 制御コマンドとして処理されます:
 
-- `/list` — 実行中の Skill スポーンと保留中の介入
-- `/cancel <id>` — Skill スポーンをキャンセル
-- `/answer <id> <text>` — 保留中の `ask_user` / Permission プロンプトに回答
-- `/agents` — このプロセスに読み込まれた agent を一覧表示
-- `/attach <name>` — REPL を別の agent に切り替える
+- `/list` — 実行中の Skill spawn と保留中のユーザープロンプトを表示。
+- `/cancel <id>` — 実行中の Skill spawn をキャンセル（id は `/list` で取得）。
+- `/answer <id> <text>` — 保留中の `ask_user` / Permission プロンプトに回答。
 
-## 複数の agent
-
-独自の役割と Skill allowlist を持つ名前付き agent を立ち上げられます:
-
-```bash
-reyn agent new researcher --role "deep technical research, prefers primary sources"
-reyn agent new writer     --role "concise long-form prose"
-```
-
-`default` にアタッチされた chat セッションでは、ルーターがリクエストを `researcher` が処理した方がよいと判断し、委任を出力することがあります。返信は自動的にルーティングされて戻ります。中間の確認の後、統合された最終回答が表示されます。チェーン中の進捗を監視するには `/attach researcher` を使用します。
-
-通信できる相手に関する構造的な制限については、[topology CLI](../../reference/cli/topology.md) と [コンセプト/topology](../../concepts/topology.md) を参照してください。
-
-## ルーターの選択方法
-
-`skill_router` は `user_message`、利用可能な Skill（`profile.allowed_skills` が設定されている場合はフィルタリング済み）、到達可能なピア agent（topology ルールによるフィルタリング済み）、マージされた Memory インデックスを読み取ります。Skill、agent、直接返信のいずれか 1 つのパスを選択します。特定の Skill を使用させたい場合は明示的に（「skill_builder を使って...」）依頼してください。ルーターはその手がかりを使います。
+default モードで使うのはこの 3 つだけです。 `/agents` / `/attach` / `/plan` などは複数 agent や長時間プランを扱うようになってから役立ちます。 そのときに [reference/cli/chat](../../reference/cli/chat.md) を参照してください。
 
 ## Memory は自動
 
-ルーター Phase はすべてのターンで 2 つの Memory レイヤーを読み取ります（追加設定不要）:
+ルーターはターンごとに memory を読み（追加設定不要）、 永続化すべき内容を検出したら書き戻します。 2 層構成です:
 
-- **Shared** — `.reyn/memory/` — すべての agent に見えるファクト
-- **Agent** — `.reyn/agents/<name>/memory/` — この agent にスコープされたファクト
+- **Shared** — `.reyn/memory/` — すべての agent から見えるファクト。
+- **Agent** — `.reyn/agents/default/memory/` — この agent にスコープされたファクト。
 
-書き込みは永続化すべき何かを検出した同じルーターターン内で行われます。完全なモデルについては [コンセプト/memory](../../concepts/memory.md) を参照してください。
-
-## Memory の確認と管理
-
-`reyn memory` CLI はデフォルトで **shared** レイヤーを操作します:
+何が記憶されているかを確認できます:
 
 ```bash
-reyn memory list             # 保存されたすべての Memory を表示
-reyn memory show <slug>      # 1 つを表示
-reyn memory edit <slug>      # $EDITOR で開く
-reyn memory delete <slug>    # 削除
+reyn memory list
+reyn memory show <slug>
 ```
 
-agent スコープのレイヤーを操作するには `--agent <name>` を渡します:
+詳細なモデルは [コンセプト/memory](../../concepts/memory.md) を参照。
 
-```bash
-reyn memory list --agent researcher
-reyn memory delete --agent researcher feedback_arxiv
-```
+## 裏で何が起きているか
 
-変更コマンド（`edit`、`delete`、`import`）は変更後に自動的にレイヤーの `MEMORY.md` を再構築します。インデックスがディスク上の body ファイルから乖離することはありません。
-
-## chat モードがルーター Skill に過ぎない理由
-
-OS は「chat」を知りません。ただ Skill を実行するだけです。`skill_router` は通常の stdlib Skill で、たまたま委任先として別の Skill（またはピア agent）を選択します。これは他の Reyn Skill と同じ組み合わせパターンです（P7）。
+OS は「chat」 という概念を知りません。 ただ Skill を実行しているだけです — それが `skill_router` で、 たまたま別の Skill（マルチエージェント構成ならピア agent）を選んで委任します。 ルーターは普通の stdlib Skill であって特別なツールではありません。 これはあなたが書く Skill と同じ合成パターンです（[P7](../../concepts/principles.md#p7-os-is-skill-agnostic-critical)）。
 
 ## 学んだこと
 
-- `reyn chat [agent_name]` で REPL を agent にアタッチします。
-- スラッシュコマンドでスポーン、介入、agent の切り替えを管理します。
-- ルーターはピア agent に委任できます。チェーンはユーザーに統合されて戻ります。
-- Memory は 2 層（shared + agent）で、自動的に読み書きされます。
+- `reyn chat` で自動作成された `default` agent に REPL がアタッチされる。
+- 各ターンは `skill_router` を通り、 stdlib Skill が選ばれて実行される。
+- Memory は 2 層（shared + agent）で、 自動的に読み書きされる。
+- このステージで必要なスラッシュコマンドは `/list` / `/cancel` / `/answer` の 3 つ。
 
 ## 次に進む
 
-Reyn が chat agent としてエンドツーエンドで動作することを確認しました。ここから:
+Reyn が chat agent として価値を提供する様子を見ました。 ここから:
 
-- **[チュートリアル 03 — はじめての Skill](03-your-first-skill.md)** — `skill_builder` を使って一行の説明から Skill を作成します。
-- **[チュートリアル 04 — Skill を実行する](04-running-a-skill.md)** — 入力フォーマット、フラグ、イベントログを含む CLI 実行の詳細。
-- **[チュートリアル 05 — eval を書く](05-writing-an-eval.md)** — ルーブリックで挙動を固定します。
-- **マルチエージェント**: [コンセプト/multi-agent](../../concepts/multi-agent.md) と [コンセプト/topology](../../concepts/topology.md) を読んで、specialist agent をチームに組み合わせる方法を学びます。
-- **[principles](../../concepts/principles.md) を読む。** 8 つの原則を理解すると、リファレンス内のすべてが意味をなします。
+- **[チュートリアル 03 — はじめての Skill](03-your-first-skill.md)** — `skill_builder` で自分の Skill を作る。
+- **[チュートリアル 04 — Skill を実行する](04-running-a-skill.md)** — 入力フォーマット / フラグ / イベントログを含む CLI 実行の詳細。
+- **[チュートリアル 05 — eval を書く](05-writing-an-eval.md)** — ルーブリックで挙動を固定する。
+- **マルチエージェント（あとで）:** [ハウツー: Agent チームを構築](../for-skill-authors/build-an-agent-team.md) が `reyn agent new`、 役割ごとの allowlist、 `/attach` を扱います。 背景: [コンセプト/multi-agent](../../concepts/multi-agent.md)、 [コンセプト/topology](../../concepts/topology.md)。
+- **なぜそうなっているか:** [コンセプト/principles](../../concepts/principles.md)。
