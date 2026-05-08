@@ -65,6 +65,11 @@ class ReynTUIApp(App):
         # — intercept F-keys before they reach Textual.
         Binding("ctrl+r", "voice_toggle", "Voice", priority=True, show=False),
         Binding("f2", "voice_toggle", "Voice (alias)", priority=True, show=False),
+        # Enter while recording = stop + transcribe + submit immediately.
+        # Lets the user dictate, decide it's clean, and send without
+        # touching the keyboard for the edit step. Gated by check_action
+        # so plain Enter in the input bar still does its normal submit.
+        Binding("enter", "voice_stop_and_submit", "Voice send", priority=True, show=False),
         Binding("escape", "voice_cancel", "Voice cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
@@ -637,7 +642,9 @@ class ReynTUIApp(App):
             except Exception as exc:
                 self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
                 return
-            self._voice_status("🔴 recording — Ctrl+R to stop · Esc to cancel")
+            self._voice_status(
+                "🔴 recording — Ctrl+R stop · Enter stop+send · Esc cancel"
+            )
             # Start the model load in the background while the user is
             # speaking. First-time load is ~30 s (download + CTranslate2
             # init). Without this pre-warm the user hits a long opaque
@@ -669,28 +676,7 @@ class ReynTUIApp(App):
                 return
             self._voice_busy = False
             if not text:
-                # Build an actionable diagnostic line so the user knows
-                # whether the mic actually captured anything.
-                dur = diag.get("duration_s", 0.0)
-                peak = diag.get("peak", 0.0)
-                reason = diag.get("reason", "silent")
-                if reason == "no_audio" or dur < 0.3:
-                    self._voice_status(
-                        "(no audio captured — mic permission? wrong device?)",
-                        style="dim #aa6666",
-                    )
-                elif reason == "silent" or peak < 0.01:
-                    self._voice_status(
-                        f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
-                        "check mic gain / system input device",
-                        style="dim #aa6666",
-                    )
-                else:
-                    self._voice_status(
-                        f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
-                        "try speaking closer / louder, or set a larger model",
-                        style="dim #aa6666",
-                    )
+                self._voice_show_empty_diagnostic(diag)
                 return
             try:
                 self.query_one("#inputbar", InputBar).append_text(text)
@@ -700,6 +686,89 @@ class ReynTUIApp(App):
             dur = diag.get("duration_s", 0.0)
             self._voice_status(
                 f"✓ inserted ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+            )
+
+    async def action_voice_stop_and_submit(self) -> None:
+        """Enter while recording — stop + transcribe + submit immediately.
+
+        Skips the manual edit step. Useful when the user is confident the
+        dictation is right and wants to send without touching the keyboard
+        again. Gated by ``check_action`` so plain Enter in the input bar
+        still submits normally; this binding only fires while the mic is
+        live.
+        """
+        if self._voice_input is None or not self._voice_input.is_recording:
+            return
+        if self._voice_busy:
+            return
+        self._voice_busy = True
+        if self._voice_input.model_loaded:
+            self._voice_status("⏳ transcribing & sending…")
+        else:
+            self._voice_status(
+                "⏳ transcribing & sending… (loading model — first run only)"
+            )
+        await asyncio.sleep(0)
+        try:
+            text, diag = await self._voice_input.stop_recording()
+        except Exception as exc:
+            self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
+            self._voice_busy = False
+            return
+        self._voice_busy = False
+        if not text:
+            # Empty transcript on the auto-submit path: surface the same
+            # diagnostic and stop short of submitting (= sending an empty
+            # turn would be worse than the user just pressing Ctrl+R again).
+            self._voice_show_empty_diagnostic(diag)
+            return
+        # Append into InputBar (so it shows up in history + matches what the
+        # user sees) and trigger the InputBar's normal submit path. That
+        # routes through `on_input_bar_user_submitted`, which handles
+        # slash-commands and session.submit_user_text identically to a
+        # human-typed Enter.
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inputbar.append_text(text)
+            inputbar.action_submit_or_confirm()
+        except Exception as exc:
+            self._voice_status(
+                f"✗ auto-submit failed: {exc}", style="bold red",
+            )
+            return
+        preview = text if len(text) <= 60 else text[:57] + "…"
+        dur = diag.get("duration_s", 0.0)
+        self._voice_status(
+            f"✓ sent ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+        )
+
+    def _voice_show_empty_diagnostic(self, diag: dict) -> None:
+        """Build an actionable status line for an empty transcription.
+
+        Shared by both the edit-then-send path (Ctrl+R twice) and the
+        immediate-send path (Ctrl+R + Enter). Tells the user whether
+        the mic captured audio, whether it was silent, or whether the
+        audio was fine but Whisper recognised nothing.
+        """
+        dur = diag.get("duration_s", 0.0)
+        peak = diag.get("peak", 0.0)
+        reason = diag.get("reason", "silent")
+        if reason == "no_audio" or dur < 0.3:
+            self._voice_status(
+                "(no audio captured — mic permission? wrong device?)",
+                style="dim #aa6666",
+            )
+        elif reason == "silent" or peak < 0.01:
+            self._voice_status(
+                f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
+                "check mic gain / system input device",
+                style="dim #aa6666",
+            )
+        else:
+            self._voice_status(
+                f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
+                "try speaking closer / louder, or set a larger model",
+                style="dim #aa6666",
             )
 
     def action_voice_cancel(self) -> None:
@@ -735,6 +804,11 @@ class ReynTUIApp(App):
         if action == "voice_cancel":
             # Only intercept Esc while we're actually recording — otherwise
             # the InputBar / SlashPicker / preview pane should keep using it.
+            return self._voice_input is not None and self._voice_input.is_recording
+        if action == "voice_stop_and_submit":
+            # Same gate as voice_cancel: Enter only behaves as "stop+send"
+            # while recording. Outside of recording it falls through to
+            # the InputBar's own Enter binding (= normal submit).
             return self._voice_input is not None and self._voice_input.is_recording
         return True
 
