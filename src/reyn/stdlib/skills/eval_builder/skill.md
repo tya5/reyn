@@ -10,6 +10,7 @@ final_output_description: |
 finish_criteria:
   - eval.md has been written at the eval_output_path resolved by the OS
   - eval_spec_result captures the path, case count, and criterion count
+  - the generated eval includes at least one negative-test case (a deliberately weak input designed to FAIL the criteria)
 graph:
   analyze_skill: [write_eval]
 routing:

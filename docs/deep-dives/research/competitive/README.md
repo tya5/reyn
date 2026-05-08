@@ -126,6 +126,7 @@
 | CrewAI | [crewai.md](crewai.md) | 2026-05-08 |
 | AutoGen | [autogen.md](autogen.md) | 2026-05-08 |
 | Dify | [dify.md](dify.md) | 2026-05-08 |
+| Semantic Kernel | [semantic-kernel.md](semantic-kernel.md) | 2026-05-09 |
 
 ## 更新方針
 

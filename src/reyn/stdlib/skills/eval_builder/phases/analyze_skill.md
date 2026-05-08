@@ -188,6 +188,14 @@ sentences. Each criterion must:
 (subjective judgments, gold-standard bars, or branch-dependent checks). These are tracked
 but excluded from pass/fail.
 
+### Evidence-bound criteria (apply before finalising each criterion)
+
+For each criterion you propose, ask: "Could a structurally-correct but content-empty output pass this criterion?" If yes, sharpen it to require evidence — the output must contain something specific derived from the input. Refer to [`eval-builder-rubric.md`](../../../../docs/guide/for-skill-authors/eval-builder-rubric.md) Principle 5 "Evidence-bound" for the discipline detail and examples.
+
+### Adversarial self-check (apply before emitting skill_analysis)
+
+At least one case in your design MUST be a negative-test case — a deliberately weak, empty, or off-topic input whose output your criteria are expected to FAIL on. This case confirms the rubric has failure-capable criteria and is not gameable by shape-only outputs. Name it clearly (e.g. `empty_input` or `off_topic_input`) and write criteria that a correct output satisfies but a bare `{}` or placeholder response does not.
+
 ### Phases with a python preprocessor
 
 If a phase has a `type: python` preprocessor step, the python computation is
@@ -231,3 +239,7 @@ resolved values is required (P3: OS is the runtime engine).
 - [ ] At most 4 criteria per phase per case.
 - [ ] `skill_dsl_path`, `skill_root`, and `eval_output_path` in the emitted artifact are
       copied verbatim from `data._resolved.*` — NOT re-derived.
+- [ ] At least one test case is a negative-test case (empty, minimal, or off-topic input)
+      with criteria expected to FAIL on a structurally-correct but content-empty output.
+- [ ] Each criterion passes the evidence-bound check: a content-empty but structurally
+      correct output must NOT satisfy it.

@@ -57,6 +57,12 @@ Rules:
 - Do NOT add `judge_model:`, `model:`, `schema:`, `### cross_phase`, or `### final` — they are not supported by the new eval skill.
 - Do NOT add commentary or markdown outside the spec format.
 
+## Evidence-bound audit (apply while writing each criterion)
+
+As you write each criterion, audit it: could a structurally-correct but content-empty output satisfy it? If yes, add an evidence clause — require the output to contain something specific derived from the input. See [`eval-builder-rubric.md`](../../../../docs/guide/for-skill-authors/eval-builder-rubric.md) Principle 5 for examples.
+
+If a criterion is genuinely shape-only (e.g. "the output contains at least one bullet") and no evidence clause is possible, include it but note it in `summary` so the human reviewer can inspect it. Shape-only criteria are not forbidden — but they should be conscious choices, not defaults.
+
 If you receive `[denied]` on a write op, do NOT retry the same path. Abort immediately with a clear explanation.
 
 ## After writing the file
