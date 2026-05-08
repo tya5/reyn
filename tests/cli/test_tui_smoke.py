@@ -650,7 +650,7 @@ async def test_docs_cursor_advances_with_j_keypress():
         panel = app.query_one("#right_panel")
 
         # Force docs tab and prime the file list with synthetic entries so the
-        # test does not depend on the project's docs/en/ layout.
+        # test does not depend on the project's docs/ layout.
         panel._panel_type = "docs"
         panel._docs_files = [Path("/tmp/a.md"), Path("/tmp/b.md"), Path("/tmp/c.md")]
         panel._docs_groups = {"": panel._docs_files}

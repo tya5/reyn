@@ -13,7 +13,7 @@ No mocks — we construct real `AgentRegistry` instances backed by real
 snapshots on a temporary `tmp_path`.
 
 Policy compliance:
-- No `unittest.mock` usage (Fake > Mock per docs/ja/contributing/testing.md)
+- No `unittest.mock` usage (Fake > Mock per docs/deep-dives/contributing/testing.ja.md)
 - No private-state assertion beyond `_last_truncation_ts` for throttle
   observation, which has no public surface and is the cleanest probe
   (alternative: time-travel patches, which would be worse)

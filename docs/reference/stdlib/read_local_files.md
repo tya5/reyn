@@ -75,7 +75,7 @@ Sample prompts that route here:
 
 - "Read README.md and tell me what reyn is."
 - "What licences are mentioned in `LICENSE`?"
-- "Summarise the philosophy section of `docs/en/concepts/principles.md`."
+- "Summarise the philosophy section of `docs/concepts/principles.md`."
 
 Sample prompts that DO NOT route here:
 

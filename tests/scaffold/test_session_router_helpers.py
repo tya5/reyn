@@ -5,7 +5,7 @@
 """Scaffolding tests for ChatSession internal router helpers.
 
 These tests were Tier 4 in the steady state per the testing policy
-(`docs/ja/contributing/testing.md`):
+(`docs/deep-dives/contributing/testing.ja.md`):
 - Use `unittest.mock.patch.object()` to fake `_build_agent`, `_invoke_narrator`,
   and other private session methods.
 - Assert directly on private state and helper return values

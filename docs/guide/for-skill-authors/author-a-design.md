@@ -252,10 +252,15 @@ Avoid: anything saturated
 
 ## See also
 
-- [`design-author-guide.md`](../../../deep-dives/spec/design/design-author-guide.md) — the
-  full operational guide (richer than this how-to)
-- [`multi-design-selection.md`](../../../deep-dives/spec/design/multi-design-selection.md) —
+The full operational guide and the OpenUI Layer 0 protocol spec live in
+the repository under `docs/deep-dives/spec/design/` and
+`docs/deep-dives/spec/openui/` (= internal contract docs, not part of
+the public site). Browse them on GitHub if you need the deeper detail:
+
+- `docs/deep-dives/spec/design/design-author-guide.md` — the full
+  operational guide (richer than this how-to)
+- `docs/deep-dives/spec/design/multi-design-selection.md` —
   three-root layout (`local` / `project` / bundled), selection priority
-- [`docs/deep-dives/spec/openui/`](../../../deep-dives/spec/openui) — the OpenUI Layer 0 protocol spec
+- `docs/deep-dives/spec/openui/` — the OpenUI Layer 0 protocol spec
   (you don't need to read it to author a design; it's the contract
   the locked zone enforces)

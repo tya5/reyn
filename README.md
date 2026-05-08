@@ -85,7 +85,7 @@ reyn run my_skill '{"type":"request","data":{"topic":"AI in education"}}'
 reyn run my_skill "Summarize AI trends in education."
 ```
 
-Full tutorial: [docs/en/guide/getting-started/02-your-first-skill.md](docs/en/guide/getting-started/02-your-first-skill.md)
+Full tutorial: [docs/guide/getting-started/02-your-first-skill.md](docs/guide/getting-started/02-your-first-skill.md)
 
 ---
 
@@ -108,7 +108,7 @@ User → Agent → Skill → OS → Phase → Workspace
 
 The LLM is a constrained decision engine: it picks a next phase from the OS-provided candidate list and produces a typed artifact. It cannot hallucinate a transition or bypass validation.
 
-Details: [docs/en/concepts/architecture.md](docs/en/concepts/architecture.md) | [docs/en/concepts/principles.md](docs/en/concepts/principles.md)
+Details: [docs/concepts/architecture.md](docs/concepts/architecture.md) | [docs/concepts/principles.md](docs/concepts/principles.md)
 
 ---
 
@@ -122,10 +122,10 @@ Built with MkDocs Material; English + Japanese (translation in progress).
 
 | Section | Live | Source |
 |---|---|---|
-| Tutorials | [tya5.github.io/reyn/docs/guide/getting-started/](https://tya5.github.io/reyn/docs/guide/getting-started/01-installation/) | [docs/en/guide/getting-started/](docs/en/guide/getting-started/) |
-| How-to | [/docs/guide/for-skill-authors/](https://tya5.github.io/reyn/docs/guide/for-skill-authors/validate-artifacts/) | [docs/en/guide/for-skill-authors/](docs/en/guide/for-skill-authors/) |
-| Reference | [/docs/reference/](https://tya5.github.io/reyn/docs/reference/cli/run/) | [docs/en/reference/](docs/en/reference/) |
-| Concepts | [/docs/concepts/](https://tya5.github.io/reyn/docs/concepts/principles/) | [docs/en/concepts/](docs/en/concepts/) |
+| Tutorials | [tya5.github.io/reyn/docs/guide/getting-started/](https://tya5.github.io/reyn/docs/guide/getting-started/01-installation/) | [docs/guide/getting-started/](docs/guide/getting-started/) |
+| How-to | [/docs/guide/for-skill-authors/](https://tya5.github.io/reyn/docs/guide/for-skill-authors/validate-artifacts/) | [docs/guide/for-skill-authors/](docs/guide/for-skill-authors/) |
+| Reference | [/docs/reference/](https://tya5.github.io/reyn/docs/reference/cli/run/) | [docs/reference/](docs/reference/) |
+| Concepts | [/docs/concepts/](https://tya5.github.io/reyn/docs/concepts/principles/) | [docs/concepts/](docs/concepts/) |
 
 Build and serve locally:
 
@@ -321,18 +321,18 @@ document. Below is the curated index it'll follow next.
 | `src/stdlib/skills/` | Bundled stdlib skills (eval, skill_builder, chat_compactor, etc.). |
 | `docs/` | Diátaxis docs site source — concepts, how-to, reference, ADRs. |
 | `cookbook/` | Example skills and configurations. |
-| `tests/` | Tier 1/2/3 tests. See `docs/en/contributing/testing.md` for the policy. |
+| `tests/` | Tier 1/2/3 tests. See `docs/deep-dives/contributing/testing.md` for the policy. |
 | `pyproject.toml` | Package metadata + tool config (ruff, pytest). |
 
 ### Recommended deep-dive entry points
 
 For "what is Reyn?" / architectural questions:
 
-- `docs/en/concepts/architecture.md` — User → Agent → Skill → OS →
+- `docs/concepts/architecture.md` — User → Agent → Skill → OS →
   Phase → Workspace overview.
-- `docs/en/concepts/principles.md` — P1–P8 invariants (= the rules
+- `docs/concepts/principles.md` — P1–P8 invariants (= the rules
   the OS enforces).
-- `docs/en/concepts/phase-vs-skill-vs-os.md` — boundary between the
+- `docs/concepts/phase-vs-skill-vs-os.md` — boundary between the
   three layers.
 - `CLAUDE.md` — Tier 1 hard rules for code-writing agents.
 
@@ -351,13 +351,13 @@ For "how does X work?" / implementation questions:
 
 For design rationale:
 
-- `docs/en/decisions/` — 23 ADRs. Each one explains a specific
+- `docs/deep-dives/decisions/` — 23 ADRs. Each one explains a specific
   decision and the alternatives considered.
 
 For testing / contribution:
 
-- `docs/en/contributing/testing.md` — Tier 1/2/3 test policy.
-- `docs/en/contributing/dogfood-discipline.md` — how Reyn was
+- `docs/deep-dives/contributing/testing.md` — Tier 1/2/3 test policy.
+- `docs/deep-dives/contributing/dogfood-discipline.md` — how Reyn was
   iterated via its own dogfood batches.
 
 When in doubt: `reyn_src_list("")` to see the top, `reyn_src_list("docs/en")`

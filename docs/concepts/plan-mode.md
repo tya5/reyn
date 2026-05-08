@@ -61,14 +61,14 @@ concurrently.
 | Plan lifecycle events | `.reyn/state/wal.jsonl` (`plan_started` / `plan_step_*` / `plan_completed`) | yes |
 | Active asyncio.Task | in-memory only | no — auto-resumes on next startup |
 
-Step outputs > 32 KB spill to a per-plan workspace file ([ADR-0024](../decisions/0024-plan-step-result-spill.md))
+Step outputs > 32 KB spill to a per-plan workspace file (ADR-0024)
 so the snapshot stays small and outputs are preserved verbatim
 (= no truncation, no data loss). Read access goes via
 `get_step_result(snap, agent_state_dir, step_id)` which transparently
 resolves inline-vs-spilled.
 
 Sub-loop LLM calls within each step are also recorded
-([ADR-0025](../decisions/0025-plan-step-llm-memoization.md)) so a
+(ADR-0025) so a
 crash mid-step doesn't re-pay the LLM cost on resume. The sub-loop's
 `call_llm_tools` invocations are keyed by `args_hash`; on resume the
 recorded results replay before the LLM is invoked, only the crashed

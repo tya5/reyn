@@ -15,7 +15,7 @@ NOTE — known bug (do NOT fix here):
   (`reyn.op_runtime.file`) so the tests cover the invariant without being
   blocked by the upstream bug. The bug should be fixed in a separate PR.
 
-See docs/en/contributing/testing.md for the tier model.
+See docs/deep-dives/contributing/testing.md for the tier model.
 """
 from __future__ import annotations
 

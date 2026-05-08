@@ -16,7 +16,7 @@ Invariants tested:
   - eval_builder skill.md declares compute_paths as trusted python step (B8-NEW-2)
   - eval_builder permissions.python contains a trusted entry for analyze_skill_resolver
 
-Testing policy (docs/ja/contributing/testing.md):
+Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - No mocks (real instances only)
   - No private-state assertions
   - No algorithm-level pins

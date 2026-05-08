@@ -57,13 +57,13 @@ chat turn は block しない:
 | Active asyncio.Task | in-memory only | 失う — restart で auto-resume |
 
 32 KB を超える step output は per-plan workspace file へ spill する
-([ADR-0024](../decisions/0024-plan-step-result-spill.md)) ので、
+(ADR-0024) ので、
 snapshot は小さいまま + truncation なしで完全 preserve。 read 側は
 `get_step_result(snap, agent_state_dir, step_id)` accessor が inline
 / spilled を透過解決。
 
 各 step の sub-loop LLM 呼び出しも記録される
-([ADR-0025](../decisions/0025-plan-step-llm-memoization.md))。 step
+(ADR-0025)。 step
 途中の crash で resume した際 LLM cost を再支払いしない。 sub-loop の
 `call_llm_tools` 呼び出しは `args_hash` で識別され、 resume 時は
 記録された結果を replay してから fresh call は crash した turn のみ

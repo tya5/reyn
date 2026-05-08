@@ -16,7 +16,7 @@ Invariants tested:
   (h) eval_builder real schema (user_message | eval_builder_request) —
       _require_parent_exists accepts 'data' as parent for 'data._prep'
 
-Testing policy (docs/ja/contributing/testing.md):
+Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - No mocks (real schema dicts + real functions)
   - No private-state assertions
   - No algorithm-level pins

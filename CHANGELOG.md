@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Release marker (rename, do not duplicate).
   At release time the maintainer renames the `[Unreleased]` header below to
   `## [0.1.0a2] — 2026-05-08` and inserts a new empty `[Unreleased]` block
-  on top. See `docs/en/contributing/release-process.md`.
+  on top. See `docs/deep-dives/contributing/release-process.md`.
 -->
 
 ## [Unreleased]
@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM post-tool empty-stop workaround — inject `(answered)` trailing user (envelope-layer fix for G12 Pattern E) (= `aab6be2`)
 - `dsl/` legacy path retired; `examples/` renamed to `cookbook/` (= `edcccbd`)
 - `dsl_root` identifier renamed to `skill_root` (= `be3ee3f`)
+- **Docs site URL structure**: migrated from `/en/` `/ja/` language-prefixed paths to suffix-based i18n (= en at root, ja at `<file>.ja.md`). Internal documentation (= journal / research / decisions / contributing / spec) consolidated under `deep-dives/` and excluded from public site. External links to `tya5.github.io/reyn/docs/en/...` URLs no longer resolve (= P1+P2+P3 restructure landed pre-PyPI).
 
 ### Fixed
 

@@ -60,4 +60,4 @@ reyn run skill_improver "improve <name>" --allow-shell
 - [リファレンス: stdlib/skill_importer](../../reference/stdlib/skill_importer.md)
 - [リファレンス: stdlib/skill_improver](../../reference/stdlib/skill_improver.md)
 - [リファレンス: lint CLI](../../reference/cli/lint.md)
-- [agent: skill_importer mapping rules](../../../en/guide/for-skill-authors/skill-importer-mapping.md)
+- [agent: skill_importer mapping rules](skill-importer-mapping.md)

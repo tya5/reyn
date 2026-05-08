@@ -114,8 +114,8 @@ Phase 指示書は output artifact のフィールドを列挙してはいけな
 
 ## 参考
 
-- [architecture.md](../../en/concepts/architecture.md) — レイヤがどう組み合わさるか
-- [phase-vs-skill-vs-os.md](../../en/concepts/phase-vs-skill-vs-os.md) — 責務境界
-- [workspace.md](../../en/concepts/workspace.md) — Workspace の詳細 (P5)
-- [events.md](../../en/concepts/events.md) — Events の詳細 (P6)
-- [Reference: llm-output-contract](../../en/reference/runtime/llm-output-contract.md) — LLM output contract
+- [architecture.md](architecture.md) — レイヤがどう組み合わさるか
+- [phase-vs-skill-vs-os.md](phase-vs-skill-vs-os.md) — 責務境界
+- [workspace.md](workspace.md) — Workspace の詳細 (P5)
+- [events.md](events.md) — Events の詳細 (P6)
+- [Reference: llm-output-contract](../reference/runtime/llm-output-contract.md) — LLM output contract

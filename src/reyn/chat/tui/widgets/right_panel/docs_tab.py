@@ -1,4 +1,4 @@
-"""Docs tab — file browser over docs/en/ Markdown files with cursor highlight."""
+"""Docs tab — file browser over docs/ Markdown files with cursor highlight."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,9 +10,9 @@ def build_docs_index(
     project_root: Path | None,
     docs_filter: str = "",
 ) -> tuple[dict[str, list[Path]], list[Path]]:
-    """Scan docs/en/ and return (groups_by_section, ordered_flat_list).
+    """Scan docs/ and return (groups_by_section, ordered_flat_list).
 
-    Returns ({}, []) when the project root or docs/en/ is missing.
+    Returns ({}, []) when the project root or docs/ is missing.
     When `docs_filter` is non-empty, only files whose stem (case-insensitive)
     contains the filter substring are kept. Sections with no matching files
     are dropped from the groups dict.
@@ -56,7 +56,7 @@ def render_docs(
         return "[#555555]  (no project root)[/]"
     docs_root = project_root / "docs" / "en"
     if not docs_root.is_dir():
-        return "[#555555]  (docs/en/ not found)[/]"
+        return "[#555555]  (docs/ not found)[/]"
 
     lines: list[str] = []
     if docs_filter:

@@ -6,7 +6,7 @@ discovery, Q8 project_context priority over web_search). They do NOT pin
 exact wording — they only check that the mitigation phrase / convention
 hint is still present, so that future edits do not silently drop it.
 
-Tier 2 per docs/ja/contributing/testing.md (OS invariant: tool /
+Tier 2 per docs/deep-dives/contributing/testing.ja.md (OS invariant: tool /
 system-prompt builders expose the documented mitigation surface).
 """
 

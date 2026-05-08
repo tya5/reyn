@@ -106,8 +106,7 @@ identical to preprocessor:
 
 - **`fail`** (default): the step's failure raises and aborts the skill.
   The skill abort is recorded as a `WorkflowAbortedError`; per
-  [ADR-0013](../decisions/0013-exception-aware-crash-lifecycle.md), the
-  per-skill snapshot is deleted (no auto-resume).
+  ADR-0013, the per-skill snapshot is deleted (no auto-resume).
 - **`skip`**: the step's failure is logged and skipped; subsequent
   steps continue.
 - **`empty`**: the step's failure produces an empty result for the
@@ -128,7 +127,7 @@ memoization. A crash mid-postprocessor:
 2. Auto-resume reads the snapshot, jumps directly to postprocessor
    replay, and skips already-committed steps via memo lookup.
 3. World-purity ops (= `file/read`, MCP read APIs) re-execute on resume
-   per [ADR-0011](../decisions/0011-world-purity-memo-invalidation.md).
+   per ADR-0011.
 
 The LLM's finish artifact is persisted to workspace before
 postprocessor starts so resume has the durable input artifact even if

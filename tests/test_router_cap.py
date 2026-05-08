@@ -10,7 +10,7 @@ agent_request).
 (``session._router_invocations_this_turn = 3``,
 ``_router_last_reason = ...``) and monkeypatch a private method
 (``_reset_router_turn_counter``). Per
-``docs/ja/contributing/testing.md`` this is Tier 4 — the test couples
+``docs/deep-dives/contributing/testing.ja.md`` this is Tier 4 — the test couples
 to internals rather than the public surface.
 
 Migration path: rewrite as a Tier 3 LLM-replay test that drives the cap

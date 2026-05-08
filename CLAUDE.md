@@ -92,8 +92,8 @@ Single format for all phases:
 
 ## Testing policy (READ BEFORE WRITING TESTS)
 
-The testing policy is at **`docs/ja/contributing/testing.md`** (English:
-`docs/en/contributing/testing.md`). It is normative — read it before adding
+The testing policy is at **`docs/deep-dives/contributing/testing.ja.md`** (English:
+`docs/deep-dives/contributing/testing.md`). It is normative — read it before adding
 or modifying tests.
 
 Key constraints (full rationale in the doc):
@@ -126,14 +126,14 @@ Key constraints (full rationale in the doc):
 
 ## When in doubt — read these (Tier 2)
 
-- **P1–P8 rationale and examples**: `docs/en/concepts/principles.md`
-- **Care boundary** (what Reyn cares / doesn't care): `docs/en/concepts/care-boundary.md`
-- **Architecture overview / component layers**: `docs/en/concepts/architecture.md`
-- **Phase vs Skill vs OS boundary**: `docs/en/concepts/phase-vs-skill-vs-os.md`
-- **Why constrain the LLM (P4)**: `docs/en/concepts/llm-as-decision-engine.md`
-- **Workspace** (P5): `docs/en/concepts/workspace.md`
-- **Events / replay** (P6): `docs/en/concepts/events.md`
-- **Permission model**: `docs/en/concepts/permission-model.md`
+- **P1–P8 rationale and examples**: `docs/concepts/principles.md`
+- **Care boundary** (what Reyn cares / doesn't care): `docs/concepts/care-boundary.md`
+- **Architecture overview / component layers**: `docs/concepts/architecture.md`
+- **Phase vs Skill vs OS boundary**: `docs/concepts/phase-vs-skill-vs-os.md`
+- **Why constrain the LLM (P4)**: `docs/concepts/llm-as-decision-engine.md`
+- **Workspace** (P5): `docs/concepts/workspace.md`
+- **Events / replay** (P6): `docs/concepts/events.md`
+- **Permission model**: `docs/concepts/permission-model.md`
 - **Input handling, ask_user, Phase Preprocessor (run_op / iterate / validate
   / lint_plan / python)**: read the corresponding stdlib skill (`skill_router`,
   `eval`, `skill_improver`) for live examples

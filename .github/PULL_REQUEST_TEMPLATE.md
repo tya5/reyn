@@ -19,8 +19,8 @@
 ## Testing
 
 Reyn has a strict, tiered testing policy. Read it before adding or
-modifying tests: [`docs/ja/contributing/testing.md`](../docs/ja/contributing/testing.md)
-(English: [`docs/en/contributing/testing.md`](../docs/en/contributing/testing.md)).
+modifying tests: [`docs/deep-dives/contributing/testing.ja.md`](../docs/deep-dives/contributing/testing.ja.md)
+(English: [`docs/deep-dives/contributing/testing.md`](../docs/deep-dives/contributing/testing.md)).
 
 - Which Tier do the new/changed tests belong to? (1: Contract / 2: OS
   invariant / 3: LLM-replay behavior / scaffold)

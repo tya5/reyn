@@ -20,7 +20,7 @@ reyn runs LLM workflows as a state machine. Phases are stateless and reusable; a
 | Understand the design | [Concepts](concepts/principles.md) |
 | Read reyn through agent-engineering lenses | [Seven lenses](guide/for-skill-authors/agent-engineering/index.md) |
 | Read LLM-targeted rubrics | [Skill-builder checklist](guide/for-skill-authors/skill-builder-checklist.md) |
-| Contribute | [Contributing](contributing/style-guide.md) |
+| Contribute | See `docs/deep-dives/contributing/` in the repository |
 
 ## The four reading modes (Diátaxis)
 

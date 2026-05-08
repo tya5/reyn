@@ -54,7 +54,7 @@ body:
     attributes:
       label: Checklist
       options:
-        - label: This aligns with Reyn's "predictability over autonomy" vision (see `docs/en/concepts/principles.md`).
+        - label: This aligns with Reyn's "predictability over autonomy" vision (see `docs/concepts/principles.md`).
           required: true
         - label: This would not require violating the P1-P8 invariants (see `CLAUDE.md`).
           required: true

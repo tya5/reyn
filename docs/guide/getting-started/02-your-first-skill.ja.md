@@ -80,4 +80,4 @@ skill を読み、変更を計画し、diff を提示します。ファイル書
 
 - Tutorial 03 — Running a skill（Phase 2）
 - Tutorial 04 — Writing an eval（Phase 2）
-- [Reference: skill.md frontmatter](../../../en/reference/dsl/skill-md.md)（英語版にフォールバック）
+- [Reference: skill.md frontmatter](../../reference/dsl/skill-md.md)（英語版にフォールバック）

@@ -5,7 +5,7 @@ and `tests/scaffold/test_intervention_registry.py` (Tier 4 — Mock + private
 state) at the ChatSession public surface (Tier 2). The scaffold files are
 removed in the same PR that lands these tests.
 
-Policy compliance (`docs/ja/contributing/testing.md`):
+Policy compliance (`docs/deep-dives/contributing/testing.ja.md`):
 - `unittest.mock` import: `AsyncMock` only, used by `_install_call_llm_tools_mock`
   to stub the LLM. No other mock usage.
 - Private state assertion: prohibited. Observation flows through:

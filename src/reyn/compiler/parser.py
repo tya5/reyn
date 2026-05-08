@@ -46,7 +46,7 @@ def parse_phase(path: Path) -> PhaseDef:
         raise ValueError(
             f"Phase '{name}': phase-level 'permissions:' was removed; "
             f"declare permissions at the skill.md frontmatter instead. "
-            f"See docs/en/reference/dsl/skill-md.md"
+            f"See docs/reference/dsl/skill-md.md"
         )
     preprocessor_raw = fm.get("preprocessor") or []
     if not isinstance(preprocessor_raw, list):

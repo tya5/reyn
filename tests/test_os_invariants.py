@@ -1,7 +1,7 @@
 """Tier 2 (OS invariant) tests.
 
 These tests guard P1-P8 invariants of the Reyn OS itself. See
-docs/en/contributing/testing.md for the testing policy and tier model.
+docs/deep-dives/contributing/testing.md for the testing policy and tier model.
 
 Each test fails when a core invariant is violated, regardless of how the
 violation was introduced. They are intentionally minimal in number (3-5

@@ -145,7 +145,7 @@ class Postprocessor(BaseModel):
     The step set, executable op set, on_error semantics, and permission gate
     are all identical to preprocessor — the only differences are fire
     position and the input/output schema source. See
-    `docs/en/decisions/0017-...` family for the design rationale.
+    `docs/deep-dives/decisions/0017-...` family for the design rationale.
     """
     # Caller-facing output (what the skill returns to its invoker).
     output_schema: dict[str, Any]

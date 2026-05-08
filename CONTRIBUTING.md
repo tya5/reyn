@@ -26,7 +26,7 @@ pip install -e ".[dev]"
 The `dev` extra installs `pytest`, `pytest-cov`, `ruff`, and `mypy`.
 
 For LLM-replay tests you need a running LiteLLM proxy (default:
-`localhost:4000`). See `docs/en/concepts/workspace.md` for environment
+`localhost:4000`). See `docs/concepts/workspace.md` for environment
 details.
 
 Run the full suite:
@@ -38,7 +38,7 @@ python -m pytest tests/ -v
 ## Testing policy
 
 The normative policy is at
-[`docs/en/contributing/testing.md`](docs/en/contributing/testing.md).
+[`docs/deep-dives/contributing/testing.md`](docs/deep-dives/contributing/testing.md).
 Read it before writing or modifying any test. The key rules are:
 
 **Tier model.** Every test belongs to exactly one tier:
@@ -88,7 +88,7 @@ There is no `black` dependency — `ruff format` covers formatting.
 
 Reyn's OS is governed by eight invariants. Violations break the runtime and
 will not be merged. The full rationale is in
-[`docs/en/concepts/principles.md`](docs/en/concepts/principles.md). The
+[`docs/concepts/principles.md`](docs/concepts/principles.md). The
 hard rules:
 
 - **P1** Phase declares only `input_schema` and instructions. It must not

@@ -14,7 +14,7 @@ Invariants tested:
   - eval skill when_not_to_use mentions eval_builder for create intent
   - eval skill routing.examples.negative includes 'eval を作って' contrast case
 
-Testing policy (docs/ja/contributing/testing.md):
+Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - Tier 1 Contract: verify public DSL contract (skill.md parsed fields)
   - No mocks — reads skill.md via _split_frontmatter (same path as enumerate_available_skills)
   - No private-state assertions

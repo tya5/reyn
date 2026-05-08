@@ -58,7 +58,7 @@ def test_safe_resolve_inside_blocks_dotdot_escape():
 
       - leading ``..`` (= ``../etc/passwd``)
       - middle ``..`` (= ``src/reyn/../../../etc/passwd``)
-      - trailing ``..`` after deep prefix (= ``docs/en/concepts/../../../../etc/passwd``)
+      - trailing ``..`` after deep prefix (= ``docs/concepts/../../../../etc/passwd``)
       - multi-bounce escape (= ``src/../../tmp/x``)
 
     The protection mechanism (= ``Path.resolve()`` canonicalises every
@@ -70,7 +70,7 @@ def test_safe_resolve_inside_blocks_dotdot_escape():
     escapes = [
         "../etc/passwd",
         "src/reyn/../../../etc/passwd",
-        "docs/en/concepts/../../../../etc/passwd",
+        "docs/concepts/../../../../etc/passwd",
         "src/../../tmp/x",
         "docs/../../etc/foo",
     ]

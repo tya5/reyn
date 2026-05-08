@@ -15,25 +15,10 @@ edit_uri: edit/main/docs/
 # docs_dir.  Add an entry here when you want to keep working notes in the
 # repo without exposing them on the public docs site.
 exclude_docs: |
-  # Engineering journals — dogfood batch logs, feature-verify notes
-  deep-dives/journal/
-
-  # Internal research notes — competitive analysis / positioning /
-  # strategic priorities / doc improvement proposals. Not user-facing
-  # OSS docs (= same category as journal/).
-  deep-dives/research/
-
-  # OpenUI = internal contract for Reyn's web UI. Not yet a neutral
-  # multi-vendor protocol (see docs/deep-dives/spec/openui/README.md framing).
-  deep-dives/spec/openui/
-
-  # Web mode design / handoff docs. User-facing pieces live under
-  # en/guide/for-skill-authors/author-a-design.md; the rest is internal
-  # contract.
-  deep-dives/spec/design/
-
-  # CLI redesign draft — tracked for design history, not policy.
-  contributing/cli-redesign.md
+  # Internal documentation — moved out of public site (P1-P3 restructure).
+  # Single subtree captures journal / research / spec / decisions /
+  # contributing (= maintainer / design history).
+  deep-dives/
 
 theme:
   name: material
@@ -53,7 +38,8 @@ theme:
 plugins:
   - search
   - i18n:
-      docs_structure: folder
+      docs_structure: suffix
+      fallback_to_default: true
       languages:
         - locale: en
           name: English
@@ -133,6 +119,7 @@ nav:
           - reference/dsl/phase-md.md
           - reference/dsl/artifact-yaml.md
           - reference/dsl/preprocessor.md
+          - reference/dsl/postprocessor.md
           - reference/dsl/graph.md
           - reference/dsl/profile-yaml.md
           - reference/dsl/topology-yaml.md
@@ -156,6 +143,11 @@ nav:
           - reference/stdlib/eval_builder.md
           - reference/stdlib/skill_router.md
           - reference/stdlib/read_local_files.md
+      - Testing:
+          - reference/testing/replay.md
+      - Other:
+          - reference/dogfood-tracing.md
+          - reference/upgrade-policy.md
   - Concepts:
       - concepts/principles.md
       - concepts/care-boundary.md
@@ -170,35 +162,9 @@ nav:
       - concepts/memory.md
       - concepts/multi-agent.md
       - concepts/topology.md
-  - Contributing:
-      - contributing/style-guide.md
-      - contributing/testing.md
-      - contributing/dogfood-discipline.md
-      - contributing/release-process.md
-  - Decisions:
-      - decisions/README.md
-      - decisions/0001-state-model-wal-snapshot.md
-      - decisions/0002-forward-replay-resume.md
-      - decisions/0003-op-purity-classification.md
-      - decisions/0004-memoization-key-design.md
-      - decisions/0005-volatile-field-stripping.md
-      - decisions/0006-schema-version-refuse-policy.md
-      - decisions/0007-bulk-resume-prompt-ux.md
-      - decisions/0008-intervention-answer-buffering.md
-      - decisions/0009-visit-count-decrement-on-resume.md
-      - decisions/0010-restore-cli-flags.md
-      - decisions/0011-world-purity-memo-invalidation.md
-      - decisions/0012-auto-resume-default.md
-      - decisions/0013-exception-aware-crash-lifecycle.md
-      - decisions/0014-wal-size-safety-net.md
-      - decisions/0015-llm-result-workspace-ref.md
-      - decisions/0016-durable-answer-buffer.md
-      - decisions/0017-parent-run-id-nested-skill-path.md
-      - decisions/0018-cross-agent-discard-notify.md
-      - decisions/0019-openui-reyn-internal-framing.md
-      - decisions/0020-skill-only-permissions.md
-      - decisions/0021-g12-attractor-structural-fix-design.md
-      - decisions/discussion-log.md
+      - concepts/plan-mode.md
+      - concepts/postprocessor.md
+      - concepts/skill-resume.md
 
 extra_css:
   - stylesheets/extra.css
@@ -211,7 +177,7 @@ extra:
   homepage: https://tya5.github.io/reyn/
   alternate:
     - name: English
-      link: /en/
+      link: /
       lang: en
     - name: 日本語
       link: /ja/
