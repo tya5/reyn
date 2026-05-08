@@ -42,11 +42,10 @@ from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
-
-from reyn.chat.tui._palette import _CORAL
 from textual.widgets import RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage
+from reyn.chat.tui._palette import _CORAL
 
 from .error_box import ErrorBox
 from .intervention import InterventionWidget
