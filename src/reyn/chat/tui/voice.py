@@ -281,7 +281,27 @@ class VoiceInput:
         )
         return self._whisper_model
 
-    def _transcribe_sync(self, audio) -> str:
+    def _transcribe_sync(self, audio) -> str:  # noqa: C901
+        # Debug-mode visibility into exactly what the in-memory path sees.
+        # Mirror what the standalone script reports so any divergence is
+        # obvious in the log.
+        if os.environ.get("REYN_VOICE_DEBUG"):
+            try:
+                logger.warning(
+                    "voice debug: in-memory audio shape=%s dtype=%s "
+                    "peak=%.4f rms=%.4f model=%s lang=%s compute=%s",
+                    getattr(audio, "shape", "?"),
+                    getattr(audio, "dtype", "?"),
+                    float(self._np.max(self._np.abs(audio))) if self._np else -1.0,
+                    float(self._np.sqrt(self._np.mean(audio.astype("float64") ** 2)))
+                    if self._np else -1.0,
+                    self._model_name, self._language, self._compute_type,
+                )
+            except Exception as exc:
+                logger.warning("voice debug pre-transcribe log failed: %s", exc)
+        return self._transcribe_real(audio)
+
+    def _transcribe_real(self, audio) -> str:
         """Run Whisper on a numpy float32 mono buffer.
 
         We deliberately do NOT normalise the audio amplitude here.
@@ -308,7 +328,7 @@ class VoiceInput:
           context across calls.
         """
         model = self._ensure_model()
-        segments, _info = model.transcribe(
+        segments, info = model.transcribe(
             audio,
             language=self._language,
             beam_size=1,
@@ -318,7 +338,21 @@ class VoiceInput:
             log_prob_threshold=-1.5,
             condition_on_previous_text=False,
         )
-        return "".join(seg.text for seg in segments).strip()
+        # Materialise the segment generator so we can both log AND return.
+        seg_list = list(segments)
+        text = "".join(s.text for s in seg_list).strip()
+        if os.environ.get("REYN_VOICE_DEBUG"):
+            try:
+                logger.warning(
+                    "voice debug: post-transcribe lang=%s prob=%.2f "
+                    "n_segments=%d text=%r",
+                    getattr(info, "language", "?"),
+                    float(getattr(info, "language_probability", 0.0)),
+                    len(seg_list), text,
+                )
+            except Exception as exc:
+                logger.warning("voice debug post-transcribe log failed: %s", exc)
+        return text
 
 
 __all__ = ["VoiceInput", "VoiceUnavailable"]
