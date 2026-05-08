@@ -126,5 +126,5 @@ to OpenAI — opt-in only, never the default.
 
 ## See also
 
-- [Customize TUI key bindings](customize-tui-keys.md) *(planned)*
-- [`reyn chat` reference](../reference/chat-cli.md) *(planned)*
+- [`reyn chat` reference](../reference/cli/chat.md)
+- Customize TUI key bindings *(doc planned — adjust `Ctrl+R` directly in `src/reyn/chat/tui/app.py` for now)*

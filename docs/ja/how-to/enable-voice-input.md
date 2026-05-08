@@ -125,5 +125,5 @@ opt-in のみでデフォルトにはしない。
 
 ## 関連
 
-- [TUI キーバインドのカスタマイズ](customize-tui-keys.md) *(予定)*
-- [`reyn chat` リファレンス](../reference/chat-cli.md) *(予定)*
+- [`reyn chat` リファレンス](../reference/cli/chat.md)
+- TUI キーバインドのカスタマイズ *(doc 予定、 当面は `src/reyn/chat/tui/app.py` の `Ctrl+R` を直接編集)*

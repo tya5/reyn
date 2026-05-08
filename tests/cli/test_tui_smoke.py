@@ -485,8 +485,9 @@ async def test_user_message_uses_richlog():
 @pytest.mark.asyncio
 async def test_status_message_routes_to_sticky_status():
     """kind=status no longer pollutes RichLog — it activates StickyStatus instead."""
-    from reyn.chat.tui.widgets.sticky_status import StickyStatus
     from textual.widgets import RichLog
+
+    from reyn.chat.tui.widgets.sticky_status import StickyStatus
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
@@ -505,8 +506,9 @@ async def test_status_message_routes_to_sticky_status():
 @pytest.mark.asyncio
 async def test_error_message_mounts_error_box():
     """kind=error mounts an ErrorBox widget (no longer a RichLog line)."""
-    from reyn.chat.tui.widgets.error_box import ErrorBox
     from textual.widgets import RichLog
+
+    from reyn.chat.tui.widgets.error_box import ErrorBox
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
         await pilot.pause()
