@@ -471,25 +471,57 @@ class ReynTUIApp(App):
             pass
 
     def action_cancel_inflight(self) -> None:
-        """Cancel the in-flight skill/model call on the attached session.
+        """Cancel the in-flight skill/plan/model call on the attached session.
 
-        Also clears the sticky ``⟳ thinking…`` indicator immediately —
-        cancellation may not produce a downstream `error` event in
-        every code path, and even when it does, the user benefits from
-        the indicator disappearing the moment they hit Ctrl+C rather
-        than waiting for the cancel to propagate.
+        Visibility: clears the sticky ``⟳ thinking…`` indicator AND writes
+        a one-line summary to the conv pane reporting how many skills /
+        plans were actually cancelled. Without this summary the user
+        couldn't tell whether Ctrl+C did anything (= "did it really
+        cancel, or was nothing in flight?").
         """
         try:
-            self.query_one("#conversation", ConversationView).hide_status()
+            conv = self.query_one("#conversation", ConversationView)
         except Exception:
-            pass
+            conv = None
+        if conv is not None:
+            conv.hide_status()
+
         session = self._get_session()
         if session is None:
+            self._voice_status(
+                "(nothing to cancel — no session attached)",
+                style="dim #aa6666",
+            )
             return
-        # Cancel all running skills
+
+        cancelled_skills = 0
         for task in list(getattr(session, "running_skills", {}).values()):
             if not task.done():
                 task.cancel()
+                cancelled_skills += 1
+        cancelled_plans = 0
+        for task in list(getattr(session, "running_plans", {}).values()):
+            if not task.done():
+                task.cancel()
+                cancelled_plans += 1
+
+        if cancelled_skills == 0 and cancelled_plans == 0:
+            self._voice_status(
+                "(nothing in-flight to cancel)", style="dim #555555",
+            )
+            return
+        parts: list[str] = []
+        if cancelled_skills:
+            parts.append(
+                f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}"
+            )
+        if cancelled_plans:
+            parts.append(
+                f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}"
+            )
+        self._voice_status(
+            f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
+        )
 
     def action_toggle_panel(self) -> None:
         """ctrl+b — open or close the right panel.

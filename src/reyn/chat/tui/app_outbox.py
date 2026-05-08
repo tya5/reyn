@@ -116,17 +116,36 @@ class OutboxRouter:
                 break
 
             handler = self.HANDLERS.get(msg.kind)
-            if handler is not None:
-                result = handler(msg, conv, header)
-                if result == _STOP:
-                    break
-                continue
+            try:
+                if handler is not None:
+                    result = handler(msg, conv, header)
+                    if result == _STOP:
+                        break
+                    continue
 
-            # Default: render the message + post-process agent turns.
-            conv.render_message(msg)
-            if msg.kind == "agent":
-                app._maybe_refresh_status(header)
-                app._maybe_render_cost_suffix(conv)
+                # Default: render the message + post-process agent turns.
+                conv.render_message(msg)
+                if msg.kind == "agent":
+                    app._maybe_refresh_status(header)
+                    app._maybe_render_cost_suffix(conv)
+            except Exception as exc:
+                # A handler crash used to silently break the outbox loop —
+                # the TUI froze on its last frame with no events flowing
+                # and no indication of the cause. Surface the failure as
+                # a one-line conv-pane error so the user can see WHY
+                # things stopped, then keep draining (= one bad message
+                # doesn't kill all subsequent ones).
+                import traceback
+                tb = traceback.format_exception_only(type(exc), exc)[-1].strip()
+                from rich.text import Text as _RichText
+                err = _RichText()
+                err.append("✗ ", style="bold red")
+                err.append(f"outbox handler [{msg.kind}] raised: ", style="red")
+                err.append(tb, style="red")
+                try:
+                    conv._write_log(err)
+                except Exception:
+                    pass
 
     # ── per-kind handlers (sentinel kinds first) ──────────────────────────────
 
