@@ -652,6 +652,12 @@ class ReynTUIApp(App):
             self._voice_status(
                 "🔴 recording — Ctrl+R stop · Enter stop+send · Esc cancel"
             )
+            # Take the InputBox out of the focus rotation + key-input path
+            # while the mic is live: prevents accidental letters typed
+            # during dictation from landing in the input field, and Tab /
+            # Shift+Tab now cycle only among right-panel widgets. Restored
+            # on every code path that ends recording.
+            self._voice_set_input_locked(True)
             # Start the model load in the background while the user is
             # speaking. First-time load is ~30 s (download + CTranslate2
             # init). Without this pre-warm the user hits a long opaque
@@ -675,8 +681,10 @@ class ReynTUIApp(App):
             except Exception as exc:
                 self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
                 self._voice_busy = False
+                self._voice_set_input_locked(False)
                 return
             self._voice_busy = False
+            self._voice_set_input_locked(False)
             if not text:
                 self._voice_show_empty_diagnostic(diag)
                 return
@@ -723,12 +731,14 @@ class ReynTUIApp(App):
             _voice_vlog(f"action_voice_stop_and_submit: stop_recording raised {exc!r}")
             self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
             self._voice_busy = False
+            self._voice_set_input_locked(False)
             return
         _voice_vlog(
             f"action_voice_stop_and_submit: stop_recording returned "
             f"len={len(text)} reason={diag.get('reason')}"
         )
         self._voice_busy = False
+        self._voice_set_input_locked(False)
         if not text:
             self._voice_show_empty_diagnostic(diag)
             return
@@ -763,6 +773,42 @@ class ReynTUIApp(App):
             )
             return
         _voice_vlog("action_voice_stop_and_submit: completed")
+
+    def _voice_set_input_locked(self, locked: bool) -> None:
+        """Lock or unlock the InputBox during voice recording.
+
+        ``locked=True``  → TextArea ``disabled = True`` (Textual blocks
+                           keyboard input AND moves focus to the next
+                           focusable widget). If a right panel is
+                           visible, focus is steered to its tabs so the
+                           user can still navigate the panel during
+                           dictation.
+        ``locked=False`` → restore TextArea + push focus back to the
+                           input bar so the user can edit / send the
+                           transcript.
+        """
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+        except Exception:
+            return
+        ta = inputbar._textarea()
+        if ta is None:
+            return
+        if locked:
+            ta.disabled = True
+            # If the right panel is open, give the user a sensible
+            # initial focus so Tab cycling works inside it. If not,
+            # Textual's auto-focus-move on `disabled=True` will land
+            # focus on App (= no widget), which is fine — the priority
+            # App-level voice bindings (Ctrl+R / Enter / Esc) still fire.
+            if self._panel_visible:
+                try:
+                    self.query_one("#right_panel", RightPanel).focus_tabs()
+                except Exception:
+                    pass
+        else:
+            ta.disabled = False
+            inputbar.focus_input()
 
     async def _yield_for_render(self) -> None:
         """Make absolutely sure a just-written status line reaches the screen
@@ -865,6 +911,7 @@ class ReynTUIApp(App):
         """
         if self._voice_input is None:
             self._voice_busy = False
+            self._voice_set_input_locked(False)
             return
         await self._yield_for_render()
         try:
@@ -874,8 +921,10 @@ class ReynTUIApp(App):
                 f"✗ auto-stop transcription failed: {exc}", style="bold red",
             )
             self._voice_busy = False
+            self._voice_set_input_locked(False)
             return
         self._voice_busy = False
+        self._voice_set_input_locked(False)
         if not text:
             self._voice_show_empty_diagnostic(diag)
             return
@@ -902,6 +951,7 @@ class ReynTUIApp(App):
         if self._voice_input is None or not self._voice_input.is_recording:
             return
         self._voice_input.cancel()
+        self._voice_set_input_locked(False)
         self._voice_status("✗ recording cancelled", style="dim #555555")
 
     def _voice_config(self):
