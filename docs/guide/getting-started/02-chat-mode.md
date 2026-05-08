@@ -36,10 +36,12 @@ What happens:
 Try a few:
 
 ```
-> what skills are available?
+> what is this project about?
 > what's in src/reyn/?
 > say hi in three languages
 ```
+
+(To see the catalogue of skills the router picks from, exit and run `reyn skills` from the shell — chat conversations don't enumerate them.)
 
 Each turn is logged under `.reyn/agents/default/`.
 
