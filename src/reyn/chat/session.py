@@ -23,7 +23,7 @@ from reyn.budget.budget import (
     format_warn_message,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, SnapshotJournal
+from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, MemoryService, SnapshotJournal
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -602,6 +602,19 @@ class ChatSession:
             events=self._chat_events,
             agent_name=self.agent_name,
             default_router_cap=_router_cap,
+        )
+
+        # PR-refactor-session-1 wave 3 PR2: memory persistence adapter.
+        # Absorbs _memory_dir / _memory_path / _run_remember / _run_forget /
+        # _read_memory_body.  The session methods are kept as 1-line delegators
+        # so PR3 (RouterHostAdapter) can re-point callers without a flag day.
+        self._memory = MemoryService(
+            agent_workspace_dir=self.workspace_dir,
+            events=self._chat_events,
+            file_write=self._file_write,
+            file_read=self._file_read,
+            file_delete=self._file_delete,
+            file_regenerate_index=self._file_regenerate_index,
         )
 
         self.running_skills: dict[str, asyncio.Task] = {}
@@ -2683,22 +2696,12 @@ class ChatSession:
     # ── RouterLoop helper methods (Wave 3 F1) ───────────────────────────────────
 
     def _memory_dir(self, layer: str) -> str:
-        """Directory for the memory layer.
-
-        layer="shared" → .reyn/memory
-        layer="agent"  → .reyn/agents/<agent_name>/memory
-        """
-        if layer == "shared":
-            return str(Path(".reyn") / "memory")
-        return str(self.workspace_dir / "memory")
+        """Directory for the memory layer. Delegates to MemoryService (wave 3 PR2)."""
+        return self._memory.memory_dir(layer)
 
     def _memory_path(self, layer: str, slug: str) -> str:
-        """Resolve layer + slug to absolute file path.
-
-        layer="shared" → .reyn/memory/<slug>.md
-        layer="agent"  → .reyn/agents/<agent_name>/memory/<slug>.md
-        """
-        return str(Path(self._memory_dir(layer)) / f"{slug}.md")
+        """Resolve layer + slug to file path. Delegates to MemoryService (wave 3 PR2)."""
+        return self._memory.memory_path(layer, slug)
 
     def _get_file_permissions_for_router(self) -> dict | None:
         """Return file permissions in the form {read: [paths], write: [paths]}
@@ -2902,94 +2905,17 @@ class ChatSession:
             }
         return {"error": result.get("error", "regenerate_index failed")}
 
-    async def _run_remember(
-        self,
-        *,
-        layer: str,
-        slug: str,
-        name: str,
-        description: str,
-        type: str,
-        body: str,
-    ) -> dict:
-        """Persist a memory entry. Constructs frontmatter, writes body file,
-        regenerates the layer's MEMORY.md.
+    async def _run_remember(self, **kwargs) -> dict:
+        """Delegates to MemoryService.remember (wave 3 PR2)."""
+        return await self._memory.remember(**kwargs)
 
-        layer: "shared" or "agent"
-        Returns: {"saved": slug, "layer": layer, "path": <relative>}
-        """
-        mem_dir = self._memory_dir(layer)
-        body_path = self._memory_path(layer, slug)
-        # Relative path for the caller to reference
-        rel_path = body_path
+    async def _read_memory_body(self, **kwargs) -> dict:
+        """Delegates to MemoryService.read_body (wave 3 PR2)."""
+        return await self._memory.read_body(**kwargs)
 
-        # Build frontmatter + body
-        frontmatter = (
-            f"---\n"
-            f"name: {name}\n"
-            f"description: {description}\n"
-            f"type: {type}\n"
-            f"---\n"
-        )
-        full_content = frontmatter + body
-
-        write_result = await self._file_write(body_path, full_content)
-        if "error" in write_result:
-            return {"error": write_result["error"]}
-
-        index_path = str(Path(mem_dir) / "MEMORY.md")
-        regen_result = await self._file_regenerate_index(
-            path=mem_dir,
-            output_path=index_path,
-            entry_template="- [{name}]({slug}.md) — {description}",
-            header="# Memory Index\n\n",
-        )
-        if "error" in regen_result:
-            return {"error": regen_result["error"]}
-
-        self._chat_events.emit(
-            "memory_saved", layer=layer, slug=slug, path=body_path,
-        )
-        return {"saved": slug, "layer": layer, "path": rel_path}
-
-    async def _read_memory_body(self, *, layer: str, slug: str) -> dict:
-        """Read a memory body file's contents.
-
-        Returns: {"layer": layer, "slug": slug, "content": <text>}
-        or {"error": <reason>} if not found.
-        """
-        body_path = self._memory_path(layer, slug)
-        result = await self._file_read(body_path)
-        if "error" in result:
-            return {"error": result["error"]}
-        return {"layer": layer, "slug": slug, "content": result["content"]}
-
-    async def _run_forget(self, *, layer: str, slug: str) -> dict:
-        """Delete a memory entry and regenerate index.
-
-        Returns: {"deleted": slug, "layer": layer}
-        or {"error": <reason>} if not found.
-        """
-        body_path = self._memory_path(layer, slug)
-        del_result = await self._file_delete(body_path)
-        if "error" in del_result:
-            return {"error": del_result["error"]}
-        if not del_result.get("deleted"):
-            return {"error": f"memory entry not found: {slug}"}
-
-        mem_dir = self._memory_dir(layer)
-        index_path = str(Path(mem_dir) / "MEMORY.md")
-        regen_result = await self._file_regenerate_index(
-            path=mem_dir,
-            output_path=index_path,
-            entry_template="- [{name}]({slug}.md) — {description}",
-            header="# Memory Index\n\n",
-        )
-        if "error" in regen_result:
-            return {"error": regen_result["error"]}
-
-        self._chat_events.emit("memory_deleted", layer=layer, slug=slug, path=body_path)
-        return {"deleted": slug, "layer": layer}
+    async def _run_forget(self, **kwargs) -> dict:
+        """Delegates to MemoryService.forget (wave 3 PR2)."""
+        return await self._memory.forget(**kwargs)
 
     async def _run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
         """Awaitable variant of _spawn_skill. Runs a single skill, awaits its
