@@ -692,9 +692,13 @@ class ReynTUIApp(App):
         still submits normally; this binding only fires while the mic is
         live.
         """
+        from .voice import _vlog as _voice_vlog
+        _voice_vlog("action_voice_stop_and_submit: entered")
         if self._voice_input is None or not self._voice_input.is_recording:
+            _voice_vlog("action_voice_stop_and_submit: no active recording, bail")
             return
         if self._voice_busy:
+            _voice_vlog("action_voice_stop_and_submit: already busy, bail")
             return
         self._voice_busy = True
         if self._voice_input.model_loaded:
@@ -703,62 +707,83 @@ class ReynTUIApp(App):
             self._voice_status(
                 "⏳ transcribing & sending… (loading model — first run only)"
             )
+        _voice_vlog("action_voice_stop_and_submit: yielding for render")
         await self._yield_for_render()
+        _voice_vlog("action_voice_stop_and_submit: calling stop_recording")
         try:
             text, diag = await self._voice_input.stop_recording()
         except Exception as exc:
+            _voice_vlog(f"action_voice_stop_and_submit: stop_recording raised {exc!r}")
             self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
             self._voice_busy = False
             return
+        _voice_vlog(
+            f"action_voice_stop_and_submit: stop_recording returned "
+            f"len={len(text)} reason={diag.get('reason')}"
+        )
         self._voice_busy = False
         if not text:
-            # Empty transcript on the auto-submit path: surface the same
-            # diagnostic and stop short of submitting (= sending an empty
-            # turn would be worse than the user just pressing Ctrl+R again).
             self._voice_show_empty_diagnostic(diag)
             return
-        # Append into InputBar (so it shows up in history + matches what the
-        # user sees) and trigger the InputBar's normal submit path. That
-        # routes through `on_input_bar_user_submitted`, which handles
-        # slash-commands and session.submit_user_text identically to a
-        # human-typed Enter.
-        try:
-            inputbar = self.query_one("#inputbar", InputBar)
-            inputbar.append_text(text)
-            inputbar.action_submit_or_confirm()
-        except Exception as exc:
-            self._voice_status(
-                f"✗ auto-submit failed: {exc}", style="bold red",
-            )
-            return
+        # Status FIRST — so even if the submit path takes a moment, the
+        # user sees the transcript landed and is being sent.
         preview = text if len(text) <= 60 else text[:57] + "…"
         dur = diag.get("duration_s", 0.0)
         self._voice_status(
             f"✓ sent ({dur:.1f}s): {preview}", style="dim #aaaaaa"
         )
+        await self._yield_for_render()
+        _voice_vlog("action_voice_stop_and_submit: about to append + submit")
+        # Bypass `inputbar.action_submit_or_confirm()` — that path threads
+        # through the slash-picker + private _submit and has been observed
+        # to leave focus + the busy-status line in a bad state when called
+        # programmatically. Instead, do the same three things _submit does
+        # (record history, clear textarea, post UserSubmitted), then
+        # explicitly refocus the input bar.
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inputbar.append_text(text)
+            ta = inputbar._textarea()
+            full_text = ta.text.strip() if ta is not None else text
+            if ta is not None:
+                ta.clear()
+            inputbar.focus_input()
+            self.post_message(InputBar.UserSubmitted(full_text))
+        except Exception as exc:
+            _voice_vlog(f"action_voice_stop_and_submit: submit raised {exc!r}")
+            self._voice_status(
+                f"✗ auto-submit failed: {exc}", style="bold red",
+            )
+            return
+        _voice_vlog("action_voice_stop_and_submit: completed")
 
     async def _yield_for_render(self) -> None:
         """Make absolutely sure a just-written status line reaches the screen
         before we begin a long synchronous operation.
 
-        Single ``await asyncio.sleep(0)`` is sometimes not enough — it yields
-        once, but Textual's compositor schedules across multiple ticks
+        Single ``await asyncio.sleep(0)`` is not enough — it yields once,
+        but Textual's compositor schedules across multiple ticks
         (widget refresh → layout → render → flush). When we then enter
-        ``asyncio.to_thread(...)`` the worker thread can hold the GIL long
-        enough to starve those follow-up ticks, leaving the previous
-        "🔴 recording" frame on screen until transcribe returns — visually
-        identical to a TUI freeze.
+        ``asyncio.to_thread(...)`` the worker thread can hold the GIL
+        long enough to starve those follow-up ticks, leaving the previous
+        frame on screen until the worker returns — visually identical to
+        a TUI freeze.
 
-        Belt + braces: explicit ``self.refresh()`` to mark the screen
-        dirty, then a ``sleep(0.05)`` (= ~3 frames at 60fps) to let the
-        compositor actually run. 50 ms is imperceptible to the user but
-        guaranteed-enough for the status line to materialise.
+        Belt + braces: explicit refresh on App + the conversation pane
+        (which is where the status line lives), then ``sleep(0.1)`` to
+        let the compositor actually run. 100 ms is imperceptible to the
+        user but guaranteed-enough for the status line to materialise.
         """
         try:
             self.refresh()
         except Exception:
             pass
-        await asyncio.sleep(0.05)
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.refresh(layout=True)
+        except Exception:
+            pass
+        await asyncio.sleep(0.1)
 
     def _voice_show_empty_diagnostic(self, diag: dict) -> None:
         """Build an actionable status line for an empty transcription.
