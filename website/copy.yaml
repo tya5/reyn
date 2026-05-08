@@ -43,6 +43,8 @@ OG_IMAGE: "https://tya5.github.io/reyn/assets/banner-hero-reyn-main.png"
 OG_IMAGE_ALT: "Reyn — LLM agent workflow OS, on a clay-coloured banner"
 
 # ── header / nav ────────────────────────────────────────────────────────────
+NAV_ARCH: "Architecture"
+NAV_ARCH_HREF: "architecture.html"
 NAV_DOCS: "Docs"
 NAV_GITHUB: "GitHub"
 NAV_GITHUB_HREF: "https://github.com/tya5/reyn"
