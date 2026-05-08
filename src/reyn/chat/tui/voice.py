@@ -49,6 +49,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Optional sink for REYN_VOICE_DEBUG — write directly to a file so the
+# user doesn't need to redirect stderr (which can interfere with the
+# Textual rendering pipeline). Path is fixed so `tail -f` works.
+_DEBUG_LOG_PATH = "/tmp/reyn-voice.log"
+
+
+def _vlog(msg: str) -> None:
+    """Append one line to the voice debug log when REYN_VOICE_DEBUG is set."""
+    if not os.environ.get("REYN_VOICE_DEBUG"):
+        return
+    try:
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{_time.strftime('%H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
 
 class VoiceUnavailable(RuntimeError):
     """Raised when the optional ``reyn[voice]`` deps cannot be imported."""
@@ -225,9 +241,9 @@ class VoiceInput:
                     w.setframerate(self._sample_rate)
                     w.writeframes(pcm.tobytes())
                 diag["wav_path"] = wav_path
-                logger.warning(
-                    "voice debug: saved %.2fs / peak=%.3f to %s",
-                    diag["duration_s"], diag["peak"], wav_path,
+                _vlog(
+                    f"WAV saved: {diag['duration_s']:.2f}s / "
+                    f"peak={diag['peak']:.3f} → {wav_path}"
                 )
             except Exception as exc:
                 logger.warning("voice debug WAV dump failed: %s", exc)
@@ -287,18 +303,23 @@ class VoiceInput:
         # obvious in the log.
         if os.environ.get("REYN_VOICE_DEBUG"):
             try:
-                logger.warning(
-                    "voice debug: in-memory audio shape=%s dtype=%s "
-                    "peak=%.4f rms=%.4f model=%s lang=%s compute=%s",
-                    getattr(audio, "shape", "?"),
-                    getattr(audio, "dtype", "?"),
-                    float(self._np.max(self._np.abs(audio))) if self._np else -1.0,
+                peak = (
+                    float(self._np.max(self._np.abs(audio)))
+                    if self._np is not None else -1.0
+                )
+                rms = (
                     float(self._np.sqrt(self._np.mean(audio.astype("float64") ** 2)))
-                    if self._np else -1.0,
-                    self._model_name, self._language, self._compute_type,
+                    if self._np is not None else -1.0
+                )
+                _vlog(
+                    f"pre-transcribe: shape={getattr(audio, 'shape', '?')} "
+                    f"dtype={getattr(audio, 'dtype', '?')} "
+                    f"peak={peak:.4f} rms={rms:.4f} "
+                    f"model={self._model_name} lang={self._language} "
+                    f"compute={self._compute_type}"
                 )
             except Exception as exc:
-                logger.warning("voice debug pre-transcribe log failed: %s", exc)
+                _vlog(f"pre-transcribe log failed: {exc}")
         return self._transcribe_real(audio)
 
     def _transcribe_real(self, audio) -> str:
@@ -343,15 +364,13 @@ class VoiceInput:
         text = "".join(s.text for s in seg_list).strip()
         if os.environ.get("REYN_VOICE_DEBUG"):
             try:
-                logger.warning(
-                    "voice debug: post-transcribe lang=%s prob=%.2f "
-                    "n_segments=%d text=%r",
-                    getattr(info, "language", "?"),
-                    float(getattr(info, "language_probability", 0.0)),
-                    len(seg_list), text,
+                _vlog(
+                    f"post-transcribe: lang={getattr(info, 'language', '?')} "
+                    f"prob={float(getattr(info, 'language_probability', 0.0)):.2f} "
+                    f"n_segments={len(seg_list)} text={text!r}"
                 )
             except Exception as exc:
-                logger.warning("voice debug post-transcribe log failed: %s", exc)
+                _vlog(f"post-transcribe log failed: {exc}")
         return text
 
 
