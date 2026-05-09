@@ -769,19 +769,25 @@ class RightPanel(Widget):
     # ── generic 'c'-to-copy plumbing ────────────────────────────────────────
 
     def _copy_current_view(self) -> None:
-        """Copy whatever the right panel is currently showing.
+        """Copy whatever region of the right panel currently has focus.
 
-        Routes based on whether the preview pane is open:
+        Focus-based routing — matches how the user reads the panel:
 
-          preview visible → copy the same content that's in preview
-                            (= cursor's event / memory entry / doc /
-                            agents bundle, as text)
-          preview hidden  → copy the upper panel's main content for the
-                            active tab (= the rendered tab view, as
-                            plain text via Rich Console)
+          tabs focused / _PanelTop focused → copy upper-panel content
+                                              (= the active tab's main
+                                              renderable, as plain text)
+          _PreviewPane focused             → copy preview content
+                                              (= the cursor's detail view)
 
-        Status confirmation is written to the conv pane via the same
-        sticky-status auto-clear pattern other tabs use.
+        Falls back to upper-panel copy when focus is outside the panel
+        entirely (= ``c`` was triggered programmatically or focus is on
+        an unrelated widget). The user's mental model is "I'm looking
+        at X → press c → X is in my clipboard"; focus is the most
+        reliable signal of "what they're looking at" because preview
+        can stay open while they're navigating tabs.
+
+        Status confirmation flows through the conv pane's sticky-status
+        widget — auto-clears after 2.5 s.
         """
         try:
             text, label = self._build_copy_payload()
@@ -805,10 +811,31 @@ class RightPanel(Widget):
             )
 
     def _build_copy_payload(self) -> tuple[str | None, str]:
-        """Return ``(text, label)`` for the currently-visible right-panel content."""
-        if self._preview_visible:
+        """Return ``(text, label)`` for the focused right-panel region.
+
+        Routes by *focus*, not by preview visibility — the user can keep
+        the preview open while navigating tabs in the upper area, and
+        the keystroke should target whichever region is "live" in their
+        attention. Tabs / _PanelTop = main; _PreviewPane = preview;
+        anything else = main (safest default — the upper area is where
+        first-time users land).
+        """
+        if self._is_preview_focused():
             return self._build_preview_copy_text()
         return self._build_main_copy_text()
+
+    def _is_preview_focused(self) -> bool:
+        """True iff focus lives inside the preview pane right now."""
+        focused = self.app.focused
+        if focused is None:
+            return False
+        try:
+            preview = self.query_one("#preview-pane", _PreviewPane)
+        except Exception:
+            return False
+        if focused is preview:
+            return True
+        return any(a is preview for a in focused.ancestors)
 
     def _build_preview_copy_text(self) -> tuple[str | None, str]:
         """Plain-text version of the active preview content.
