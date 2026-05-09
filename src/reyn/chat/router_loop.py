@@ -734,6 +734,13 @@ class RouterLoop:
         # delegate_to_agent paths.  Defense Layer B (skill-name
         # validation) is applied inside the handler.
         "invoke_skill",
+        # Phase 3.5-B-mid — mcp cluster.  Handlers access the
+        # RouterHostAdapter via ctx.router_state.host so the session-
+        # level MCPClient cache is preserved (= no per-call re-handshake
+        # when the LLM repeatedly calls list_mcp_tools / call_mcp_tool).
+        # _normalise_router_tool_result unwraps list_mcp_servers and
+        # list_mcp_tools dict envelopes back to bare list shape.
+        "list_mcp_servers", "list_mcp_tools", "call_mcp_tool",
     })
 
     def _build_router_caller_state(self) -> Any:
@@ -807,6 +814,11 @@ class RouterLoop:
             # synthesis path, which is fine for tests that don't exercise
             # permission gating.
             op_context_factory=getattr(self.host, "make_router_op_context", None),
+            # Host duck-type (= for mcp handlers; Phase 3.5-B-mid).  MCP
+            # handlers call ``host.mcp_list_servers / mcp_list_tools /
+            # mcp_call_tool`` directly to preserve the session-level
+            # MCPClient cache (= no per-call re-handshake).
+            host=self.host,
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
@@ -862,6 +874,14 @@ class RouterLoop:
             if isinstance(result, dict):
                 return result.get("entries", [result])
             return result
+        if name == "list_mcp_servers":
+            if isinstance(result, dict) and "servers" in result:
+                return result["servers"]
+            return result
+        if name == "list_mcp_tools":
+            if isinstance(result, dict) and "tools" in result:
+                return result["tools"]
+            return result
         return result
 
     async def _invoke_router_tool(self, name: str, args: dict) -> Any:
@@ -890,16 +910,6 @@ class RouterLoop:
             return await self._remember(layer=layer, **args)
         if name == "forget_memory":
             return await self._forget(args["layer"], args["slug"])
-
-        # D. MCP
-        if name == "list_mcp_servers":
-            return await self.host.mcp_list_servers()
-        if name == "list_mcp_tools":
-            return await self.host.mcp_list_tools(args["server"])
-        if name == "call_mcp_tool":
-            return await self.host.mcp_call_tool(
-                args["server"], args["tool"], args["args"]
-            )
 
         # E + F (web + reyn_src) + G (plan) + B2 (delegate_to_agent) +
         # A1-A4 (catalog) are dispatched via the unified registry — see

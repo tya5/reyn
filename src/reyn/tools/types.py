@@ -105,6 +105,14 @@ class RouterCallerState:
     # pending_chain semantics would break for sub-skill delegations.
     run_skill_fn: Callable[..., Awaitable[Any]] | None = None
 
+    # RouterLoopHost reference for handlers that need duck-typed access
+    # to host methods not covered by individual callable fields (=
+    # MCP tools that already shipped with ``ctx.router_state`` treated as
+    # host duck-type before Phase 3 step 2 introduced the typed sub-object).
+    # When set, handlers may access ``rs.host.mcp_list_servers()`` etc.
+    # directly.  Phase-side and test sites leave it None.
+    host: Any = None
+
 
 @dataclass
 class PhaseCallerState:

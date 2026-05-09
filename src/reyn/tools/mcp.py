@@ -224,20 +224,39 @@ async def _handle_call_mcp_tool(
 # ── Private helpers ───────────────────────────────────────────────────────────
 
 def _require_host(ctx: ToolContext) -> Any:
-    """Extract host from ctx.router_state, raising if absent.
+    """Extract host from ctx.router_state.host, raising if absent.
 
-    The router_state is set by the router dispatcher before calling
-    tool handlers. For MCP tools, it must carry a host object with
-    mcp_list_servers / mcp_list_tools / mcp_call_tool async methods.
+    Production wiring (Phase 3.5-B-mid): RouterLoop sets
+    ``ctx.router_state.host`` to the RouterHostAdapter instance so MCP
+    handlers can call ``host.mcp_list_servers()`` etc. directly,
+    preserving the existing session-level mcp_clients cache (= no
+    re-handshake per call).
+
+    Backward-compat: pre-Phase-3-step-2 tests that assigned
+    ``ctx.router_state = some_host_stub`` (= router_state IS the host
+    duck-type, not a RouterCallerState) still work via the duck-type
+    fallback below.
     """
-    host = ctx.router_state
-    if host is None:
+    rs = ctx.router_state
+    if rs is None:
         raise RuntimeError(
-            "MCP tool handlers require ctx.router_state to carry the "
+            "MCP tool handlers require ctx.router_state.host to carry the "
             "RouterHostAdapter (set by the router dispatcher before calling "
             "the handler). router_state is None — this is a dispatcher wiring bug."
         )
-    return host
+    # Phase 3.5+ path: typed RouterCallerState with .host populated.
+    host = getattr(rs, "host", None)
+    if host is not None:
+        return host
+    # Backward-compat: pre-typed router_state = host stub.
+    if hasattr(rs, "mcp_list_servers"):
+        return rs
+    raise RuntimeError(
+        "MCP tool handlers require ctx.router_state.host to carry the "
+        "RouterHostAdapter (Phase 3.5-B-mid wiring), or for the legacy "
+        "router_state = host stub pattern, the stub must expose "
+        "mcp_list_servers / mcp_list_tools / mcp_call_tool methods."
+    )
 
 
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
