@@ -134,6 +134,7 @@
 | **Dify** | ノーコード・即戦力 stdlib・日本市場実績 (Kakaku.com/CTC) で最も日本市場に浸透している競合。Workflow モードは確定的だが LLM 出力の OS レベル強制バリデーションなし。クラッシュ回復は "Closed as not planned"。ガバナンス最優先のエンジニア向けには Reyn の設計が優位 |
 | **OpenClaw** | 爆発的採用（370K stars、500K インスタンス）で「デファクトの grassroots エージェント OS」になりつつある。LLM 自律度最大・エコシステム最大。一方で 138 CVE・ambient authority・手動クラッシュ回復という 3 点がエンタープライズ採用の障壁。Reyn は「OpenClaw の governance 版」として差別化可能 |
 | **Hermes Agent** | 「自己改善するエージェント」という新カテゴリを定義。GEPA (ICLR 2026 Oral) + 永続メモリ + Kanban は LangGraph/CrewAI にない独自性。ただし v0.x の API 不安定・監査ログ未出荷により本番エンタープライズ採用は時期尚早。2026 末 v1.0 で状況が変化する可能性があるため要監視 |
+| **Pi (pi-mono)** | OpenClaw の基盤フレームワーク（44.3K stars）。4 ツール + 200 トークン SP + YOLO モデルの「最小コーディングエージェント」。**直接競合はない**（コーディング CLI カテゴリ）が、設計哲学が Reyn と正反対（YOLO vs Permission Gate）。「Pi でプロトタイプ → Reyn で本番化」という補完シナリオが成立しうる |
 
 ---
 
@@ -149,6 +150,7 @@
 | Semantic Kernel | [semantic-kernel.md](semantic-kernel.md) | 2026-05-09 |
 | OpenClaw | [openclaw.md](openclaw.md) | 2026-05-09 |
 | Hermes Agent | [hermes-agent.md](hermes-agent.md) | 2026-05-09 |
+| Pi (pi-mono) | [pi.md](pi.md) | 2026-05-09 |
 
 ## 更新方針
 
