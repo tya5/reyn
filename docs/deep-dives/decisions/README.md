@@ -82,6 +82,8 @@ historical value with status updated to "superseded by ADR-XXXX").
 | ADR | Topic |
 |---|---|
 | [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
+| [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
+| [0028](0028-embedded-web-server-ux.md) | Embedded Web Server — TUI ライフサイクルに連動、孤児プロセスなし (Proposed) |
 
 ## Format
 
