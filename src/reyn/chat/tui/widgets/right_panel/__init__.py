@@ -619,17 +619,34 @@ class RightPanel(Widget):
         from rich.text import Text as RichText
 
         head = RichText()
-        ok = item.get("status") == "ok"
-        head.append("✓ " if ok else "✗ ",
-                    style="bold " + ("#44cc88" if ok else "#ff6644"))
+        status = item.get("status", "?")
+        if status == "ok":
+            head_glyph, head_style = "✓ ", "#44cc88"
+        elif status == "stuck":
+            head_glyph, head_style = "⊘ ", "#ffaa44"
+        else:
+            head_glyph, head_style = "✗ ", "#ff6644"
+        head.append(head_glyph, style="bold " + head_style)
         head.append(item.get("skill_name", "?"), style="bold #dddddd")
         head.append("\n")
         head.append("agent: ", style="dim")
         head.append(item.get("agent", "?"), style="#dddddd")
         head.append("\n")
         head.append("status: ", style="dim")
-        head.append(item.get("status", "?"),
-                    style="#44cc88" if ok else "#ff6644")
+        if status == "stuck":
+            head.append(
+                f"stuck (last event: {item.get('stuck_at', '?')})",
+                style="bold #ffaa44",
+            )
+            head.append(
+                "\n           "
+                "no workflow_finished / workflow_aborted in the log — "
+                "the run was likely killed mid-execution "
+                "(SIGKILL / crash / abandoned session)",
+                style="dim #aa8844",
+            )
+        else:
+            head.append(status, style=head_style)
         head.append("\n")
         head.append("duration: ", style="dim")
         head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
@@ -1036,7 +1053,14 @@ class RightPanel(Widget):
         lines.append(f"# Reyn skill run · {item.get('skill_name', '?')}")
         lines.append(f"# agent:    {item.get('agent', '?')}")
         lines.append(f"# run_id:   {item.get('run_id', '?')}")
-        lines.append(f"# status:   {item.get('status', '?')}")
+        status = item.get("status", "?")
+        if status == "stuck":
+            lines.append(
+                f"# status:   stuck (last event: {item.get('stuck_at', '?')}) "
+                f"-- run was killed mid-execution; no terminal event"
+            )
+        else:
+            lines.append(f"# status:   {status}")
         lines.append(f"# duration: {item.get('duration_s', 0):.1f}s")
         if llm_calls > 0:
             lines.append(f"# llm:      {llm_calls} call(s)")

@@ -123,12 +123,20 @@ def _recent_skill_runs_for_agent(
         # Terminal-type → status mapping. Includes legacy
         # `skill_run_completed` shape for forward-compat with future
         # event renames; new code emits workflow_finished/aborted.
+        # When the LAST event is NOT a known terminal type, the run
+        # never finished cleanly — typical causes are session crash,
+        # SIGKILL, exception escaping the OS layer, or stdio fd
+        # corruption mid-LLM-call. We mark these as "stuck" so the
+        # display can distinguish them from genuine aborts.
         if ev_type in ("workflow_finished", "skill_run_completed"):
             status = "ok"
+            stuck_at = ""
         elif ev_type in ("workflow_aborted", "skill_run_failed"):
             status = "aborted"
+            stuck_at = ""
         else:
-            status = ev_type or "unknown"
+            status = "stuck"
+            stuck_at = ev_type or "unknown"
 
         # Duration — both timestamps include timezone offsets in the
         # current event format (e.g. "2026-05-09T08:44:43.210059+09:00").
@@ -167,6 +175,9 @@ def _recent_skill_runs_for_agent(
             # session-local map keyed on the full id.
             "run_id_full": run_id or "",
             "status": status,
+            # Last event type when status == "stuck"; lets the renderer
+            # show "(stuck @ llm_called)" instead of just "(llm_called)".
+            "stuck_at": stuck_at,
             "duration_s": duration_s,
             "ts": ts[:19].replace("T", " "),
             # Carry the absolute path so the preview pane can re-read
@@ -584,16 +595,29 @@ def render_agents(
                 pfx, _ = _cursor_prefix(len(flat_items))
                 line = RichText()
                 line.append(pfx, style=_CORAL)
-                # status colour: ok green, anything else red/coral.
-                status_colour = (
-                    "#44cc88" if s["status"] == "ok" else "#ff6644"
-                )
-                line.append("✓ " if s["status"] == "ok" else "✗ ", style=status_colour)
+                # 3-colour glyph based on terminal status:
+                #   ok      → green ✓
+                #   aborted → red ✗  (= explicit failure event)
+                #   stuck   → amber ⊘ (= no terminal event; likely a
+                #                       crashed / killed prior session)
+                status = s["status"]
+                if status == "ok":
+                    glyph, glyph_style = "✓ ", "#44cc88"
+                elif status == "stuck":
+                    glyph, glyph_style = "⊘ ", "#ffaa44"
+                else:
+                    glyph, glyph_style = "✗ ", "#ff6644"
+                line.append(glyph, style=glyph_style)
                 line.append(s["skill_name"], style="#bbbbbb")
                 if s["duration_s"] > 0:
                     line.append(f"  {s['duration_s']:.1f}s", style="#555555")
-                if s["status"] != "ok":
-                    line.append(f"  ({s['status']})", style="#aa6655")
+                if status == "stuck":
+                    line.append(
+                        f"  (stuck @ {s.get('stuck_at', '?')})",
+                        style="#aa8844",
+                    )
+                elif status != "ok":
+                    line.append(f"  ({status})", style="#aa6655")
                 if s["ts"]:
                     line.append(f"  {s['ts']}", style="#444444")
                 recent_node.add(line)
