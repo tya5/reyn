@@ -4,46 +4,64 @@ name: search
 input: user_message
 role: mcp_researcher
 can_finish: true
-allowed_ops: [web_fetch]
+allowed_ops: []
+preprocessor:
+  - type: python
+    module: ./registry_fetch.py
+    function: fetch_registry_results
+    into: data.registry
+    output_schema:
+      type: object
+      properties:
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              name:        {type: string}
+              repo_url:    {type: string}
+              description: {type: string}
+            required: [name, repo_url, description]
+        source:
+          type: string
+          description: "registry | registry_stale | error"
+        query:
+          type: string
+      required: [candidates, source, query]
 ---
 
-Search the GitHub MCP Registry for servers relevant to the user's capability request.
-You MUST complete this entire phase with exactly ONE web_fetch call — no more.
+The MCP registry has already been queried by the OS preprocessor. Use only the data in
+`data.registry` — do NOT call any ops or fetch any URLs.
 
-## Step 1 — Extract search keyword
+## Step 1 — Check preprocessor result
 
-From the user's request, extract the most concise English keyword(s) that describe the capability
-needed (1–3 words). Examples:
-- "GitHub リポジトリの操作" → `github`
-- "web 検索がしたい" → `search`
-- "PostgreSQL データベースに接続したい" → `database`
-- "Slack にメッセージを送りたい" → `slack`
+`data.registry.source` tells you what happened:
+- `"registry"` — fresh results from registry.modelcontextprotocol.io.
+- `"registry_stale"` — registry was unreachable; these are cached results from up to 24h ago.
+- `"error"` — registry unreachable and no cache available.
 
-## Step 2 — ONE web_fetch (no more)
+`data.registry.query` is the keyword that was searched.
+`data.registry.candidates` is the list of servers returned (may be empty).
 
-Perform exactly one web_fetch:
+## Step 2 — Filter by relevance
 
-```
-web_fetch: https://github.com/mcp?search={keyword}
-prompt: Find all <a> tags whose href attribute starts with "/mcp/". For each, return the exact
-        href string as it appears in the HTML (e.g. "/mcp/github/github-mcp-server").
-        Do NOT modify, abbreviate, or infer the owner or repo name — copy it verbatim.
-        Exclude hrefs where the first path segment after "/mcp/" is any of:
-        mcp-clients, servers, server, blob, tree, graphs, issues, pulls, actions,
-        wiki, security, dist, bridges, main, ga, docs, assets.
-        Return a plain newline-separated list of exact href strings only.
-```
+From `data.registry.candidates`, keep only the servers relevant to the user's request.
+A server is relevant if its name or description plausibly matches the capability asked for.
 
-After this fetch, go directly to Step 3. Do not call web_fetch again for any reason.
+If `data.registry.source` is `"error"`, set `candidates: []` and note the failure in the
+result. Do not attempt to fetch anything yourself — that would be a P3 violation.
 
-## Step 3 — Return result immediately
+## Step 3 — Return mcp_candidate_list
 
-Using only the href paths from Step 2, finish with `mcp_candidate_list`.
-Do NOT call web_fetch again. Do NOT fetch individual repository pages for descriptions.
+Finish with the `mcp_candidate_list` artifact containing only the relevant servers.
 
-For each href `/mcp/{owner}/{repo}` (use the exact owner and repo strings — never guess):
-- `name`: `{owner}/{repo}`
-- `repo_url`: `https://github.com/{owner}/{repo}`
-- `description`: a one-line description inferred from the repo name alone
+For each kept candidate:
+- `name`: use `candidate.name` verbatim (e.g. `"capital.hove/read-only-local-postgres-mcp-server"`)
+- `repo_url`: use `candidate.repo_url` verbatim
+- `description`: use `candidate.description` verbatim — do NOT invent or paraphrase
 
-If Step 2 returned no valid paths, set `candidates: []`.
+If no candidates are relevant (or the list is empty), set `candidates: []`.
+
+Note: Anthropic's official reference servers (e.g. for GitHub, filesystem, memory) are not
+registered in the registry. If the user asks for them specifically, mention in a follow-up
+that they can be found at `https://github.com/orgs/modelcontextprotocol/repositories`.

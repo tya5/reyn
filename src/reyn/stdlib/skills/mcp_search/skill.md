@@ -1,18 +1,24 @@
 ---
 type: skill
 name: mcp_search
-description: Search github.com/mcp for MCP servers relevant to a natural-language capability request
+description: Search the MCP registry for servers relevant to a natural-language capability request
 entry: search
 final_output: mcp_candidate_list
 final_output_description: |
-  List of MCP server candidates from the GitHub MCP Registry that match the requested capability.
+  List of MCP server candidates from registry.modelcontextprotocol.io that match the requested capability.
   Empty list if no relevant servers are found.
 finish_criteria:
-  - github.com/mcp has been fetched
+  - The MCP registry has been queried (via preprocessor)
   - Candidates have been filtered by relevance to the user's request
   - Result list is returned (may be empty)
 graph:
   search: []
+permissions:
+  python:
+    - module: ./registry_fetch.py
+      function: fetch_registry_results
+      mode: trusted
+      timeout: 20
 routing:
   intents: [task]
   when_to_use:
@@ -33,8 +39,14 @@ routing:
 
 ## Overview
 
-Fetches the curated MCP server registry at `github.com/mcp` and returns servers relevant to the
-requested capability. Caller is responsible for selection when multiple candidates are returned.
+Queries the official MCP registry at `registry.modelcontextprotocol.io` and returns servers
+relevant to the requested capability. Results come from a deterministic preprocessor; the LLM
+only filters and presents them. Caller is responsible for selection when multiple candidates are
+returned.
+
+Note: Anthropic's official reference servers (e.g. `modelcontextprotocol/server-github`) are not
+yet listed in the registry. For these, the fallback is to search GitHub directly at
+`https://github.com/orgs/modelcontextprotocol/repositories`.
 
 ## Input
 
