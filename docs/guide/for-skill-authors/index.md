@@ -42,7 +42,6 @@ Running skills in production — crash recovery, auditing, cost control.
 
 - **[Crash recovery and resume](crash-recovery-and-resume.md)** — how the WAL + forward-replay works, how to control resume behaviour, and when to reset. **Start here before deploying to production.**
 - **[Audit and explainability](audit-and-explainability.md)** — reading the events log, what it proves, and how to use it for compliance or internal review.
-- **[Cost and model selection](cost-and-model-selection.md)** — why cheaper models stay stable under P4 constraints, and how to tune the cost/quality trade-off.
 
 ## Operations
 

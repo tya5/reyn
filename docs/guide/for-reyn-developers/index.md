@@ -14,7 +14,7 @@ If you're building skills on top of Reyn rather than modifying the OS itself, se
 
 ## Read first
 
-**[CLAUDE.md](../../../../CLAUDE.md)** — the invariants every code-writing agent (and human contributor) must follow. P1–P8 are hard constraints, not guidelines.
+**`CLAUDE.md`** (in the repo root) — the invariants every code-writing agent (and human contributor) must follow. P1–P8 are hard constraints, not guidelines.
 
 **[concepts/principles.md](../../concepts/principles.md)** — the *why* behind P1–P8, with worked examples.
 
@@ -42,11 +42,6 @@ The OS (`kernel/runtime.py`) is the only thing that calls the LLM, executes Cont
 ### Understanding the system
 
 - **[P1–P8 and the code that enforces them](principles-and-code.md)** — file-by-file map of how each principle is mechanically upheld.
-- **[Events and replay](events-and-replay.md)** — how the append-only event log works, and how to replay a bug from a production log.
-
-### Contributing
-
-- **[Contributing guide](contributing.md)** — PR workflow, P7 checklist, test tier requirements.
 
 ---
 
