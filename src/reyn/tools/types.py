@@ -1,4 +1,4 @@
-"""Type definitions for the unified tool registry (ADR-0026 M1).
+"""Type definitions for the unified tool registry (ADR-0026 M1/M4).
 
 ToolDefinition is the single source of truth for a capability's
 identity, metadata, gates, and handler. ToolGates encodes the
@@ -6,6 +6,9 @@ per-protocol allow/deny declaration. ToolContext is the
 protocol-agnostic execution context handed to handlers; per-protocol
 dispatchers build it before invocation. ToolHandler is the async
 callable signature.
+
+M4 Phase 2: RouterCallerState and PhaseCallerState replace the loose
+Any types on ToolContext.router_state and ToolContext.phase_state.
 """
 from __future__ import annotations
 
@@ -33,24 +36,117 @@ class ToolGates:
 ToolResult = Mapping[str, Any]
 
 
+@dataclass
+class RouterCallerState:
+    """Per-protocol state that router-style invocations need access to.
+
+    Populated by RouterLoop / dispatch_tool when invoking a
+    ToolDefinition handler in router context. Handlers that need
+    session-scoped resources (skill registry, agent registry, etc.)
+    or async-dispatch callbacks (send_to_agent, dispatch_plan_tool)
+    consume them via this object.
+
+    All fields are Optional to allow:
+    - Test contexts that need only a subset
+    - Gradual migration where Wave 1+2 NotImplementedError stubs
+      become real handlers as fields are populated
+
+    M3 / M4 Phase 1 / 2 status: structure defined; production
+    population (= router_loop wiring) is M4 Phase 3.
+    """
+    # Catalog discovery (= for catalog tools list_skills /
+    # describe_skill / list_agents / describe_agent handlers)
+    skill_registry: Any = None
+    agent_registry: Any = None
+    available_skills: list[Mapping[str, Any]] | None = None
+    available_agents: list[Mapping[str, Any]] | None = None
+
+    # Async dispatch callbacks (= for delegate_to_agent / plan
+    # handlers that need to interact with chain / task lifecycle)
+    send_to_agent: Callable[..., Awaitable[Any]] | None = None
+    dispatch_plan_tool: Callable[..., Awaitable[Any]] | None = None
+
+    # Session-scoped chain identity (= for plan tool, delegate
+    # tool, etc.)
+    chain_id: str | None = None
+
+    # Cost / model context (= for plan tool cost-aware decomposition)
+    budget: Any = None                    # BudgetGateway instance
+    router_model: str | None = None
+    available_tool_names: list[str] | None = None
+
+    # Memory access (= for memory tools when invoked router-side;
+    # router uses MemoryService directly, phase wraps via
+    # ctx.workspace callbacks)
+    memory_service: Any = None
+
+
+@dataclass
+class PhaseCallerState:
+    """Per-protocol state that phase-style invocations need access to.
+
+    Populated by ControlIRExecutor when invoking a ToolDefinition
+    handler in phase context. Handlers that need phase-scoped
+    resources (already-built OpContext, skill_run_id, run_visit_count,
+    etc.) consume them via this object.
+
+    All fields are Optional. Test contexts may populate only what's
+    needed. M3 / M4 Phase 1 / 2 status: structure defined; production
+    population (= control_ir_executor wiring) is M4 Phase 3.
+    """
+    # Phase identity
+    skill_run_id: str | None = None
+    phase_name: str | None = None
+    run_visit_count: int | None = None
+
+    # Pre-built OpContext (= for capabilities like mcp_call_tool that
+    # currently hand-build OpContext; once phase-side dispatch
+    # consumes the registry, OpContext is built once at the
+    # dispatcher layer and passed through)
+    op_context: Any = None
+
+    # Workspace callbacks (= currently accessed via ctx.workspace
+    # directly by memory tools; this field is for forward
+    # consistency when ToolContext.workspace becomes a typed
+    # interface vs the current loose Any)
+    workspace_callbacks: Mapping[str, Callable[..., Awaitable[Any]]] | None = None
+
+
 # ToolContext: protocol-agnostic execution context. Built by the
 # dispatcher (router or phase) before invoking the handler.
 # Universal fields: events / permission_resolver / workspace.
-# Per-protocol-specific state can be accessed via caller_kind branching;
-# future iterations may introduce caller-specific sub-objects per
-# ADR-0026 Open Question #3 recommendation.
+# Per-protocol-specific state can be accessed via caller_kind branching.
+#
+# M4 Phase 2: router_state and phase_state are now typed sub-objects
+# (RouterCallerState / PhaseCallerState) instead of loose Any. Default
+# to None when not relevant for the call site.
+#
+# Migration note: pre-Phase-2 code that wrote
+# `ctx.router_state = some_dict` continues to work because
+# RouterCallerState defaults all fields to None and the
+# sub-objects are dataclasses (= structural compatibility for
+# most read patterns is preserved). Test sites and handler
+# sites should migrate to typed access.
 @dataclass
 class ToolContext:
+    """Protocol-agnostic execution context (= ADR-0026 §2).
+
+    Universal fields (events, permission_resolver, workspace) are
+    populated regardless of protocol. caller_kind discriminates
+    which sub-object holds protocol-specific state.
+
+    M4 Phase 2: router_state and phase_state are now typed
+    sub-objects (RouterCallerState / PhaseCallerState) instead of
+    loose Any. Default to None when not relevant for the call site.
+    """
     events: Any                                      # EventLog
     permission_resolver: Any | None                  # PermissionResolver
     workspace: Any                                   # Workspace
     caller_kind: Literal["router", "phase"]
-    # Per-protocol-specific state (= ADR-0026 Open Question #3):
-    # Today these are loose Any types; future amendment may
-    # introduce typed sub-objects (e.g., RouterCallerState,
-    # PhaseCallerState).
-    router_state: Any = None                         # chain_id, etc. for router callers
-    phase_state: Any = None                          # skill_run_id, run_visit_count, etc. for phase callers
+    # Per-protocol-specific state (= ADR-0026 Open Question #3, resolved M4 Phase 2):
+    # Typed sub-objects carry caller-kind-specific state.
+    router_state: RouterCallerState | None = None    # populated for caller_kind="router"
+    phase_state: PhaseCallerState | None = None      # populated for caller_kind="phase"
 
 
 # ToolHandler: async callable signature.

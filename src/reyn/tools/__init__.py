@@ -9,6 +9,8 @@ from reyn.tools.types import (
     ToolDefinition,
     ToolGates,
     ToolContext,
+    RouterCallerState,
+    PhaseCallerState,
     ToolHandler,
     ToolResult,
 )
@@ -18,6 +20,8 @@ __all__ = [
     "ToolDefinition",
     "ToolGates",
     "ToolContext",
+    "RouterCallerState",
+    "PhaseCallerState",
     "ToolHandler",
     "ToolResult",
     "ToolRegistry",

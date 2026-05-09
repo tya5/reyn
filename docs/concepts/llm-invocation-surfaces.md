@@ -249,9 +249,15 @@ ToolRegistry. Type C convention-drift gaps identified in §4 are declaratively
 closed via `gates(router=allow, phase=allow)`. Phase-side Control IR dispatch
 wiring to consume the registry is M4 cleanup work.
 
-**M4 (pending):** phase-side dispatch consuming registry, ToolContext expansion
-(= `router_state` / `phase_state` typed sub-objects per Open Q #3), allowed_ops
-semantic migration, `router_tools.py` inline ToolSpec residual replacements,
-per-call schema enrichment hook, sunset of legacy aliases.
+**M4 Phase 2 (landed):** ToolContext expansion — `router_state` and `phase_state`
+are now typed sub-objects (`RouterCallerState` / `PhaseCallerState`) instead of
+loose `Any`, resolving ADR-0026 Open Question #3. All fields default to `None`
+for gradual migration. +7 Tier 2 invariants.
+
+**M4 Phase 3 (pending):** production population of `RouterCallerState` /
+`PhaseCallerState` fields by the router and phase dispatchers (= router_loop wiring,
+control_ir_executor wiring). Also pending: phase-side dispatch consuming registry,
+allowed_ops semantic migration, `router_tools.py` inline ToolSpec residual
+replacements, per-call schema enrichment hook, sunset of legacy aliases.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

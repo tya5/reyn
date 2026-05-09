@@ -21,15 +21,19 @@ Design-revisit finding (M4 requirement):
                      at all.
 
   A typed RouterCallerState / PhaseCallerState sub-object on
-  ToolContext (ADR-0026 Open Question #3) is the clean path. Until
-  that sub-object lands (M4), these handlers raise NotImplementedError.
+  ToolContext (ADR-0026 Open Question #3) is the clean path. That
+  sub-object has landed in M4 Phase 2. Production population of
+  RouterCallerState.skill_registry / agent_registry fields (=
+  router_loop wiring) is M4 Phase 3. Until Phase 3, these handlers
+  raise NotImplementedError.
 
   RouterLoop continues to dispatch list_skills / describe_skill /
   list_agents / describe_agent via the existing
   ``if name == "list_skills"`` branches in router_loop.py
   (_invoke_router_tool). The ToolDefinitions here serve M3's goal:
   description + parameters + gates registered in the unified registry
-  for render / gate / drift checks.
+  for render / gate / drift checks. M4 Phase 3 will wire the handlers
+  to consume RouterCallerState.skill_registry / agent_registry.
 
 Description strings are byte-identical to the ToolSpec literals in
 src/reyn/chat/router_tools.py lines 250–324 (Wave 2 validation target).
@@ -77,17 +81,16 @@ async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> Tool
     """Design-revisit stub — not a real dispatch adapter.
 
     list_skills requires access to the session-scoped skill registry
-    (RouterLoopHost.list_available_skills) which is not reachable from
-    ToolContext. RouterLoop continues to dispatch list_skills directly via
-    the _invoke_router_tool branch until a typed caller-state sub-object
-    is added to ToolContext (ADR-0026 Open Question #3 / M4).
+    via ctx.router_state.skill_registry (RouterCallerState, M4 Phase 2
+    structure defined). RouterLoop continues to dispatch list_skills directly
+    via the _invoke_router_tool branch until M4 Phase 3 wires the
+    RouterCallerState.skill_registry field.
     """
     raise NotImplementedError(
         "list_skills handler is a design-revisit stub: the skill registry "
-        "(host.list_available_skills) is not reachable from ToolContext. "
-        "RouterLoop dispatches list_skills directly until a typed "
-        "RouterCallerState sub-object is added to ToolContext "
-        "(ADR-0026 Open Question #3, M4)."
+        "(RouterCallerState.skill_registry) is not yet populated in production. "
+        "RouterLoop dispatches list_skills directly until M4 Phase 3 wires "
+        "RouterCallerState.skill_registry (ADR-0026 Open Question #3)."
     )
 
 
@@ -128,17 +131,16 @@ async def _handle_describe_skill(args: Mapping[str, Any], ctx: ToolContext) -> T
     """Design-revisit stub — not a real dispatch adapter.
 
     describe_skill requires access to the session-scoped skill registry
-    (RouterLoopHost.list_available_skills) which is not reachable from
-    ToolContext. RouterLoop continues to dispatch describe_skill directly via
-    the _invoke_router_tool branch until a typed caller-state sub-object
-    is added to ToolContext (ADR-0026 Open Question #3 / M4).
+    via ctx.router_state.skill_registry (RouterCallerState, M4 Phase 2
+    structure defined). RouterLoop continues to dispatch describe_skill directly
+    via the _invoke_router_tool branch until M4 Phase 3 wires the
+    RouterCallerState.skill_registry field.
     """
     raise NotImplementedError(
         "describe_skill handler is a design-revisit stub: the skill registry "
-        "(host.list_available_skills) is not reachable from ToolContext. "
-        "RouterLoop dispatches describe_skill directly until a typed "
-        "RouterCallerState sub-object is added to ToolContext "
-        "(ADR-0026 Open Question #3, M4)."
+        "(RouterCallerState.skill_registry) is not yet populated in production. "
+        "RouterLoop dispatches describe_skill directly until M4 Phase 3 wires "
+        "RouterCallerState.skill_registry (ADR-0026 Open Question #3)."
     )
 
 
@@ -178,17 +180,16 @@ async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> Tool
     """Design-revisit stub — not a real dispatch adapter.
 
     list_agents requires access to the session-scoped agent registry
-    (RouterLoopHost.list_available_agents) which is not reachable from
-    ToolContext. RouterLoop continues to dispatch list_agents directly via
-    the _invoke_router_tool branch until a typed caller-state sub-object
-    is added to ToolContext (ADR-0026 Open Question #3 / M4).
+    via ctx.router_state.agent_registry (RouterCallerState, M4 Phase 2
+    structure defined). RouterLoop continues to dispatch list_agents directly
+    via the _invoke_router_tool branch until M4 Phase 3 wires the
+    RouterCallerState.agent_registry field.
     """
     raise NotImplementedError(
         "list_agents handler is a design-revisit stub: the agent registry "
-        "(host.list_available_agents) is not reachable from ToolContext. "
-        "RouterLoop dispatches list_agents directly until a typed "
-        "RouterCallerState sub-object is added to ToolContext "
-        "(ADR-0026 Open Question #3, M4)."
+        "(RouterCallerState.agent_registry) is not yet populated in production. "
+        "RouterLoop dispatches list_agents directly until M4 Phase 3 wires "
+        "RouterCallerState.agent_registry (ADR-0026 Open Question #3)."
     )
 
 
@@ -227,17 +228,16 @@ async def _handle_describe_agent(args: Mapping[str, Any], ctx: ToolContext) -> T
     """Design-revisit stub — not a real dispatch adapter.
 
     describe_agent requires access to the session-scoped agent registry
-    (RouterLoopHost.list_available_agents) which is not reachable from
-    ToolContext. RouterLoop continues to dispatch describe_agent directly via
-    the _invoke_router_tool branch until a typed caller-state sub-object
-    is added to ToolContext (ADR-0026 Open Question #3 / M4).
+    via ctx.router_state.agent_registry (RouterCallerState, M4 Phase 2
+    structure defined). RouterLoop continues to dispatch describe_agent directly
+    via the _invoke_router_tool branch until M4 Phase 3 wires the
+    RouterCallerState.agent_registry field.
     """
     raise NotImplementedError(
         "describe_agent handler is a design-revisit stub: the agent registry "
-        "(host.list_available_agents) is not reachable from ToolContext. "
-        "RouterLoop dispatches describe_agent directly until a typed "
-        "RouterCallerState sub-object is added to ToolContext "
-        "(ADR-0026 Open Question #3, M4)."
+        "(RouterCallerState.agent_registry) is not yet populated in production. "
+        "RouterLoop dispatches describe_agent directly until M4 Phase 3 wires "
+        "RouterCallerState.agent_registry (ADR-0026 Open Question #3)."
     )
 
 

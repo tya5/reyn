@@ -20,16 +20,13 @@ metadata (description, parameters, gates) is correct and usable for:
   - registry gate assertions
   - build_tools() migration (router only)
 
-Wave 2 should either:
-  (a) Surface a host.send_to_agent coroutine on ToolContext.router_state
-      so the handler can call ctx.router_state.send_to_agent(to, request,
-      depth, chain_id) — making async dispatch a clean (args, ctx) adapter.
-  (b) Keep delegate_to_agent handled inline in RouterLoop and exclude it
-      from the unified handler dispatch path (registry for metadata only).
+M4 Phase 2 (landed): RouterCallerState.send_to_agent is the typed field
+for the dispatch callback. Population (= router_loop wiring) is M4 Phase 3.
 
-Until then, the router dispatcher in RouterLoop MUST NOT invoke
-DELEGATE_TO_AGENT.handler; it should continue to call self.host.send_to_agent
-directly after name == "delegate_to_agent" detection.
+Until M4 Phase 3 wires send_to_agent on RouterCallerState, the router
+dispatcher in RouterLoop MUST NOT invoke DELEGATE_TO_AGENT.handler; it
+should continue to call self.host.send_to_agent directly after
+name == "delegate_to_agent" detection.
 """
 from __future__ import annotations
 
@@ -72,20 +69,21 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     Design-revisit needed for Wave 2 (see module docstring).
 
-    The actual dispatch is wired into RouterLoop via self.host.send_to_agent,
-    which is not reachable from ToolContext. This handler cannot be called
-    as a standalone adapter until send_to_agent is surfaced on
-    ToolContext.router_state (Wave 2 option a) or the tool is excluded from
-    unified handler dispatch (Wave 2 option b).
+    The actual dispatch is wired into RouterLoop via self.host.send_to_agent.
+    M4 Phase 2 defines RouterCallerState.send_to_agent as the typed field for
+    this callback. This handler cannot be called as a standalone adapter until
+    M4 Phase 3 populates RouterCallerState.send_to_agent in the router
+    dispatcher.
 
     Raises:
-        NotImplementedError: always — signals the Wave 2 design gap to any
-            caller that accidentally routes through the unified handler.
+        NotImplementedError: always — signals the M4 Phase 3 production wiring
+            gap to any caller that accidentally routes through the unified handler.
     """
     raise NotImplementedError(
         "delegate_to_agent async dispatch is wired into RouterLoop via "
-        "self.host.send_to_agent and cannot be called as a standalone "
-        "(args, ctx) handler. See module docstring for Wave 2 options."
+        "self.host.send_to_agent. RouterCallerState.send_to_agent (M4 Phase 2 "
+        "structure) is not yet populated in production (M4 Phase 3). "
+        "RouterLoop dispatches delegate_to_agent directly until Phase 3 lands."
     )
 
 

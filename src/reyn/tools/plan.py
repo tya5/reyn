@@ -14,20 +14,24 @@ Async dispatch posture (ADR-0023 Phase 2.1):
                                 detection / plan validation)
 
   These are inherently router-session-scoped and do not map cleanly to
-  ToolContext's current protocol-agnostic surface.  A thin wrapper that
-  plucks them from ``ctx.router_state`` would couple ToolContext's shape
-  to a single caller's internals — exactly the anti-pattern ADR-0026
-  Open Question #3 warns against.
+  ToolContext's current protocol-agnostic surface.
+
+  **M4 Phase 2 (landed)**: ``RouterCallerState`` typed sub-object on
+  ToolContext is now defined. Relevant fields:
+    * ``RouterCallerState.dispatch_plan_tool``  (= dispatch_plan_tool callback)
+    * ``RouterCallerState.chain_id``            (= parent chain_id)
+    * ``RouterCallerState.available_tool_names`` (= dynamic per-session)
+    * ``RouterCallerState.budget``              (= BudgetGateway instance)
+    * ``RouterCallerState.router_model``        (= model string)
 
   **Design-revisit finding**: the handler registered here raises
   ``NotImplementedError`` to make the constraint explicit.  RouterLoop
   continues to invoke ``dispatch_plan_tool`` directly (via the existing
-  ``if name == "plan"`` branch in router_loop.py).  A future amendment
-  to ADR-0026 (e.g., typed ``RouterCallerState`` sub-object on
-  ToolContext) would allow a clean adapter.  Until that amendment lands,
-  this ToolDefinition serves Wave 1's goal: description + parameters +
-  gates registered in the unified registry for render / gate / drift
-  checks, without forcing a premature adapter.
+  ``if name == "plan"`` branch in router_loop.py).  M4 Phase 3 will
+  populate these fields in RouterCallerState and wire the handler.
+  Until Phase 3 lands, this ToolDefinition serves Wave 1's goal:
+  description + parameters + gates registered in the unified registry
+  for render / gate / drift checks, without forcing a premature adapter.
 
 Description and parameters are byte-identical to the ToolSpec literal
 in router_tools.py line 686–751.
@@ -103,21 +107,20 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Design-revisit stub — not a real dispatch adapter.
 
     ``dispatch_plan_tool`` requires RouterLoopHost, chain_id,
-    available_tool_names, budget, and router_model — all caller-session
-    state that ToolContext cannot supply without coupling its shape to a
-    single caller's internals.  See module docstring for the full
-    design-revisit rationale.
+    available_tool_names, budget, and router_model — all now typed on
+    RouterCallerState (M4 Phase 2). RouterCallerState.dispatch_plan_tool,
+    .chain_id, .available_tool_names, .budget, and .router_model are the
+    target fields. Production population is M4 Phase 3.
 
-    RouterLoop continues to call dispatch_plan_tool directly until a
-    typed RouterCallerState sub-object is added to ToolContext (ADR-0026
-    Open Question #3 follow-up).
+    RouterLoop continues to call dispatch_plan_tool directly until M4 Phase 3
+    populates RouterCallerState and wires the handler.
     """
     raise NotImplementedError(
-        "plan handler is a design-revisit stub: dispatch_plan_tool "
-        "requires caller-session state (RouterLoopHost, chain_id, "
-        "available_tool_names) that ToolContext cannot supply without a "
-        "typed RouterCallerState extension (ADR-0026 Open Question #3). "
-        "RouterLoop dispatches plan directly until that extension lands."
+        "plan handler is a design-revisit stub: RouterCallerState fields "
+        "(dispatch_plan_tool, chain_id, available_tool_names, budget, "
+        "router_model) are defined (M4 Phase 2) but not yet populated in "
+        "production (M4 Phase 3). RouterLoop dispatches plan directly "
+        "until Phase 3 lands (ADR-0026 Open Question #3 resolved Phase 2)."
     )
 
 

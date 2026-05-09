@@ -45,8 +45,9 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     ask_user is phase-only (gates.router="deny"), so ctx.caller_kind
     is always "phase" here. The intervention_bus is retrieved from
-    ctx.phase_state (an OpContext) which is wired by the phase
-    dispatcher before invoking this handler.
+    ctx.phase_state.op_context (a PhaseCallerState holding the OpContext)
+    which is wired by the phase dispatcher before invoking this handler
+    (M4 Phase 3).
     """
     # Lazy import to avoid circular dependency at registry-init time.
     from reyn.op_runtime.ask_user import handle
@@ -61,11 +62,11 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         required=bool(args.get("required", True)),
     )
 
-    # ctx.phase_state is the OpContext built by the phase dispatcher.
-    # ask_user requires intervention_bus on OpContext; if phase_state
-    # is not an OpContext (e.g. in unit tests that pass a stub), the
-    # handler will raise RuntimeError as designed.
-    legacy_ctx = ctx.phase_state
+    # ctx.phase_state.op_context is the OpContext built by the phase dispatcher
+    # (M4 Phase 3 wiring). ask_user requires intervention_bus on OpContext; if
+    # op_context is not populated (e.g. in unit tests that pass a stub or before
+    # M4 Phase 3 wires the dispatcher), the handler will raise RuntimeError as designed.
+    legacy_ctx = ctx.phase_state.op_context if ctx.phase_state is not None else None
 
     return await handle(op=op, ctx=legacy_ctx, caller="control_ir")
 

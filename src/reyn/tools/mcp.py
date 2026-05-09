@@ -184,10 +184,16 @@ async def _handle_call_mcp_tool(
     op = MCPIROp(kind="mcp", server=server, tool=tool, args=tool_args)
 
     # Build a legacy OpContext from the new ToolContext.
-    # phase_state carries the full OpContext when wired by the phase dispatcher.
-    # Fall back to a minimal context for direct (non-phase-dispatcher) calls.
-    if ctx.phase_state is not None and isinstance(ctx.phase_state, OpContext):
-        legacy_ctx = ctx.phase_state
+    # phase_state.op_context carries the full OpContext when wired by the phase
+    # dispatcher (M4 Phase 3). Fall back to a minimal context for direct
+    # (non-phase-dispatcher) calls.
+    _op_ctx = (
+        ctx.phase_state.op_context
+        if ctx.phase_state is not None
+        else None
+    )
+    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
+        legacy_ctx = _op_ctx
     else:
         legacy_ctx = OpContext(
             workspace=ctx.workspace,

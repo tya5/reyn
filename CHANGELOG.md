@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ADR-0026 M4 Phase 2: `RouterCallerState` and `PhaseCallerState` typed sub-objects added to `ToolContext`, replacing loose `Any` for `router_state` / `phase_state` fields (ADR-0026 Open Question #3 resolved). All fields default to `None` for gradual migration. Production wiring (router_loop + control_ir_executor) is M4 Phase 3. +7 Tier 2 invariants.
 - ADR-0026 M3 Wave 2: 17 capabilities migrated — file ops × 4 / mcp ops × 3 / memory ops × 5 / catalog ops × 4 / invoke_skill (= `66435d1`). All 3 Type C convention-drift gaps closed declaratively (memory write phase-side, catalog browse phase-side, MCP discover phase-side). +127 Tier 2 invariants. LLMReplay fixtures preserved.
 - ADR-0026 M3 Wave 1: 7 capabilities migrated to unified registry — web_fetch, shell, lint, ask_user, delegate_to_agent, plan, reyn_src_list, reyn_src_read (= `ba4c5fe`). ToolDefinition gains dispatch_kind field. +99 Tier 2 invariants.
 - ADR-0026 M2 POC: `web_search` migrated to unified `ToolDefinition` in `src/reyn/tools/web_search.py`; `build_tools()` and `get_default_registry()` derive it from the registry; byte-identity with prior `ToolSpec` literal verified (LLMReplay fixtures unchanged); 14 new Tier 2 invariants in `tests/test_web_search_unified.py`

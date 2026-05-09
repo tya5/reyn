@@ -15,6 +15,8 @@ from reyn.tools import (
     ToolDefinition,
     ToolGates,
     ToolContext,
+    RouterCallerState,
+    PhaseCallerState,
     ToolRegistry,
 )
 from reyn.tools.dispatch import invoke_tool, ToolNotFound
@@ -412,3 +414,168 @@ def test_gate_partitioning_both_deny():
 
     assert tool not in registry.for_router()
     assert tool not in registry.for_phase()
+
+
+# ── 13. RouterCallerState typed sub-object invariants (M4 Phase 2) ───────────
+
+def test_router_caller_state_defaults_all_none():
+    """Tier 2: RouterCallerState() with no arguments defaults all fields to None."""
+    state = RouterCallerState()
+    assert state.skill_registry is None
+    assert state.agent_registry is None
+    assert state.available_skills is None
+    assert state.available_agents is None
+    assert state.send_to_agent is None
+    assert state.dispatch_plan_tool is None
+    assert state.chain_id is None
+    assert state.budget is None
+    assert state.router_model is None
+    assert state.available_tool_names is None
+    assert state.memory_service is None
+
+
+def test_phase_caller_state_defaults_all_none():
+    """Tier 2: PhaseCallerState() with no arguments defaults all fields to None."""
+    state = PhaseCallerState()
+    assert state.skill_run_id is None
+    assert state.phase_name is None
+    assert state.run_visit_count is None
+    assert state.op_context is None
+    assert state.workspace_callbacks is None
+
+
+def test_tool_context_with_router_caller_state():
+    """Tier 2: ToolContext with caller_kind='router' can hold a RouterCallerState."""
+
+    class _SentinelEvents:
+        pass
+
+    class _SentinelWorkspace:
+        pass
+
+    state = RouterCallerState(chain_id="chain-123", router_model="gpt-4o")
+    ctx = ToolContext(
+        events=_SentinelEvents(),
+        permission_resolver=None,
+        workspace=_SentinelWorkspace(),
+        caller_kind="router",
+        router_state=state,
+    )
+    assert ctx.caller_kind == "router"
+    assert ctx.router_state is state
+    assert ctx.router_state.chain_id == "chain-123"
+    assert ctx.router_state.router_model == "gpt-4o"
+    assert ctx.phase_state is None
+
+
+def test_tool_context_with_phase_caller_state():
+    """Tier 2: ToolContext with caller_kind='phase' can hold a PhaseCallerState."""
+
+    class _SentinelEvents:
+        pass
+
+    class _SentinelWorkspace:
+        pass
+
+    state = PhaseCallerState(
+        skill_run_id="run-abc",
+        phase_name="analyze",
+        run_visit_count=3,
+    )
+    ctx = ToolContext(
+        events=_SentinelEvents(),
+        permission_resolver=None,
+        workspace=_SentinelWorkspace(),
+        caller_kind="phase",
+        phase_state=state,
+    )
+    assert ctx.caller_kind == "phase"
+    assert ctx.phase_state is state
+    assert ctx.phase_state.skill_run_id == "run-abc"
+    assert ctx.phase_state.phase_name == "analyze"
+    assert ctx.phase_state.run_visit_count == 3
+    assert ctx.router_state is None
+
+
+def test_tool_context_fields_attribute_access():
+    """Tier 2: ToolContext fields are accessible via attribute access (dataclass round-trip)."""
+
+    class _SentinelEvents:
+        pass
+
+    class _SentinelWorkspace:
+        pass
+
+    events = _SentinelEvents()
+    workspace = _SentinelWorkspace()
+    ctx = ToolContext(
+        events=events,
+        permission_resolver=None,
+        workspace=workspace,
+        caller_kind="router",
+    )
+    assert ctx.events is events
+    assert ctx.workspace is workspace
+    assert ctx.permission_resolver is None
+    assert ctx.caller_kind == "router"
+    assert ctx.router_state is None
+    assert ctx.phase_state is None
+
+
+def test_router_caller_state_partial_population():
+    """Tier 2: RouterCallerState constructed with skill_registry only leaves
+    all other fields None (= partial population for gradual migration)."""
+    sentinel_registry = object()
+    state = RouterCallerState(skill_registry=sentinel_registry)
+
+    assert state.skill_registry is sentinel_registry
+    assert state.agent_registry is None
+    assert state.available_skills is None
+    assert state.available_agents is None
+    assert state.send_to_agent is None
+    assert state.dispatch_plan_tool is None
+    assert state.chain_id is None
+    assert state.budget is None
+    assert state.router_model is None
+    assert state.available_tool_names is None
+    assert state.memory_service is None
+
+
+def test_router_caller_state_full_population():
+    """Tier 2: RouterCallerState constructed with all fields preserves them."""
+    sentinel_skill_reg = object()
+    sentinel_agent_reg = object()
+    sentinel_budget = object()
+    sentinel_memory = object()
+
+    async def _send_to_agent(*a, **kw):
+        pass
+
+    async def _dispatch_plan(*a, **kw):
+        pass
+
+    state = RouterCallerState(
+        skill_registry=sentinel_skill_reg,
+        agent_registry=sentinel_agent_reg,
+        available_skills=[{"name": "s1"}],
+        available_agents=[{"name": "a1"}],
+        send_to_agent=_send_to_agent,
+        dispatch_plan_tool=_dispatch_plan,
+        chain_id="chain-xyz",
+        budget=sentinel_budget,
+        router_model="openai/gpt-4o",
+        available_tool_names=["web_search", "plan"],
+        memory_service=sentinel_memory,
+    )
+
+    assert state.skill_registry is sentinel_skill_reg
+    assert state.agent_registry is sentinel_agent_reg
+    assert state.available_skills == [{"name": "s1"}]
+    assert state.available_agents == [{"name": "a1"}]
+    assert state.send_to_agent is _send_to_agent
+    assert state.dispatch_plan_tool is _dispatch_plan
+    assert state.chain_id == "chain-xyz"
+    assert state.budget is sentinel_budget
+    assert state.router_model == "openai/gpt-4o"
+    assert state.available_tool_names == ["web_search", "plan"]
+    assert state.memory_service is sentinel_memory

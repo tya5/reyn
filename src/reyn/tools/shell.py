@@ -79,7 +79,11 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         shell_allowed=True,
         mcp_servers={},
         mcp_clients={},
-        intervention_bus=getattr(ctx.phase_state, "intervention_bus", None),
+        intervention_bus=getattr(
+            ctx.phase_state.op_context if ctx.phase_state is not None else None,
+            "intervention_bus",
+            None,
+        ),
         current_phase="",
         caller="direct",
         parent_skill_run_id=None,

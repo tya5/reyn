@@ -228,6 +228,8 @@ ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つ
 
 13 ケーパビリティクラスター（= 26 ToolDefinitions）すべてが unified ToolRegistry に登録済みである。§4 で識別した Type C convention-drift のギャップは `gates(router=allow, phase=allow)` で宣言的にクローズされている。Phase-side Control IR dispatch が registry を消費するように配線する作業は M4 cleanup の範囲である。
 
-**M4（未着手）:** phase-side dispatch の registry 消費、ToolContext の型拡張（= Open Q #3 に基づく `router_state` / `phase_state` typed sub-object）、`allowed_ops` セマンティクス移行、`router_tools.py` インライン ToolSpec 残留物の置換、per-call schema enrichment hook、レガシーエイリアスのサンセット。
+**M4 Phase 2（着地済み）:** ToolContext の型拡張 — `router_state` と `phase_state` が loose `Any` から型付き sub-object（`RouterCallerState` / `PhaseCallerState`）に変わり、ADR-0026 Open Question #3 を解決。全フィールドはデフォルト `None` で段階的移行に対応。Tier 2 invariant +7。
+
+**M4 Phase 3（未着手）:** `RouterCallerState` / `PhaseCallerState` フィールドの production 投入（= router_loop wiring、control_ir_executor wiring）。また未着手: phase-side dispatch の registry 消費、`allowed_ops` セマンティクス移行、`router_tools.py` インライン ToolSpec 残留物の置換、per-call schema enrichment hook、レガシーエイリアスのサンセット。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)
