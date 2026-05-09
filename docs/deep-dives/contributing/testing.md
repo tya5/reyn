@@ -309,6 +309,21 @@ This is the only sanctioned use of snapshot tests in the codebase.
 
 ---
 
+## Filesystem isolation (= no real `~/.reyn/` pollution)
+
+Tests **must not** modify the developer's real `~/.reyn/` files. The repository's `tests/conftest.py` already enforces this for the secret store via an autouse fixture that sets `REYN_SECRETS_PATH` to `tmp_path / "secrets.env"` for every test. As a result:
+
+- `secrets.store.save_secret()` / `clear_secret()` / `load_secrets()` go to `tmp_path` automatically — no `monkeypatch.setattr` needed in individual tests.
+- `reyn secret {set,list,clear,rotate}` CLI tests inherit the same isolation.
+
+When adding new infra that touches user home (`~/.reyn/registry-cache/`, `~/.reyn/approvals.yaml`, etc.), follow the same pattern:
+
+1. Make the path resolver consult an env var (`REYN_*_PATH`) at call time, falling back to `Path.home() / ".reyn" / ...`.
+2. Add an autouse fixture in `conftest.py` that points the env var at `tmp_path`.
+3. Verify via md5: `~/.reyn/<file>` hash must be byte-identical before and after the test run.
+
+Module-level constants (`_SECRETS_FILE = Path.home() / ".reyn" / "secrets.env"`) are evaluated at import time — `monkeypatch.setenv("HOME", ...)` after import has no effect. The env-var-at-call-time pattern avoids that footgun.
+
 ## Out of policy
 
 These belong outside the test suite:

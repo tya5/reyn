@@ -41,6 +41,17 @@ reyn chat
 
 `reyn mcp install` fetches the server manifest from the MCP registry, checks that the required runtime (`npx`, `uvx`, etc.) is installed, prompts for any credentials (storing them securely in `~/.reyn/secrets.env`), and writes the `mcp.servers.*` entry into your config with `${VAR}` references for secrets — all in one step.
 
+**For servers not in the registry** (including Anthropic's official reference servers like `@modelcontextprotocol/server-filesystem`), use `--source`:
+
+```bash
+reyn mcp install --source npm:@modelcontextprotocol/server-filesystem
+reyn mcp install --source pypi:mcp-server-fetch
+reyn mcp install --source docker:mcp/playwright
+reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+```
+
+`--source` skips the registry fetch and resolves install metadata from the source specifier directly. Permission gate, credentials, config write, and audit event are identical to the registry path.
+
 For the full `reyn mcp` CLI reference, see [Reference: `reyn mcp`](../reference/cli/mcp.md).
 
 ## Quick start: try MCP from `reyn chat` (manual config path)

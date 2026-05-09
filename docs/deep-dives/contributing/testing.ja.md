@@ -233,6 +233,23 @@ def test_ledger_jsonl_format_during_migration():
 
 ---
 
+## ファイルシステム隔離 (= real `~/.reyn/` への汚染禁止)
+
+テストは開発者の real `~/.reyn/` ファイルを **変更してはいけません**。 リポジトリの `tests/conftest.py` は secret store について autouse fixture で既にこれを強制しています。 全テストで `REYN_SECRETS_PATH` が `tmp_path / "secrets.env"` に設定されます。 結果として:
+
+- `secrets.store.save_secret()` / `clear_secret()` / `load_secrets()` は自動的に `tmp_path` 配下に行きます。 個別テストで `monkeypatch.setattr` は不要。
+- `reyn secret {set,list,clear,rotate}` CLI のテストも同じ isolation を継承します。
+
+User home (`~/.reyn/registry-cache/`、 `~/.reyn/approvals.yaml` 等) に触れる新 infra を追加する時は、 同 pattern に従ってください:
+
+1. パス resolver が呼出時に env var (`REYN_*_PATH`) を参照、 default は `Path.home() / ".reyn" / ...` で fallback。
+2. `conftest.py` に autouse fixture を追加、 env var を `tmp_path` に向ける。
+3. md5 で verify: `~/.reyn/<file>` のハッシュがテスト前後で byte-identical であること。
+
+モジュール level の constant (`_SECRETS_FILE = Path.home() / ".reyn" / "secrets.env"`) は import 時に evaluate されます。 import 後の `monkeypatch.setenv("HOME", ...)` は効きません。 「呼出時に env var 参照」 の pattern がこの footgun を回避します。
+
+---
+
 ## ポリシー外
 
 以下はテストスイートの外に属します:

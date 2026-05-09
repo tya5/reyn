@@ -58,11 +58,14 @@ MCP サーバーを reyn の設定にインストールします。
 
 ```
 reyn mcp install <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
+reyn mcp install --source <SOURCE_SPEC> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
 ```
 
-`install` は新しい MCP サーバーへの推奨された最初のステップです。以下を実行します：
+`install` は新しい MCP サーバーへの推奨された最初のステップです。 2 つの path:
 
-1. レジストリからサーバーの `server.json` を取得します。
+**レジストリ path** (= default、 `<SERVER_ID>` を渡す):
+
+1. レジストリからサーバーの `server.json` を取得します（`registry.modelcontextprotocol.io`）。
 2. 必要なランタイム（`npx`、`uvx`、`docker` など）がインストールされているか確認します。
 3. `mcp_install` パーミッションゲートを適用します（[パーミッションとの連動: mcp_install](#permission-interaction) 参照）。
 4. 必要な認証情報（レジストリマニフェストで `isSecret` とマークされているもの）をプロンプトするか、`--env` フラグから読み取ります。
@@ -70,11 +73,27 @@ reyn mcp install <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-intera
 6. 対象スコープの設定ファイルに `mcp.servers.<name>` エントリを書き込みます（シークレットは `${VAR}` 参照として記述されます）。
 7. `mcp_server_installed` 監査イベントを発行します。
 
+**ソース path** (= `--source <SOURCE_SPEC>`、 レジストリに未登録のサーバー向け、 Anthropic 公式 reference servers `@modelcontextprotocol/server-filesystem` 等):
+
+レジストリ取得を完全に skip し、 ソース指定子から install metadata を解決します。 パーミッションゲート / 認証情報 / 設定書込 / 監査 event はレジストリ path と同一。
+
+サポートする source scheme:
+
+| Scheme | 例 | 解決先 |
+|--------|---------|-------------|
+| `npm:<package>[@version]` | `npm:@modelcontextprotocol/server-filesystem` | `command: npx, args: ["-y", "<package>"]` |
+| `pypi:<package>[==version]` | `pypi:mcp-server-fetch` | `command: uvx, args: ["<package>"]` |
+| `docker:<image>[:tag]` | `docker:mcp/playwright:latest` | `command: docker, args: ["run", "--rm", "-i", "<image>"]` |
+| `https://github.com/<owner>/<repo>[/...]` | `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem` | ヒューリスティック: 既知 repo は `@scope/<package>` npm パッケージに解決、 未知 repo は `command` なしで設定書込 (= silent bad install を回避し、 ランタイム時に明示的失敗) |
+
+`<SERVER_ID>` と `--source` は相互排他です。
+
 ### オプション
 
 | フラグ | デフォルト | 説明 |
 |------|---------|-------------|
 | `--scope SCOPE` | `local` | 書き込む設定スコープ: `local`（`.reyn/config.yaml`、gitignored）、`project`（`reyn.yaml`、コミット対象）、または `user`（`~/.reyn/config.yaml`）。 |
+| `--source <SPEC>` | — | レジストリ経由でなく直接ソース指定子（`npm:`、`pypi:`、`docker:`、`https://github.com/...`）からインストール。`<SERVER_ID>` と相互排他。 |
 | `--env KEY=VALUE` | — | 環境変数をあらかじめ指定します（繰り返し可）。そのキーのインタラクティブプロンプトを抑制します。 |
 | `--non-interactive` | off | すべてのインタラクティブプロンプトを抑制します。必要な認証情報が不足している場合はゼロ以外で終了します。CI 用。 |
 
@@ -102,6 +121,18 @@ reyn mcp install io.github.modelcontextprotocol/server-github \
 
 # プロジェクトスコープにインストール（チーム共有設定）
 reyn mcp install io.github.modelcontextprotocol/server-github --scope project
+
+# Anthropic 公式サーバー (= レジストリ未登録) を npm ソース経由で install
+reyn mcp install --source npm:@modelcontextprotocol/server-filesystem
+
+# PyPI ソース経由で install
+reyn mcp install --source pypi:mcp-server-fetch
+
+# Docker ソース経由で install
+reyn mcp install --source docker:mcp/playwright
+
+# GitHub URL 経由 (= heuristic resolver)
+reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
 ```
 
 ### パーミッションとの連動: mcp_install {#permission-interaction}

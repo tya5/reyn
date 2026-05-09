@@ -58,11 +58,14 @@ Install an MCP server into reyn's configuration.
 
 ```
 reyn mcp install <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
+reyn mcp install --source <SOURCE_SPEC> [--scope SCOPE] [--env KEY=VALUE ...] [--non-interactive]
 ```
 
-`install` is the recommended first step for any new MCP server. It:
+`install` is the recommended first step for any new MCP server. Two paths:
 
-1. Fetches the server's `server.json` from the registry.
+**Registry path** (default — pass a `<SERVER_ID>`):
+
+1. Fetches the server's `server.json` from the registry (`registry.modelcontextprotocol.io`).
 2. Checks that the required runtime (`npx`, `uvx`, `docker`, etc.) is installed.
 3. Applies the `mcp_install` permission gate (see [permission interaction](#permission-interaction-mcp_install)).
 4. Prompts for any required credentials (marked `isSecret` in the registry manifest) — or reads them from `--env` flags.
@@ -70,11 +73,27 @@ reyn mcp install <SERVER_ID> [--scope SCOPE] [--env KEY=VALUE ...] [--non-intera
 6. Writes the `mcp.servers.<name>` entry to the target scope config file, with `${VAR}` references for any secrets.
 7. Emits a `mcp_server_installed` audit event.
 
+**Source path** (`--source <SOURCE_SPEC>` — for servers not in the registry, including Anthropic's official reference servers like `@modelcontextprotocol/server-filesystem`):
+
+Skips the registry fetch entirely and resolves the install metadata from the source specifier. Permission gate, credentials, config write, and audit event are identical to the registry path.
+
+Supported source schemes:
+
+| Scheme | Example | Resolves to |
+|--------|---------|-------------|
+| `npm:<package>[@version]` | `npm:@modelcontextprotocol/server-filesystem` | `command: npx, args: ["-y", "<package>"]` |
+| `pypi:<package>[==version]` | `pypi:mcp-server-fetch` | `command: uvx, args: ["<package>"]` |
+| `docker:<image>[:tag]` | `docker:mcp/playwright:latest` | `command: docker, args: ["run", "--rm", "-i", "<image>"]` |
+| `https://github.com/<owner>/<repo>[/...]` | `https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem` | Heuristic: known repos resolve to `@scope/<package>` npm packages; unknown repos write the config without a `command`, surfacing as a clear failure at runtime rather than a silent bad install. |
+
+`<SERVER_ID>` and `--source` are mutually exclusive.
+
 ### Options
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--scope SCOPE` | `local` | Config scope to write into: `local` (`.reyn/config.yaml`, gitignored), `project` (`reyn.yaml`, committed), or `user` (`~/.reyn/config.yaml`). |
+| `--source <SPEC>` | — | Install from a direct source specifier (`npm:`, `pypi:`, `docker:`, or `https://github.com/...`) instead of from the registry. Mutually exclusive with `<SERVER_ID>`. |
 | `--env KEY=VALUE` | — | Pre-supply an environment variable (may be repeated). Suppresses the interactive prompt for that key. |
 | `--non-interactive` | off | Suppress all interactive prompts. Exit non-zero if required credentials are missing. For CI use. |
 
@@ -102,6 +121,18 @@ reyn mcp install io.github.modelcontextprotocol/server-github \
 
 # Install into project scope (team-shared config)
 reyn mcp install io.github.modelcontextprotocol/server-github --scope project
+
+# Install Anthropic official server (not in registry) via npm source
+reyn mcp install --source npm:@modelcontextprotocol/server-filesystem
+
+# Install via PyPI source
+reyn mcp install --source pypi:mcp-server-fetch
+
+# Install via Docker source
+reyn mcp install --source docker:mcp/playwright
+
+# Install via GitHub URL (heuristic resolver)
+reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
 ```
 
 ### Permission interaction: `mcp_install`

@@ -41,6 +41,17 @@ reyn chat
 
 `reyn mcp install` は MCP レジストリからサーバーマニフェストを取得し、必要なランタイム（`npx`、`uvx` など）がインストールされているか確認し、認証情報をプロンプト（`~/.reyn/secrets.env` に安全に保存）し、シークレットを `${VAR}` 参照として設定に書き込みます。これらをすべて 1 ステップで実行します。
 
+**レジストリに未登録のサーバー** (= Anthropic 公式 reference servers `@modelcontextprotocol/server-filesystem` 等) は `--source` を使います:
+
+```bash
+reyn mcp install --source npm:@modelcontextprotocol/server-filesystem
+reyn mcp install --source pypi:mcp-server-fetch
+reyn mcp install --source docker:mcp/playwright
+reyn mcp install --source https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+```
+
+`--source` はレジストリ取得を skip し、 ソース指定子から install metadata を直接解決します。 パーミッションゲート / 認証情報 / 設定書込 / 監査 event はレジストリ path と同一です。
+
 完全な `reyn mcp` CLI リファレンスは [Reference: `reyn mcp`](../reference/cli/mcp.md) を参照してください。
 
 ## クイックスタート: `reyn chat` から MCP を試す（手動設定パス）

@@ -169,7 +169,7 @@ OPENAI_API_KEY=sk-yyy           # ← MCP 以外でも universal に使える (=
 dogfood で確認した制約 (= v0.1 freeze、 uptime 保証なし、 Anthropic 公式未登録):
 
 - **registry.modelcontextprotocol.io 直接 fetch + Reyn 側 cache 必須**: `~/.reyn/registry-cache/<server_id>.json` (TTL 24h) で offline / timeout 時 graceful
-- **fallback path**: registry 未登録の server は `--source <github_url>` flag で直接指定 (= Anthropic 公式 servers / 内製 server)
+- **fallback path**: registry 未登録の server は `--source <SOURCE_SPEC>` flag で直接指定 (= Anthropic 公式 servers / 内製 server)。 **実装済 (= commit `b668f4f`)**、 scheme は `npm:<package>` / `pypi:<package>` / `docker:<image>` / `https://github.com/<owner>/<repo>` の 4 種、 GitHub URL は heuristic resolver (= 既知 repo は `@scope/<package>` 推測、 未知 repo は `command` 空欄で graceful degrade)
 - **schema version pin**: server.json `$schema` URL の date version (`2025-12-11`) を Reyn 側で記録、 skew 検出時は warning
 - **`REYN_MCP_REGISTRY_URL` override**: enterprise 向け private registry (= subregistry spec) を優先 base URL に設定可能、 `mcp.registries:` priority list で複数 registry を順次検索
 
