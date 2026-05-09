@@ -121,6 +121,13 @@ class ReynTUIApp(App):
         # time we see a trace event for a new run, so the agents tab
         # preview can show "which user message kicked off this skill?".
         self._latest_user_message: str = ""
+        # Persistent map of run_id → triggered_by message, kept across
+        # `_on_skill_done` (which pops `_skill_exec` once a run finishes).
+        # Lets the recent_skill preview display the same triggered_by
+        # info even after the skill row has rotated out of the running
+        # set. Bounded by a soft cap below to keep memory predictable
+        # in long-running sessions.
+        self._run_id_to_user_message: dict[str, str] = {}
         # Voice input (lazy — created on first F2 press so import-time cost is
         # zero for users who don't have the `reyn[voice]` extras installed).
         self._voice_input = None  # type: ignore[var-annotated]
@@ -301,6 +308,16 @@ class ReynTUIApp(App):
                 "triggered_by": self._latest_user_message,
             }
             self._skill_exec[run_id] = existing
+            # Mirror to the persistent map so recent_skill (= post-skill_done)
+            # can still show what triggered the run. Soft-cap to avoid
+            # unbounded growth on long sessions; oldest entries drop first.
+            if self._latest_user_message:
+                self._run_id_to_user_message[run_id] = self._latest_user_message
+                if len(self._run_id_to_user_message) > 200:
+                    # Pop the oldest insertion (dict preserves order).
+                    self._run_id_to_user_message.pop(
+                        next(iter(self._run_id_to_user_message)),
+                    )
         # Text pattern: "phase started: <phase_name>"
         if text.startswith("phase started: "):
             phase = text[len("phase started: "):].strip()

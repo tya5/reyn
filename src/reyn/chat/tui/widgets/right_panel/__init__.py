@@ -755,6 +755,17 @@ class RightPanel(Widget):
         head.append("\n")
         head.append("finished: ", style="dim")
         head.append(item.get("ts", "?"), style="#dddddd")
+
+        # triggered_by — looked up by full run_id from the session-local
+        # map populated when the skill first emitted a trace event. Empty
+        # for runs from previous sessions (= map is rebuilt fresh each
+        # ``reyn chat`` launch).
+        trig = self._lookup_triggered_by(item.get("run_id_full", ""))
+        if trig:
+            head.append("\n\ntriggered by:\n", style="dim")
+            short = trig if len(trig) <= 240 else trig[:237] + "…"
+            head.append(short, style="#aaaaaa")
+
         head.append("\n\n")
 
         if events:
@@ -929,6 +940,17 @@ class RightPanel(Widget):
         body = self._renderable_to_text(renderable)
         return f"# {title}\n\n{body}" if title else body
 
+    def _lookup_triggered_by(self, run_id_full: str) -> str:
+        """Return the user message that triggered ``run_id_full`` (or "")."""
+        if not run_id_full:
+            return ""
+        try:
+            return str(
+                self.app._run_id_to_user_message.get(run_id_full, ""),  # type: ignore[attr-defined]
+            )
+        except Exception:
+            return ""
+
     def _renderable_to_text(self, renderable: Any) -> str:
         """Render any Rich renderable to plain text (no ANSI codes)."""
         import io
@@ -1035,6 +1057,12 @@ class RightPanel(Widget):
         lines.append(f"# finished: {item.get('ts', '?')}")
         if path is not None:
             lines.append(f"# source:   {path}")
+        trig = self._lookup_triggered_by(item.get("run_id_full", ""))
+        if trig:
+            lines.append("")
+            lines.append("triggered_by: |")
+            for ln in str(trig).splitlines() or [str(trig)]:
+                lines.append(f"  {ln}")
         lines.append("")
         if events:
             if _yaml is not None:

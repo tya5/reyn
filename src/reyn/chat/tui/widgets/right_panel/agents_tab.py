@@ -162,6 +162,10 @@ def _recent_skill_runs_for_agent(
         out.append({
             "skill_name": skill_name or "?",
             "run_id": (rid_compact or stem)[:8],
+            # Full run_id (= as it appears in workflow_started.data.run_id).
+            # Needed by the orchestrator to look up triggered_by from the
+            # session-local map keyed on the full id.
+            "run_id_full": run_id or "",
             "status": status,
             "duration_s": duration_s,
             "ts": ts[:19].replace("T", " "),
