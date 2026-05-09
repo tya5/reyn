@@ -77,6 +77,12 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0020](0020-skill-only-permissions.md) | Skill-only permissions — Phase.permissions field removed (案 2) |
 
+### Architecture
+
+| ADR | Topic |
+|---|---|
+| [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
+
 ## Format
 
 ```markdown
