@@ -698,21 +698,109 @@ class RouterLoop:
             invoker=functools.partial(self._invoke_router_tool, name),
         )
 
+    # Capabilities dispatched via the unified ToolRegistry (ADR-0026 M4 Phase 3
+    # step 2). Their handlers in `src/reyn/tools/` delegate via typed
+    # RouterCallerState callable fields populated by ``_build_router_caller_state``.
+    # Tools NOT in this set fall through to the legacy if/elif tree below; the
+    # set expands cluster-by-cluster as Phase 3.5 lands the remaining adapters.
+    _REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
+        "list_skills", "describe_skill", "list_agents", "describe_agent",
+        "delegate_to_agent", "plan",
+    })
+
+    def _build_router_caller_state(self) -> Any:
+        """Build a RouterCallerState populated with bound callbacks.
+
+        Bindings follow the wiring contract documented in
+        ``reyn.tools.types.RouterCallerState``:
+
+        * Catalog ``_fn`` callables wrap RouterLoop's private helpers
+          (``_list_skills`` / ``_describe_skill`` / ``_list_agents`` /
+          ``_describe_agent``) so the registry handlers stay decoupled from
+          RouterLoopHost type.
+        * ``send_to_agent`` is bound with ``chain_id`` and ``depth=0`` at
+          population time so the delegate handler signature stays pure
+          ``(to, request)``.
+        * ``dispatch_plan_tool`` is bound with ``parent_host`` / ``chain_id``
+          / ``budget`` / ``router_model`` / ``available_tool_names``; the
+          plan handler passes only ``args``.
+
+        Forward-looking fields (``available_skills`` / ``available_agents``
+        for schema enrichment, identity / cost / model context) are also
+        populated so future handler activations have what they need.
+        """
+        from reyn.tools.types import RouterCallerState
+
+        async def _send_to_agent_bound(*, to: str, request: str) -> None:
+            await self.host.send_to_agent(
+                to=to, request=request, depth=0, chain_id=self.chain_id,
+            )
+
+        async def _dispatch_plan_bound(*, args: dict) -> Any:
+            from reyn.chat.planner import dispatch_plan_tool
+            return await dispatch_plan_tool(
+                args=args,
+                parent_host=self.host,
+                chain_id=self.chain_id,
+                budget=self.budget,
+                router_model=self.router_model,
+                available_tool_names=set(self._tool_names) - {"plan"},
+            )
+
+        return RouterCallerState(
+            # Catalog access (= activated handlers)
+            list_skills_fn=self._list_skills,
+            describe_skill_fn=self._describe_skill,
+            list_agents_fn=self._list_agents,
+            describe_agent_fn=self._describe_agent,
+            available_skills=list(self.host.list_available_skills()),
+            available_agents=list(self.host.list_available_agents()),
+            # Async dispatch (= activated handlers)
+            send_to_agent=_send_to_agent_bound,
+            dispatch_plan_tool=_dispatch_plan_bound,
+            # Identity + cost + model context (forward-looking; consumed by
+            # schema_enricher hooks and future activated handlers)
+            chain_id=self.chain_id,
+            budget=self.budget,
+            router_model=self.router_model,
+            available_tool_names=list(self._tool_names),
+        )
+
+    async def _invoke_via_registry(self, name: str, args: dict) -> Any:
+        """Dispatch a tool through the unified ToolRegistry handler.
+
+        Builds a ToolContext with a populated RouterCallerState and calls
+        the canonical handler from ``src/reyn/tools/<name>.py``. Wrapped
+        externally by ``dispatch_tool`` (= same cross-cutting events /
+        validation / error envelope as the legacy invoker path).
+        """
+        from reyn.tools import get_default_registry
+        from reyn.tools.dispatch import invoke_tool
+        from reyn.tools.types import ToolContext
+
+        rs = self._build_router_caller_state()
+        tool_ctx = ToolContext(
+            events=self.host.events,
+            permission_resolver=getattr(self.host, "permission_resolver", None),
+            workspace=getattr(self.host, "workspace", None),
+            caller_kind="router",
+            router_state=rs,
+        )
+        return await invoke_tool(get_default_registry(), name, args, tool_ctx)
+
     async def _invoke_router_tool(self, name: str, args: dict) -> Any:
         """Execute a validated tool call by name.
 
-        Called by dispatch_tool after name/args validation. The if/elif
-        tree from the old _execute_tool lives here — assumes name is valid.
+        Called by dispatch_tool after name/args validation. Tools in
+        ``_REGISTRY_DISPATCH_TOOLS`` go through the unified registry path
+        (= ADR-0026); the rest fall through to the legacy if/elif tree
+        until Phase 3.5 ports their handlers.
         """
+        # ADR-0026 M4 Phase 3 step 2 — registry dispatch for activated tools
+        if name in self._REGISTRY_DISPATCH_TOOLS:
+            return await self._invoke_via_registry(name, args)
+
         # A. Discovery
-        if name == "list_skills":
-            return self._list_skills(args.get("path", ""))
-        if name == "describe_skill":
-            return self._describe_skill(args.get("name", ""))
-        if name == "list_agents":
-            return self._list_agents(args.get("path", ""))
-        if name == "describe_agent":
-            return self._describe_agent(args.get("name", ""))
         if name == "list_memory":
             return self._list_memory(args.get("path", ""))
         if name == "read_memory_body":
@@ -737,26 +825,6 @@ class RouterLoop:
                 input=args["input"],
                 chain_id=self.chain_id,
             )
-        if name == "delegate_to_agent":
-            await self.host.send_to_agent(
-                to=args["to"],
-                request=args["request"],
-                depth=0,
-                chain_id=self.chain_id,
-            )
-            # 案 f-1: clear note that the reply arrives asynchronously and
-            # the LLM should wait for it. RouterLoop also exits after
-            # detecting any async dispatch (defense in depth via
-            # router_tools.get_dispatch_kind); if the loop ever did
-            # continue, this message tells the LLM what state we're in.
-            return {
-                "status": "dispatched",
-                "to": args["to"],
-                "note": (
-                    "Peer's reply will arrive in a future router invocation; "
-                    "please wait for it."
-                ),
-            }
         if name in ("remember_shared", "remember_agent"):
             layer = "shared" if name == "remember_shared" else "agent"
             return await self._remember(layer=layer, **args)
@@ -805,18 +873,10 @@ class RouterLoop:
         if name == "reyn_src_read":
             return await self.host.reyn_src_read(path=args["path"])
 
-        # G. Plan tool — decompose into sub-tasks, run each in a narrow
-        # LLM call, return the aggregated text. See planner.py.
-        if name == "plan":
-            from reyn.chat.planner import dispatch_plan_tool
-            return await dispatch_plan_tool(
-                args=args,
-                parent_host=self.host,
-                chain_id=self.chain_id,
-                budget=self.budget,
-                router_model=self.router_model,
-                available_tool_names=set(self._tool_names) - {"plan"},  # no nested plans
-            )
+        # delegate_to_agent + plan are dispatched via the unified registry
+        # (= ADR-0026 M4 Phase 3 step 2; see _REGISTRY_DISPATCH_TOOLS /
+        # _invoke_via_registry).  The legacy branches for those tools have
+        # been removed; their handlers live in src/reyn/tools/.
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.

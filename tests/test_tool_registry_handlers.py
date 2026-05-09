@@ -2,8 +2,9 @@
 
 Each test verifies that a catalog handler:
   1. Delegates to the typed RouterCallerState callable field.
-  2. Returns the correct shape (list handlers wrap in {"items": [...]},
-     describe handlers return the Mapping directly).
+  2. Returns the correct shape — list handlers return list directly
+     (= byte-identity with legacy router branches; LLMReplay safety),
+     describe handlers return the Mapping directly.
   3. Raises RuntimeError with a descriptive message when router_state
      or the relevant fn field is None (mis-wired or test site omission).
 """
@@ -45,7 +46,7 @@ async def test_list_skills_handler_delegates_to_router_state_fn():
     result = await LIST_SKILLS.handler({"path": "write/blog"}, _ctx(rs))
 
     assert captured_path == ["write/blog"]
-    assert result == {"items": [{"name": "s1", "description": "d1"}, {"name": "s2", "description": "d2"}]}
+    assert result == [{"name": "s1", "description": "d1"}, {"name": "s2", "description": "d2"}]
 
 
 @pytest.mark.asyncio
@@ -111,7 +112,7 @@ async def test_list_agents_handler_delegates_to_router_state_fn():
     result = await LIST_AGENTS.handler({"path": "cluster-a"}, _ctx(rs))
 
     assert captured_path == ["cluster-a"]
-    assert result == {"items": [{"name": "research", "description": "research agent"}]}
+    assert result == [{"name": "research", "description": "research agent"}]
 
 
 @pytest.mark.asyncio

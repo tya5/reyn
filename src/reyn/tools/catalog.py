@@ -86,8 +86,10 @@ async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> Tool
     or list_skills_fn is None (= mis-wired or test sites that don't
     populate it), raise RuntimeError with a clear message.
 
-    List handlers wrap the list return in {"items": [...]} to satisfy
-    ToolResult = Mapping[str, Any].
+    Returns the list directly. ToolResult is typed as Mapping[str, Any] but
+    the dispatcher JSON-serializes whatever the handler returns; preserving
+    byte-identity with the legacy router branches (which returned bare list)
+    is the migration safety mechanism (= LLMReplay fixtures unchanged).
     """
     rs = ctx.router_state
     if rs is None or rs.list_skills_fn is None:
@@ -96,7 +98,7 @@ async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> Tool
             "to be populated by the dispatcher (= RouterLoop)."
         )
     path = args.get("path", "")
-    return {"items": rs.list_skills_fn(path)}
+    return rs.list_skills_fn(path)  # type: ignore[return-value]
 
 
 LIST_SKILLS = ToolDefinition(
@@ -195,8 +197,10 @@ async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> Tool
     or list_agents_fn is None (= mis-wired or test sites that don't
     populate it), raise RuntimeError with a clear message.
 
-    List handlers wrap the list return in {"items": [...]} to satisfy
-    ToolResult = Mapping[str, Any].
+    Returns the list directly. ToolResult is typed as Mapping[str, Any] but
+    the dispatcher JSON-serializes whatever the handler returns; preserving
+    byte-identity with the legacy router branches (which returned bare list)
+    is the migration safety mechanism (= LLMReplay fixtures unchanged).
     """
     rs = ctx.router_state
     if rs is None or rs.list_agents_fn is None:
@@ -205,7 +209,7 @@ async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> Tool
             "to be populated by the dispatcher (= RouterLoop)."
         )
     path = args.get("path", "")
-    return {"items": rs.list_agents_fn(path)}
+    return rs.list_agents_fn(path)  # type: ignore[return-value]
 
 
 LIST_AGENTS = ToolDefinition(
