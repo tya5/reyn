@@ -705,8 +705,15 @@ class RouterLoop:
     # Tools NOT in this set fall through to the legacy if/elif tree below; the
     # set expands cluster-by-cluster as Phase 3.5 lands the remaining adapters.
     _REGISTRY_DISPATCH_TOOLS: frozenset[str] = frozenset({
+        # Phase 3 step 2 (commit 649a426)
         "list_skills", "describe_skill", "list_agents", "describe_agent",
         "delegate_to_agent", "plan",
+        # Phase 3.5-D — zero-diff handlers (reyn_src + web).
+        # reyn_src handlers are literal copies of RouterHostAdapter helpers;
+        # web handlers delegate to op_runtime.web with a synthesized OpContext
+        # that the read-only handlers don't consult (= behavior preserved).
+        "reyn_src_list", "reyn_src_read",
+        "web_search", "web_fetch",
     })
 
     def _build_router_caller_state(self) -> Any:
@@ -852,32 +859,11 @@ class RouterLoop:
                 args["server"], args["tool"], args["args"]
             )
 
-        # E. Web (OS-native ops, not skills) — delegate to host so the
-        # underlying op_runtime/web.py handlers run with the same OpContext
-        # plumbing as Control IR phase invocations.
-        if name == "web_search":
-            return await self.host.web_search(
-                query=args["query"],
-                max_results=args.get("max_results", 5),
-            )
-        if name == "web_fetch":
-            return await self.host.web_fetch(
-                url=args["url"],
-                max_length=args.get("max_length", 50_000),
-            )
-
-        # F. Reyn-source tools — read Reyn's own repo (no permission gate;
-        # the tree is public OSS content). See router_tools.py:F for the
-        # rationale.
-        if name == "reyn_src_list":
-            return await self.host.reyn_src_list(path=args.get("path", ""))
-        if name == "reyn_src_read":
-            return await self.host.reyn_src_read(path=args["path"])
-
-        # delegate_to_agent + plan are dispatched via the unified registry
-        # (= ADR-0026 M4 Phase 3 step 2; see _REGISTRY_DISPATCH_TOOLS /
-        # _invoke_via_registry).  The legacy branches for those tools have
-        # been removed; their handlers live in src/reyn/tools/.
+        # E + F (web + reyn_src) + G (plan) + B2 (delegate_to_agent) +
+        # A1-A4 (catalog) are dispatched via the unified registry — see
+        # _REGISTRY_DISPATCH_TOOLS at the top of this method (ADR-0026
+        # M4 Phase 3 step 2 + Phase 3.5-D). Their handlers live in
+        # src/reyn/tools/.
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.
