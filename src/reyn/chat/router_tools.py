@@ -642,25 +642,17 @@ def build_tools(
         ))
 
     # ── E2: web_fetch (operator opt-in via web.fetch: allow) ──────────────────
+    # ADR-0026 M3 Wave 1: rendered from unified ToolDefinition.
     if web_fetch_allowed:
-        specs.append(ToolSpec(
-            name="web_fetch",
-            description=(
-                "Fetch a single URL and return its (text-extracted) "
-                "content. url: absolute http/https URL. "
-                "max_length: cap on returned content size "
-                "(default 50000). Use after web_search to read a "
-                "result page in detail."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "max_length": {"type": "integer"},
-                },
-                "required": ["url"],
-            },
-        ))
+        _wf = _registry.lookup("web_fetch")
+        if _wf is not None and _wf.gates.router == "allow":
+            _wf_rendered = _wf.render_for_router()
+            specs.append(ToolSpec(
+                name=_wf_rendered["function"]["name"],
+                description=_wf_rendered["function"]["description"],
+                parameters=_wf_rendered["function"]["parameters"],
+                dispatch_kind=_wf.dispatch_kind,
+            ))
 
     # ── G. Plan tool (always present) ────────────────────────────────────────
     #
@@ -680,9 +672,19 @@ def build_tools(
     # catalog) is checked at dispatch time by `parse_and_validate_plan`,
     # not here, because the tool list is dynamic per-session. Cycle
     # detection is also at dispatch time.
-    specs.append(
+    # ADR-0026 M3 Wave 1: rendered from unified ToolDefinition.
+    _plan_def = _registry.lookup("plan")
+    if _plan_def is not None and _plan_def.gates.router == "allow":
+        _plan_rendered = _plan_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_plan_rendered["function"]["name"],
+            description=_plan_rendered["function"]["description"],
+            parameters=_plan_rendered["function"]["parameters"],
+            dispatch_kind=_plan_def.dispatch_kind,
+        ))
+    else:  # pragma: no cover - defensive fallback if registry mis-init
         # ── G1: plan ─────────────────────────────────────────────────────────
-        ToolSpec(
+        specs.append(ToolSpec(
             name="plan",
             description=(
                 "Decompose a complex query into 2-7 independent "
@@ -747,8 +749,7 @@ def build_tools(
                 "required": ["goal", "steps_json"],
             },
             dispatch_kind="async",
-        )
-    )
+        ))
 
     specs += [
         # ── F. Reyn-source tools (always present, no permission) ────────────

@@ -86,6 +86,9 @@ class ToolDefinition:
     # Metadata
     category: str                                    # = "io" / "discovery" / "memory" / etc.
     purity: Literal["pure", "side_effect", "read_only", "world_pure"] = "side_effect"
+    dispatch_kind: Literal["sync", "async"] = "sync"  # async = result via deferred channel
+                                                     # (= delegate_to_agent / plan;
+                                                     # router-side only consideration)
 
     # Future metadata anchors (commented out; surface as needed):
     # cost_weight: float = 1.0

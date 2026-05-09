@@ -36,7 +36,25 @@ def get_default_registry() -> ToolRegistry:
     """
     # Lazy import to avoid circular dependencies at package-init time.
     from reyn.tools.web_search import WEB_SEARCH
+    from reyn.tools.web_fetch import WEB_FETCH
+    from reyn.tools.shell import SHELL
+    from reyn.tools.lint import LINT
+    from reyn.tools.ask_user import ASK_USER
+    from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
+    from reyn.tools.plan import PLAN
+    from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
 
     registry = ToolRegistry()
+    # Both-surface capabilities
     registry.register(WEB_SEARCH)
+    registry.register(WEB_FETCH)
+    # Phase-only capabilities (= gates.router == "deny")
+    registry.register(SHELL)
+    registry.register(LINT)
+    registry.register(ASK_USER)
+    # Router-only capabilities (= gates.phase == "deny")
+    registry.register(DELEGATE_TO_AGENT)
+    registry.register(PLAN)
+    registry.register(REYN_SRC_LIST)
+    registry.register(REYN_SRC_READ)
     return registry
