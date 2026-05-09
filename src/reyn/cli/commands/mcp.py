@@ -432,7 +432,8 @@ def run_search(args: argparse.Namespace) -> None:
         name = _trunc(server.name, _MAX_NAME)
         runtime = server.runtime_hint or "(unknown)"
         desc = _trunc(server.description, _MAX_DESC)
-        repo = _trunc(server.repository_url, _MAX_REPO)
+        repo_raw = server.repository_url if server.repository_url else "(no repo URL)"
+        repo = _trunc(repo_raw, _MAX_REPO)
         print(
             f"{name:<{_MAX_NAME}}  {runtime:<8}  {desc:<{_MAX_DESC}}  {repo}"
         )
