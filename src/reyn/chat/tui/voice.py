@@ -225,12 +225,23 @@ class VoiceInput:
 
     # ── recording control ───────────────────────────────────────────────────
 
-    def start_recording(self) -> None:
+    async def start_recording(self) -> None:
         """Open the mic stream and begin appending chunks to the buffer.
 
-        Raises :class:`VoiceUnavailable` when sounddevice / numpy are missing.
-        Subsequent ``start_recording()`` calls while already recording are
-        silently no-ops.
+        Async because the underlying ``sd.InputStream(...)`` constructor +
+        ``.start()`` are synchronous and **can block** on macOS when the
+        audio subsystem is contended (= other apps holding the input
+        device, AirPods reconnecting, CoreAudio HAL grumpy). Inline
+        calls froze the event loop and produced the user-reported
+        "Ctrl+R では時計止まったまま" symptom. We run the open in a
+        worker thread with a 5-second timeout and translate any failure
+        / timeout into a ``VoiceUnavailable`` exception that the TUI
+        already knows how to surface.
+
+        Raises :class:`VoiceUnavailable` when sounddevice / numpy are
+        missing OR the audio device cannot be opened in time. Subsequent
+        ``start_recording()`` calls while already recording are silently
+        no-ops.
         """
         if self._recording:
             return
@@ -241,7 +252,31 @@ class VoiceInput:
             )
         self._sd, self._np = deps
         self._chunks = []
+        _vlog("start_recording: opening InputStream")
+        try:
+            await asyncio.wait_for(
+                asyncio.to_thread(self._open_stream_sync),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError as exc:
+            _vlog("start_recording: InputStream open timed out (5s)")
+            self._stream = None
+            self._chunks = []
+            raise VoiceUnavailable(
+                "microphone open timed out (5s) — another app may be "
+                "holding the device; check System Settings → Sound → Input"
+            ) from exc
+        except Exception as exc:
+            _vlog(f"start_recording: InputStream open failed: {exc!r}")
+            self._stream = None
+            self._chunks = []
+            raise VoiceUnavailable(f"failed to open microphone: {exc}") from exc
+        self._recording = True
+        self._recording_started_at = _time.monotonic()
+        _vlog("start_recording: InputStream live")
 
+    def _open_stream_sync(self) -> None:
+        """Synchronous body of the InputStream open. Runs in a worker thread."""
         def _callback(indata, frames, time_info, status) -> None:
             if status:
                 logger.debug("sounddevice status: %s", status)
@@ -251,20 +286,18 @@ class VoiceInput:
             self._chunks.append(indata.copy())
 
         try:
-            self._stream = self._sd.InputStream(
+            stream = self._sd.InputStream(
                 samplerate=self._sample_rate,
                 channels=1,
                 dtype="float32",
                 callback=_callback,
             )
-            self._stream.start()
-            self._recording = True
-            self._recording_started_at = _time.monotonic()
-        except Exception as exc:
-            logger.warning("voice start_recording failed: %s", exc)
+            stream.start()
+            self._stream = stream
+        except Exception:
+            # Make sure we don't leak a half-opened stream into self.
             self._stream = None
-            self._chunks = []
-            raise VoiceUnavailable(f"failed to open microphone: {exc}") from exc
+            raise
 
     def cancel(self) -> None:
         """Stop the stream and drop the buffer without transcribing."""

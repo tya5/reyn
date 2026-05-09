@@ -687,11 +687,20 @@ class ReynTUIApp(App):
             return  # already transcribing — ignore re-presses
 
         if not self._voice_input.is_recording:
+            # Status BEFORE the (now-async) start_recording so the user
+            # sees feedback even when CoreAudio takes a moment to hand
+            # over the device.
+            self._voice_status(
+                "🔴 starting mic… (Ctrl+R stop · Enter stop+send · Esc cancel)"
+            )
+            await self._yield_for_render()
             try:
-                self._voice_input.start_recording()
+                await self._voice_input.start_recording()
             except Exception as exc:
                 self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
                 return
+            # Replace the "starting…" line with the live recording
+            # message once the stream is actually open.
             self._voice_status(
                 "🔴 recording — Ctrl+R stop · Enter stop+send · Esc cancel"
             )
