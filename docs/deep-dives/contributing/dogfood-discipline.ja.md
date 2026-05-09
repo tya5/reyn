@@ -829,6 +829,89 @@ ADR-0023 §3.4 はツールオペレーション (= 非 LLM ツール dispatch) 
 
 ---
 
+## 6.6 Long-lived session パターン (G12 / context-bloat 測定)
+
+### A. このパターンが存在する理由
+
+セクション 2 および section 6 全体で説明している既存の per-run dogfood パターンは、シナリオ実行のたびに workspace state をリセットします。この分離は R1 type attractor (= LLM がフレッシュな context で拒否 / misroute / 構造的に無効な出力を出す) の測定に有効です。しかし G12 type attractor、特に Pattern E (= 複数ターンにまたがる context bloat によって引き起こされる empty completion) は測定できません。G28 (`giveup-tracker.md` 参照) はこの測定ギャップを明示しました: batch 16 で 8% の empty-reply rate が観測されましたが、後に production 問題ではなく dogfood driver の `clean_state` 呼び出しが disk history と server の in-memory `ChatSession._history` のズレを生じさせたことが原因と判明しました。その結果、production user が経験しない人工的な context 重複が発生していました。production 等価な挙動を測定する — ユーザーのセッションがリセットなしに自然にターンをまたいで成長する状態 — には、driver がそのライフサイクルをミラーする必要があります。
+
+### B. driver の概要
+
+`scripts/dogfood_long_session.py` は Reyn 用の long-lived session driver です。同一の A2A agent endpoint にプロンプトを順に送信し、ターンをまたいで history を自然に蓄積させながら、ターンごとのメトリクスとシナリオ終了後の events log を収集します。
+
+**ターンごとに記録するもの:**
+
+- `reply_len`: 合成テキスト reply の文字数
+- `elapsed_s`: ターンの wall-clock latency
+- `empty`: reply が空かどうか (空白文字を除いて文字数ゼロ)
+- HTTP status および JSON-RPC エラーメッセージ
+
+**シナリオ後の収集:**
+
+- agent の budget-ledger token entries (総 token 数と LLM call 数)
+- events log のパス (`detect_attractor.py` による downstream attractor 分析用)
+
+**ターン間でリセットしないもの:** history。server 側の `ChatSession._history` はシナリオの全ターンにわたって継続的に成長します — production user の場合と同様です。
+
+**scenarios ファイル:** `dogfood/scenarios/long_session_v1.yaml` — research chain / pronoun-reference followup / cross-reference 比較 / 反復 context (G12 Pattern E の主要ターゲット) / 一般 Python トピック / file・doc lookup chain / 概念説明 chain の 7 シナリオを収録。
+
+**baseline 実行で使用したコマンド:**
+
+```bash
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml
+```
+
+追加フラグ:
+
+```bash
+# agent やポートを変更する
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --agent default --web-url http://localhost:8080
+
+# multi-shot (各 shot が異なる agent endpoint を使用: default-shot1, default-shot2, ...)
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --n-shot 3
+
+# downstream 分析用に JSON を出力
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --json --out results.json
+```
+
+`--n-shot N > 1` では各 shot が異なる agent 名 (`default-shot1` 〜 `default-shotN`) を使用し、各 shot が真にフレッシュな server 側セッションを得ます。agent は registry に存在するか `reyn agent new` で事前作成が必要です。
+
+### C. どちらのパターンを使うか
+
+| 答えたい問い | 使う driver |
+|---|---|
+| 「特定シナリオの LLM の R1 拒否率は?」 | Per-run clean_state (既存パターン、セクション 2–5) |
+| 「multi-turn 会話での empty-completion base rate は?」 | Long-lived session (本セクション) |
+| 「新しい fix が context 処理をターンをまたいで変化させるか?」 | Long-lived session — fix 前後でシナリオを再実行 |
+| 「plan-mode の crash + resume 挙動は?」 | Per-run clean_state と `kill -9` 手順 (section 6.5 Class 3) |
+| 「特定の attractor が 1 ターンのシナリオに存在するか?」 | Per-run clean_state + `detect_attractor.py` |
+
+### D. 既知の制限
+
+- **Empty 検出は response-text layer で動作し、events layer ではありません。** driver は合成された `reply_len` がゼロのときにターンを empty とカウントします。これはユーザーから見た empty reply を捉えます。events log の `finish_reason: stop` + `completion_tokens: 0` と直接対応するわけではありません。G12 Pattern E / JSON-RPC error / network timeout のどれが原因かを確認するには events log と `--json` 出力の `status` フィールドを参照してください。
+
+- **ターンごとの token 成長曲線は直接取得できません。** budget ledger は agent セッション全体の総 token 数を記録しますが、ターンごとには記録しません。`--json` 出力にはタイムスタンプ付きの `token_entries` が含まれており、ターン wall-clock タイムスタンプとの照合で per-turn 相関を導くことができます。粗い分析にはシナリオごとの合計 token 数で十分です。
+
+- **N=37 ターンは安定したレート推定には小さすぎます。** baseline 実行 (7 シナリオ × 5–6 ターン) では overall empty rate 2% が得られました。方向性の指標としては有用ですが、N=37 での誤差余地は大きい。95% 信頼区間で ±5% 精度のレート推定には N ≥ 100 ターンが必要です。N を増やすには `--n-shot N` で複数 shot を実行するか、シナリオセットを拡張してください。
+
+- **非常に長いターン数 (10+, 20+) での context bloat は未測定です。** baseline は 5–6 ターン/シナリオを使用しました。G12 Pattern E は context サイズの関数として現れます。10+ ターンで empty completion が増加するかどうかはまだ未確認であり、そのレンジをテストするにはシナリオを拡張または新規追加する必要があります。
+
+### E. クロスリファレンス
+
+- **セクション 5 calibration discipline** (N≥10 / N≥5 要件): long-session パターンは測定全体の一方の半分であり、per-run clean_state がもう一方の半分です。どちらか一方だけでは不十分です。
+- **`giveup-tracker.md` の G28**: このドライバーの動機となったエントリ。batch 16 の 8% baseline と driver-induced と判明した経緯を含む。
+- **`dogfood/scenarios/long_session_v1.yaml`**: 7 シナリオのスターターセット。特定の context 成長仮説をテストする際は拡張してください。
+- **`scripts/detect_attractor.py`**: `--json` で報告された events log パスに対して実行し、phase レベルの empty-stop event を確認。
+
+---
+
 ## 7. 新規 dogfooder 向け quickstart
 
 ### 新 batch 開始時 — checklist

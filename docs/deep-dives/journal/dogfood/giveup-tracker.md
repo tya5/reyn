@@ -1548,6 +1548,46 @@ trace 観測で diverge point pinpoint:
 - **observe-first で 8% を 0% に分解できた**: trace dump なしには 「2/25 empty は G27 fix の不完全」 と誤推測したまま batch 17 description rewrite を着手していた可能性。 実際は driver-induced + G12 manifestation で description rewrite では解消しない
 - **真の rate 測定には driver 設計の見直しが必要**: 既存 dogfood pattern (= per-run clean_state) は R1 type attractor (= LLM 拒否) の測定に最適化、 G12 type (= context bloat empty) は long-session pattern が必要
 
+#### Baseline measurement (2026-05-09)
+
+**Driver landed**: commit `32d31b6`
+
+- `scripts/dogfood_long_session.py` (370 lines) — long-lived session driver。history を disk / in-memory 両方にわたって自然蓄積させる per-run clean_state を使わないパターン
+- `dogfood/scenarios/long_session_v1.yaml` — 7 シナリオ (research chain / pronoun followup / cross-reference / repetitive context / general Python / file lookup / concept explanation)
+
+**Baseline run**: 7 scenarios × 5–6 turns = **37 turns total**
+
+| 指標 | 値 |
+|---|---|
+| Overall empty rate | **2% (1/37)** |
+| LLM calls | 68 |
+| Total tokens | 388,145 |
+| Latency p50 | 6.13s |
+
+**Empty distribution by turn position:**
+
+| Turn position | empty / total | Rate |
+|---|---|---|
+| turn_1 | 1/7 | 14% |
+| turn_2 | 0/7 | 0% |
+| turn_3 | 0/7 | 0% |
+| turn_4 | 0/7 | 0% |
+| turn_5 | 0/7 | 0% |
+| turn_6 | 0/2 | 0% |
+
+The 1 empty case was **scenario_2 turn_1** (pronoun_followup シナリオの cold-start)。
+
+**解釈**:
+
+- batch 16 の 8% rate は **driver-induced と確定**。G28 の仮説が N=37 ターンの実測で裏付けられた
+- 真の production base rate は **~2%** (N=37 の小サンプル、誤差余地大)、 batch 16 の 8% とは明確に異なる
+- G12 Pattern E (= 後続ターンでの context-bloat empty) は 5–6 turn range では **観測されなかった**
+- Cold-start empty (= turn_1 のみ) が現在のシナリオセットでの dominant empty モードと判明
+
+**G28 ステータス更新**: "tracker entry のみ" → "tracker entry + baseline measured + production-rate ~2% (N=37)"
+
+**Future**: 10+, 20+ ターンでの context-bloat 測定が G12 Pattern E の真の surface 条件確定に必要 (= シナリオ拡張 or `--n-shot` 増加で対応可能)
+
 ---
 
 ### G30: multi-agent debate primitive を追加しない (negative-space decision)

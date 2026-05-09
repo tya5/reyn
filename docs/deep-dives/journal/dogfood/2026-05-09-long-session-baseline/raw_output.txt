@@ -1,0 +1,72 @@
+=== Long-session dogfood: 7 scenarios × N=1 shot ===
+Target: http://localhost:8080/a2a/agents/default
+
+━━━ scenario_1_reyn_research_chain (5 turns) ━━━
+  Turn 1: 392 chars in 13.6s ✓
+  Turn 2: 217 chars in 6.3s ✓
+  Turn 3: 178 chars in 13.1s ✓
+  Turn 4: 306 chars in 13.5s ✓
+  Turn 5: 193 chars in 33.9s ✓
+  Stats: empty_rate=0% (0/5), latency_p50=13.52s, 95373 tokens / 17 calls
+
+━━━ scenario_2_pronoun_followup (6 turns) ━━━
+  Turn 1: 0 chars in 8.5s ⚠ EMPTY
+  Turn 2: 114 chars in 8.0s ✓
+  Turn 3: 114 chars in 5.7s ✓
+  Turn 4: 114 chars in 12.9s ✓
+  Turn 5: 114 chars in 19.8s ✓
+  Turn 6: 281 chars in 7.3s ✓
+  Stats: empty_rate=16% (1/6), latency_p50=8.5s, 52866 tokens / 12 calls
+
+━━━ scenario_3_cross_reference_compare (5 turns) ━━━
+  Turn 1: 454 chars in 6.0s ✓
+  Turn 2: 415 chars in 5.0s ✓
+  Turn 3: 114 chars in 4.5s ✓
+  Turn 4: 464 chars in 4.5s ✓
+  Turn 5: 4190 chars in 4.8s ✓
+  Stats: empty_rate=0% (0/5), latency_p50=4.81s, 57799 tokens / 10 calls
+
+━━━ scenario_4_repetitive_context_bloat (6 turns) ━━━
+  Turn 1: 276 chars in 6.1s ✓
+  Turn 2: 2566 chars in 4.9s ✓
+  Turn 3: 142 chars in 4.1s ✓
+  Turn 4: 2105 chars in 11.9s ✓
+  Turn 5: 324 chars in 2.9s ✓
+  Turn 6: 2563 chars in 6.3s ✓
+  Stats: empty_rate=0% (0/6), latency_p50=6.13s, 53002 tokens / 9 calls
+
+━━━ scenario_5_general_python_chain (5 turns) ━━━
+  Turn 1: 634 chars in 3.7s ✓
+  Turn 2: 1354 chars in 2.9s ✓
+  Turn 3: 2458 chars in 7.9s ✓
+  Turn 4: 2683 chars in 8.6s ✓
+  Turn 5: 5121 chars in 5.7s ✓
+  Stats: empty_rate=0% (0/5), latency_p50=5.73s, 42780 tokens / 6 calls
+
+━━━ scenario_6_file_and_doc_lookup_chain (5 turns) ━━━
+  Turn 1: 267 chars in 7.3s ✓
+  Turn 2: 91 chars in 3.1s ✓
+  Turn 3: 144 chars in 1.0s ✓
+  Turn 4: 126 chars in 2.1s ✓
+  Turn 5: 289 chars in 4.3s ✓
+  Stats: empty_rate=0% (0/5), latency_p50=3.14s, 52510 tokens / 8 calls
+
+━━━ scenario_7_concept_explanation_chain (5 turns) ━━━
+  Turn 1: 470 chars in 6.9s ✓
+  Turn 2: 2173 chars in 5.3s ✓
+  Turn 3: 2440 chars in 2.1s ✓
+  Turn 4: 5341 chars in 7.8s ✓
+  Turn 5: 5983 chars in 7.8s ✓
+  Stats: empty_rate=0% (0/5), latency_p50=6.89s, 33815 tokens / 6 calls
+
+════════════════════════════════════════════════════════════
+ Summary: 7 scenarios, 37 turns total, 1 empty (2%), latency p50=6.13s
+ Empty by turn position:
+   turn_1: 1/7 (14%)
+   turn_2: 0/7 (0%)
+   turn_3: 0/7 (0%)
+   turn_4: 0/7 (0%)
+   turn_5: 0/7 (0%)
+   turn_6: 0/2 (0%)
+ LLM calls: 68, total tokens: 388145
+════════════════════════════════════════════════════════════

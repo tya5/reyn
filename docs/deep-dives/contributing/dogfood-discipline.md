@@ -850,6 +850,89 @@ If you consistently cannot trigger plan-mode across multiple query formulations,
 
 ---
 
+## 6.6 Long-lived session pattern (G12 / context-bloat measurement)
+
+### A. Why this pattern exists
+
+The existing per-run dogfood pattern (described in Section 2 and throughout Section 6) resets workspace state between every scenario execution. This isolation is valuable for measuring R1-type attractors — cases where the LLM refuses, misroutes, or produces a structurally invalid output on a fresh context. But it cannot measure G12-type attractors, specifically Pattern E: empty completions that are triggered by context bloat across multiple turns. G28 (see `giveup-tracker.md`) made this measurement gap explicit: batch 16 observed an 8% empty-reply rate that was later traced not to a production issue but to the dogfood driver's `clean_state` call invalidating disk history out of step with the server's in-memory `ChatSession._history`. The result was artificial context duplication that production users never experience. To measure actual production-equivalent behavior — where a user's session grows naturally across turns without any reset — the driver must mirror that lifecycle.
+
+### B. The driver
+
+`scripts/dogfood_long_session.py` is a long-lived session driver for Reyn. It sends prompts in order to the same A2A agent endpoint, allowing history to accumulate naturally across turns, and harvests per-turn metrics and the events log at the end of each scenario.
+
+**What it records (per turn):**
+
+- `reply_len`: character count of the synthesised text reply
+- `elapsed_s`: wall-clock latency for the turn
+- `empty`: whether the reply was empty (zero non-whitespace characters)
+- HTTP status and any JSON-RPC error message
+
+**Post-scenario harvest:**
+
+- Budget-ledger token entries for the agent (total tokens and LLM call count)
+- Events log path (for downstream attractor analysis with `detect_attractor.py`)
+
+**What it does NOT reset between turns:** history. The server-side `ChatSession._history` grows continuously across all turns of a scenario, exactly as it does for a production user.
+
+**Scenarios file:** `dogfood/scenarios/long_session_v1.yaml` — 7 sample scenarios covering research chains, pronoun-reference followup, cross-reference comparison, repetitive context (the primary G12 Pattern E target), general Python topics, file/doc lookup chains, and concept explanation chains.
+
+**CLI invocation used for the baseline:**
+
+```bash
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml
+```
+
+Additional flags:
+
+```bash
+# Target a different agent or port
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --agent default --web-url http://localhost:8080
+
+# Multi-shot (each shot uses a distinct agent endpoint: default-shot1, default-shot2, ...)
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --n-shot 3
+
+# Emit structured JSON for downstream analysis
+python scripts/dogfood_long_session.py \
+    --scenarios dogfood/scenarios/long_session_v1.yaml \
+    --json --out results.json
+```
+
+For `--n-shot N > 1`, each shot uses a distinct agent name (`default-shot1` through `default-shotN`) so each shot gets a truly fresh server-side session. The agents must exist in the registry or be pre-created with `reyn agent new`.
+
+### C. When to reach for which pattern
+
+| Question to answer | Use this driver |
+|---|---|
+| "What is the LLM's R1 refusal rate for a given scenario?" | Per-run clean_state (existing pattern, Section 2–5) |
+| "What is the empty-completion base rate over a multi-turn conversation?" | Long-lived session (this section) |
+| "Does my new fix change context-handling across turns?" | Long-lived session — re-run scenarios pre/post fix |
+| "How does the agent behave in plan-mode crash + resume?" | Per-run clean_state with the `kill -9` procedure (Section 6.5 Class 3) |
+| "Is a specific attractor present in a single-turn scenario?" | Per-run clean_state + `detect_attractor.py` |
+
+### D. Known limitations
+
+- **Empty detection operates at the response-text layer, not the events layer.** The driver counts a turn as empty when the synthesised `reply_len` is zero. This captures the user-visible empty reply. It does not directly correlate with `finish_reason: stop` + `completion_tokens: 0` in the events log. If you need to verify whether an empty turn was caused by G12 Pattern E vs. a JSON-RPC error vs. a network timeout, consult the events log and the `status` field in the JSON output.
+
+- **Token growth curve by turn position is not directly available.** The budget ledger records total tokens per agent session, not per turn. The `--json` output includes raw `token_entries` with timestamps; downstream per-turn correlation requires matching budget-ledger timestamps against turn wall-clock timestamps. For coarse analysis, per-scenario total tokens are sufficient.
+
+- **N=37 turns is small for stable rate estimates.** The baseline run (7 scenarios × 5–6 turns) produced a 2% overall empty rate. This is a useful directional signal but the margin of error at N=37 is large. For a rate estimate with ±5% precision at 95% confidence, N ≥ 100 turns are needed. Run multiple shots (`--n-shot N`) or expand the scenario set to increase N before drawing hard conclusions.
+
+- **Context bloat at very long turn counts (10+, 20+) was not measured.** The baseline used 5–6 turns per scenario. G12 Pattern E manifests as a context-size function. Whether empty completions increase at 10+ turns is an open question — scenarios would need to be extended or new ones added to test that range.
+
+### E. Cross-references
+
+- **Section 5 calibration discipline** (N≥10 / N≥5 requirement): the long-session pattern is one half of the measurement picture; per-run clean_state is the other half. Neither alone is sufficient.
+- **G28 in `giveup-tracker.md`**: the entry that motivated this driver, including the batch 16 8% baseline and the confirmed driver-induced explanation.
+- **`dogfood/scenarios/long_session_v1.yaml`**: the 7-scenario starting set. Extend it when testing specific context-growth hypotheses.
+- **`scripts/detect_attractor.py`**: run against the events log path reported by `--json` to check for empty-stop events at the phase level.
+
+---
+
 ## 7. Quickstart for new dogfooders
 
 ### Starting a new batch — checklist
