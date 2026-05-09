@@ -1,5 +1,5 @@
 # Reyn project configuration
-# Committed to git. For personal overrides, use agent-os.local.yaml (gitignored).
+# Committed to git. For personal overrides, use reyn.local.yaml (gitignored).
 # api_base (proxy URL) belongs in reyn.local.yaml or ~/.reyn/config.yaml.
 # API keys must be set as environment variables — never in config files:
 #   OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY, etc.
