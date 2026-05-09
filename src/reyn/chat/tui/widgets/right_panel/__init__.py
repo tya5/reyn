@@ -624,14 +624,16 @@ class RightPanel(Widget):
         head.append("\n")
         head.append("duration: ", style="dim")
         head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
-        head.append("\n")
-        head.append("finished: ", style="dim")
-        head.append(item.get("ts", "?"), style="#dddddd")
-        head.append("\n\n")
 
-        # Event log dump (= the same shape the events tab preview uses,
-        # but pre-filtered to this run's jsonl).
+        # Event log + LLM-usage rollup. Single pass: keep a running count
+        # of llm_response_received events plus their prompt/completion
+        # token totals and cost_usd. The events list is also retained for
+        # the YAML dump below, so we don't read the file twice.
         events: list[dict] = []
+        llm_calls = 0
+        prompt_tokens_total = 0
+        completion_tokens_total = 0
+        cost_usd_total = 0.0
         path = item.get("jsonl_path")
         if path is not None:
             try:
@@ -640,11 +642,54 @@ class RightPanel(Widget):
                     if not raw:
                         continue
                     try:
-                        events.append(_json.loads(raw))
+                        ev = _json.loads(raw)
                     except Exception:
                         continue
+                    events.append(ev)
+                    if ev.get("type") == "llm_response_received":
+                        d = ev.get("data") or {}
+                        llm_calls += 1
+                        try:
+                            prompt_tokens_total += int(d.get("prompt_tokens", 0) or 0)
+                        except (TypeError, ValueError):
+                            pass
+                        try:
+                            completion_tokens_total += int(
+                                d.get("completion_tokens", 0) or 0
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                        try:
+                            cost_usd_total += float(d.get("cost_usd", 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            pass
             except OSError as exc:
-                head.append(f"(failed to read events: {exc})", style="dim red")
+                head.append(f"\n(failed to read events: {exc})", style="dim red")
+
+        # LLM usage block — only meaningful when we actually saw at least
+        # one llm_response_received event. Skipped silently for runs that
+        # didn't call the LLM (e.g. pure deterministic preprocessor).
+        if llm_calls > 0:
+            head.append("\n")
+            head.append("llm calls: ", style="dim")
+            head.append(str(llm_calls), style="#dddddd")
+            head.append("\n")
+            head.append("tokens: ", style="dim")
+            total_tokens = prompt_tokens_total + completion_tokens_total
+            head.append(
+                f"{total_tokens:,} (prompt {prompt_tokens_total:,} + "
+                f"completion {completion_tokens_total:,})",
+                style="#dddddd",
+            )
+            head.append("\n")
+            head.append("cost: ", style="dim")
+            head.append(f"${cost_usd_total:.4f}", style="#dddddd")
+
+        head.append("\n")
+        head.append("finished: ", style="dim")
+        head.append(item.get("ts", "?"), style="#dddddd")
+        head.append("\n\n")
+
         if events:
             event_block = self._render_as_yaml(events)
             title = f"{item.get('skill_name', '?')} · {len(events)} events"
