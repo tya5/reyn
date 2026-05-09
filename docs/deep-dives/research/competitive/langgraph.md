@@ -308,11 +308,13 @@ Reyn の WAL はファイルベースで、単一プロセス前提。
 LangGraph は PostgreSQL / SQLite をバックエンドとしたスケーラブルな checkpointer を持ち、複数ワーカーが同一 thread_id を共有できる。
 **長時間実行ジョブや複数インスタンス構成**には DB バックエンドが必要。
 
-### 9-5. Time Travel デバッグ [medium]
+### 9-5. Time Travel デバッグ [**実装済み**]
 
 LangGraph は任意の過去 checkpoint から replay できる。
-Reyn の event log はリプレイ可能な設計 (P6) だが、**time travel デバッグの CLI / UI コマンドが未実装**。
-Event log 構造は既にあるため実装コストは中程度。
+Reyn も同等の機能を持つ: `scripts/dogfood_trace.py --mode replay` で過去の実行をステップごとに
+walk し、`--mode compare` で 2 つの実行を side-by-side で diff できる。
+エンジンは `src/reyn/replay/` に実装済み (PR-TIME-TRAVEL、2026-05-06 verified)。
+詳細: [reference/dogfood-tracing.md](../../reference/dogfood-tracing.md)。
 
 ### 9-6. Node/task キャッシュ [small]
 

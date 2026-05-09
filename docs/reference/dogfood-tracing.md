@@ -1,5 +1,10 @@
 # LLM Payload Tracing (Dogfood Debug)
 
+Reyn provides time-travel debugging via the events log (P6). The CLI commands
+below — `--mode replay` and `--mode compare` — let you walk any past run step
+by step or diff two runs side by side. This is the operator's primary surface
+for production debugging.
+
 Reyn can optionally dump every LLM call's full payload — messages, tools
 schema, sampling params, and response — to a JSONL file on disk. This is
 intentionally a debug/dogfood tool, not production audit infrastructure

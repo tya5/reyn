@@ -107,7 +107,7 @@ trade-off is explicit: predictability and auditability over maximum autonomy.
 | **CrewAI** | Role-driven (sequential / hierarchical / Flow event-driven); no OS-level candidate constraint | Flow `@persist` (SQLite); manual resume on crash | Task replay (last run only) | Role-orchestration ergonomics; 30+ built-in tools; RAG and memory out of the box |
 | **AutoGen** | Conversational multi-agent (message bus); LLM selects next speaker freely in SelectorGroupChat | `save_state()` / `load_state()` — application-managed, no built-in auto-checkpoint | OpenTelemetry spans (not replay-capable) | Multi-agent dialog patterns; actor model for distributed agents |
 | **Semantic Kernel** | Function calling loop; LLM selects plugins autonomously; no OS-level candidate constraint | ChatHistory (in-memory); external DB persistence is app-managed | OpenTelemetry spans (not replay-capable) | Azure-native integration; C# / Python / Java parity; MIT OSS |
-| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; MCP server + client |
+| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; per-agent / per-chain / per-model cost caps; MCP server + client |
 
 **Reyn is more constrained.** If you want maximum LLM autonomy and creative
 agent behavior, LangGraph or AutoGen will feel less restrictive.
@@ -120,6 +120,10 @@ channel; Events are the only audit log. Other frameworks let you pass state
 in-memory or through callbacks — convenient, but invisible to crash recovery and
 audit trails.
 
+**Time-travel debugging** — Reyn ships a replay CLI that walks any past run
+step by step (`--mode replay`), and a compare CLI that diffs two runs side by
+side (`--mode compare`). See [docs/reference/dogfood-tracing.md](docs/reference/dogfood-tracing.md).
+
 ### Reyn fits when
 
 - You need every LLM decision to be replayable and auditable (regulated,
@@ -127,9 +131,10 @@ audit trails.
 - You want weak models to be reliable — the structural constraints (P4, P5)
   compensate for capability gaps without requiring prompt-level workarounds.
 - You need predictable cost: the closed candidate set prevents surprise tool
-  invention and unbounded loops.
+  invention and unbounded loops, and token + USD caps per agent / chain / model
+  refuse-on-exceed to prevent runaway spend (see [docs/reference/config/budget.md](docs/reference/config/budget.md)).
 - You want to integrate with Claude Code, Claude Desktop, Cursor, or any
-  MCP-aware client — Reyn ships as an MCP server out of the box.
+  MCP-aware client — `reyn mcp serve` exposes your agent fleet via MCP. See [docs/reference/cli/mcp.md](docs/reference/cli/mcp.md).
 
 ### Reyn does not fit when
 

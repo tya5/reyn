@@ -66,3 +66,8 @@ run_id    — 実行の uuid
 - [Reference: events](../reference/runtime/events.md) — 完全な event 分類
 - [Reference: events CLI](../reference/cli/run.md) — `reyn run` の `--events` フラグ
 - [How-to: debug with events](../guide/for-skill-authors/debug-with-events.md)
+
+Events は監査証跡であるだけでなく、タイムトラベルデバッグの基盤でもあります。
+`--mode replay`（過去の実行をステップごとに追う）と `--mode compare`（2 つの実行を
+並べて差分確認する）については [reference/dogfood-tracing.md](../reference/dogfood-tracing.md)
+を参照してください。

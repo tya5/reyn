@@ -66,3 +66,8 @@ You don't need a debugger; the log already has the information.
 - [Reference: events](../reference/runtime/events.md) — the full event taxonomy
 - [Reference: events CLI](../reference/cli/run.md) — `--events` flag on `reyn run`
 - [How-to: debug with events](../guide/for-skill-authors/debug-with-events.md)
+
+Events are not just an audit trail — they are the substrate for time-travel
+debugging. See [reference/dogfood-tracing.md](../reference/dogfood-tracing.md)
+for `--mode replay` (step-by-step walk of a past run) and `--mode compare`
+(side-by-side diff between two runs).

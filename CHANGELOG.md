@@ -128,6 +128,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Public budget/cost reference page (`reference/config/budget.md`, en + ja) — `cost:` schema, slash commands (`/cost` / `/budget` / `/budget reset`), cap tiers, events, ledger, known limitations
+- Public CLI reference for `reyn mcp serve` (`reference/cli/mcp.md`, en + ja) — flags, tools exposed, exit codes, Claude Code wiring example
 - Dogfood session chronicle 2026-05-09: HN research → description hint → 4 insights → parallel landing (= `72364fe`)
 - Long-session baseline findings journal + raw driver output (G28 confirmed driver-induced; true rate ~2% at N=37) (= `5b47827`)
 - HN AI-agent landscape insights doc (2025-2026) — 4 actionable findings from 10 threads (= `9e04c04`)
