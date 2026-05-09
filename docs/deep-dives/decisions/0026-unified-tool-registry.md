@@ -585,22 +585,37 @@ recorded in ADR amendment at that point.
 
 ## 9. Acceptance criteria
 
-**The ADR is implementable when:**
+### M1 deliverables — **completed (commit `edd4c1b`)**
 
-- M1 deliverables are in `main` with all tests passing: `src/reyn/tools/`
-  module tree, `ToolDefinition` / `ToolGates` / `ToolContext` / `ToolHandler`
-  types, `ToolRegistry` loader, adapter shims (`build_tools()` consuming
-  registry, `OP_KIND_MODEL_MAP` as derived view), `_DISPATCH_KIND` backward-
-  compat alias preserved, and approximately 30 new Tier 2 invariants in
-  `tests/test_tool_registry_invariants.py`.
-- M2 POC for `web_search` lands with: zero LLMReplay fixture re-recording,
-  approximately 5 new Tier 2 invariants, drift test green (single description
-  change propagates to both surfaces), `ToolContext` design validated for
-  both `caller_kind` values.
+- [x] registry, ToolDefinition, ToolGates, ToolContext, dispatch.py
+- [x] adapter shims (build_tools / OP_KIND_MODEL_MAP migration-note docstrings)
+- [x] 27 Tier 2 invariants
+
+### M2 POC deliverables — **completed (commit `367b41c`)**
+
+- [x] web_search migrated as POC
+- [x] zero LLMReplay fixture re-recording (= byte-identity gate green)
+- [x] +14 Tier 2 invariants
+- [x] drift test green
+- [x] ToolContext design validated for web_search shape
+
+### M3 Wave 1 + Wave 2 — **completed (commits `ba4c5fe`, `66435d1`)**
+
+- [x] 24 additional capabilities migrated (= 25 total + invoke_skill)
+- [x] All 3 Type C gaps closed declaratively (= memory I/O, catalog browse, MCP discover)
+- [x] Open Q #6 (naming) and #7 (allowed_ops) doctrine resolutions applied
+- [x] +226 Tier 2 invariants
+- [x] LLMReplay fixtures preserved
+- [x] Sanity check via live `reyn web` A2A endpoint passed (= no real-LLM regression)
+
+**Note on ADR status:** the status remains "Proposed" because M4 (= phase-side
+dispatch consuming registry, ToolContext typed expansion — `router_state` /
+`phase_state` sub-objects per Open Q #3, allowed_ops semantic migration, sunset
+of legacy aliases) is the closing work. The current state is M3-complete; M4
+cleanup is what transitions the ADR to Accepted.
 
 **The ADR is closed when:**
 
-- All 13 capabilities migrated (M3 complete); full test suite green.
 - Cleanup completed (M4 complete): `ToolSpec` list removed,
   `OP_KIND_MODEL_MAP` resolved per open question 2, `_DISPATCH_KIND` removed
   with deprecation notice, obsolete `op_runtime/<kind>.py` handler files

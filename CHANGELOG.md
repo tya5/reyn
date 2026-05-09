@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ADR-0026 M3 Wave 2: 17 capabilities migrated — file ops × 4 / mcp ops × 3 / memory ops × 5 / catalog ops × 4 / invoke_skill (= `66435d1`). All 3 Type C convention-drift gaps closed declaratively (memory write phase-side, catalog browse phase-side, MCP discover phase-side). +127 Tier 2 invariants. LLMReplay fixtures preserved.
+- ADR-0026 M3 Wave 1: 7 capabilities migrated to unified registry — web_fetch, shell, lint, ask_user, delegate_to_agent, plan, reyn_src_list, reyn_src_read (= `ba4c5fe`). ToolDefinition gains dispatch_kind field. +99 Tier 2 invariants.
 - ADR-0026 M2 POC: `web_search` migrated to unified `ToolDefinition` in `src/reyn/tools/web_search.py`; `build_tools()` and `get_default_registry()` derive it from the registry; byte-identity with prior `ToolSpec` literal verified (LLMReplay fixtures unchanged); 14 new Tier 2 invariants in `tests/test_web_search_unified.py`
 - `scripts/dogfood_long_session.py` long-lived-session driver (370 lines): CLI drives the A2A JSON-RPC endpoint with N consecutive prompts on the same agent, persisting history naturally (mirrors production); records empty rate by turn position, token counts, latency p50, JSON structured output (= `32d31b6`)
 - `dogfood/scenarios/long_session_v1.yaml` — 7 scenarios covering research chains, pronoun followup, reference-back, multi-source compare, and repetitive context-growth stress (= `32d31b6`)

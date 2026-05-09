@@ -209,31 +209,49 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M1 landed — edd4c1b; M2 POC web_search migrated)
+## 9. Implementation: unified registry (M3 Wave 1+2 complete)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
 ADR-0026 (Status: Proposed) closes the structural drift by introducing a single
 `ToolDefinition` per capability with two render methods.
 
-**M1 status (landed — commit `edd4c1b`):** The infrastructure module `src/reyn/tools/` is in place:
+**M1 (landed — commit `edd4c1b`):** The infrastructure module `src/reyn/tools/` is in place:
 
 - `ToolDefinition`, `ToolGates`, `ToolContext`, `ToolHandler`, `ToolResult` — in `src/reyn/tools/types.py`
 - `ToolRegistry` — in `src/reyn/tools/registry.py`
 - `invoke_tool`, `ToolNotFound`, `ToolGateRefused` — in `src/reyn/tools/dispatch.py`
 
-**M2 status (POC landed):** `web_search` is the first capability migrated to
-the unified registry. `src/reyn/tools/web_search.py` contains the `WEB_SEARCH`
-`ToolDefinition` instance and a thin adapter wrapping the legacy
+**M2 POC (landed — commit `367b41c`):** `web_search` is the first capability
+migrated to the unified registry. `src/reyn/tools/web_search.py` contains the
+`WEB_SEARCH` `ToolDefinition` instance and a thin adapter wrapping the legacy
 `handle_web_search` handler. `build_tools()` now derives `web_search` from the
 registry via `render_for_router()`, producing byte-identical output to the prior
-`ToolSpec` literal (LLMReplay fixtures unchanged). `get_default_registry()` in
-`src/reyn/tools/__init__.py` is the startup entry point; M3 capability migrations
-register additional tools there. The phase-side dispatch path
-(`OP_KIND_MODEL_MAP` / `ControlIRExecutor`) is unchanged in M2 — that unification
-is M3 territory. All M2 verification gates passed: byte-identity GREEN, drift
-test GREEN, full suite 1500 passed / 2 xfailed, mkdocs strict empty.
+`ToolSpec` literal (LLMReplay fixtures unchanged). All M2 verification gates
+passed: byte-identity GREEN, drift test GREEN, full suite 1500 passed / 2
+xfailed, mkdocs strict empty.
 
-M3 will roll out the remaining 12 capabilities; M4 removes the legacy structures.
+**M3 Wave 1 (landed — commit `ba4c5fe`):** 7 capabilities migrated:
+`web_fetch`, `shell`, `lint`, `ask_user`, `delegate_to_agent`, `plan`,
+`reyn_src_list`, `reyn_src_read`. `ToolDefinition` gains a `dispatch_kind`
+field. +99 Tier 2 invariants.
+
+**M3 Wave 2 (landed — commit `66435d1`):** 17 capabilities migrated —
+file ops × 4 / MCP ops × 3 / memory ops × 5 / catalog ops × 4 /
+`invoke_skill`. All 3 Type C convention-drift gaps identified in §4 are
+declaratively closed via `gates(router=allow, phase=allow)`: memory write
+phase-side, catalog browse phase-side, MCP discover phase-side. +127 Tier 2
+invariants. LLMReplay fixtures preserved across all migrations. Sanity check
+via live `reyn web` A2A endpoint confirmed zero real-LLM regression.
+
+All 13 capability clusters (= 26 ToolDefinitions) are registered in the unified
+ToolRegistry. Type C convention-drift gaps identified in §4 are declaratively
+closed via `gates(router=allow, phase=allow)`. Phase-side Control IR dispatch
+wiring to consume the registry is M4 cleanup work.
+
+**M4 (pending):** phase-side dispatch consuming registry, ToolContext expansion
+(= `router_state` / `phase_state` typed sub-objects per Open Q #3), allowed_ops
+semantic migration, `router_tools.py` inline ToolSpec residual replacements,
+per-call schema enrichment hook, sunset of legacy aliases.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

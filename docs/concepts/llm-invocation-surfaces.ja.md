@@ -209,19 +209,25 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M1 着地済み — edd4c1b; M2 POC web_search 移行済み）
+## 9. 実装: 統合 tool registry（M3 Wave 1+2 完了）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
 
-**M1 ステータス（着地済み — commit `edd4c1b`）:** インフラモジュール `src/reyn/tools/` が存在する:
+**M1（着地済み — commit `edd4c1b`）:** インフラモジュール `src/reyn/tools/` が存在する:
 
 - `ToolDefinition`, `ToolGates`, `ToolContext`, `ToolHandler`, `ToolResult` — `src/reyn/tools/types.py`
 - `ToolRegistry` — `src/reyn/tools/registry.py`
 - `invoke_tool`, `ToolNotFound`, `ToolGateRefused` — `src/reyn/tools/dispatch.py`
 
-**M2 ステータス（POC 着地済み）:** `web_search` が統合 registry に移行された最初のケーパビリティである。`src/reyn/tools/web_search.py` に `WEB_SEARCH` `ToolDefinition` インスタンスとレガシー `handle_web_search` をラップするアダプターが含まれる。`build_tools()` は `render_for_router()` 経由で registry から `web_search` を導出し、従来の `ToolSpec` リテラルとバイト同一の出力を生成する（LLMReplay フィクスチャは変更なし）。フェーズ側ディスパッチパス（`OP_KIND_MODEL_MAP` / `ControlIRExecutor`）は M2 では変更なし — その統合は M3 の範囲。すべての M2 検証ゲートが通過: バイト同一性 GREEN、ドリフトテスト GREEN、フルスイート 1500 passed / 2 xfailed、mkdocs strict エラーなし。
+**M2 POC（着地済み — commit `367b41c`）:** `web_search` が統合 registry に移行された最初のケーパビリティである。`build_tools()` は `render_for_router()` 経由で registry から `web_search` を導出し、従来の `ToolSpec` リテラルとバイト同一の出力を生成する（LLMReplay フィクスチャは変更なし）。すべての M2 検証ゲートが通過: byte-identity GREEN、drift test GREEN、フルスイート 1500 passed / 2 xfailed、mkdocs strict エラーなし。
 
-M3 で残り 12 件を順次移行し、M4 でレガシー構造を削除する。
+**M3 Wave 1（着地済み — commit `ba4c5fe`）:** 7 ケーパビリティを移行 — `web_fetch`、`shell`、`lint`、`ask_user`、`delegate_to_agent`、`plan`、`reyn_src_list`、`reyn_src_read`。`ToolDefinition` に `dispatch_kind` フィールドを追加。Tier 2 invariant +99。
+
+**M3 Wave 2（着地済み — commit `66435d1`）:** 17 ケーパビリティを移行 — file ops × 4 / MCP ops × 3 / memory ops × 5 / catalog ops × 4 / `invoke_skill`。§4 で識別した Type C convention-drift の 3 つのギャップをすべて `gates(router=allow, phase=allow)` で宣言的にクローズ（memory write phase-side、catalog browse phase-side、MCP discover phase-side）。Tier 2 invariant +127。全移行を通じて LLMReplay fixtures を保持。`reyn web` A2A エンドポイントのサニティチェックにより実 LLM リグレッションなしを確認。
+
+13 ケーパビリティクラスター（= 26 ToolDefinitions）すべてが unified ToolRegistry に登録済みである。§4 で識別した Type C convention-drift のギャップは `gates(router=allow, phase=allow)` で宣言的にクローズされている。Phase-side Control IR dispatch が registry を消費するように配線する作業は M4 cleanup の範囲である。
+
+**M4（未着手）:** phase-side dispatch の registry 消費、ToolContext の型拡張（= Open Q #3 に基づく `router_state` / `phase_state` typed sub-object）、`allowed_ops` セマンティクス移行、`router_tools.py` インライン ToolSpec 残留物の置換、per-call schema enrichment hook、レガシーエイリアスのサンセット。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)
