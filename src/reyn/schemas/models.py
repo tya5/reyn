@@ -284,11 +284,21 @@ class WebSearchIROp(BaseModel):
     backend: str = "duckduckgo"   # backend name (currently only "duckduckgo")
 
 
+class MCPInstallIROp(BaseModel):
+    kind: Literal["mcp_install"]
+    server_id: str                             # registry identifier, e.g. "io.github.foo/bar-mcp"
+    scope: Literal["local", "project", "user"] = "local"  # write-target config tier
+    env_overrides: dict[str, str] | None = None  # pre-supplied env values (from --env flags)
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
-#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search.
+#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search, mcp_install.
 ControlIROp = Annotated[
-    Union[FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp, RunSkillIROp, WebFetchIROp, WebSearchIROp],
+    Union[
+        FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
+        RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
+    ],
     Field(discriminator="kind"),
 ]
 
