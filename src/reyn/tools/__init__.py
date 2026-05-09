@@ -51,6 +51,7 @@ def get_default_registry() -> ToolRegistry:
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import READ_FILE, WRITE_FILE, DELETE_FILE, LIST_DIRECTORY, FILE_OP
     from reyn.tools.mcp import CALL_MCP_TOOL, LIST_MCP_SERVERS, LIST_MCP_TOOLS, MCP_OP
+    from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.memory import (
         LIST_MEMORY,
         READ_MEMORY_BODY,
@@ -107,4 +108,5 @@ def get_default_registry() -> ToolRegistry:
     registry.register(FILE_OP)
     registry.register(MCP_OP)
     registry.register(RUN_SKILL_OP)
+    registry.register(MCP_INSTALL_OP)
     return registry

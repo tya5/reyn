@@ -20,6 +20,7 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `web_search` | Search the public web via DuckDuckGo | none (always allowed) |
 | `web_fetch` | Fetch a single URL and return extracted text | `web.fetch: allow` in `reyn.yaml` |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
+| `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 
 ## Common envelope
 
@@ -166,6 +167,38 @@ Fields: `server` (required — must match a key under `mcp.servers:` in `reyn.ya
 The OS resolves the server's transport (`stdio`, `http`, or `sse`), dispatches via `MCPClient`, and returns the tool result. Every call emits `mcp_called`, `mcp_completed`, and (on failure) `mcp_failed` events.
 
 See [concepts/mcp.md](../../concepts/mcp.md) for server configuration, transport options, and the security model.
+
+## `mcp_install`
+
+Installs an MCP server from `registry.modelcontextprotocol.io` into the project's config.
+**Phase-only** (not available from the router). Requires `permissions.mcp_install: true`
+in the skill's frontmatter **and** user approval (ADR-0029).
+
+```json
+{
+  "kind": "mcp_install",
+  "server_id": "io.github.modelcontextprotocol/server-filesystem",
+  "scope": "local",
+  "env_overrides": {"GITHUB_TOKEN": "ghp_..."}
+}
+```
+
+Fields:
+- `server_id` (required) — registry identifier (e.g. `"io.github.foo/bar-mcp"`).
+- `scope` (optional, default `"local"`) — config tier to write to:
+  - `"local"` → `<project>/.reyn/config.yaml`
+  - `"project"` → `<project>/reyn.yaml`
+  - `"user"` → `~/.reyn/config.yaml`
+- `env_overrides` (optional) — pre-supplied secret env values; skip interactive prompt
+  for keys present here.
+
+Handler lifecycle:
+1. Fetches `server.json` via `RegistryClient`
+2. Checks runtime command availability (`npx` / `uvx` / `docker` / `dnx`)
+3. Gates via `PermissionResolver.require_mcp_install` (ADR-0029)
+4. Prompts for `isSecret=true` env vars via `intervention_bus`; persists with `secrets.store`
+5. Writes `mcp.servers.<name>` to the target scope config file
+6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
 ---
 

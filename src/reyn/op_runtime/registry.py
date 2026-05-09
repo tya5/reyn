@@ -57,6 +57,7 @@ from reyn.schemas.models import (
     AskUserIROp,
     FileIROp,
     LintIROp,
+    MCPInstallIROp,
     MCPIROp,
     RunSkillIROp,
     ShellIROp,
@@ -101,14 +102,15 @@ class OpPurity(str, Enum):
 # ---------------------------------------------------------------------------
 
 OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
-    "file":       FileIROp,
-    "mcp":        MCPIROp,
-    "run_skill":  RunSkillIROp,
-    "shell":      ShellIROp,
-    "lint":       LintIROp,
-    "ask_user":   AskUserIROp,
-    "web_fetch":  WebFetchIROp,
-    "web_search": WebSearchIROp,
+    "file":        FileIROp,
+    "mcp":         MCPIROp,
+    "run_skill":   RunSkillIROp,
+    "shell":       ShellIROp,
+    "lint":        LintIROp,
+    "ask_user":    AskUserIROp,
+    "web_fetch":   WebFetchIROp,
+    "web_search":  WebSearchIROp,
+    "mcp_install": MCPInstallIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -124,20 +126,22 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
 
 OP_PURITY: dict[str, OpPurity] = {
     # Pure: pure computation, no I/O.
-    "lint":       OpPurity.pure,
+    "lint":        OpPurity.pure,
     # World-state dependent (read APIs).  ``file`` includes both read and
     # write ops; we mark it side_effect (conservative).  Sub-op refinement
     # can happen inside the handler if perf demands.
-    "web_fetch":  OpPurity.world,
-    "web_search": OpPurity.world,
+    "web_fetch":   OpPurity.world,
+    "web_search":  OpPurity.world,
     # Side effect (workspace mutation; file/write/delete fall here).
-    "file":       OpPurity.side_effect,
+    "file":        OpPurity.side_effect,
     # External / unknown side-effecting.
-    "mcp":        OpPurity.external,
-    "shell":      OpPurity.external,
-    "run_skill":  OpPurity.external,
+    "mcp":         OpPurity.external,
+    "shell":       OpPurity.external,
+    "run_skill":   OpPurity.external,
     # User interaction (state-changing for the user).
-    "ask_user":   OpPurity.side_effect,
+    "ask_user":    OpPurity.side_effect,
+    # MCP server install: writes config + secrets, runs registry fetch.
+    "mcp_install": OpPurity.side_effect,
 }
 
 
