@@ -23,9 +23,29 @@ The point: your skill says "call the `read_text_file` tool on the `filesystem` s
 
 The rest of this page covers each role in turn.
 
-## Quick start: try MCP from `reyn chat` (no skill needed)
+## Quick start: from zero to working MCP in three commands
 
-If you just want to use an MCP server interactively, you do **not** need to write a skill. `reyn chat` already exposes three router tools that work the same way Claude Code's `claude mcp` UX does:
+The recommended first-time flow uses `reyn mcp install` — no manual YAML editing required:
+
+```bash
+# 1. Discover available servers
+reyn mcp search "github"
+
+# 2. Install (handles config + credentials + permission gate)
+reyn mcp install io.github.modelcontextprotocol/server-github
+
+# 3. Start using it immediately
+reyn chat
+> このリポジトリの最近の PR を一覧して
+```
+
+`reyn mcp install` fetches the server manifest from the MCP registry, checks that the required runtime (`npx`, `uvx`, etc.) is installed, prompts for any credentials (storing them securely in `~/.reyn/secrets.env`), and writes the `mcp.servers.*` entry into your config with `${VAR}` references for secrets — all in one step.
+
+For the full `reyn mcp` CLI reference, see [Reference: `reyn mcp`](../reference/cli/mcp.md).
+
+## Quick start: try MCP from `reyn chat` (manual config path)
+
+If you prefer to configure a server manually (or are adding a server not in the public registry), add it directly to `reyn.yaml`. `reyn chat` exposes three router tools that work automatically once the server is configured:
 
 | Tool | What it does |
 |------|--------------|
@@ -121,13 +141,37 @@ mcp:
 | `url`     | — | required | Endpoint URL |
 | `headers` | — | optional | Static headers; values support `${VAR}` expansion |
 
-`${VAR}` expansion happens at op-dispatch time using `os.environ`. Missing variables expand to `""` and emit a warning — never a hard error, so a missing optional token doesn't crash the run.
+`${VAR}` expansion resolves from `os.environ` (which is pre-loaded from `~/.reyn/secrets.env` at startup — see [Concepts: secret handling](secret-handling.md)). Missing variables expand to `""` and emit a warning — never a hard error, so a missing optional token doesn't crash the run.
 
-API keys belong in environment variables, never inline in `reyn.yaml` (see [reyn.yaml: API keys](../reference/config/reyn-yaml.md#api-keys)).
+The `${VAR}` syntax works in **all** YAML string fields, not just `mcp.servers`. This means `models.<name>.api_key`, `litellm.api_base`, and future fields all use the same mechanism. See [Reference: `reyn.yaml` — `${VAR}` interpolation](../reference/config/reyn-yaml.md#var-interpolation) for the full picture.
+
+API keys and tokens belong in `~/.reyn/secrets.env` (managed via `reyn secret set`), referenced as `${VAR}` in `reyn.yaml` — never as literal values inline. See [Concepts: secret handling](secret-handling.md).
 
 ## Security model
 
-MCP calls cross two gates before they leave the process:
+MCP operations are gated at two points:
+
+### Install-time gate: `permissions.mcp_install`
+
+Before any MCP server can be added to the configuration, the `mcp_install` permission gate fires. This applies to `reyn mcp install` and to any `mcp_install` Control IR op emitted by a skill. The default is `ask` — an interactive prompt on first install.
+
+Enterprise teams can set `permissions.mcp_install: deny` in a project-scoped `reyn.yaml` to prevent all server additions, or combine `mcp_install: allow` with a private registry to enforce "approved servers only" policy:
+
+```yaml
+# enterprise reyn.yaml — team-wide policy
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # private registry (approved servers only)
+    - https://registry.modelcontextprotocol.io/   # public fallback
+permissions:
+  mcp_install: allow    # team can install, but only from the private registry
+```
+
+See [Concepts: permission model — `mcp_install`](permission-model.md#mcp_install-permission) for the full scope-tier interaction and enterprise use cases.
+
+### Runtime gate: `permissions.mcp`
+
+MCP tool calls cross two checks before they leave the process:
 
 1. **Phase declaration.** A phase MUST list each server it intends to use under `permissions.mcp` in its frontmatter. The runtime calls `require_mcp(decl, server, ...)`; if `server not in decl.mcp`, the call fails with a clear error pointing at the missing declaration.
 2. **Approval.** Like every other capability, the first invocation per skill prompts (`y` / `j` / `r` / `N`). Persistent approvals land in `.reyn/approvals.yaml` keyed by `<skill>/mcp.<server>`. Pre-approve project-wide with `permissions.mcp: allow` in `reyn.yaml` if you trust the project broadly.
@@ -197,7 +241,10 @@ If you find yourself wishing MCP could do one of these, you're at the wrong laye
 ## See also
 
 - [How-to: use an MCP server](../guide/for-skill-authors/use-an-mcp-server.md) — quickstart with the filesystem server
+- [Reference: `reyn mcp`](../reference/cli/mcp.md) — full CLI reference for `search`, `install`, `list`, `remove`, `set-secret`, `clear-secret`
+- [Reference: `reyn secret`](../reference/cli/secret.md) — universal secret management
+- [Concepts: secret handling](secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
 - [Reference: `read_local_files`](../reference/stdlib/read_local_files.md) — the first stdlib MCP skill
 - [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — full `mcp.servers:` schema
-- [Concepts: permission model](permission-model.md) — where `permissions.mcp` fits
+- [Concepts: permission model](permission-model.md) — `mcp_install` and `permissions.mcp`
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — the spec, server registry, official SDKs

@@ -194,21 +194,94 @@ permissions:
       - statistics
       - json
       - re
+  mcp_install: ask      # deny | ask | allow (default: ask)
 ```
 
-The full permission grammar is documented in `reference/config/permissions.md` (Phase 2).
+### `permissions.mcp_install`
+
+Controls whether MCP servers can be added to the configuration via `reyn mcp install` or the `mcp_install` Control IR op. Three tiers:
+
+| Value | Behaviour |
+|-------|-----------|
+| `ask` (default) | Interactive prompt on first install per server. Approval is persisted to `.reyn/approvals.yaml` under key `mcp_install:<server_id>`. |
+| `allow` | Install proceeds without a prompt. Useful when combined with a private registry to implement "approved servers only" policy. |
+| `deny` | All install attempts are rejected. Appropriate for project-scope `reyn.yaml` in team settings where the server list is centrally managed. |
+
+The setting participates in the standard scope-tier merge — you can set `deny` in project-scope `reyn.yaml` and allow individual developers to override with `mcp_install: ask` in `reyn.local.yaml`.
+
+Enterprise pattern — restrict installs to a private registry:
+
+```yaml
+# reyn.yaml (project scope — committed to git)
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # private registry first
+    - https://registry.modelcontextprotocol.io/   # public fallback
+permissions:
+  mcp_install: allow    # team can install, but only from the registry above
+```
+
+See [Concepts: permission model](../../concepts/permission-model.md#mcp_install-permission) for the full interaction with scope tiers and the enterprise use case.
+
+The full permission grammar is documented in `reference/config/permissions.md`.
+
+## `${VAR}` interpolation {#var-interpolation}
+
+Any string field in any section of `reyn.yaml` (or `reyn.local.yaml` / `~/.reyn/config.yaml`) can reference an environment variable using `${VAR}` syntax. Variables are resolved from `os.environ` at startup, after `~/.reyn/secrets.env` is loaded into the environment (see [Concepts: secret handling](../../concepts/secret-handling.md)).
+
+```yaml
+# reyn.yaml — ${VAR} works in every string field
+models:
+  default-sonnet:
+    model: claude-sonnet-4-5
+    api_key: ${ANTHROPIC_API_KEY}          # LLM API key — resolved from secrets.env or shell
+    extra_body:
+      headers:
+        Authorization: ${LITELLM_PROXY_TOKEN}
+
+litellm:
+  api_base: ${LITELLM_API_BASE}            # LiteLLM proxy URL
+
+mcp:
+  servers:
+    github:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    internal_tools:
+      type: http
+      url: https://tools.example.internal/mcp
+      headers:
+        Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
+```
+
+Resolution rules:
+
+- `${VAR}` — expands to the env var value; emits a warning and expands to `""` if undefined (never a hard error).
+- `$$` — literal `$` sign (escape).
+- All string fields in all YAML sections are scanned recursively, including nested dicts and lists.
+- Shell environment variables take priority over `~/.reyn/secrets.env` values.
+
+To manage `~/.reyn/secrets.env`, use `reyn secret set` / `reyn secret list` / `reyn secret clear` (see [Reference: `reyn secret`](../../reference/cli/secret.md)).
 
 ## API keys
 
-API keys MUST come from environment variables — `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, etc. Never put them in `reyn.yaml` or `reyn.local.yaml`.
+API keys and tokens MUST come from environment variables, not from literal values in `reyn.yaml`. The recommended pattern is:
+
+1. Store the value once: `reyn secret set ANTHROPIC_API_KEY`
+2. Reference it in `reyn.yaml`: `api_key: ${ANTHROPIC_API_KEY}`
+
+Never paste token values inline in `reyn.yaml` or `reyn.local.yaml` — they are committed to git and readable by anyone with repo access.
 
 ## Proxy / `api_base`
 
-If you route models through a local LiteLLM proxy, put the URL in `reyn.local.yaml` (gitignored), not `reyn.yaml`:
+If you route models through a local LiteLLM proxy, put the URL in `reyn.local.yaml` (gitignored), not `reyn.yaml`. You can reference an env var here too:
 
 ```yaml
 # reyn.local.yaml
-api_base: http://localhost:4000
+api_base: ${LITELLM_API_BASE}    # or literal: http://localhost:4000
 ```
 
 ## Resolution order
@@ -277,6 +350,8 @@ cost:
 
 External tool servers reyn can call via the [Model Context Protocol](../../concepts/mcp.md). Each entry under `mcp.servers:` is keyed by a short name (the same name the skill declares in `permissions.mcp` and emits in `mcp` ops).
 
+The recommended way to add a server is `reyn mcp install <server_id>` (see [Reference: `reyn mcp`](../../reference/cli/mcp.md)) — it writes the entry below automatically and handles credentials via `~/.reyn/secrets.env`. Manual config is also fully supported.
+
 ```yaml
 mcp:
   servers:
@@ -287,6 +362,14 @@ mcp:
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
       env:
         FS_LOG_LEVEL: "info"
+
+    # stdio with credential from ~/.reyn/secrets.env
+    github:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
 
     # http: hosted server, JSON-RPC over Streamable HTTP
     internal_tools:
@@ -301,11 +384,11 @@ mcp:
 | `type` | string | all | `stdio` \| `http` \| `sse` |
 | `command` | string | stdio | Executable to spawn. |
 | `args` | list[string] | stdio (optional) | Argument vector passed to `command`. |
-| `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. |
+| `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. Values support `${VAR}` expansion. |
 | `url` | string | http, sse | Endpoint URL. |
 | `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
 
-`${VAR}` in any string value is expanded from `os.environ` when the op dispatches. Missing variables expand to `""` and emit a runtime warning. Keep tokens in environment variables — never paste them into `reyn.yaml` directly.
+`${VAR}` in any string value is expanded from `os.environ` at startup (after `~/.reyn/secrets.env` is loaded). Missing variables expand to `""` and emit a runtime warning. Use `reyn secret set` to store values in `~/.reyn/secrets.env` — never paste tokens into `reyn.yaml` directly.
 
 Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`. The merge is a shallow union on `mcp.servers` keys — a per-machine `reyn.local.yaml` can add or override a single server without re-stating the rest.
 
@@ -315,6 +398,9 @@ See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to
 
 ## See also
 
-- `reference/config/permissions.md` — full permission grammar (Phase 2)
-- `reference/config/state-dir.md` — `.reyn/` layout (Phase 2)
+- `reference/config/permissions.md` — full permission grammar
+- `reference/config/state-dir.md` — `.reyn/` layout
 - [Concepts: MCP](../../concepts/mcp.md)
+- [Concepts: secret handling](../../concepts/secret-handling.md) — `~/.reyn/secrets.env` and `${VAR}` interpolation
+- [Reference: `reyn secret`](../../reference/cli/secret.md) — managing secrets via CLI
+- [Reference: `reyn mcp`](../../reference/cli/mcp.md) — MCP server management CLI
