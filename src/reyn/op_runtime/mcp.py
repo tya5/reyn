@@ -23,7 +23,7 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
         return {
             "kind": "mcp", "status": "error",
             "error": f"MCP server '{op.server}' is not configured. "
-                     f"Add it under mcp.servers in reyn.yaml or .reyn/config.yaml.",
+                     f"Add it under mcp.servers in reyn.yaml or reyn.local.yaml.",
         }
 
     expanded = expand_env(server_cfg)

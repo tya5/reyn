@@ -92,7 +92,7 @@ reyn mcp install --source <SOURCE_SPEC> [--scope SCOPE] [--env KEY=VALUE ...] [-
 
 | フラグ | デフォルト | 説明 |
 |------|---------|-------------|
-| `--scope SCOPE` | `local` | 書き込む設定スコープ: `local`（`.reyn/config.yaml`、gitignored）、`project`（`reyn.yaml`、コミット対象）、または `user`（`~/.reyn/config.yaml`）。 |
+| `--scope SCOPE` | `local` | 書き込む設定スコープ: `local`（`reyn.local.yaml`、gitignored）、`project`（`reyn.yaml`、コミット対象）、または `user`（`~/.reyn/config.yaml`）。 |
 | `--source <SPEC>` | — | レジストリ経由でなく直接ソース指定子（`npm:`、`pypi:`、`docker:`、`https://github.com/...`）からインストール。`<SERVER_ID>` と相互排他。 |
 | `--env KEY=VALUE` | — | 環境変数をあらかじめ指定します（繰り返し可）。そのキーのインタラクティブプロンプトを抑制します。 |
 | `--non-interactive` | off | すべてのインタラクティブプロンプトを抑制します。必要な認証情報が不足している場合はゼロ以外で終了します。CI 用。 |

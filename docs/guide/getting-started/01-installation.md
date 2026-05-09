@@ -62,7 +62,7 @@ In your working directory:
 reyn init
 ```
 
-This creates `reyn.yaml` and `.reyn/config.yaml` if they don't exist.
+This creates `reyn.yaml` and `reyn.local.yaml.example` if they don't exist.
 
 ## Verify
 

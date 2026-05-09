@@ -51,7 +51,7 @@ def _scope_path(scope: str, project_root: Path | None) -> Path:
             file=sys.stderr,
         )
         sys.exit(1)
-    return project_root / ".reyn" / "config.yaml"
+    return project_root / "reyn.local.yaml"
 
 
 def _load_yaml_file(path: Path) -> dict:
@@ -1053,6 +1053,6 @@ def run_clear_secret(args: argparse.Namespace) -> None:
             print("No secrets were removed.")
         else:
             print(
-                "Note: yaml ${VAR} references in reyn.yaml/.reyn/config.yaml "
+                "Note: yaml ${VAR} references in reyn.yaml/reyn.local.yaml "
                 "are NOT removed — server config structure is preserved."
             )

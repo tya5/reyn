@@ -7,7 +7,7 @@ applies_to: [reyn.yaml]
 
 # `reyn.yaml`
 
-Project-level configuration. Checked in to git. Personal overrides go in `reyn.local.yaml` (gitignored) or `~/.reyn/config.yaml`.
+Project-level configuration. Checked in to git. Personal overrides go in `reyn.local.yaml` (gitignored, project root) or `~/.reyn/config.yaml` (user-global).
 
 ## Minimal example
 
@@ -289,9 +289,13 @@ api_base: ${LITELLM_API_BASE}    # or literal: http://localhost:4000
 For each setting, reyn merges (lowest priority first):
 
 1. `~/.reyn/config.yaml` (user-global)
-2. `reyn.yaml` (project)
-3. `reyn.local.yaml` (project, gitignored)
+2. `reyn.yaml` (project, committed)
+3. `reyn.local.yaml` (project, gitignored — human edits + tool writes)
 4. CLI flags
+
+**`<project>/.reyn/config.yaml` was removed in ADR-0031.** If that file still exists
+on disk, Reyn emits a deprecation warning and does **not** load it. Move its contents
+to `reyn.local.yaml`, then delete the file.
 
 ## `cost` block
 

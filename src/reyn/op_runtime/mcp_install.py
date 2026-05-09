@@ -9,7 +9,7 @@ Handler logic (one-shot, no sub-phases):
   6. Emit mcp_server_installed event (P6)
 
 Scope → file mapping:
-  local   → <project>/.reyn/config.yaml
+  local   → <project>/reyn.local.yaml
   project → <project>/reyn.yaml
   user    → ~/.reyn/config.yaml
 
@@ -64,7 +64,7 @@ def _short_name(server_id: str) -> str:
 def _scope_to_path(scope: str, project_root: Path) -> Path:
     """Resolve the target config file path for the given scope."""
     if scope == "local":
-        return project_root / ".reyn" / "config.yaml"
+        return project_root / "reyn.local.yaml"
     elif scope == "project":
         return project_root / "reyn.yaml"
     else:  # "user"

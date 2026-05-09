@@ -63,7 +63,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 reyn init
 ```
 
-これで `reyn.yaml` と `.reyn/config.yaml` が存在しない場合に作成されます。
+これで `reyn.yaml` と `reyn.local.yaml.example` が存在しない場合に作成されます。
 
 ## 確認する
 

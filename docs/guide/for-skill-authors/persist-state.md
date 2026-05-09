@@ -11,25 +11,28 @@ applies_to: [.reyn/, reyn.yaml]
 
 ## What lives under `.reyn/`
 
+`.reyn/` is an **opaque runtime-state directory** — treat it as tool-managed, not human-edited.
+
 | Path | Purpose | Default git status |
 |------|---------|--------------------|
-| `.reyn/config.yaml` | Personal overrides for `reyn.yaml` | gitignore |
 | `.reyn/approvals.yaml` | Saved permission approvals | gitignore |
 | `.reyn/events/` | Per-run event JSONL logs | gitignore |
 | `.reyn/chats/` | Chat session histories | gitignore |
 | `.reyn/eval_reports/` | Eval results per skill | gitignore |
 | `.reyn/memory/` | Project-scoped memory | depends on the team |
+| `.reyn/state/` | WAL + budget ledger (crash recovery) | gitignore |
 
-`reyn.yaml` (the project config) is checked in. `.reyn/config.yaml` (personal) is not.
+`reyn.yaml` (the project config) is checked in. Personal overrides go in
+`reyn.local.yaml` (gitignored, project root) — not in `.reyn/config.yaml`.
+
+**Note:** `.reyn/config.yaml` is deprecated (ADR-0031). If it exists, Reyn warns
+and ignores it. Move its contents to `reyn.local.yaml`.
 
 ## Recommended `.gitignore`
 
 ```
-.reyn/config.yaml
-.reyn/approvals.yaml
-.reyn/events/
-.reyn/chats/
-.reyn/eval_reports/
+.reyn/
+reyn.local.yaml
 ```
 
 Memory is a judgment call:
@@ -52,7 +55,7 @@ Or per-run via `--state-dir` (when supported by the subcommand) — generally th
 
 `~/.reyn/` mirrors the per-project shape:
 
-- `~/.reyn/config.yaml` — user-global defaults (your default model, API base, etc.).
+- `~/.reyn/config.yaml` — user-global defaults (your default model, API base, etc.). This file is still active (not deprecated).
 - `~/.reyn/memory/` — global memory (facts about you across all projects).
 
 `recall_memory` reads both global and project scopes.
@@ -67,7 +70,7 @@ Or per-run via `--state-dir` (when supported by the subcommand) — generally th
 | `.reyn/approvals.yaml` | Yes | You'll be re-prompted on the next run. |
 | `.reyn/memory/` | Maybe | You lose persisted facts. Export first: `reyn memory export --out memory.json`. |
 
-`reyn.yaml` and `.reyn/config.yaml` are config; deleting them resets to defaults.
+`reyn.yaml` and `reyn.local.yaml` are config; deleting them resets to defaults.
 
 ## See also
 

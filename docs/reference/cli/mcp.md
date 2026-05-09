@@ -92,7 +92,7 @@ Supported source schemes:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--scope SCOPE` | `local` | Config scope to write into: `local` (`.reyn/config.yaml`, gitignored), `project` (`reyn.yaml`, committed), or `user` (`~/.reyn/config.yaml`). |
+| `--scope SCOPE` | `local` | Config scope to write into: `local` (`reyn.local.yaml`, gitignored), `project` (`reyn.yaml`, committed), or `user` (`~/.reyn/config.yaml`). |
 | `--source <SPEC>` | — | Install from a direct source specifier (`npm:`, `pypi:`, `docker:`, or `https://github.com/...`) instead of from the registry. Mutually exclusive with `<SERVER_ID>`. |
 | `--env KEY=VALUE` | — | Pre-supply an environment variable (may be repeated). Suppresses the interactive prompt for that key. |
 | `--non-interactive` | off | Suppress all interactive prompts. Exit non-zero if required credentials are missing. For CI use. |

@@ -13,20 +13,21 @@ applies_to: [.reyn/]
 
 ```
 .reyn/
-├── config.yaml          # 個人設定のオーバーライド（通常 gitignored）
 ├── approvals.yaml       # 永続的な Permission 承認
 ├── events/              # イベント JSONL ログ、ランごとに 1 ファイル
 │   └── <run_id>.jsonl
 ├── chats/               # chat セッション状態（セッションごとに 1 ファイル）
 │   └── <session_id>.json
+├── state/               # WAL とバジェット台帳（クラッシュリカバリー）
 └── memory/              # プロジェクトスコープの Memory
     ├── MEMORY.md
     └── <name>.md
 ```
 
-### `config.yaml`
-
-`reyn.yaml` の個人設定オーバーライド。同じスキーマ。通常 gitignored。`api_base`、カスタム `models` などに使用します。
+**注意:** `.reyn/config.yaml` は ADR-0031（3-layer config cascade）で廃止されました。
+個人設定のオーバーライドは `reyn.local.yaml`（gitignored、プロジェクトルート）に置いてください。
+既存の `.reyn/config.yaml` がある場合は、内容を `reyn.local.yaml` に移行して旧ファイルを削除してください。
+削除するまで Reyn は警告を表示します。
 
 ### `approvals.yaml`
 
@@ -67,10 +68,8 @@ my_skill/shell: allow
 推奨追加内容:
 
 ```
-.reyn/config.yaml
-.reyn/events/
-.reyn/chats/
-.reyn/approvals.yaml
+.reyn/
+reyn.local.yaml
 ```
 
 Memory（`.reyn/memory/`）— プロジェクト Memory がコラボレーター間で共有されるかどうかに基づいて選択します。

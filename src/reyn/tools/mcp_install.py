@@ -10,7 +10,7 @@ The handler delegates to op_runtime.mcp_install.handle, which performs:
   2. runtimeHint existence check
   3. Permission gate (PermissionResolver.require_mcp_install / ADR-0029)
   4. Secret env vars prompt + secrets.store persistence
-  5. reyn.yaml / .reyn/config.yaml write (scope-dependent)
+  5. reyn.yaml / reyn.local.yaml write (scope-dependent)
   6. mcp_server_installed event emit (P6)
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ _MCP_INSTALL_PARAMETERS: dict[str, Any] = {
             "enum": ["local", "project", "user"],
             "description": (
                 "Config tier to write the server entry to. "
-                "'local' → .reyn/config.yaml (default), "
+                "'local' → reyn.local.yaml (default), "
                 "'project' → reyn.yaml, "
                 "'user' → ~/.reyn/config.yaml."
             ),

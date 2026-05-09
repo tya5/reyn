@@ -6,7 +6,7 @@ Mirrors the construction order in cli/commands/chat.py:
 The dependency graph is:
     project_root  (cached application-lifetime singleton)
     ↓
-    reyn_config   (loaded once from reyn.yaml / .reyn/config.yaml)
+    reyn_config   (loaded once from reyn.yaml / reyn.local.yaml)
     ↓
     state_log     (process-shared WAL for crash recovery, PR21)
     budget_tracker (process-shared cost enforcer, PR22/PR25)

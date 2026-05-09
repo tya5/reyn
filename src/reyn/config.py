@@ -5,9 +5,12 @@ Priority (lowest → highest):
   built-in defaults
   ~/.reyn/config.yaml         user global
   <project>/reyn.yaml         project (git managed)
-  <project>/reyn.local.yaml   local developer overrides (gitignored)
-  <project>/.reyn/config.yaml override of overrides (gitignored)
+  <project>/reyn.local.yaml   local developer overrides (gitignored, human + tool)
   CLI flags                   per-invocation
+
+Note: <project>/.reyn/config.yaml was removed in ADR-0031 (3-layer cascade).
+  If the file is still present a one-time migration warning is emitted; the
+  file is NOT loaded.  Move settings to reyn.local.yaml and delete the file.
 
 Scalars: higher priority wins outright.
 models dict: shallow merge — each key overrides independently.
@@ -466,6 +469,22 @@ def _migrate_legacy_keys(merged: dict, source: str) -> None:
             )
 
 
+def _warn_legacy_dot_reyn_config(path: Path) -> None:
+    """Emit a migration warning if a deprecated <project>/.reyn/config.yaml exists.
+
+    ADR-0031 removed this layer from the 3-layer cascade.  The file is
+    intentionally NOT loaded — only a warning is emitted so the user can
+    migrate the settings to reyn.local.yaml manually.
+    """
+    if path.exists():
+        print(
+            f"reyn: warning: {path} is deprecated (ADR-0031 — 3-layer config cascade). "
+            "Settings in this file are no longer loaded. "
+            "Migrate to reyn.local.yaml, then delete this file.",
+            file=sys.stderr,
+        )
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -497,9 +516,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         project_local = _load_yaml(project_root / "reyn.local.yaml")
         _migrate_legacy_keys(project_local, str(project_root / "reyn.local.yaml"))
         merged = _merge(merged, project_local)
-        local = _load_yaml(project_root / ".reyn" / "config.yaml")
-        _migrate_legacy_keys(local, str(project_root / ".reyn" / "config.yaml"))
-        merged = _merge(merged, local)
+
+        # ADR-0031: <project>/.reyn/config.yaml is DEPRECATED (removed from
+        # the 3-layer cascade).  Emit a one-time warning if the file exists so
+        # users know to migrate.  The file is intentionally NOT loaded.
+        _warn_legacy_dot_reyn_config(project_root / ".reyn" / "config.yaml")
 
     # ADR-0030: apply ${VAR} interpolation across all string fields of the
     # merged config dict.  At this point os.environ already contains values

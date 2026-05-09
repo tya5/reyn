@@ -2,7 +2,7 @@
 type: how-to
 topic: config
 audience: [human]
-applies_to: [reyn.yaml, .reyn/config.yaml]
+applies_to: [reyn.yaml, reyn.local.yaml]
 ---
 
 # Localize output
@@ -16,9 +16,10 @@ The OS injects an `output_language` field into every context frame. Phase instru
 ## Resolution order
 
 1. `--output-language` CLI flag (`reyn run`, `reyn eval`, `reyn chat`)
-2. `.reyn/config.yaml` (personal override)
+2. `reyn.local.yaml` (personal override, gitignored)
 3. `reyn.yaml` (project setting)
-4. Built-in default (`ja`)
+4. `~/.reyn/config.yaml` (user-global)
+5. Built-in default (`ja`)
 
 ## Set per project
 

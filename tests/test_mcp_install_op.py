@@ -5,7 +5,7 @@ Tests the OS-level contract of the mcp_install op:
   - runtime hint check (missing runtime → error result)
   - secrets persistence: save_secret called for isSecret env vars
   - reyn.yaml written with ${KEY} reference (not raw value)
-  - scope tier: local → .reyn/config.yaml, project → reyn.yaml, user → ~/.reyn/config.yaml
+  - scope tier: local → reyn.local.yaml, project → reyn.yaml, user → ~/.reyn/config.yaml
   - mcp_server_installed event emitted (server_id / scope / runtime / env_keys_set present;
     secret values NOT in the event)
 
@@ -302,7 +302,7 @@ def test_env_overrides_skip_prompt_and_persist_secret(tmp_path):
     assert "my-secret-value" in secrets_text
 
     # Config file written with ${KEY} reference, not raw value
-    config_path = tmp_path / ".reyn" / "config.yaml"
+    config_path = tmp_path / "reyn.local.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -356,8 +356,8 @@ def test_secret_value_not_in_event(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_scope_local_writes_to_reyn_config(tmp_path):
-    """Tier 2: scope='local' writes to <project>/.reyn/config.yaml."""
+def test_scope_local_writes_to_reyn_local_yaml(tmp_path):
+    """Tier 2: scope='local' writes to <project>/reyn.local.yaml."""
     resolver = _make_resolver(tmp_path, config={"mcp_install": "allow"})
     decl = PermissionDecl(mcp_install=True)
     bus = _AutoApproveInterventionBus()
@@ -374,7 +374,7 @@ def test_scope_local_writes_to_reyn_config(tmp_path):
             result = _run(mcp_install_handle(op, ctx, "control_ir"))
 
     assert result["status"] == "ok"
-    expected_path = tmp_path / ".reyn" / "config.yaml"
+    expected_path = tmp_path / "reyn.local.yaml"
     assert result["installed_path"] == str(expected_path)
     assert expected_path.exists()
 

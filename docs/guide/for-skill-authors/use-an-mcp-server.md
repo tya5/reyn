@@ -29,7 +29,7 @@ reyn mcp search "filesystem"
 reyn mcp install io.github.modelcontextprotocol/server-filesystem
 ```
 
-After install, the `mcp.servers.filesystem` entry is already in your config (in `.reyn/config.yaml` by default, or `reyn.yaml` if you pass `--scope project`). Skip to step 3.
+After install, the `mcp.servers.filesystem` entry is already in your config (in `reyn.local.yaml` by default, or `reyn.yaml` if you pass `--scope project`). Skip to step 3.
 
 ### Advanced: manual config
 
@@ -138,7 +138,7 @@ grep '"mcp_' .reyn/events.jsonl | tail -n 5
 
 ## Troubleshooting
 
-**`MCP server 'filesystem' is not configured.`** The `mcp.servers.filesystem` block is missing or misnamed. Confirm with `cat reyn.yaml` (or `cat .reyn/config.yaml` if installed with `--scope local`); remember the name the skill uses (`filesystem`) must match the key in the config.
+**`MCP server 'filesystem' is not configured.`** The `mcp.servers.filesystem` block is missing or misnamed. Confirm with `cat reyn.yaml` (or `cat reyn.local.yaml` if installed with `--scope local`); remember the name the skill uses (`filesystem`) must match the key in the config.
 
 **`MCP server 'filesystem' not declared in phase permissions.`** The phase's frontmatter is missing `permissions.mcp: [filesystem]`. Open the phase file and add it. This is the runtime gate, not a config issue.
 

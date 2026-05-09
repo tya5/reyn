@@ -177,11 +177,11 @@ dogfood で確認した制約 (= v0.1 freeze、 uptime 保証なし、 Anthropic
 
 ## 5. scope tier (= Claude Code 流 3 tier)
 
-Reyn 既存の config 階層 (`~/.reyn/config.yaml` / `<project>/reyn.yaml` / `<project>/reyn.local.yaml` / `<project>/.reyn/config.yaml`) と mapping:
+Reyn config 階層 (ADR-0031 3-layer: `~/.reyn/config.yaml` / `<project>/reyn.yaml` / `<project>/reyn.local.yaml`) と mapping:
 
 | scope | flag | 書き込み先 | 用途 |
 |---|---|---|---|
-| **local** (default) | `--scope local` | `<project>/.reyn/config.yaml` (gitignored) | 個人・project パス限定、 default |
+| **local** (default) | `--scope local` | `<project>/reyn.local.yaml` (gitignored) | 個人・project パス限定、 default |
 | **project** | `--scope project` | `<project>/reyn.yaml` (commit 対象) | team 共有 (= secret は `${VAR}` 参照のみ) |
 | **user** | `--scope user` | `~/.reyn/config.yaml` (gitignored、 全 project 横断) | 全 project で使う server (= filesystem 等) |
 

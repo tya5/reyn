@@ -22,7 +22,7 @@ Approval keys are skill-scoped to prevent external skill privilege escalation:
   "{skill_name}/file.write/{path}"   (just_path)
   "{skill_name}/file.write/{dir}/"   (recursive, trailing slash signals recursive)
 
-Config pre-approval (reyn.yaml / .reyn/config.yaml):
+Config pre-approval (reyn.yaml / reyn.local.yaml):
   permissions:
     shell: allow
     file.write: allow   # grants all write-class ops for all skills

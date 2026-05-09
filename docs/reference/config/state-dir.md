@@ -13,20 +13,21 @@ Per-project state. Default location: `<project_root>/.reyn/`. Override via `reyn
 
 ```
 .reyn/
-├── config.yaml          # personal overrides (often gitignored)
 ├── approvals.yaml       # persistent permission approvals
 ├── events/              # event JSONL logs, one file per run
 │   └── <run_id>.jsonl
 ├── chats/               # chat session state (one file per session)
 │   └── <session_id>.json
+├── state/               # WAL and budget ledger (crash recovery)
 └── memory/              # project-scope memory
     ├── MEMORY.md
     └── <name>.md
 ```
 
-### `config.yaml`
-
-Personal overrides for `reyn.yaml`. Same schema. Typically gitignored. Use for `api_base`, custom `models`, etc.
+**Note:** `.reyn/config.yaml` was removed in ADR-0031 (3-layer config cascade).
+Personal config overrides now live in `reyn.local.yaml` (gitignored, project root).
+If you have an existing `.reyn/config.yaml`, move its contents to `reyn.local.yaml`
+and delete the old file. Reyn will print a warning until it is removed.
 
 ### `approvals.yaml`
 
@@ -67,10 +68,8 @@ Same shape as `.reyn/` but lives in the home directory. Used for:
 Recommended additions:
 
 ```
-.reyn/config.yaml
-.reyn/events/
-.reyn/chats/
-.reyn/approvals.yaml
+.reyn/
+reyn.local.yaml
 ```
 
 Memory (`.reyn/memory/`) — choose based on whether project memory is shared between collaborators.

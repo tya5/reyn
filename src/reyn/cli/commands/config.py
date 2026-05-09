@@ -21,7 +21,7 @@ def register(sub) -> None:
     g = csub.add_parser("get", help="Get a single config value")
     g.add_argument("key", metavar="KEY", help="Config key (e.g. model, api_base)")
 
-    s = csub.add_parser("set", help="Set a config value in .reyn/config.yaml")
+    s = csub.add_parser("set", help="Set a config value in reyn.local.yaml")
     s.add_argument("key", metavar="KEY",
                    help="Config key (e.g. api_base, models.standard). Run 'reyn config fields' for the full list.")
     s.add_argument("value", metavar="VALUE", help="Value to set (YAML syntax accepted)")
@@ -94,8 +94,9 @@ def _set(key: str, value: str) -> None:
         print("Run 'reyn config fields' to see available keys.", file=sys.stderr)
         sys.exit(1)
 
-    local_cfg = Path(".reyn") / "config.yaml"
-    local_cfg.parent.mkdir(exist_ok=True)
+    from reyn.config import _find_project_root
+    project_root = _find_project_root(Path.cwd()) or Path.cwd()
+    local_cfg = project_root / "reyn.local.yaml"
     current: dict = {}
     if local_cfg.exists():
         current = yaml.safe_load(local_cfg.read_text(encoding="utf-8")) or {}

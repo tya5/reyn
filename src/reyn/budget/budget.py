@@ -954,7 +954,7 @@ def format_refusal_message(check: BudgetCheck, *, agent: Optional[str] = None) -
     lines.append("The next LLM call has been refused.")
     lines.append("")
     lines.append("What you can do:")
-    lines.append("  • Raise the limit in `.reyn/config.yaml` (cost: section)")
+    lines.append("  • Raise the limit in `reyn.local.yaml` (cost: section)")
     lines.append("  • Reset counters with `:budget reset`")
     if check.hard_dimension and check.hard_dimension.startswith(("daily_", "monthly_")):
         lines.append("  • Daily / monthly limits reset automatically at period boundary")

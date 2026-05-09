@@ -29,7 +29,7 @@ reyn mcp search "filesystem"
 reyn mcp install io.github.modelcontextprotocol/server-filesystem
 ```
 
-インストール後、`mcp.servers.filesystem` エントリはすでに設定に追加されています（デフォルトでは `.reyn/config.yaml`、または `--scope project` を渡した場合は `reyn.yaml`）。手順 3 に進んでください。
+インストール後、`mcp.servers.filesystem` エントリはすでに設定に追加されています（デフォルトでは `reyn.local.yaml`、または `--scope project` を渡した場合は `reyn.yaml`）。手順 3 に進んでください。
 
 ### 高度な使い方: 手動設定
 
@@ -138,7 +138,7 @@ grep '"mcp_' .reyn/events.jsonl | tail -n 5
 
 ## トラブルシューティング
 
-**`MCP server 'filesystem' is not configured.`** `mcp.servers.filesystem` ブロックが存在しないか名前が違います。`cat reyn.yaml`（または `--scope local` でインストールした場合は `cat .reyn/config.yaml`）で確認してください。Skill が使用する名前（`filesystem`）と設定のキーが一致している必要があります。
+**`MCP server 'filesystem' is not configured.`** `mcp.servers.filesystem` ブロックが存在しないか名前が違います。`cat reyn.yaml`（または `--scope local` でインストールした場合は `cat reyn.local.yaml`）で確認してください。Skill が使用する名前（`filesystem`）と設定のキーが一致している必要があります。
 
 **`MCP server 'filesystem' not declared in phase permissions.`** Phase のフロントマターに `permissions.mcp: [filesystem]` がありません。Phase ファイルを開いて追加してください。これは設定の問題ではなく、ランタイムのゲートです。
 

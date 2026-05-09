@@ -246,7 +246,7 @@ def test_source_npm_skips_registry_and_installs(tmp_path):
     assert result["source"] == "npm:@modelcontextprotocol/server-filesystem"
 
     # Config file written
-    config_path = tmp_path / ".reyn" / "config.yaml"
+    config_path = tmp_path / "reyn.local.yaml"
     assert config_path.exists()
     import yaml
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
@@ -278,7 +278,7 @@ def test_source_pypi_skips_registry_and_installs(tmp_path):
     assert result["runtime"] == "uvx"
 
     import yaml
-    config_path = tmp_path / ".reyn" / "config.yaml"
+    config_path = tmp_path / "reyn.local.yaml"
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
     assert "my-mcp-server" in servers
@@ -304,7 +304,7 @@ def test_source_invalid_specifier_returns_error(tmp_path):
     assert result["status"] == "error"
     assert "Source resolution failed" in result["error"]
     # Config file must NOT have been written
-    config_path = tmp_path / ".reyn" / "config.yaml"
+    config_path = tmp_path / "reyn.local.yaml"
     assert not config_path.exists()
 
 
@@ -356,7 +356,7 @@ def test_source_github_known_installs_npm(tmp_path):
     assert result["runtime"] == "npx"
 
     import yaml
-    config_path = tmp_path / ".reyn" / "config.yaml"
+    config_path = tmp_path / "reyn.local.yaml"
     written = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     servers = written["mcp"]["servers"]
     assert "server-filesystem" in servers

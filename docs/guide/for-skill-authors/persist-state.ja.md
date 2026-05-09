@@ -11,25 +11,28 @@ applies_to: [.reyn/, reyn.yaml]
 
 ## `.reyn/` 配下に格納されるもの
 
+`.reyn/` は **opaque な runtime 状態ディレクトリ** です — ツール管理と見なし、人間が直接編集しないようにしてください。
+
 | パス | 目的 | デフォルトの git ステータス |
 |------|---------|--------------------|
-| `.reyn/config.yaml` | `reyn.yaml` の個人設定オーバーライド | gitignore |
 | `.reyn/approvals.yaml` | 保存された Permission 承認 | gitignore |
 | `.reyn/events/` | ランごとのイベント JSONL ログ | gitignore |
 | `.reyn/chats/` | chat セッション履歴 | gitignore |
 | `.reyn/eval_reports/` | Skill ごとの eval 結果 | gitignore |
 | `.reyn/memory/` | プロジェクトスコープの Memory | チームによる |
+| `.reyn/state/` | WAL + バジェット台帳（クラッシュリカバリー） | gitignore |
 
-`reyn.yaml`（プロジェクト設定）はチェックインします。`.reyn/config.yaml`（個人設定）はチェックインしません。
+`reyn.yaml`（プロジェクト設定）はチェックインします。個人設定のオーバーライドは
+`reyn.local.yaml`（gitignored、プロジェクトルート）に置いてください — `.reyn/config.yaml` ではありません。
+
+**注意:** `.reyn/config.yaml` は廃止されました（ADR-0031）。存在する場合、Reyn は警告を表示して無視します。
+内容を `reyn.local.yaml` に移行してください。
 
 ## 推奨される `.gitignore`
 
 ```
-.reyn/config.yaml
-.reyn/approvals.yaml
-.reyn/events/
-.reyn/chats/
-.reyn/eval_reports/
+.reyn/
+reyn.local.yaml
 ```
 
 Memory は判断が必要です:
@@ -52,7 +55,7 @@ state_dir: /var/lib/reyn/<project>
 
 `~/.reyn/` はプロジェクトごとの形状を反映します:
 
-- `~/.reyn/config.yaml` — ユーザーグローバルのデフォルト（デフォルトモデル、API ベースなど）。
+- `~/.reyn/config.yaml` — ユーザーグローバルのデフォルト（デフォルトモデル、API ベースなど）。このファイルは引き続き有効です（廃止されていません）。
 - `~/.reyn/memory/` — グローバル Memory（すべてのプロジェクトにまたがるユーザーに関するファクト）。
 
 `recall_memory` はグローバルとプロジェクトの両方のスコープを読み取ります。
@@ -67,7 +70,7 @@ state_dir: /var/lib/reyn/<project>
 | `.reyn/approvals.yaml` | Yes | 次回の実行時に再プロンプトされます。 |
 | `.reyn/memory/` | 場合による | 永続化されたファクトが失われます。先にエクスポートします: `reyn memory export --out memory.json`。 |
 
-`reyn.yaml` と `.reyn/config.yaml` は設定です。削除するとデフォルトにリセットされます。
+`reyn.yaml` と `reyn.local.yaml` は設定です。削除するとデフォルトにリセットされます。
 
 ## 関連情報
 

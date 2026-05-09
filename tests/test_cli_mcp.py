@@ -196,9 +196,9 @@ def test_scope_path_project(tmp_path):
 
 
 def test_scope_path_local(tmp_path):
-    """Tier 2: scope=local maps to <project>/.reyn/config.yaml."""
+    """Tier 2: scope=local maps to <project>/reyn.local.yaml."""
     p = _scope_path("local", tmp_path)
-    assert p == tmp_path / ".reyn" / "config.yaml"
+    assert p == tmp_path / "reyn.local.yaml"
 
 
 def test_scope_path_project_without_root_exits():
@@ -285,8 +285,8 @@ def test_run_list_empty(tmp_path, capsys, monkeypatch):
 
 def test_run_list_shows_servers(tmp_path, capsys, monkeypatch):
     """Tier 2: run_list enumerates servers from yaml files."""
-    # Write a local scope file under tmp_path/.reyn/config.yaml.
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    # Write a local scope file under tmp_path/reyn.local.yaml.
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "filesystem": {"type": "stdio", "command": "npx"},
     })
@@ -302,7 +302,7 @@ def test_run_list_shows_servers(tmp_path, capsys, monkeypatch):
 
 def test_run_list_probe_false_no_handshake(tmp_path, capsys, monkeypatch):
     """Tier 2: probe=False uses cheap status (no subprocess/handshake initiated)."""
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "myserver": {"type": "stdio", "command": "npx"},
     })
@@ -330,7 +330,7 @@ def _setup_project(tmp_path: Path) -> None:
 def test_remove_from_local_scope(tmp_path, capsys, monkeypatch):
     """Tier 2: run_remove deletes the named server from the local scope yaml."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "command": "npx"},
         "other": {"type": "stdio", "command": "uvx"},
@@ -403,7 +403,7 @@ def test_remove_missing_server_exits(tmp_path, monkeypatch):
 def test_remove_shows_runtime_note(tmp_path, capsys, monkeypatch):
     """Tier 2: remove always prints the 'subprocess continues until next session' note."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {"myserver": {"type": "stdio", "command": "npx"}})
     monkeypatch.chdir(tmp_path)
 
@@ -426,7 +426,7 @@ def test_run_set_secret_saves_to_store(tmp_path, capsys, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     # Plant a minimal server declaration so KEY is "known".
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
     })
@@ -446,7 +446,7 @@ def test_run_set_secret_unknown_key_warns(tmp_path, capsys, monkeypatch):
     from reyn.secrets.store import clear_secret as _clear
 
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
     })
@@ -475,7 +475,7 @@ def test_run_set_secret_adds_env_ref(tmp_path, capsys, monkeypatch):
     finally:
         _clear("MY_TOKEN")
 
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     data = _load_yaml_file(local_cfg)
     servers = data.get("mcp", {}).get("servers", {})
     assert "newserver" in servers
@@ -490,7 +490,7 @@ def test_run_set_secret_adds_env_ref(tmp_path, capsys, monkeypatch):
 def test_run_clear_secret_specific_key(tmp_path, capsys, monkeypatch):
     """Tier 2: run_clear_secret with KEY removes that single secret."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}},
     })
@@ -511,7 +511,7 @@ def test_run_clear_secret_specific_key(tmp_path, capsys, monkeypatch):
 def test_run_clear_secret_all_keys(tmp_path, capsys, monkeypatch):
     """Tier 2: run_clear_secret without KEY clears all declared secrets."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "slack": {
             "type": "stdio",
@@ -543,7 +543,7 @@ def test_run_clear_secret_all_keys(tmp_path, capsys, monkeypatch):
 def test_run_clear_secret_yaml_ref_untouched(tmp_path, monkeypatch):
     """Tier 2: clear-secret does NOT remove ${KEY} references from yaml."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "env": {"MY_KEY": "${MY_KEY}"}},
     })
@@ -586,8 +586,8 @@ def test_all_servers_higher_scope_wins(tmp_path, monkeypatch, tmp_path_factory):
         "github": {"type": "stdio", "command": "project-cmd"},
     })
 
-    # local scope: .reyn/config.yaml
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    # local scope: reyn.local.yaml
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "github": {"type": "stdio", "command": "local-cmd"},
     })
@@ -609,7 +609,7 @@ def test_all_servers_merges_distinct_names(tmp_path, monkeypatch, tmp_path_facto
     project_yaml = tmp_path / "reyn.yaml"
     _write_server_yaml(project_yaml, {"fs": {"type": "stdio", "command": "npx"}})
 
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {"gh": {"type": "stdio", "command": "npx"}})
 
     monkeypatch.chdir(tmp_path)
@@ -627,7 +627,7 @@ def test_all_servers_merges_distinct_names(tmp_path, monkeypatch, tmp_path_facto
 def test_server_env_keys_found(tmp_path, monkeypatch):
     """Tier 2: _server_env_keys returns the declared env key set for a known server."""
     _setup_project(tmp_path)
-    local_cfg = tmp_path / ".reyn" / "config.yaml"
+    local_cfg = tmp_path / "reyn.local.yaml"
     _write_server_yaml(local_cfg, {
         "slack": {"env": {"SLACK_BOT_TOKEN": "${SLACK_BOT_TOKEN}", "SLACK_TEAM_ID": "T1"}},
     })
