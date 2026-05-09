@@ -315,12 +315,15 @@ class RightPanel(Widget):
         elif event.key == "h":
             event.prevent_default()
             self._panel_resize(+2)
-        elif event.key == "c" and self._panel_type == "agents":
-            # Agents tab only: copy the cursor's run/plan as a shareable
-            # text bundle (= header + events YAML). Useful for skill
-            # authors to paste a problematic run into chat / issue tracker.
+        elif event.key == "c":
+            # Generic copy: whatever the right panel is currently
+            # showing — the preview pane content if it's visible,
+            # otherwise the main upper-panel content for the active
+            # tab. Designed for skill authors / debuggers to grab
+            # whatever they're looking at and paste it into chat /
+            # an issue tracker.
             event.prevent_default()
-            self._agents_copy_current()
+            self._copy_current_view()
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -763,86 +766,170 @@ class RightPanel(Widget):
             title = f"{item.get('skill_name', '?')} · 0 events"
             pane.show_text(title, RichGroup(head))
 
-    def _agents_copy_current(self) -> None:
-        """Copy the cursor's agent-tab item to the OS clipboard as text.
+    # ── generic 'c'-to-copy plumbing ────────────────────────────────────────
 
-        Bundle format depends on item kind:
+    def _copy_current_view(self) -> None:
+        """Copy whatever the right panel is currently showing.
 
-          * recent_skill  → header (run summary, llm rollup, phase graph)
-                            + full events YAML. The most useful payload —
-                            paste straight into a Slack thread / issue
-                            tracker for another skill author to reproduce.
-          * recent_plan   → header (plan summary) + per-step status table.
-          * running_skill → live snapshot only (events haven't been
-                            persisted yet at the file path the orchestrator
-                            knows about).
-          * running_plan  → live snapshot only.
+        Routes based on whether the preview pane is open:
 
-        Confirmation status is written to the conv pane via the same
-        path other tabs use (``app.query_one("#conversation"...)``).
+          preview visible → copy the same content that's in preview
+                            (= cursor's event / memory entry / doc /
+                            agents bundle, as text)
+          preview hidden  → copy the upper panel's main content for the
+                            active tab (= the rendered tab view, as
+                            plain text via Rich Console)
+
+        Status confirmation is written to the conv pane via the same
+        sticky-status auto-clear pattern other tabs use.
         """
-        from .. import ConversationView  # late import → avoid cycle
         try:
-            conv = self.app.query_one("#conversation", ConversationView)
-        except Exception:
-            conv = None
-
-        if not self._agents_items:
-            self._agents_copy_status(conv, "(no item under cursor)", error=True)
-            return
-        idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
-        item = self._agents_items[idx]
-        kind = item.get("kind", "")
-        try:
-            if kind == "recent_skill":
-                bundle = self._build_recent_skill_bundle(item)
-                title = f"skill run · {item.get('skill_name', '?')}"
-            elif kind == "recent_plan":
-                bundle = self._build_recent_plan_bundle(item)
-                title = f"plan · {item.get('plan_id', '?')}"
-            elif kind == "running_skill":
-                bundle = self._build_running_skill_bundle(item)
-                title = f"running skill · {item.get('skill_name', '?')}"
-            elif kind == "running_plan":
-                bundle = self._build_running_plan_bundle(item)
-                title = f"running plan · {item.get('plan_id', '?')}"
-            else:
-                self._agents_copy_status(
-                    conv, f"(unsupported item kind: {kind})", error=True,
-                )
-                return
+            text, label = self._build_copy_payload()
         except Exception as exc:
-            self._agents_copy_status(
-                conv, f"✗ failed to build copy bundle: {exc}", error=True,
-            )
+            self._copy_status(f"✗ failed to build copy payload: {exc}", error=True)
             return
-
+        if not text:
+            self._copy_status(f"(nothing to copy from {label})", error=True)
+            return
         from .._clipboard import copy_to_clipboard
-        ok, label = copy_to_clipboard(bundle)
+        ok, tool = copy_to_clipboard(text)
         if ok:
-            n_chars = len(bundle)
-            self._agents_copy_status(
-                conv, f"✓ copied {title} · {n_chars:,} chars via {label}",
+            self._copy_status(
+                f"✓ copied {label} · {len(text):,} chars via {tool}",
             )
         else:
-            self._agents_copy_status(
-                conv,
+            self._copy_status(
                 "✗ no clipboard tool found "
                 "(install pbcopy / xclip / wl-copy / xsel)",
                 error=True,
             )
 
-    def _agents_copy_status(
-        self, conv, text: str, *, error: bool = False,
-    ) -> None:
+    def _build_copy_payload(self) -> tuple[str | None, str]:
+        """Return ``(text, label)`` for the currently-visible right-panel content."""
+        if self._preview_visible:
+            return self._build_preview_copy_text()
+        return self._build_main_copy_text()
+
+    def _build_preview_copy_text(self) -> tuple[str | None, str]:
+        """Plain-text version of the active preview content.
+
+        Each tab routes to its own builder where there's a dedicated
+        format that's nicer than the rendered Rich text — the agents
+        bundles especially. Other tabs fall back to rendering the same
+        Rich renderable as plain text.
+        """
+        if self._panel_type == "agents" and self._agents_items:
+            idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+            item = self._agents_items[idx]
+            kind = item.get("kind", "")
+            if kind == "recent_skill":
+                return (
+                    self._build_recent_skill_bundle(item),
+                    f"skill run · {item.get('skill_name', '?')}",
+                )
+            if kind == "recent_plan":
+                return (
+                    self._build_recent_plan_bundle(item),
+                    f"plan · {item.get('plan_id', '?')}",
+                )
+            if kind == "running_skill":
+                return (
+                    self._build_running_skill_bundle(item),
+                    f"running skill · {item.get('skill_name', '?')}",
+                )
+            if kind == "running_plan":
+                return (
+                    self._build_running_plan_bundle(item),
+                    f"running plan · {item.get('plan_id', '?')}",
+                )
+        if self._panel_type == "docs" and self._docs_files:
+            idx = max(0, min(len(self._docs_files) - 1, self._docs_cursor))
+            doc_path: Path = self._docs_files[idx]
+            try:
+                body = doc_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return (None, f"docs preview ({exc})")
+            header = f"# {doc_path.name}\n# source: {doc_path}\n\n"
+            return (header + body, f"doc · {doc_path.name}")
+        # Generic fallback: capture whatever the preview builder hands
+        # to the pane and render it to plain text.
+        text = self._capture_preview_as_text()
+        if text:
+            return (text, f"{self._panel_type} preview")
+        return (None, f"{self._panel_type} preview")
+
+    def _build_main_copy_text(self) -> tuple[str | None, str]:
+        """Plain-text snapshot of the active tab's main content."""
+        try:
+            renderable = self._panel_markup()
+        except Exception as exc:
+            return (None, f"{self._panel_type} view ({exc})")
+        text = self._renderable_to_text(renderable)
+        return (text, f"{self._panel_type} view")
+
+    def _capture_preview_as_text(self) -> str | None:
+        """Re-run the preview builder and snapshot its renderable as text.
+
+        Mirrors the dispatch in ``_update_preview`` but writes into a
+        capture stub instead of the real preview pane, so we can grab
+        the title + renderable and convert to plain text.
+        """
+        captured: list[tuple[str, Any]] = []
+
+        class _CapturePane:
+            def show_text(self, title: str, renderable: Any) -> None:
+                captured.append((title, renderable))
+
+            def clear(self) -> None:
+                captured.append(("", None))
+
+        fake = _CapturePane()
+        try:
+            if self._panel_type == "events" and self._events_visible:
+                self._show_event_in_preview(fake)  # type: ignore[arg-type]
+            elif self._panel_type == "memory" and self._memory_entries:
+                self._show_memory_in_preview(fake)  # type: ignore[arg-type]
+            else:
+                return None
+        except Exception as exc:
+            logger.warning("right_panel capture preview failed: %s", exc)
+            return None
+        if not captured:
+            return None
+        title, renderable = captured[-1]
+        if renderable is None:
+            return None
+        body = self._renderable_to_text(renderable)
+        return f"# {title}\n\n{body}" if title else body
+
+    def _renderable_to_text(self, renderable: Any) -> str:
+        """Render any Rich renderable to plain text (no ANSI codes)."""
+        import io
+
+        from rich.console import Console
+        buf = io.StringIO()
+        Console(
+            file=buf,
+            width=120,
+            no_color=True,
+            force_terminal=False,
+            legacy_windows=False,
+            record=False,
+        ).print(renderable)
+        return buf.getvalue()
+
+    def _copy_status(self, text: str, *, error: bool = False) -> None:
         """Write a brief copy-action status line to the conv pane (auto-clears)."""
-        if conv is None:
+        from .. import ConversationView  # late import → avoid cycle
+        try:
+            conv = self.app.query_one("#conversation", ConversationView)
+        except Exception:
             return
         try:
             conv.show_status(text, kind="error" if error else "general")
             self.app.set_timer(2.5, conv.hide_status)
         except Exception as exc:
-            logger.warning("right_panel agents copy status failed: %s", exc)
+            logger.warning("right_panel copy status failed: %s", exc)
 
     def _build_recent_skill_bundle(self, item: dict) -> str:
         """Header + events YAML for a finished skill run."""
