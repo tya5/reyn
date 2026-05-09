@@ -625,15 +625,19 @@ class RightPanel(Widget):
         head.append("duration: ", style="dim")
         head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
 
-        # Event log + LLM-usage rollup. Single pass: keep a running count
-        # of llm_response_received events plus their prompt/completion
-        # token totals and cost_usd. The events list is also retained for
-        # the YAML dump below, so we don't read the file twice.
+        # Event log + LLM-usage rollup + phase-path reconstruction.
+        # Single pass: keep running totals for LLM calls / tokens / cost
+        # AND record the sequence of phase_started events so we can
+        # render the actual execution path the OS took. The events list
+        # is also retained for the YAML dump below, so we don't read
+        # the file twice.
         events: list[dict] = []
         llm_calls = 0
         prompt_tokens_total = 0
         completion_tokens_total = 0
         cost_usd_total = 0.0
+        phase_path: list[tuple[str, int]] = []   # [(phase_name, visit_count)]
+        terminal_kind: str = ""                  # "finished" / "aborted" / ""
         path = item.get("jsonl_path")
         if path is not None:
             try:
@@ -646,8 +650,9 @@ class RightPanel(Widget):
                     except Exception:
                         continue
                     events.append(ev)
-                    if ev.get("type") == "llm_response_received":
-                        d = ev.get("data") or {}
+                    et = ev.get("type")
+                    d = ev.get("data") or {}
+                    if et == "llm_response_received":
                         llm_calls += 1
                         try:
                             prompt_tokens_total += int(d.get("prompt_tokens", 0) or 0)
@@ -663,6 +668,18 @@ class RightPanel(Widget):
                             cost_usd_total += float(d.get("cost_usd", 0.0) or 0.0)
                         except (TypeError, ValueError):
                             pass
+                    elif et == "phase_started":
+                        phase_name = str(d.get("phase", "")).strip()
+                        if phase_name:
+                            try:
+                                visit = int(d.get("visit_count", 1) or 1)
+                            except (TypeError, ValueError):
+                                visit = 1
+                            phase_path.append((phase_name, visit))
+                    elif et in ("workflow_finished", "skill_run_completed"):
+                        terminal_kind = "finished"
+                    elif et in ("workflow_aborted", "skill_run_failed"):
+                        terminal_kind = "aborted"
             except OSError as exc:
                 head.append(f"\n(failed to read events: {exc})", style="dim red")
 
@@ -684,6 +701,47 @@ class RightPanel(Widget):
             head.append("\n")
             head.append("cost: ", style="dim")
             head.append(f"${cost_usd_total:.4f}", style="#dddddd")
+
+        # Phase graph — the sequence of phases the OS actually executed,
+        # rendered with arrows. Visit counts > 1 surface as `(v2)` /
+        # `(v3)` so revisit loops are visible. Long paths wrap on the
+        # arrow boundary so a 10+ phase chain stays readable in a 33%
+        # preview pane. The terminal type appends a final node:
+        #   finished → arrow into a green ✓ end
+        #   aborted  → arrow into a red ✗ aborted
+        if phase_path:
+            head.append("\n")
+            head.append("phase graph:", style="dim")
+            head.append("\n  ")
+            line_chars = 2  # current visual column inside this line
+            for i, (phase, visit) in enumerate(phase_path):
+                node = phase if visit <= 1 else f"{phase} (v{visit})"
+                # Soft-wrap before drawing the arrow when adding it would
+                # push past ~58 chars (= comfortable width inside the
+                # preview pane border).
+                arrow = " → " if i > 0 else ""
+                if i > 0 and line_chars + len(arrow) + len(node) > 58:
+                    head.append("\n  ")
+                    line_chars = 2
+                if arrow:
+                    head.append(arrow, style="dim #555555")
+                    line_chars += len(arrow)
+                head.append(node, style="#dddddd")
+                line_chars += len(node)
+            # Terminal marker
+            if terminal_kind == "finished":
+                tail_text = " → ✓ end"
+                tail_style = "#44cc88"
+            elif terminal_kind == "aborted":
+                tail_text = " → ✗ aborted"
+                tail_style = "#ff6644"
+            else:
+                tail_text = ""
+                tail_style = ""
+            if tail_text:
+                if line_chars + len(tail_text) > 58:
+                    head.append("\n  ")
+                head.append(tail_text, style=tail_style)
 
         head.append("\n")
         head.append("finished: ", style="dim")
