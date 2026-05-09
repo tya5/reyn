@@ -400,32 +400,65 @@ class RightPanel(Widget):
         if self._preview_visible:
             self._update_preview()
 
-    def _show_event_in_preview(self, pane: _PreviewPane) -> None:
-        """Render the cursor's event as JSON in the preview pane."""
+    def _render_as_yaml(self, value: Any) -> Any:
+        """Format ``value`` as a YAML block + Rich syntax highlighter.
+
+        YAML is dramatically easier to scan than the equivalent JSON for
+        the kind of nested structures we surface in the events / recent-
+        skill previews — fewer braces / commas / quotes, multi-line
+        strings stay multi-line, and the indented block style matches
+        the way the events are mentally grouped (top-level type, then
+        nested data / meta).
+
+        Implementation: round-trip through ``json.dumps(default=str)``
+        first to coerce non-YAML-native types (Path, datetime, custom
+        classes) into plain strings; then ``yaml.safe_dump`` the result.
+        Falls back to JSON, then to ``repr`` if either step explodes —
+        the preview should never hide content because of a serialisation
+        edge case.
+        """
         import json as _json
-        if not self._events_visible:
-            pane.clear()
-            return
-        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
-        ev = self._events_visible[idx]
-        from rich.syntax import Syntax  # lazy — keeps cold-start fast
-        title = f"event #{idx} · {ev.get('type', '?')}"
+
+        from rich.syntax import Syntax
+        from rich.text import Text as RichText
+        body: str
         try:
-            body = _json.dumps(ev, indent=2, default=str, ensure_ascii=False)
+            import yaml as _yaml
+            normalised = _json.loads(
+                _json.dumps(value, default=str, ensure_ascii=False),
+            )
+            body = _yaml.safe_dump(
+                normalised,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                width=120,
+            )
         except Exception:
-            body = repr(ev)
+            try:
+                body = _json.dumps(value, indent=2, default=str, ensure_ascii=False)
+            except Exception:
+                body = repr(value)
         try:
-            renderable = Syntax(
-                body, "json",
+            return Syntax(
+                body, "yaml",
                 theme="ansi_dark",
                 background_color="default",
                 line_numbers=False,
                 word_wrap=True,
             )
         except Exception:
-            from rich.text import Text as RichText
-            renderable = RichText(body)
-        pane.show_text(title, renderable)
+            return RichText(body)
+
+    def _show_event_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's event as YAML in the preview pane."""
+        if not self._events_visible:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
+        ev = self._events_visible[idx]
+        title = f"event #{idx} · {ev.get('type', '?')}"
+        pane.show_text(title, self._render_as_yaml(ev))
 
     def _memory_move(self, delta: int) -> None:
         """Move the memory tab cursor; sync preview if open."""
@@ -574,7 +607,6 @@ class RightPanel(Widget):
         import json as _json
 
         from rich.console import Group as RichGroup
-        from rich.syntax import Syntax
         from rich.text import Text as RichText
 
         head = RichText()
@@ -614,17 +646,7 @@ class RightPanel(Widget):
             except OSError as exc:
                 head.append(f"(failed to read events: {exc})", style="dim red")
         if events:
-            try:
-                body = _json.dumps(events, indent=2, default=str, ensure_ascii=False)
-                event_block = Syntax(
-                    body, "json",
-                    theme="ansi_dark",
-                    background_color="default",
-                    line_numbers=False,
-                    word_wrap=True,
-                )
-            except Exception:
-                event_block = RichText(_json.dumps(events, default=str))
+            event_block = self._render_as_yaml(events)
             title = f"{item.get('skill_name', '?')} · {len(events)} events"
             pane.show_text(title, RichGroup(head, event_block))
         else:
