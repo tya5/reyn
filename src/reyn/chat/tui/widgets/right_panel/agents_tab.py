@@ -628,10 +628,18 @@ def render_agents(
                     f"last: {ts_str}{count_part}", style="#555555",
                 ))
                 if snippet:
+                    # Collapse all whitespace runs to single spaces FIRST,
+                    # then truncate. The user's last message may be a
+                    # multi-line paste (= e.g. they grabbed the agents
+                    # tree via `c` and pasted it back into chat); without
+                    # this, the embedded newlines + tree-drawing chars
+                    # made the snippet look like a nested sub-tree under
+                    # the "↳" node.
+                    flattened = " ".join(snippet.split())
                     _max = 60
                     short = (
-                        snippet if len(snippet) <= _max
-                        else snippet[:_max - 1] + "…"
+                        flattened if len(flattened) <= _max
+                        else flattened[:_max - 1] + "…"
                     )
                     line2 = RichText()
                     line2.append("↳ ", style="#555555")
