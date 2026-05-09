@@ -482,6 +482,11 @@ def render_agents(
                     "phase": phase,
                     "phase_visits": info.get("phase_visits", 1),
                     "elapsed_s": elapsed,
+                    # User message that kicked off this run — populated
+                    # by ``ReynTUIApp._update_skill_exec`` on first trace.
+                    # Empty string when unknown (= e.g. session restored
+                    # from disk, or skill spawned by a non-chat caller).
+                    "triggered_by": info.get("triggered_by", ""),
                 })
 
         # Plan-mode (ADR-0022 / 0023). Surfaced as a sibling of running

@@ -116,6 +116,11 @@ class ReynTUIApp(App):
         self._last_focal_tab: str | None = None  # "events" | "agents" | None
         # Active streaming row id — shared between __stream_* handlers
         self._current_stream_id: str | None = None
+        # Most-recent user-typed message (or voice-dictated transcript) —
+        # captured into ``_skill_exec[run_id]['triggered_by']`` the first
+        # time we see a trace event for a new run, so the agents tab
+        # preview can show "which user message kicked off this skill?".
+        self._latest_user_message: str = ""
         # Voice input (lazy — created on first F2 press so import-time cost is
         # zero for users who don't have the `reyn[voice]` extras installed).
         self._voice_input = None  # type: ignore[var-annotated]
@@ -289,6 +294,11 @@ class ReynTUIApp(App):
                 "start_time": _time.monotonic(),
                 "phase": "",
                 "phase_visits": 0,
+                # Snapshot of the user message that triggered this run.
+                # Captured ONCE, on the first trace, so a long-tail skill
+                # that's still running when the user types another
+                # message keeps the message that actually started it.
+                "triggered_by": self._latest_user_message,
             }
             self._skill_exec[run_id] = existing
         # Text pattern: "phase started: <phase_name>"
@@ -379,6 +389,12 @@ class ReynTUIApp(App):
         conv.render_user_message(text)
         # A4: snapshot cost/tokens/time at turn start
         self._record_turn_start()
+        # Remember this message so the next skill run that fires can
+        # tag itself with "triggered_by". Cleared / overwritten on each
+        # subsequent submit, so a long-tail skill that finishes after
+        # the user has typed again still keeps the message that
+        # actually started it (= we capture eagerly on first trace).
+        self._latest_user_message = text
 
         # Get the attached session
         session = self._get_session()

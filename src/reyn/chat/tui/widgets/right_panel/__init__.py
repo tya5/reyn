@@ -527,6 +527,19 @@ class RightPanel(Widget):
         head.append(item.get("phase", "—") or "—", style="#dddddd")
         if item.get("phase_visits", 0) > 1:
             head.append(f"  (visit #{item['phase_visits']})", style="#888888")
+        # The user message that kicked off this run. Lets the user
+        # disambiguate same-named skills triggered by different turns —
+        # the typical "why is web_search_display still running, didn't
+        # I already get my answer?" gotcha (= different run from a
+        # different prompt).
+        trig = item.get("triggered_by", "") or ""
+        if trig:
+            head.append("\n\ntriggered by:\n", style="dim")
+            # Truncate to 240 chars so a long pasted prompt doesn't
+            # blow up the preview, but keep enough to identify which
+            # turn it came from.
+            short = trig if len(trig) <= 240 else trig[:237] + "…"
+            head.append(short, style="#aaaaaa")
         title = f"running · {item.get('skill_name', '?')}"
         pane.show_text(title, RichGroup(head))
 
