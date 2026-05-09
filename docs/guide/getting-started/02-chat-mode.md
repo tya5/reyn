@@ -49,6 +49,18 @@ Each turn is logged under `.reyn/agents/default/`.
 
 `Ctrl+D` or `/quit` ends the session. Re-running `reyn chat` resumes the same agent — its memory and history persist.
 
+## Web UI (optional)
+
+While the TUI is running, you can also use a browser-based interface. In a second terminal:
+
+```bash
+reyn web
+```
+
+Then open **http://localhost:8080**. The Web UI connects to the same agent and shows the same session — richer rendering, better for longer conversations or screen sharing.
+
+Stopping `reyn web` (Ctrl+C) doesn't affect the TUI session, and vice versa. See [How-to: Chat and Web UI](../for-users/chat-and-web-ui.md) for options.
+
 ## Slash commands
 
 Lines starting with `/` are intercepted as control commands, not routed to the LLM:
