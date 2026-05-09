@@ -83,7 +83,8 @@ historical value with status updated to "superseded by ADR-XXXX").
 |---|---|
 | [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
 | [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
-| [0028](0028-embedded-web-server-ux.md) | Embedded Web Server — TUI ライフサイクルに連動、孤児プロセスなし (Proposed) |
+
+> Embedded Web Server UX (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/embedded-web-server-ux.md` 参照。
 
 ## Format
 
