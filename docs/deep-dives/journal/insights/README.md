@@ -30,6 +30,7 @@ insights だけで Reyn の deep technical lesson にアクセスできる。
 | 2026-05-07 | [plan-mode dogfood — 3 bugs found via LLM context analysis discipline](2026-05-07-plan-mode-dogfood-findings.md) | stable | commits `ea97509` + `7d0d6a2` |
 | 2026-05-07 | [plan-mode crash resilience Phase 1 — audit → ADR → impl → e2e verify](2026-05-07-plan-mode-crash-resilience-phase1.md) | stable | ADR-0022 / commits `6b09844` + `5f4944a` |
 | 2026-05-08 | [「25/25 refuted」 false alarm — plumbing fix + observe-first で投機的 description rewrite を回避](2026-05-08-r1-false-alarm-observe-first-saved.md) | stable | G24 / G27 / G28 / commits `3a59d8c` + `61949df` + `1fc3925` |
+| 2026-05-09 | [ADR-0026 Unified Tool Registry — bridge patterns for byte-identity-preserving multi-cluster refactor](2026-05-09-adr0026-unified-registry-migration.md) | stable | ADR-0026 Accepted / 14-commit arc `edd4c1b`→`9620310` / tool-addition 3-5 → 2-3 touch points |
 
 ## How to add an insight
 
