@@ -14,6 +14,9 @@ Gemini-safe schema rules enforced throughout:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Literal
+
 # ── G12 attractor mitigation (B7 finding: skill description verbosity trigger) ──
 #
 # Empty-stop attractor root cause: skill description verbosity.  B7 finding
@@ -52,24 +55,81 @@ MAX_DESC_LEN_FOR_LISTING: int = 80
 _DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({"routing", "category"})
 
 
-# ── dispatch_kind sidecar registry ──────────────────────────────────────────
+# ── ToolSpec — unified tool descriptor ──────────────────────────────────────
 #
-# Each tool is intrinsically either:
-#   - "sync"  — invoker awaits a result that's available in this RouterLoop
-#               turn; the LLM sees the tool_result and decides next step.
-#   - "async" — invoker dispatches work whose result arrives via a separate
-#               channel in a future router invocation (e.g. delegate_to_agent
-#               result comes through PR14 pending_chain). The current loop
-#               cannot wait for the answer; RouterLoop must exit after
-#               dispatch and rely on the future invocation to resume.
+# Single source of truth for all chat-router tool metadata. Replaces the
+# prior dual representation:
+#   - dict literal in build_tools() (OpenAI schema)
+#   - sidecar _DISPATCH_KIND dict (sync/async classification)
 #
-# Default: any tool not listed here is treated as "sync".
+# dispatch_kind: intrinsic dispatch posture for the tool.
+#   "sync"  — invoker awaits a result that's available in this RouterLoop
+#             turn; the LLM sees the tool_result and decides next step.
+#   "async" — invoker dispatches work whose result arrives via a separate
+#             channel in a future router invocation (e.g. delegate_to_agent
+#             result comes through PR14 pending_chain). The current loop
+#             cannot wait for the answer; RouterLoop must exit after
+#             dispatch and rely on the future invocation to resume.
 #
-# Future: when more async tools appear (long-running skill modes, scheduled
-# tasks, webhooks), this registry can grow; the formalization candidate is
-# the `ToolSpec` dataclass in the residuals (residuals → OS abstraction
-# 拡張 → ToolSpec dataclass formalize).
-_DISPATCH_KIND: dict[str, str] = {
+# Future-proof for tool metadata growth (cost weight, rate-limit class,
+# per-tool budget, log redaction policy). Add fields here as those needs
+# surface; build_tools() and dispatcher consume from the same source.
+#
+# Future fields (not added yet):
+#   cost_weight: float = 1.0
+#   rate_limit_class: str | None = None
+#   log_redaction: list[str] = field(default_factory=list)
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """Unified spec for a chat-router tool exposed to the LLM.
+
+    Replaces the prior dual representation:
+      - dict literal in build_tools() (OpenAI schema)
+      - sidecar _DISPATCH_KIND dict (sync/async classification)
+
+    Future-proof for tool metadata growth (cost weight, rate-limit class,
+    per-tool budget, log redaction policy). Add fields here as those needs
+    surface; build_tools() and dispatcher consume from the same source.
+    """
+
+    name: str
+    description: str
+    parameters: dict                                  # JSON schema (object root)
+    dispatch_kind: Literal["sync", "async"] = "sync"
+    # Future fields (commented out, not added yet):
+    # cost_weight: float = 1.0
+    # rate_limit_class: str | None = None
+    # log_redaction: list[str] = field(default_factory=list)
+
+    def to_openai_dict(self) -> dict:
+        """Render to the OpenAI tools array shape that LiteLLM expects."""
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+
+# ── _DISPATCH_KIND — module-level derived view ───────────────────────────────
+#
+# Derived from the canonical _TOOL_SPECS list below. Kept as a module-level
+# dict so that:
+#  (a) get_dispatch_kind() works without needing build_tools() to have run
+#  (b) test_plan_async_dispatch.py's direct ``_DISPATCH_KIND.get(...)``
+#      import keeps working (= backward compat for that test's contract pin).
+#
+# This dict is computed once at module import time from _TOOL_SPECS_STATIC
+# (the always-present tools). Conditional tools (invoke_skill, file tools,
+# MCP tools, web_fetch) are all "sync" so they don't change the lookup;
+# get_dispatch_kind() defaults to "sync" for unknown names, which covers
+# them correctly.
+#
+# NOTE: Do NOT add async conditional tools without also updating this dict.
+_TOOL_SPECS_STATIC_ASYNC: dict[str, str] = {
     "delegate_to_agent": "async",
     # ADR-0023 Phase 2.1: plan-mode dispatch is fire-and-forget so the
     # chat turn doesn't block on multi-step LLM work. dispatch_plan_tool
@@ -80,6 +140,9 @@ _DISPATCH_KIND: dict[str, str] = {
     "plan": "async",
 }
 
+# Module-level backward-compat alias: same shape as the old sidecar dict.
+_DISPATCH_KIND: dict[str, str] = _TOOL_SPECS_STATIC_ASYNC
+
 
 def get_dispatch_kind(tool_name: str) -> str:
     """Return "sync" or "async" for the given tool name.
@@ -88,6 +151,9 @@ def get_dispatch_kind(tool_name: str) -> str:
     tool dispatch (sync — result is in the tool_result, LLM can act on it)
     or to exit immediately and wait for a deferred result via a separate
     channel (async — pending_chain or equivalent).
+
+    Implementation derives from the ToolSpec definitions (single source of
+    truth). Default for unknown / sync tools is "sync".
     """
     return _DISPATCH_KIND.get(tool_name, "sync")
 
@@ -111,6 +177,11 @@ def build_tools(
       C1 list_directory, C2 read_file (when any file scope),
       C3 write_file, C4 delete_file (only when write scope),
       D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool (when mcp configured).
+
+    Internally collects ToolSpec objects (= single source of truth for name,
+    description, parameters, dispatch_kind) and returns the OpenAI dict shape
+    via ToolSpec.to_openai_dict(). The public return type stays list[dict] for
+    backward compatibility with all callers.
 
     Parameters
     ----------
@@ -160,317 +231,286 @@ def build_tools(
         if agent_names
         else {"type": "string"}
     )
-    # fmt: off
-    tools: list[dict] = [
+
+    # Collect ToolSpec objects in canonical order (single source of truth).
+    # Each spec carries name + description + parameters + dispatch_kind.
+    # build_tools() converts to OpenAI dict shape via to_openai_dict().
+    specs: list[ToolSpec] = [
         # ── A1: list_skills ──────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "list_skills",
-                "description": (
-                    "Browse the skill catalogue hierarchically. "
-                    "Pass empty string to see top-level categories. "
-                    "Pass a category path to drill in. "
-                    "Returns either child categories or items, "
-                    "each with name and one-line description. "
-                    "After this returns, narrate the skill names directly to "
-                    "the user in your next message — do not stop after listing "
-                    "and do not ask for confirmation before naming them."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": (
-                                'Category path, e.g. "", "write", "write/blog". '
-                                "Empty = root."
-                            ),
-                        }
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
-        # ── A2: describe_skill ───────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "describe_skill",
-                "description": (
-                    "Fetch full metadata for one skill: when_to_use, examples, "
-                    "input artifact schema. "
-                    "Call this before invoke_skill if you're unsure how to "
-                    "construct the input."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                    },
-                    "required": ["name"],
-                },
-            },
-        },
-        # ── A3: list_agents ──────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "list_agents",
-                "description": (
-                    "Browse peer agents reachable via topology. "
-                    "Pass empty path for clusters; "
-                    "pass a cluster name for agents in it."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
-        # ── A4: describe_agent ───────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "describe_agent",
-                "description": (
-                    "Fetch full role / capabilities profile for one agent. "
-                    "Call before delegate_to_agent if uncertain."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "name": {"type": "string"},
-                    },
-                    "required": ["name"],
-                },
-            },
-        },
-        # ── A5: list_memory ──────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "list_memory",
-                "description": (
-                    'Browse persisted memory hierarchically. Path = "" (roots) '
-                    '| "shared" | "shared/user" | "agent/feedback" etc. '
-                    "Returns child categories or item entries "
-                    "(slug + name + one-line description)."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                    },
-                    "required": ["path"],
-                },
-            },
-        },
-        # ── A6: read_memory_body ─────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "read_memory_body",
-                "description": (
-                    "Fetch the full body of one memory entry. "
-                    "Use only when list_memory's description is too vague "
-                    "to answer the user."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "layer": {
-                            "type": "string",
-                            "enum": ["shared", "agent"],
-                        },
-                        "slug": {"type": "string"},
-                    },
-                    "required": ["layer", "slug"],
-                },
-            },
-        },
-        # ── B1: invoke_skill ─────────────────────────────────────────────
-        *(
-            [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "invoke_skill",
+        ToolSpec(
+            name="list_skills",
+            description=(
+                "Browse the skill catalogue hierarchically. "
+                "Pass empty string to see top-level categories. "
+                "Pass a category path to drill in. "
+                "Returns either child categories or items, "
+                "each with name and one-line description. "
+                "After this returns, narrate the skill names directly to "
+                "the user in your next message — do not stop after listing "
+                "and do not ask for confirmation before naming them."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
                         "description": (
-                            "Run a skill from the registered list. "
-                            "The 'name' parameter MUST be one of the skills "
-                            "listed in the system prompt's \"Available skills\" "
-                            "section, used verbatim (no dots, no slashes, "
-                            "no namespace prefixes). "
-                            "Use list_skills' input_fields hint to construct "
-                            "the correct input, or call describe_skill for full "
-                            "schema details. Do not guess input field names."
+                            'Category path, e.g. "", "write", "write/blog". '
+                            "Empty = root."
                         ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "name": {
-                                    **_invoke_skill_name_schema,
-                                    "description": (
-                                        "Skill name — choose exactly one from "
-                                        "the enum (verbatim, no dots or slashes)."
-                                    ),
-                                },
-                                "input": {
-                                    "type": "object",
-                                    "description": (
-                                        "Skill input artifact: "
-                                        "{type: <artifact_type>, data: {...}}"
-                                    ),
-                                },
-                            },
-                            "required": ["name", "input"],
-                        },
-                    },
-                }
-            ]
-            if skill_names
-            else []
+                    }
+                },
+                "required": ["path"],
+            },
         ),
-        # ── B2: delegate_to_agent ────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "delegate_to_agent",
-                "description": "Forward the request to a peer agent.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "to": {
-                            **_delegate_to_schema,
-                            "description": (
-                                "Target agent name as listed by list_agents."
-                            ),
-                        },
-                        "request": {
-                            "type": "string",
-                            "description": (
-                                "Natural-language request paraphrased "
-                                "for the peer's context."
-                            ),
-                        },
-                    },
-                    "required": ["to", "request"],
+        # ── A2: describe_skill ───────────────────────────────────────────
+        ToolSpec(
+            name="describe_skill",
+            description=(
+                "Fetch full metadata for one skill: when_to_use, examples, "
+                "input artifact schema. "
+                "Call this before invoke_skill if you're unsure how to "
+                "construct the input."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
                 },
+                "required": ["name"],
             },
-        },
-        # ── B3: remember_shared ──────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "remember_shared",
-                "description": (
-                    "Persist a durable fact to project-wide (shared) memory. "
-                    "Use for user role / project decisions / external references "
-                    "that benefit all agents."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "slug": {
-                            "type": "string",
-                            "description": (
-                                "Filename stem, format <type>_<topic>, "
-                                "e.g. user_role"
-                            ),
-                        },
-                        "name": {"type": "string"},
-                        "description": {
-                            "type": "string",
-                            "description": (
-                                "One-line summary; appears in memory listings"
-                            ),
-                        },
-                        "type": {
-                            "type": "string",
-                            "enum": ["user", "feedback", "project", "reference"],
-                        },
-                        "body": {
-                            "type": "string",
-                            "description": (
-                                "Full body markdown, typically <5 lines"
-                            ),
-                        },
-                    },
-                    "required": ["slug", "name", "description", "type", "body"],
+        ),
+        # ── A3: list_agents ──────────────────────────────────────────────
+        ToolSpec(
+            name="list_agents",
+            description=(
+                "Browse peer agents reachable via topology. "
+                "Pass empty path for clusters; "
+                "pass a cluster name for agents in it."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
                 },
+                "required": ["path"],
             },
-        },
-        # ── B4: remember_agent ───────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "remember_agent",
-                "description": (
-                    "Persist a durable fact to this agent's private memory. "
-                    "Use for agent-specific preferences, feedback, or context "
-                    "that should not propagate to all agents."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "slug": {
-                            "type": "string",
-                            "description": (
-                                "Filename stem, format <type>_<topic>, "
-                                "e.g. feedback_tone"
-                            ),
-                        },
-                        "name": {"type": "string"},
-                        "description": {
-                            "type": "string",
-                            "description": (
-                                "One-line summary; appears in memory listings"
-                            ),
-                        },
-                        "type": {
-                            "type": "string",
-                            "enum": ["user", "feedback", "project", "reference"],
-                        },
-                        "body": {
-                            "type": "string",
-                            "description": (
-                                "Full body markdown, typically <5 lines"
-                            ),
-                        },
-                    },
-                    "required": ["slug", "name", "description", "type", "body"],
+        ),
+        # ── A4: describe_agent ───────────────────────────────────────────
+        ToolSpec(
+            name="describe_agent",
+            description=(
+                "Fetch full role / capabilities profile for one agent. "
+                "Call before delegate_to_agent if uncertain."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
                 },
+                "required": ["name"],
             },
-        },
-        # ── B5: forget_memory ────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "forget_memory",
-                "description": (
-                    "Delete a memory entry. "
-                    "Only when the user explicitly says 'forget' or "
-                    "the memory turned out wrong."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "layer": {
-                            "type": "string",
-                            "enum": ["shared", "agent"],
-                        },
-                        "slug": {"type": "string"},
-                    },
-                    "required": ["layer", "slug"],
+        ),
+        # ── A5: list_memory ──────────────────────────────────────────────
+        ToolSpec(
+            name="list_memory",
+            description=(
+                'Browse persisted memory hierarchically. Path = "" (roots) '
+                '| "shared" | "shared/user" | "agent/feedback" etc. '
+                "Returns child categories or item entries "
+                "(slug + name + one-line description)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
                 },
+                "required": ["path"],
             },
-        },
+        ),
+        # ── A6: read_memory_body ─────────────────────────────────────────
+        ToolSpec(
+            name="read_memory_body",
+            description=(
+                "Fetch the full body of one memory entry. "
+                "Use only when list_memory's description is too vague "
+                "to answer the user."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "layer": {
+                        "type": "string",
+                        "enum": ["shared", "agent"],
+                    },
+                    "slug": {"type": "string"},
+                },
+                "required": ["layer", "slug"],
+            },
+        ),
     ]
-    # fmt: on
+
+    # ── B1: invoke_skill (conditional — omitted when no skills registered) ──
+    if skill_names:
+        specs.append(ToolSpec(
+            name="invoke_skill",
+            description=(
+                "Run a skill from the registered list. "
+                "The 'name' parameter MUST be one of the skills "
+                "listed in the system prompt's \"Available skills\" "
+                "section, used verbatim (no dots, no slashes, "
+                "no namespace prefixes). "
+                "Use list_skills' input_fields hint to construct "
+                "the correct input, or call describe_skill for full "
+                "schema details. Do not guess input field names."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        **_invoke_skill_name_schema,
+                        "description": (
+                            "Skill name — choose exactly one from "
+                            "the enum (verbatim, no dots or slashes)."
+                        ),
+                    },
+                    "input": {
+                        "type": "object",
+                        "description": (
+                            "Skill input artifact: "
+                            "{type: <artifact_type>, data: {...}}"
+                        ),
+                    },
+                },
+                "required": ["name", "input"],
+            },
+        ))
+
+    specs += [
+        # ── B2: delegate_to_agent ────────────────────────────────────────
+        ToolSpec(
+            name="delegate_to_agent",
+            description="Forward the request to a peer agent.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "to": {
+                        **_delegate_to_schema,
+                        "description": (
+                            "Target agent name as listed by list_agents."
+                        ),
+                    },
+                    "request": {
+                        "type": "string",
+                        "description": (
+                            "Natural-language request paraphrased "
+                            "for the peer's context."
+                        ),
+                    },
+                },
+                "required": ["to", "request"],
+            },
+            dispatch_kind="async",
+        ),
+        # ── B3: remember_shared ──────────────────────────────────────────
+        ToolSpec(
+            name="remember_shared",
+            description=(
+                "Persist a durable fact to project-wide (shared) memory. "
+                "Use for user role / project decisions / external references "
+                "that benefit all agents."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": (
+                            "Filename stem, format <type>_<topic>, "
+                            "e.g. user_role"
+                        ),
+                    },
+                    "name": {"type": "string"},
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "One-line summary; appears in memory listings"
+                        ),
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["user", "feedback", "project", "reference"],
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": (
+                            "Full body markdown, typically <5 lines"
+                        ),
+                    },
+                },
+                "required": ["slug", "name", "description", "type", "body"],
+            },
+        ),
+        # ── B4: remember_agent ───────────────────────────────────────────
+        ToolSpec(
+            name="remember_agent",
+            description=(
+                "Persist a durable fact to this agent's private memory. "
+                "Use for agent-specific preferences, feedback, or context "
+                "that should not propagate to all agents."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "slug": {
+                        "type": "string",
+                        "description": (
+                            "Filename stem, format <type>_<topic>, "
+                            "e.g. feedback_tone"
+                        ),
+                    },
+                    "name": {"type": "string"},
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "One-line summary; appears in memory listings"
+                        ),
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["user", "feedback", "project", "reference"],
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": (
+                            "Full body markdown, typically <5 lines"
+                        ),
+                    },
+                },
+                "required": ["slug", "name", "description", "type", "body"],
+            },
+        ),
+        # ── B5: forget_memory ────────────────────────────────────────────
+        ToolSpec(
+            name="forget_memory",
+            description=(
+                "Delete a memory entry. "
+                "Only when the user explicitly says 'forget' or "
+                "the memory turned out wrong."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "layer": {
+                        "type": "string",
+                        "enum": ["shared", "agent"],
+                    },
+                    "slug": {"type": "string"},
+                },
+                "required": ["layer", "slug"],
+            },
+        ),
+    ]
 
     # ── C. File tools (permission-gated) ─────────────────────────────────────
     #
@@ -489,89 +529,77 @@ def build_tools(
     _file_write = (file_permissions or {}).get("write") or []
 
     if _file_read or _file_write:
-        tools += [
+        specs += [
             # ── C1: list_directory ───────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_directory",
-                    "description": (
-                        "List contents of a directory under the agent's read scope. "
-                        "Returns names + types (file/dir)."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                        },
-                        "required": ["path"],
+            ToolSpec(
+                name="list_directory",
+                description=(
+                    "List contents of a directory under the agent's read scope. "
+                    "Returns names + types (file/dir)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
                     },
+                    "required": ["path"],
                 },
-            },
+            ),
             # ── C2: read_file ────────────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "description": (
-                        "Read a file's contents under the agent's read scope. "
-                        "Common conventions: README is at project root as "
-                        "`README.md`. CLAUDE.md, CHANGELOG.md, and "
-                        "configuration files (e.g. `reyn.yaml`, "
-                        "`pyproject.toml`) are at project root. Try these "
-                        "conventional paths directly instead of asking the "
-                        "user where the file lives."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "path": {"type": "string"},
-                        },
-                        "required": ["path"],
+            ToolSpec(
+                name="read_file",
+                description=(
+                    "Read a file's contents under the agent's read scope. "
+                    "Common conventions: README is at project root as "
+                    "`README.md`. CLAUDE.md, CHANGELOG.md, and "
+                    "configuration files (e.g. `reyn.yaml`, "
+                    "`pyproject.toml`) are at project root. Try these "
+                    "conventional paths directly instead of asking the "
+                    "user where the file lives."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
                     },
+                    "required": ["path"],
                 },
-            },
+            ),
         ]
 
         if _file_write:
             # C3 and C4 only when write scope is configured
-            tools += [
+            specs += [
                 # ── C3: write_file ───────────────────────────────────────────
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "write_file",
-                        "description": (
-                            "Write content to a file under the agent's write scope. "
-                            "Creates or overwrites."
-                        ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "content": {"type": "string"},
-                            },
-                            "required": ["path", "content"],
+                ToolSpec(
+                    name="write_file",
+                    description=(
+                        "Write content to a file under the agent's write scope. "
+                        "Creates or overwrites."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "content": {"type": "string"},
                         },
+                        "required": ["path", "content"],
                     },
-                },
+                ),
                 # ── C4: delete_file ──────────────────────────────────────────
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "delete_file",
-                        "description": (
-                            "Delete a file under the agent's write scope."
-                        ),
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                            },
-                            "required": ["path"],
+                ToolSpec(
+                    name="delete_file",
+                    description=(
+                        "Delete a file under the agent's write scope."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
                         },
+                        "required": ["path"],
                     },
-                },
+                ),
             ]
 
     # ── E. Web tools (OS-native, backed by Control IR ops web/search +
@@ -582,60 +610,52 @@ def build_tools(
     #         attacker's server logs them) or to probe internal endpoints, so
     #         the operator enables it explicitly via `web.fetch: allow` in
     #         reyn.yaml.
-    tools += [
+    specs.append(
         # ── E1: web_search (always available) ────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "web_search",
-                "description": (
-                    "Search the public web with DuckDuckGo and return "
-                    "structured results. Standard search operators are "
-                    "supported in `query`: `site:<domain>` to scope to "
-                    "one site (e.g. `site:news.ycombinator.com`), "
-                    "`\"phrase\"` for exact match, `-term` to exclude. "
-                    "Use them when the user's intent is site-specific "
-                    "or phrase-anchored; plain keywords work otherwise. "
-                    "query: search string. "
-                    "max_results: cap on returned results (default 5)."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "max_results": {"type": "integer"},
-                    },
-                    "required": ["query"],
+        ToolSpec(
+            name="web_search",
+            description=(
+                "Search the public web with DuckDuckGo and return "
+                "structured results. Standard search operators are "
+                "supported in `query`: `site:<domain>` to scope to "
+                "one site (e.g. `site:news.ycombinator.com`), "
+                "`\"phrase\"` for exact match, `-term` to exclude. "
+                "Use them when the user's intent is site-specific "
+                "or phrase-anchored; plain keywords work otherwise. "
+                "query: search string. "
+                "max_results: cap on returned results (default 5)."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"},
                 },
+                "required": ["query"],
             },
-        },
-    ]
+        )
+    )
 
     # ── E2: web_fetch (operator opt-in via web.fetch: allow) ──────────────────
     if web_fetch_allowed:
-        tools += [
-            {
-                "type": "function",
-                "function": {
-                    "name": "web_fetch",
-                    "description": (
-                        "Fetch a single URL and return its (text-extracted) "
-                        "content. url: absolute http/https URL. "
-                        "max_length: cap on returned content size "
-                        "(default 50000). Use after web_search to read a "
-                        "result page in detail."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "url": {"type": "string"},
-                            "max_length": {"type": "integer"},
-                        },
-                        "required": ["url"],
-                    },
+        specs.append(ToolSpec(
+            name="web_fetch",
+            description=(
+                "Fetch a single URL and return its (text-extracted) "
+                "content. url: absolute http/https URL. "
+                "max_length: cap on returned content size "
+                "(default 50000). Use after web_search to read a "
+                "result page in detail."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_length": {"type": "integer"},
                 },
+                "required": ["url"],
             },
-        ]
+        ))
 
     # ── G. Plan tool (always present) ────────────────────────────────────────
     #
@@ -655,203 +675,187 @@ def build_tools(
     # catalog) is checked at dispatch time by `parse_and_validate_plan`,
     # not here, because the tool list is dynamic per-session. Cycle
     # detection is also at dispatch time.
-    tools += [
+    specs.append(
         # ── G1: plan ─────────────────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "plan",
-                "description": (
-                    "Decompose a complex query into 2-7 independent "
-                    "sub-tasks. Use ONLY when the query needs multi-"
-                    "source synthesis (e.g. \"explain X with code "
-                    "references\", \"compare A vs B from multiple "
-                    "docs\", \"build a summary across these N "
-                    "files\"). For simple queries — chitchat, single-"
-                    "tool retrieval, single-source narration — reply "
-                    "directly or call one tool; do NOT use plan. The "
-                    "terminal step's text reply becomes the user-"
-                    "facing answer; design the last step to "
-                    "synthesise."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "goal": {
-                            "type": "string",
-                            "description": (
-                                "1-sentence restatement of the user's overall query."
-                            ),
-                        },
-                        # steps is a JSON-encoded string instead of a nested
-                        # object array because the chat-router schema budget
-                        # forbids depth-2 object properties (= Gemini-safe
-                        # constraint, see test_nested_objects_max_depth_1).
-                        # The dispatch layer parses + validates the JSON.
-                        "steps_json": {
-                            "type": "string",
-                            "description": (
-                                "JSON-encoded array of 2-7 step objects. Each "
-                                "step has shape: "
-                                "{\"id\": str, \"description\": str, "
-                                "\"tools\": [str, ...], \"depends_on\": [str, ...]}. "
-                                "id: short unique identifier. description: what "
-                                "this step does. "
-                                # 2026-05-07 dogfood fix: clarify step.tools field —
-                                # LLM was confusing skill names (= invoke_skill enum
-                                # values like \"direct_llm\") with top-level tool
-                                # names. Be explicit about both the source of truth
-                                # AND the empty-list semantics for synthesis steps.
-                                "tools: list of TOP-LEVEL tool names this step "
-                                "calls (e.g. \"reyn_src_read\", \"web_search\", "
-                                "\"invoke_skill\"). Use [] for steps that just "
-                                "synthesise / compare / summarise from prior step "
-                                "outputs — the step's LLM does that natively without "
-                                "any tool. To run a skill, use [\"invoke_skill\"], "
-                                "NOT the skill's name. depends_on: ids of prior "
-                                "steps whose output this step needs (default []). "
-                                "The terminal step's text reply becomes the user-"
-                                "facing answer; design the last step to "
-                                "synthesise (= tools: []). Example: "
-                                "[{\"id\": \"s1\", \"description\": \"read README\", "
-                                "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
-                                "{\"id\": \"s2\", \"description\": \"compare and "
-                                "summarise for user\", "
-                                "\"tools\": [], \"depends_on\": [\"s1\"]}]"
-                            ),
-                        },
+        ToolSpec(
+            name="plan",
+            description=(
+                "Decompose a complex query into 2-7 independent "
+                "sub-tasks. Use ONLY when the query needs multi-"
+                "source synthesis (e.g. \"explain X with code "
+                "references\", \"compare A vs B from multiple "
+                "docs\", \"build a summary across these N "
+                "files\"). For simple queries — chitchat, single-"
+                "tool retrieval, single-source narration — reply "
+                "directly or call one tool; do NOT use plan. The "
+                "terminal step's text reply becomes the user-"
+                "facing answer; design the last step to "
+                "synthesise."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "goal": {
+                        "type": "string",
+                        "description": (
+                            "1-sentence restatement of the user's overall query."
+                        ),
                     },
-                    "required": ["goal", "steps_json"],
+                    # steps is a JSON-encoded string instead of a nested
+                    # object array because the chat-router schema budget
+                    # forbids depth-2 object properties (= Gemini-safe
+                    # constraint, see test_nested_objects_max_depth_1).
+                    # The dispatch layer parses + validates the JSON.
+                    "steps_json": {
+                        "type": "string",
+                        "description": (
+                            "JSON-encoded array of 2-7 step objects. Each "
+                            "step has shape: "
+                            "{\"id\": str, \"description\": str, "
+                            "\"tools\": [str, ...], \"depends_on\": [str, ...]}. "
+                            "id: short unique identifier. description: what "
+                            "this step does. "
+                            # 2026-05-07 dogfood fix: clarify step.tools field —
+                            # LLM was confusing skill names (= invoke_skill enum
+                            # values like \"direct_llm\") with top-level tool
+                            # names. Be explicit about both the source of truth
+                            # AND the empty-list semantics for synthesis steps.
+                            "tools: list of TOP-LEVEL tool names this step "
+                            "calls (e.g. \"reyn_src_read\", \"web_search\", "
+                            "\"invoke_skill\"). Use [] for steps that just "
+                            "synthesise / compare / summarise from prior step "
+                            "outputs — the step's LLM does that natively without "
+                            "any tool. To run a skill, use [\"invoke_skill\"], "
+                            "NOT the skill's name. depends_on: ids of prior "
+                            "steps whose output this step needs (default []). "
+                            "The terminal step's text reply becomes the user-"
+                            "facing answer; design the last step to "
+                            "synthesise (= tools: []). Example: "
+                            "[{\"id\": \"s1\", \"description\": \"read README\", "
+                            "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
+                            "{\"id\": \"s2\", \"description\": \"compare and "
+                            "summarise for user\", "
+                            "\"tools\": [], \"depends_on\": [\"s1\"]}]"
+                        ),
+                    },
                 },
+                "required": ["goal", "steps_json"],
             },
-        },
-    ]
+            dispatch_kind="async",
+        )
+    )
 
-    # ── F. Reyn-source tools (always present, no permission) ────────────────
-    #
-    # `reyn_src_list` / `reyn_src_read` give the agent read access to
-    # **Reyn's own** repository (= the project where pyproject.toml
-    # declares Reyn). They serve a single use case: when the user asks
-    # how Reyn works or wants a deep-dive into its implementation, the
-    # agent should answer from Reyn's source/docs, not web search.
-    #
-    # Why no permission gate: the resolver scopes paths to the Reyn
-    # repository tree, which is by definition public open-source content
-    # (= GitHub secret-scanning blocks credentials at push time, so
-    # nothing in the tree is sensitive). Operators don't configure this
-    # — it's an OS-internal capability, distinct from `file_*` (= which
-    # accesses the *user's* project files and IS permission-gated).
-    #
-    # Why two tools, not one: `list` lets the LLM discover the layout
-    # before reading; `read` returns the file body. Mirrors the file_*
-    # pair so the LLM's tool-use pattern is consistent across both
-    # Reyn-source and user-file access.
-    tools += [
+    specs += [
+        # ── F. Reyn-source tools (always present, no permission) ────────────
+        #
+        # `reyn_src_list` / `reyn_src_read` give the agent read access to
+        # **Reyn's own** repository (= the project where pyproject.toml
+        # declares Reyn). They serve a single use case: when the user asks
+        # how Reyn works or wants a deep-dive into its implementation, the
+        # agent should answer from Reyn's source/docs, not web search.
+        #
+        # Why no permission gate: the resolver scopes paths to the Reyn
+        # repository tree, which is by definition public open-source content
+        # (= GitHub secret-scanning blocks credentials at push time, so
+        # nothing in the tree is sensitive). Operators don't configure this
+        # — it's an OS-internal capability, distinct from `file_*` (= which
+        # accesses the *user's* project files and IS permission-gated).
+        #
+        # Why two tools, not one: `list` lets the LLM discover the layout
+        # before reading; `read` returns the file body. Mirrors the file_*
+        # pair so the LLM's tool-use pattern is consistent across both
+        # Reyn-source and user-file access.
         # ── F1: reyn_src_list ────────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "reyn_src_list",
-                "description": (
-                    "List entries under a path inside Reyn's own repository "
-                    "(= the project that built this agent). Pass \"\" for "
-                    "the repo root. Returns names + types (file/dir). Use "
-                    "this to discover Reyn's source/doc layout before "
-                    "reading specific files. Examples: list \"\" for the "
-                    "top-level layout, \"docs/en/concepts\" for concept "
-                    "docs, \"src/reyn/chat\" for the chat layer source."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                    },
-                    "required": ["path"],
+        ToolSpec(
+            name="reyn_src_list",
+            description=(
+                "List entries under a path inside Reyn's own repository "
+                "(= the project that built this agent). Pass \"\" for "
+                "the repo root. Returns names + types (file/dir). Use "
+                "this to discover Reyn's source/doc layout before "
+                "reading specific files. Examples: list \"\" for the "
+                "top-level layout, \"docs/en/concepts\" for concept "
+                "docs, \"src/reyn/chat\" for the chat layer source."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
                 },
+                "required": ["path"],
             },
-        },
+        ),
         # ── F2: reyn_src_read ────────────────────────────────────────────────
-        {
-            "type": "function",
-            "function": {
-                "name": "reyn_src_read",
-                "description": (
-                    "Read a text file from Reyn's own repository. Path is "
-                    "repo-root-relative (= same paths the user sees on "
-                    "GitHub). Start with reyn_src_read(\"README.md\") for "
-                    "an overview and a curated index of deep-dive paths. "
-                    "Use this for any \"how does Reyn / how does Reyn's X "
-                    "work?\" question — Reyn's source is the authoritative "
-                    "answer, not web search."
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                    },
-                    "required": ["path"],
+        ToolSpec(
+            name="reyn_src_read",
+            description=(
+                "Read a text file from Reyn's own repository. Path is "
+                "repo-root-relative (= same paths the user sees on "
+                "GitHub). Start with reyn_src_read(\"README.md\") for "
+                "an overview and a curated index of deep-dive paths. "
+                "Use this for any \"how does Reyn / how does Reyn's X "
+                "work?\" question — Reyn's source is the authoritative "
+                "answer, not web search."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
                 },
+                "required": ["path"],
             },
-        },
+        ),
     ]
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     if mcp_servers:
-        tools += [
+        specs += [
             # ── D1: list_mcp_servers ─────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_mcp_servers",
-                    "description": (
-                        "List available MCP servers configured for this agent. "
-                        "Returns name + description per server."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
+            ToolSpec(
+                name="list_mcp_servers",
+                description=(
+                    "List available MCP servers configured for this agent. "
+                    "Returns name + description per server."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
                 },
-            },
+            ),
             # ── D2: list_mcp_tools ───────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_mcp_tools",
-                    "description": (
-                        "List tools exposed by one MCP server "
-                        "(with description per tool)."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "server": {"type": "string"},
-                        },
-                        "required": ["server"],
+            ToolSpec(
+                name="list_mcp_tools",
+                description=(
+                    "List tools exposed by one MCP server "
+                    "(with description per tool)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "server": {"type": "string"},
                     },
+                    "required": ["server"],
                 },
-            },
+            ),
             # ── D3: call_mcp_tool ────────────────────────────────────────────
-            {
-                "type": "function",
-                "function": {
-                    "name": "call_mcp_tool",
-                    "description": (
-                        "Invoke an MCP server tool. Construct args matching "
-                        "the tool's input schema (see list_mcp_tools)."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "server": {"type": "string"},
-                            "tool": {"type": "string"},
-                            "args": {"type": "object"},
-                        },
-                        "required": ["server", "tool", "args"],
+            ToolSpec(
+                name="call_mcp_tool",
+                description=(
+                    "Invoke an MCP server tool. Construct args matching "
+                    "the tool's input schema (see list_mcp_tools)."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "server": {"type": "string"},
+                        "tool": {"type": "string"},
+                        "args": {"type": "object"},
                     },
+                    "required": ["server", "tool", "args"],
                 },
-            },
+            ),
         ]
 
-    return tools
+    # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
+    return [spec.to_openai_dict() for spec in specs]

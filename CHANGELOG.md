@@ -16,6 +16,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scripts/dogfood_long_session.py` long-lived-session driver (370 lines): CLI drives the A2A JSON-RPC endpoint with N consecutive prompts on the same agent, persisting history naturally (mirrors production); records empty rate by turn position, token counts, latency p50, JSON structured output (= `32d31b6`)
+- `dogfood/scenarios/long_session_v1.yaml` — 7 scenarios covering research chains, pronoun followup, reference-back, multi-source compare, and repetitive context-growth stress (= `32d31b6`)
+- `scripts/hn_research.py` — reusable industry-research pipeline: site-scoped DDG search → Algolia HN API per-item fetch → cross-thread digest. Concurrent fetch, /tmp cache, `--json` structured output; no new pip deps (= `a6c780f`)
+- `src/reyn/chat/services/router_host_adapter.py` — RouterHostAdapter concrete implementation of RouterLoopHost protocol (681 lines); ChatSession's collaborators injected, RouterLoop has zero dependency on ChatSession internals; `@runtime_checkable` added to RouterLoopHost (= `21b6bf0`)
+- `src/reyn/chat/services/memory_service.py` — MemoryService stateless service: memory_dir/memory_path path resolution, remember/forget/read_body ops; injects EventLog + 4 file callbacks; no OpContext/Workspace import (= `a5bd5d5`)
+- `src/reyn/chat/services/budget_gateway.py` — BudgetGateway service: per-session budget bookkeeping (total_usage/cost, router_cap state, accumulate, check_and_increment_router_cap, pre-spawn gate, cost_line/budget_full/reset_all) (= `729befa`)
+- Tier 2 invariant tests for RouterHostAdapter (4 tests, protocol conformance + delegation wiring), MemoryService (4 tests, round-trip + forget + layer mapping + events), and BudgetGateway; all use real instances, no mocks (= `21b6bf0`, `a5bd5d5`, `729befa`)
+- `docs/concepts/skill-design-patterns.{md,ja.md}` — new concept doc cataloguing the 3 canonical skill shapes (Linear / Loop / Sub-skill composition), mixing-patterns paragraph, and 4 anti-patterns; placed near multi-agent.md in nav (= `d297939`)
+- `docs/concepts/multi-agent.{md,ja.md}` — new "Four layers of multi-agent in Reyn" section: Layer 1 `@sub_skill` / Layer 2 `run_skill` / Layer 3 `delegate_to_agent` / Layer 4 `reyn mcp serve`, with ASCII diagram, per-layer table, and 4-line decision guide (= `d297939`)
+- Phase execution sequence diagram in `docs/concepts/architecture.{md,ja.md}` — ASCII sequence (User/Agent/OS/LLM/Workspace/Events) showing context-build → LLM call → validation loop → Control IR → events → transition/finish/abort; placed before the act-sense-react lens section (= `d297939`)
+- Plan-mode operator how-to (`docs/guide/for-skill-authors/use-plan-mode.{md,ja.md}`) covering when to use plan mode, trigger, `/plan list`, `/plan discard`, `/plan resume --from`, state persistence, operator intervention recipes, and common pitfalls (= `9d78ffe`)
+- `web_search`, `web_fetch`, and `mcp` op-kind sections in `docs/reference/control-ir.{md,ja.md}` — fields verified against src/reyn/schemas/models.py; includes contributor sync rule and `OP_KIND_MODEL_MAP` pointer; same rule added to CLAUDE.md Hard NEVER block (= `9d78ffe`)
+- README "How Reyn compares" section — 5-row comparison table (LangGraph / CrewAI / AutoGen / Semantic Kernel / Reyn) with Loop enforcement / State persistence / Replay / Strength columns; "fits when / does not fit when" lists; placed between Quick Start and Architecture (= `9d78ffe`)
+- `docs/deep-dives/research/competitive/semantic-kernel.md` — 350-line Semantic Kernel competitive research note (10 primary sources cited, 13-row Reyn 対比 table, 7 capability gaps, §8–§9 sections); README SK row sharpened with specific claims backed by the research (= `7952f9d`)
+- 5 mid-priority ja translations: `postprocessor.ja.md`, `skill-resume.ja.md`, `author-a-design.ja.md`, `reference/dsl/postprocessor.ja.md`, `reference/stdlib/read_local_files.ja.md` (750 lines total) (= `7952f9d`)
+- Eval rubric "Evidence-bound" principle (§5) and "Adversarial self-check" section in `docs/guide/for-skill-authors/eval-builder-rubric.md`, citing Berkeley RDI Trustworthy Benchmarks paper; eval_builder `analyze_skill.md` + `write_eval.md` + `skill.md` hardened with negative-test requirement and evidence-bound audit (= `a6c780f`, `7952f9d`)
+- "Reyn through the act-sense-react lens" section in `docs/concepts/architecture.{md,ja.md}` — maps loop steps (act/sense/re-act/loop closure) 1:1 onto Reyn primitives; cites Tines blog + HN discussion (= `a6c780f`)
+- "Downstream tooling — what builds on Reyn" section in `docs/concepts/care-boundary.{md,ja.md}` — names 5 raw primitives Reyn exposes and 4 downstream product categories; frames events log + WAL as public-facing contracts (= `a6c780f`)
+- G30 giveup-tracker entry: explicit decision NOT to add multi-agent debate primitive; HN expert consensus cited as supporting data; counter-argument triggers documented for future re-opening (= `a6c780f`)
+- `docs/deep-dives/insights/2026-05-09-hn-ai-agent-landscape-insights.md` — 4 actionable insights from 10 HN AI-agent threads (2025-2026) via Algolia API cross-thread analysis (= `9e04c04`)
+- `docs/deep-dives/journal/sessions/2026-05-09.md` — session chronicle: 1 HN query → events-log discipline rescue → 1-line description hint → 4 insights → parallel multi-axis landing → reusable industry-research tooling (= `72364fe`)
+- `docs/deep-dives/journal/dogfood/2026-05-09-long-session-baseline/` — baseline measurement findings (212-line chronicle) and raw driver output; G28 giveup-tracker entry extended with measured data: 37-turn baseline, 2% empty rate, cold-start dominated (= `5b47827`)
+- Section 6.6 "Long-lived session pattern" in `docs/deep-dives/contributing/dogfood-discipline.{md,ja.md}` (+83 lines each) covering driver design, when-to-use comparison table vs. per-run clean_state vs. plan-mode Class 3, and known limitations (= `5b47827`)
+- Web A2A endpoint subsection in dogfood-discipline section 6 (script-friendly debug surface): curl one-liner, list-agents, send-message, delineation from trace/replay tools (= `cf9d193`)
+- `write-your-first-custom-skill.{md,ja.md}` how-to in `docs/guide/for-skill-authors/` — step-by-step from scratch via skill.md / phases/<name>.md / artifacts/<name>.yaml with `react_to_text` worked example, common P1/P8 mistakes, stdlib pointers (= `2c56577`)
 - Plan-mode crash resilience Phase 1 — fail-safe + observability (= `5f4944a`)
 - Plan-mode forward replay Phase 2 — 7-step migration with PlanRegistry, analyzer, coordinator, runtime, dispatch wiring, auto-resume (= `bcf1105`〜`1e529d7`)
 - Plan-mode Phase 2.1 — async dispatch + multi-plan + per-plan chain_id (= `a13caaa`)
@@ -57,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Guide nav restructured: `agent-engineering/` moved from `guide/` to `concepts/agent-engineering/` (conceptual essays belong under Concepts, not Guide); `for-skill-authors/` nav split into 6 task-type clusters (Foundation / Composition & multi-agent / Phase mechanics / Operations / UX & polish / Working with stdlib tools) — file paths unchanged, nav grouping only (= `2c56577`)
+- Getting Started reordered: chat-mode tutorial promoted from position 05 to 02 (value-first onboarding — users see Reyn work before authoring); build → run → eval dependency chain preserved in positions 03-05; stale "Phase 2" cross-references corrected to live links (= `4684a90`)
+- Tutorial 02 refocused on the auto-created `default` agent only: `reyn chat researcher` command removed (researcher agent doesn't exist by default); multi-agent section (`reyn agent new`, `/attach`, delegation, topology) cut and forwarded to `build-an-agent-team` how-to; example query "what skills are available?" replaced with "what is this project about?" (verified live against A2A endpoint) (= `80d649b`, `563ace6`)
+- `web_search` router tool description extended with search operator hints: `site:<domain>`, `"phrase"`, `-term` surfaced as available capabilities, phrased as option not MUST rule (care-boundary compliant); 4 LLMReplay router fixtures re-recorded due to tools-array hash change (`chitchat_text_reply`, `invoke_skill_single_round`, `memory_recall_via_list_then_read`, `named_skill_direct_invoke`) (= `8af3444`)
+- `reyn web --reload` recommended as the standard dev-mode server start in dogfood-discipline section 6 (replaces plain `reyn web`); memory entry updated so future sessions use `--reload` by default (= `b465521`)
+- `docs/reference/control-ir.{md,ja.md}` gains contributor sync rule: new op kinds MUST be documented in the same PR; CLAUDE.md Hard NEVER block updated reciprocally (= `9d78ffe`)
+- `eval_builder` `skill.md` finish_criteria gains "the generated eval includes at least one negative-test case" requirement (= `7952f9d`)
+- session.py reduced −449 lines (~12%) over wave 3 (3858 → 3409): BudgetGateway −7 net (PR1), MemoryService −74 (PR2), RouterHostAdapter −368 (PR3); five memory methods become 1-line delegators (= `729befa`, `a5bd5d5`, `21b6bf0`)
 - Router system prompt — category-only catalog, O(1) skill scaling, lazy item discovery (= `f4c5df2`)
 - Router V3 ABSOLUTE routing rule + JA examples (= `d44841e`)
 - Router direct invoke when skill name appears in Available skills (= `d07fa3c`)
@@ -69,6 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Tutorial 02 blocker: `reyn chat researcher` command referenced an agent that doesn't exist by default; removed in favour of `reyn chat` (default agent) (= `80d649b`)
+- Tutorial 02 example query "what skills are available?" returned a conversational ask-back instead of a list; replaced with "what is this project about?" (verified live) (= `563ace6`)
+- Tutorial 02 stale "Phase 2" labels in Next-step pointers for tutorials 03 and 04 corrected to live links (= `4684a90`)
 - G27 A2A async-dispatch return mismatch — plan terminal text now reaches caller (= `3a59d8c`)
 - Plan-mode 2 dogfood bugs — `_PlanStepHost.resolve_model` + step recursion guard (= `ea97509`)
 - Plan tool description — disambiguate `step.tools` field (= `7d0d6a2`)
@@ -92,6 +128,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- Dogfood session chronicle 2026-05-09: HN research → description hint → 4 insights → parallel landing (= `72364fe`)
+- Long-session baseline findings journal + raw driver output (G28 confirmed driver-induced; true rate ~2% at N=37) (= `5b47827`)
+- HN AI-agent landscape insights doc (2025-2026) — 4 actionable findings from 10 threads (= `9e04c04`)
 - Plan-mode concept docs (en + ja) (= `891f0fd`)
 - Dogfood discipline guide — 9 原則 + patterns + tools (= `82fd95e`)
 - Care boundary concept — what Reyn cares vs observes (en + ja) (= `527f702`)
@@ -103,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- `tests/scaffold/test_session_router_helpers.py` deleted per scaffold lifecycle policy (`removed_by` metadata pointed at the ChatSession-extraction PR — wave 3 PR3 is that PR) (= `21b6bf0`)
 - `Phase.permissions` field — replaced by skill-level permissions per ADR-0020 (= `3dab751`)
 - TUI screenshots from repo root + gitignore the pattern (= `990c139`)
 - Real-looking secret patterns scrubbed from test fixtures + docs (= `26fe398`)
