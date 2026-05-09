@@ -1,0 +1,111 @@
+# long_session_v1.yaml — multi-turn scenarios for long-session dogfood
+#
+# Purpose: surface G12-type attractors (context-bloat empty completions) that
+# per-run clean_state dogfood misses. Each scenario is a single chat session:
+# prompts are sent in order, history accumulates naturally across turns.
+#
+# Scenario design mix:
+#   - research_chain: each prompt builds on prior context
+#   - pronoun_followup: uses "it"/"that"/"those" to force history reference
+#   - cross_reference: compare two things named in prior turns
+#   - repetitive_context: forced re-ask pattern to grow context without entropy
+#   - general_topic: non-Reyn topics — agent can't use project context as crutch
+
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+
+scenarios:
+  - id: scenario_1_reyn_research_chain
+    description: >
+      Multi-turn Reyn deep-dive. Each question assumes the prior answer.
+      Natural context growth from successive concept lookups.
+    kind: research_chain
+    prompts:
+      - "What is Reyn and what problem does it solve?"
+      - "How does its skill system work?"
+      - "What is the difference between a Phase and a Skill in that system?"
+      - "Where does the OS fit in the architecture you just described?"
+      - "What principles prevent skill-specific code from leaking into the OS?"
+
+  - id: scenario_2_pronoun_followup
+    description: >
+      Aggressive pronoun reference chain. Every turn uses "it", "that", or
+      "those" to reference the prior answer, forcing the LLM to maintain
+      session context across turns.
+    kind: pronoun_followup
+    prompts:
+      - "What stdlib skills does Reyn bundle?"
+      - "Tell me more about the simplest one."
+      - "What event types does it emit?"
+      - "Are those events stored somewhere on disk?"
+      - "What format are they stored in?"
+      - "Can you show me an example of that format?"
+
+  - id: scenario_3_cross_reference_compare
+    description: >
+      Introduces two systems early, then forces a comparison later.
+      Exercises context recall across 4+ turns.
+    kind: cross_reference
+    prompts:
+      - "Describe how LangGraph structures multi-agent workflows."
+      - "Now describe how Reyn structures multi-agent workflows."
+      - "What is async/await in Python and why does it matter for agents?"
+      - "Given what you said about both LangGraph and Reyn, which approach handles async tool calls more predictably?"
+      - "What would a developer need to change when migrating from LangGraph to Reyn?"
+
+  - id: scenario_4_repetitive_context_bloat
+    description: >
+      Deliberately repetitive: re-asks close variants of the same question.
+      Forces context to grow without new entropy — the classic G12 Pattern E
+      trigger. This is the primary attractor-detection scenario.
+    kind: repetitive_context
+    prompts:
+      - "What skills are available in Reyn?"
+      - "List the available skills again, but this time include a one-line description for each."
+      - "Which of those skills are used most commonly in dogfood sessions?"
+      - "Summarize the skill list one more time in bullet form."
+      - "Which skill would you recommend for a first-time Reyn user?"
+      - "Can you re-confirm which skills are available? I want to make sure I have the full list."
+
+  - id: scenario_5_general_python_chain
+    description: >
+      General Python topic — no Reyn context. Tests that the agent handles
+      long sessions on non-project topics without falling back on project
+      knowledge or producing empty replies.
+    kind: general_topic
+    prompts:
+      - "Explain Python's asyncio event loop in simple terms."
+      - "What is the difference between asyncio.gather and asyncio.wait?"
+      - "When would you choose asyncio over threading?"
+      - "How does Python's GIL interact with async code?"
+      - "Give me a minimal example of an async producer-consumer queue."
+
+  - id: scenario_6_file_and_doc_lookup_chain
+    description: >
+      Mixed research + file reference chain. Exercises tool invocation
+      across turns and checks that tool results are carried into subsequent
+      answers without context loss.
+    kind: research_chain
+    prompts:
+      - "What ADRs exist in this project?"
+      - "Summarize the most recent one."
+      - "What problem was it solving?"
+      - "Is there a related ADR that covers the same area?"
+      - "What would be the next logical ADR to write given the current state?"
+
+  - id: scenario_7_concept_explanation_chain
+    description: >
+      Explains a broad software concept across turns, each building on the
+      last. Covers non-Reyn territory (distributed systems) to prevent
+      project-context shortcuts and exercise general reasoning under
+      growing context.
+    kind: general_topic
+    prompts:
+      - "Explain eventual consistency in distributed systems."
+      - "What is the CAP theorem and how does it relate to what you just described?"
+      - "Give a concrete example of a system that chooses availability over consistency."
+      - "How would you detect inconsistency in that system at runtime?"
+      - "What repair strategies exist once an inconsistency is detected?"
