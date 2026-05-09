@@ -129,6 +129,12 @@ class RightPanel(Widget):
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
+        # Agents tab state — same cursor pattern as events / memory.
+        # `_agents_items` is the flat list returned by `render_agents`,
+        # one entry per running skill / running plan / recent skill /
+        # recent plan. Used by j/k navigation and preview rendering.
+        self._agents_cursor: int = 0
+        self._agents_items: list[dict] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -287,6 +293,8 @@ class RightPanel(Widget):
                 self._events_move(+1)
             elif self._panel_type == "memory":
                 self._memory_move(+1)
+            elif self._panel_type == "agents":
+                self._agents_move(+1)
             else:
                 self._scroll_panel(+1)
         elif event.key == "k":
@@ -297,6 +305,8 @@ class RightPanel(Widget):
                 self._events_move(-1)
             elif self._panel_type == "memory":
                 self._memory_move(-1)
+            elif self._panel_type == "agents":
+                self._agents_move(-1)
             else:
                 self._scroll_panel(-1)
         elif event.key == "l":
@@ -370,6 +380,8 @@ class RightPanel(Widget):
                 self._show_event_in_preview(pane)
             elif self._panel_type == "memory" and self._memory_entries:
                 self._show_memory_in_preview(pane)
+            elif self._panel_type == "agents" and self._agents_items:
+                self._show_agent_in_preview(pane)
             else:
                 pane.clear()
         except Exception as exc:
@@ -448,6 +460,199 @@ class RightPanel(Widget):
         body_md = RichMarkdown(getattr(entry, "body", "") or "")
         title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
         pane.show_text(title, RichGroup(head, body_md))
+
+    # ── agents tab cursor + preview integration ──────────────────────────────
+
+    def _agents_move(self, delta: int) -> None:
+        """Move the agents tab cursor; sync preview if open."""
+        if not self._agents_items:
+            return
+        self._agents_cursor = max(
+            0, min(len(self._agents_items) - 1, self._agents_cursor + delta),
+        )
+        self._invalidate()
+        if self._preview_visible:
+            self._update_preview()
+
+    def _show_agent_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's agent-tab item in the preview pane.
+
+        Each ``kind`` produces a different layout:
+
+          * ``running_skill`` — agent / skill / current phase / elapsed +
+            recent traces (read from the live skill_run jsonl if visible).
+          * ``recent_skill``  — full event sequence from the run's jsonl
+            file, JSON-prettified (mirrors the events tab preview).
+          * ``running_plan``  — agent / plan_id / goal / done/total /
+            failed count.
+          * ``recent_plan``   — agent / plan_id / goal / completion stats /
+            exception type when interrupted.
+        """
+        if not self._agents_items:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+        item = self._agents_items[idx]
+        kind = item.get("kind", "")
+        if kind == "running_skill":
+            self._preview_running_skill(pane, item)
+        elif kind == "running_plan":
+            self._preview_running_plan(pane, item)
+        elif kind == "recent_skill":
+            self._preview_recent_skill(pane, item)
+        elif kind == "recent_plan":
+            self._preview_recent_plan(pane, item)
+        else:
+            pane.clear()
+
+    def _preview_running_skill(self, pane: _PreviewPane, item: dict) -> None:
+        """Live snapshot for an in-flight skill run."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        head.append(item.get("skill_name", "?"), style="bold " + _CORAL)
+        head.append("  ")
+        head.append("(running)", style="#44cc88")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("run_id: ", style="dim")
+        head.append(item.get("run_id", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("elapsed: ", style="dim")
+        head.append(f"{item.get('elapsed_s', 0)}s", style="#dddddd")
+        head.append("\n")
+        head.append("phase: ", style="dim")
+        head.append(item.get("phase", "—") or "—", style="#dddddd")
+        if item.get("phase_visits", 0) > 1:
+            head.append(f"  (visit #{item['phase_visits']})", style="#888888")
+        title = f"running · {item.get('skill_name', '?')}"
+        pane.show_text(title, RichGroup(head))
+
+    def _preview_running_plan(self, pane: _PreviewPane, item: dict) -> None:
+        """Live snapshot for an in-flight plan run."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        head.append("plan ", style="dim")
+        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append("  ")
+        head.append(item.get("status", "?"),
+                    style="#44cc88" if item.get("status") == "running" else "#aaaa55")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("progress: ", style="dim")
+        head.append(
+            f"{item.get('done', 0)}/{item.get('total', 0)}", style="#dddddd",
+        )
+        if item.get("failed"):
+            head.append(f"  ({item['failed']} failed)", style="#ff6644")
+        if item.get("goal"):
+            head.append("\n\ngoal:\n", style="dim")
+            head.append(item["goal"], style="#aaaaaa")
+        title = f"running · plan {item.get('plan_id', '?')}"
+        pane.show_text(title, RichGroup(head))
+
+    def _preview_recent_skill(self, pane: _PreviewPane, item: dict) -> None:
+        """Replay events from the skill_run jsonl file."""
+        import json as _json
+
+        from rich.console import Group as RichGroup
+        from rich.syntax import Syntax
+        from rich.text import Text as RichText
+
+        head = RichText()
+        ok = item.get("status") == "ok"
+        head.append("✓ " if ok else "✗ ",
+                    style="bold " + ("#44cc88" if ok else "#ff6644"))
+        head.append(item.get("skill_name", "?"), style="bold #dddddd")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("status: ", style="dim")
+        head.append(item.get("status", "?"),
+                    style="#44cc88" if ok else "#ff6644")
+        head.append("\n")
+        head.append("duration: ", style="dim")
+        head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
+        head.append("\n")
+        head.append("finished: ", style="dim")
+        head.append(item.get("ts", "?"), style="#dddddd")
+        head.append("\n\n")
+
+        # Event log dump (= the same shape the events tab preview uses,
+        # but pre-filtered to this run's jsonl).
+        events: list[dict] = []
+        path = item.get("jsonl_path")
+        if path is not None:
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        events.append(_json.loads(raw))
+                    except Exception:
+                        continue
+            except OSError as exc:
+                head.append(f"(failed to read events: {exc})", style="dim red")
+        if events:
+            try:
+                body = _json.dumps(events, indent=2, default=str, ensure_ascii=False)
+                event_block = Syntax(
+                    body, "json",
+                    theme="ansi_dark",
+                    background_color="default",
+                    line_numbers=False,
+                    word_wrap=True,
+                )
+            except Exception:
+                event_block = RichText(_json.dumps(events, default=str))
+            title = f"{item.get('skill_name', '?')} · {len(events)} events"
+            pane.show_text(title, RichGroup(head, event_block))
+        else:
+            head.append("(no events found)", style="dim #555555")
+            title = f"{item.get('skill_name', '?')} · 0 events"
+            pane.show_text(title, RichGroup(head))
+
+    def _preview_recent_plan(self, pane: _PreviewPane, item: dict) -> None:
+        """Detail view for a finished plan."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        ok = item.get("status") == "ok"
+        head.append("✓ " if ok else "✗ ",
+                    style="bold " + ("#44cc88" if ok else "#ff6644"))
+        head.append("plan ", style="dim")
+        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("status: ", style="dim")
+        head.append(item.get("status", "?"),
+                    style="#44cc88" if ok else "#ff6644")
+        head.append("\n")
+        head.append("steps: ", style="dim")
+        head.append(
+            f"{item.get('n_completed', 0)} ok / {item.get('n_failed', 0)} failed",
+            style="#dddddd",
+        )
+        head.append("\n")
+        head.append("finished: ", style="dim")
+        head.append(item.get("ts", "?"), style="#dddddd")
+        if item.get("exc_type"):
+            head.append("\n\nexception:\n", style="dim")
+            head.append(item["exc_type"], style="#ff6644")
+        if item.get("goal"):
+            head.append("\n\ngoal:\n", style="dim")
+            head.append(item["goal"], style="#aaaaaa")
+        title = f"plan {item.get('plan_id', '?')}"
+        pane.show_text(title, RichGroup(head))
 
     # ── docs navigation ───────────────────────────────────────────────────────
 
@@ -546,10 +751,15 @@ class RightPanel(Widget):
                     self._events_cursor = max(0, len(windowed) - 1)
                 return rendered
             if self._panel_type == "agents":
-                return render_agents(
+                rendered, flat_items = render_agents(
                     self._registry, self._exec_state,
                     project_root=self._project_root,
+                    cursor=self._agents_cursor,
                 )
+                self._agents_items = flat_items
+                if self._agents_cursor >= len(flat_items):
+                    self._agents_cursor = max(0, len(flat_items) - 1)
+                return rendered
             if self._panel_type == "memory":
                 rendered, flat_entries = render_memory(
                     self._project_root, cursor=self._memory_cursor,

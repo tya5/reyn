@@ -165,6 +165,10 @@ def _recent_skill_runs_for_agent(
             "status": status,
             "duration_s": duration_s,
             "ts": ts[:19].replace("T", " "),
+            # Carry the absolute path so the preview pane can re-read
+            # the jsonl on demand (= without holding all events in
+            # memory across panel refreshes).
+            "jsonl_path": jsonl,
         })
     return out
 
@@ -359,25 +363,37 @@ def render_agents(
     exec_state: dict[str, dict],
     *,
     project_root: Path | None = None,
-) -> Any:
-    """Return a Rich renderable describing each agent and its running skills.
+    cursor: int = 0,
+) -> tuple[Any, list[dict]]:
+    """Return ``(renderable, flat_items)`` for the agents tab.
 
     ``project_root`` is optional — when provided, the RECENT subsection
     surfaces the last few completed skill runs and finished plans by reading
     `.reyn/events/agents/<name>/`. When omitted, the renderer degrades to
-    just running + idle context (= original behaviour).
+    just running + idle context.
+
+    ``cursor`` is an index into ``flat_items``. The matching row gets a
+    coral ``▶ `` prefix (= same selection idiom as docs / events / memory
+    tabs). Out-of-range cursors are silently clamped by the orchestrator.
+
+    ``flat_items`` is an ordered list of selectable rows, one entry per
+    running skill / running plan / recent skill / recent plan. Each entry
+    carries enough metadata for the preview pane to build a detail view
+    without re-reading the registry.
     """
+    flat_items: list[dict] = []
+
     if registry is None:
-        return "[#555555]  (no registry)[/]"
+        return "[#555555]  (no registry)[/]", flat_items
 
     try:
         names = registry.list_names()
     except Exception as exc:
         logger.warning("right_panel agents: registry.list_names() failed: %s", exc)
-        return "[#555555]  (registry unavailable)[/]"
+        return "[#555555]  (registry unavailable)[/]", flat_items
 
     if not names:
-        return "[#555555]  (no agents)[/]"
+        return "[#555555]  (no agents)[/]", flat_items
 
     try:
         attached = registry.attached_name
@@ -418,13 +434,26 @@ def render_agents(
 
         agent_plans = _plans_for_agent(registry, name)
 
+        def _cursor_prefix(idx: int) -> tuple[str, str]:
+            """Return (prefix, name_style) for selectable item ``idx``.
+
+            Highlighted row gets a coral '▶ ' marker; everything else
+            gets two spaces so the column alignment is preserved.
+            """
+            if idx == cursor:
+                return ("▶ ", "bold " + _CORAL)
+            return ("  ", "")
+
         if agent_skills:
             for run_id, info in agent_skills:
                 elapsed = int(now - info.get("start_time", now))
+                pfx, name_style = _cursor_prefix(len(flat_items))
                 skill_label = RichText()
+                skill_label.append(pfx, style=_CORAL)
                 skill_label.append(f"[{elapsed:3d}s] ", style="#888888")
                 skill_label.append(
-                    info.get("skill_name", "?"), style="#dddddd"
+                    info.get("skill_name", "?"),
+                    style=name_style or "#dddddd",
                 )
                 skill_node = tree.add(skill_label)
 
@@ -436,13 +465,24 @@ def render_agents(
                     if visits > 1:
                         phase_label.append(f"  v{visits}", style="#444444")
                     skill_node.add(phase_label)
+                flat_items.append({
+                    "kind": "running_skill",
+                    "agent": name,
+                    "run_id": run_id,
+                    "skill_name": info.get("skill_name", "?"),
+                    "phase": phase,
+                    "phase_visits": info.get("phase_visits", 1),
+                    "elapsed_s": elapsed,
+                })
 
         # Plan-mode (ADR-0022 / 0023). Surfaced as a sibling of running
         # skills — same agent can simultaneously run skills + plans.
         # Coloured orange (#ff9944) to match the events-tab plan_* family.
         if agent_plans:
             for p in agent_plans:
+                pfx, _ = _cursor_prefix(len(flat_items))
                 plan_label = RichText()
+                plan_label.append(pfx, style=_CORAL)
                 plan_label.append("plan ", style="#888888")
                 plan_label.append(p["plan_id"], style="#ff9944")
                 plan_label.append(
@@ -461,6 +501,16 @@ def render_agents(
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
                     plan_node.add(RichText(goal, style="#555555"))
+                flat_items.append({
+                    "kind": "running_plan",
+                    "agent": name,
+                    "plan_id": p["plan_id"],
+                    "goal": p["goal"],
+                    "done": p["done"],
+                    "total": p["total"],
+                    "failed": p["failed"],
+                    "status": p["status"],
+                })
 
         # ── recently completed (skills + plans) ────────────────────
         # Always shown when project_root is supplied — gives the user
@@ -483,7 +533,9 @@ def render_agents(
                 RichText("recent", style="#777777")
             )
             for s in recent_skills:
+                pfx, _ = _cursor_prefix(len(flat_items))
                 line = RichText()
+                line.append(pfx, style=_CORAL)
                 # status colour: ok green, anything else red/coral.
                 status_colour = (
                     "#44cc88" if s["status"] == "ok" else "#ff6644"
@@ -497,8 +549,15 @@ def render_agents(
                 if s["ts"]:
                     line.append(f"  {s['ts']}", style="#444444")
                 recent_node.add(line)
+                flat_items.append({
+                    "kind": "recent_skill",
+                    "agent": name,
+                    **s,
+                })
             for p in recent_plans:
+                pfx, _ = _cursor_prefix(len(flat_items))
                 line = RichText()
+                line.append(pfx, style=_CORAL)
                 ok = p["status"] == "ok"
                 line.append("✓ " if ok else "✗ ", style="#44cc88" if ok else "#ff6644")
                 line.append("plan ", style="#888888")
@@ -517,6 +576,11 @@ def render_agents(
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
                     node.add(RichText(goal, style="#555555"))
+                flat_items.append({
+                    "kind": "recent_plan",
+                    "agent": name,
+                    **p,
+                })
 
         if not agent_skills and not agent_plans:
             # idle: last activity + message count + recent user snippet
@@ -564,7 +628,7 @@ def render_agents(
         if i > 0:
             items.append(RichText(""))
         items.append(tree)
-    return RichGroup(*items)
+    return RichGroup(*items), flat_items
 
 
 __all__ = ["render_agents"]
