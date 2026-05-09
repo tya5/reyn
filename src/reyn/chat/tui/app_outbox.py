@@ -35,42 +35,10 @@ if TYPE_CHECKING:
 _STOP = "stop"
 
 
-# Order of clipboard tools we try for /copy. First match that succeeds wins.
-# Each entry is (binary_name, argv_tail, label).
-_CLIPBOARD_TOOLS: tuple[tuple[str, list[str], str], ...] = (
-    ("pbcopy",   [],            "pbcopy"),         # macOS
-    ("wl-copy",  [],            "wl-copy"),        # Wayland
-    ("xclip",    ["-selection", "clipboard"], "xclip"),  # X11
-    ("xsel",     ["--clipboard", "--input"], "xsel"),    # X11 fallback
-    ("clip",     [],            "clip"),           # Windows
-)
-
-
-def _copy_to_clipboard(text: str) -> tuple[bool, str]:
-    """Pipe ``text`` to a platform clipboard tool. Returns ``(ok, tool_label)``.
-
-    Looked up via ``shutil.which`` so the user only needs one of them on
-    PATH. We avoid hard-coding the OS because users may run, e.g., xclip
-    inside a Linux VM regardless of the host platform.
-    """
-    import shutil
-    import subprocess
-
-    for binary, tail, label in _CLIPBOARD_TOOLS:
-        path = shutil.which(binary)
-        if path is None:
-            continue
-        try:
-            subprocess.run(
-                [path, *tail],
-                input=text.encode("utf-8"),
-                check=True,
-                timeout=2.0,
-            )
-            return True, label
-        except Exception:
-            continue
-    return False, ""
+# Re-export for backward compatibility — moved to a shared module so the
+# right_panel widgets can use it without creating an import cycle through
+# app_outbox.
+from ._clipboard import copy_to_clipboard as _copy_to_clipboard  # noqa: F401
 
 
 class OutboxRouter:

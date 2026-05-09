@@ -315,6 +315,12 @@ class RightPanel(Widget):
         elif event.key == "h":
             event.prevent_default()
             self._panel_resize(+2)
+        elif event.key == "c" and self._panel_type == "agents":
+            # Agents tab only: copy the cursor's run/plan as a shareable
+            # text bundle (= header + events YAML). Useful for skill
+            # authors to paste a problematic run into chat / issue tracker.
+            event.prevent_default()
+            self._agents_copy_current()
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -756,6 +762,239 @@ class RightPanel(Widget):
             head.append("(no events found)", style="dim #555555")
             title = f"{item.get('skill_name', '?')} · 0 events"
             pane.show_text(title, RichGroup(head))
+
+    def _agents_copy_current(self) -> None:
+        """Copy the cursor's agent-tab item to the OS clipboard as text.
+
+        Bundle format depends on item kind:
+
+          * recent_skill  → header (run summary, llm rollup, phase graph)
+                            + full events YAML. The most useful payload —
+                            paste straight into a Slack thread / issue
+                            tracker for another skill author to reproduce.
+          * recent_plan   → header (plan summary) + per-step status table.
+          * running_skill → live snapshot only (events haven't been
+                            persisted yet at the file path the orchestrator
+                            knows about).
+          * running_plan  → live snapshot only.
+
+        Confirmation status is written to the conv pane via the same
+        path other tabs use (``app.query_one("#conversation"...)``).
+        """
+        from .. import ConversationView  # late import → avoid cycle
+        try:
+            conv = self.app.query_one("#conversation", ConversationView)
+        except Exception:
+            conv = None
+
+        if not self._agents_items:
+            self._agents_copy_status(conv, "(no item under cursor)", error=True)
+            return
+        idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+        item = self._agents_items[idx]
+        kind = item.get("kind", "")
+        try:
+            if kind == "recent_skill":
+                bundle = self._build_recent_skill_bundle(item)
+                title = f"skill run · {item.get('skill_name', '?')}"
+            elif kind == "recent_plan":
+                bundle = self._build_recent_plan_bundle(item)
+                title = f"plan · {item.get('plan_id', '?')}"
+            elif kind == "running_skill":
+                bundle = self._build_running_skill_bundle(item)
+                title = f"running skill · {item.get('skill_name', '?')}"
+            elif kind == "running_plan":
+                bundle = self._build_running_plan_bundle(item)
+                title = f"running plan · {item.get('plan_id', '?')}"
+            else:
+                self._agents_copy_status(
+                    conv, f"(unsupported item kind: {kind})", error=True,
+                )
+                return
+        except Exception as exc:
+            self._agents_copy_status(
+                conv, f"✗ failed to build copy bundle: {exc}", error=True,
+            )
+            return
+
+        from .._clipboard import copy_to_clipboard
+        ok, label = copy_to_clipboard(bundle)
+        if ok:
+            n_chars = len(bundle)
+            self._agents_copy_status(
+                conv, f"✓ copied {title} · {n_chars:,} chars via {label}",
+            )
+        else:
+            self._agents_copy_status(
+                conv,
+                "✗ no clipboard tool found "
+                "(install pbcopy / xclip / wl-copy / xsel)",
+                error=True,
+            )
+
+    def _agents_copy_status(
+        self, conv, text: str, *, error: bool = False,
+    ) -> None:
+        """Write a brief copy-action status line to the conv pane (auto-clears)."""
+        if conv is None:
+            return
+        try:
+            conv.show_status(text, kind="error" if error else "general")
+            self.app.set_timer(2.5, conv.hide_status)
+        except Exception as exc:
+            logger.warning("right_panel agents copy status failed: %s", exc)
+
+    def _build_recent_skill_bundle(self, item: dict) -> str:
+        """Header + events YAML for a finished skill run."""
+        import json as _json
+        try:
+            import yaml as _yaml
+        except Exception:
+            _yaml = None  # type: ignore[assignment]
+
+        events: list[dict] = []
+        llm_calls = 0
+        ptok = 0
+        ctok = 0
+        cost = 0.0
+        phase_path: list[tuple[str, int]] = []
+        terminal_kind = ""
+        path = item.get("jsonl_path")
+        if path is not None:
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = _json.loads(raw)
+                    except Exception:
+                        continue
+                    events.append(ev)
+                    et = ev.get("type")
+                    d = ev.get("data") or {}
+                    if et == "llm_response_received":
+                        llm_calls += 1
+                        try:
+                            ptok += int(d.get("prompt_tokens", 0) or 0)
+                            ctok += int(d.get("completion_tokens", 0) or 0)
+                            cost += float(d.get("cost_usd", 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            pass
+                    elif et == "phase_started":
+                        phase_name = str(d.get("phase", "")).strip()
+                        if phase_name:
+                            try:
+                                visit = int(d.get("visit_count", 1) or 1)
+                            except (TypeError, ValueError):
+                                visit = 1
+                            phase_path.append((phase_name, visit))
+                    elif et in ("workflow_finished", "skill_run_completed"):
+                        terminal_kind = "finished"
+                    elif et in ("workflow_aborted", "skill_run_failed"):
+                        terminal_kind = "aborted"
+            except OSError:
+                pass
+
+        lines: list[str] = []
+        lines.append(f"# Reyn skill run · {item.get('skill_name', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# run_id:   {item.get('run_id', '?')}")
+        lines.append(f"# status:   {item.get('status', '?')}")
+        lines.append(f"# duration: {item.get('duration_s', 0):.1f}s")
+        if llm_calls > 0:
+            lines.append(f"# llm:      {llm_calls} call(s)")
+            lines.append(
+                f"# tokens:   {ptok + ctok:,} (prompt {ptok:,} + completion {ctok:,})"
+            )
+            lines.append(f"# cost:     ${cost:.4f}")
+        if phase_path:
+            chain_parts = [
+                f"{p} (v{v})" if v > 1 else p for p, v in phase_path
+            ]
+            chain = " → ".join(chain_parts)
+            if terminal_kind == "finished":
+                chain += " → ✓ end"
+            elif terminal_kind == "aborted":
+                chain += " → ✗ aborted"
+            lines.append(f"# graph:    {chain}")
+        lines.append(f"# finished: {item.get('ts', '?')}")
+        if path is not None:
+            lines.append(f"# source:   {path}")
+        lines.append("")
+        if events:
+            if _yaml is not None:
+                try:
+                    normalised = _json.loads(
+                        _json.dumps(events, default=str, ensure_ascii=False),
+                    )
+                    body = _yaml.safe_dump(
+                        {"events": normalised},
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                        width=120,
+                    )
+                    lines.append(body.rstrip())
+                except Exception:
+                    lines.append(_json.dumps(events, indent=2, default=str))
+            else:
+                lines.append(_json.dumps(events, indent=2, default=str))
+        else:
+            lines.append("(no events)")
+        return "\n".join(lines) + "\n"
+
+    def _build_recent_plan_bundle(self, item: dict) -> str:
+        """Header for a finished plan."""
+        lines: list[str] = []
+        lines.append(f"# Reyn plan · {item.get('plan_id', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# status:   {item.get('status', '?')}")
+        lines.append(
+            f"# steps:    {item.get('n_completed', 0)} ok / "
+            f"{item.get('n_failed', 0)} failed",
+        )
+        if item.get("exc_type"):
+            lines.append(f"# exc:      {item['exc_type']}")
+        lines.append(f"# finished: {item.get('ts', '?')}")
+        if item.get("goal"):
+            lines.append("")
+            lines.append("goal: |")
+            for goal_line in str(item["goal"]).splitlines() or [str(item["goal"])]:
+                lines.append(f"  {goal_line}")
+        return "\n".join(lines) + "\n"
+
+    def _build_running_skill_bundle(self, item: dict) -> str:
+        lines: list[str] = []
+        lines.append(f"# Reyn skill run (running) · {item.get('skill_name', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# run_id:   {item.get('run_id', '?')}")
+        lines.append(f"# elapsed:  {item.get('elapsed_s', 0)}s")
+        lines.append(f"# phase:    {item.get('phase', '—') or '—'}")
+        if item.get("phase_visits", 0) > 1:
+            lines.append(f"# visits:   {item['phase_visits']}")
+        if item.get("triggered_by"):
+            lines.append("")
+            lines.append("triggered_by: |")
+            for ln in str(item["triggered_by"]).splitlines() or [str(item["triggered_by"])]:
+                lines.append(f"  {ln}")
+        return "\n".join(lines) + "\n"
+
+    def _build_running_plan_bundle(self, item: dict) -> str:
+        lines: list[str] = []
+        lines.append(f"# Reyn plan (running) · {item.get('plan_id', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# status:   {item.get('status', '?')}")
+        lines.append(
+            f"# progress: {item.get('done', 0)}/{item.get('total', 0)} "
+            f"({item.get('failed', 0)} failed)"
+        )
+        if item.get("goal"):
+            lines.append("")
+            lines.append("goal: |")
+            for ln in str(item["goal"]).splitlines() or [str(item["goal"])]:
+                lines.append(f"  {ln}")
+        return "\n".join(lines) + "\n"
 
     def _preview_recent_plan(self, pane: _PreviewPane, item: dict) -> None:
         """Detail view for a finished plan."""
