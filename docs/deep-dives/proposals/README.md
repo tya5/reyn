@@ -67,3 +67,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | # | タイトル | Status | コスト |
 |---|---|---|---|
 | [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification 対応 | proposed | MEDIUM |
+| [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — 統合ドキュメント検索スキル | proposed | LARGE |
