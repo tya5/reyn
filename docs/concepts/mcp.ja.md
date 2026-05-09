@@ -23,6 +23,39 @@ MCP は AI エージェントがツールを公開する「サーバー」に接
 
 このページでは以降、各ロールを順に解説します。
 
+## クイックスタート: `reyn chat` から MCP を試す (skill 不要)
+
+MCP サーバーをインタラクティブに使うだけなら、 **skill を書く必要はありません**。 `reyn chat` モードはすでに 3 つの router tool を露出しており、 Claude Code の `claude mcp` UX と同様に動きます:
+
+| Tool | 何をするか |
+|------|-----------|
+| `list_mcp_servers` | `reyn.yaml` に設定された全サーバー名を返す |
+| `list_mcp_tools(server)` | 1 つのサーバーが露出する tool 一覧を返す |
+| `call_mcp_tool(server, tool, args)` | サーバー上の tool を呼び出して結果を返す |
+
+LLM router がチャット turn 内で直接これらを呼べます。 初回利用の典型 flow:
+
+```sh
+# 1. reyn.yaml にサーバーエントリを追加 (1 回のみ)
+mcp:
+  servers:
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+# 2. reyn.yaml で事前承認、 もしくは初回プロンプトで承認
+permissions:
+  mcp:
+    filesystem: allow
+
+# 3. あとは普通にチャット
+reyn chat
+> このディレクトリにある README.md を要約して
+```
+
+router が自動的に `list_mcp_tools` → `call_mcp_tool` を呼び出します。 どの skill にも `permissions.mcp:` 宣言を書く必要はありません。 **Skill 作成は、 繰り返し使うワークフローを形式化したい時** (= phase graph / validation / retry policy が必要になった時) に検討するものであって、 MCP を使う前提条件ではありません。 以下の deep-dive はその場合の話で、 ad-hoc 利用だけならここで読み終えて問題ありません。
+
 ## ロール 1：MCP クライアント — Reyn が外部サーバーを呼ぶ
 
 Skill が外部ツールを必要とするときの流れは次のとおりです：

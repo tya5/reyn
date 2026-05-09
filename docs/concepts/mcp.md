@@ -23,6 +23,39 @@ The point: your skill says "call the `read_text_file` tool on the `filesystem` s
 
 The rest of this page covers each role in turn.
 
+## Quick start: try MCP from `reyn chat` (no skill needed)
+
+If you just want to use an MCP server interactively, you do **not** need to write a skill. `reyn chat` already exposes three router tools that work the same way Claude Code's `claude mcp` UX does:
+
+| Tool | What it does |
+|------|--------------|
+| `list_mcp_servers` | Returns the names of all servers configured in `reyn.yaml` |
+| `list_mcp_tools(server)` | Returns the tools exposed by one server |
+| `call_mcp_tool(server, tool, args)` | Invokes a tool on a server, returning its result |
+
+The LLM router can call these directly during a chat turn. Typical first-time flow:
+
+```sh
+# 1. Add a server entry to reyn.yaml (one-time)
+mcp:
+  servers:
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+# 2. Pre-approve in reyn.yaml or accept the prompt on first use
+permissions:
+  mcp:
+    filesystem: allow
+
+# 3. Just chat
+reyn chat
+> このディレクトリにある README.md を要約して
+```
+
+The router invokes `list_mcp_tools` → `call_mcp_tool` automatically; no `permissions.mcp:` declaration in any skill is required. **Skill authoring is for when you want to formalize a recurring workflow** (= phase graph, validation, retry policy) — not a prerequisite to using MCP. The deep-dive below is for that case; if you only need ad-hoc invocation, you can stop reading here.
+
 ## Role 1: MCP client — Reyn calls external servers
 
 When a skill needs an external tool, the flow is:
