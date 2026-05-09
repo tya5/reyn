@@ -1,8 +1,8 @@
 # `reyn mcp` CLI shape — design positioning
 
-**Status**: Design positioning (2026-05-09) — `reyn mcp {search,install,list,remove}` CLI の design choice。 dogfood Step 0 (= 8 並列 sonnet research) の ground truth 反映済。 ADR ではなく positioning doc として記録 (= CLI shape は将来 iterate 前提)。
+**Status**: Design positioning (2026-05-09 update 1) — `reyn mcp {search,install,list,remove,set-secret,clear-secret}` CLI の design choice。 dogfood Step 0 (= 8 並列 sonnet research) の ground truth 反映済 + ADR-0030 universal secret infra との整合済。 ADR ではなく positioning doc として記録 (= CLI shape は将来 iterate 前提、 ただし storage / loading semantics は ADR-0030 で固定)。
 **Track**: MCP UX / OSS launch friction reduction
-**Related**: ADR-0029 (`mcp_install` permission)、 `docs/concepts/mcp.md` Quick start section
+**Related**: ADR-0029 (`mcp_install` permission)、 ADR-0030 (universal secret handling — `reyn mcp set-secret` の storage layer を提供)、 `docs/concepts/mcp.md` Quick start section
 
 > 元 plan の researcher entry (= `reyn mcp` CLI proposal) を base に、 dogfood findings + industry research で confidence を上げた最終形。 着手 ready の design として残す。
 
@@ -23,12 +23,12 @@
 
 dogfood で確認できた、 wholesale 再利用可能な実装:
 
-- **`${VAR}` env interpolation 完全実装済** (`mcp_client.py::expand_env()`): `mcp.servers.<name>` の全 string field を再帰展開、 op dispatch 時に解決
-- **gitignore default**: `reyn.local.yaml` / `~/.reyn/config.yaml` / `.env*` がすべて gitignore 済 (= secret は `${VAR}` で参照、 値は env or `.env` ファイル に置く運用が成立)
+- **`${VAR}` env interpolation 部分実装済** (`mcp_client.py::expand_env()`): `mcp.servers.<name>` の全 string field を再帰展開、 op dispatch 時に解決。 ADR-0030 で **全 yaml field に generic 化** + **startup load** に拡張予定
+- **gitignore default**: `reyn.local.yaml` / `~/.reyn/config.yaml` / `.env*` がすべて gitignore 済 (= secret は `${VAR}` で参照、 値は env or `~/.reyn/secrets.env` (= ADR-0030) に置く運用が成立)
 - **permission system**: `PermissionDecl` / `PermissionResolver._is_config_approved()` / `require_*` pattern が `mcp_install` 追加に整合的に拡張可能 (= ADR-0029 で詳細)
 - **MCPClient lifecycle + transport abstraction**: stdio / http の `_open_transport()` 切替が SDK 公式ラッパーで整備済
 
-→ **Reyn は既に MCP credentials 周りの core machinery を持っている**。 CLI 化の追加 cost は当初想定より低い。
+→ **Reyn は既に MCP credentials 周りの core machinery を持っている**、 ADR-0030 で全 Reyn-wide に generic 化される (= MCP wave に bundle 実装)。 CLI 化の追加 cost は当初想定より低い。
 
 ---
 
@@ -98,11 +98,11 @@ slack        stdio      missing-cred   SLACK_BOT_TOKEN ✗ (not set)
 
 ## 3. Credentials UX (= A+B hybrid + `${VAR}` interpolation reuse)
 
-### 3 layered approach
+### Layered approach (= ADR-0030 universal secret infra に乗る)
 
-dogfood で「Reyn は既に `${VAR}` を持っている」 と判明したため、 layered approach を採用:
+storage / loading は **ADR-0030 で universal 化**。 ここでは MCP-specific UX layer のみ記述、 underlying machinery は universal:
 
-#### Layer 1: `${VAR}` interpolation (= 既存実装、 baseline)
+#### Layer 1: `${VAR}` interpolation (= ADR-0030 で全 yaml に lift、 baseline)
 
 ```yaml
 # reyn.yaml (= VCS commit 安全、 secret 含まず)
@@ -137,18 +137,19 @@ $ reyn chat   # 即座に動く
 
 `--non-interactive` flag で prompt 抑制 (= CI 用途)、 token 不足時は exit code 非 0 + post-install guide message 表示。
 
-#### Layer 3: `~/.reyn/secrets.env` dotenv (= 軽量 secret 永続化、 phase 1 追加)
+#### Layer 3: `~/.reyn/secrets.env` dotenv (= ADR-0030 で universal 化、 startup load)
 
-interactive prompt で得た値を `~/.reyn/secrets.env` (chmod 600) に dotenv 形式で保存、 Reyn 起動時に load して `os.environ` に inject。 既存 `${VAR}` interpolation がそのまま再利用可能。
+interactive prompt で得た値を `~/.reyn/secrets.env` (chmod 600) に dotenv 形式で保存。 **Reyn process startup 時に load** して `os.environ` に inject (= ADR-0030 Decision)、 全 component (= MCP / LLM / future Web server / etc.) が透過 reuse。 既存 `${VAR}` interpolation の resolve target も自動的に dotenv 値を含む。
 
 ```
-# ~/.reyn/secrets.env (= user 手で編集 OK、 自動更新は install / set-secret から)
+# ~/.reyn/secrets.env (= user 手で編集 OK、 自動更新は install / set-secret / reyn secret set から)
 GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxx
 SLACK_BOT_TOKEN=xoxb-yyyyyyyy
 SLACK_TEAM_ID=Tzzzzzzzz
+OPENAI_API_KEY=sk-yyy           # ← MCP 以外でも universal に使える (= ADR-0030)
 ```
 
-別途 `reyn mcp set-secret <server> <KEY>=<VALUE>` (or value 省略で interactive) を補助 subcommand として追加 (= D: 別 subcommand、 既存 server の credential 後付け / rotate 用途)。
+`reyn mcp set-secret` は ADR-0030 `reyn secret set` の **MCP-aware thin wrapper**: server の `mcp.servers.<name>.env` declaration (= 既存) や registry server.json `environmentVariables` を読んで「github MCP server には `GITHUB_PERSONAL_ACCESS_TOKEN` が必要」 と推論、 適切な KEY を prompt。 storage は universal (= `~/.reyn/secrets.env`)、 user が `reyn secret set GITHUB_PERSONAL_ACCESS_TOKEN=...` を直打ちしても等価。
 
 ### Phase 2 以降の拡張 path
 
