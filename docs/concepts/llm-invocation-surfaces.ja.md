@@ -209,7 +209,7 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M4 Phase 3 step 2 + Phase 4 step 1 完了）
+## 9. 実装: 統合 tool registry（M4 Phase 3.5 router-side 完了; phase-side migration 未着手）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
@@ -236,12 +236,19 @@ ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つ
 
 **M4 Phase 4 step 1（着地済み）:** `_DISPATCH_KIND` sidecar dict / `_TOOL_SPECS_STATIC_ASYNC` を `router_tools.py` から削除。`get_dispatch_kind(name)` は registry の `ToolDefinition.dispatch_kind` を直接参照。registry が schema render と dispatch posture 分類の両方の canonical source になった。
 
-**Phase 3.5 + Phase 4 step 2+（先送り — 設計判断が必要）:**
+**M4 Phase 3.5（着地済み — 5 commits `0093667` / `2b1fe8d` / `3378051` / `a58c685` / `7482b33`）:** router-side cluster activations 完了。 残り 18 tools (file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) も全て `invoke_tool(get_default_registry(), ...)` 経由 dispatch するようになった。 migration audit で識別した per-tool 設計課題は 3 つの bridge pattern を `RouterCallerState` に追加して解決:
 
-- 残り 18 router tools (file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) の registry dispatch には per-tool の byte-equivalence 検証が必要。 ギャップ例: `host.file_read` は op_runtime dict result から抽出した string を返すが、 registry handler は dict 全体を返す; memory tools は host-managed index layout を使うが、 registry handler は filesystem-direct paths を使う; `invoke_skill` は `op_runtime caller="control_ir"` が運ばない `chain_id` propagation が必要。 各 cluster は RouterCallerState callable bridge を経由して既存挙動を維持するか、 shape 変更を受け入れて dogfood で検証するかの選択になる。
+1. **`op_context_factory: Callable | None`** — RouterLoop が `host.make_router_op_context` を bind し、 file / mcp / web handlers が operator-declared PermissionDecl + Workspace を受信。 legacy router branch と同等。
+2. **`host: Any`** — MCP handlers が session-level MCPClient cache を保持するための duck-typed RouterHostAdapter 参照。
+3. **Per-tool callable bridges** (`run_skill_fn` / `list_memory_fn` / `read_memory_body_fn` / `remember_fn` / `forget_fn`) — RouterLoop の private helper に bind されており、 chain_id propagation (`invoke_skill`) と agent-aware memory paths (memory cluster) を保持。
+
+`RouterLoop._invoke_router_tool` は registry dispatch top-branch + 将来 cluster 用の placeholder コメントだけの薄い実装に。 `_normalise_router_tool_result` が handler 戻り値 shape (= op_runtime synthesis 由来の dict envelope) を legacy router branch が emit していた bare-string / bare-list shape に正規化し、 LLMReplay byte-identity を 5 cluster migration を通じて end-to-end で保持。
+
+**残り作業（先送り — 設計判断が必要）:**
+
 - Phase-side dispatch の registry 消費 (`ControlIRExecutor` → `get_default_registry().for_phase()`)、 phase dispatcher での `allowed_ops` prefix-wildcard semantics。
 - `OP_KIND_MODEL_MAP` 撤去 (Open Q #2)、 obsolete `op_runtime/<kind>.py` の consolidation。
 
-ADR-0026 Status は上記 deferred work が land するまで **Proposed** のまま。 ADR の `Acceptance criteria` セクションに closing checklist が明記されている。
+ADR-0026 Status は phase-side migration が land するまで **Proposed** のまま。 ADR の `Acceptance criteria` セクションに closing checklist が明記されている。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

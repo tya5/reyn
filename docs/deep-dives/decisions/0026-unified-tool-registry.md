@@ -1,6 +1,6 @@
 # ADR-0026: Unified tool registry — single ToolDefinition for both router and phase surfaces
 
-**Status**: Proposed (2026-05-09 → in progress; M1–M3 + M4 Phase 1–3 step 2 + Phase 4 step 1 landed)
+**Status**: Proposed (2026-05-09 → in progress; M1–M3 + M4 Phase 1–4 + Phase 3.5 router-side cluster activations landed)
 **Track**: Architecture — closes the dual-implementation drift between
 chat router (function calling) and phase Control IR (JSON output)
 identified in `docs/concepts/llm-invocation-surfaces.md`.
@@ -654,7 +654,7 @@ recorded in ADR amendment at that point.
 - [x] Legacy A1–A4 / B2 / G branches in `_invoke_router_tool` removed
 - [x] 1754 passed / 2 xfailed (no net change; byte-identity verified)
 
-### M4 Phase 4 step 1 — **completed (this ADR's Phase 4 commit)**
+### M4 Phase 4 step 1 — **completed (commit `ebe5786`)**
 
 - [x] `_DISPATCH_KIND` sidecar dict / `_TOOL_SPECS_STATIC_ASYNC` removed
       from `router_tools.py`; `get_dispatch_kind(name)` now consults
@@ -665,23 +665,61 @@ recorded in ADR amendment at that point.
 - [x] `planner.py` / `router_loop.py` comment references to
       `_DISPATCH_KIND` updated to point at the helper / registry
 
-**Note on ADR status:** the status remains "Proposed" through M4 Phase 3
-step 2 + Phase 4 step 1. Promotion to "Accepted" is gated on the remaining
-Phase 3.5 + Phase 4 step 2+ work below, which involves design decisions
-(byte-equivalence per-tool review for memory / file-shape / invoke_skill
-chain_id propagation; phase-side dispatch consuming registry; obsolete
-`op_runtime/<kind>.py` consolidation).
+### M4 Phase 3.5 router-side cluster activations — **completed**
+
+The 18 remaining router tools dispatched via the legacy if/elif tree
+in `RouterLoop._invoke_router_tool` migrated cluster-by-cluster to
+unified registry dispatch. Per-tool design issues identified in the
+migration audit (= shape mismatch / state propagation / permission
+gating) addressed via three bridge patterns on `RouterCallerState`.
+
+- [x] **Phase 3.5-D — reyn_src + web (commit `0093667`)** — zero-diff
+      handlers (= already byte-equivalent to legacy router branches);
+      added to `_REGISTRY_DISPATCH_TOOLS`.
+- [x] **Phase 3.5-A+C — file cluster (commit `2b1fe8d`)** — 4 tools
+      (read_file / write_file / delete_file / list_directory).
+      `RouterCallerState.op_context_factory` bound to public
+      `host.make_router_op_context` (renamed from `_make_router_op_context`)
+      so file handlers receive operator-declared PermissionDecl +
+      Workspace. `_normalise_router_tool_result` unwraps read_file
+      `{...,content,...}` → bare string and list_directory
+      `{...,entries,...}` → bare list to preserve LLM-visible shape.
+- [x] **Phase 3.5-B-light — invoke_skill (commit `3378051`)** —
+      `RouterCallerState.run_skill_fn` callable bridge bound with
+      chain_id pre-applied so PR14 multi-hop chain semantics propagate
+      into nested run_skill / delegate_to_agent paths. Defense Layer B
+      (skill-name validation) ported to handler.
+- [x] **Phase 3.5-B-mid — mcp cluster (commit `a58c685`)** — 3 tools.
+      `RouterCallerState.host: Any` field added as a duck-typed
+      RouterHostAdapter reference; MCP handlers preserved their
+      original `ctx.router_state.host.mcp_*` access pattern with the
+      session-level MCPClient cache intact (= no per-call re-handshake).
+      `_normalise_router_tool_result` extended for list_mcp_servers /
+      list_mcp_tools dict-envelope unwrap.
+- [x] **Phase 3.5-B-heavy — memory cluster (commit `7482b33`)** — 5
+      tools. `RouterCallerState.{list_memory_fn, read_memory_body_fn,
+      remember_fn, forget_fn}` callable bridges bound to RouterLoop's
+      private helpers which consume `host.get_memory_index()` (=
+      agent-aware combined index), preserving per-agent memory privacy
+      that the registry handlers' filesystem-direct fallback couldn't
+      guarantee.
+
+After Phase 3.5, `RouterLoop._invoke_router_tool` is a thin top-branch
+(= registry dispatch via `_invoke_via_registry`) plus a placeholder
+comment for future clusters; all 24 router-active ToolDefinitions
+exercise their canonical `src/reyn/tools/<name>.py` handler in
+production. LLMReplay byte-identity preserved end-to-end (= 1754
+passed / 2 xfailed across all 5 cluster migrations, no fixture
+re-recording).
+
+**Note on ADR status:** the status remains "Proposed" because phase-side
+migration is the closing work. Promotion to "Accepted" is gated on the
+remaining items below, which involve design decisions (phase-side
+dispatch consuming registry; obsolete `op_runtime/<kind>.py`
+consolidation; `allowed_ops` prefix-wildcard semantics).
 
 **The ADR is closed (= Accepted) when:**
 
-- **Phase 3.5 — registry dispatch for the remaining 18 tools.** Each of
-  file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / invoke_skill needs
-  per-tool byte-equivalence verification (e.g. `host.file_read` returns
-  string vs `op_runtime` returns dict; memory tools have host-managed
-  index layout vs filesystem-direct paths; `invoke_skill` needs chain_id
-  propagation that `op_runtime caller="control_ir"` doesn't carry).
-  Adapters either delegate to RouterLoopHost via new `RouterCallerState`
-  callable fields, or accept the behavior change with dogfood validation.
 - **Phase 4 step 2 — phase-side dispatch consumes registry.**
   `ControlIRExecutor` switches from `OP_KIND_MODEL_MAP` lookup to
   `get_default_registry().for_phase()`. `allowed_ops` prefix-wildcard

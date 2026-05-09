@@ -209,7 +209,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M4 Phase 3 step 2 + Phase 4 step 1 complete)
+## 9. Implementation: unified registry (M4 Phase 3.5 router-side complete; phase-side migration pending)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
@@ -282,25 +282,44 @@ Legacy A1–A4 / B2 / G branches in `_invoke_router_tool` removed.
 registry directly. The registry is now the canonical source for both schema
 rendering AND dispatch posture classification.
 
-**Phase 3.5 + Phase 4 step 2+ (deferred — design decisions required):**
+**M4 Phase 3.5 (landed — 5 commits `0093667` / `2b1fe8d` / `3378051` /
+`a58c685` / `7482b33`):** router-side cluster activations complete.
+All 18 remaining tools (file ×4 / mcp ×3 / memory ×5 / web ×2 /
+reyn_src ×2 / `invoke_skill`) now dispatch through
+`invoke_tool(get_default_registry(), ...)`.  Per-tool design issues
+identified in the migration audit were addressed with three bridge
+patterns on `RouterCallerState`:
 
-- Registry dispatch for the remaining 18 router tools (file ×4 / mcp ×3 /
-  memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) needs per-tool byte-
-  equivalence verification. Examples of the gap: `host.file_read` returns
-  a string (extracted from op_runtime dict result) but the registry
-  handler returns the full dict; memory tools use host-managed index
-  layout vs the registry handler's filesystem-direct paths;
-  `invoke_skill` needs `chain_id` propagation that `op_runtime
-  caller="control_ir"` doesn't carry. Each cluster either gets a
-  RouterCallerState callable bridge (preserves behavior) or accepts the
-  shape change with dogfood validation.
+1. **`op_context_factory: Callable | None`** — RouterLoop binds
+   `host.make_router_op_context` so file / mcp / web handlers receive
+   the operator-declared PermissionDecl + Workspace, matching the
+   legacy router branch.
+2. **`host: Any`** — duck-typed RouterHostAdapter reference for MCP
+   handlers that preserve the session-level MCPClient cache.
+3. **Per-tool callable bridges** (`run_skill_fn`, `list_memory_fn`,
+   `read_memory_body_fn`, `remember_fn`, `forget_fn`) — bound to
+   RouterLoop's private helpers so chain_id propagation
+   (`invoke_skill`) and agent-aware memory paths (memory cluster) are
+   preserved.
+
+`RouterLoop._invoke_router_tool` is now a thin top-branch (registry
+dispatch) plus a comment placeholder for future clusters.
+`_normalise_router_tool_result` adapts handler return shapes (= dict
+envelopes from op_runtime synthesis) back to the bare-string /
+bare-list shapes the legacy router branches emitted to the LLM,
+preserving LLMReplay byte-identity end-to-end through all 5 cluster
+migrations.
+
+**Remaining work (deferred — design decisions required):**
+
 - Phase-side dispatch consuming registry (`ControlIRExecutor` →
   `get_default_registry().for_phase()`); `allowed_ops` prefix-wildcard
   semantics in the phase dispatcher.
 - `OP_KIND_MODEL_MAP` removal (Open Q #2); obsolete `op_runtime/<kind>.py`
   consolidation.
 
-ADR-0026 Status remains **Proposed** until the deferred work above lands.
-The `Acceptance criteria` section in the ADR enumerates the closing checklist.
+ADR-0026 Status remains **Proposed** until the phase-side migration
+above lands.  The `Acceptance criteria` section in the ADR enumerates
+the closing checklist.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)
