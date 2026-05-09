@@ -143,17 +143,15 @@ def test_delegate_to_agent_in_for_router_not_in_for_phase():
     assert DELEGATE_TO_AGENT not in registry.for_phase()
 
 
-# ── 5. Async-dispatch sentinel — handler raises NotImplementedError ───────────
+# ── 5. Handler activated (M4 Phase 3) — mis-wiring contract ──────────────────
+# Happy-path delegation tests live in tests/test_tool_registry_handlers.py.
 
 @pytest.mark.asyncio
-async def test_delegate_to_agent_handler_raises_not_implemented():
-    """Tier 2: DELEGATE_TO_AGENT.handler raises NotImplementedError when
-    called directly. This is the Wave 2 design-revisit sentinel: async
-    dispatch is wired into RouterLoop via self.host.send_to_agent and
-    cannot be surfaced as a standalone (args, ctx) → ToolResult adapter
-    without a ToolContext.router_state extension (Wave 2 option a) or
-    explicit exclusion from the unified handler dispatch path (option b).
-    """
+async def test_delegate_to_agent_handler_raises_when_router_state_missing():
+    """Tier 2: DELEGATE_TO_AGENT.handler raises RuntimeError when
+    ctx.router_state is None or .send_to_agent is unset (= M4 Phase 3
+    activation contract; RouterLoop binds chain_id at population time and
+    the handler passes only per-call args)."""
     from reyn.tools.types import ToolContext
 
     # Minimal stub context — handler should raise before touching ctx.
@@ -163,7 +161,7 @@ async def test_delegate_to_agent_handler_raises_not_implemented():
         workspace=None,
         caller_kind="router",
     )
-    with pytest.raises(NotImplementedError, match="wired into RouterLoop"):
+    with pytest.raises(RuntimeError, match="send_to_agent"):
         await DELEGATE_TO_AGENT.handler(
             args={"to": "some_agent", "request": "hello"},
             ctx=ctx,

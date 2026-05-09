@@ -227,21 +227,17 @@ def build_tools(
     # description in the system prompt (context layer), giving the LLM both
     # constraint and context to resist the attractor.
     #
+    # Wave 2c migration: dynamic enum injection has moved to schema_enricher
+    # in tools/invoke_skill.py (_enrich_router_schema) and
+    # tools/delegate_to_agent.py (_enrich_router_schema). The inline
+    # _invoke_skill_name_schema / _delegate_to_schema locals are no longer
+    # needed; render_for_router(state=...) applies the enrichment per-call.
+    #
     # When available_skills is empty, invoke_skill is omitted from the tools
     # list to avoid an empty-enum schema that some providers reject.
     # Same strategy for available_agents / delegate_to_agent.
     skill_names = [s["name"] for s in available_skills]
     agent_names = [a["name"] for a in available_agents]
-    _invoke_skill_name_schema: dict = (
-        {"type": "string", "enum": skill_names}
-        if skill_names
-        else {"type": "string"}
-    )
-    _delegate_to_schema: dict = (
-        {"type": "string", "enum": agent_names}
-        if agent_names
-        else {"type": "string"}
-    )
 
     # Collect ToolSpec objects in canonical order (single source of truth).
     # Each spec carries name + description + parameters + dispatch_kind.
@@ -318,68 +314,33 @@ def build_tools(
         ))
 
     # ── B1: invoke_skill (conditional — omitted when no skills registered) ──
-    if skill_names:
+    # Wave 2c: registry-driven render with schema_enricher for per-call enum.
+    from reyn.tools.types import RouterCallerState as _RouterCallerState
+    _state = _RouterCallerState(
+        available_skills=[{"name": n} for n in skill_names],
+        available_agents=[{"name": n} for n in agent_names],
+    )
+    _invoke_skill_def = _registry.lookup("invoke_skill")
+    if _invoke_skill_def is not None and _invoke_skill_def.gates.router == "allow" and skill_names:
+        _invoke_skill_rendered = _invoke_skill_def.render_for_router(state=_state)
         specs.append(ToolSpec(
-            name="invoke_skill",
-            description=(
-                "Run a skill from the registered list. "
-                "The 'name' parameter MUST be one of the skills "
-                "listed in the system prompt's \"Available skills\" "
-                "section, used verbatim (no dots, no slashes, "
-                "no namespace prefixes). "
-                "Use list_skills' input_fields hint to construct "
-                "the correct input, or call describe_skill for full "
-                "schema details. Do not guess input field names."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "name": {
-                        **_invoke_skill_name_schema,
-                        "description": (
-                            "Skill name — choose exactly one from "
-                            "the enum (verbatim, no dots or slashes)."
-                        ),
-                    },
-                    "input": {
-                        "type": "object",
-                        "description": (
-                            "Skill input artifact: "
-                            "{type: <artifact_type>, data: {...}}"
-                        ),
-                    },
-                },
-                "required": ["name", "input"],
-            },
+            name=_invoke_skill_rendered["function"]["name"],
+            description=_invoke_skill_rendered["function"]["description"],
+            parameters=_invoke_skill_rendered["function"]["parameters"],
+            dispatch_kind=_invoke_skill_def.dispatch_kind,
         ))
 
-    specs += [
-        # ── B2: delegate_to_agent ────────────────────────────────────────
-        ToolSpec(
-            name="delegate_to_agent",
-            description="Forward the request to a peer agent.",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "to": {
-                        **_delegate_to_schema,
-                        "description": (
-                            "Target agent name as listed by list_agents."
-                        ),
-                    },
-                    "request": {
-                        "type": "string",
-                        "description": (
-                            "Natural-language request paraphrased "
-                            "for the peer's context."
-                        ),
-                    },
-                },
-                "required": ["to", "request"],
-            },
-            dispatch_kind="async",
-        ),
-    ]
+    # ── B2: delegate_to_agent ────────────────────────────────────────────
+    # Wave 2c: registry-driven render with schema_enricher for per-call enum.
+    _delegate_def = _registry.lookup("delegate_to_agent")
+    if _delegate_def is not None and _delegate_def.gates.router == "allow":
+        _delegate_rendered = _delegate_def.render_for_router(state=_state)
+        specs.append(ToolSpec(
+            name=_delegate_rendered["function"]["name"],
+            description=_delegate_rendered["function"]["description"],
+            parameters=_delegate_rendered["function"]["parameters"],
+            dispatch_kind=_delegate_def.dispatch_kind,
+        ))
 
     # ── B3: remember_shared ──────────────────────────────────────────────
     _remember_shared_def = _registry.lookup("remember_shared")

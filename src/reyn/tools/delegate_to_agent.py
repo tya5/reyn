@@ -1,4 +1,4 @@
-"""delegate_to_agent ToolDefinition — ADR-0026 M3 Wave 1.
+"""delegate_to_agent ToolDefinition — ADR-0026 M4 Phase 3.
 
 Router-only (gates.router=allow, gates.phase=deny).
 
@@ -6,33 +6,35 @@ Async-dispatch semantics (ADR-0026 §6)
 ---------------------------------------
 delegate_to_agent is NOT a request/response tool. RouterLoop calls
 self.host.send_to_agent(...) and then *exits*; the peer's reply arrives
-in a future RouterLoop invocation via PR14 pending_chain. The handler
-below cannot be called as a standalone (args, ctx) → ToolResult adapter
-because the actual dispatch is wired into RouterLoop through self.host,
-which is not reachable from ToolContext.
+in a future RouterLoop invocation via PR14 pending_chain.
 
-Design-revisit needed for Wave 2
----------------------------------
-The handler raises NotImplementedError at call time to make this
-constraint explicit. The ToolDefinition IS registerable and its
-metadata (description, parameters, gates) is correct and usable for:
-  - render_for_router() byte-identity checks
-  - registry gate assertions
-  - build_tools() migration (router only)
+M4 Phase 3 activation (this file)
+-----------------------------------
+RouterCallerState.send_to_agent (defined in Wave 1) is now consumed by
+_handle. The handler calls ctx.router_state.send_to_agent(to=, request=)
+and returns a spawn-ack dict immediately. The actual peer reply arrives
+asynchronously in a future RouterLoop turn.
 
-M4 Phase 2 (landed): RouterCallerState.send_to_agent is the typed field
-for the dispatch callback. Population (= router_loop wiring) is M4 Phase 3.
+RouterLoop still branches on name == "delegate_to_agent" to call
+self.host.send_to_agent directly (legacy path). Wave 3 will migrate
+that branch to route through DELEGATE_TO_AGENT.handler via the unified
+dispatch path. Until then, both paths are correct:
+  - Legacy (RouterLoop direct): used in production today
+  - Unified (this handler): activated for test / dispatch-table routes
 
-Until M4 Phase 3 wires send_to_agent on RouterCallerState, the router
-dispatcher in RouterLoop MUST NOT invoke DELEGATE_TO_AGENT.handler; it
-should continue to call self.host.send_to_agent directly after
-name == "delegate_to_agent" detection.
+schema_enricher (_enrich_router_schema) injects `to.enum` from
+RouterCallerState.available_agents per-call, replacing the prior inline
+_delegate_to_schema literal in router_tools.py.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+import copy
+from typing import Any, Mapping, TYPE_CHECKING
 
 from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
+
+if TYPE_CHECKING:
+    from reyn.tools.types import RouterCallerState
 
 
 # Description must be byte-identical to router_tools.py line 403 ToolSpec.
@@ -41,8 +43,8 @@ _DELEGATE_TO_AGENT_DESCRIPTION = "Forward the request to a peer agent."
 
 # Parameters JSON schema must be byte-identical to router_tools.py ToolSpec
 # for delegate_to_agent. The "to" property omits the dynamic enum (which is
-# built per-call in build_tools based on available_agents); the static
-# base type is {"type": "string"}.
+# injected per-call by _enrich_router_schema from available_agents); the
+# static base type is {"type": "string"}.
 _DELEGATE_TO_AGENT_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -64,27 +66,54 @@ _DELEGATE_TO_AGENT_PARAMETERS: dict[str, Any] = {
 }
 
 
-async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Adapter stub for delegate_to_agent.
+def _enrich_router_schema(rendered: dict, state: "RouterCallerState") -> dict:
+    """Inject `to` enum from available_agents (= dynamic per-session data).
 
-    Design-revisit needed for Wave 2 (see module docstring).
+    Matches the prior inline literal in router_tools.py: when there's at
+    least one agent, the to field gets an enum constraint. When there
+    are zero agents, the schema falls back to plain string (no enum).
 
-    The actual dispatch is wired into RouterLoop via self.host.send_to_agent.
-    M4 Phase 2 defines RouterCallerState.send_to_agent as the typed field for
-    this callback. This handler cannot be called as a standalone adapter until
-    M4 Phase 3 populates RouterCallerState.send_to_agent in the router
-    dispatcher.
-
-    Raises:
-        NotImplementedError: always — signals the M4 Phase 3 production wiring
-            gap to any caller that accidentally routes through the unified handler.
+    Returns a NEW dict — does not mutate the input.
     """
-    raise NotImplementedError(
-        "delegate_to_agent async dispatch is wired into RouterLoop via "
-        "self.host.send_to_agent. RouterCallerState.send_to_agent (M4 Phase 2 "
-        "structure) is not yet populated in production (M4 Phase 3). "
-        "RouterLoop dispatches delegate_to_agent directly until Phase 3 lands."
-    )
+    available_agents = state.available_agents or []
+    agent_names = [a["name"] for a in available_agents if "name" in a]
+    new = copy.deepcopy(rendered)
+    to_prop = new["function"]["parameters"]["properties"].get("to")
+    if to_prop is None:
+        return new  # defensive: schema is missing the to field
+    if agent_names:
+        to_prop["enum"] = agent_names
+    else:
+        to_prop.pop("enum", None)
+    return new
+
+
+async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Delegate to RouterCallerState.send_to_agent (M4 Phase 3 wiring).
+
+    The send_to_agent callable is populated by RouterLoop with chain_id
+    pre-bound; this handler passes only the per-call args (to + request).
+    Async-dispatch posture: returns a spawn ack immediately; the actual
+    peer reply arrives via PR14 pending_chain in a future RouterLoop turn.
+
+    Raises RuntimeError when router_state or send_to_agent is missing
+    (= mis-wiring; matches the catalog/plan handler convention).
+    """
+    rs = ctx.router_state
+    if rs is None or rs.send_to_agent is None:
+        raise RuntimeError(
+            "delegate_to_agent handler requires ctx.router_state.send_to_agent "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    await rs.send_to_agent(to=args["to"], request=args["request"])
+    return {
+        "status": "dispatched",
+        "to": args["to"],
+        "note": (
+            "Peer's reply will arrive in a future router invocation; "
+            "please wait for it."
+        ),
+    }
 
 
 DELEGATE_TO_AGENT = ToolDefinition(
@@ -96,4 +125,5 @@ DELEGATE_TO_AGENT = ToolDefinition(
     category="delegation",
     purity="side_effect",
     dispatch_kind="async",  # PR14 pending_chain: result arrives in future RouterLoop turn
+    schema_enricher=_enrich_router_schema,
 )

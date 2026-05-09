@@ -78,20 +78,25 @@ _LIST_SKILLS_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Design-revisit stub — not a real dispatch adapter.
+    """Delegate to RouterCallerState.list_skills_fn (M4 Phase 3 wiring).
 
-    list_skills requires access to the session-scoped skill registry
-    via ctx.router_state.skill_registry (RouterCallerState, M4 Phase 2
-    structure defined). RouterLoop continues to dispatch list_skills directly
-    via the _invoke_router_tool branch until M4 Phase 3 wires the
-    RouterCallerState.skill_registry field.
+    The caller (= RouterLoop) populates router_state.list_skills_fn with
+    a bound method (= RouterLoop._list_skills) at dispatch time. This
+    decouples the catalog tool from RouterLoopHost type. If router_state
+    or list_skills_fn is None (= mis-wired or test sites that don't
+    populate it), raise RuntimeError with a clear message.
+
+    List handlers wrap the list return in {"items": [...]} to satisfy
+    ToolResult = Mapping[str, Any].
     """
-    raise NotImplementedError(
-        "list_skills handler is a design-revisit stub: the skill registry "
-        "(RouterCallerState.skill_registry) is not yet populated in production. "
-        "RouterLoop dispatches list_skills directly until M4 Phase 3 wires "
-        "RouterCallerState.skill_registry (ADR-0026 Open Question #3)."
-    )
+    rs = ctx.router_state
+    if rs is None or rs.list_skills_fn is None:
+        raise RuntimeError(
+            "list_skills handler requires ctx.router_state.list_skills_fn "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    path = args.get("path", "")
+    return {"items": rs.list_skills_fn(path)}
 
 
 LIST_SKILLS = ToolDefinition(
@@ -128,20 +133,25 @@ _DESCRIBE_SKILL_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_describe_skill(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Design-revisit stub — not a real dispatch adapter.
+    """Delegate to RouterCallerState.describe_skill_fn (M4 Phase 3 wiring).
 
-    describe_skill requires access to the session-scoped skill registry
-    via ctx.router_state.skill_registry (RouterCallerState, M4 Phase 2
-    structure defined). RouterLoop continues to dispatch describe_skill directly
-    via the _invoke_router_tool branch until M4 Phase 3 wires the
-    RouterCallerState.skill_registry field.
+    The caller (= RouterLoop) populates router_state.describe_skill_fn with
+    a bound method (= RouterLoop._describe_skill) at dispatch time. This
+    decouples the catalog tool from RouterLoopHost type. If router_state
+    or describe_skill_fn is None (= mis-wired or test sites that don't
+    populate it), raise RuntimeError with a clear message.
+
+    The underlying fn returns a Mapping directly (single skill dict), so no
+    wrapping is needed — return it as-is to satisfy ToolResult = Mapping[str, Any].
     """
-    raise NotImplementedError(
-        "describe_skill handler is a design-revisit stub: the skill registry "
-        "(RouterCallerState.skill_registry) is not yet populated in production. "
-        "RouterLoop dispatches describe_skill directly until M4 Phase 3 wires "
-        "RouterCallerState.skill_registry (ADR-0026 Open Question #3)."
-    )
+    rs = ctx.router_state
+    if rs is None or rs.describe_skill_fn is None:
+        raise RuntimeError(
+            "describe_skill handler requires ctx.router_state.describe_skill_fn "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    name = args.get("name", "")
+    return rs.describe_skill_fn(name)
 
 
 DESCRIBE_SKILL = ToolDefinition(
@@ -177,20 +187,25 @@ _LIST_AGENTS_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Design-revisit stub — not a real dispatch adapter.
+    """Delegate to RouterCallerState.list_agents_fn (M4 Phase 3 wiring).
 
-    list_agents requires access to the session-scoped agent registry
-    via ctx.router_state.agent_registry (RouterCallerState, M4 Phase 2
-    structure defined). RouterLoop continues to dispatch list_agents directly
-    via the _invoke_router_tool branch until M4 Phase 3 wires the
-    RouterCallerState.agent_registry field.
+    The caller (= RouterLoop) populates router_state.list_agents_fn with
+    a bound method (= RouterLoop._list_agents) at dispatch time. This
+    decouples the catalog tool from RouterLoopHost type. If router_state
+    or list_agents_fn is None (= mis-wired or test sites that don't
+    populate it), raise RuntimeError with a clear message.
+
+    List handlers wrap the list return in {"items": [...]} to satisfy
+    ToolResult = Mapping[str, Any].
     """
-    raise NotImplementedError(
-        "list_agents handler is a design-revisit stub: the agent registry "
-        "(RouterCallerState.agent_registry) is not yet populated in production. "
-        "RouterLoop dispatches list_agents directly until M4 Phase 3 wires "
-        "RouterCallerState.agent_registry (ADR-0026 Open Question #3)."
-    )
+    rs = ctx.router_state
+    if rs is None or rs.list_agents_fn is None:
+        raise RuntimeError(
+            "list_agents handler requires ctx.router_state.list_agents_fn "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    path = args.get("path", "")
+    return {"items": rs.list_agents_fn(path)}
 
 
 LIST_AGENTS = ToolDefinition(
@@ -225,20 +240,25 @@ _DESCRIBE_AGENT_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_describe_agent(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Design-revisit stub — not a real dispatch adapter.
+    """Delegate to RouterCallerState.describe_agent_fn (M4 Phase 3 wiring).
 
-    describe_agent requires access to the session-scoped agent registry
-    via ctx.router_state.agent_registry (RouterCallerState, M4 Phase 2
-    structure defined). RouterLoop continues to dispatch describe_agent directly
-    via the _invoke_router_tool branch until M4 Phase 3 wires the
-    RouterCallerState.agent_registry field.
+    The caller (= RouterLoop) populates router_state.describe_agent_fn with
+    a bound method (= RouterLoop._describe_agent) at dispatch time. This
+    decouples the catalog tool from RouterLoopHost type. If router_state
+    or describe_agent_fn is None (= mis-wired or test sites that don't
+    populate it), raise RuntimeError with a clear message.
+
+    The underlying fn returns a Mapping directly (single agent dict), so no
+    wrapping is needed — return it as-is to satisfy ToolResult = Mapping[str, Any].
     """
-    raise NotImplementedError(
-        "describe_agent handler is a design-revisit stub: the agent registry "
-        "(RouterCallerState.agent_registry) is not yet populated in production. "
-        "RouterLoop dispatches describe_agent directly until M4 Phase 3 wires "
-        "RouterCallerState.agent_registry (ADR-0026 Open Question #3)."
-    )
+    rs = ctx.router_state
+    if rs is None or rs.describe_agent_fn is None:
+        raise RuntimeError(
+            "describe_agent handler requires ctx.router_state.describe_agent_fn "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    name = args.get("name", "")
+    return rs.describe_agent_fn(name)
 
 
 DESCRIBE_AGENT = ToolDefinition(

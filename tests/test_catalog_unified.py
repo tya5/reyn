@@ -347,42 +347,43 @@ def test_registry_lookup_returns_correct_instances():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 6. Handler design-revisit stubs — all 4 raise NotImplementedError
+# 6. Handler activated (M4 Phase 3) — all 4 require router_state.<fn>
+#    Activation tests with happy-path delegation live in
+#    tests/test_tool_registry_handlers.py.  These tests pin the
+#    mis-wiring contract: missing router_state → RuntimeError.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-async def test_list_skills_handler_raises_not_implemented():
-    """Tier 2: LIST_SKILLS.handler raises NotImplementedError — design-revisit
-    stub documents that the skill registry (host.list_available_skills) is not
-    reachable from ToolContext until ADR-0026 Open Question #3 (M4) lands."""
+async def test_list_skills_handler_raises_when_router_state_missing():
+    """Tier 2: LIST_SKILLS.handler raises RuntimeError when ctx.router_state
+    is None (= mis-wired dispatcher; M4 Phase 3 activation contract)."""
     ctx = _minimal_ctx()
-    with pytest.raises(NotImplementedError, match="list_skills"):
+    with pytest.raises(RuntimeError, match="list_skills_fn"):
         await LIST_SKILLS.handler({"path": ""}, ctx)
 
 
 @pytest.mark.asyncio
-async def test_describe_skill_handler_raises_not_implemented():
-    """Tier 2: DESCRIBE_SKILL.handler raises NotImplementedError — same M4
-    design-revisit rationale as list_skills."""
+async def test_describe_skill_handler_raises_when_router_state_missing():
+    """Tier 2: DESCRIBE_SKILL.handler raises RuntimeError on missing
+    router_state (= M4 Phase 3 activation contract)."""
     ctx = _minimal_ctx()
-    with pytest.raises(NotImplementedError, match="describe_skill"):
+    with pytest.raises(RuntimeError, match="describe_skill_fn"):
         await DESCRIBE_SKILL.handler({"name": "some_skill"}, ctx)
 
 
 @pytest.mark.asyncio
-async def test_list_agents_handler_raises_not_implemented():
-    """Tier 2: LIST_AGENTS.handler raises NotImplementedError — design-revisit
-    stub documents that the agent registry (host.list_available_agents) is not
-    reachable from ToolContext until ADR-0026 Open Question #3 (M4) lands."""
+async def test_list_agents_handler_raises_when_router_state_missing():
+    """Tier 2: LIST_AGENTS.handler raises RuntimeError on missing
+    router_state (= M4 Phase 3 activation contract)."""
     ctx = _minimal_ctx()
-    with pytest.raises(NotImplementedError, match="list_agents"):
+    with pytest.raises(RuntimeError, match="list_agents_fn"):
         await LIST_AGENTS.handler({"path": ""}, ctx)
 
 
 @pytest.mark.asyncio
-async def test_describe_agent_handler_raises_not_implemented():
-    """Tier 2: DESCRIBE_AGENT.handler raises NotImplementedError — same M4
-    design-revisit rationale as list_agents."""
+async def test_describe_agent_handler_raises_when_router_state_missing():
+    """Tier 2: DESCRIBE_AGENT.handler raises RuntimeError on missing
+    router_state (= M4 Phase 3 activation contract)."""
     ctx = _minimal_ctx()
-    with pytest.raises(NotImplementedError, match="describe_agent"):
+    with pytest.raises(RuntimeError, match="describe_agent_fn"):
         await DESCRIBE_AGENT.handler({"name": "some_agent"}, ctx)

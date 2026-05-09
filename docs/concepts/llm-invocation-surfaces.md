@@ -209,7 +209,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M3 Wave 1+2 complete)
+## 9. Implementation: unified registry (M4 Phase 3 step 1 complete)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
@@ -254,10 +254,26 @@ are now typed sub-objects (`RouterCallerState` / `PhaseCallerState`) instead of
 loose `Any`, resolving ADR-0026 Open Question #3. All fields default to `None`
 for gradual migration. +7 Tier 2 invariants.
 
-**M4 Phase 3 (pending):** production population of `RouterCallerState` /
-`PhaseCallerState` fields by the router and phase dispatchers (= router_loop wiring,
-control_ir_executor wiring). Also pending: phase-side dispatch consuming registry,
-allowed_ops semantic migration, `router_tools.py` inline ToolSpec residual
-replacements, per-call schema enrichment hook, sunset of legacy aliases.
+**M4 Phase 3 step 1 (landed):** handler activation + per-call schema enrichment
+hook. The 6 design-revisit `NotImplementedError` stubs (4 catalog +
+`delegate_to_agent` + `plan`) are activated to delegate via the typed
+`RouterCallerState` callable fields. `RouterCallerState` gains 4 new callable
+fields (`list_skills_fn`, `describe_skill_fn`, `list_agents_fn`,
+`describe_agent_fn`). `ToolDefinition` gains an optional `schema_enricher` hook
+invoked by `render_for_router(state=...)` to inject per-session dynamic data
+(canonical use: `invoke_skill.name` / `delegate_to_agent.to` enums). The 2
+remaining inline `ToolSpec` literals in `router_tools.py` (= `invoke_skill` +
+`delegate_to_agent`) are migrated to registry consumption with the new hook,
+preserving byte-identity. Mis-wiring contract: handlers raise `RuntimeError`
+with a descriptive message when the dispatcher fails to populate the required
+callable. +29 Tier 2 invariants. 1754 passed / 2 xfailed.
+
+**M4 Phase 3 step 2 (pending):** `RouterLoop._invoke_router_tool` switches
+to dispatch the 6 activated tools through `invoke_tool(registry, ...)` instead
+of the if/elif tree. Requires resolving handler return-shape compatibility
+(list-vs-dict wrap on catalog handlers) to preserve LLMReplay byte-identity.
+Phase-side dispatch consuming registry, allowed_ops semantic migration,
+`invoke_skill` handler activation (depends on `run_skill_fn` field addition),
+and sunset of legacy aliases also remain.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

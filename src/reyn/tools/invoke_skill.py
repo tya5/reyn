@@ -5,29 +5,33 @@ Phase-side `run_skill` op kind continues to work via OP_KIND_MODEL_MAP
 backward-compat (= ADR-0026 Open Q #7 hybrid recommendation: alias
 preserved + deprecation in a later release).
 
-Note: this ToolSpec has dynamic per-call schema (= enum injection from
-available_skills) on router side. The static parameters JSON schema in
-this ToolDefinition represents the shape WITHOUT the per-call enum;
-router-side code that injects the enum (= router_tools.py inline pattern)
-can stay inline for this capability since the registry render produces
-the static base shape only. M4 may surface a per-call render override.
+M4 Phase 3 status (schema_enricher landed; handler activation pending):
+  schema_enricher (_enrich_router_schema) is now wired into the
+  INVOKE_SKILL ToolDefinition. render_for_router(state=...) injects the
+  `name` enum from RouterCallerState.available_skills per-call, matching
+  the prior inline literal in router_tools.py.
+
+  Handler activation (= replacing the existing legacy adapter with a
+  unified-registry dispatch path) requires RouterCallerState.run_skill_fn
+  which was not added in Wave 1. Handler activation is deferred to Phase 3.5.
 
 Per-call enum enrichment:
-  On the router side, build_tools() wraps the `name` field with
-  ``{"type": "string", "enum": skill_names}`` when skill_names is
-  non-empty (see _invoke_skill_name_schema in router_tools.py). This
-  enrichment is caller-context-specific and cannot be expressed in a
-  static ToolDefinition.parameters without a per-call render hook.
-  render_for_router() on this ToolDefinition therefore produces the
-  static base shape (name is "type": "string" with no enum). The router
-  continues to inject the enum inline (= existing router_tools.py logic
-  preserved until M4 introduces a per-call render override mechanism).
+  The `name` field in _INVOKE_SKILL_PARAMETERS is a plain string (no enum).
+  _enrich_router_schema injects the enum at render time when
+  RouterCallerState.available_skills is non-empty. When empty, the name
+  field remains a plain string (consistent with the prior inline logic
+  in router_tools.py that omitted invoke_skill entirely when no skills
+  are registered — the omission guard is preserved in build_tools()).
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+import copy
+from typing import Any, Mapping, TYPE_CHECKING
 
 from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
+
+if TYPE_CHECKING:
+    from reyn.tools.types import RouterCallerState
 
 
 # Description must be byte-identical to the router_tools.py invoke_skill
@@ -69,6 +73,28 @@ _INVOKE_SKILL_PARAMETERS: dict[str, Any] = {
     },
     "required": ["name", "input"],
 }
+
+
+def _enrich_router_schema(rendered: dict, state: "RouterCallerState") -> dict:
+    """Inject `name` enum from available_skills (= dynamic per-session data).
+
+    Matches the prior inline literal in router_tools.py: when there's at
+    least one skill, the name field gets an enum constraint. When there
+    are zero skills, the schema falls back to plain string (no enum).
+
+    Returns a NEW dict — does not mutate the input.
+    """
+    available_skills = state.available_skills or []
+    skill_names = [s["name"] for s in available_skills if "name" in s]
+    new = copy.deepcopy(rendered)
+    name_prop = new["function"]["parameters"]["properties"].get("name")
+    if name_prop is None:
+        return new  # defensive: schema is missing the name field
+    if skill_names:
+        name_prop["enum"] = skill_names
+    else:
+        name_prop.pop("enum", None)
+    return new
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
@@ -141,4 +167,5 @@ INVOKE_SKILL = ToolDefinition(
     handler=_handle,
     category="invocation",
     purity="side_effect",
+    schema_enricher=_enrich_router_schema,
 )

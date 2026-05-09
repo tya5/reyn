@@ -4,34 +4,32 @@ Router-only: gates.router="allow", gates.phase="deny".
 
 Async dispatch posture (ADR-0023 Phase 2.1):
   ``plan`` is fire-and-forget. The real dispatch logic lives in
-  ``reyn.chat.planner.dispatch_plan_tool``, which requires caller-side
-  state that ToolContext cannot supply today:
+  ``reyn.chat.planner.dispatch_plan_tool``. The handler returns a spawn
+  ack dict; actual progress/result arrives via outbox in future
+  RouterLoop turns.
 
-    * ``parent_host``   (RouterLoopHost — exposes spawn_plan_task,
-                         write_plan_decomposition, budget, router_model)
-    * ``chain_id``      (chat-turn chain for parent_chain_id hand-off)
-    * ``available_tool_names`` (dynamic per-session; needed for cycle
-                                detection / plan validation)
+  **M4 Phase 3 (landed)**: handler delegates to
+  ``RouterCallerState.dispatch_plan_tool``, populated by RouterLoop with
+  all session-scoped state pre-bound:
 
-  These are inherently router-session-scoped and do not map cleanly to
-  ToolContext's current protocol-agnostic surface.
+    * ``parent_host``            (RouterLoopHost — exposes spawn_plan_task,
+                                  write_plan_decomposition, budget, router_model)
+    * ``chain_id``               (chat-turn chain for parent_chain_id hand-off)
+    * ``budget``                 (BudgetGateway instance)
+    * ``router_model``           (model string)
+    * ``available_tool_names``   (dynamic per-session; needed for cycle
+                                  detection / plan validation)
 
-  **M4 Phase 2 (landed)**: ``RouterCallerState`` typed sub-object on
-  ToolContext is now defined. Relevant fields:
-    * ``RouterCallerState.dispatch_plan_tool``  (= dispatch_plan_tool callback)
-    * ``RouterCallerState.chain_id``            (= parent chain_id)
-    * ``RouterCallerState.available_tool_names`` (= dynamic per-session)
-    * ``RouterCallerState.budget``              (= BudgetGateway instance)
-    * ``RouterCallerState.router_model``        (= model string)
+  RouterLoop is responsible for binding session state at population time
+  (e.g. via ``functools.partial`` or a closure), keeping the handler
+  signature pure ``(args, ctx)``. The handler passes only ``args``
+  to the pre-bound callable.
 
-  **Design-revisit finding**: the handler registered here raises
-  ``NotImplementedError`` to make the constraint explicit.  RouterLoop
-  continues to invoke ``dispatch_plan_tool`` directly (via the existing
-  ``if name == "plan"`` branch in router_loop.py).  M4 Phase 3 will
-  populate these fields in RouterCallerState and wire the handler.
-  Until Phase 3 lands, this ToolDefinition serves Wave 1's goal:
-  description + parameters + gates registered in the unified registry
-  for render / gate / drift checks, without forcing a premature adapter.
+  WHY this design: ``dispatch_plan_tool`` requires inherently
+  router-session-scoped state that does not map cleanly to
+  ToolContext's protocol-agnostic surface. Binding at RouterLoop
+  population time keeps the handler decoupled from session internals
+  while enabling full async-dispatch semantics.
 
 Description and parameters are byte-identical to the ToolSpec literal
 in router_tools.py line 686–751.
@@ -104,24 +102,20 @@ _PLAN_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Design-revisit stub — not a real dispatch adapter.
+    """Delegate to RouterCallerState.dispatch_plan_tool (M4 Phase 3 wiring).
 
-    ``dispatch_plan_tool`` requires RouterLoopHost, chain_id,
-    available_tool_names, budget, and router_model — all now typed on
-    RouterCallerState (M4 Phase 2). RouterCallerState.dispatch_plan_tool,
-    .chain_id, .available_tool_names, .budget, and .router_model are the
-    target fields. Production population is M4 Phase 3.
-
-    RouterLoop continues to call dispatch_plan_tool directly until M4 Phase 3
-    populates RouterCallerState and wires the handler.
+    See module docstring for the async-dispatch posture. The
+    dispatch_plan_tool callable is populated by RouterLoop with all
+    session-scoped state (parent_host, chain_id, budget, router_model,
+    available_tool_names) pre-bound; the handler passes only args.
     """
-    raise NotImplementedError(
-        "plan handler is a design-revisit stub: RouterCallerState fields "
-        "(dispatch_plan_tool, chain_id, available_tool_names, budget, "
-        "router_model) are defined (M4 Phase 2) but not yet populated in "
-        "production (M4 Phase 3). RouterLoop dispatches plan directly "
-        "until Phase 3 lands (ADR-0026 Open Question #3 resolved Phase 2)."
-    )
+    rs = ctx.router_state
+    if rs is None or rs.dispatch_plan_tool is None:
+        raise RuntimeError(
+            "plan handler requires ctx.router_state.dispatch_plan_tool "
+            "to be populated by the dispatcher (= RouterLoop)."
+        )
+    return await rs.dispatch_plan_tool(args=args)
 
 
 PLAN = ToolDefinition(

@@ -210,14 +210,14 @@ def test_plan_parameters_constant_matches_render():
     assert dict(PLAN.parameters) == _PLAN_PARAMETERS
 
 
-# ── 6. Handler design-revisit stub ───────────────────────────────────────────
+# ── 6. Handler activated (M4 Phase 3) — mis-wiring contract ─────────────────
+# Happy-path delegation tests live in tests/test_tool_registry_handlers.py.
 
 @pytest.mark.asyncio
-async def test_plan_handler_raises_not_implemented():
-    """Tier 2: PLAN.handler raises NotImplementedError — design-revisit
-    stub documents that dispatch_plan_tool cannot be cleanly adapted to
-    (args, ctx) until ADR-0026 Open Question #3 (typed RouterCallerState)
-    is resolved. RouterLoop continues to call dispatch_plan_tool directly."""
+async def test_plan_handler_raises_when_router_state_missing():
+    """Tier 2: PLAN.handler raises RuntimeError when ctx.router_state is
+    None or .dispatch_plan_tool is unset (= M4 Phase 3 activation contract;
+    RouterLoop is responsible for binding session state at population time)."""
     from reyn.tools.types import ToolContext
 
     # Minimal ToolContext; handler must raise before using any fields.
@@ -227,5 +227,5 @@ async def test_plan_handler_raises_not_implemented():
         workspace=None,
         caller_kind="router",
     )
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(RuntimeError, match="dispatch_plan_tool"):
         await PLAN.handler({"goal": "test", "steps_json": "[]"}, ctx)

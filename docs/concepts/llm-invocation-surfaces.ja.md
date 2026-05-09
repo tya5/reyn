@@ -209,7 +209,7 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M3 Wave 1+2 完了）
+## 9. 実装: 統合 tool registry（M4 Phase 3 step 1 完了）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
@@ -230,6 +230,8 @@ ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つ
 
 **M4 Phase 2（着地済み）:** ToolContext の型拡張 — `router_state` と `phase_state` が loose `Any` から型付き sub-object（`RouterCallerState` / `PhaseCallerState`）に変わり、ADR-0026 Open Question #3 を解決。全フィールドはデフォルト `None` で段階的移行に対応。Tier 2 invariant +7。
 
-**M4 Phase 3（未着手）:** `RouterCallerState` / `PhaseCallerState` フィールドの production 投入（= router_loop wiring、control_ir_executor wiring）。また未着手: phase-side dispatch の registry 消費、`allowed_ops` セマンティクス移行、`router_tools.py` インライン ToolSpec 残留物の置換、per-call schema enrichment hook、レガシーエイリアスのサンセット。
+**M4 Phase 3 step 1（着地済み）:** ハンドラ活性化 + per-call schema enrichment hook。6 つの design-revisit `NotImplementedError` stub（catalog 4 件 + `delegate_to_agent` + `plan`）が型付き `RouterCallerState` の callable フィールド経由で delegate するよう活性化された。`RouterCallerState` に 4 つの新規 callable フィールド（`list_skills_fn` / `describe_skill_fn` / `list_agents_fn` / `describe_agent_fn`）を追加。`ToolDefinition` に optional `schema_enricher` hook を追加し、`render_for_router(state=...)` が per-session 動的データを inject するために起動する（正準用途: `invoke_skill.name` / `delegate_to_agent.to` enums）。`router_tools.py` 内の残り 2 件のインライン `ToolSpec` リテラル（= `invoke_skill` + `delegate_to_agent`）を新 hook 経由で registry consumption に移行、byte-identity を保持。mis-wiring 契約: dispatcher が必要な callable を populate しない場合、ハンドラは記述的メッセージで `RuntimeError` を raise する。Tier 2 invariant +29。1754 passed / 2 xfailed。
+
+**M4 Phase 3 step 2（未着手）:** `RouterLoop._invoke_router_tool` が活性化済 6 ツールを if/elif tree ではなく `invoke_tool(registry, ...)` 経由で dispatch するように切り替える。LLMReplay byte-identity を保持するため、ハンドラ戻り値 shape の互換性（catalog ハンドラの list-vs-dict ラップ）解決が前提。phase-side dispatch の registry 消費、`allowed_ops` セマンティクス移行、`invoke_skill` ハンドラ活性化（`run_skill_fn` フィールド追加に依存）、レガシーエイリアスのサンセットも残課題。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

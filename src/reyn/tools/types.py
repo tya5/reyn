@@ -80,6 +80,15 @@ class RouterCallerState:
     # ctx.workspace callbacks)
     memory_service: Any = None
 
+    # Catalog access callbacks (= for catalog stub handlers
+    # list_skills / describe_skill / list_agents / describe_agent;
+    # RouterLoop populates with bound methods, the stubs delegate
+    # to keep router/registry decoupled from RouterLoopHost type)
+    list_skills_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
+    describe_skill_fn: Callable[[str], Mapping[str, Any]] | None = None
+    list_agents_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
+    describe_agent_fn: Callable[[str], Mapping[str, Any]] | None = None
+
 
 @dataclass
 class PhaseCallerState:
@@ -186,18 +195,45 @@ class ToolDefinition:
                                                      # (= delegate_to_agent / plan;
                                                      # router-side only consideration)
 
+    # Per-call schema enrichment hook (= ADR-0026 M4 Phase 3).
+    # When set, callers (= build_tools / phase catalog builder) invoke
+    # this hook AFTER render_for_router/render_for_phase to inject
+    # per-session dynamic data into the schema (canonical example:
+    # invoke_skill.name enum from available_skills, delegate_to_agent.to
+    # enum from available_agents).
+    #
+    # Signature: (rendered_tool_dict, RouterCallerState) -> rendered_tool_dict
+    #   - rendered_tool_dict: the dict produced by render_for_router /
+    #     render_for_phase (= function/parameters/etc shape)
+    #   - RouterCallerState: contains available_skills / available_agents
+    #     and other per-session data the enricher may consult
+    #   - returns: a NEW dict with dynamic enrichment applied (do NOT
+    #     mutate the input; static schema is the canonical render)
+    #
+    # None (default) = static render is used as-is. This is the path
+    # for the 24/26 capabilities whose schemas don't depend on per-session
+    # data.
+    schema_enricher: Any = None  # Callable[[dict, RouterCallerState], dict] | None
+
     # Future metadata anchors (commented out; surface as needed):
     # cost_weight: float = 1.0
     # rate_limit_class: str | None = None
     # log_redaction: tuple[str, ...] = ()
 
     # Protocol-specific renders
-    def render_for_router(self) -> dict:
+    def render_for_router(self, *, state: RouterCallerState | None = None) -> dict:
         """Render to OpenAI tools[] entry shape used by call_llm_tools.
 
         Identical structure to the existing ToolSpec.to_openai_dict().
+
+        M4 Phase 3: when ``schema_enricher`` is set on the ToolDefinition AND
+        ``state`` is provided, the static render is post-processed by the
+        enricher to inject per-call dynamic data (e.g. invoke_skill.name enum
+        from RouterCallerState.available_skills). When either is None (= 24/26
+        capabilities, plus all callers that don't supply state), the static
+        render is returned as-is.
         """
-        return {
+        rendered = {
             "type": "function",
             "function": {
                 "name": self.name,
@@ -205,6 +241,9 @@ class ToolDefinition:
                 "parameters": dict(self.parameters),
             },
         }
+        if self.schema_enricher is not None and state is not None:
+            rendered = self.schema_enricher(rendered, state)
+        return rendered
 
     def render_for_phase(self) -> dict:
         """Render to a Control IR available_control_ops entry shape.

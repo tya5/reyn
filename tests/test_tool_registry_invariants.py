@@ -579,3 +579,94 @@ def test_router_caller_state_full_population():
     assert state.router_model == "openai/gpt-4o"
     assert state.available_tool_names == ["web_search", "plan"]
     assert state.memory_service is sentinel_memory
+
+
+# ── 14. RouterCallerState catalog callable fields (M4 Phase 3) ───────────────
+
+def test_router_caller_state_catalog_callable_fields_default_none():
+    """Tier 2: RouterCallerState catalog callable fields default to None."""
+    state = RouterCallerState()
+    assert state.list_skills_fn is None
+    assert state.describe_skill_fn is None
+    assert state.list_agents_fn is None
+    assert state.describe_agent_fn is None
+
+
+def test_router_caller_state_catalog_callable_fields_assignable():
+    """Tier 2: RouterCallerState catalog callable fields accept callables and remain callable."""
+    def _list_skills(query: str) -> list:
+        return [{"name": "s1", "query": query}]
+
+    def _describe_skill(name: str) -> dict:
+        return {"name": name, "description": "desc"}
+
+    def _list_agents(query: str) -> list:
+        return [{"name": "a1", "query": query}]
+
+    def _describe_agent(name: str) -> dict:
+        return {"name": name, "description": "agent desc"}
+
+    state = RouterCallerState(
+        list_skills_fn=_list_skills,
+        describe_skill_fn=_describe_skill,
+        list_agents_fn=_list_agents,
+        describe_agent_fn=_describe_agent,
+    )
+
+    assert callable(state.list_skills_fn)
+    assert callable(state.describe_skill_fn)
+    assert callable(state.list_agents_fn)
+    assert callable(state.describe_agent_fn)
+
+    skills = state.list_skills_fn("test_query")
+    assert isinstance(skills, list)
+    assert skills[0]["name"] == "s1"
+
+    skill = state.describe_skill_fn("my_skill")
+    assert isinstance(skill, dict)
+    assert skill["name"] == "my_skill"
+
+    agents = state.list_agents_fn("agent_query")
+    assert isinstance(agents, list)
+    assert agents[0]["name"] == "a1"
+
+    agent = state.describe_agent_fn("my_agent")
+    assert isinstance(agent, dict)
+    assert agent["name"] == "my_agent"
+
+
+# ── 15. ToolDefinition schema_enricher field (M4 Phase 3) ────────────────────
+
+def test_tool_definition_schema_enricher_defaults_none():
+    """Tier 2: ToolDefinition.schema_enricher defaults to None when not specified."""
+    tool = _make_tool("enricher_default_tool")
+    assert tool.schema_enricher is None
+
+
+def test_tool_definition_schema_enricher_can_be_set():
+    """Tier 2: ToolDefinition.schema_enricher accepts a callable and can be invoked."""
+    def _enricher(rendered: dict, state: RouterCallerState) -> dict:
+        enriched = dict(rendered)
+        enriched["_enriched"] = True
+        enriched["_skills_count"] = len(state.available_skills or [])
+        return enriched
+
+    tool = ToolDefinition(
+        name="enricher_tool",
+        description="Tool with schema enricher.",
+        parameters={"type": "object", "properties": {}, "required": []},
+        gates=ToolGates(),
+        handler=_noop_handler(),
+        category="discovery",
+        schema_enricher=_enricher,
+    )
+
+    assert callable(tool.schema_enricher)
+
+    sample_rendered = {"type": "function", "function": {"name": "enricher_tool"}}
+    state = RouterCallerState(available_skills=[{"name": "skill_a"}, {"name": "skill_b"}])
+    result = tool.schema_enricher(sample_rendered, state)
+
+    assert result["_enriched"] is True
+    assert result["_skills_count"] == 2
+    assert result["type"] == "function"
