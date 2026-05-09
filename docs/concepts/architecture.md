@@ -65,6 +65,113 @@ Three properties fall out of the layering:
 - **Skill portability.** Because the OS knows nothing about specific skills (P7), adding a new skill never changes OS code. Skills are pure data + LLM-readable instructions.
 - **Bounded LLM creativity.** Because the LLM picks from a fixed set of OS-provided transitions (P4), it can't invent control flow that breaks invariants.
 
+## Phase execution flow
+
+The layered diagram above shows *what* the components are. This section shows
+*what happens* during one Phase invocation — useful for new contributors mapping
+their mental model, for debugging a Phase that doesn't behave as expected, and
+for understanding the cost of one Phase tick.
+
+```
+User        Agent          OS Runtime         LLM (LiteLLM)   Workspace       Events
+ │            │                │                    │               │              │
+ │──message──>│                │                    │               │              │
+ │            │──invoke skill──>│                    │               │              │
+ │            │          ┌─────┴──── for each Phase visit ──────────────────────┐  │
+ │            │          │     │                    │               │              │
+ │            │          │     │──read artifacts────────────────────>│              │
+ │            │          │     │<───────────────────────── context frame ─────────│  │
+ │            │          │     │──────────────────────────────────────────────────── emit phase_started ──>│
+ │            │          │     │                    │               │              │
+ │            │          │     │──call(messages,────>│               │              │
+ │            │          │     │    candidates, ops) │               │              │
+ │            │          │     │<── {control,        │               │              │
+ │            │          │     │     artifact,        │               │              │
+ │            │          │     │     control_ir}      │               │              │
+ │            │          │     │                    │               │              │
+ │            │          │     ├── validate artifact (vs next-phase / final_output_schema)
+ │            │          │     │                    │               │              │
+ │            │          │     │  ┌── if validation fails ──────────────────────┐  │
+ │            │          │     │  │──────────────────────────────────────────────── emit validation_error ─>│
+ │            │          │     │  │──re-prompt─────>│               │              │
+ │            │          │     │  └── (within max_phase_retries budget) ─────────┘  │
+ │            │          │     │                    │               │              │
+ │            │          │     ├── for each Control IR op ──────────────────────┐  │
+ │            │          │     │  ├── permission check                          │  │
+ │            │          │     │  │──────────────────────────────────────────────── emit <op>_started ────>│
+ │            │          │     │  │──dispatch + write result──────>│              │
+ │            │          │     │  │──────────────────────────────────────────────── emit <op>_completed ──>│
+ │            │          │     │  └────────────────────────────────────────────────────────────────────────│
+ │            │          │     │──────────────────────────────────────────────────── emit phase_completed ─>│
+ │            │          │     │                    │               │              │
+ │            │          │     ├── control.type == transition ──────────────────┐  │
+ │            │          │     │  └── pick next phase from Skill graph; repeat ─┘  │
+ │            │          │     │                    │               │              │
+ │            │          │     ├── control.type == finish ──────────────────────┐  │
+ │            │          │     │  ├── validate against final_output_schema       │  │
+ │            │          │     │  │──────────────────────────────────────────────── emit skill_completed ──>│
+ │            │          │     │  └────────────────────────────────────────────────────────────────────────│
+ │            │          │     │                    │               │              │
+ │            │          │     ├── control.type == abort ───────────────────────┐  │
+ │            │          │     │  │──────────────────────────────────────────────── emit skill_aborted ───>│
+ │            │          │     │  └────────────────────────────────────────────────────────────────────────│
+ │            │          └─────┴────────────────────────────────────────────────┘  │
+ │            │<───── final_output artifact ────────│               │              │
+ │<─── reply ─│                │                    │               │              │
+```
+
+**Note on diagram rendering:** The diagram above uses ASCII art because
+`pymdownx.superfences` is enabled in this docs build without `custom_fences`
+configured for Mermaid. A Mermaid rendering of the same flow is available on
+the project website architecture page.
+
+### Step-by-step narration
+
+1. **Context build (P5)** — The OS reads from the Workspace only what the Phase
+   declares as input. Nothing leaks between phases through any other channel.
+
+2. **LLM call** — The OS assembles the prompt (instructions + input artifact +
+   `candidate_outputs` + `available_control_ops`) and calls the LLM. Single-shot
+   by default; retried within `max_phase_retries` on validation failure.
+
+3. **Output validation (P4)** — The artifact in the LLM's response must match
+   the declared schema for the chosen destination: `next_phase.input_schema` on
+   a transition, or `skill.final_output_schema` on a finish. The OS rejects any
+   hallucinated phase name not in the Skill graph.
+
+4. **Re-prompt loop** — If validation fails, the OS emits `validation_error` and
+   re-prompts. The loop is bounded by `max_phase_retries`; exhausting retries
+   fails the phase rather than crashing.
+
+5. **Control IR execution (P3 + permissions)** — The OS dispatches each op in
+   `control_ir` sequentially. Every op passes through the permission gate before
+   dispatch. Denial emits `permission_denied` and returns a structured denial
+   result; it does not abort the phase unless the LLM decides to abort.
+
+6. **Workspace write (P5)** — Every op that produces data (file reads, web
+   fetches, MCP calls, etc.) writes its result to the Workspace before the next
+   op runs. In-memory results are not trusted between ops.
+
+7. **Event emission (P6)** — Every state change is an event: `phase_started`,
+   `phase_completed`, `validation_error`, `<op>_started`, `<op>_completed`,
+   `skill_completed`, `skill_aborted`. The OS doesn't care about the LLM's
+   reasoning; it cares that the transition was validated and recorded.
+
+8. **Transition or finish** — On `transition`, the OS picks the next phase from
+   the Skill graph and starts a new Phase visit. On `finish`, it validates the
+   final artifact against `skill.final_output_schema`, emits `skill_completed`,
+   and returns the artifact to the caller.
+
+### Connection to act-sense-react
+
+Each iteration of the outer Phase visit loop in the diagram above IS one full
+act-sense-react cycle. **Act** is `control_ir` execution (the LLM's decision
+dispatched by the OS). **Sense** is context-frame assembly from Workspace and
+Events at the top of the next visit. **Re-act** is the next LLM call with the
+updated context. The sequence diagram operationalizes what the act-sense-react
+framing below summarises — the structural contract that makes the loop explicit
+and OS-owned rather than implicit in the LLM's behaviour.
+
 ## Reyn through the act-sense-react lens
 
 The broader agent community has converged on a working definition of what makes
@@ -117,7 +224,8 @@ convention.
 - [principles.md](principles.md) — the eight constraints
 - [phase-vs-skill-vs-os.md](phase-vs-skill-vs-os.md) — responsibility boundaries
 - [workspace.md](workspace.md) — Workspace in depth
-- [events.md](events.md) — Events in depth
-- [Reference: control-ir](../reference/runtime/control-ir.md) — Control IR ops
+- [events.md](events.md) — full event taxonomy
+- [Reference: control-ir](../reference/runtime/control-ir.md) — Control IR op semantics
+- [Reference: llm-output-contract](../reference/runtime/llm-output-contract.md) — the LLM JSON shape
 - [Reference: events](../reference/runtime/events.md) — event types
 - [Agent engineering — seven lenses](agent-engineering/index.md) — the same architecture through external engineering perspectives

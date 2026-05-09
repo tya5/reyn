@@ -8,6 +8,51 @@ audience: [human, agent]
 
 1 つの reyn プロセスは、任意の数の長期稼働 **agent** をホストできます。各 agent は独自のプロファイル、履歴、memory レイヤー、受信ボックス、Skill カタログビューを持つ ChatSession です。Agent は人間と（一度に 1 つ、attach 経由で）、そして互いに（構造化されたリクエスト/レスポンスチャンネルを通じて）通信します。
 
+## Reyn の 4 layer マルチ agent
+
+Reyn はマルチ agent 機能を 1 つ持つのではなく、異なるスコープと配線タイミングに対応した **4 つの独立した合成サーフェス** を持ちます。差別化の核心は、**4 つの layer すべてで同じ OS invariant を維持する** ことです — [P4](principles.md#p4-llm-is-a-constrained-decision-engine)（候補セット制約）、[P6](principles.md#p6-events-are-the-audit-truth)（すべての transition に event）、そして permission システム。多くのフレームワークはこれらのサーフェスを 1〜2 つしか持ちませんが、Reyn の差別点は 4 つすべてに uniform invariant を適用していることです。
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Layer 4:  reyn mcp serve                                        │
+│            (external MCP clients call INTO Reyn agents)          │
+│              ↑ list_agents()  ↑ send_to_agent(name, msg)         │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 3:  delegate_to_agent                                     │
+│            (agent → agent, in-process, chain_id correlated)      │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 2:  run_skill  Control IR op                              │
+│            (phase invokes a sub-skill at runtime, LLM-chosen)    │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 1:  @sub_skill  graph node                                │
+│            (skill graph statically embeds another skill)         │
+└──────────────────────────────────────────────────────────────────┘
+                All layers enforce: P4 + P6 + permissions
+```
+
+### Layer 一覧
+
+| Layer | メカニズム | 配線タイミング | プロセス境界 | 典型的な用途 | 参照 |
+|-------|-----------|--------------|-------------|-------------|------|
+| 1 | `@sub_skill` graph node | compile-time | same-process | 静的合成（「phase A は常に skill X を呼ぶ」） | [graph.md](../reference/dsl/graph.md) |
+| 2 | `run_skill` Control IR op | LLM-runtime | same-process | 動的 sub-skill 選択（「phase が入力に応じて sub-skill を決定」） | [control-ir.md](../reference/runtime/control-ir.md#run_skill) |
+| 3 | `delegate_to_agent` | runtime + topology | same-process | 専門家への委譲（「research agent → writer agent」） | [topology.md](topology.md) |
+| 4 | `reyn mcp serve` | runtime | external client | agent fleet を Claude Code、Cursor などの MCP 対応クライアントに公開する | [mcp.md](mcp.md) |
+
+### 4 つの layer で変わらないもの
+
+- **P4 — 候補セット制約。** どの layer でも、LLM は OS が用意した集合の中から選択します。所有している skill、topology 経由で到達可能な agent、または MCP server が公開しているツールです。どの layer も、カタログにない agent や skill を LLM が作り出すことは許しません。
+- **P6 — すべての transition に event。** どの layer でも、入場・完了・失敗時に構造化 event を発行します。layer をまたいだチェーンも、各 agent の `events.jsonl` を `grep <chain_id>` することで end-to-end で再構成できます。event log が唯一の監査チャンネルです。
+- **Permission ゲート。** file、MCP、shell、web の permission はどの layer 経由の呼び出しでも OS 層でチェックされます。Layer 3 の委譲呼び出しが permission ルールを迂回することはなく、Layer 2 の sub-skill は自身の permission を宣言しなければなりません。
+- **Workspace 分離。** どの layer も skill スコープの workspace 境界を尊重します。Layer 1 または 2 経由で呼び出された sub-skill は、宣言した入力のみを読みます。
+
+### どの layer を選ぶか
+
+- 「skill X の中で常に step Y が必要」 → **Layer 1**（`@sub_skill` graph node）
+- 「skill X が入力に応じて N 個の sub-skill のうち 1 つを呼ぶ」 → **Layer 2**（`run_skill` Control IR op）
+- 「それぞれ独自の skill カタログを持つ複数の専門 role が互いに通信する」 → **Layer 3**（`delegate_to_agent`）
+- 「外部の MCP 対応ツール（Claude Code、Cursor、OpenAI Agents SDK 等）が agent を呼べるようにしたい」 → **Layer 4**（`reyn mcp serve`）
+
 ## agent とは何か
 
 Agent は `.reyn/agents/<name>/` にあるディレクトリと、ランタイムがオンデマンドで起動するインメモリ ChatSession です：

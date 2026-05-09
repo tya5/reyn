@@ -8,6 +8,51 @@ audience: [human, agent]
 
 A reyn process can host any number of long-lived **agents**, each one a ChatSession with its own profile, history, memory layer, inbox, and skill catalogue view. Agents talk to humans (one at a time, via attach) and to each other (through a structured request-response channel).
 
+## Four layers of multi-agent in Reyn
+
+Reyn does not have a single multi-agent feature. It has four distinct compositional surfaces, each suited to a different scope and wiring time. The differentiating claim: **all four layers preserve the same OS invariants** — [P4](principles.md#p4-llm-is-a-constrained-decision-engine) (constrained candidate set), [P6](principles.md#p6-events-are-the-audit-truth) (events for every transition), and the permission system. Many frameworks have one or two of these surfaces; Reyn's distinction is uniform invariants across all four.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Layer 4:  reyn mcp serve                                        │
+│            (external MCP clients call INTO Reyn agents)          │
+│              ↑ list_agents()  ↑ send_to_agent(name, msg)         │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 3:  delegate_to_agent                                     │
+│            (agent → agent, in-process, chain_id correlated)      │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 2:  run_skill  Control IR op                              │
+│            (phase invokes a sub-skill at runtime, LLM-chosen)    │
+├──────────────────────────────────────────────────────────────────┤
+│  Layer 1:  @sub_skill  graph node                                │
+│            (skill graph statically embeds another skill)         │
+└──────────────────────────────────────────────────────────────────┘
+                All layers enforce: P4 + P6 + permissions
+```
+
+### Layer summary
+
+| Layer | Mechanism | Wiring | Boundary | Typical use | Reference |
+|-------|-----------|--------|----------|-------------|-----------|
+| 1 | `@sub_skill` graph node | compile-time | same-process | static composition ("phase A always calls skill X") | [graph.md](../reference/dsl/graph.md) |
+| 2 | `run_skill` Control IR op | LLM-runtime | same-process | dynamic sub-skill choice ("phase decides which sub-skill") | [control-ir.md](../reference/runtime/control-ir.md#run_skill) |
+| 3 | `delegate_to_agent` | runtime + topology | same-process | specialist hand-off ("research agent → writer agent") | [topology.md](topology.md) |
+| 4 | `reyn mcp serve` | runtime | external client | exposing agent fleet to Claude Code, Cursor, or any MCP-aware client | [mcp.md](mcp.md) |
+
+### What stays the same across all four layers
+
+- **P4 — constrained candidate set.** At every layer the LLM picks from an OS-curated set: skills it owns, agents reachable via topology, or tools the MCP server exposes. No layer lets the LLM invent agents or skills not already in the catalogue.
+- **P6 — events for every transition.** Every layer emits structured events on entry, completion, and failure. Cross-layer chains are reconstructable by `grep <chain_id>` across each agent's `events.jsonl`. The event log is the single audit channel.
+- **Permission gating.** File, MCP, shell, and web permissions are checked at the OS level regardless of which layer triggered the call. A Layer 3 delegated call does not bypass permission rules, and a Layer 2 sub-skill must declare its own permissions.
+- **Workspace isolation.** Each layer respects skill-scoped workspace boundaries. A sub-skill invoked via Layer 1 or 2 reads only the inputs it declares.
+
+### When to pick which layer
+
+- "I always need step Y inside skill X" → **Layer 1** (`@sub_skill` graph node)
+- "Skill X needs to call one of N sub-skills depending on input" → **Layer 2** (`run_skill` Control IR op)
+- "Different specialist roles, each with their own skill catalogue, talking to each other" → **Layer 3** (`delegate_to_agent`)
+- "Outside MCP-aware tools (Claude Code, Cursor, OpenAI Agents SDK, etc.) need to call my agents" → **Layer 4** (`reyn mcp serve`)
+
 ## What is an agent?
 
 An agent is a directory at `.reyn/agents/<name>/` plus an in-memory ChatSession the runtime spins up on demand:

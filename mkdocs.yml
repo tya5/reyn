@@ -165,6 +165,7 @@ nav:
       - concepts/plan-mode.md
       - concepts/preprocessor.md
       - concepts/postprocessor.md
+      - concepts/skill-design-patterns.md
       - concepts/skill-resume.md
       - Agent engineering — seven lenses:
           - concepts/agent-engineering/index.md
