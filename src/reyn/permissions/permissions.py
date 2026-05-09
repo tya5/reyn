@@ -129,6 +129,9 @@ class PermissionDecl:
     # AND the server must pass project-wide checks. "all" sentinel is
     # normalized to None by the loader before constructing PermissionDecl.
     allowed_mcp: list[str] | None = None
+    # ADR-0029: install-time gating. False = skill/agent did not declare install
+    # intent; require_mcp_install() will reject immediately without prompting.
+    mcp_install: bool = False
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -183,6 +186,7 @@ class PermissionDecl:
             file_read=cls._parse_path_list(d.get("file.read")),
             file_write=cls._parse_path_list(d.get("file.write")),
             python=cls._parse_python_list(d.get("python")),
+            mcp_install=bool(d.get("mcp_install", False)),
         )
 
 
@@ -254,6 +258,20 @@ class PermissionResolver:
             if val == "allow":
                 return True
             if isinstance(val, dict) and val.get(sub) == "allow":
+                return True
+        return False
+
+    def _is_config_denied(self, key: str) -> bool:
+        """Return True when config explicitly sets `key` (or a parent key) to 'deny'."""
+        if self._config.get(key) == "deny":
+            return True
+        dot = key.find(".")
+        if dot != -1:
+            top, sub = key[:dot], key[dot + 1:]
+            val = self._config.get(top)
+            if val == "deny":
+                return True
+            if isinstance(val, dict) and val.get(sub) == "deny":
                 return True
         return False
 
@@ -476,6 +494,19 @@ class PermissionResolver:
                     f"to enable trusted-mode Python preprocessor steps."
                 )
 
+        # ADR-0029: warn when skill declares mcp_install but config denies it.
+        # This is a pre-flight warning, not a hard-fail — the actual gate runs
+        # at require_mcp_install() call time. Emit a visible warning so the
+        # operator learns about the conflict before execution reaches install ops.
+        if decl.mcp_install and self._is_config_denied("mcp_install"):
+            import warnings
+            warnings.warn(
+                f"Skill '{skill_name}' declares mcp_install permission but "
+                f"config has permissions.mcp_install: deny. "
+                f"Any mcp_install operation will be rejected at runtime.",
+                stacklevel=2,
+            )
+
         if not (write_requests or read_requests or python_requests):
             return
 
@@ -621,6 +652,49 @@ class PermissionResolver:
             )
         if not await self._approve(f"mcp.{server}", f"MCP server: {server!r}", bus):
             raise PermissionError(f"MCP server {server!r} access denied")
+
+    async def require_mcp_install(
+        self, decl: PermissionDecl, server_id: str, bus: InterventionBus,
+    ) -> None:
+        """Gate MCP server installation (ADR-0029).
+
+        Three-step resolution:
+        1. Skill/agent must declare `mcp_install: true` in its permissions block.
+           If not declared, raise immediately — the skill has no install intent.
+        2. Config (any scope tier) may hard-allow or hard-deny. `deny` → raise.
+           `allow` → pass through. Otherwise fall through to interactive prompt.
+        3. Interactive prompt (or auto-approve via REYN_MCP_INSTALL_AUTO_APPROVE).
+           Approval key `mcp_install:<server_id>` is persisted to approvals.yaml.
+        """
+        import os
+
+        # Step 1 — decl guard
+        if not decl.mcp_install:
+            raise PermissionError(
+                f"MCP server install of {server_id!r} not declared in skill permissions. "
+                f"Add `permissions:\\n  mcp_install: true` to the skill.md frontmatter."
+            )
+
+        # Step 2 — config deny/allow
+        if self._is_config_denied("mcp_install"):
+            raise PermissionError(
+                f"MCP server install of {server_id!r} denied by config "
+                f"(permissions.mcp_install: deny)."
+            )
+        if self._is_config_approved("mcp_install"):
+            return
+
+        # Step 3 — CI escape hatch or interactive prompt
+        approval_key = f"mcp_install:{server_id}"
+
+        if os.environ.get("REYN_MCP_INSTALL_AUTO_APPROVE") == "1":
+            self._persist(approval_key, True)
+            return
+
+        if not await self._approve(approval_key, f"install MCP server: {server_id!r}", bus):
+            raise PermissionError(
+                f"MCP server install of {server_id!r} denied by user."
+            )
 
     async def require_python(
         self, decl: PermissionDecl, module: str, function: str,
