@@ -372,6 +372,15 @@ close as a natural side effect of migration: adding `phase=allow` in the
 gate and wiring the handler to the phase dispatch path is the entire gap
 closure. No separate PRs needed.
 
+**Migration semantics note.** Capabilities #3 (file ops),
+#4 (mcp ops), #9 (memory ops), #13 (catalog ops) involve
+coarse-to-fine name unbundling on the phase side. Each unbundling
+forces a decision on Open Questions #6 (canonical naming) and #7
+(`allowed_ops` migration). The first such migration (= file ops,
+step 3) is the deciding wave; recommendation defaults from those
+Open Questions are applied unless the wave surfaces conflicting
+requirements.
+
 ### Phase M4: Cleanup (~2-3 days)
 
 - Remove the `router_tools.py` `ToolSpec` list and all inline tool dict
@@ -404,6 +413,7 @@ closure. No separate PRs needed.
 | ToolContext design mismatch | medium | high (showstopper) | M2 POC catches early; explicit stop signal; fallback to Alternative A documented |
 | Permission resolver path change | low-medium | medium | M1 keeps `PermissionResolver` unchanged; `ToolContext` delegates the same way `OpContext` does today |
 | Migration coexistence breakage | high | medium-high | every commit must pass the full test suite; capability migrations are independent and can be reverted individually |
+| Existing skill `allowed_ops` migration | high | medium | hybrid prefix-wildcard + deprecation warning preserves backward compat; explicit migration deferred to a later minor release |
 | Test count growth | low | low | ~60 new Tier 2 invariants across 13 capabilities (approximately 5 per capability); expected and proportionate |
 | Showstopper at M2 | 10-15% estimate | high | explicit stop signal; invested M1 work has documentation value (registry types + adapter shims) regardless of M2 outcome |
 | Gate misconfiguration for Type B asymmetries | low | medium | Tier 2 invariant asserts that `shell`, `lint`, `ask_user` have `router=deny`; `delegate_to_agent`, `plan`, `reyn_src_*` have `phase=deny` |
@@ -463,6 +473,65 @@ requires doc-rendering logic in the registry or a separate script, and the
 payoff depends on documentation maintenance discipline that should be
 established with the first few manually-maintained entries. Defer to an M5+
 enhancement after the migration stabilizes. Resolve post-M4.
+
+### 6. Naming canonicalization
+
+**Question.** Each capability has divergent names across surfaces today
+(= `read_file` router tool vs `file` op + `action: read` phase op). The
+unified ToolDefinition requires ONE canonical name. How is it chosen?
+
+**Options.**
+- (a) Adopt router-side names as canonical (= `read_file`, `write_file`,
+  `list_directory`, `delete_file`, `list_mcp_servers`, etc.). Phase-side
+  coarse-grained ops (= `file` with action) get unbundled into
+  fine-grained ToolDefinitions. Existing skill phases referring to
+  `file` op need migration.
+- (b) Adopt phase-side names as canonical (= `file` op with `action`,
+  `mcp` op with polymorphic args). Router-side fine-grained tools get
+  re-exposed as polymorphic tools with action argument. LLM affordance
+  on router side may degrade (= function calling convention prefers
+  one-tool-one-purpose).
+- (c) Logical-capability layer with surface-specific name aliases.
+  ToolDefinition holds a `logical_name` plus per-surface `aliases`.
+  Existing surface names preserved. Doctrine-level "1 ToolDefinition =
+  1 capability" weakened.
+
+**Recommendation.** Option (a) — adopt router-side fine-grained names.
+Reasoning: (i) function calling convention prefers fine-grained tools
+for LLM affordance; (ii) Type C closure naturally adopts fine-grained
+phase ops; (iii) `allowed_ops: [file_read, file_write]` is more
+expressive than `allowed_ops: [file]` for skill-author intent.
+
+**Resolution phase.** M2 POC selects `web_search` which has a 1:1 name
+match across surfaces — does not exercise this question. M3 first
+file-op migration (= step #3 in capability table) is the resolution
+trigger; ADR amendment recording the choice + migration semantics
+required before that step.
+
+### 7. `Phase.allowed_ops` semantic migration
+
+**Question.** Today `Phase.allowed_ops: list[str]` lists op kinds at
+coarse granularity (= `["file", "ask_user"]` is the default).
+Migration to fine-grained ToolDefinitions (= 4 file_* tools instead of
+one `file` op) breaks this semantic.
+
+**Options.**
+- (a) Prefix-wildcard interpretation: `allowed_ops: [file]` matches
+  `file_*` tool prefix. Backward compat without skill-author action.
+- (b) Explicit migration: rewrite all stdlib skills' `allowed_ops` to
+  enumerate the fine-grained capabilities. ~12 stdlib skills × phases
+  to update. Cleaner long-term but high migration cost.
+- (c) Hybrid: prefix-wildcard preserved for one minor release, with
+  deprecation warning emitted at lint time when a coarse-grained name
+  is used; explicit form required from version N+1.
+
+**Recommendation.** Option (c) — hybrid with deprecation. Preserves
+backward compat without locking the project into permanent ambiguity.
+The deprecation message points skill authors at the migration path.
+
+**Resolution phase.** Same trigger as Question #6 — M3 first
+file-op migration. Lint message wording + deprecation timeline
+recorded in ADR amendment at that point.
 
 ---
 
