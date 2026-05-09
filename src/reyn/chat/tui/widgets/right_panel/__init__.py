@@ -797,7 +797,7 @@ class RightPanel(Widget):
         if not text:
             self._copy_status(f"(nothing to copy from {label})", error=True)
             return
-        from .._clipboard import copy_to_clipboard
+        from ..._clipboard import copy_to_clipboard
         ok, tool = copy_to_clipboard(text)
         if ok:
             self._copy_status(
