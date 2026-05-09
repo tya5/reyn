@@ -353,6 +353,10 @@ def _plans_for_agent(registry: "AgentRegistry", name: str) -> list[dict]:
         is_running = task is not None and not task.done()
         out.append({
             "plan_id": plan_id[:8],
+            # Full plan_id retained alongside the 8-char display form so
+            # the orchestrator can build the "running set" used to keep
+            # recent_plans from double-listing in-flight runs.
+            "plan_id_full": plan_id,
             "goal": goal,
             "done": len(step_results),
             "failed": len(step_failures),
@@ -555,7 +559,14 @@ def render_agents(
         # skill/plan is running. Skipped silently when project_root is
         # missing (= test harnesses) or both lists are empty.
         running_run_ids = {rid for rid, _info in agent_skills}
-        running_plan_ids = {p["plan_id"] for p in agent_plans}
+        # Full plan_ids — must match the FULL id we'll see in event
+        # ``data.plan_id`` so ``_recent_plans_for_agent`` can dedup
+        # against currently-running plans correctly. Earlier code
+        # used ``p["plan_id"]`` (= 8-char display prefix) which never
+        # matched, leaving running plans visible in both sections.
+        running_plan_ids = {
+            p.get("plan_id_full", p["plan_id"]) for p in agent_plans
+        }
         # Plan ids in agent_plans are 8-char prefixes; expand to a guard
         # set that also catches full-length matches against the same
         # prefix space.
