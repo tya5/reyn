@@ -52,6 +52,25 @@ def resolve_skill_path(name: str) -> tuple[Path, Path]:
     raise SkillNotFoundError(name, [str(d / "skill.md") for d, _ in candidates])
 
 
+def is_stdlib_skill(skill_dir: Path) -> bool:
+    """Return True if *skill_dir* lives inside the bundled stdlib tree.
+
+    Used by CLI entry points to decide whether to auto-allow trusted Python
+    preprocessor steps: stdlib skills are shipped by the Reyn team and are
+    therefore trusted by construction — the user cannot inject code into them.
+    User-provided skills (reyn/local/, reyn/project/) still require the
+    --allow-untrusted-python flag.
+
+    The check is purely path-based (no skill name string), keeping the OS
+    skill-agnostic in accordance with P7.
+    """
+    try:
+        skill_dir.resolve().relative_to(stdlib_root().resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def eval_md_path_for(name: str) -> Path:
     """Return the canonical eval.md path for a skill name.
 

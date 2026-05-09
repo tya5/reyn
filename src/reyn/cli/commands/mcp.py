@@ -489,7 +489,7 @@ def run_install(args: argparse.Namespace) -> None:
     from reyn.llm.llm import run_async as _run_async
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
-    from reyn.skill.skill_paths import SkillNotFoundError
+    from reyn.skill.skill_paths import SkillNotFoundError, is_stdlib_skill
     from reyn.skill.skill_paths import resolve_skill_path as _resolve_skill_path_raw
     from reyn.user_intervention import StdinInterventionBus
 
@@ -523,11 +523,15 @@ def run_install(args: argparse.Namespace) -> None:
     }
 
     perm_config = getattr(config, "permissions", {}) or {}
+    # Stdlib skills ship with the Reyn team's code — their trusted python steps
+    # are safe by construction. Auto-allow so users are not blocked by the
+    # --allow-untrusted-python gate that applies only to user-supplied skills.
+    auto_trust_python = is_stdlib_skill(skill_dir)
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
         project_root=project_root,
         interactive=not non_interactive and sys.stdin.isatty(),
-        trusted_python_allowed=False,
+        trusted_python_allowed=auto_trust_python,
     )
     project_context = load_project_context(config, project_root)
 

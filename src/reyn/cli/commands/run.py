@@ -94,6 +94,12 @@ def run(args: argparse.Namespace) -> None:
     limits = session.limits_for(args)
 
     trusted_python = bool(getattr(args, "allow_untrusted_python", False))
+    # Stdlib skills ship with the Reyn team's code and are trusted by
+    # construction — auto-allow their trusted python steps so users don't need
+    # --allow-untrusted-python when running e.g. `reyn run mcp_install`.
+    if not trusted_python and loaded.skill_md is not None:
+        from reyn.skill.skill_paths import is_stdlib_skill
+        trusted_python = is_stdlib_skill(loaded.skill_md.parent)
     perm_resolver = _build_permission_resolver(
         session.config, shell_allowed, trusted_python=trusted_python,
     )
