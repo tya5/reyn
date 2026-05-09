@@ -156,6 +156,7 @@ nav:
       - concepts/care-boundary.md
       - concepts/architecture.md
       - concepts/phase-vs-skill-vs-os.md
+      - concepts/llm-invocation-surfaces.md
       - concepts/llm-as-decision-engine.md
       - concepts/workspace.md
       - concepts/events.md

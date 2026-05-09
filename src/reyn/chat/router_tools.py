@@ -3,7 +3,7 @@
 Public API
 ----------
 build_tools(available_skills, available_agents, *, file_permissions, mcp_servers)
-    Returns 11–18 tools in fixed order for litellm.acompletion.
+    Returns 14–23 tools in fixed order for litellm.acompletion.
 
 Gemini-safe schema rules enforced throughout:
 - No oneOf / anyOf / additionalProperties / format keys
@@ -168,7 +168,7 @@ def build_tools(
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
-    Returns 11–18 tools in fixed order (Anthropic prompt cache compatibility).
+    Returns 14–23 tools in fixed order (Anthropic prompt cache compatibility).
     Tool order matches the plan's canonical ordering:
       A1 list_skills, A2 describe_skill, A3 list_agents, A4 describe_agent,
       A5 list_memory, A6 read_memory_body,
