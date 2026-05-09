@@ -29,9 +29,9 @@ _delegate_to_schema literal in router_tools.py.
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
     from reyn.tools.types import RouterCallerState

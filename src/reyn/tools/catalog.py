@@ -42,8 +42,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── list_skills ───────────────────────────────────────────────────────────────
 

@@ -5,16 +5,16 @@ exposed to both router-style (function calling) and phase-style
 Per ADR-0026 (Status: Proposed). M1 lays the infrastructure;
 capability migrations land in M2/M3.
 """
+from reyn.tools.registry import ToolRegistry
 from reyn.tools.types import (
+    PhaseCallerState,
+    RouterCallerState,
+    ToolContext,
     ToolDefinition,
     ToolGates,
-    ToolContext,
-    RouterCallerState,
-    PhaseCallerState,
     ToolHandler,
     ToolResult,
 )
-from reyn.tools.registry import ToolRegistry
 
 __all__ = [
     "ToolDefinition",
@@ -39,32 +39,33 @@ def get_default_registry() -> ToolRegistry:
     callers may cache the result if needed).
     """
     # Lazy import to avoid circular dependencies at package-init time.
-    from reyn.tools.web_search import WEB_SEARCH
-    from reyn.tools.web_fetch import WEB_FETCH
-    from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
-    from reyn.tools.shell import SHELL
-    from reyn.tools.lint import LINT
     from reyn.tools.ask_user import ASK_USER
+    from reyn.tools.catalog import (
+        DESCRIBE_AGENT,
+        DESCRIBE_SKILL,
+        LIST_AGENTS,
+        LIST_SKILLS,
+    )
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
-    from reyn.tools.plan import PLAN
-    from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
+
     # Wave 2 additions (ADR-0026 M3 Wave 2)
-    from reyn.tools.file import READ_FILE, WRITE_FILE, DELETE_FILE, LIST_DIRECTORY, FILE_OP
+    from reyn.tools.file import DELETE_FILE, FILE_OP, LIST_DIRECTORY, READ_FILE, WRITE_FILE
+    from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
+    from reyn.tools.lint import LINT
     from reyn.tools.mcp import CALL_MCP_TOOL, LIST_MCP_SERVERS, LIST_MCP_TOOLS, MCP_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.memory import (
+        FORGET_MEMORY,
         LIST_MEMORY,
         READ_MEMORY_BODY,
-        REMEMBER_SHARED,
         REMEMBER_AGENT,
-        FORGET_MEMORY,
+        REMEMBER_SHARED,
     )
-    from reyn.tools.catalog import (
-        LIST_SKILLS,
-        DESCRIBE_SKILL,
-        LIST_AGENTS,
-        DESCRIBE_AGENT,
-    )
+    from reyn.tools.plan import PLAN
+    from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
+    from reyn.tools.shell import SHELL
+    from reyn.tools.web_fetch import WEB_FETCH
+    from reyn.tools.web_search import WEB_SEARCH
 
     registry = ToolRegistry()
     # ── Both-surface capabilities (gates.router=allow, gates.phase=allow) ──

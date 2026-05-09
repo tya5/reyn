@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _ASK_USER_DESCRIPTION = (
     "Pause the current phase and ask the user a clarifying question. "

@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Description must be byte-identical to the current router_tools.py
 # ToolSpec.description for web_fetch (= the literal from the E2 block).
@@ -46,10 +45,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     the body of handle_web_fetch may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.web import handle_web_fetch
-    from reyn.schemas.models import WebFetchIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.web import handle_web_fetch
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import WebFetchIROp
 
     # Build a transient WebFetchIROp from args (= reuse Pydantic
     # validation that the existing op handler expects).

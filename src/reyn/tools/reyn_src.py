@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Description must be byte-identical to the current router_tools.py
 # ToolSpec.description for reyn_src_list (lines 776-783). Copied verbatim.

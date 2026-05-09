@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Description derived from ShellIROp docstring + control-ir.md ## shell section.
 # Shell is phase-only; no legacy router ToolSpec to match byte-for-byte.
@@ -43,10 +42,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     the body of handle may be inlined here.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.shell import handle as handle_shell
-    from reyn.schemas.models import ShellIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.shell import handle as handle_shell
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import ShellIROp
 
     # Build a transient ShellIROp from args (= reuse Pydantic validation
     # that the existing op handler expects).

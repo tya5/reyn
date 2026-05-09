@@ -12,8 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Description must be byte-identical to the current router_tools.py
 # ToolSpec.description for web_search (= the operator-hint extended
@@ -50,10 +49,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     body of handle_web_search may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.web import handle_web_search
-    from reyn.schemas.models import WebSearchIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.web import handle_web_search
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import WebSearchIROp
 
     # Build a transient WebSearchIROp from args (= reuse Pydantic
     # validation that the existing op handler expects).

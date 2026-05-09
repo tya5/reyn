@@ -317,7 +317,7 @@ class ControlIRExecutor:
         # Build the registry once per execute() call (cheap; cached if needed).
         from reyn.tools import get_default_registry
         from reyn.tools.dispatch import invoke_tool
-        from reyn.tools.types import ToolContext, PhaseCallerState
+        from reyn.tools.types import PhaseCallerState, ToolContext
         _registry = get_default_registry()
 
         # Lazy import to avoid module-init cycles.

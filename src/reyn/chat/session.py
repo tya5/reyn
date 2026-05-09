@@ -23,7 +23,14 @@ from reyn.budget.budget import (
     format_warn_message,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, MemoryService, RouterHostAdapter, SnapshotJournal
+from reyn.chat.services import (
+    BudgetGateway,
+    ChainManager,
+    InterventionRegistry,
+    MemoryService,
+    RouterHostAdapter,
+    SnapshotJournal,
+)
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter

@@ -45,8 +45,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── Description constants (byte-identical to router_tools.py D1/D2/D3) ────────
 
@@ -172,10 +171,10 @@ async def _handle_call_mcp_tool(
 
     # Phase path: build MCPIROp and dispatch through op_runtime.
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.mcp import handle as mcp_handle
-    from reyn.schemas.models import MCPIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.mcp import handle as mcp_handle
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import MCPIROp
 
     server = str(args["server"])
     tool = str(args["tool"])
@@ -318,10 +317,10 @@ _MCP_OP_DESCRIPTION = (
 
 async def _handle_mcp_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Coarse handler for the phase-side ``mcp`` op.  Delegates to op_runtime."""
-    from reyn.op_runtime.mcp import handle as mcp_handle
-    from reyn.schemas.models import MCPIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.mcp import handle as mcp_handle
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import MCPIROp
 
     op = MCPIROp(kind="mcp", **{k: v for k, v in args.items() if k != "kind"})
 

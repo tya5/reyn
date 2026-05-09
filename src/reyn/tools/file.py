@@ -20,8 +20,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # Descriptions must be byte-identical to the ToolSpec.description literals in
 # router_tools.py lines ~546-614 (C1-C4 block). Copied verbatim.

@@ -37,8 +37,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 # ── Description literals — byte-identical to router_tools.py ToolSpec literals ─
 

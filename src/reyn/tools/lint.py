@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
-
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 _LINT_DESCRIPTION = (
     "Run the DSL linter on a skill directory and return "
@@ -38,10 +37,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     the body of lint.handle may be inlined here in M4 cleanup.
     """
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.lint import handle as handle_lint
-    from reyn.schemas.models import LintIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.lint import handle as handle_lint
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import LintIROp
 
     # Build a transient LintIROp from args (= reuse Pydantic
     # validation that the existing op handler expects).

@@ -26,9 +26,9 @@ Per-call enum enrichment:
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Mapping
 
-from reyn.tools.types import ToolDefinition, ToolGates, ToolContext, ToolResult
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
 if TYPE_CHECKING:
     from reyn.tools.types import RouterCallerState
@@ -135,10 +135,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
         )
 
     # Lazy import to avoid circular dependency at registry-init time.
-    from reyn.op_runtime.run_skill import handle as handle_run_skill
-    from reyn.schemas.models import RunSkillIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.run_skill import handle as handle_run_skill
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import RunSkillIROp
 
     # Build a transient RunSkillIROp from args (= reuse existing handler
     # expectation; model/workspace/output_language fields default).
@@ -221,10 +221,10 @@ _RUN_SKILL_DESCRIPTION = (
 
 async def _handle_run_skill_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Coarse handler for phase-side ``run_skill`` op.  Delegates to op_runtime."""
-    from reyn.op_runtime.run_skill import handle as handle_run_skill
-    from reyn.schemas.models import RunSkillIROp
     from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.run_skill import handle as handle_run_skill
     from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import RunSkillIROp
 
     op = RunSkillIROp(kind="run_skill", **{k: v for k, v in args.items() if k != "kind"})
 
