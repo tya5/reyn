@@ -34,16 +34,18 @@ dogfood で確認できた、 wholesale 再利用可能な実装:
 
 ## 2. Direction
 
-### 4 subcommand 構成
+### subcommand 構成 (= phase 1)
 
 ```
 reyn mcp search "<query>"            # 候補 discovery (= mcp_search skill wrapper)
 reyn mcp install <server_id>         # registry fetch + reyn.yaml 追記 (= 新 mcp_install skill + IR op)
 reyn mcp list                        # 設定済み server 一覧 + status
 reyn mcp remove <name>               # reyn.yaml から削除
+reyn mcp set-secret <server> <KEY>[=<VALUE>]    # secret 設定・rotate (value 省略で prompt)
+reyn mcp clear-secret <server> [<KEY>]          # secret 削除 (KEY 省略で全削除)
 ```
 
-`reyn mcp serve` (= 既存 inbound mode) はそのまま残す。 namespace 共存。
+`reyn mcp serve` (= 既存 inbound mode) はそのまま残す。 namespace 共存。 phase 2 candidate: `reyn mcp env set/unset` (= 非 secret env、 demand surface してから追加)。
 
 ### 各 subcommand の設計
 
@@ -140,13 +142,13 @@ $ reyn chat   # 即座に動く
 interactive prompt で得た値を `~/.reyn/secrets.env` (chmod 600) に dotenv 形式で保存、 Reyn 起動時に load して `os.environ` に inject。 既存 `${VAR}` interpolation がそのまま再利用可能。
 
 ```
-# ~/.reyn/secrets.env (= user 手で編集 OK、 自動更新は install / set-env から)
+# ~/.reyn/secrets.env (= user 手で編集 OK、 自動更新は install / set-secret から)
 GITHUB_PERSONAL_ACCESS_TOKEN=ghp_xxxxxxxx
 SLACK_BOT_TOKEN=xoxb-yyyyyyyy
 SLACK_TEAM_ID=Tzzzzzzzz
 ```
 
-別途 `reyn mcp set-env <server> <KEY>=<VALUE>` (or value 省略で interactive) を補助 subcommand として追加 (= D: 別 subcommand、 既存 server の credential 後付け / rotate 用途)。
+別途 `reyn mcp set-secret <server> <KEY>=<VALUE>` (or value 省略で interactive) を補助 subcommand として追加 (= D: 別 subcommand、 既存 server の credential 後付け / rotate 用途)。
 
 ### Phase 2 以降の拡張 path
 
@@ -157,7 +159,7 @@ SLACK_TEAM_ID=Tzzzzzzzz
 ### 不採用案 (= 案 C / D 単独)
 
 - **案 C 単独 (= post-install message のみ)**: 「reyn chat で今すぐ使えます」 messaging が嘘になり OSS first-touch friction が悪化、 主路線として採用しない。 ただし credentials 不足時の **fallback message** として常に出す (= layer 2 で prompt 入力なしで進められた場合)
-- **案 D 単独 (= install と set-env の 2 step 必須)**: cognitive load 高い、 「install したのに動かない」 で user 離脱。 ただし phase 1 で `reyn mcp set-env` を補助として併設 (= 既存 server の rotate / 後付け)
+- **案 D 単独 (= install と set-secret の 2 step 必須)**: cognitive load 高い、 「install したのに動かない」 で user 離脱。 ただし phase 1 で `reyn mcp set-secret` を補助として併設 (= 既存 server の rotate / 後付け)
 
 ---
 
@@ -197,7 +199,7 @@ Reyn 既存の config 階層 (`~/.reyn/config.yaml` / `<project>/reyn.yaml` / `<
 
 ### △ トレードオフ
 
-- **CLI surface 増加**: `reyn mcp` 配下に 5 subcommand (= search / install / list / remove / set-env) + 既存 serve、 cognitive load 増。 mitigation: docs Quick start で「3 commands で足りる: install / list / remove」 と明示
+- **CLI surface 増加**: `reyn mcp` 配下に 6 subcommand (= search / install / list / remove / set-secret / clear-secret) + 既存 serve、 cognitive load 増。 mitigation: docs Quick start で「3 commands で足りる: install / list / remove、 set-secret は token rotate 時のみ」 と明示
 - **registry preview API 依存**: GA 前 schema 変更 risk、 cache layer + fallback で吸収するが breaking change が来たら code 修正必要
 - **subprocess lifecycle 改善は scope 外**: 既存 `list_mcp_tools` cache なし問題 / phase-side deferred / subprocess close 残留可能性 等は別 wave (= ADR-0026 follow-up or 専用 wave)
 - **OAuth は phase 2 deferred**: stdio + PAT が dominant な現状で acceptable trade-off だが、 remote / HTTP server 比率が上がると優先度上昇
@@ -209,7 +211,7 @@ Reyn 既存の config 階層 (`~/.reyn/config.yaml` / `<project>/reyn.yaml` / `<
 1. **`mcp_install` IR op の P3 / P5 整合確認**: `reyn.yaml` 書き込みは workspace 外 (= `<project>` root)、 OS が直接担う pattern が ADR-0026 ToolDefinition と整合するか detail 確認
 2. **既存 `mcp_search` skill の置換 vs 拡張**: GitHub HTML scraping → registry API 切替時、 既存 skill を上書き update するか、 別名 (`mcp_registry_search`) で並走させて段階移行するか
 3. **dotenv loader の load timing**: `~/.reyn/secrets.env` を Reyn 起動時に load するか、 op dispatch 時に lazy load するか。 既存 `${VAR}` resolve が op dispatch 時なので latter が整合
-4. **`reyn mcp set-env <server> KEY=VALUE`**: shell history leak vs prompt の trade-off、 value 省略時 prompt fallback で hybrid が clean
+4. **非 secret な MCP env (= `LOG_LEVEL` 等の rare case)**: phase 1 では yaml 直編集で対応、 demand surface したら phase 2 で `reyn mcp env set/unset` 追加。 docs に明示が必要
 5. **`--scope` default の確定**: local default (= ad-hoc 試行) vs project default (= team 共有想定) の判断、 dogfood 第 2 round で測定推奨
 
 ---
