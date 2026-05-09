@@ -55,10 +55,15 @@ from pydantic import BaseModel
 
 from reyn.schemas.models import (
     AskUserIROp,
+    EmbedIROp,
     FileIROp,
+    IndexDropIROp,
+    IndexQueryIROp,
+    IndexWriteIROp,
     LintIROp,
     MCPInstallIROp,
     MCPIROp,
+    RecallIROp,
     RunSkillIROp,
     ShellIROp,
     WebFetchIROp,
@@ -111,6 +116,12 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "web_fetch":   WebFetchIROp,
     "web_search":  WebSearchIROp,
     "mcp_install": MCPInstallIROp,
+    # ADR-0033: RAG-extensible OS — embed / index_* / recall ops
+    "embed":       EmbedIROp,
+    "index_write": IndexWriteIROp,
+    "index_query": IndexQueryIROp,
+    "recall":      RecallIROp,
+    "index_drop":  IndexDropIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -142,6 +153,18 @@ OP_PURITY: dict[str, OpPurity] = {
     "ask_user":    OpPurity.side_effect,
     # MCP server install: writes config + secrets, runs registry fetch.
     "mcp_install": OpPurity.side_effect,
+    # ADR-0033 RAG ops:
+    # - embed: external API call (LiteLLM passthrough), token cost.
+    "embed":       OpPurity.external,
+    # - index_write: writes to backend SQLite / future plugins.
+    "index_write": OpPurity.side_effect,
+    # - index_query: read-only, depends on backend state (= world).
+    "index_query": OpPurity.world,
+    # - recall: macro op dispatching embed + index_query, treated as external
+    #   (sub-ops emit their own events for trace fidelity).
+    "recall":      OpPurity.external,
+    # - index_drop: deletes backend collection + manifest entry.
+    "index_drop":  OpPurity.side_effect,
 }
 
 

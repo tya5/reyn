@@ -297,13 +297,116 @@ class MCPInstallIROp(BaseModel):
     source: str | None = None                  # --source specifier (skips registry fetch)
 
 
+# ---------------------------------------------------------------------------
+# RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
+# ---------------------------------------------------------------------------
+# Phase 1 of FP-0002 / ADR-0033. ChunkMetadata is the OS-level data carrier
+# passed between embed / index_write / index_query / recall. The `source_type`
+# value is NOT interpreted by OS code (= P7); chunker modules and skills
+# attach domain-specific labels and read them back via filters.
+# ---------------------------------------------------------------------------
+
+
+class ChunkMetadata(BaseModel):
+    """Per-chunk metadata carried between RAG ops (= ADR-0033 §2.1)."""
+    source_path: str                       # generic — file path or memory slug
+    source_type: str = "generic"           # OS does not interpret this value (P7)
+    content_hash: str                      # change detection / dedup
+    embedding_model: str                   # vector-space compatibility check
+    chunk_index: int = 0                   # position within source
+    size_tokens: int = 0                   # context budget management
+    parent_context: str | None = None      # heading / class / function name
+    extra: dict[str, Any] = Field(default_factory=dict)  # skill-defined fields
+
+
+class EmbedIROp(BaseModel):
+    """Convert texts to embedding vectors (ADR-0033 §2.1).
+
+    Hybrid input form:
+      - Form A (inline): `texts: list[str]`, returns `vectors` inline.
+      - Form B (artifact reference): `input_artifact` JSONL path +
+        `output_artifact` JSONL path. Op handler streams input, batches
+        embed calls, writes vectors back to output_artifact. Idempotent
+        re-run via output_artifact `content_hash` skip.
+    Exactly one of `texts` / `input_artifact` must be set.
+    """
+    kind: Literal["embed"]
+    # Form A: inline (= small payload, e.g. recall query embedding)
+    texts: list[str] | None = None
+    # Form B: artifact reference (= large payload, e.g. indexing 100K chunks)
+    input_artifact: str | None = None      # workspace-relative JSONL path
+    text_field: str = "text"               # field in JSONL to embed
+    output_artifact: str | None = None     # workspace-relative JSONL path
+    # Embedding model spec — resolved via `reyn.yaml embedding.classes` map
+    # or passed directly (e.g. "openai/text-embedding-3-small").
+    model: str = "standard"
+
+
+class IndexWriteIROp(BaseModel):
+    """Write chunks (with vectors) to an index backend (ADR-0033 §2.1).
+
+    Hybrid input form:
+      - Form A (inline): `chunks` list of {text, vector, metadata}.
+      - Form B (artifact reference): `input_artifact` JSONL path with
+        text + vector + metadata zipped per line.
+    Exactly one of `chunks` / `input_artifact` must be set.
+    """
+    kind: Literal["index_write"]
+    source: str                            # logical source name
+    chunks: list[dict[str, Any]] | None = None        # Form A
+    input_artifact: str | None = None                  # Form B
+    mode: Literal["append", "replace"] = "append"
+    # Optional override; defaults to ChunkMetadata.embedding_model in chunks
+    embedding_model: str | None = None
+
+
+class IndexQueryIROp(BaseModel):
+    """Semantic search over a single source (ADR-0033 §2.1).
+
+    Inline-only input/output (top-K is small, ~30KB). Falls back to catalog
+    enumeration when `query_vector` is None and the source is unindexed.
+    """
+    kind: Literal["index_query"]
+    source: str                            # logical source name
+    query_vector: list[float] | None = None  # None → enumerate fallback
+    top_k: int = 5
+    filters: dict[str, str] = Field(default_factory=dict)
+    fallback_size_cap: int = 4096          # tokens, enumerate fallback cap
+
+
+class RecallIROp(BaseModel):
+    """Macro op: embed query → iterate index_query → merge top-K (ADR-0033 §2.1).
+
+    Handler dispatches sub-ops via the OS dispatch path (= iterate op
+    precedent). LLM-callable via ToolDefinition `recall`.
+    """
+    kind: Literal["recall"]
+    query: str
+    sources: list[str]                     # required, no default
+    top_k: int = 5
+    filters: dict[str, str] = Field(default_factory=dict)
+    embedding_model: str = "standard"      # forwarded to embed sub-op
+
+
+class IndexDropIROp(BaseModel):
+    """Remove an indexed source entirely (ADR-0033 §2.1).
+
+    `permissions.index_drop: ask` default (= ADR-0029 mirror, destructive op
+    consent gate). LLM-callable via ToolDefinition `drop_source`.
+    """
+    kind: Literal["index_drop"]
+    source: str
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
-#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search, mcp_install.
+#   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
+#   mcp_install, embed, index_write, index_query, recall, index_drop.
 ControlIROp = Annotated[
     Union[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
+        EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
     ],
     Field(discriminator="kind"),
 ]

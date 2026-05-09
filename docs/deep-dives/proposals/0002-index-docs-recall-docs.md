@@ -1,8 +1,9 @@
 # FP-0002: index_docs / recall_docs — 統合ドキュメント検索スキル
 
-**Status**: proposed
+**Status**: in-progress (= ADR-0033 Proposed、 implementation wave 開始 2026-05-10)
 **Proposed**: 2026-05-09
 **Author**: Research session (eager-shaw-389d9d)
+**ADR**: [0033](../decisions/0033-rag-extensible-os.md) (= confirmed design pin)
 
 ---
 

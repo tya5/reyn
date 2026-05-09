@@ -85,6 +85,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
 | [0029](0029-mcp-install-permission.md) | `mcp_install` permission — install-time gating として permission system に追加 (Proposed) |
 | [0030](0030-universal-secret-handling.md) | Universal secret handling — `${VAR}` 全 yaml + `~/.reyn/secrets.env` + `reyn secret` CLI (Proposed) |
+| [0033](0033-rag-extensible-os.md) | RAG-extensible OS — `embed` / `index_*` / `recall` ops + `index_docs` stdlib + `IndexBackend` protocol (Proposed) |
 
 > Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は **`reyn chat` (= local + embedded Web UI server を session bind で同梱) + `reyn serve` (= explicit long-running server、 browser からアクセス)** の 2 commands。 業界慣行 (Ollama / vLLM / LangGraph) の `<tool> serve` pattern に整合、 remote TUI client は workspace location semantics の懸念で当面 scope 外 (= browser remote access で代替、 将来 concrete demand 出たら再判断)。 embedded thesis は `reyn chat` 内に温存。 実現性検討は未着手。
 
