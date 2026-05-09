@@ -284,18 +284,21 @@ async def _handle_list_memory(
 ) -> ToolResult:
     """Adapter for list_memory.
 
-    Reads the combined MEMORY.md index from the state dir and filters by
-    path. Index location: .reyn/memory/MEMORY.md (shared) and
-    .reyn/agents/memory/MEMORY.md (agent — fallback path; see design-revisit).
+    Router path (= production, ADR-0026 Phase 3.5-B-heavy): delegate to
+    ``ctx.router_state.list_memory_fn`` which is RouterLoop-bound to
+    ``RouterLoop._list_memory``.  That helper consumes
+    ``host.get_memory_index()`` (= the agent-aware combined index built
+    by the session layer), matching the legacy router branch behavior.
 
-    The router-side implementation (router_loop._list_memory) reads a single
-    combined index via host.get_memory_index(). That combined index is built
-    by the session layer and is not accessible via ToolContext. This adapter
-    reads the two layer indexes directly from the workspace filesystem.
-
-    Design-revisit (M4): ToolContext should carry a memory_index accessor or
-    MemoryService reference so both router and phase paths use identical data.
+    Fallback (= phase-side / test sites): read the layer indexes directly
+    from the workspace filesystem.  This path is NOT agent-aware and is
+    intended for non-router callers; the router production path always
+    populates list_memory_fn.
     """
+    rs = ctx.router_state
+    if rs is not None and rs.list_memory_fn is not None:
+        return rs.list_memory_fn(args.get("path", ""))
+
     path = args.get("path", "")
     state_dir = ctx.workspace.state_dir
 
@@ -362,9 +365,20 @@ async def _handle_read_memory_body(
 ) -> ToolResult:
     """Adapter for read_memory_body.
 
-    Reads the body file, strips the YAML frontmatter (= G12 attractor fix;
-    same logic as router_loop._read_memory_body), and returns clean text.
+    Router path: delegate to ``ctx.router_state.read_memory_body_fn``
+    (= RouterLoop._read_memory_body) which uses ``host.memory_path`` +
+    ``host.file_read`` for agent-aware file resolution.
+
+    Fallback: read the body file via ``ctx.workspace.read_file`` and
+    strip the YAML frontmatter (= same G12 attractor fix logic as the
+    router helper).
     """
+    rs = ctx.router_state
+    if rs is not None and rs.read_memory_body_fn is not None:
+        return await rs.read_memory_body_fn(
+            args.get("layer", ""), args.get("slug", ""),
+        )
+
     layer = args.get("layer", "")
     slug = args.get("slug", "")
 
@@ -393,10 +407,26 @@ async def _handle_remember(
 ) -> ToolResult:
     """Shared adapter body for remember_shared / remember_agent.
 
-    Writes frontmatter + body, then regenerates MEMORY.md. Mirrors
-    router_loop._remember / MemoryService.remember — duplication intentional
-    during M3 (see module docstring design-revisit note).
+    Router path: delegate to ``ctx.router_state.remember_fn``
+    (= RouterLoop._remember) which uses ``host.memory_path`` +
+    ``host.file_write`` + ``host.file_regenerate_index`` for atomic
+    write + index regen (= the same multi-step sequence the legacy
+    router branch performed).
+
+    Fallback: write frontmatter + body via ctx.workspace, then
+    regenerate MEMORY.md by scanning the layer dir.
     """
+    rs = ctx.router_state
+    if rs is not None and rs.remember_fn is not None:
+        return await rs.remember_fn(
+            layer=layer,
+            slug=args.get("slug", ""),
+            name=args.get("name", ""),
+            description=args.get("description", ""),
+            type=args.get("type", ""),
+            body=args.get("body", ""),
+        )
+
     slug = args.get("slug", "")
     name = args.get("name", "")
     description = args.get("description", "")
@@ -450,9 +480,18 @@ async def _handle_forget_memory(
 ) -> ToolResult:
     """Adapter for forget_memory.
 
-    Deletes the body file and regenerates the MEMORY.md index. Mirrors
-    router_loop._forget / MemoryService.forget.
+    Router path: delegate to ``ctx.router_state.forget_fn``
+    (= RouterLoop._forget) which uses ``host.memory_path`` +
+    ``host.file_delete`` + ``host.file_regenerate_index`` matching the
+    legacy router branch.
+
+    Fallback: delete the body file via ctx.workspace and regenerate the
+    layer's MEMORY.md.
     """
+    rs = ctx.router_state
+    if rs is not None and rs.forget_fn is not None:
+        return await rs.forget_fn(args.get("layer", ""), args.get("slug", ""))
+
     layer = args.get("layer", "")
     slug = args.get("slug", "")
 

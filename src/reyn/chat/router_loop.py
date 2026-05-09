@@ -741,6 +741,15 @@ class RouterLoop:
         # _normalise_router_tool_result unwraps list_mcp_servers and
         # list_mcp_tools dict envelopes back to bare list shape.
         "list_mcp_servers", "list_mcp_tools", "call_mcp_tool",
+        # Phase 3.5-B-heavy — memory cluster.  Handlers delegate via
+        # RouterCallerState.{list_memory_fn, read_memory_body_fn,
+        # remember_fn, forget_fn} bound to RouterLoop's private helpers
+        # which consume the agent-aware ``host.get_memory_index()`` /
+        # ``host.memory_path`` paths.  This preserves per-agent memory
+        # privacy that the registry handlers' filesystem-direct fallback
+        # cannot guarantee.
+        "list_memory", "read_memory_body",
+        "remember_shared", "remember_agent", "forget_memory",
     })
 
     def _build_router_caller_state(self) -> Any:
@@ -802,6 +811,15 @@ class RouterLoop:
             # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
             # multi-hop chain semantics.
             run_skill_fn=_run_skill_bound,
+            # Memory tool bridges (= for memory cluster handlers;
+            # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
+            # so registry handlers consume the same agent-aware
+            # ``host.get_memory_index()`` / ``host.memory_path`` /
+            # ``host.file_*`` paths the legacy router branches used.
+            list_memory_fn=self._list_memory,
+            read_memory_body_fn=self._read_memory_body,
+            remember_fn=self._remember,
+            forget_fn=self._forget,
             # Identity + cost + model context (forward-looking; consumed by
             # schema_enricher hooks and future activated handlers)
             chain_id=self.chain_id,
@@ -896,26 +914,14 @@ class RouterLoop:
         if name in self._REGISTRY_DISPATCH_TOOLS:
             return await self._invoke_via_registry(name, args)
 
-        # A. Discovery
-        if name == "list_memory":
-            return self._list_memory(args.get("path", ""))
-        if name == "read_memory_body":
-            return await self._read_memory_body(
-                args.get("layer", ""), args.get("slug", "")
-            )
-
-        # B. Action — invoke_skill via registry (Phase 3.5-B-light)
-        if name in ("remember_shared", "remember_agent"):
-            layer = "shared" if name == "remember_shared" else "agent"
-            return await self._remember(layer=layer, **args)
-        if name == "forget_memory":
-            return await self._forget(args["layer"], args["slug"])
-
-        # E + F (web + reyn_src) + G (plan) + B2 (delegate_to_agent) +
-        # A1-A4 (catalog) are dispatched via the unified registry — see
-        # _REGISTRY_DISPATCH_TOOLS at the top of this method (ADR-0026
-        # M4 Phase 3 step 2 + Phase 3.5-D). Their handlers live in
-        # src/reyn/tools/.
+        # All router tool clusters are now dispatched via the unified
+        # registry — see ``_REGISTRY_DISPATCH_TOOLS`` at the top of this
+        # method.  Phase 3 step 2 + Phase 3.5-D / A+C / B-light / B-mid /
+        # B-heavy migrations land here; the legacy if/elif tree was
+        # retained only for clusters whose adapter design needed
+        # per-tool review.  When that review surfaces a new cluster /
+        # capability not yet in the dispatch set, the new branch lands
+        # here as the legacy stop-gap until the adapter migrates.
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.

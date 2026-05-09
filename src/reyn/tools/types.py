@@ -113,6 +113,18 @@ class RouterCallerState:
     # directly.  Phase-side and test sites leave it None.
     host: Any = None
 
+    # Memory tool callbacks (= for memory cluster handlers; Phase 3.5-B-heavy).
+    # Bound by RouterLoop to its private ``_list_memory`` /
+    # ``_read_memory_body`` / ``_remember`` / ``_forget`` helpers so
+    # registry handlers consume the SAME parsed-index path the legacy
+    # router branches used (= host.get_memory_index() routed through
+    # the agent-aware session layer).  Without this, registry handlers
+    # would read MEMORY.md from a path not aware of per-agent dirs.
+    list_memory_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
+    read_memory_body_fn: Callable[[str, str], Awaitable[Any]] | None = None
+    remember_fn: Callable[..., Awaitable[Any]] | None = None
+    forget_fn: Callable[[str, str], Awaitable[Any]] | None = None
+
 
 @dataclass
 class PhaseCallerState:
