@@ -209,7 +209,7 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M4 Phase 3 step 1 完了）
+## 9. 実装: 統合 tool registry（M4 Phase 3 step 2 + Phase 4 step 1 完了）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
@@ -232,6 +232,16 @@ ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つ
 
 **M4 Phase 3 step 1（着地済み）:** ハンドラ活性化 + per-call schema enrichment hook。6 つの design-revisit `NotImplementedError` stub（catalog 4 件 + `delegate_to_agent` + `plan`）が型付き `RouterCallerState` の callable フィールド経由で delegate するよう活性化された。`RouterCallerState` に 4 つの新規 callable フィールド（`list_skills_fn` / `describe_skill_fn` / `list_agents_fn` / `describe_agent_fn`）を追加。`ToolDefinition` に optional `schema_enricher` hook を追加し、`render_for_router(state=...)` が per-session 動的データを inject するために起動する（正準用途: `invoke_skill.name` / `delegate_to_agent.to` enums）。`router_tools.py` 内の残り 2 件のインライン `ToolSpec` リテラル（= `invoke_skill` + `delegate_to_agent`）を新 hook 経由で registry consumption に移行、byte-identity を保持。mis-wiring 契約: dispatcher が必要な callable を populate しない場合、ハンドラは記述的メッセージで `RuntimeError` を raise する。Tier 2 invariant +29。1754 passed / 2 xfailed。
 
-**M4 Phase 3 step 2（未着手）:** `RouterLoop._invoke_router_tool` が活性化済 6 ツールを if/elif tree ではなく `invoke_tool(registry, ...)` 経由で dispatch するように切り替える。LLMReplay byte-identity を保持するため、ハンドラ戻り値 shape の互換性（catalog ハンドラの list-vs-dict ラップ）解決が前提。phase-side dispatch の registry 消費、`allowed_ops` セマンティクス移行、`invoke_skill` ハンドラ活性化（`run_skill_fn` フィールド追加に依存）、レガシーエイリアスのサンセットも残課題。
+**M4 Phase 3 step 2（着地済み — commit `649a426`）:** `RouterLoop._invoke_router_tool` が活性化済 6 tools (catalog ×4 + `delegate_to_agent` + `plan`) を if/elif tree ではなく `invoke_tool(get_default_registry(), ...)` 経由で dispatch するように切替。`RouterLoop._build_router_caller_state` が bound callbacks つき `RouterCallerState` を構築。catalog list-handler の戻り値 shape を bare list に緩和（= LLMReplay byte-identity 保持）。`_invoke_router_tool` 内の A1–A4 / B2 / G レガシー分岐を削除。
+
+**M4 Phase 4 step 1（着地済み）:** `_DISPATCH_KIND` sidecar dict / `_TOOL_SPECS_STATIC_ASYNC` を `router_tools.py` から削除。`get_dispatch_kind(name)` は registry の `ToolDefinition.dispatch_kind` を直接参照。registry が schema render と dispatch posture 分類の両方の canonical source になった。
+
+**Phase 3.5 + Phase 4 step 2+（先送り — 設計判断が必要）:**
+
+- 残り 18 router tools (file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) の registry dispatch には per-tool の byte-equivalence 検証が必要。 ギャップ例: `host.file_read` は op_runtime dict result から抽出した string を返すが、 registry handler は dict 全体を返す; memory tools は host-managed index layout を使うが、 registry handler は filesystem-direct paths を使う; `invoke_skill` は `op_runtime caller="control_ir"` が運ばない `chain_id` propagation が必要。 各 cluster は RouterCallerState callable bridge を経由して既存挙動を維持するか、 shape 変更を受け入れて dogfood で検証するかの選択になる。
+- Phase-side dispatch の registry 消費 (`ControlIRExecutor` → `get_default_registry().for_phase()`)、 phase dispatcher での `allowed_ops` prefix-wildcard semantics。
+- `OP_KIND_MODEL_MAP` 撤去 (Open Q #2)、 obsolete `op_runtime/<kind>.py` の consolidation。
+
+ADR-0026 Status は上記 deferred work が land するまで **Proposed** のまま。 ADR の `Acceptance criteria` セクションに closing checklist が明記されている。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

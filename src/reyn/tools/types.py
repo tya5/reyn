@@ -89,6 +89,15 @@ class RouterCallerState:
     list_agents_fn: Callable[[str], list[Mapping[str, Any]]] | None = None
     describe_agent_fn: Callable[[str], Mapping[str, Any]] | None = None
 
+    # Phase 3.5 deferred: memory / reyn_src / invoke_skill cluster
+    # registry-dispatch wiring requires per-tool byte-equivalence work
+    # (e.g. file_read returns str via host adapter but full dict via
+    # op_runtime synthesis; memory tools have host-managed index layout
+    # vs filesystem-direct paths; invoke_skill needs chain_id
+    # propagation that op_runtime caller="control_ir" doesn't carry).
+    # Callable fields will be added here as each cluster's adapter is
+    # designed to preserve production behavior.
+
 
 @dataclass
 class PhaseCallerState:

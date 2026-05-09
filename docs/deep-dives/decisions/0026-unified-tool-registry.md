@@ -1,6 +1,6 @@
 # ADR-0026: Unified tool registry — single ToolDefinition for both router and phase surfaces
 
-**Status**: Proposed (2026-05-09)
+**Status**: Proposed (2026-05-09 → in progress; M1–M3 + M4 Phase 1–3 step 2 + Phase 4 step 1 landed)
 **Track**: Architecture — closes the dual-implementation drift between
 chat router (function calling) and phase Control IR (JSON output)
 identified in `docs/concepts/llm-invocation-surfaces.md`.
@@ -608,20 +608,91 @@ recorded in ADR amendment at that point.
 - [x] LLMReplay fixtures preserved
 - [x] Sanity check via live `reyn web` A2A endpoint passed (= no real-LLM regression)
 
-**Note on ADR status:** the status remains "Proposed" because M4 (= phase-side
-dispatch consuming registry, ToolContext typed expansion — `router_state` /
-`phase_state` sub-objects per Open Q #3, allowed_ops semantic migration, sunset
-of legacy aliases) is the closing work. The current state is M3-complete; M4
-cleanup is what transitions the ADR to Accepted.
+### M4 Phase 1 — **completed (commit `66a068e`)**
 
-**The ADR is closed when:**
+- [x] 18 router_tools.py inline `ToolSpec` literals (= the static-schema
+      tools) replaced with registry consumption via `render_for_router()`
+- [x] 2 inline literals (`invoke_skill`, `delegate_to_agent`) deferred to
+      Phase 3 step 1 because of dynamic enum injection requirements
 
-- Cleanup completed (M4 complete): `ToolSpec` list removed,
-  `OP_KIND_MODEL_MAP` resolved per open question 2, `_DISPATCH_KIND` removed
-  with deprecation notice, obsolete `op_runtime/<kind>.py` handler files
-  removed or consolidated.
-- `docs/concepts/llm-invocation-surfaces.md` updated to reflect the unified
-  registry as the implementation.
+### M4 Phase 2 — **completed (commit `a86a246`)**
+
+- [x] `RouterCallerState` / `PhaseCallerState` typed sub-objects on
+      `ToolContext` (Open Q #3 resolved at the structure level)
+- [x] All fields default to `None` for gradual population
+- [x] +7 Tier 2 invariants
+
+### M4 Phase 3 step 1 — **completed (commit `37ea8e5`)**
+
+- [x] 6 `NotImplementedError` design-revisit stubs activated
+      (catalog ×4 + `delegate_to_agent` + `plan`); they delegate via the
+      typed `RouterCallerState` callable fields
+- [x] `RouterCallerState` gains 4 catalog `_fn` callable fields
+- [x] `ToolDefinition.schema_enricher` per-call hook + `render_for_router`
+      accepts `state=...` to invoke the enricher
+- [x] Last 2 inline `ToolSpec` literals (`invoke_skill`,
+      `delegate_to_agent`) migrated to registry consumption with
+      `schema_enricher` injecting per-session enums (= Phase 1 closeout)
+- [x] +29 Tier 2 invariants
+- [x] LLMReplay byte-identity preserved (existing test_router_tools.py
+      tests pass without modification)
+
+### M4 Phase 3 step 2 — **completed (commit `649a426`)**
+
+- [x] `RouterLoop._invoke_router_tool` dispatches the 6 activated tools
+      through `invoke_tool(get_default_registry(), ...)` instead of the
+      legacy if/elif tree (= the architectural goal: handlers live in one
+      place, dispatcher is thin)
+- [x] `RouterLoop._build_router_caller_state` populates a
+      `RouterCallerState` with catalog `_fn` callables, `send_to_agent` /
+      `dispatch_plan_tool` with session state pre-bound, and forward-
+      looking fields (available_skills / available_agents / chain_id /
+      budget / router_model / available_tool_names) for schema_enricher
+      consumers
+- [x] Catalog list-handler return shape relaxed to bare list (= LLMReplay
+      byte-identity with legacy router branches preserved)
+- [x] Legacy A1–A4 / B2 / G branches in `_invoke_router_tool` removed
+- [x] 1754 passed / 2 xfailed (no net change; byte-identity verified)
+
+### M4 Phase 4 step 1 — **completed (this ADR's Phase 4 commit)**
+
+- [x] `_DISPATCH_KIND` sidecar dict / `_TOOL_SPECS_STATIC_ASYNC` removed
+      from `router_tools.py`; `get_dispatch_kind(name)` now consults
+      `get_default_registry().lookup(name).dispatch_kind` directly. The
+      registry's `ToolDefinition.dispatch_kind` is canonical.
+- [x] `tests/test_plan_async_dispatch.py` updated to use
+      `get_dispatch_kind()` only (= no direct sidecar access)
+- [x] `planner.py` / `router_loop.py` comment references to
+      `_DISPATCH_KIND` updated to point at the helper / registry
+
+**Note on ADR status:** the status remains "Proposed" through M4 Phase 3
+step 2 + Phase 4 step 1. Promotion to "Accepted" is gated on the remaining
+Phase 3.5 + Phase 4 step 2+ work below, which involves design decisions
+(byte-equivalence per-tool review for memory / file-shape / invoke_skill
+chain_id propagation; phase-side dispatch consuming registry; obsolete
+`op_runtime/<kind>.py` consolidation).
+
+**The ADR is closed (= Accepted) when:**
+
+- **Phase 3.5 — registry dispatch for the remaining 18 tools.** Each of
+  file ×4 / mcp ×3 / memory ×5 / web ×2 / reyn_src ×2 / invoke_skill needs
+  per-tool byte-equivalence verification (e.g. `host.file_read` returns
+  string vs `op_runtime` returns dict; memory tools have host-managed
+  index layout vs filesystem-direct paths; `invoke_skill` needs chain_id
+  propagation that `op_runtime caller="control_ir"` doesn't carry).
+  Adapters either delegate to RouterLoopHost via new `RouterCallerState`
+  callable fields, or accept the behavior change with dogfood validation.
+- **Phase 4 step 2 — phase-side dispatch consumes registry.**
+  `ControlIRExecutor` switches from `OP_KIND_MODEL_MAP` lookup to
+  `get_default_registry().for_phase()`. `allowed_ops` prefix-wildcard
+  semantics (= `["file"]` matches `read_file` / `write_file` / etc) lands
+  in the phase dispatcher.
+- **Phase 4 step 3 — alias sunset.** `OP_KIND_MODEL_MAP` removed
+  (Open Q #2). Obsolete `op_runtime/<kind>.py` handler files removed or
+  consolidated into `src/reyn/tools/<name>.py`.
+- `docs/concepts/llm-invocation-surfaces.md` updated to reflect the
+  unified registry as the implementation (= rolling updates land with
+  each phase commit; final Accepted update describes the steady state).
 - `CHANGELOG` records the architectural change.
 
 ---

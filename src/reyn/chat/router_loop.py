@@ -466,8 +466,9 @@ class RouterLoop:
                 tool_results = await asyncio.gather(*[
                     self._execute_tool(tc) for tc in tool_calls
                 ])
-                # Detect async-deferred dispatches via dispatch_kind
-                # registry (router_tools._DISPATCH_KIND). Async tools'
+                # Detect async-deferred dispatches via the canonical
+                # registry (router_tools.get_dispatch_kind() →
+                # ToolDefinition.dispatch_kind).  Async tools'
                 # results arrive via a separate channel (e.g.
                 # delegate_to_agent → PR14 pending_chain re-invokes router
                 # in a future turn). The current loop can't wait for the

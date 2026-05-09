@@ -209,7 +209,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M4 Phase 3 step 1 complete)
+## 9. Implementation: unified registry (M4 Phase 3 step 2 + Phase 4 step 1 complete)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
@@ -268,12 +268,39 @@ preserving byte-identity. Mis-wiring contract: handlers raise `RuntimeError`
 with a descriptive message when the dispatcher fails to populate the required
 callable. +29 Tier 2 invariants. 1754 passed / 2 xfailed.
 
-**M4 Phase 3 step 2 (pending):** `RouterLoop._invoke_router_tool` switches
-to dispatch the 6 activated tools through `invoke_tool(registry, ...)` instead
-of the if/elif tree. Requires resolving handler return-shape compatibility
-(list-vs-dict wrap on catalog handlers) to preserve LLMReplay byte-identity.
-Phase-side dispatch consuming registry, allowed_ops semantic migration,
-`invoke_skill` handler activation (depends on `run_skill_fn` field addition),
-and sunset of legacy aliases also remain.
+**M4 Phase 3 step 2 (landed — commit `649a426`):**
+`RouterLoop._invoke_router_tool` dispatches the 6 activated tools (catalog
+×4 + `delegate_to_agent` + `plan`) through `invoke_tool(get_default_registry(), ...)`
+instead of the legacy if/elif tree. `RouterLoop._build_router_caller_state`
+populates a `RouterCallerState` with bound callbacks. Catalog list-handler
+return shape relaxed to bare list (= LLMReplay byte-identity preserved).
+Legacy A1–A4 / B2 / G branches in `_invoke_router_tool` removed.
+
+**M4 Phase 4 step 1 (landed):** `_DISPATCH_KIND` sidecar dict /
+`_TOOL_SPECS_STATIC_ASYNC` removed from `router_tools.py`;
+`get_dispatch_kind(name)` consults `ToolDefinition.dispatch_kind` from the
+registry directly. The registry is now the canonical source for both schema
+rendering AND dispatch posture classification.
+
+**Phase 3.5 + Phase 4 step 2+ (deferred — design decisions required):**
+
+- Registry dispatch for the remaining 18 router tools (file ×4 / mcp ×3 /
+  memory ×5 / web ×2 / reyn_src ×2 / `invoke_skill`) needs per-tool byte-
+  equivalence verification. Examples of the gap: `host.file_read` returns
+  a string (extracted from op_runtime dict result) but the registry
+  handler returns the full dict; memory tools use host-managed index
+  layout vs the registry handler's filesystem-direct paths;
+  `invoke_skill` needs `chain_id` propagation that `op_runtime
+  caller="control_ir"` doesn't carry. Each cluster either gets a
+  RouterCallerState callable bridge (preserves behavior) or accepts the
+  shape change with dogfood validation.
+- Phase-side dispatch consuming registry (`ControlIRExecutor` →
+  `get_default_registry().for_phase()`); `allowed_ops` prefix-wildcard
+  semantics in the phase dispatcher.
+- `OP_KIND_MODEL_MAP` removal (Open Q #2); obsolete `op_runtime/<kind>.py`
+  consolidation.
+
+ADR-0026 Status remains **Proposed** until the deferred work above lands.
+The `Acceptance criteria` section in the ADR enumerates the closing checklist.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

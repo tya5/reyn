@@ -922,9 +922,11 @@ async def dispatch_plan_tool(
 ) -> dict:
     """Entry point invoked from the chat router's ``plan`` tool dispatch.
 
-    **ADR-0023 Phase 2.1: async dispatch.** ``plan`` is registered in
-    ``_DISPATCH_KIND`` as async; this function spawns the runtime as
-    a background task and returns the spawn ack immediately. The
+    **ADR-0023 Phase 2.1: async dispatch.** ``plan`` is registered as
+    ``dispatch_kind="async"`` on its ToolDefinition (resolved via
+    ``get_dispatch_kind("plan")`` → registry lookup); this function
+    spawns the runtime as a background task and returns the spawn ack
+    immediately. The
     RouterLoop sees an async tool result and exits the chat turn —
     the user gets quick replies first while the plan runs in the
     background, mirroring ``_spawn_skill`` UX.

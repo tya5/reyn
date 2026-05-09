@@ -6,7 +6,7 @@ Pins the async behavior:
   - per-plan chain_id allocated as f"plan_{plan_id}"
   - host without spawn_plan_task → sync fallback path (= Phase 2 v1
     behavior preserved as safety net for test stubs)
-  - _DISPATCH_KIND["plan"] == "async" so RouterLoop exits after dispatch
+  - get_dispatch_kind("plan") == "async" so RouterLoop exits after dispatch
 """
 from __future__ import annotations
 
@@ -16,16 +16,21 @@ from typing import Any
 import pytest
 
 from reyn.chat.planner import Plan, PlanStep, dispatch_plan_tool
-from reyn.chat.router_tools import _DISPATCH_KIND, get_dispatch_kind
+from reyn.chat.router_tools import get_dispatch_kind
 
 # ── basic registry checks ─────────────────────────────────────────────────
 
 
 def test_plan_is_registered_async() -> None:
-    """Tier 2: _DISPATCH_KIND classifies plan as async so RouterLoop
-    exits after dispatch (= ADR-0023 §2.1.1)."""
-    assert _DISPATCH_KIND.get("plan") == "async"
+    """Tier 2: get_dispatch_kind() classifies plan as async so RouterLoop
+    exits after dispatch (= ADR-0023 §2.1.1; ADR-0026 M4 Phase 4 — the
+    sidecar ``_DISPATCH_KIND`` dict has been sunset, registry is canonical)."""
     assert get_dispatch_kind("plan") == "async"
+    # delegate_to_agent is the other async tool — verify both via registry.
+    assert get_dispatch_kind("delegate_to_agent") == "async"
+    # Sync default for unknown / regular tools.
+    assert get_dispatch_kind("web_search") == "sync"
+    assert get_dispatch_kind("__nonexistent__") == "sync"
 
 
 # ── stub host with spawn_plan_task ────────────────────────────────────────

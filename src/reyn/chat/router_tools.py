@@ -125,48 +125,32 @@ class ToolSpec:
         }
 
 
-# ── _DISPATCH_KIND — module-level derived view ───────────────────────────────
+# ── get_dispatch_kind — registry-backed (ADR-0026 M4 Phase 4) ────────────────
 #
-# Derived from the canonical _TOOL_SPECS list below. Kept as a module-level
-# dict so that:
-#  (a) get_dispatch_kind() works without needing build_tools() to have run
-#  (b) test_plan_async_dispatch.py's direct ``_DISPATCH_KIND.get(...)``
-#      import keeps working (= backward compat for that test's contract pin).
-#
-# This dict is computed once at module import time from _TOOL_SPECS_STATIC
-# (the always-present tools). Conditional tools (invoke_skill, file tools,
-# MCP tools, web_fetch) are all "sync" so they don't change the lookup;
-# get_dispatch_kind() defaults to "sync" for unknown names, which covers
-# them correctly.
-#
-# NOTE: Do NOT add async conditional tools without also updating this dict.
-_TOOL_SPECS_STATIC_ASYNC: dict[str, str] = {
-    "delegate_to_agent": "async",
-    # ADR-0023 Phase 2.1: plan-mode dispatch is fire-and-forget so the
-    # chat turn doesn't block on multi-step LLM work. dispatch_plan_tool
-    # spawns the PlanRuntime as a background task and returns the
-    # spawn ack immediately; outbox narration carries progress + final
-    # text. RouterLoop exits after dispatch (= same posture as
-    # delegate_to_agent).
-    "plan": "async",
-}
-
-# Module-level backward-compat alias: same shape as the old sidecar dict.
-_DISPATCH_KIND: dict[str, str] = _TOOL_SPECS_STATIC_ASYNC
+# Sunset: the prior sidecar ``_DISPATCH_KIND`` dict / ``_TOOL_SPECS_STATIC_ASYNC``
+# duplicate has been removed.  ``ToolDefinition.dispatch_kind`` on entries in
+# the unified ToolRegistry is now the single source of truth; this helper
+# delegates to the registry.  Default for unknown names stays ``"sync"``.
 
 
 def get_dispatch_kind(tool_name: str) -> str:
-    """Return "sync" or "async" for the given tool name.
+    """Return ``"sync"`` or ``"async"`` for the given tool name.
 
     Used by RouterLoop to decide whether to continue the loop after a
-    tool dispatch (sync — result is in the tool_result, LLM can act on it)
-    or to exit immediately and wait for a deferred result via a separate
-    channel (async — pending_chain or equivalent).
+    tool dispatch (sync — result is in the tool_result, LLM can act on
+    it) or to exit immediately and wait for a deferred result via a
+    separate channel (async — pending_chain or equivalent).
 
-    Implementation derives from the ToolSpec definitions (single source of
-    truth). Default for unknown / sync tools is "sync".
+    Resolves via ``get_default_registry().lookup(tool_name).dispatch_kind``.
+    Default for unknown / unregistered names is ``"sync"`` (= safe default;
+    the loop continues and the LLM sees a "no such tool" error result).
     """
-    return _DISPATCH_KIND.get(tool_name, "sync")
+    from reyn.tools import get_default_registry
+
+    tool = get_default_registry().lookup(tool_name)
+    if tool is None:
+        return "sync"
+    return tool.dispatch_kind
 
 
 def build_tools(
