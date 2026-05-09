@@ -133,7 +133,7 @@ async def _discard_plan_run(session: "ChatSession", args: str) -> None:
 
     # 3. Delete decomposition artifact (= P5 cleanup).
     try:
-        await session.delete_plan_decomposition(plan_id=plan_id)
+        await session._router_host.delete_plan_decomposition(plan_id=plan_id)
     except Exception as exc:  # noqa: BLE001
         import logging
         logging.getLogger(__name__).warning(

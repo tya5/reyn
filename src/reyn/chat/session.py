@@ -23,7 +23,7 @@ from reyn.budget.budget import (
     format_warn_message,
 )
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, MemoryService, SnapshotJournal
+from reyn.chat.services import BudgetGateway, ChainManager, InterventionRegistry, MemoryService, RouterHostAdapter, SnapshotJournal
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
@@ -605,9 +605,9 @@ class ChatSession:
         )
 
         # PR-refactor-session-1 wave 3 PR2: memory persistence adapter.
-        # Absorbs _memory_dir / _memory_path / _run_remember / _run_forget /
-        # _read_memory_body.  The session methods are kept as 1-line delegators
-        # so PR3 (RouterHostAdapter) can re-point callers without a flag day.
+        # Absorbs memory path resolution + remember / forget / read_body.
+        # PR3 (RouterHostAdapter) holds a direct reference; session delegates
+        # via the adapter's memory_path / memory_dir.
         self._memory = MemoryService(
             agent_workspace_dir=self.workspace_dir,
             events=self._chat_events,
@@ -658,6 +658,44 @@ class ChatSession:
         # context; put_outbox appends "agent" kind text here so callers can
         # forward the reply upstream. None = not capturing (user-turn context).
         self._router_loop_agent_replies: list[str] | None = None
+
+        # PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
+        # RouterLoopHost implementation extracted from ChatSession. Constructed
+        # last in __init__ because it receives callbacks that reference self
+        # (all of which are bound methods, resolved at call time not here).
+        self._router_host = RouterHostAdapter(
+            agent_name=self.agent_name,
+            agent_role=self._agent_role,
+            output_language=self.output_language,
+            allowed_skills=self._allowed_skills,
+            allowed_mcp=self._allowed_mcp,
+            permission_resolver=self._perm,
+            mcp_servers=self._mcp_servers,
+            project_context=self._project_context,
+            events=self._chat_events,
+            resolver=self._resolver,
+            memory=self._memory,
+            journal=self._journal,
+            agent_registry=self._registry,
+            skill_enumerate_fn=enumerate_available_skills,
+            agent_workspace_dir=self.workspace_dir,
+            plan_registry_getter=self._get_plan_registry,
+            file_read=self._file_read,
+            file_write=self._file_write,
+            file_delete=self._file_delete,
+            file_list_directory=self._file_list_directory,
+            file_regenerate_index=self._file_regenerate_index,
+            mcp_list_servers=self._mcp_list_servers,
+            mcp_list_tools=self._mcp_list_tools,
+            mcp_call_tool=self._mcp_call_tool,
+            run_skill_awaitable=self._run_skill_awaitable,
+            send_to_agent=self._send_to_agent,
+            put_outbox=self._put_outbox,
+            append_history=self._append_history,
+            spawn_plan_task=self.spawn_plan_task,
+            delegation_tracker=lambda: self._router_loop_delegations,
+            agent_replies_tracker=lambda: self._router_loop_agent_replies,
+        )
 
     # ── cost accumulation ───────────────────────────────────────────────────────
 
@@ -2693,15 +2731,10 @@ class ChatSession:
                 kind="skill_done", text=fallback, meta=meta,
             ))
 
-    # ── RouterLoop helper methods (Wave 3 F1) ───────────────────────────────────
-
-    def _memory_dir(self, layer: str) -> str:
-        """Directory for the memory layer. Delegates to MemoryService (wave 3 PR2)."""
-        return self._memory.memory_dir(layer)
-
-    def _memory_path(self, layer: str, slug: str) -> str:
-        """Resolve layer + slug to file path. Delegates to MemoryService (wave 3 PR2)."""
-        return self._memory.memory_path(layer, slug)
+    # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
+    # _make_router_op_context + 3 helpers remain on ChatSession because the
+    # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
+    # _file_op) use them. The adapter has its own private copies.
 
     def _get_file_permissions_for_router(self) -> dict | None:
         """Return file permissions in the form {read: [paths], write: [paths]}
@@ -3122,407 +3155,6 @@ class ChatSession:
             mcp=[server],
         )
         return await execute_op(op, ctx, caller="control_ir")
-
-    # ── RouterLoopHost protocol (Wave 3 F2) ─────────────────────────────────────
-
-    # --- Properties required by RouterLoopHost ---
-
-    @property
-    def chat_id(self) -> str:
-        """chat_id exposed to RouterLoopHost — same as agent_name."""
-        return self.agent_name
-
-    @property
-    def agent_role(self) -> str:
-        """agent_role exposed to RouterLoopHost."""
-        return self._agent_role
-
-    @property
-    def events(self):
-        """EventLog exposed to RouterLoopHost for dispatch_tool events."""
-        return self._chat_events
-
-    # --- Catalogue accessors ---
-
-    def list_available_skills(self) -> list[dict]:
-        """Return enumerated skills with skill_router excluded (deleted in wave H).
-
-        Also excludes chat_compactor and skill_narrator — these are internal
-        infrastructure, not user-facing skills.
-        """
-        avail = enumerate_available_skills(exclude={
-            ROUTER_SKILL_NAME, "chat_compactor", NARRATOR_SKILL_NAME,
-        })
-        # PR15: allowlist filter
-        if self._allowed_skills is not None:
-            allow = set(self._allowed_skills)
-            avail = [s for s in avail if s.get("name") in allow]
-        return avail
-
-    def list_available_agents(self) -> list[dict]:
-        """Return topology-reachable peers (PR11/PR12)."""
-        if self._registry is not None:
-            return list(self._registry.iter_reachable_agents(self.agent_name))
-        return []
-
-    def get_memory_index(self) -> dict:
-        """Return merged shared + agent memory index."""
-        return _merge_memory_indexes(
-            shared_path=Path(".reyn") / "memory" / "MEMORY.md",
-            agent_path=self.workspace_dir / "memory" / "MEMORY.md",
-            agent_name=self.agent_name,
-        )
-
-    def get_file_permissions(self) -> dict | None:
-        return self._get_file_permissions_for_router()
-
-    def get_mcp_servers(self) -> list[dict]:
-        return self._get_mcp_servers_for_router()
-
-    def get_web_fetch_allowed(self) -> bool:
-        """RouterLoopHost: True iff `web.fetch: allow` is in the operator's
-        permissions config. Gates the web_fetch tool because arbitrary URL
-        fetches are a data-exfiltration vector — see router_tools.py:E2.
-        """
-        if self._perm is None:
-            return False
-        config = self._perm._config or {}
-        web_block = config.get("web") if isinstance(config.get("web"), dict) else {}
-        return (
-            config.get("web.fetch") == "allow"
-            or (web_block.get("fetch") == "allow")
-        )
-
-    def get_project_context(self) -> str:
-        """RouterLoopHost: project context text (= REYN.md / whatever
-        ``project_context_path`` points to). Threaded into the chat
-        router's system prompt so casual chat (= the geometry-of-the-day,
-        not skill execution) sees the operator's project context. Empty
-        string when the operator has not configured one.
-        """
-        return self._project_context or ""
-
-    async def web_search(self, *, query: str, max_results: int) -> dict:
-        """RouterLoopHost: dispatch the OS-native web/search op (DuckDuckGo)
-        from the chat router. Same handler as Control IR `web/search`; the
-        chat path just builds its own minimal OpContext via
-        ``_make_router_op_context``.
-        """
-        from reyn.op_runtime.web import handle_web_search
-        from reyn.schemas.models import WebSearchIROp
-
-        op = WebSearchIROp(
-            kind="web_search",
-            query=query,
-            max_results=max_results,
-            backend="duckduckgo",
-        )
-        ctx = self._make_router_op_context()
-        return await handle_web_search(op, ctx, caller="control_ir")
-
-    async def web_fetch(self, *, url: str, max_length: int) -> dict:
-        """RouterLoopHost: dispatch the OS-native web/fetch op from the chat
-        router. Gated by ``get_web_fetch_allowed()`` at catalog-build time;
-        if the LLM still calls it without permission the op result will
-        carry an error.
-        """
-        from reyn.op_runtime.web import handle_web_fetch
-        from reyn.schemas.models import WebFetchIROp
-
-        op = WebFetchIROp(
-            kind="web_fetch",
-            url=url,
-            max_length=max_length,
-            timeout=15.0,
-        )
-        ctx = self._make_router_op_context()
-        return await handle_web_fetch(op, ctx, caller="control_ir")
-
-    async def reyn_src_list(self, *, path: str) -> dict:
-        """RouterLoopHost: list entries under ``<reyn_root>/path``.
-
-        See :func:`_resolve_reyn_root` for the root resolution rule and
-        :func:`_safe_resolve_inside` for path-traversal protection.
-        Returns ``{path, entries: [{name, type}]}`` on success or
-        ``{error}`` on failure (= unresolvable root, escape attempt,
-        missing path, not a directory).
-        """
-        from reyn.chat.reyn_src import (
-            list_entries,
-            resolve_reyn_root,
-            safe_resolve_inside,
-        )
-        try:
-            root = resolve_reyn_root()
-        except RuntimeError as exc:
-            return {"error": str(exc)}
-        try:
-            target = safe_resolve_inside(root, path)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        return list_entries(root, target, path)
-
-    async def reyn_src_read(self, *, path: str) -> dict:
-        """RouterLoopHost: read text at ``<reyn_root>/path``."""
-        from reyn.chat.reyn_src import (
-            read_text,
-            resolve_reyn_root,
-            safe_resolve_inside,
-        )
-        try:
-            root = resolve_reyn_root()
-        except RuntimeError as exc:
-            return {"error": str(exc)}
-        try:
-            target = safe_resolve_inside(root, path)
-        except ValueError as exc:
-            return {"error": str(exc)}
-        return read_text(target, path)
-
-    def memory_path(self, layer: str, slug: str) -> str:
-        return self._memory_path(layer, slug)
-
-    def memory_dir(self, layer: str) -> str:
-        return self._memory_dir(layer)
-
-    # --- Action callbacks ---
-
-    async def run_skill_awaitable(self, *, skill: str, input: dict,
-                                   chain_id: str) -> dict:
-        return await self._run_skill_awaitable(
-            {"skill": skill, "input": input}, chain_id=chain_id,
-        )
-
-    async def send_to_agent(self, *, to: str, request: str, depth: int,
-                            chain_id: str) -> None:
-        """RouterLoopHost callback: dispatch to peer and record delegation
-        for pending-chain registration (F2 wave)."""
-        await self._send_to_agent(
-            to=to, request=request, depth=depth, chain_id=chain_id,
-        )
-        # Track delegations so callers can register _PendingChain after the loop.
-        if self._router_loop_delegations is not None:
-            self._router_loop_delegations.append({"to": to, "request": request})
-
-    async def put_outbox(self, *, kind: str, text: str, meta: dict) -> None:
-        await self._put_outbox(OutboxMessage(kind=kind, text=text, meta=meta))
-        # Persist agent (conversational) replies to history so the context
-        # window stays coherent across turns.
-        #
-        # Note on empty-stop canned text: dogfood trace v6 showed that
-        # filtering router-empty-response text out of history (= the naive
-        # "don't pollute LLM context with failure notices" patch) creates
-        # a worse downstream pattern — the next turn's LLM sees two
-        # consecutive ``role="user"`` messages with no assistant between
-        # them, which is itself an attractor (= same shape as the
-        # commit 3732275 duplicate-user bug we fixed earlier). Keeping
-        # the canned text in history maintains alternation; the
-        # cascading-attractor mitigation needs to live elsewhere
-        # (= context build / classifier-side, tracked as follow-up).
-        if kind == "agent" and text:
-            self._append_history(ChatMessage(
-                role="agent", text=text, ts=_now_iso(), meta=meta,
-            ))
-            # Capture for agent-to-agent paths (agent_request / chain_resolve)
-            # that need to forward the reply upstream via _send_agent_response.
-            if self._router_loop_agent_replies is not None:
-                self._router_loop_agent_replies.append(text)
-
-    async def file_read(self, path: str) -> str:
-        """RouterLoopHost file_read — returns content string or JSON error."""
-        res = await self._file_read(path)
-        if "content" in res:
-            return res["content"]
-        return json.dumps(res)
-
-    async def file_write(self, path: str, content: str) -> dict:
-        return await self._file_write(path, content)
-
-    async def file_delete(self, path: str) -> dict:
-        return await self._file_delete(path)
-
-    async def file_list_directory(self, path: str) -> list[dict]:
-        result = await self._file_list_directory(path)
-        if isinstance(result, dict):
-            return result.get("entries", [result])
-        return result
-
-    async def file_regenerate_index(self, path: str, output_path: str,
-                                     entry_template: str, header: str) -> dict:
-        return await self._file_regenerate_index(
-            path=path,
-            output_path=output_path,
-            entry_template=entry_template,
-            header=header,
-        )
-
-    async def mcp_list_servers(self) -> list[dict]:
-        return await self._mcp_list_servers()
-
-    async def mcp_list_tools(self, server: str) -> list[dict]:
-        return await self._mcp_list_tools(server)
-
-    async def mcp_call_tool(self, server: str, tool: str, args: dict) -> dict:
-        return await self._mcp_call_tool(server, tool, args)
-
-    def resolve_model(self, name: str) -> str:
-        """Resolve config model name (e.g. 'router') to actual model id."""
-        return self._resolver.resolve(name).model
-
-    # --- Plan-mode lifecycle persistence (ADR-0022 Phase 1) ---
-    #
-    # RouterLoopHost methods that wire through to SnapshotJournal so plan-
-    # mode executions become crash-discoverable. Defensive: if the journal
-    # has no state_log, the journal methods are themselves no-ops.
-
-    async def record_plan_started(
-        self, *, plan_id: str, goal: str, n_steps: int,
-    ) -> None:
-        await self._journal.record_plan_started(
-            plan_id=plan_id, goal=goal, n_steps=n_steps,
-        )
-        # ADR-0023 Phase 2 + ADR-0025 wiring: per-plan snapshot is
-        # created here so on-disk state mirrors AgentSnapshot's
-        # active_plan_ids. Without this, the resume coordinator's
-        # PlanRegistry.load_active() returns empty and forward replay
-        # silently degrades to legacy discard.
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None:
-            try:
-                # Stamp applied_seq from the agent snapshot the journal
-                # just bumped. Non-blocking on errors — registry is the
-                # cache, the WAL append is the source of truth.
-                applied = self._journal.snapshot.applied_seq
-                # Stash decomposition artifact path for §3.5 SSoT.
-                from pathlib import Path
-                agent_state_dir = (
-                    Path(".reyn") / "agents" / self.agent_name / "state"
-                )
-                from reyn.plan import decomposition_path
-                artifact = decomposition_path(agent_state_dir, plan_id)
-                plan_reg.start(
-                    plan_id=plan_id,
-                    chain_id=f"plan_{plan_id}",  # ADR-0023 §2.1.2 per-plan chain
-                    goal=goal,
-                    applied_seq=applied,
-                    decomposition_artifact_path=str(artifact)
-                    if artifact.exists()
-                    else None,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.start failed for %s: %r", plan_id, exc,
-                )
-
-    async def record_plan_completed(self, *, plan_id: str) -> None:
-        await self._journal.record_plan_completed(plan_id=plan_id)
-        # ADR-0023 Phase 2 wiring: per-plan workspace cleanup.
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None:
-            try:
-                await plan_reg.complete(plan_id=plan_id, status="completed")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.complete failed for %s: %r", plan_id, exc,
-                )
-
-    async def record_plan_aborted(
-        self, *, plan_id: str, reason: str = "",
-    ) -> None:
-        await self._journal.record_plan_aborted(plan_id=plan_id, reason=reason)
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None:
-            try:
-                await plan_reg.complete(plan_id=plan_id, status="aborted")
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "PlanRegistry.complete (abort) failed for %s: %r",
-                    plan_id, exc,
-                )
-
-    # Plan-mode per-step WAL persistence (ADR-0023 Phase 2 step 6).
-    # Mirrors the plan_started/completed/aborted wiring above.
-
-    async def record_plan_step_started(
-        self, *, plan_id: str, step_id: str, depends_on: list[str],
-        n_tools: int,
-    ) -> None:
-        seq = await self._journal.record_plan_step_started(
-            plan_id=plan_id, step_id=step_id,
-            depends_on=depends_on, n_tools=n_tools,
-        )
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None and seq is not None:
-            plan_reg.record_step_started(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-            )
-
-    async def record_plan_step_completed(
-        self, *, plan_id: str, step_id: str, content_len: int,
-        result_text: str | None = None,
-    ) -> None:
-        """Record durable step completion.
-
-        ADR-0023 Phase 2 + ADR-0024: ``result_text`` is the optional
-        full text — passed through to PlanRegistry which inlines or
-        spills based on size. Callers (= execute_plan) supply this so
-        the per-plan snapshot carries the data; analyzer reads it back
-        on resume.
-        """
-        seq = await self._journal.record_plan_step_completed(
-            plan_id=plan_id, step_id=step_id, content_len=content_len,
-        )
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None and seq is not None:
-            await plan_reg.record_step_completed(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-                result_text=result_text or "",
-            )
-
-    async def record_plan_step_failed(
-        self, *, plan_id: str, step_id: str, error: str,
-    ) -> None:
-        seq = await self._journal.record_plan_step_failed(
-            plan_id=plan_id, step_id=step_id, error=error,
-        )
-        plan_reg = self._get_plan_registry()
-        if plan_reg is not None and seq is not None:
-            await plan_reg.record_step_failed(
-                plan_id=plan_id, step_id=step_id, applied_seq=seq,
-                error_repr=error,
-            )
-
-    # Decomposition artifact persistence (ADR-0023 §3.5). Resolves the
-    # agent-specific state directory and delegates to the standalone
-    # reyn.plan.decomposition helpers.
-
-    async def write_plan_decomposition(
-        self, *, plan_id: str, plan: Any,
-    ) -> str | None:
-        from reyn.plan import write_decomposition
-        agent_state_dir = (
-            Path(".reyn") / "agents" / self.agent_name / "state"
-        )
-        try:
-            return str(write_decomposition(agent_state_dir, plan_id, plan))
-        except OSError as exc:
-            logger.warning(
-                "write_plan_decomposition failed for %s: %r", plan_id, exc,
-            )
-            return None
-
-    async def delete_plan_decomposition(self, *, plan_id: str) -> None:
-        from reyn.plan import delete_decomposition
-        agent_state_dir = (
-            Path(".reyn") / "agents" / self.agent_name / "state"
-        )
-        try:
-            delete_decomposition(agent_state_dir, plan_id)
-        except OSError as exc:
-            logger.warning(
-                "delete_plan_decomposition failed for %s: %r", plan_id, exc,
-            )
-
     async def spawn_plan_task(
         self, *, plan_id: str, runtime: Any, chain_id: str,
         parent_chain_id: str | None = None,
@@ -3559,7 +3191,7 @@ class ChatSession:
             # Emit terminal aggregator text on clean exit.
             if clean_exit and result_text:
                 try:
-                    await self.put_outbox(
+                    await self._put_outbox(OutboxMessage(
                         kind="agent",
                         text=result_text,
                         meta={
@@ -3567,7 +3199,7 @@ class ChatSession:
                             "chain_id": chain_id,
                             "source": "plan",
                         },
-                    )
+                    ))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "plan task outbox emit failed for %s: %r",
@@ -3604,7 +3236,7 @@ class ChatSession:
             # Artifact cleanup mirrors the old dispatch_plan_tool finally.
             if clean_exit:
                 try:
-                    await self.delete_plan_decomposition(plan_id=plan_id)
+                    await self._router_host.delete_plan_decomposition(plan_id=plan_id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "plan task delete_decomposition failed for %s: %r",
@@ -3673,7 +3305,7 @@ class ChatSession:
 
         runtime = PlanRuntime(
             decomposition,
-            host=self,
+            host=self._router_host,
             chain_id=decision.plan.chain_id,
             plan_id=plan_id,
             budget=budget,
@@ -3761,7 +3393,7 @@ class ChatSession:
         self._check_and_increment_router_cap(user_text)
         from reyn.chat.router_loop import RouterLoop
         loop = RouterLoop(
-            host=self, chain_id=chain_id, max_iterations=5,
+            host=self._router_host, chain_id=chain_id, max_iterations=5,
             budget=self._budget_tracker,
         )
         history = self._build_history_for_router()

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from reyn.chat.router_system_prompt import build_system_prompt
 from reyn.chat.router_tools import (
@@ -108,9 +108,13 @@ def _is_empty_router_response(response: Any) -> bool:
 # Host protocol
 # ---------------------------------------------------------------------------
 
+@runtime_checkable
 class RouterLoopHost(Protocol):
-    """Abstract surface RouterLoop needs. ChatSession will implement this
-    in wave 3; for now, define the protocol and use a fake in tests."""
+    """Abstract surface RouterLoop needs.
+
+    Implemented by RouterHostAdapter in
+    src/reyn/chat/services/router_host_adapter.py.
+    """
 
     # Static catalogue access
     chat_id: str

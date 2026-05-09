@@ -141,9 +141,15 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     ]
 
     async def run():
+        # patch on the adapter — RouterLoop calls host.run_skill_awaitable directly.
+        async def fake_adapter_run_skill(*, skill, input, chain_id):
+            skill_ran["called"] = True
+            return {"status": "finished", "data": {"result": "done"}}
+
         with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm, \
-             patch.object(session, "_run_skill_awaitable", side_effect=fake_run_skill_awaitable), \
-             patch.object(session, "list_available_skills",
+             patch.object(session._router_host, "run_skill_awaitable",
+                          side_effect=fake_adapter_run_skill), \
+             patch.object(session._router_host, "list_available_skills",
                           return_value=[{"name": "some_skill", "category": "general"}]):
             mock_llm.side_effect = rounds
             await session._handle_user_message("run skill", chain_id="chain-003")
@@ -221,9 +227,10 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
-    """Tier 1: public contract — ChatSession exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed."""
+    """Tier 1: public contract — RouterHostAdapter (session._router_host) exposes all RouterLoopHost required methods and property types. Protocol compliance test; fails when required API is removed or renamed from the adapter."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
+    host = session._router_host
 
     required = [
         "chat_id", "agent_name", "agent_role",
@@ -236,14 +243,14 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
         "mcp_list_servers", "mcp_list_tools", "mcp_call_tool",
         "resolve_model",
     ]
-    missing = [m for m in required if not hasattr(session, m)]
-    assert missing == [], f"Missing protocol members: {missing}"
+    missing = [m for m in required if not hasattr(host, m)]
+    assert missing == [], f"Missing protocol members on RouterHostAdapter: {missing}"
 
     # Verify property types
-    assert isinstance(session.chat_id, str)
-    assert session.chat_id == "test_agent"
-    assert isinstance(session.agent_name, str)
-    assert isinstance(session.agent_role, str)
+    assert isinstance(host.chat_id, str)
+    assert host.chat_id == "test_agent"
+    assert isinstance(host.agent_name, str)
+    assert isinstance(host.agent_role, str)
 
 
 # ---------------------------------------------------------------------------
@@ -251,14 +258,14 @@ def test_chatsession_satisfies_host_protocol(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
+    """Tier 1 framework boundary: RouterHostAdapter.resolve_model delegates to ModelResolver; named models resolve to configured values and unknown names pass through unchanged."""
     monkeypatch.chdir(tmp_path)
     from reyn.llm.model_resolver import ModelResolver
     resolver = ModelResolver({"router": "openai/gpt-4o-mini"})
     session = ChatSession(agent_name="test_agent", resolver=resolver)
 
-    assert session.resolve_model("router") == "openai/gpt-4o-mini"
-    assert session.resolve_model("unknown") == "unknown"  # pass-through
+    assert session._router_host.resolve_model("router") == "openai/gpt-4o-mini"
+    assert session._router_host.resolve_model("unknown") == "unknown"  # pass-through
 
 
 # ---------------------------------------------------------------------------
@@ -266,15 +273,11 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
-    """Tier 2: OS invariant — list_available_skills() must never expose skill_router, chat_compactor, or skill_narrator to the LLM tool catalog.
-
-    list_available_skills() must never return skill_router, chat_compactor,
-    or skill_narrator.
-    """
+    """Tier 2: OS invariant — RouterHostAdapter.list_available_skills() must never expose skill_router, chat_compactor, or skill_narrator to the LLM tool catalog."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
-    skills = session.list_available_skills()
+    skills = session._router_host.list_available_skills()
     names = {s.get("name") for s in skills}
     assert "skill_router" not in names
     assert "chat_compactor" not in names

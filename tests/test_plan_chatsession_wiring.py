@@ -37,12 +37,12 @@ def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
 
 @pytest.mark.asyncio
 async def test_record_plan_started_creates_per_plan_snapshot(tmp_path, monkeypatch):
-    """Tier 2: ChatSession.record_plan_started writes the per-plan
+    """Tier 2: RouterHostAdapter.record_plan_started (via session._router_host) writes the per-plan
     snapshot file alongside the WAL append + AgentSnapshot mutation."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
-    await session.record_plan_started(
+    await session._router_host.record_plan_started(
         plan_id="p_test", goal="hello", n_steps=2,
     )
 
@@ -66,20 +66,20 @@ async def test_record_plan_started_creates_per_plan_snapshot(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_record_plan_step_completed_persists_to_snapshot(tmp_path, monkeypatch):
-    """Tier 2: ChatSession.record_plan_step_completed flows result_text
+    """Tier 2: RouterHostAdapter.record_plan_step_completed flows result_text
     through to PlanRegistry.record_step_completed (= ADR-0024 inline
     or spilled persistence in the per-plan snapshot)."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    await session.record_plan_started(
+    await session._router_host.record_plan_started(
         plan_id="p_test", goal="g", n_steps=1,
     )
-    await session.record_plan_step_started(
+    await session._router_host.record_plan_step_started(
         plan_id="p_test", step_id="s1", depends_on=[], n_tools=0,
     )
 
     text = "step output text"
-    await session.record_plan_step_completed(
+    await session._router_host.record_plan_step_completed(
         plan_id="p_test", step_id="s1",
         content_len=len(text), result_text=text,
     )
@@ -105,11 +105,11 @@ async def test_record_plan_step_completed_spills_large_text(tmp_path, monkeypatc
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    await session.record_plan_started(
+    await session._router_host.record_plan_started(
         plan_id="p_big", goal="g", n_steps=1,
     )
     huge = "X" * 50_000
-    await session.record_plan_step_completed(
+    await session._router_host.record_plan_step_completed(
         plan_id="p_big", step_id="s1",
         content_len=len(huge), result_text=huge,
     )
@@ -124,20 +124,20 @@ async def test_record_plan_step_completed_spills_large_text(tmp_path, monkeypatc
 
 @pytest.mark.asyncio
 async def test_record_plan_completed_removes_per_plan_workspace(tmp_path, monkeypatch):
-    """Tier 2: ChatSession.record_plan_completed reclaims the per-plan
+    """Tier 2: RouterHostAdapter.record_plan_completed reclaims the per-plan
     workspace via PlanRegistry.complete (= delete_plan_workspace)."""
     from reyn.plan import decomposition_dir
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    await session.record_plan_started(
+    await session._router_host.record_plan_started(
         plan_id="p_done", goal="g", n_steps=1,
     )
-    await session.record_plan_step_completed(
+    await session._router_host.record_plan_step_completed(
         plan_id="p_done", step_id="s1", content_len=5, result_text="hello",
     )
 
-    await session.record_plan_completed(plan_id="p_done")
+    await session._router_host.record_plan_completed(plan_id="p_done")
 
     # Per-plan workspace dir + snapshot file gone.
     agent_state_dir = (
@@ -149,13 +149,13 @@ async def test_record_plan_completed_removes_per_plan_workspace(tmp_path, monkey
 
 @pytest.mark.asyncio
 async def test_record_plan_aborted_removes_per_plan_workspace(tmp_path, monkeypatch):
-    """Tier 2: ChatSession.record_plan_aborted similarly cleans up the
+    """Tier 2: RouterHostAdapter.record_plan_aborted similarly cleans up the
     per-plan workspace (= /plan discard / restart-cleanup paths)."""
     from reyn.plan import decomposition_dir
 
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
-    await session.record_plan_started(
+    await session._router_host.record_plan_started(
         plan_id="p_abort", goal="g", n_steps=1,
     )
     agent_state_dir = (
@@ -163,7 +163,7 @@ async def test_record_plan_aborted_removes_per_plan_workspace(tmp_path, monkeypa
     )
     assert plan_snapshot_path(agent_state_dir, "p_abort").exists()
 
-    await session.record_plan_aborted(
+    await session._router_host.record_plan_aborted(
         plan_id="p_abort", reason="test",
     )
     assert not plan_snapshot_path(agent_state_dir, "p_abort").exists()

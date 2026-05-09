@@ -1,0 +1,286 @@
+"""Tier 2 invariant tests for RouterHostAdapter (wave 3 PR3).
+
+Verifies structural properties of RouterHostAdapter without using mocks of
+collaborators. Real services (MemoryService, EventLog) and closure-based
+callbacks are used throughout. No private state assertions — public surface only.
+"""
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+import pytest
+
+from reyn.chat.router_loop import RouterLoopHost
+from reyn.chat.services import MemoryService, RouterHostAdapter
+from reyn.events.events import EventLog
+from reyn.llm.model_resolver import ModelResolver
+
+
+# ---------------------------------------------------------------------------
+# Minimal stubs and helpers
+# ---------------------------------------------------------------------------
+
+class _FakeEventStore:
+    """Minimal event store that discards events."""
+
+    def emit(self, type: str, **data) -> None:
+        pass
+
+
+class _FakePermResolver:
+    """Stub PermissionResolver with no configured permissions."""
+    _config: dict = {}
+
+
+def _null_async(*args, **kwargs):
+    async def _inner(*a, **kw):
+        return {}
+    return _inner()
+
+
+async def _null_file_read(path: str) -> dict:
+    return {"content": ""}
+
+
+async def _null_file_write(path: str, content: str) -> dict:
+    return {"path": path, "written": True}
+
+
+async def _null_file_delete(path: str) -> dict:
+    return {"path": path, "deleted": True}
+
+
+async def _null_file_list(path: str) -> dict:
+    return {"path": path, "entries": []}
+
+
+async def _null_file_regen(*, path, output_path, entry_template, header) -> dict:
+    return {"path": path, "output_path": output_path, "entries": 0}
+
+
+async def _null_mcp_list_servers() -> list:
+    return []
+
+
+async def _null_mcp_list_tools(server: str) -> list:
+    return []
+
+
+async def _null_mcp_call_tool(server: str, tool: str, args: dict) -> dict:
+    return {}
+
+
+async def _null_run_skill(spec, *, chain_id) -> dict:
+    return {"status": "finished", "data": {}}
+
+
+async def _null_send_to_agent(*, to, request, depth, chain_id) -> None:
+    pass
+
+
+async def _null_put_outbox(msg) -> None:
+    pass
+
+
+def _null_append_history(msg) -> None:
+    pass
+
+
+async def _null_spawn_plan_task(*, plan_id, runtime, chain_id, parent_chain_id=None) -> None:
+    pass
+
+
+def _make_adapter(
+    agent_name: str = "test-agent",
+    agent_workspace_dir: Path | None = None,
+    events: EventLog | None = None,
+    memory: MemoryService | None = None,
+    delegation_list: "list[dict] | None" = None,
+    agent_replies_list: "list[str] | None" = None,
+    resolver: ModelResolver | None = None,
+) -> RouterHostAdapter:
+    """Construct a minimal RouterHostAdapter with real collaborators."""
+    if events is None:
+        events = EventLog(subscribers=[])
+    workspace = agent_workspace_dir or Path(".reyn") / "agents" / agent_name
+    if memory is None:
+        memory = MemoryService(
+            agent_workspace_dir=workspace,
+            events=events,
+            file_write=_null_file_write,
+            file_read=_null_file_read,
+            file_delete=_null_file_delete,
+            file_regenerate_index=_null_file_regen,
+        )
+    if resolver is None:
+        resolver = ModelResolver({})
+
+    _delegations = delegation_list
+    _replies = agent_replies_list
+
+    return RouterHostAdapter(
+        agent_name=agent_name,
+        agent_role="test role",
+        output_language="en",
+        allowed_skills=None,
+        allowed_mcp=None,
+        permission_resolver=None,
+        mcp_servers=None,
+        project_context="",
+        events=events,
+        resolver=resolver,
+        memory=memory,
+        journal=None,
+        agent_registry=None,
+        skill_enumerate_fn=lambda exclude: [],
+        agent_workspace_dir=workspace,
+        plan_registry_getter=lambda: None,
+        file_read=_null_file_read,
+        file_write=_null_file_write,
+        file_delete=_null_file_delete,
+        file_list_directory=_null_file_list,
+        file_regenerate_index=_null_file_regen,
+        mcp_list_servers=_null_mcp_list_servers,
+        mcp_list_tools=_null_mcp_list_tools,
+        mcp_call_tool=_null_mcp_call_tool,
+        run_skill_awaitable=_null_run_skill,
+        send_to_agent=_null_send_to_agent,
+        put_outbox=_null_put_outbox,
+        append_history=_null_append_history,
+        spawn_plan_task=_null_spawn_plan_task,
+        delegation_tracker=lambda: _delegations,
+        agent_replies_tracker=lambda: _replies,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 1: Protocol conformance (runtime_checkable isinstance)
+# ---------------------------------------------------------------------------
+
+def test_adapter_protocol_conformance(tmp_path):
+    """Tier 2: RouterHostAdapter is structurally conformant with RouterLoopHost.
+
+    Uses @runtime_checkable isinstance check — catches missing methods at
+    refactor time without requiring a real LLM or full session.
+    """
+    adapter = _make_adapter(agent_workspace_dir=tmp_path / "agents" / "test-agent")
+    assert isinstance(adapter, RouterLoopHost), (
+        "RouterHostAdapter must satisfy RouterLoopHost protocol structurally"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 2: memory_path / memory_dir delegation
+# ---------------------------------------------------------------------------
+
+def test_memory_path_delegation_matches_service(tmp_path):
+    """Tier 2: adapter.memory_path returns the same value as MemoryService.memory_path.
+
+    Asserts no double-mapping or path transformation between the adapter
+    delegation surface and the service's own method.
+    """
+    events = EventLog(subscribers=[])
+    workspace = tmp_path / "agents" / "test-agent"
+    memory = MemoryService(
+        agent_workspace_dir=workspace,
+        events=events,
+        file_write=_null_file_write,
+        file_read=_null_file_read,
+        file_delete=_null_file_delete,
+        file_regenerate_index=_null_file_regen,
+    )
+    adapter = _make_adapter(
+        agent_workspace_dir=workspace,
+        events=events,
+        memory=memory,
+    )
+
+    assert adapter.memory_path("shared", "test_slug") == memory.memory_path("shared", "test_slug")
+    assert adapter.memory_dir("agent") == memory.memory_dir("agent")
+
+
+# ---------------------------------------------------------------------------
+# Test 3: events identity
+# ---------------------------------------------------------------------------
+
+def test_events_identity(tmp_path):
+    """Tier 2: adapter.events is the same EventLog object as the session's _chat_events.
+
+    No duplicate event log surface — ensures there is a single append-only
+    event log for the session (P6 compliance).
+    """
+    events = EventLog(subscribers=[])
+    adapter = _make_adapter(
+        agent_workspace_dir=tmp_path / "agents" / "test-agent",
+        events=events,
+    )
+    assert adapter.events is events, (
+        "adapter.events must be the same EventLog instance as injected"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: delegation tracker via callback
+# ---------------------------------------------------------------------------
+
+def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
+    """Tier 2: send_to_agent appends to the delegation tracker list supplied via callback.
+
+    When the delegation_tracker callback returns a mutable list, calling
+    send_to_agent must append a dict with 'to' and 'request' keys.
+    """
+    tracker: list[dict] = []
+    calls: list[dict] = []
+
+    async def fake_send(*, to, request, depth, chain_id) -> None:
+        calls.append({"to": to, "request": request})
+
+    adapter = RouterHostAdapter(
+        agent_name="alpha",
+        agent_role="role",
+        output_language=None,
+        allowed_skills=None,
+        allowed_mcp=None,
+        permission_resolver=None,
+        mcp_servers=None,
+        project_context="",
+        events=EventLog(subscribers=[]),
+        resolver=ModelResolver({}),
+        memory=MemoryService(
+            agent_workspace_dir=tmp_path / "agents" / "alpha",
+            events=EventLog(subscribers=[]),
+            file_write=_null_file_write,
+            file_read=_null_file_read,
+            file_delete=_null_file_delete,
+            file_regenerate_index=_null_file_regen,
+        ),
+        journal=None,
+        agent_registry=None,
+        skill_enumerate_fn=lambda exclude: [],
+        agent_workspace_dir=tmp_path / "agents" / "alpha",
+        plan_registry_getter=lambda: None,
+        file_read=_null_file_read,
+        file_write=_null_file_write,
+        file_delete=_null_file_delete,
+        file_list_directory=_null_file_list,
+        file_regenerate_index=_null_file_regen,
+        mcp_list_servers=_null_mcp_list_servers,
+        mcp_list_tools=_null_mcp_list_tools,
+        mcp_call_tool=_null_mcp_call_tool,
+        run_skill_awaitable=_null_run_skill,
+        send_to_agent=fake_send,
+        put_outbox=_null_put_outbox,
+        append_history=_null_append_history,
+        spawn_plan_task=_null_spawn_plan_task,
+        delegation_tracker=lambda: tracker,
+        agent_replies_tracker=lambda: None,
+    )
+
+    asyncio.run(adapter.send_to_agent(
+        to="beta", request="hello from alpha", depth=1, chain_id="chain-x",
+    ))
+
+    assert len(tracker) == 1, f"Expected 1 delegation entry; got {tracker}"
+    assert tracker[0]["to"] == "beta"
+    assert tracker[0]["request"] == "hello from alpha"

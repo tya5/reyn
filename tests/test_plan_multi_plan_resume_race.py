@@ -126,12 +126,12 @@ async def test_two_plans_dispatched_concurrently_get_independent_snapshots(
     res1, res2 = await asyncio.gather(
         dispatch_plan_tool(
             args=_plan_args("alpha"),
-            parent_host=session, chain_id="turn_c0",
+            parent_host=session._router_host, chain_id="turn_c0",
             available_tool_names=set(),
         ),
         dispatch_plan_tool(
             args=_plan_args("beta"),
-            parent_host=session, chain_id="turn_c0",
+            parent_host=session._router_host, chain_id="turn_c0",
             available_tool_names=set(),
         ),
     )
@@ -178,12 +178,12 @@ async def test_concurrent_plans_record_distinct_step_results(
     res1, res2 = await asyncio.gather(
         dispatch_plan_tool(
             args=_plan_args("alpha", n_steps=2),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
         dispatch_plan_tool(
             args=_plan_args("beta", n_steps=2),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
     )
@@ -245,12 +245,12 @@ async def test_crash_mid_flight_two_plans_resume_both(tmp_path, monkeypatch):
     res1, res2 = await asyncio.gather(
         dispatch_plan_tool(
             args=_plan_args("alpha", n_steps=2),
-            parent_host=session1, chain_id="t0",
+            parent_host=session1._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
         dispatch_plan_tool(
             args=_plan_args("beta", n_steps=2),
-            parent_host=session1, chain_id="t0",
+            parent_host=session1._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
     )
@@ -331,12 +331,12 @@ async def test_concurrent_plans_wal_events_interleave_correctly(
     res1, res2 = await asyncio.gather(
         dispatch_plan_tool(
             args=_plan_args("alpha", n_steps=2),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
         dispatch_plan_tool(
             args=_plan_args("beta", n_steps=2),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
     )
@@ -387,12 +387,12 @@ async def test_per_plan_chain_id_propagates_to_step_events(tmp_path, monkeypatch
     res1, res2 = await asyncio.gather(
         dispatch_plan_tool(
             args=_plan_args("alpha"),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
         dispatch_plan_tool(
             args=_plan_args("beta"),
-            parent_host=session, chain_id="t0",
+            parent_host=session._router_host, chain_id="t0",
             available_tool_names=set(),
         ),
     )
