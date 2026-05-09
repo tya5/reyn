@@ -289,6 +289,12 @@ class MCPInstallIROp(BaseModel):
     server_id: str                             # registry identifier, e.g. "io.github.foo/bar-mcp"
     scope: Literal["local", "project", "user"] = "local"  # write-target config tier
     env_overrides: dict[str, str] | None = None  # pre-supplied env values (from --env flags)
+    # When set, registry fetch is skipped and metadata is resolved from this
+    # specifier directly (e.g. "npm:@modelcontextprotocol/server-filesystem",
+    # "pypi:my-mcp-server", "docker:my-org/server", or a GitHub URL).
+    # ``server_id`` is still required for the audit event; callers should
+    # derive it from the specifier or accept an empty string for unnamed sources.
+    source: str | None = None                  # --source specifier (skips registry fetch)
 
 
 # Discriminated union — Pydantic selects the variant via the "kind" field.

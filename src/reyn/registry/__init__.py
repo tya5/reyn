@@ -18,6 +18,8 @@ Quick usage::
 """
 from reyn.registry.client import RegistryClient, RegistryError
 from reyn.registry.models import ServerInfo, ServerJson, ServerPackage, ServerRemote
+from reyn.registry.source_resolver import SourceResolution
+from reyn.registry.source_resolver import resolve as resolve_source
 
 __all__ = [
     "RegistryClient",
@@ -26,4 +28,6 @@ __all__ = [
     "ServerJson",
     "ServerPackage",
     "ServerRemote",
+    "SourceResolution",
+    "resolve_source",
 ]

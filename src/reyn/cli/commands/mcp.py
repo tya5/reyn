@@ -164,8 +164,28 @@ def register(sub) -> None:
     )
     install.add_argument(
         "server_id",
+        nargs="?",
+        default=None,
         metavar="SERVER_ID",
-        help="Registry server identifier (e.g. 'io.github.foo/bar-mcp')",
+        help=(
+            "Registry server identifier (e.g. 'io.github.foo/bar-mcp'). "
+            "Mutually exclusive with --source."
+        ),
+    )
+    install.add_argument(
+        "--source",
+        dest="source",
+        default=None,
+        metavar="SOURCE",
+        help=(
+            "Install directly from a source specifier, skipping the registry. "
+            "Supported forms: "
+            "npm:<package>[@version], "
+            "pypi:<package>[==version], "
+            "docker:<image>[:<tag>], "
+            "https://github.com/<owner>/<repo>[/tree/<ref>/...]. "
+            "Mutually exclusive with SERVER_ID."
+        ),
     )
     install.add_argument(
         "--scope",
@@ -448,6 +468,18 @@ def run_search(args: argparse.Namespace) -> None:
 def run_install(args: argparse.Namespace) -> None:
     """Install an MCP server — thin wrapper over the mcp_install skill.
 
+    Two install modes:
+      - Registry mode (positional SERVER_ID): fetch server.json from
+        registry.modelcontextprotocol.io, then install.  This is the
+        existing behaviour.
+      - Source mode (``--source SPECIFIER``): skip the registry; resolve
+        metadata from the specifier directly.  Useful for servers that are
+        not yet listed in the registry (e.g. Anthropic official reference
+        servers).
+
+    ``SERVER_ID`` and ``--source`` are mutually exclusive; exactly one must
+    be supplied.
+
     When ``--non-interactive`` is set the ``REYN_MCP_INSTALL_AUTO_APPROVE``
     environment variable is injected so the skill / IR op suppress interactive
     prompts.
@@ -456,10 +488,30 @@ def run_install(args: argparse.Namespace) -> None:
     environment overrides so the credential-prompt flow is skipped for those
     keys.
     """
-    server_id = args.server_id.strip()
-    if not server_id:
-        print("Error: SERVER_ID must not be empty.", file=sys.stderr)
+    server_id_raw: str | None = getattr(args, "server_id", None)
+    source_raw: str | None = getattr(args, "source", None)
+
+    # ── Mutual exclusivity check ──────────────────────────────────────────────
+    has_server_id = server_id_raw is not None and server_id_raw.strip()
+    has_source = source_raw is not None and source_raw.strip()
+
+    if has_server_id and has_source:
+        print(
+            "Error: SERVER_ID and --source are mutually exclusive. "
+            "Provide one or the other, not both.",
+            file=sys.stderr,
+        )
         sys.exit(1)
+
+    if not has_server_id and not has_source:
+        print(
+            "Error: provide either a SERVER_ID (registry install) "
+            "or --source <specifier> (direct install).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    source: str | None = source_raw.strip() if has_source else None
 
     scope = getattr(args, "scope", "local")
     if scope not in _VALID_SCOPES:
@@ -482,11 +534,24 @@ def run_install(args: argparse.Namespace) -> None:
     if non_interactive:
         os.environ["REYN_MCP_INSTALL_AUTO_APPROVE"] = "1"
 
+    # ── Source mode: bypass skill, go direct to IR op handler ─────────────────
+    if source:
+        _run_install_from_source(
+            source=source,
+            scope=scope,
+            pre_env=pre_env,
+            non_interactive=non_interactive,
+        )
+        return
+
+    # ── Registry mode (existing path) ─────────────────────────────────────────
+    server_id = (server_id_raw or "").strip()
+
     # Forward to mcp_install skill via reyn run machinery.
     import json
 
     from reyn.agent import Agent
-    from reyn.config import LimitsConfig, _find_project_root, load_config, load_project_context
+    from reyn.config import _find_project_root, load_config, load_project_context
     from reyn.llm.llm import run_async as _run_async
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
@@ -580,6 +645,94 @@ def run_install(args: argparse.Namespace) -> None:
 
     print(f"Server '{server_id}' installed successfully.")
     print(json.dumps(result.data, indent=2, ensure_ascii=False))
+
+
+def _run_install_from_source(
+    source: str,
+    scope: str,
+    pre_env: dict[str, str],
+    non_interactive: bool,
+) -> None:
+    """Install an MCP server directly from a ``--source`` specifier.
+
+    Bypasses the mcp_install skill and the registry fetch, going directly
+    to the IR op handler.  The permission gate, credential flow, and config
+    write are all identical to the registry path (reusing the same handler).
+    """
+    import asyncio
+    import json
+
+    from reyn.config import _find_project_root, load_config
+    from reyn.events.events import EventLog
+    from reyn.op_runtime.context import OpContext
+    from reyn.op_runtime.mcp_install import handle as _mcp_install_handle
+    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.schemas.models import MCPInstallIROp
+    from reyn.user_intervention import StdinInterventionBus
+
+    config = load_config()
+    project_root = _find_project_root(Path.cwd())
+
+    perm_config = getattr(config, "permissions", {}) or {}
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=project_root,
+        interactive=not non_interactive and sys.stdin.isatty(),
+        trusted_python_allowed=True,  # OS-level install path, no user skill code
+    )
+
+    events = EventLog()
+    workspace = type("Workspace", (), {"root": str(project_root or Path.cwd())})()
+    bus = StdinInterventionBus()
+
+    # Source installs use mcp_install permission declaration (same gate as registry).
+    decl = PermissionDecl(mcp_install=True)
+
+    ctx = OpContext(
+        workspace=workspace,
+        events=events,
+        permission_decl=decl,
+        permission_resolver=perm_resolver,
+        skill_name="mcp_install_source",
+        intervention_bus=bus,
+    )
+
+    # server_id is empty for source installs; the resolved short name is used
+    # as the config key.  We pass a synthetic id for audit clarity.
+    synthetic_id = source
+
+    op = MCPInstallIROp(
+        kind="mcp_install",
+        server_id=synthetic_id,
+        scope=scope,  # type: ignore[arg-type]
+        env_overrides=pre_env or None,
+        source=source,
+    )
+
+    print(f"Installing MCP server from source: {source}")
+    print(f"Scope: {scope}")
+    if pre_env:
+        print(f"Pre-supplied env keys: {', '.join(pre_env.keys())}")
+    print()
+
+    try:
+        result = asyncio.run(_mcp_install_handle(op, ctx, "control_ir"))
+    except PermissionError as exc:
+        print(f"\nPermission denied: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except Exception as exc:
+        print(f"\nError during mcp_install (source): {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    print()
+    if result.get("status") != "ok":
+        err = result.get("error", "(unknown error)")
+        print(f"=== mcp_install failed: {err} ===", file=sys.stderr)
+        sys.exit(2)
+
+    server_name = result.get("server_name", "")
+    print(f"Server '{server_name}' installed successfully (source: {source}).")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------

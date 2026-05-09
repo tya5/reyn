@@ -143,24 +143,58 @@ async def handle(
     ctx: OpContext,
     caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
-    """Execute an mcp_install op — register an MCP server from the registry."""
+    """Execute an mcp_install op — register an MCP server from registry or source.
 
-    # ── 1. Registry fetch ─────────────────────────────────────────────────────
-    from reyn.registry.client import RegistryClient, RegistryError
+    Two install paths:
+      - Registry path (``op.source is None``): fetch server.json from
+        registry.modelcontextprotocol.io, then install.
+      - Source path (``op.source`` non-empty): resolve metadata from the
+        specifier (npm:/pypi:/docker: prefix, or GitHub URL) and skip the
+        registry fetch entirely.
+    """
 
-    try:
-        async with RegistryClient() as client:
-            server_json = await client.get_server(op.server_id)
-    except RegistryError as exc:
-        return {
-            "kind": "mcp_install",
-            "status": "error",
-            "server_id": op.server_id,
-            "error": f"Registry fetch failed: {exc}",
-        }
+    # ── 1. Resolve server metadata ────────────────────────────────────────────
+    if op.source:
+        # Source-based path: skip registry fetch, resolve from specifier.
+        from reyn.registry.source_resolver import resolve as _resolve_source
+
+        resolution = _resolve_source(op.source)
+        if resolution.error:
+            return {
+                "kind": "mcp_install",
+                "status": "error",
+                "server_id": op.server_id,
+                "source": op.source,
+                "error": f"Source resolution failed: {resolution.error}",
+            }
+
+        packages_raw = resolution.packages_raw
+        remotes_raw = resolution.remotes_raw
+        runtime = resolution.runtime_hint
+        # Use resolved server_name for the config key; fall back to server_id short name.
+        resolved_server_name = resolution.server_name or _short_name(op.server_id or op.source)
+
+    else:
+        # Registry path (existing behaviour).
+        from reyn.registry.client import RegistryClient, RegistryError
+
+        try:
+            async with RegistryClient() as client:
+                server_json = await client.get_server(op.server_id)
+        except RegistryError as exc:
+            return {
+                "kind": "mcp_install",
+                "status": "error",
+                "server_id": op.server_id,
+                "error": f"Registry fetch failed: {exc}",
+            }
+
+        packages_raw = server_json.raw.get("packages", [])
+        remotes_raw = server_json.raw.get("remotes", [])
+        runtime = server_json.runtime_hint
+        resolved_server_name = _short_name(op.server_id)
 
     # ── 2. runtimeHint check ──────────────────────────────────────────────────
-    runtime = server_json.runtime_hint  # "npx" / "uvx" / "docker" / "dnx" / ""
     if runtime and runtime in _RUNTIME_CMD:
         cmd = _RUNTIME_CMD[runtime]
         if shutil.which(cmd) is None:
@@ -185,7 +219,6 @@ async def handle(
     secret_keys_set: list[str] = []
 
     # Collect environmentVariables from packages[] that have isSecret=True
-    packages_raw = server_json.raw.get("packages", [])
     for pkg_raw in packages_raw:
         env_vars = pkg_raw.get("environmentVariables", [])
         for ev in env_vars:
@@ -229,29 +262,22 @@ async def handle(
     config_path = _scope_to_path(op.scope, project_root)
     existing = _read_yaml_config(config_path)
 
-    # Determine server short name; handle conflicts by appending suffix
-    base_name = _short_name(op.server_id)
-    server_name = base_name
-    servers = (existing.get("mcp") or {}).get("servers") or {}
-    if server_name in servers:
-        # Already installed — update in-place (idempotent)
-        pass
+    # Server name: use resolved_server_name (idempotent on re-install)
+    server_name = resolved_server_name
 
     # Build the server entry from the first package
     server_entry: dict = {}
     if packages_raw:
         server_entry = _build_server_entry(packages_raw[0], secret_keys_set)
-    else:
+    elif remotes_raw:
         # Remote (HTTP) server — use remotes[0] URL
-        remotes_raw = server_json.raw.get("remotes", [])
-        if remotes_raw:
-            r = remotes_raw[0]
-            server_entry = {
-                "type": r.get("type", "streamable-http"),
-                "url": r.get("url", ""),
-            }
-            if secret_keys_set:
-                server_entry["env"] = {k: f"${{{k}}}" for k in secret_keys_set}
+        r = remotes_raw[0]
+        server_entry = {
+            "type": r.get("type", "streamable-http"),
+            "url": r.get("url", ""),
+        }
+        if secret_keys_set:
+            server_entry["env"] = {k: f"${{{k}}}" for k in secret_keys_set}
 
     # Merge into existing config
     if "mcp" not in existing or not isinstance(existing.get("mcp"), dict):
@@ -273,6 +299,7 @@ async def handle(
         runtime=runtime or "unknown",
         env_keys_set=secret_keys_set,
         installed_path=installed_path,
+        source=op.source or "",
         # NOTE: env values are NOT emitted — only key names for audit
     )
 
@@ -285,6 +312,7 @@ async def handle(
         "installed_path": installed_path,
         "runtime": runtime or "unknown",
         "env_keys_set": secret_keys_set,
+        "source": op.source or "",
     }
 
 
