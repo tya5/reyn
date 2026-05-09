@@ -209,7 +209,7 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M4 Phase 3.5 router-side complete; phase-side migration pending)
+## 9. Implementation: unified registry (ADR-0026 Accepted — M4 complete, both surfaces consume the registry)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
@@ -310,16 +310,35 @@ bare-list shapes the legacy router branches emitted to the LLM,
 preserving LLMReplay byte-identity end-to-end through all 5 cluster
 migrations.
 
-**Remaining work (deferred — design decisions required):**
+**M4 Phase 4 (landed):** phase-side migration completes the architectural
+goal.
 
-- Phase-side dispatch consuming registry (`ControlIRExecutor` →
-  `get_default_registry().for_phase()`); `allowed_ops` prefix-wildcard
-  semantics in the phase dispatcher.
-- `OP_KIND_MODEL_MAP` removal (Open Q #2); obsolete `op_runtime/<kind>.py`
-  consolidation.
+- **Phase 4 step 1 (commit `ebe5786`)** — `_DISPATCH_KIND` sidecar dict
+  removed; `get_dispatch_kind()` reads `ToolDefinition.dispatch_kind`
+  from the registry.
+- **Phase 4 step 2** — coarse-name `FILE_OP` / `MCP_OP` / `RUN_SKILL_OP`
+  ToolDefinitions registered with `gates(phase="allow")` so phase
+  Control IR `kind` values map 1:1 to registry entries.
+  `ControlIRExecutor.execute()` dispatches via
+  `invoke_tool(get_default_registry(), op.kind, ...)`. Catalog building
+  (`_build_phase_tool_catalog`) reads schemas from the registry.
+- **Phase 4 step 3** — `OP_KIND_MODEL_MAP` retained as the coarse-kind
+  reference (= linter `ALL_OP_KINDS`, `OP_PURITY` coverage); no longer
+  consulted at dispatch time. `op_runtime/<kind>.py` handlers retained
+  as the shared implementation that registry handlers delegate to.
+- **`is_op_allowed` helper** — prefix-wildcard membership for legacy
+  coarse-name `allowed_ops` declarations matching future fine-grained
+  `op.kind` values. Forward-looking: phase Control IR still emits
+  coarse kinds today.
 
-ADR-0026 Status remains **Proposed** until the phase-side migration
-above lands.  The `Acceptance criteria` section in the ADR enumerates
-the closing checklist.
+**Tool addition cost** at the steady state: 1 file in
+`src/reyn/tools/<name>.py` + 1 register call in `__init__.py` = 2 touch
+points for a router-or-phase tool. New phase-side coarse op kinds
+additionally need an `OP_KIND_MODEL_MAP` entry (linter / purity
+coverage) and a Pydantic `IROp` model in `schemas/models.py` =
+3-touch-point budget for a fully phase-eligible new kind. This is the
+baseline future tool-scope expansion amortises against.
+
+ADR-0026 is now **Accepted**.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

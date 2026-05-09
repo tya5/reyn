@@ -24,7 +24,6 @@ from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.op_runtime import execute_op
 from reyn.op_runtime.context import OpContext
-from reyn.op_runtime.registry import OP_KIND_MODEL_MAP
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
 from reyn.schemas.models import (
     ControlIROp,
@@ -33,43 +32,36 @@ from reyn.schemas.models import (
 from reyn.user_intervention import InterventionBus
 from reyn.workspace.workspace import Workspace
 
-# Map: op kind -> IROp Pydantic model (used to derive tool parameter schemas).
-# Single source of truth lives in reyn.op_runtime.registry.OP_KIND_MODEL_MAP.
-_IROP_MODEL_MAP = OP_KIND_MODEL_MAP
-
 
 def _build_phase_tool_catalog(allowed_ops: set[str]) -> dict[str, dict]:
     """Build a tool_catalog for dispatch_tool from a set of allowed op kinds.
 
-    Each allowed op kind becomes a tool entry whose parameters schema is
-    derived from the corresponding IROp Pydantic model (with 'kind' removed
-    from required fields, since kind is implicit at dispatch time).
+    Each allowed op kind becomes a tool entry whose parameters schema comes
+    from the unified ToolRegistry (= ADR-0026 Phase 4-3).  Each
+    ToolDefinition with ``gates.phase == "allow"`` carries the same
+    coarse-IROp-derived schema the legacy ``OP_KIND_MODEL_MAP``-based path
+    used; the registry is now the single source for both schema rendering
+    and dispatch.
+
+    Unknown / router-only kinds get a schema-less entry (= no arg
+    validation; dispatch will return ``unknown_tool`` if invoked).
 
     Returns a dict[str, dict] in litellm tools= entry shape:
         {op_kind: {"function": {"name": op_kind, "parameters": <json schema>}}}
     """
+    from reyn.tools import get_default_registry
+    registry = get_default_registry()
+
     catalog: dict[str, dict] = {}
     for kind in allowed_ops:
-        model_cls = _IROP_MODEL_MAP.get(kind)
-        if model_cls is None:
-            # Unknown op kinds get a schema-less entry (no arg validation)
+        tool_def = registry.lookup(kind)
+        if tool_def is None or tool_def.gates.phase != "allow":
             catalog[kind] = {"function": {"name": kind}}
             continue
-        schema = model_cls.model_json_schema()
-        # Remove 'kind' from required — it's implicit at dispatch time and
-        # would fail validation since we pass args without the kind field.
-        required = [f for f in schema.get("required", []) if f != "kind"]
-        properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
-        clean_schema = {
-            "type": "object",
-            "properties": properties,
-        }
-        if required:
-            clean_schema["required"] = required
         catalog[kind] = {
             "function": {
                 "name": kind,
-                "parameters": clean_schema,
+                "parameters": dict(tool_def.parameters),
             }
         }
     return catalog
@@ -322,8 +314,17 @@ class ControlIRExecutor:
             resume_plan=self._resume_plan,
         )
 
+        # Build the registry once per execute() call (cheap; cached if needed).
+        from reyn.tools import get_default_registry
+        from reyn.tools.dispatch import invoke_tool
+        from reyn.tools.types import ToolContext, PhaseCallerState
+        _registry = get_default_registry()
+
+        # Lazy import to avoid module-init cycles.
+        from reyn.op_runtime.registry import is_op_allowed
+
         for op_idx, op in enumerate(ops):
-            if allowed_ops is not None and op.kind not in allowed_ops:
+            if allowed_ops is not None and not is_op_allowed(op.kind, allowed_ops):
                 self.events.emit(
                     "control_ir_skipped",
                     kind=op.kind, reason="not_allowed_in_phase",
@@ -337,15 +338,40 @@ class ControlIRExecutor:
 
             op_args = op.model_dump(exclude={"kind"})
 
-            async def _invoker(args: dict, _op=op, _ctx=ctx) -> Any:
-                # execute_op catches PermissionError internally and returns
-                # {"status": "denied"}.  Re-raise as PermissionError so that
-                # dispatch_tool's handler emits tool_failed with error_kind
-                # "permission_denied" (the designed cross-cutting pattern).
-                result = await execute_op(_op, _ctx, caller="control_ir")
-                result.pop("_token_usage", None)
-                if result.get("status") == "denied":
-                    raise PermissionError(result.get("error", "permission denied"))
+            async def _invoker(args: dict, _op=op, _ctx=ctx, _name=op.kind) -> Any:
+                # ADR-0026 Phase 4 step 2: dispatch via the unified
+                # ToolRegistry when the op kind has a phase=allow entry.
+                # This routes through the canonical handler in
+                # src/reyn/tools/<name>.py which itself delegates to
+                # op_runtime/<kind>.py (= shared implementation).  All 8
+                # Control IR op kinds are registered (= ask_user / shell /
+                # lint / web_fetch / web_search directly + file / mcp /
+                # run_skill via the coarse-name ToolDefinitions added in
+                # Phase 4-2a).  The legacy execute_op fallback below is
+                # retained as a safety net for any future op kind whose
+                # registry entry isn't yet wired with phase=allow.
+                tool_def = _registry.lookup(_name)
+                if tool_def is not None and tool_def.gates.phase == "allow":
+                    phase_state = PhaseCallerState(
+                        skill_run_id=self._skill_run_id,
+                        phase_name=phase or None,
+                        op_context=_ctx,
+                    )
+                    tool_ctx = ToolContext(
+                        events=self.events,
+                        permission_resolver=self._perm,
+                        workspace=self.workspace,
+                        caller_kind="phase",
+                        phase_state=phase_state,
+                    )
+                    result = await invoke_tool(_registry, _name, args, tool_ctx)
+                else:
+                    result = await execute_op(_op, _ctx, caller="control_ir")
+
+                if isinstance(result, dict):
+                    result.pop("_token_usage", None)
+                    if result.get("status") == "denied":
+                        raise PermissionError(result.get("error", "permission denied"))
                 return result
 
             # op_invocation_id scopes the WAL step events to a phase-relative

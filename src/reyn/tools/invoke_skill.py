@@ -192,3 +192,64 @@ INVOKE_SKILL = ToolDefinition(
     purity="side_effect",
     schema_enricher=_enrich_router_schema,
 )
+
+
+# ── Coarse-name "run_skill" ToolDefinition (phase-side, ADR-0026 Phase 4) ─────
+#
+# Phase Control IR uses ``kind: "run_skill"`` for sub-skill invocation.
+# Semantically the same operation as router-side ``invoke_skill`` but the
+# field name differs (= ``skill`` vs ``name``) and chain_id propagation
+# semantics don't apply phase-side.  Registered under the ``run_skill``
+# name so phase-side dispatch via ``op.kind`` finds it.
+
+def _build_run_skill_parameters() -> dict[str, Any]:
+    from reyn.schemas.models import RunSkillIROp
+    schema = RunSkillIROp.model_json_schema()
+    required = [f for f in schema.get("required", []) if f != "kind"]
+    properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
+    return {"type": "object", "properties": properties, **({"required": required} if required else {})}
+
+
+_RUN_SKILL_DESCRIPTION = (
+    "Run a Reyn skill in-process and return its final output "
+    "(= phase-side coarse op).  ``skill`` selects the skill name (or "
+    "skill.md path); ``input`` is the input artifact dict; ``model`` / "
+    "``workspace`` / ``output_language`` are optional overrides.  See "
+    "RunSkillIROp for the full schema."
+)
+
+
+async def _handle_run_skill_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Coarse handler for phase-side ``run_skill`` op.  Delegates to op_runtime."""
+    from reyn.op_runtime.run_skill import handle as handle_run_skill
+    from reyn.schemas.models import RunSkillIROp
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl
+
+    op = RunSkillIROp(kind="run_skill", **{k: v for k, v in args.items() if k != "kind"})
+
+    _op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
+    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
+        legacy_ctx = _op_ctx
+    else:
+        legacy_ctx = OpContext(
+            workspace=ctx.workspace,
+            events=ctx.events,
+            permission_decl=PermissionDecl(),
+            permission_resolver=ctx.permission_resolver,
+            skill_name="",
+        )
+    return await handle_run_skill(op=op, ctx=legacy_ctx, caller="control_ir")
+
+
+RUN_SKILL_OP = ToolDefinition(
+    name="run_skill",
+    description=_RUN_SKILL_DESCRIPTION,
+    parameters=_build_run_skill_parameters(),
+    gates=ToolGates(router="deny", phase="allow"),
+    handler=_handle_run_skill_op,
+    category="invocation",
+    purity="external",
+)

@@ -1,35 +1,51 @@
-"""Op kind registry — single source of truth for Control IR op kinds.
+"""Op kind registry — coarse-name op classification (ADR-0026 Phase 4 steady state).
 
-This module centralises the three previously scattered op kind definitions:
+This module holds three classifications keyed by **coarse op kind**
+(= the ``op.kind`` values phase Control IR emits today: ``file`` /
+``mcp`` / ``run_skill`` / ``shell`` / ``lint`` / ``ask_user`` /
+``web_fetch`` / ``web_search``):
 
-  1. ``OP_KIND_MODEL_MAP``  (was ``_IROP_MODEL_MAP`` in kernel/control_ir_executor.py)
-     Maps each op kind to its typed Pydantic IROp model.  Used by the control
-     IR executor to derive tool-parameter JSON schemas.
+  1. ``OP_KIND_MODEL_MAP`` — coarse name → IROp Pydantic model.
+     Schema derivation is now done by ``reyn.tools.ToolRegistry``
+     entries (= ADR-0026 Phase 4-3); this map is retained as a backwards-
+     compat reference and a stable target for ``ALL_OP_KINDS``.
 
-  2. ``ALL_OP_KINDS``  (was ``_KNOWN_OP_KINDS`` in compiler/linter.py)
-     Frozenset of every valid op kind.  Used by the DSL linter to flag
-     misspelled ``allowed_ops`` entries.
+  2. ``ALL_OP_KINDS`` — frozenset of coarse op kinds.  Used by the DSL
+     linter to flag misspelled ``allowed_ops`` entries; also drives
+     ``OP_PURITY`` coverage tests.
 
-  3. ``OP_PURITY``  (NEW in skill resume design)
-     Determinism classification.  See ``OpPurity`` enum below.  Used by
-     dispatch_tool to decide whether to emit step events for resume.
+  3. ``OP_PURITY`` — determinism classification.  See ``OpPurity`` enum
+     below.  Used by ``dispatch_tool`` to decide whether to emit step
+     events for resume.
+
+Helper:
+  - ``is_op_allowed(op_kind, allowed_ops)`` — prefix-wildcard membership
+    check (= ADR-0026 Phase 4-2c).  ``allowed_ops: ["file"]`` matches
+    fine-grained kinds (``read_file`` / ``write_file`` / etc.) when phase
+    Control IR migrates to fine-grained ``op.kind`` values in a future
+    phase.  Today phase emits coarse kinds, so the helper is a pass-
+    through but the rule is in place to keep skill frontmatter stable.
 
 Consumers:
-  - ``reyn.kernel.control_ir_executor``  — ``OP_KIND_MODEL_MAP``
-  - ``reyn.compiler.linter``             — ``ALL_OP_KINDS``
-  - ``reyn.dispatch.dispatcher``         — ``OP_PURITY`` (skip emission for ``pure``)
+  - ``reyn.compiler.linter``     — ``ALL_OP_KINDS``
+  - ``reyn.dispatch.dispatcher`` — ``OP_PURITY`` (skip emission for ``pure``)
+  - ``reyn.kernel.control_ir_executor`` — ``is_op_allowed`` for the
+    ``allowed_ops`` filter
 
 Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify
 *file sub-operations* (op.op values within the "file" kind), not top-level
 op kinds.  They are a different concern and intentionally stay local.
 
-Migration note (ADR-0026)
--------------------------
-``OP_KIND_MODEL_MAP`` will become a derived view of the unified ToolRegistry
-once capabilities migrate during M2/M3. In the steady state (M4), this map
-is either removed or retained as a ``Mapping[str, type[BaseModel]]`` derived
-from registry entries (see ADR-0026 §7 Open Question #2). Until then, it
-remains the single source of truth for phase-side op kind registration.
+Migration note (ADR-0026 Phase 4 closeout)
+------------------------------------------
+``ControlIRExecutor._build_phase_tool_catalog`` reads schema from
+``get_default_registry()`` (= unified ToolRegistry) directly.  This
+module's ``OP_KIND_MODEL_MAP`` no longer drives dispatch-time schema
+derivation; it survives as the canonical coarse-kind list (= for purity
+classification, linter warnings, prefix-wildcard mappings).  Removing
+this module entirely awaits phase Control IR's migration to fine-grained
+``op.kind`` values, at which point the linter and OP_PURITY can also
+key off registry names.
 """
 from __future__ import annotations
 
@@ -139,7 +155,59 @@ def get_op_purity(op_kind: str) -> OpPurity:
 # ---------------------------------------------------------------------------
 # ALL_OP_KINDS
 # ---------------------------------------------------------------------------
-# Derived from the registry; the linter imports this to detect misspellings.
+# Coarse-name set (= OP_KIND_MODEL_MAP.keys()).  These are the kinds phase
+# Control IR emits in ``op.kind`` today, the names ``allowed_ops``
+# frontmatter targets, and the rows OP_PURITY classifies.  Fine-grained
+# router-side names (= read_file / write_file / call_mcp_tool / etc.) are
+# NOT in this set; they live in the unified ToolRegistry (reyn.tools).
+# When phase Control IR migrates to fine-grained kinds in a future phase,
+# this set will expand to a union of coarse + fine.  Until then, the
+# ``is_op_allowed`` helper below covers the prefix-wildcard semantics for
+# any fine-grained kinds the future phase emits.
 # ---------------------------------------------------------------------------
 
 ALL_OP_KINDS: frozenset[str] = frozenset(OP_KIND_MODEL_MAP.keys())
+
+
+# ---------------------------------------------------------------------------
+# Coarse → fine prefix-wildcard mapping (ADR-0026 Phase 4)
+# ---------------------------------------------------------------------------
+# Skill frontmatter conventionally declares ``allowed_ops: [file]`` — a
+# coarse name that originally matched ``op.kind == "file"`` 1:1.  As
+# router-side fine-grained names (= read_file / write_file / etc.) become
+# canonical phase-side too, the coarse declaration must continue to match
+# the fine-grained ops by prefix wildcard.  ``is_op_allowed`` consults
+# this map to keep existing skills working without frontmatter migration.
+# ---------------------------------------------------------------------------
+
+COARSE_TO_FINE: dict[str, frozenset[str]] = {
+    "file":      frozenset({"read_file", "write_file", "delete_file", "list_directory"}),
+    "mcp":       frozenset({"call_mcp_tool", "list_mcp_servers", "list_mcp_tools"}),
+    "run_skill": frozenset({"invoke_skill"}),
+}
+
+
+def is_op_allowed(op_kind: str, allowed_ops: set[str] | frozenset[str]) -> bool:
+    """Return True if ``op_kind`` is permitted by the ``allowed_ops`` set.
+
+    Membership rules (= ADR-0026 Phase 4):
+
+    1. **Direct match** — ``op_kind in allowed_ops`` (= the legacy 1:1
+       semantics that all existing skill frontmatter relies on).
+    2. **Prefix-wildcard** — when ``allowed_ops`` contains a coarse name
+       (e.g. ``"file"``) and ``op_kind`` is a fine-grained name covered
+       by that coarse (e.g. ``"read_file"``), the op is allowed.
+
+    This forward-looking helper keeps existing ``allowed_ops: [file]``
+    declarations working as Control IR migrates to fine-grained kinds in
+    later phases.  Today (post Phase 4-2a) phase Control IR still emits
+    coarse ``op.kind`` values, so rule 2 is exercised only by tests and
+    by future migrations.
+    """
+    if op_kind in allowed_ops:
+        return True
+    for coarse in allowed_ops:
+        fine_set = COARSE_TO_FINE.get(coarse)
+        if fine_set is not None and op_kind in fine_set:
+            return True
+    return False

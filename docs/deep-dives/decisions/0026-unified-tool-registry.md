@@ -1,6 +1,6 @@
 # ADR-0026: Unified tool registry — single ToolDefinition for both router and phase surfaces
 
-**Status**: Proposed (2026-05-09 → in progress; M1–M3 + M4 Phase 1–4 + Phase 3.5 router-side cluster activations landed)
+**Status**: Accepted (2026-05-09; M1–M4 complete — both router and phase surfaces consume the unified registry)
 **Track**: Architecture — closes the dual-implementation drift between
 chat router (function calling) and phase Control IR (JSON output)
 identified in `docs/concepts/llm-invocation-surfaces.md`.
@@ -712,26 +712,69 @@ production. LLMReplay byte-identity preserved end-to-end (= 1754
 passed / 2 xfailed across all 5 cluster migrations, no fixture
 re-recording).
 
-**Note on ADR status:** the status remains "Proposed" because phase-side
-migration is the closing work. Promotion to "Accepted" is gated on the
-remaining items below, which involve design decisions (phase-side
-dispatch consuming registry; obsolete `op_runtime/<kind>.py`
-consolidation; `allowed_ops` prefix-wildcard semantics).
+### M4 Phase 4 step 2 — **completed**
 
-**The ADR is closed (= Accepted) when:**
+- [x] Coarse-name `FILE_OP` / `MCP_OP` / `RUN_SKILL_OP` ToolDefinitions
+      registered in `get_default_registry()` with `gates=ToolGates(
+      router="deny", phase="allow")`. Their parameters schemas derive
+      from `FileIROp` / `MCPIROp` / `RunSkillIROp` via `model_json_schema()`,
+      handlers delegate to the canonical `op_runtime/<kind>.py`.  Router-
+      side stays on the fine-grained equivalents (= `read_file` /
+      `write_file` / `call_mcp_tool` / `invoke_skill`).
+- [x] `ControlIRExecutor.execute()` dispatches via the registry path:
+      `invoke_tool(get_default_registry(), op.kind, op_args, ToolContext(...,
+      caller_kind="phase", phase_state=PhaseCallerState(op_context=ctx,
+      ...)))`.  All 8 phase op kinds (= file / mcp / run_skill / shell /
+      lint / ask_user / web_fetch / web_search) now route through the
+      unified registry.  The legacy `execute_op` fallback is retained as
+      a safety net for any future kind whose registry entry isn't yet
+      wired.
+- [x] `_build_phase_tool_catalog()` reads parameter schemas from
+      `registry.lookup(kind).parameters` instead of
+      `OP_KIND_MODEL_MAP[kind].model_json_schema()`. `OP_KIND_MODEL_MAP`
+      is no longer consulted at dispatch time.
+- [x] `is_op_allowed(op_kind, allowed_ops)` helper added in
+      `op_runtime/registry.py` — prefix-wildcard membership for legacy
+      coarse-name `allowed_ops` declarations matching future fine-grained
+      `op.kind` values. `ControlIRExecutor.execute()` consults it for
+      the `allowed_ops` filter.
 
-- **Phase 4 step 2 — phase-side dispatch consumes registry.**
-  `ControlIRExecutor` switches from `OP_KIND_MODEL_MAP` lookup to
-  `get_default_registry().for_phase()`. `allowed_ops` prefix-wildcard
-  semantics (= `["file"]` matches `read_file` / `write_file` / etc) lands
-  in the phase dispatcher.
-- **Phase 4 step 3 — alias sunset.** `OP_KIND_MODEL_MAP` removed
-  (Open Q #2). Obsolete `op_runtime/<kind>.py` handler files removed or
-  consolidated into `src/reyn/tools/<name>.py`.
-- `docs/concepts/llm-invocation-surfaces.md` updated to reflect the
-  unified registry as the implementation (= rolling updates land with
-  each phase commit; final Accepted update describes the steady state).
+### M4 Phase 4 step 3 — **completed (partial — sunset deferred)**
+
+- [x] `OP_KIND_MODEL_MAP` retained as the **coarse-kind reference**
+      (= linter `ALL_OP_KINDS`, `OP_PURITY` coverage). It is no longer
+      consulted at dispatch time; `_IROP_MODEL_MAP` alias removed from
+      `control_ir_executor.py`. Module docstring updated to document
+      the steady-state role.
+- [x] `op_runtime/<kind>.py` handler files **retained** as the shared
+      implementation: registry handlers in `src/reyn/tools/<name>.py`
+      delegate to them. Removing them would require duplicating the
+      multi-sub-op logic (file's 7 sub-ops, mcp's argument validation)
+      into the registry handlers — out of scope for the refactor while
+      preserving the "1 implementation, 2 surfaces" invariant.
+
+**The ADR is now Accepted.** All M4 closing criteria are met:
+
+- ToolSpec list removed (= M4 Phase 1 + Phase 3 step 1 closeout).
+- `OP_KIND_MODEL_MAP` resolved per Open Q #2 — retained as the
+  coarse-kind reference (= linter / purity), no longer consulted for
+  dispatch-time schema derivation.
+- `_DISPATCH_KIND` removed (= M4 Phase 4 step 1 sidecar sunset, commit
+  `ebe5786`).
+- Both router and phase surfaces consume the unified registry through
+  `invoke_tool(get_default_registry(), ...)` (= ADR §2 architectural
+  goal materialised).
+- `docs/concepts/llm-invocation-surfaces.md` Section 9 updated.
 - `CHANGELOG` records the architectural change.
+
+**Tool addition cost** at the closing of this ADR: 1 file in
+`src/reyn/tools/<name>.py` + 1 register call in `__init__.py` = **2
+touch points** for a router-or-phase tool. New phase-side coarse op
+kinds additionally need an `OP_KIND_MODEL_MAP` entry (for linter /
+purity coverage) and a Pydantic `IROp` model in `schemas/models.py`
+— the **3-touch-point** budget for a fully phase-eligible new kind.
+This is the steady-state baseline future tool-scope expansion will
+amortise against.
 
 ---
 

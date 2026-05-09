@@ -209,7 +209,7 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M4 Phase 3.5 router-side 完了; phase-side migration 未着手）
+## 9. 実装: 統合 tool registry（ADR-0026 Accepted — M4 完了、 router/phase 両 surface が registry を消費）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
@@ -244,11 +244,15 @@ ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つ
 
 `RouterLoop._invoke_router_tool` は registry dispatch top-branch + 将来 cluster 用の placeholder コメントだけの薄い実装に。 `_normalise_router_tool_result` が handler 戻り値 shape (= op_runtime synthesis 由来の dict envelope) を legacy router branch が emit していた bare-string / bare-list shape に正規化し、 LLMReplay byte-identity を 5 cluster migration を通じて end-to-end で保持。
 
-**残り作業（先送り — 設計判断が必要）:**
+**M4 Phase 4（着地済み）:** phase-side migration 完了で architectural goal 達成。
 
-- Phase-side dispatch の registry 消費 (`ControlIRExecutor` → `get_default_registry().for_phase()`)、 phase dispatcher での `allowed_ops` prefix-wildcard semantics。
-- `OP_KIND_MODEL_MAP` 撤去 (Open Q #2)、 obsolete `op_runtime/<kind>.py` の consolidation。
+- **Phase 4 step 1 (commit `ebe5786`)** — `_DISPATCH_KIND` sidecar dict 撤去、 `get_dispatch_kind()` が registry の `ToolDefinition.dispatch_kind` を直接参照。
+- **Phase 4 step 2** — coarse-name `FILE_OP` / `MCP_OP` / `RUN_SKILL_OP` ToolDefinitions を `gates(phase="allow")` で registry 登録。 phase Control IR `kind` 値は registry entry に 1:1 マッピング。 `ControlIRExecutor.execute()` が `invoke_tool(get_default_registry(), op.kind, ...)` 経由 dispatch、 catalog building (`_build_phase_tool_catalog`) は registry から schema を読む。
+- **Phase 4 step 3** — `OP_KIND_MODEL_MAP` は coarse-kind reference (= linter `ALL_OP_KINDS`、 `OP_PURITY` coverage) として残存; dispatch time には参照されない。 `op_runtime/<kind>.py` handlers は registry handlers が委譲する shared implementation として残存。
+- **`is_op_allowed` helper** — legacy coarse-name `allowed_ops` declarations が将来 fine-grained `op.kind` にマッチするための prefix-wildcard membership。 forward-looking: phase Control IR は今日も coarse kinds を emit。
 
-ADR-0026 Status は phase-side migration が land するまで **Proposed** のまま。 ADR の `Acceptance criteria` セクションに closing checklist が明記されている。
+**tool 追加コスト** (steady state): `src/reyn/tools/<name>.py` 1 file + `__init__.py` の register 呼出 1 行 = router-or-phase tool で **2 touch points**。 新規 phase-side coarse op kind は加えて `OP_KIND_MODEL_MAP` entry (linter / purity coverage) + `schemas/models.py` の Pydantic `IROp` model = **3 touch points** が phase-eligible 新 kind の予算。 これが今後の tool-scope 拡大が amortise する base line。
+
+ADR-0026 は **Accepted**。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

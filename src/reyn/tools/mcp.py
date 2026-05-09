@@ -290,3 +290,63 @@ CALL_MCP_TOOL = ToolDefinition(
     category="discovery",
     purity="side_effect",  # call_mcp_tool has arbitrary side effects
 )
+
+
+# ── Coarse-name "mcp" ToolDefinition (phase-side, ADR-0026 Phase 4) ───────────
+#
+# Phase Control IR uses ``kind: "mcp"`` for invoking an MCP server tool.
+# Semantically equivalent to ``call_mcp_tool`` (= server / tool / args), but
+# registered under the ``mcp`` name to match Control IR ``kind`` values
+# without forcing existing skills to migrate. Router-side stays on the
+# fine-grained ``call_mcp_tool`` ToolDefinition.
+
+def _build_mcp_parameters() -> dict[str, Any]:
+    """Derive parameters from MCPIROp schema (= same as op-runtime expectation)."""
+    from reyn.schemas.models import MCPIROp
+    schema = MCPIROp.model_json_schema()
+    required = [f for f in schema.get("required", []) if f != "kind"]
+    properties = {k: v for k, v in schema.get("properties", {}).items() if k != "kind"}
+    return {"type": "object", "properties": properties, **({"required": required} if required else {})}
+
+
+_MCP_OP_DESCRIPTION = (
+    "Invoke an MCP server tool (= phase-side coarse op).  Builds an "
+    "MCPIROp(server, tool, args) and dispatches via op_runtime.mcp; "
+    "permission gating consults the phase's permissions.mcp allowlist."
+)
+
+
+async def _handle_mcp_op(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Coarse handler for the phase-side ``mcp`` op.  Delegates to op_runtime."""
+    from reyn.op_runtime.mcp import handle as mcp_handle
+    from reyn.schemas.models import MCPIROp
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl
+
+    op = MCPIROp(kind="mcp", **{k: v for k, v in args.items() if k != "kind"})
+
+    _op_ctx = (
+        ctx.phase_state.op_context if ctx.phase_state is not None else None
+    )
+    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
+        legacy_ctx = _op_ctx
+    else:
+        legacy_ctx = OpContext(
+            workspace=ctx.workspace,
+            events=ctx.events,
+            permission_decl=PermissionDecl(mcp=[op.server]),
+            permission_resolver=ctx.permission_resolver,
+            skill_name="",
+        )
+    return await mcp_handle(op=op, ctx=legacy_ctx, caller="control_ir")
+
+
+MCP_OP = ToolDefinition(
+    name="mcp",
+    description=_MCP_OP_DESCRIPTION,
+    parameters=_build_mcp_parameters(),
+    gates=ToolGates(router="deny", phase="allow"),
+    handler=_handle_mcp_op,
+    category="io",
+    purity="external",
+)

@@ -41,7 +41,7 @@ def get_default_registry() -> ToolRegistry:
     # Lazy import to avoid circular dependencies at package-init time.
     from reyn.tools.web_search import WEB_SEARCH
     from reyn.tools.web_fetch import WEB_FETCH
-    from reyn.tools.invoke_skill import INVOKE_SKILL
+    from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
     from reyn.tools.shell import SHELL
     from reyn.tools.lint import LINT
     from reyn.tools.ask_user import ASK_USER
@@ -49,8 +49,8 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.plan import PLAN
     from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
     # Wave 2 additions (ADR-0026 M3 Wave 2)
-    from reyn.tools.file import READ_FILE, WRITE_FILE, DELETE_FILE, LIST_DIRECTORY
-    from reyn.tools.mcp import CALL_MCP_TOOL, LIST_MCP_SERVERS, LIST_MCP_TOOLS
+    from reyn.tools.file import READ_FILE, WRITE_FILE, DELETE_FILE, LIST_DIRECTORY, FILE_OP
+    from reyn.tools.mcp import CALL_MCP_TOOL, LIST_MCP_SERVERS, LIST_MCP_TOOLS, MCP_OP
     from reyn.tools.memory import (
         LIST_MEMORY,
         READ_MEMORY_BODY,
@@ -99,4 +99,12 @@ def get_default_registry() -> ToolRegistry:
     registry.register(PLAN)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
+    # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
+    # ADR-0026 Phase 4: Control IR ``kind: file/mcp/run_skill`` values map
+    # 1:1 to these coarse ToolDefinitions; ControlIRExecutor dispatches via
+    # the registry by op.kind name.  Router-side stays on the fine-grained
+    # equivalents (read_file/write_file/etc., call_mcp_tool, invoke_skill).
+    registry.register(FILE_OP)
+    registry.register(MCP_OP)
+    registry.register(RUN_SKILL_OP)
     return registry
