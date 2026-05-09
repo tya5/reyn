@@ -32,6 +32,65 @@ class RegistryError(Exception):
     """Raised when the registry is unreachable or returns an error."""
 
 
+def _parse_semver(version: str) -> tuple[int, ...]:
+    """Parse a semver string into a comparable tuple of ints.
+
+    Non-numeric segments are treated as 0 so malformed versions don't crash.
+    Returns ``(0,)`` for empty or unparseable input.
+    """
+    parts = []
+    for segment in version.split(".")[:3]:
+        try:
+            parts.append(int(segment))
+        except ValueError:
+            parts.append(0)
+    return tuple(parts) if parts else (0,)
+
+
+def _dedup_by_latest(raw_entries: list[dict]) -> list[dict]:
+    """Deduplicate registry search entries by server name.
+
+    When the registry returns multiple version entries for the same server
+    name, keep only the best one using this priority:
+      1. Entry where ``_meta…isLatest`` is ``true``.
+      2. Entry with the highest semver ``server.version``.
+      3. Last-seen entry (preserve original list order as tiebreaker).
+
+    Insertion order of the first occurrence of each name is preserved so the
+    display order stays stable.
+    """
+    # Maps name → (entry, version_tuple, is_latest)
+    best: dict[str, tuple[dict, tuple[int, ...], bool]] = {}
+
+    for entry in raw_entries:
+        srv = entry.get("server", entry)
+        name: str = srv.get("name", "")
+        version_str: str = srv.get("version", "")
+        version_tuple = _parse_semver(version_str)
+
+        meta = entry.get("_meta", {})
+        # registry key can vary; scan all top-level _meta values for isLatest
+        is_latest = False
+        for meta_val in meta.values():
+            if isinstance(meta_val, dict) and meta_val.get("isLatest"):
+                is_latest = True
+                break
+
+        if name not in best:
+            best[name] = (entry, version_tuple, is_latest)
+        else:
+            _, cur_ver, cur_latest = best[name]
+            # Prefer isLatest flag; among equal-flag entries prefer higher version.
+            if is_latest and not cur_latest:
+                best[name] = (entry, version_tuple, is_latest)
+            elif not is_latest and cur_latest:
+                pass  # current best wins
+            elif version_tuple > cur_ver:
+                best[name] = (entry, version_tuple, is_latest)
+
+    return [item[0] for item in best.values()]
+
+
 def _base_url() -> str:
     return os.environ.get(
         "REYN_MCP_REGISTRY_URL",
@@ -108,8 +167,12 @@ class RegistryClient:
     async def search(self, query: str, limit: int = 20) -> list:
         """Search for MCP servers matching *query*.
 
-        Returns a list of ``ServerInfo`` dataclasses (from
-        ``reyn.registry.models``).  Results are cached for 24 h.
+        Returns a deduplicated list of ``ServerInfo`` dataclasses (from
+        ``reyn.registry.models``).  When the registry returns multiple version
+        entries for the same server name, only the latest version is kept:
+        first by ``_meta.isLatest == true``, then by highest semver.
+
+        Results are cached for 24 h.
 
         Raises ``RegistryError`` on network / HTTP failure.
         """
@@ -120,7 +183,7 @@ class RegistryClient:
         cached = cache.get(cache_key)
         if cached is not None:
             raw_entries = cached.get("servers", [])
-            return [server_info_from_raw(e) for e in raw_entries]
+            return [server_info_from_raw(e) for e in _dedup_by_latest(raw_entries)]
 
         data = await self._get(
             "/v0.1/servers",
@@ -128,7 +191,7 @@ class RegistryClient:
         )
         cache.set(cache_key, data)
         raw_entries = data.get("servers", [])
-        return [server_info_from_raw(e) for e in raw_entries]
+        return [server_info_from_raw(e) for e in _dedup_by_latest(raw_entries)]
 
     async def get_server(self, server_name: str) -> object:
         """Fetch the latest version of a specific server by registry name.

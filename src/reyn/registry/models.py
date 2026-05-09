@@ -20,14 +20,15 @@ class ServerInfo:
     Fields mirror the registry ``/v0.1/servers`` response envelope:
       - ``name``        — registry identifier, e.g. ``"io.github.foo/bar-mcp"``
       - ``description`` — one-line description from server.json
-      - ``repository_url`` — GitHub (or other) repository URL
+      - ``repository_url`` — GitHub (or other) repository URL, or ``None`` if
+                             the registry entry does not include a repository.
       - ``runtime_hint``   — inferred from packages[0].registryType: one of
                              ``"npx"`` / ``"uvx"`` / ``"docker"`` / ``"dnx"`` / ``""``
     """
 
     name: str
     description: str
-    repository_url: str
+    repository_url: str | None
     runtime_hint: str = ""
 
 
@@ -109,14 +110,19 @@ def server_info_from_raw(entry: dict[str, Any]) -> ServerInfo:
     """Build a ``ServerInfo`` from one element of ``/v0.1/servers`` response.
 
     ``entry`` is ``{"server": {...}, "_meta": {...}}``.
+
+    ``repository_url`` is ``None`` when the registry entry has no
+    ``repository.url`` field — callers should treat ``None`` as "not available"
+    rather than an empty string, so display layers can substitute a placeholder.
     """
     srv = entry.get("server", entry)  # tolerate bare server dict
     packages_raw: list[dict[str, Any]] = srv.get("packages", [])
     repo = srv.get("repository", {})
+    raw_url: str | None = repo.get("url") or None  # coerce "" → None
     return ServerInfo(
         name=srv.get("name", ""),
         description=srv.get("description", ""),
-        repository_url=repo.get("url", ""),
+        repository_url=raw_url,
         runtime_hint=_runtime_hint_from_packages(packages_raw),
     )
 
