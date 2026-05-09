@@ -129,6 +129,12 @@ class RightPanel(Widget):
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
+        # Agents tab state — same cursor pattern as events / memory.
+        # `_agents_items` is the flat list returned by `render_agents`,
+        # one entry per running skill / running plan / recent skill /
+        # recent plan. Used by j/k navigation and preview rendering.
+        self._agents_cursor: int = 0
+        self._agents_items: list[dict] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -287,6 +293,8 @@ class RightPanel(Widget):
                 self._events_move(+1)
             elif self._panel_type == "memory":
                 self._memory_move(+1)
+            elif self._panel_type == "agents":
+                self._agents_move(+1)
             else:
                 self._scroll_panel(+1)
         elif event.key == "k":
@@ -297,6 +305,8 @@ class RightPanel(Widget):
                 self._events_move(-1)
             elif self._panel_type == "memory":
                 self._memory_move(-1)
+            elif self._panel_type == "agents":
+                self._agents_move(-1)
             else:
                 self._scroll_panel(-1)
         elif event.key == "l":
@@ -305,6 +315,15 @@ class RightPanel(Widget):
         elif event.key == "h":
             event.prevent_default()
             self._panel_resize(+2)
+        elif event.key == "c":
+            # Generic copy: whatever the right panel is currently
+            # showing — the preview pane content if it's visible,
+            # otherwise the main upper-panel content for the active
+            # tab. Designed for skill authors / debuggers to grab
+            # whatever they're looking at and paste it into chat /
+            # an issue tracker.
+            event.prevent_default()
+            self._copy_current_view()
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -370,6 +389,8 @@ class RightPanel(Widget):
                 self._show_event_in_preview(pane)
             elif self._panel_type == "memory" and self._memory_entries:
                 self._show_memory_in_preview(pane)
+            elif self._panel_type == "agents" and self._agents_items:
+                self._show_agent_in_preview(pane)
             else:
                 pane.clear()
         except Exception as exc:
@@ -388,32 +409,65 @@ class RightPanel(Widget):
         if self._preview_visible:
             self._update_preview()
 
-    def _show_event_in_preview(self, pane: _PreviewPane) -> None:
-        """Render the cursor's event as JSON in the preview pane."""
+    def _render_as_yaml(self, value: Any) -> Any:
+        """Format ``value`` as a YAML block + Rich syntax highlighter.
+
+        YAML is dramatically easier to scan than the equivalent JSON for
+        the kind of nested structures we surface in the events / recent-
+        skill previews — fewer braces / commas / quotes, multi-line
+        strings stay multi-line, and the indented block style matches
+        the way the events are mentally grouped (top-level type, then
+        nested data / meta).
+
+        Implementation: round-trip through ``json.dumps(default=str)``
+        first to coerce non-YAML-native types (Path, datetime, custom
+        classes) into plain strings; then ``yaml.safe_dump`` the result.
+        Falls back to JSON, then to ``repr`` if either step explodes —
+        the preview should never hide content because of a serialisation
+        edge case.
+        """
         import json as _json
-        if not self._events_visible:
-            pane.clear()
-            return
-        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
-        ev = self._events_visible[idx]
-        from rich.syntax import Syntax  # lazy — keeps cold-start fast
-        title = f"event #{idx} · {ev.get('type', '?')}"
+
+        from rich.syntax import Syntax
+        from rich.text import Text as RichText
+        body: str
         try:
-            body = _json.dumps(ev, indent=2, default=str, ensure_ascii=False)
+            import yaml as _yaml
+            normalised = _json.loads(
+                _json.dumps(value, default=str, ensure_ascii=False),
+            )
+            body = _yaml.safe_dump(
+                normalised,
+                default_flow_style=False,
+                allow_unicode=True,
+                sort_keys=False,
+                width=120,
+            )
         except Exception:
-            body = repr(ev)
+            try:
+                body = _json.dumps(value, indent=2, default=str, ensure_ascii=False)
+            except Exception:
+                body = repr(value)
         try:
-            renderable = Syntax(
-                body, "json",
+            return Syntax(
+                body, "yaml",
                 theme="ansi_dark",
                 background_color="default",
                 line_numbers=False,
                 word_wrap=True,
             )
         except Exception:
-            from rich.text import Text as RichText
-            renderable = RichText(body)
-        pane.show_text(title, renderable)
+            return RichText(body)
+
+    def _show_event_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's event as YAML in the preview pane."""
+        if not self._events_visible:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._events_visible) - 1, self._events_cursor))
+        ev = self._events_visible[idx]
+        title = f"event #{idx} · {ev.get('type', '?')}"
+        pane.show_text(title, self._render_as_yaml(ev))
 
     def _memory_move(self, delta: int) -> None:
         """Move the memory tab cursor; sync preview if open."""
@@ -448,6 +502,700 @@ class RightPanel(Widget):
         body_md = RichMarkdown(getattr(entry, "body", "") or "")
         title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
         pane.show_text(title, RichGroup(head, body_md))
+
+    # ── agents tab cursor + preview integration ──────────────────────────────
+
+    def _agents_move(self, delta: int) -> None:
+        """Move the agents tab cursor; sync preview if open."""
+        if not self._agents_items:
+            return
+        self._agents_cursor = max(
+            0, min(len(self._agents_items) - 1, self._agents_cursor + delta),
+        )
+        self._invalidate()
+        if self._preview_visible:
+            self._update_preview()
+
+    def _show_agent_in_preview(self, pane: _PreviewPane) -> None:
+        """Render the cursor's agent-tab item in the preview pane.
+
+        Each ``kind`` produces a different layout:
+
+          * ``running_skill`` — agent / skill / current phase / elapsed +
+            recent traces (read from the live skill_run jsonl if visible).
+          * ``recent_skill``  — full event sequence from the run's jsonl
+            file, JSON-prettified (mirrors the events tab preview).
+          * ``running_plan``  — agent / plan_id / goal / done/total /
+            failed count.
+          * ``recent_plan``   — agent / plan_id / goal / completion stats /
+            exception type when interrupted.
+        """
+        if not self._agents_items:
+            pane.clear()
+            return
+        idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+        item = self._agents_items[idx]
+        kind = item.get("kind", "")
+        if kind == "running_skill":
+            self._preview_running_skill(pane, item)
+        elif kind == "running_plan":
+            self._preview_running_plan(pane, item)
+        elif kind == "recent_skill":
+            self._preview_recent_skill(pane, item)
+        elif kind == "recent_plan":
+            self._preview_recent_plan(pane, item)
+        else:
+            pane.clear()
+
+    def _preview_running_skill(self, pane: _PreviewPane, item: dict) -> None:
+        """Live snapshot for an in-flight skill run."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        head.append(item.get("skill_name", "?"), style="bold " + _CORAL)
+        head.append("  ")
+        head.append("(running)", style="#44cc88")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("run_id: ", style="dim")
+        head.append(item.get("run_id", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("elapsed: ", style="dim")
+        head.append(f"{item.get('elapsed_s', 0)}s", style="#dddddd")
+        head.append("\n")
+        head.append("phase: ", style="dim")
+        head.append(item.get("phase", "—") or "—", style="#dddddd")
+        if item.get("phase_visits", 0) > 1:
+            head.append(f"  (visit #{item['phase_visits']})", style="#888888")
+        # The user message that kicked off this run. Lets the user
+        # disambiguate same-named skills triggered by different turns —
+        # the typical "why is web_search_display still running, didn't
+        # I already get my answer?" gotcha (= different run from a
+        # different prompt).
+        trig = item.get("triggered_by", "") or ""
+        if trig:
+            head.append("\n\ntriggered by:\n", style="dim")
+            # Truncate to 240 chars so a long pasted prompt doesn't
+            # blow up the preview, but keep enough to identify which
+            # turn it came from.
+            short = trig if len(trig) <= 240 else trig[:237] + "…"
+            head.append(short, style="#aaaaaa")
+        title = f"running · {item.get('skill_name', '?')}"
+        pane.show_text(title, RichGroup(head))
+
+    def _preview_running_plan(self, pane: _PreviewPane, item: dict) -> None:
+        """Live snapshot for an in-flight plan run."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        head.append("plan ", style="dim")
+        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append("  ")
+        head.append(item.get("status", "?"),
+                    style="#44cc88" if item.get("status") == "running" else "#aaaa55")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("progress: ", style="dim")
+        head.append(
+            f"{item.get('done', 0)}/{item.get('total', 0)}", style="#dddddd",
+        )
+        if item.get("failed"):
+            head.append(f"  ({item['failed']} failed)", style="#ff6644")
+        if item.get("goal"):
+            head.append("\n\ngoal:\n", style="dim")
+            head.append(item["goal"], style="#aaaaaa")
+        title = f"running · plan {item.get('plan_id', '?')}"
+        pane.show_text(title, RichGroup(head))
+
+    def _preview_recent_skill(self, pane: _PreviewPane, item: dict) -> None:
+        """Replay events from the skill_run jsonl file."""
+        import json as _json
+
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+
+        head = RichText()
+        status = item.get("status", "?")
+        if status == "ok":
+            head_glyph, head_style = "✓ ", "#44cc88"
+        elif status == "stuck":
+            head_glyph, head_style = "⊘ ", "#ffaa44"
+        else:
+            head_glyph, head_style = "✗ ", "#ff6644"
+        head.append(head_glyph, style="bold " + head_style)
+        head.append(item.get("skill_name", "?"), style="bold #dddddd")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("status: ", style="dim")
+        if status == "stuck":
+            head.append(
+                f"stuck (last event: {item.get('stuck_at', '?')})",
+                style="bold #ffaa44",
+            )
+            head.append(
+                "\n           "
+                "no workflow_finished / workflow_aborted in the log — "
+                "the run was likely killed mid-execution "
+                "(SIGKILL / crash / abandoned session)",
+                style="dim #aa8844",
+            )
+        else:
+            head.append(status, style=head_style)
+        head.append("\n")
+        head.append("duration: ", style="dim")
+        head.append(f"{item.get('duration_s', 0):.1f}s", style="#dddddd")
+
+        # Event log + LLM-usage rollup + phase-path reconstruction.
+        # Single pass: keep running totals for LLM calls / tokens / cost
+        # AND record the sequence of phase_started events so we can
+        # render the actual execution path the OS took. The events list
+        # is also retained for the YAML dump below, so we don't read
+        # the file twice.
+        events: list[dict] = []
+        llm_calls = 0
+        prompt_tokens_total = 0
+        completion_tokens_total = 0
+        cost_usd_total = 0.0
+        phase_path: list[tuple[str, int]] = []   # [(phase_name, visit_count)]
+        terminal_kind: str = ""                  # "finished" / "aborted" / ""
+        path = item.get("jsonl_path")
+        if path is not None:
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = _json.loads(raw)
+                    except Exception:
+                        continue
+                    events.append(ev)
+                    et = ev.get("type")
+                    d = ev.get("data") or {}
+                    if et == "llm_response_received":
+                        llm_calls += 1
+                        try:
+                            prompt_tokens_total += int(d.get("prompt_tokens", 0) or 0)
+                        except (TypeError, ValueError):
+                            pass
+                        try:
+                            completion_tokens_total += int(
+                                d.get("completion_tokens", 0) or 0
+                            )
+                        except (TypeError, ValueError):
+                            pass
+                        try:
+                            cost_usd_total += float(d.get("cost_usd", 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            pass
+                    elif et == "phase_started":
+                        phase_name = str(d.get("phase", "")).strip()
+                        if phase_name:
+                            try:
+                                visit = int(d.get("visit_count", 1) or 1)
+                            except (TypeError, ValueError):
+                                visit = 1
+                            phase_path.append((phase_name, visit))
+                    elif et in ("workflow_finished", "skill_run_completed"):
+                        terminal_kind = "finished"
+                    elif et in ("workflow_aborted", "skill_run_failed"):
+                        terminal_kind = "aborted"
+            except OSError as exc:
+                head.append(f"\n(failed to read events: {exc})", style="dim red")
+
+        # LLM usage block — only meaningful when we actually saw at least
+        # one llm_response_received event. Skipped silently for runs that
+        # didn't call the LLM (e.g. pure deterministic preprocessor).
+        if llm_calls > 0:
+            head.append("\n")
+            head.append("llm calls: ", style="dim")
+            head.append(str(llm_calls), style="#dddddd")
+            head.append("\n")
+            head.append("tokens: ", style="dim")
+            total_tokens = prompt_tokens_total + completion_tokens_total
+            head.append(
+                f"{total_tokens:,} (prompt {prompt_tokens_total:,} + "
+                f"completion {completion_tokens_total:,})",
+                style="#dddddd",
+            )
+            head.append("\n")
+            head.append("cost: ", style="dim")
+            head.append(f"${cost_usd_total:.4f}", style="#dddddd")
+
+        # Phase graph — the sequence of phases the OS actually executed,
+        # rendered with arrows. Visit counts > 1 surface as `(v2)` /
+        # `(v3)` so revisit loops are visible. Long paths wrap on the
+        # arrow boundary so a 10+ phase chain stays readable in a 33%
+        # preview pane. The terminal type appends a final node:
+        #   finished → arrow into a green ✓ end
+        #   aborted  → arrow into a red ✗ aborted
+        if phase_path:
+            head.append("\n")
+            head.append("phase graph:", style="dim")
+            head.append("\n  ")
+            line_chars = 2  # current visual column inside this line
+            for i, (phase, visit) in enumerate(phase_path):
+                node = phase if visit <= 1 else f"{phase} (v{visit})"
+                # Soft-wrap before drawing the arrow when adding it would
+                # push past ~58 chars (= comfortable width inside the
+                # preview pane border).
+                arrow = " → " if i > 0 else ""
+                if i > 0 and line_chars + len(arrow) + len(node) > 58:
+                    head.append("\n  ")
+                    line_chars = 2
+                if arrow:
+                    head.append(arrow, style="dim #555555")
+                    line_chars += len(arrow)
+                head.append(node, style="#dddddd")
+                line_chars += len(node)
+            # Terminal marker
+            if terminal_kind == "finished":
+                tail_text = " → ✓ end"
+                tail_style = "#44cc88"
+            elif terminal_kind == "aborted":
+                tail_text = " → ✗ aborted"
+                tail_style = "#ff6644"
+            else:
+                tail_text = ""
+                tail_style = ""
+            if tail_text:
+                if line_chars + len(tail_text) > 58:
+                    head.append("\n  ")
+                head.append(tail_text, style=tail_style)
+
+        head.append("\n")
+        head.append("finished: ", style="dim")
+        head.append(item.get("ts", "?"), style="#dddddd")
+
+        # triggered_by — looked up by full run_id from the session-local
+        # map populated when the skill first emitted a trace event. Empty
+        # for runs from previous sessions (= map is rebuilt fresh each
+        # ``reyn chat`` launch).
+        trig = self._lookup_triggered_by(item.get("run_id_full", ""))
+        if trig:
+            head.append("\n\ntriggered by:\n", style="dim")
+            short = trig if len(trig) <= 240 else trig[:237] + "…"
+            head.append(short, style="#aaaaaa")
+
+        head.append("\n\n")
+
+        if events:
+            event_block = self._render_as_yaml(events)
+            title = f"{item.get('skill_name', '?')} · {len(events)} events"
+            pane.show_text(title, RichGroup(head, event_block))
+        else:
+            head.append("(no events found)", style="dim #555555")
+            title = f"{item.get('skill_name', '?')} · 0 events"
+            pane.show_text(title, RichGroup(head))
+
+    # ── generic 'c'-to-copy plumbing ────────────────────────────────────────
+
+    def _copy_current_view(self) -> None:
+        """Copy whatever region of the right panel currently has focus.
+
+        Focus-based routing — matches how the user reads the panel:
+
+          tabs focused / _PanelTop focused → copy upper-panel content
+                                              (= the active tab's main
+                                              renderable, as plain text)
+          _PreviewPane focused             → copy preview content
+                                              (= the cursor's detail view)
+
+        Falls back to upper-panel copy when focus is outside the panel
+        entirely (= ``c`` was triggered programmatically or focus is on
+        an unrelated widget). The user's mental model is "I'm looking
+        at X → press c → X is in my clipboard"; focus is the most
+        reliable signal of "what they're looking at" because preview
+        can stay open while they're navigating tabs.
+
+        Status confirmation flows through the conv pane's sticky-status
+        widget — auto-clears after 2.5 s.
+        """
+        try:
+            text, label = self._build_copy_payload()
+        except Exception as exc:
+            self._copy_status(f"✗ failed to build copy payload: {exc}", error=True)
+            return
+        if not text:
+            self._copy_status(f"(nothing to copy from {label})", error=True)
+            return
+        from ..._clipboard import copy_to_clipboard
+        ok, tool = copy_to_clipboard(text)
+        if ok:
+            self._copy_status(
+                f"✓ copied {label} · {len(text):,} chars via {tool}",
+            )
+        else:
+            self._copy_status(
+                "✗ no clipboard tool found "
+                "(install pbcopy / xclip / wl-copy / xsel)",
+                error=True,
+            )
+
+    def _build_copy_payload(self) -> tuple[str | None, str]:
+        """Return ``(text, label)`` for the focused right-panel region.
+
+        Routes by *focus*, not by preview visibility — the user can keep
+        the preview open while navigating tabs in the upper area, and
+        the keystroke should target whichever region is "live" in their
+        attention. Tabs / _PanelTop = main; _PreviewPane = preview;
+        anything else = main (safest default — the upper area is where
+        first-time users land).
+        """
+        if self._is_preview_focused():
+            return self._build_preview_copy_text()
+        return self._build_main_copy_text()
+
+    def _is_preview_focused(self) -> bool:
+        """True iff focus lives inside the preview pane right now."""
+        focused = self.app.focused
+        if focused is None:
+            return False
+        try:
+            preview = self.query_one("#preview-pane", _PreviewPane)
+        except Exception:
+            return False
+        if focused is preview:
+            return True
+        return any(a is preview for a in focused.ancestors)
+
+    def _build_preview_copy_text(self) -> tuple[str | None, str]:
+        """Plain-text version of the active preview content.
+
+        Each tab routes to its own builder where there's a dedicated
+        format that's nicer than the rendered Rich text — the agents
+        bundles especially. Other tabs fall back to rendering the same
+        Rich renderable as plain text.
+        """
+        if self._panel_type == "agents" and self._agents_items:
+            idx = max(0, min(len(self._agents_items) - 1, self._agents_cursor))
+            item = self._agents_items[idx]
+            kind = item.get("kind", "")
+            if kind == "recent_skill":
+                return (
+                    self._build_recent_skill_bundle(item),
+                    f"skill run · {item.get('skill_name', '?')}",
+                )
+            if kind == "recent_plan":
+                return (
+                    self._build_recent_plan_bundle(item),
+                    f"plan · {item.get('plan_id', '?')}",
+                )
+            if kind == "running_skill":
+                return (
+                    self._build_running_skill_bundle(item),
+                    f"running skill · {item.get('skill_name', '?')}",
+                )
+            if kind == "running_plan":
+                return (
+                    self._build_running_plan_bundle(item),
+                    f"running plan · {item.get('plan_id', '?')}",
+                )
+        if self._panel_type == "docs" and self._docs_files:
+            idx = max(0, min(len(self._docs_files) - 1, self._docs_cursor))
+            doc_path: Path = self._docs_files[idx]
+            try:
+                body = doc_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return (None, f"docs preview ({exc})")
+            header = f"# {doc_path.name}\n# source: {doc_path}\n\n"
+            return (header + body, f"doc · {doc_path.name}")
+        # Generic fallback: capture whatever the preview builder hands
+        # to the pane and render it to plain text.
+        text = self._capture_preview_as_text()
+        if text:
+            return (text, f"{self._panel_type} preview")
+        return (None, f"{self._panel_type} preview")
+
+    def _build_main_copy_text(self) -> tuple[str | None, str]:
+        """Plain-text snapshot of the active tab's main content."""
+        try:
+            renderable = self._panel_markup()
+        except Exception as exc:
+            return (None, f"{self._panel_type} view ({exc})")
+        text = self._renderable_to_text(renderable)
+        return (text, f"{self._panel_type} view")
+
+    def _capture_preview_as_text(self) -> str | None:
+        """Re-run the preview builder and snapshot its renderable as text.
+
+        Mirrors the dispatch in ``_update_preview`` but writes into a
+        capture stub instead of the real preview pane, so we can grab
+        the title + renderable and convert to plain text.
+        """
+        captured: list[tuple[str, Any]] = []
+
+        class _CapturePane:
+            def show_text(self, title: str, renderable: Any) -> None:
+                captured.append((title, renderable))
+
+            def clear(self) -> None:
+                captured.append(("", None))
+
+        fake = _CapturePane()
+        try:
+            if self._panel_type == "events" and self._events_visible:
+                self._show_event_in_preview(fake)  # type: ignore[arg-type]
+            elif self._panel_type == "memory" and self._memory_entries:
+                self._show_memory_in_preview(fake)  # type: ignore[arg-type]
+            else:
+                return None
+        except Exception as exc:
+            logger.warning("right_panel capture preview failed: %s", exc)
+            return None
+        if not captured:
+            return None
+        title, renderable = captured[-1]
+        if renderable is None:
+            return None
+        body = self._renderable_to_text(renderable)
+        return f"# {title}\n\n{body}" if title else body
+
+    def _lookup_triggered_by(self, run_id_full: str) -> str:
+        """Return the user message that triggered ``run_id_full`` (or "")."""
+        if not run_id_full:
+            return ""
+        try:
+            return str(
+                self.app._run_id_to_user_message.get(run_id_full, ""),  # type: ignore[attr-defined]
+            )
+        except Exception:
+            return ""
+
+    def _renderable_to_text(self, renderable: Any) -> str:
+        """Render any Rich renderable to plain text (no ANSI codes)."""
+        import io
+
+        from rich.console import Console
+        buf = io.StringIO()
+        Console(
+            file=buf,
+            width=120,
+            no_color=True,
+            force_terminal=False,
+            legacy_windows=False,
+            record=False,
+        ).print(renderable)
+        return buf.getvalue()
+
+    def _copy_status(self, text: str, *, error: bool = False) -> None:
+        """Write a brief copy-action status line to the conv pane (auto-clears)."""
+        from .. import ConversationView  # late import → avoid cycle
+        try:
+            conv = self.app.query_one("#conversation", ConversationView)
+        except Exception:
+            return
+        try:
+            conv.show_status(text, kind="error" if error else "general")
+            self.app.set_timer(2.5, conv.hide_status)
+        except Exception as exc:
+            logger.warning("right_panel copy status failed: %s", exc)
+
+    def _build_recent_skill_bundle(self, item: dict) -> str:
+        """Header + events YAML for a finished skill run."""
+        import json as _json
+        try:
+            import yaml as _yaml
+        except Exception:
+            _yaml = None  # type: ignore[assignment]
+
+        events: list[dict] = []
+        llm_calls = 0
+        ptok = 0
+        ctok = 0
+        cost = 0.0
+        phase_path: list[tuple[str, int]] = []
+        terminal_kind = ""
+        path = item.get("jsonl_path")
+        if path is not None:
+            try:
+                for raw in path.read_text(encoding="utf-8").splitlines():
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = _json.loads(raw)
+                    except Exception:
+                        continue
+                    events.append(ev)
+                    et = ev.get("type")
+                    d = ev.get("data") or {}
+                    if et == "llm_response_received":
+                        llm_calls += 1
+                        try:
+                            ptok += int(d.get("prompt_tokens", 0) or 0)
+                            ctok += int(d.get("completion_tokens", 0) or 0)
+                            cost += float(d.get("cost_usd", 0.0) or 0.0)
+                        except (TypeError, ValueError):
+                            pass
+                    elif et == "phase_started":
+                        phase_name = str(d.get("phase", "")).strip()
+                        if phase_name:
+                            try:
+                                visit = int(d.get("visit_count", 1) or 1)
+                            except (TypeError, ValueError):
+                                visit = 1
+                            phase_path.append((phase_name, visit))
+                    elif et in ("workflow_finished", "skill_run_completed"):
+                        terminal_kind = "finished"
+                    elif et in ("workflow_aborted", "skill_run_failed"):
+                        terminal_kind = "aborted"
+            except OSError:
+                pass
+
+        lines: list[str] = []
+        lines.append(f"# Reyn skill run · {item.get('skill_name', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# run_id:   {item.get('run_id', '?')}")
+        status = item.get("status", "?")
+        if status == "stuck":
+            lines.append(
+                f"# status:   stuck (last event: {item.get('stuck_at', '?')}) "
+                f"-- run was killed mid-execution; no terminal event"
+            )
+        else:
+            lines.append(f"# status:   {status}")
+        lines.append(f"# duration: {item.get('duration_s', 0):.1f}s")
+        if llm_calls > 0:
+            lines.append(f"# llm:      {llm_calls} call(s)")
+            lines.append(
+                f"# tokens:   {ptok + ctok:,} (prompt {ptok:,} + completion {ctok:,})"
+            )
+            lines.append(f"# cost:     ${cost:.4f}")
+        if phase_path:
+            chain_parts = [
+                f"{p} (v{v})" if v > 1 else p for p, v in phase_path
+            ]
+            chain = " → ".join(chain_parts)
+            if terminal_kind == "finished":
+                chain += " → ✓ end"
+            elif terminal_kind == "aborted":
+                chain += " → ✗ aborted"
+            lines.append(f"# graph:    {chain}")
+        lines.append(f"# finished: {item.get('ts', '?')}")
+        if path is not None:
+            lines.append(f"# source:   {path}")
+        trig = self._lookup_triggered_by(item.get("run_id_full", ""))
+        if trig:
+            lines.append("")
+            lines.append("triggered_by: |")
+            for ln in str(trig).splitlines() or [str(trig)]:
+                lines.append(f"  {ln}")
+        lines.append("")
+        if events:
+            if _yaml is not None:
+                try:
+                    normalised = _json.loads(
+                        _json.dumps(events, default=str, ensure_ascii=False),
+                    )
+                    body = _yaml.safe_dump(
+                        {"events": normalised},
+                        default_flow_style=False,
+                        allow_unicode=True,
+                        sort_keys=False,
+                        width=120,
+                    )
+                    lines.append(body.rstrip())
+                except Exception:
+                    lines.append(_json.dumps(events, indent=2, default=str))
+            else:
+                lines.append(_json.dumps(events, indent=2, default=str))
+        else:
+            lines.append("(no events)")
+        return "\n".join(lines) + "\n"
+
+    def _build_recent_plan_bundle(self, item: dict) -> str:
+        """Header for a finished plan."""
+        lines: list[str] = []
+        lines.append(f"# Reyn plan · {item.get('plan_id', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# status:   {item.get('status', '?')}")
+        lines.append(
+            f"# steps:    {item.get('n_completed', 0)} ok / "
+            f"{item.get('n_failed', 0)} failed",
+        )
+        if item.get("exc_type"):
+            lines.append(f"# exc:      {item['exc_type']}")
+        lines.append(f"# finished: {item.get('ts', '?')}")
+        if item.get("goal"):
+            lines.append("")
+            lines.append("goal: |")
+            for goal_line in str(item["goal"]).splitlines() or [str(item["goal"])]:
+                lines.append(f"  {goal_line}")
+        return "\n".join(lines) + "\n"
+
+    def _build_running_skill_bundle(self, item: dict) -> str:
+        lines: list[str] = []
+        lines.append(f"# Reyn skill run (running) · {item.get('skill_name', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# run_id:   {item.get('run_id', '?')}")
+        lines.append(f"# elapsed:  {item.get('elapsed_s', 0)}s")
+        lines.append(f"# phase:    {item.get('phase', '—') or '—'}")
+        if item.get("phase_visits", 0) > 1:
+            lines.append(f"# visits:   {item['phase_visits']}")
+        if item.get("triggered_by"):
+            lines.append("")
+            lines.append("triggered_by: |")
+            for ln in str(item["triggered_by"]).splitlines() or [str(item["triggered_by"])]:
+                lines.append(f"  {ln}")
+        return "\n".join(lines) + "\n"
+
+    def _build_running_plan_bundle(self, item: dict) -> str:
+        lines: list[str] = []
+        lines.append(f"# Reyn plan (running) · {item.get('plan_id', '?')}")
+        lines.append(f"# agent:    {item.get('agent', '?')}")
+        lines.append(f"# status:   {item.get('status', '?')}")
+        lines.append(
+            f"# progress: {item.get('done', 0)}/{item.get('total', 0)} "
+            f"({item.get('failed', 0)} failed)"
+        )
+        if item.get("goal"):
+            lines.append("")
+            lines.append("goal: |")
+            for ln in str(item["goal"]).splitlines() or [str(item["goal"])]:
+                lines.append(f"  {ln}")
+        return "\n".join(lines) + "\n"
+
+    def _preview_recent_plan(self, pane: _PreviewPane, item: dict) -> None:
+        """Detail view for a finished plan."""
+        from rich.console import Group as RichGroup
+        from rich.text import Text as RichText
+        head = RichText()
+        ok = item.get("status") == "ok"
+        head.append("✓ " if ok else "✗ ",
+                    style="bold " + ("#44cc88" if ok else "#ff6644"))
+        head.append("plan ", style="dim")
+        head.append(item.get("plan_id", "?"), style="bold #ff9944")
+        head.append("\n")
+        head.append("agent: ", style="dim")
+        head.append(item.get("agent", "?"), style="#dddddd")
+        head.append("\n")
+        head.append("status: ", style="dim")
+        head.append(item.get("status", "?"),
+                    style="#44cc88" if ok else "#ff6644")
+        head.append("\n")
+        head.append("steps: ", style="dim")
+        head.append(
+            f"{item.get('n_completed', 0)} ok / {item.get('n_failed', 0)} failed",
+            style="#dddddd",
+        )
+        head.append("\n")
+        head.append("finished: ", style="dim")
+        head.append(item.get("ts", "?"), style="#dddddd")
+        if item.get("exc_type"):
+            head.append("\n\nexception:\n", style="dim")
+            head.append(item["exc_type"], style="#ff6644")
+        if item.get("goal"):
+            head.append("\n\ngoal:\n", style="dim")
+            head.append(item["goal"], style="#aaaaaa")
+        title = f"plan {item.get('plan_id', '?')}"
+        pane.show_text(title, RichGroup(head))
 
     # ── docs navigation ───────────────────────────────────────────────────────
 
@@ -546,10 +1294,15 @@ class RightPanel(Widget):
                     self._events_cursor = max(0, len(windowed) - 1)
                 return rendered
             if self._panel_type == "agents":
-                return render_agents(
+                rendered, flat_items = render_agents(
                     self._registry, self._exec_state,
                     project_root=self._project_root,
+                    cursor=self._agents_cursor,
                 )
+                self._agents_items = flat_items
+                if self._agents_cursor >= len(flat_items):
+                    self._agents_cursor = max(0, len(flat_items) - 1)
+                return rendered
             if self._panel_type == "memory":
                 rendered, flat_entries = render_memory(
                     self._project_root, cursor=self._memory_cursor,

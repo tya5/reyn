@@ -76,7 +76,8 @@ Inside `reyn chat`:
 | Key | Action |
 |---|---|
 | `Ctrl+R` | Start recording — `🔴 recording…` appears in the conversation pane |
-| `Ctrl+R` (again) | Stop recording, transcribe, append the result to the input bar |
+| `Ctrl+R` (again) | Stop recording, transcribe, append the result to the input bar (review/edit before sending) |
+| `Enter` while recording | Stop recording, transcribe, **send immediately** — skips the edit step |
 | `Esc` while recording | Cancel without transcribing |
 | `F2` | Alias for `Ctrl+R` (see note below) |
 

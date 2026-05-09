@@ -35,42 +35,10 @@ if TYPE_CHECKING:
 _STOP = "stop"
 
 
-# Order of clipboard tools we try for /copy. First match that succeeds wins.
-# Each entry is (binary_name, argv_tail, label).
-_CLIPBOARD_TOOLS: tuple[tuple[str, list[str], str], ...] = (
-    ("pbcopy",   [],            "pbcopy"),         # macOS
-    ("wl-copy",  [],            "wl-copy"),        # Wayland
-    ("xclip",    ["-selection", "clipboard"], "xclip"),  # X11
-    ("xsel",     ["--clipboard", "--input"], "xsel"),    # X11 fallback
-    ("clip",     [],            "clip"),           # Windows
-)
-
-
-def _copy_to_clipboard(text: str) -> tuple[bool, str]:
-    """Pipe ``text`` to a platform clipboard tool. Returns ``(ok, tool_label)``.
-
-    Looked up via ``shutil.which`` so the user only needs one of them on
-    PATH. We avoid hard-coding the OS because users may run, e.g., xclip
-    inside a Linux VM regardless of the host platform.
-    """
-    import shutil
-    import subprocess
-
-    for binary, tail, label in _CLIPBOARD_TOOLS:
-        path = shutil.which(binary)
-        if path is None:
-            continue
-        try:
-            subprocess.run(
-                [path, *tail],
-                input=text.encode("utf-8"),
-                check=True,
-                timeout=2.0,
-            )
-            return True, label
-        except Exception:
-            continue
-    return False, ""
+# Re-export for backward compatibility — moved to a shared module so the
+# right_panel widgets can use it without creating an import cycle through
+# app_outbox.
+from ._clipboard import copy_to_clipboard as _copy_to_clipboard  # noqa: F401
 
 
 class OutboxRouter:
@@ -116,24 +84,48 @@ class OutboxRouter:
                 break
 
             handler = self.HANDLERS.get(msg.kind)
-            if handler is not None:
-                result = handler(msg, conv, header)
-                if result == _STOP:
-                    break
-                continue
+            try:
+                if handler is not None:
+                    result = handler(msg, conv, header)
+                    if result == _STOP:
+                        break
+                    continue
 
-            # Default: render the message + post-process agent turns.
-            conv.render_message(msg)
-            if msg.kind == "agent":
-                app._maybe_refresh_status(header)
-                app._maybe_render_cost_suffix(conv)
+                # Default: render the message + post-process agent turns.
+                conv.render_message(msg)
+                if msg.kind == "agent":
+                    app._maybe_refresh_status(header)
+                    app._maybe_render_cost_suffix(conv)
+            except Exception as exc:
+                # A handler crash used to silently break the outbox loop —
+                # the TUI froze on its last frame with no events flowing
+                # and no indication of the cause. Surface the failure as
+                # a one-line conv-pane error so the user can see WHY
+                # things stopped, then keep draining (= one bad message
+                # doesn't kill all subsequent ones).
+                import traceback
+                tb = traceback.format_exception_only(type(exc), exc)[-1].strip()
+                from rich.text import Text as _RichText
+                err = _RichText()
+                err.append("✗ ", style="bold red")
+                err.append(f"outbox handler [{msg.kind}] raised: ", style="red")
+                err.append(tb, style="red")
+                try:
+                    conv._write_log(err)
+                except Exception:
+                    pass
 
     # ── per-kind handlers (sentinel kinds first) ──────────────────────────────
 
     def _on_end(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> str:
-        """`__end__` — registry signals shutdown; loop should break."""
+        """`__end__` — registry signals shutdown; loop should break.
+
+        Also clears any leftover ``⟳ thinking…`` sticky so the final
+        TUI frame on shutdown isn't a phantom indicator.
+        """
+        conv.hide_status()
         return _STOP
 
     def _on_attach_request(
@@ -266,7 +258,13 @@ class OutboxRouter:
     def _on_intervention(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`intervention` — mount inline ask_user widget."""
+        """`intervention` — mount inline ask_user widget.
+
+        Hides the sticky ``⟳ thinking…`` indicator first: while the
+        agent is waiting for a human answer, "thinking" is misleading
+        — the system is blocked on user input, not on the model.
+        """
+        conv.hide_status()
         iv_id = msg.meta.get("intervention_id", "")
         raw_choices = msg.meta.get("choices")
         choices = None
@@ -311,7 +309,13 @@ class OutboxRouter:
     def _on_error(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`error` — render via conv (mounts ErrorBox) + remember focal tab."""
+        """`error` — render via conv (mounts ErrorBox) + remember focal tab.
+
+        Also clears the sticky ``⟳ thinking…`` indicator: a turn that
+        ends in error never reaches `__stream_start__` / `agent`, so
+        without this the indicator would stick around indefinitely.
+        """
+        conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"
 

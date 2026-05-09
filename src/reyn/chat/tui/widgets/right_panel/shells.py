@@ -192,6 +192,17 @@ class _PreviewPane(Widget):
             event.prevent_default()
             event.stop()
             self.scroll_line(-1)
+        elif event.key == "d":
+            # vim-style half-page down — bigger jump than `j` for the
+            # long event-YAML dumps where line-by-line is tedious.
+            event.prevent_default()
+            event.stop()
+            self.scroll_half_page(+1)
+        elif event.key == "u":
+            # vim-style half-page up.
+            event.prevent_default()
+            event.stop()
+            self.scroll_half_page(-1)
         elif event.key == "l":
             event.prevent_default()
             event.stop()
@@ -246,6 +257,23 @@ class _PreviewPane(Widget):
         except Exception as exc:
             logger.warning("right_panel preview scroll_line failed: %s", exc)
 
+    def scroll_half_page(self, direction: int) -> None:
+        """Scroll by half the visible window height. Used by the d/u keys.
+
+        ``direction`` is +1 (down) or -1 (up). When the size isn't yet
+        known (= layout still pending), falls back to a 10-line jump
+        which is a reasonable default for the typical preview pane.
+        """
+        try:
+            log = self.query_one("#preview-log", RichLog)
+            visible = max(1, log.size.height - 1)
+            jump = max(1, visible // 2) * direction
+            log.scroll_to(y=log.scroll_y + jump, animate=False)
+        except Exception as exc:
+            logger.warning(
+                "right_panel preview scroll_half_page failed: %s", exc,
+            )
+
     def scroll_col(self, delta: int) -> None:
         try:
             log = self.query_one("#preview-log", RichLog)
@@ -271,7 +299,7 @@ class _PreviewPane(Widget):
             name = "—"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  j↓  k↑  h←  l→"
+                f"  {name}  │  j↓ k↑ d⇊ u⇈ h← l→"
             )
         except Exception as exc:
             logger.warning("right_panel preview header update failed: %s", exc)

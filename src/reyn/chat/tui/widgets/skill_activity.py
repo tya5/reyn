@@ -38,6 +38,19 @@ from reyn.chat.tui._palette import _CORAL
 
 _TICK_INTERVAL_S = 0.5  # elapsed-time refresh rate
 
+# Braille-dot spinner frames. Cycles once every (len(_SPINNER_FRAMES) *
+# _TICK_INTERVAL_S) = 5 s, which is slow enough to be calming and fast
+# enough to make "still alive" obvious at a glance.
+_SPINNER_FRAMES: tuple[str, ...] = (
+    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+)
+
+# Elapsed thresholds for dynamic colour: green = quick, amber = taking
+# a while, red = long-tail / probably blocked. Picked to match a typical
+# Reyn skill — most finish under 30 s, anything past 60 s is unusual.
+_ELAPSED_AMBER_S = 30.0
+_ELAPSED_RED_S = 60.0
+
 
 class SkillActivityRow(Widget):
     """One ambient skill-progress row that updates in-place.
@@ -83,6 +96,9 @@ class SkillActivityRow(Widget):
         # Timer
         self._start = time.monotonic()
         self._running = True
+        # Spinner tick — increments on every _tick(), modulo wrapped to
+        # cycle through `_SPINNER_FRAMES` for the running indicator.
+        self._spin_idx: int = 0
 
         # DOM ref
         self._static: Static | None = None
@@ -126,6 +142,7 @@ class SkillActivityRow(Widget):
         """Called every 0.5 s by Textual. Stops once _running is False."""
         if not self._running:
             return
+        self._spin_idx = (self._spin_idx + 1) % len(_SPINNER_FRAMES)
         self._refresh()
 
     def _elapsed(self) -> str:
@@ -146,8 +163,11 @@ class SkillActivityRow(Widget):
 
     def _build_running(self) -> Text:
         t = Text()
-        # ▶ coral
-        t.append("▶ ", style=_CORAL)
+        # Animated braille spinner — replaces the static ▶ so "still
+        # alive" is obvious even when the response was streamed and the
+        # user is wondering "is this skill still doing things?".
+        spinner = _SPINNER_FRAMES[self._spin_idx % len(_SPINNER_FRAMES)]
+        t.append(f"{spinner} ", style=_CORAL)
         # skill_name#abcd — normal weight
         t.append(f"{self._skill_name}#{self._short_id}", style="bold")
         t.append("  · ", style="dim")
@@ -160,8 +180,18 @@ class SkillActivityRow(Widget):
         dots = self._dots()
         if dots:
             t.append(f"  {dots}", style="dim")
-        # elapsed
-        t.append(f"  {self._elapsed()}", style="dim")
+        # Elapsed — colour-coded so a slow / stuck skill stands out:
+        #   < 30 s → dim (= normal)
+        #   30–60s → amber (= "taking a while")
+        #   ≥ 60 s → red (= "this is unusual; might be blocked")
+        secs = time.monotonic() - self._start
+        if secs >= _ELAPSED_RED_S:
+            elapsed_style = "bold #ff6644"
+        elif secs >= _ELAPSED_AMBER_S:
+            elapsed_style = "bold #ffaa44"
+        else:
+            elapsed_style = "dim"
+        t.append(f"  {secs:.1f}s", style=elapsed_style)
         return t
 
     def _build_finished(self) -> Text:

@@ -65,6 +65,11 @@ class ReynTUIApp(App):
         # — intercept F-keys before they reach Textual.
         Binding("ctrl+r", "voice_toggle", "Voice", priority=True, show=False),
         Binding("f2", "voice_toggle", "Voice (alias)", priority=True, show=False),
+        # Enter while recording = stop + transcribe + submit immediately.
+        # Lets the user dictate, decide it's clean, and send without
+        # touching the keyboard for the edit step. Gated by check_action
+        # so plain Enter in the input bar still does its normal submit.
+        Binding("enter", "voice_stop_and_submit", "Voice send", priority=True, show=False),
         Binding("escape", "voice_cancel", "Voice cancel", priority=True, show=False),
         Binding("ctrl+backslash", "screenshot", "Screenshot", priority=True, show=False),
     ]
@@ -111,6 +116,18 @@ class ReynTUIApp(App):
         self._last_focal_tab: str | None = None  # "events" | "agents" | None
         # Active streaming row id — shared between __stream_* handlers
         self._current_stream_id: str | None = None
+        # Most-recent user-typed message (or voice-dictated transcript) —
+        # captured into ``_skill_exec[run_id]['triggered_by']`` the first
+        # time we see a trace event for a new run, so the agents tab
+        # preview can show "which user message kicked off this skill?".
+        self._latest_user_message: str = ""
+        # Persistent map of run_id → triggered_by message, kept across
+        # `_on_skill_done` (which pops `_skill_exec` once a run finishes).
+        # Lets the recent_skill preview display the same triggered_by
+        # info even after the skill row has rotated out of the running
+        # set. Bounded by a soft cap below to keep memory predictable
+        # in long-running sessions.
+        self._run_id_to_user_message: dict[str, str] = {}
         # Voice input (lazy — created on first F2 press so import-time cost is
         # zero for users who don't have the `reyn[voice]` extras installed).
         self._voice_input = None  # type: ignore[var-annotated]
@@ -284,8 +301,23 @@ class ReynTUIApp(App):
                 "start_time": _time.monotonic(),
                 "phase": "",
                 "phase_visits": 0,
+                # Snapshot of the user message that triggered this run.
+                # Captured ONCE, on the first trace, so a long-tail skill
+                # that's still running when the user types another
+                # message keeps the message that actually started it.
+                "triggered_by": self._latest_user_message,
             }
             self._skill_exec[run_id] = existing
+            # Mirror to the persistent map so recent_skill (= post-skill_done)
+            # can still show what triggered the run. Soft-cap to avoid
+            # unbounded growth on long sessions; oldest entries drop first.
+            if self._latest_user_message:
+                self._run_id_to_user_message[run_id] = self._latest_user_message
+                if len(self._run_id_to_user_message) > 200:
+                    # Pop the oldest insertion (dict preserves order).
+                    self._run_id_to_user_message.pop(
+                        next(iter(self._run_id_to_user_message)),
+                    )
         # Text pattern: "phase started: <phase_name>"
         if text.startswith("phase started: "):
             phase = text[len("phase started: "):].strip()
@@ -374,6 +406,12 @@ class ReynTUIApp(App):
         conv.render_user_message(text)
         # A4: snapshot cost/tokens/time at turn start
         self._record_turn_start()
+        # Remember this message so the next skill run that fires can
+        # tag itself with "triggered_by". Cleared / overwritten on each
+        # subsequent submit, so a long-tail skill that finishes after
+        # the user has typed again still keeps the message that
+        # actually started it (= we capture eagerly on first trace).
+        self._latest_user_message = text
 
         # Get the attached session
         session = self._get_session()
@@ -466,14 +504,57 @@ class ReynTUIApp(App):
             pass
 
     def action_cancel_inflight(self) -> None:
-        """Cancel the in-flight skill/model call on the attached session."""
+        """Cancel the in-flight skill/plan/model call on the attached session.
+
+        Visibility: clears the sticky ``⟳ thinking…`` indicator AND writes
+        a one-line summary to the conv pane reporting how many skills /
+        plans were actually cancelled. Without this summary the user
+        couldn't tell whether Ctrl+C did anything (= "did it really
+        cancel, or was nothing in flight?").
+        """
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+        except Exception:
+            conv = None
+        if conv is not None:
+            conv.hide_status()
+
         session = self._get_session()
         if session is None:
+            self._voice_status(
+                "(nothing to cancel — no session attached)",
+                style="dim #aa6666",
+            )
             return
-        # Cancel all running skills
+
+        cancelled_skills = 0
         for task in list(getattr(session, "running_skills", {}).values()):
             if not task.done():
                 task.cancel()
+                cancelled_skills += 1
+        cancelled_plans = 0
+        for task in list(getattr(session, "running_plans", {}).values()):
+            if not task.done():
+                task.cancel()
+                cancelled_plans += 1
+
+        if cancelled_skills == 0 and cancelled_plans == 0:
+            self._voice_status(
+                "(nothing in-flight to cancel)", style="dim #555555",
+            )
+            return
+        parts: list[str] = []
+        if cancelled_skills:
+            parts.append(
+                f"{cancelled_skills} skill{'s' if cancelled_skills != 1 else ''}"
+            )
+        if cancelled_plans:
+            parts.append(
+                f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}"
+            )
+        self._voice_status(
+            f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
+        )
 
     def action_toggle_panel(self) -> None:
         """ctrl+b — open or close the right panel.
@@ -623,52 +704,74 @@ class ReynTUIApp(App):
                     "device": cfg_voice.device,
                     "compute_type": cfg_voice.compute_type,
                     "sample_rate": cfg_voice.sample_rate,
+                    "cpu_threads": cfg_voice.cpu_threads,
+                    "num_workers": cfg_voice.num_workers,
+                    "max_duration_s": cfg_voice.max_duration_s,
                 }
             self._voice_input = VoiceInput(**kwargs)
+            # Watchdog: every second, check whether the active recording
+            # has exceeded its configured `max_duration_s`. If so, cancel
+            # so we don't accumulate gigabytes of audio when the user
+            # walks away mid-dictation. Cheap (one comparison) and self-
+            # disarming when no recording is active.
+            self.set_interval(1.0, self._voice_watchdog_tick)
 
         if self._voice_busy:
             return  # already transcribing — ignore re-presses
 
         if not self._voice_input.is_recording:
+            # Status BEFORE the (now-async) start_recording so the user
+            # sees feedback even when CoreAudio takes a moment to hand
+            # over the device.
+            self._voice_status(
+                "🔴 starting mic… (Ctrl+R stop · Enter stop+send · Esc cancel)"
+            )
+            await self._yield_for_render()
             try:
-                self._voice_input.start_recording()
+                await self._voice_input.start_recording()
             except Exception as exc:
                 self._voice_status(f"✗ voice recording failed: {exc}", style="bold red")
                 return
-            self._voice_status("🔴 recording — F2 to stop · Esc to cancel")
+            # Replace the "starting…" line with the live recording
+            # message once the stream is actually open.
+            self._voice_status(
+                "🔴 recording — Ctrl+R stop · Enter stop+send · Esc cancel"
+            )
+            # Take the InputBox out of the focus rotation + key-input path
+            # while the mic is live: prevents accidental letters typed
+            # during dictation from landing in the input field, and Tab /
+            # Shift+Tab now cycle only among right-panel widgets. Restored
+            # on every code path that ends recording.
+            self._voice_set_input_locked(True)
+            # Start the model load in the background while the user is
+            # speaking. First-time load is ~30 s (download + CTranslate2
+            # init). Without this pre-warm the user hits a long opaque
+            # block on the second Ctrl+R press; with it the second press
+            # usually returns in ~1 s.
+            asyncio.create_task(self._voice_input.preload_model())
         else:
             self._voice_busy = True
-            self._voice_status("⏳ transcribing…")
+            # Choose a status message that sets honest expectations: if
+            # the model isn't hot yet the wait will be long, so say so.
+            if self._voice_input.model_loaded:
+                self._voice_status("⏳ transcribing…")
+            else:
+                self._voice_status(
+                    "⏳ transcribing… (loading model — first run only, "
+                    "~30 s on slow connection)",
+                )
+            await self._yield_for_render()
             try:
                 text, diag = await self._voice_input.stop_recording()
             except Exception as exc:
                 self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
                 self._voice_busy = False
+                self._voice_set_input_locked(False)
                 return
             self._voice_busy = False
+            self._voice_set_input_locked(False)
             if not text:
-                # Build an actionable diagnostic line so the user knows
-                # whether the mic actually captured anything.
-                dur = diag.get("duration_s", 0.0)
-                peak = diag.get("peak", 0.0)
-                reason = diag.get("reason", "silent")
-                if reason == "no_audio" or dur < 0.3:
-                    self._voice_status(
-                        "(no audio captured — mic permission? wrong device?)",
-                        style="dim #aa6666",
-                    )
-                elif reason == "silent" or peak < 0.01:
-                    self._voice_status(
-                        f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
-                        "check mic gain / system input device",
-                        style="dim #aa6666",
-                    )
-                else:
-                    self._voice_status(
-                        f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
-                        "try speaking closer / louder, or set a larger model",
-                        style="dim #aa6666",
-                    )
+                self._voice_show_empty_diagnostic(diag)
                 return
             try:
                 self.query_one("#inputbar", InputBar).append_text(text)
@@ -680,6 +783,250 @@ class ReynTUIApp(App):
                 f"✓ inserted ({dur:.1f}s): {preview}", style="dim #aaaaaa"
             )
 
+    async def action_voice_stop_and_submit(self) -> None:
+        """Enter while recording — stop + transcribe + submit immediately.
+
+        Skips the manual edit step. Useful when the user is confident the
+        dictation is right and wants to send without touching the keyboard
+        again. Gated by ``check_action`` so plain Enter in the input bar
+        still submits normally; this binding only fires while the mic is
+        live.
+        """
+        from .voice import _vlog as _voice_vlog
+        _voice_vlog("action_voice_stop_and_submit: entered")
+        if self._voice_input is None or not self._voice_input.is_recording:
+            _voice_vlog("action_voice_stop_and_submit: no active recording, bail")
+            return
+        if self._voice_busy:
+            _voice_vlog("action_voice_stop_and_submit: already busy, bail")
+            return
+        self._voice_busy = True
+        if self._voice_input.model_loaded:
+            self._voice_status("⏳ transcribing & sending…")
+        else:
+            self._voice_status(
+                "⏳ transcribing & sending… (loading model — first run only)"
+            )
+        _voice_vlog("action_voice_stop_and_submit: yielding for render")
+        await self._yield_for_render()
+        _voice_vlog("action_voice_stop_and_submit: calling stop_recording")
+        try:
+            text, diag = await self._voice_input.stop_recording()
+        except Exception as exc:
+            _voice_vlog(f"action_voice_stop_and_submit: stop_recording raised {exc!r}")
+            self._voice_status(f"✗ transcription failed: {exc}", style="bold red")
+            self._voice_busy = False
+            self._voice_set_input_locked(False)
+            return
+        _voice_vlog(
+            f"action_voice_stop_and_submit: stop_recording returned "
+            f"len={len(text)} reason={diag.get('reason')}"
+        )
+        self._voice_busy = False
+        self._voice_set_input_locked(False)
+        if not text:
+            self._voice_show_empty_diagnostic(diag)
+            return
+        # Status FIRST — so even if the submit path takes a moment, the
+        # user sees the transcript landed and is being sent.
+        preview = text if len(text) <= 60 else text[:57] + "…"
+        dur = diag.get("duration_s", 0.0)
+        self._voice_status(
+            f"✓ sent ({dur:.1f}s): {preview}", style="dim #aaaaaa"
+        )
+        await self._yield_for_render()
+        _voice_vlog("action_voice_stop_and_submit: about to append + submit")
+        # Bypass `inputbar.action_submit_or_confirm()` — that path threads
+        # through the slash-picker + private _submit and has been observed
+        # to leave focus + the busy-status line in a bad state when called
+        # programmatically. Instead, do the same three things _submit does
+        # (record history, clear textarea, post UserSubmitted), then
+        # explicitly refocus the input bar.
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inputbar.append_text(text)
+            ta = inputbar._textarea()
+            full_text = ta.text.strip() if ta is not None else text
+            if ta is not None:
+                ta.clear()
+            inputbar.focus_input()
+            self.post_message(InputBar.UserSubmitted(full_text))
+        except Exception as exc:
+            _voice_vlog(f"action_voice_stop_and_submit: submit raised {exc!r}")
+            self._voice_status(
+                f"✗ auto-submit failed: {exc}", style="bold red",
+            )
+            return
+        _voice_vlog("action_voice_stop_and_submit: completed")
+
+    def _voice_set_input_locked(self, locked: bool) -> None:
+        """Lock or unlock the InputBox during voice recording.
+
+        ``locked=True``  → TextArea ``disabled = True`` (Textual blocks
+                           keyboard input AND moves focus to the next
+                           focusable widget). If a right panel is
+                           visible, focus is steered to its tabs so the
+                           user can still navigate the panel during
+                           dictation.
+        ``locked=False`` → restore TextArea + push focus back to the
+                           input bar so the user can edit / send the
+                           transcript.
+        """
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+        except Exception:
+            return
+        ta = inputbar._textarea()
+        if ta is None:
+            return
+        if locked:
+            ta.disabled = True
+            # If the right panel is open, give the user a sensible
+            # initial focus so Tab cycling works inside it. If not,
+            # Textual's auto-focus-move on `disabled=True` will land
+            # focus on App (= no widget), which is fine — the priority
+            # App-level voice bindings (Ctrl+R / Enter / Esc) still fire.
+            if self._panel_visible:
+                try:
+                    self.query_one("#right_panel", RightPanel).focus_tabs()
+                except Exception:
+                    pass
+        else:
+            ta.disabled = False
+            inputbar.focus_input()
+
+    async def _yield_for_render(self) -> None:
+        """Make absolutely sure a just-written status line reaches the screen
+        before we begin a long synchronous operation.
+
+        Single ``await asyncio.sleep(0)`` is not enough — it yields once,
+        but Textual's compositor schedules across multiple ticks
+        (widget refresh → layout → render → flush). When we then enter
+        ``asyncio.to_thread(...)`` the worker thread can hold the GIL
+        long enough to starve those follow-up ticks, leaving the previous
+        frame on screen until the worker returns — visually identical to
+        a TUI freeze.
+
+        Belt + braces: explicit refresh on App + the conversation pane
+        (which is where the status line lives), then ``sleep(0.1)`` to
+        let the compositor actually run. 100 ms is imperceptible to the
+        user but guaranteed-enough for the status line to materialise.
+        """
+        try:
+            self.refresh()
+        except Exception:
+            pass
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.refresh(layout=True)
+        except Exception:
+            pass
+        await asyncio.sleep(0.1)
+
+    def _voice_show_empty_diagnostic(self, diag: dict) -> None:
+        """Build an actionable status line for an empty transcription.
+
+        Shared by both the edit-then-send path (Ctrl+R twice) and the
+        immediate-send path (Ctrl+R + Enter). Tells the user whether
+        the mic captured audio, whether it was silent, or whether the
+        audio was fine but Whisper recognised nothing.
+        """
+        dur = diag.get("duration_s", 0.0)
+        peak = diag.get("peak", 0.0)
+        reason = diag.get("reason", "silent")
+        if reason == "no_audio" or dur < 0.3:
+            self._voice_status(
+                "(no audio captured — mic permission? wrong device?)",
+                style="dim #aa6666",
+            )
+        elif reason == "silent" or peak < 0.01:
+            self._voice_status(
+                f"(silent capture: {dur:.1f}s, peak={peak:.3f}) — "
+                "check mic gain / system input device",
+                style="dim #aa6666",
+            )
+        else:
+            self._voice_status(
+                f"(no speech recognised in {dur:.1f}s, peak={peak:.3f}) — "
+                "try speaking closer / louder, or set a larger model",
+                style="dim #aa6666",
+            )
+
+    def _voice_watchdog_tick(self) -> None:
+        """Per-second tick: auto-stop runaway recordings, preserving audio.
+
+        Triggered by ``set_interval(1.0, ...)`` after the first VoiceInput
+        is created. Self-disarming — does nothing when no recording is
+        active. Caps memory growth (16 kHz mono float32 ≈ 64 KB/s, so an
+        8-hour idle recording would otherwise pile up ~1.8 GB of buffer).
+
+        Behaviour at the cap: instead of dropping the buffer, we run the
+        same stop+transcribe+append path as a manual second-Ctrl+R press.
+        The transcript lands in the InputBox so nothing the user already
+        said is lost, and a follow-up Ctrl+R session will concatenate
+        further dictation into the same input field via
+        ``InputBar.append_text``.
+        """
+        if self._voice_input is None or not self._voice_input.is_recording:
+            return
+        if self._voice_busy:
+            return  # already transcribing — let it finish
+        cap = self._voice_input.max_duration_s
+        if cap <= 0:
+            return  # 0 = uncapped, opt-out
+        elapsed = self._voice_input.recording_elapsed_s
+        if elapsed < cap:
+            return
+        # Cap reached — kick off transcribe-and-insert as a fire-and-forget
+        # task. Setting _voice_busy here (= synchronously) prevents a
+        # subsequent watchdog tick from racing into a second start.
+        self._voice_busy = True
+        self._voice_status(
+            f"⏰ recording cap reached ({cap:.0f}s) — transcribing & inserting…",
+            style="dim #aa6666",
+        )
+        asyncio.create_task(self._voice_auto_stop_and_insert())
+
+    async def _voice_auto_stop_and_insert(self) -> None:
+        """Watchdog continuation — transcribe the captured buffer + append
+        to the InputBox + leave the input bar focused so Ctrl+R can extend.
+
+        Mirrors the second-Ctrl+R path in ``action_voice_toggle`` but
+        without re-checking ``_voice_busy`` (the caller already set it).
+        """
+        if self._voice_input is None:
+            self._voice_busy = False
+            self._voice_set_input_locked(False)
+            return
+        await self._yield_for_render()
+        try:
+            text, diag = await self._voice_input.stop_recording()
+        except Exception as exc:
+            self._voice_status(
+                f"✗ auto-stop transcription failed: {exc}", style="bold red",
+            )
+            self._voice_busy = False
+            self._voice_set_input_locked(False)
+            return
+        self._voice_busy = False
+        self._voice_set_input_locked(False)
+        if not text:
+            self._voice_show_empty_diagnostic(diag)
+            return
+        try:
+            inputbar = self.query_one("#inputbar", InputBar)
+            inputbar.append_text(text)
+            inputbar.focus_input()
+        except Exception:
+            pass
+        preview = text if len(text) <= 60 else text[:57] + "…"
+        dur = diag.get("duration_s", 0.0)
+        self._voice_status(
+            f"✓ inserted ({dur:.1f}s, auto-stopped): {preview}  — "
+            "Ctrl+R to continue dictating, Enter to send",
+            style="dim #aaaaaa",
+        )
+
     def action_voice_cancel(self) -> None:
         """Esc — discard the current recording without transcribing.
 
@@ -689,6 +1036,7 @@ class ReynTUIApp(App):
         if self._voice_input is None or not self._voice_input.is_recording:
             return
         self._voice_input.cancel()
+        self._voice_set_input_locked(False)
         self._voice_status("✗ recording cancelled", style="dim #555555")
 
     def _voice_config(self):
@@ -713,6 +1061,11 @@ class ReynTUIApp(App):
         if action == "voice_cancel":
             # Only intercept Esc while we're actually recording — otherwise
             # the InputBar / SlashPicker / preview pane should keep using it.
+            return self._voice_input is not None and self._voice_input.is_recording
+        if action == "voice_stop_and_submit":
+            # Same gate as voice_cancel: Enter only behaves as "stop+send"
+            # while recording. Outside of recording it falls through to
+            # the InputBar's own Enter binding (= normal submit).
             return self._voice_input is not None and self._voice_input.is_recording
         return True
 
