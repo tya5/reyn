@@ -18,41 +18,15 @@ Environment variable expansion:
 """
 from __future__ import annotations
 
-import os
-import re
-import warnings
 from contextlib import AsyncExitStack
 from typing import Any
 
 # ── Env var expansion ─────────────────────────────────────────────────────────
-
-_ENV_VAR_RE = re.compile(r"\$\{(\w+)\}")
-
-
-def _expand_str(value: str) -> str:
-    def _replace(m: re.Match) -> str:
-        name = m.group(1)
-        result = os.environ.get(name)
-        if result is None:
-            warnings.warn(
-                f"MCP config references undefined environment variable: ${{{name}}}",
-                stacklevel=4,
-            )
-            return ""
-        return result
-    return _ENV_VAR_RE.sub(_replace, value)
-
-
-def expand_env(obj: Any) -> Any:
-    """Recursively expand ${VAR} in all string values of a dict/list/str."""
-    if isinstance(obj, str):
-        return _expand_str(obj)
-    if isinstance(obj, dict):
-        return {k: expand_env(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [expand_env(i) for i in obj]
-    return obj
-
+# Shared resolver lives in reyn.secrets.interpolation (ADR-0030).
+# This re-export keeps the public surface of this module backward-compatible:
+# callers that import ``from reyn.mcp_client import expand_env`` continue to
+# work without change.
+from reyn.secrets.interpolation import expand_env as expand_env  # noqa: F401
 
 # ── Errors ───────────────────────────────────────────────────────────────────
 

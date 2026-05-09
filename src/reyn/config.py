@@ -470,6 +470,11 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
 
+    # ADR-0030: load ~/.reyn/secrets.env into os.environ before YAML is
+    # parsed so that ${VAR} references in any config field resolve correctly.
+    from reyn.secrets.loader import load_secrets_to_environ
+    load_secrets_to_environ()
+
     # `output_language` intentionally omitted from merged defaults so we
     # can distinguish "user did not configure" (= None, chat router will
     # skip the language directive) from "user explicitly set it" (= str,
@@ -495,6 +500,12 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         local = _load_yaml(project_root / ".reyn" / "config.yaml")
         _migrate_legacy_keys(local, str(project_root / ".reyn" / "config.yaml"))
         merged = _merge(merged, local)
+
+    # ADR-0030: apply ${VAR} interpolation across all string fields of the
+    # merged config dict.  At this point os.environ already contains values
+    # loaded from ~/.reyn/secrets.env (see load_secrets_to_environ() above).
+    from reyn.secrets.interpolation import expand_env
+    merged = expand_env(merged)
 
     raw_ol = merged.get("output_language")
     output_language: str | None
