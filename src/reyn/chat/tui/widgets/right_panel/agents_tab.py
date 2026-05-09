@@ -450,7 +450,16 @@ def render_agents(
                 pfx, name_style = _cursor_prefix(len(flat_items))
                 skill_label = RichText()
                 skill_label.append(pfx, style=_CORAL)
-                skill_label.append(f"[{elapsed:3d}s] ", style="#888888")
+                # Colour-grade the elapsed counter the same way
+                # SkillActivityRow does (≥30s amber, ≥60s red) so a
+                # slow / stuck skill stands out at a glance.
+                if elapsed >= 60:
+                    elapsed_style = "bold #ff6644"
+                elif elapsed >= 30:
+                    elapsed_style = "bold #ffaa44"
+                else:
+                    elapsed_style = "#888888"
+                skill_label.append(f"[{elapsed:3d}s] ", style=elapsed_style)
                 skill_label.append(
                     info.get("skill_name", "?"),
                     style=name_style or "#dddddd",
