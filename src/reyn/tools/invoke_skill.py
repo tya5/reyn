@@ -98,19 +98,42 @@ def _enrich_router_schema(rendered: dict, state: "RouterCallerState") -> dict:
 
 
 async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Adapter wrapping op_runtime.run_skill.handle.
+    """Adapter for invoke_skill.
 
-    Bridges between the unified (args, ctx) signature and the existing
-    (op, ctx, caller) signature. Constructs a RunSkillIROp from args
-    and builds a legacy OpContext from the ToolContext, mirroring the
-    pattern established in web_search.py (M2 POC).
+    Router path (= production, ADR-0026 Phase 3.5-B-light): delegate to
+    ``ctx.router_state.run_skill_fn`` which is RouterLoop-bound to
+    ``host.run_skill_awaitable`` with chain_id pre-applied.  This path
+    preserves multi-hop chain identity (= PR14 pending_chain semantics)
+    that the op_runtime fallback path drops.  Defense Layer B
+    (= skill name validation against ``available_skills``) is also
+    applied here so a hallucinated skill name is rejected before the
+    sub-skill task spawns.
 
-    Phase-side `run_skill` op kind continues to be dispatched through
-    OP_KIND_MODEL_MAP["run_skill"] = RunSkillIROp — backward-compat alias
-    per ADR-0026 Open Q #7. This handler is used when the capability is
-    invoked via the unified registry (M3+); the OP_KIND_MODEL_MAP path
-    remains active for phase-side control_ir until M4 wires the alias.
+    Fallback (= phase-side dispatch / test sites): build a transient
+    RunSkillIROp + minimal OpContext and call op_runtime.run_skill.handle
+    directly.  PR14 chain semantics do not apply phase-side, so the
+    chain_id loss is OK in that path.
     """
+    rs = ctx.router_state
+
+    # Router path — delegate via the populated callable (chain_id bound)
+    if rs is not None and rs.run_skill_fn is not None:
+        # Defense Layer B: validate skill name against available_skills
+        # so hallucinated names raise before spawning. Mirrors the
+        # explicit check in the legacy RouterLoop branch (now removed).
+        skill_name = args["name"]
+        if rs.available_skills:
+            available = {s["name"] for s in rs.available_skills if "name" in s}
+            if available and skill_name not in available:
+                raise ValueError(
+                    f"skill {skill_name!r} not found; "
+                    f"available: {sorted(available)}"
+                )
+        return await rs.run_skill_fn(
+            skill=skill_name,
+            input=args["input"],
+        )
+
     # Lazy import to avoid circular dependency at registry-init time.
     from reyn.op_runtime.run_skill import handle as handle_run_skill
     from reyn.schemas.models import RunSkillIROp

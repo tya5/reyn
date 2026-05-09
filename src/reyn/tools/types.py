@@ -97,6 +97,14 @@ class RouterCallerState:
     # minimal OpContext synthesis (= test sites / phase-side).
     op_context_factory: Callable[[], Any] | None = None
 
+    # Skill invocation callback (= for invoke_skill handler; bound by
+    # RouterLoop to ``host.run_skill_awaitable`` with chain_id pre-applied
+    # so the multi-hop chain identity propagates into nested run_skill /
+    # delegate_to_agent paths.  Without this, ``invoke_skill`` via
+    # op_runtime caller="control_ir" would not carry chain_id and PR14
+    # pending_chain semantics would break for sub-skill delegations.
+    run_skill_fn: Callable[..., Awaitable[Any]] | None = None
+
 
 @dataclass
 class PhaseCallerState:

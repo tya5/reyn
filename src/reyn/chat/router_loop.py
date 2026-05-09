@@ -728,6 +728,12 @@ class RouterLoop:
         # _normalise_router_tool_result unwraps read_file / list_directory
         # to the bare-content / bare-list shapes the host adapter returned.
         "read_file", "write_file", "delete_file", "list_directory",
+        # Phase 3.5-B-light — invoke_skill.  Handler delegates via
+        # RouterCallerState.run_skill_fn (= chain_id pre-bound) so PR14
+        # multi-hop chain semantics propagate into nested run_skill /
+        # delegate_to_agent paths.  Defense Layer B (skill-name
+        # validation) is applied inside the handler.
+        "invoke_skill",
     })
 
     def _build_router_caller_state(self) -> Any:
@@ -758,6 +764,11 @@ class RouterLoop:
                 to=to, request=request, depth=0, chain_id=self.chain_id,
             )
 
+        async def _run_skill_bound(*, skill: str, input: dict) -> Any:
+            return await self.host.run_skill_awaitable(
+                skill=skill, input=input, chain_id=self.chain_id,
+            )
+
         async def _dispatch_plan_bound(*, args: dict) -> Any:
             from reyn.chat.planner import dispatch_plan_tool
             return await dispatch_plan_tool(
@@ -780,6 +791,10 @@ class RouterLoop:
             # Async dispatch (= activated handlers)
             send_to_agent=_send_to_agent_bound,
             dispatch_plan_tool=_dispatch_plan_bound,
+            # Skill invocation bridge (= for invoke_skill handler;
+            # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
+            # multi-hop chain semantics.
+            run_skill_fn=_run_skill_bound,
             # Identity + cost + model context (forward-looking; consumed by
             # schema_enricher hooks and future activated handlers)
             chain_id=self.chain_id,
@@ -869,23 +884,7 @@ class RouterLoop:
                 args.get("layer", ""), args.get("slug", "")
             )
 
-        # B. Action
-        if name == "invoke_skill":
-            skill_name = args["name"]
-            # Layer B: defense-in-depth — verify skill name at runtime.
-            # Only enforced when the host exposes a non-empty skills list
-            # (same precondition as Layer A enum in build_tools).
-            available_skills = {s["name"] for s in self.host.list_available_skills()}
-            if available_skills and skill_name not in available_skills:
-                raise ValueError(
-                    f"skill {skill_name!r} not found; "
-                    f"available: {sorted(available_skills)}"
-                )
-            return await self.host.run_skill_awaitable(
-                skill=skill_name,
-                input=args["input"],
-                chain_id=self.chain_id,
-            )
+        # B. Action — invoke_skill via registry (Phase 3.5-B-light)
         if name in ("remember_shared", "remember_agent"):
             layer = "shared" if name == "remember_shared" else "agent"
             return await self._remember(layer=layer, **args)
