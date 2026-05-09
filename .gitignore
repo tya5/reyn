@@ -21,6 +21,13 @@ reyn/local/
 reyn.local.yaml
 !reyn.local.yaml.example
 
+# Personal AI-tool instruction overrides (= industry pattern: Claude Code
+# CLAUDE.local.md / OpenAI Codex AGENTS.override.md 等)。 project-level
+# CLAUDE.md / REYN.md は committed (= team-shared, dogfood reproducible)、
+# personal override は gitignored。
+CLAUDE.local.md
+REYN.local.md
+
 improver_state.json
 # Textual TUI export captures (= screenshots Textual emits via SVG
 # export / --screenshot). Land in repo root by default; never meant to
