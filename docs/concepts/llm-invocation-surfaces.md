@@ -206,3 +206,25 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 - [../reference/runtime/control-ir.md](../reference/runtime/control-ir.md) — phase-side op vocabulary and semantics
 - [../reference/cli/chat.md](../reference/cli/chat.md) — slash commands available in chat (sometimes confused with router tools; they are distinct)
 - [../reference/cli/mcp.md](../reference/cli/mcp.md) — MCP server side (Reyn-as-MCP-server exposes a third surface that is NOT covered here because it is external clients calling INTO Reyn, not Reyn's internal LLM invocation kinds)
+
+---
+
+## 9. Implementation: unified registry (M1 landed; M2 pending)
+
+The dual-implementation architecture described in this document (two separate
+catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
+ADR-0026 (Status: Proposed) closes the structural drift by introducing a single
+`ToolDefinition` per capability with two render methods.
+
+**M1 status (landed):** The infrastructure module `src/reyn/tools/` is in place:
+
+- `ToolDefinition`, `ToolGates`, `ToolContext`, `ToolHandler`, `ToolResult` — in `src/reyn/tools/types.py`
+- `ToolRegistry` — in `src/reyn/tools/registry.py`
+- `invoke_tool`, `ToolNotFound`, `ToolGateRefused` — in `src/reyn/tools/dispatch.py`
+
+No capabilities have been migrated yet. `build_tools()` and `OP_KIND_MODEL_MAP`
+remain the active dispatch paths. M2 POC migrates `web_search` as the first
+capability; M3 rolls out the remaining 12 capabilities; M4 removes the legacy
+structures.
+
+**Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

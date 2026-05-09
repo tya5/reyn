@@ -10,6 +10,17 @@ Gemini-safe schema rules enforced throughout:
 - Nested objects max 1 level (input: object / args: object are untyped)
 - enum values are strings only
 - Tool order is a literal list — deterministic regardless of dict iteration order
+
+Migration note (ADR-0026)
+-------------------------
+This file is an M1 adapter shim. The ToolSpec pattern defined here will be
+progressively replaced as capabilities migrate to ToolDefinition instances in
+src/reyn/tools/ during M2/M3. The public surface (build_tools() returning
+list[dict]) is preserved unchanged throughout migration; M4 cleanup removes
+the ToolSpec literals once all capabilities have migrated.
+
+A private helper _build_tools_via_registry(registry) is available for M2/M3
+integration; build_tools() itself remains the public API.
 """
 
 from __future__ import annotations
@@ -859,3 +870,17 @@ def build_tools(
 
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
     return [spec.to_openai_dict() for spec in specs]
+
+
+def _build_tools_via_registry(registry) -> list[dict]:
+    """Private helper for M2/M3 registry-driven tool building.
+
+    Produces the OpenAI tools[] list from a ToolRegistry's router-allowed
+    entries via ToolDefinition.render_for_router(). Used by M2/M3 capability
+    migrations; the public build_tools() function is unchanged.
+
+    Per ADR-0026 M1 adapter shim pattern: this helper exists so M2/M3 can
+    wire registry entries into the router surface without touching the
+    public API surface.
+    """
+    return [tool.render_for_router() for tool in registry.for_router()]

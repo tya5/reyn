@@ -22,6 +22,14 @@ Consumers:
 Note: ``_WRITE_OPS`` / ``_READ_OPS`` in ``op_runtime/file.py`` classify
 *file sub-operations* (op.op values within the "file" kind), not top-level
 op kinds.  They are a different concern and intentionally stay local.
+
+Migration note (ADR-0026)
+-------------------------
+``OP_KIND_MODEL_MAP`` will become a derived view of the unified ToolRegistry
+once capabilities migrate during M2/M3. In the steady state (M4), this map
+is either removed or retained as a ``Mapping[str, type[BaseModel]]`` derived
+from registry entries (see ADR-0026 §7 Open Question #2). Until then, it
+remains the single source of truth for phase-side op kind registration.
 """
 from __future__ import annotations
 

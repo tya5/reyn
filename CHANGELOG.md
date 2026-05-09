@@ -128,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
+- M1 of ADR-0026 unified tool registry: types + registry + dispatch helpers + Tier 2 invariants (no capability migrations yet)
 - Public budget/cost reference page (`reference/config/budget.md`, en + ja) — `cost:` schema, slash commands (`/cost` / `/budget` / `/budget reset`), cap tiers, events, ledger, known limitations
 - Public CLI reference for `reyn mcp serve` (`reference/cli/mcp.md`, en + ja) — flags, tools exposed, exit codes, Claude Code wiring example
 - Dogfood session chronicle 2026-05-09: HN research → description hint → 4 insights → parallel landing (= `72364fe`)
