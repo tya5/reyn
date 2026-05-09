@@ -23,9 +23,29 @@ MCP は AI エージェントがツールを公開する「サーバー」に接
 
 このページでは以降、各ロールを順に解説します。
 
-## クイックスタート: `reyn chat` から MCP を試す (skill 不要)
+## クイックスタート: 3 つのコマンドでゼロから MCP を動かす
 
-MCP サーバーをインタラクティブに使うだけなら、 **skill を書く必要はありません**。 `reyn chat` モードはすでに 3 つの router tool を露出しており、 Claude Code の `claude mcp` UX と同様に動きます:
+初回利用時の推奨フローは `reyn mcp install` です。YAML の手動編集は不要です：
+
+```bash
+# 1. 利用可能なサーバーを検索
+reyn mcp search "github"
+
+# 2. インストール（設定 + 認証情報 + パーミッションゲートを一括処理）
+reyn mcp install io.github.modelcontextprotocol/server-github
+
+# 3. すぐに使い始める
+reyn chat
+> このリポジトリの最近の PR を一覧して
+```
+
+`reyn mcp install` は MCP レジストリからサーバーマニフェストを取得し、必要なランタイム（`npx`、`uvx` など）がインストールされているか確認し、認証情報をプロンプト（`~/.reyn/secrets.env` に安全に保存）し、シークレットを `${VAR}` 参照として設定に書き込みます。これらをすべて 1 ステップで実行します。
+
+完全な `reyn mcp` CLI リファレンスは [Reference: `reyn mcp`](../reference/cli/mcp.md) を参照してください。
+
+## クイックスタート: `reyn chat` から MCP を試す（手動設定パス）
+
+手動でサーバーを設定したい場合や、公開レジストリにないサーバーを追加する場合は、`reyn.yaml` に直接追加します。サーバーを設定すると、`reyn chat` は自動的に 3 つの router tool を使えます：
 
 | Tool | 何をするか |
 |------|-----------|
@@ -121,13 +141,37 @@ mcp:
 | `url` | — | 必須 | エンドポイント URL |
 | `headers` | — | 任意 | 静的ヘッダー。値は `${VAR}` 展開に対応 |
 
-`${VAR}` の展開は op ディスパッチ時に `os.environ` を使って行われます。変数が存在しない場合は `""` に展開され警告が出ますが、ハードエラーにはなりません。オプショナルなトークンが欠けていても実行はクラッシュしません。
+`${VAR}` の展開は `os.environ` から解決されます（起動時に `~/.reyn/secrets.env` から事前ロードされています。詳細は [コンセプト: シークレット管理](secret-handling.md) 参照）。変数が存在しない場合は `""` に展開され警告が出ますが、ハードエラーにはなりません。オプショナルなトークンが欠けていても実行はクラッシュしません。
 
-API キーは環境変数に置き、`reyn.yaml` にインラインで書かないでください（[reyn.yaml: API keys](../reference/config/reyn-yaml.md#api-keys) 参照）。
+`${VAR}` 構文は `mcp.servers` だけでなく、**すべての** YAML 文字列フィールドで使えます。`models.<name>.api_key`、`litellm.api_base` などすべてが同じ仕組みを使います。全体像は [Reference: `reyn.yaml` — `${VAR}` interpolation](../reference/config/reyn-yaml.md#var-interpolation) を参照してください。
+
+API キーとトークンは `~/.reyn/secrets.env`（`reyn secret set` で管理）に置き、`reyn.yaml` では `${VAR}` として参照してください。リテラルの値をインラインで書かないでください。詳細は [コンセプト: シークレット管理](secret-handling.md) を参照してください。
 
 ## セキュリティモデル
 
-MCP 呼び出しはプロセスを離れる前に 2 つのゲートを通過します：
+MCP の操作は 2 つのポイントでゲートされます：
+
+### インストール時ゲート: `permissions.mcp_install`
+
+MCP サーバーを設定に追加する前に、`mcp_install` パーミッションゲートが実行されます。これは `reyn mcp install` と、skill が発行する `mcp_install` Control IR op の両方に適用されます。デフォルトは `ask` — 初回インストール時にインタラクティブプロンプトが表示されます。
+
+エンタープライズチームは、プロジェクトスコープの `reyn.yaml` で `permissions.mcp_install: deny` を設定してすべてのサーバー追加を防ぐか、`mcp_install: allow` とプライベートレジストリを組み合わせて「承認済みサーバーのみ」ポリシーを強制できます：
+
+```yaml
+# enterprise reyn.yaml — チーム全体のポリシー
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # プライベートレジストリ（承認済みサーバーのみ）
+    - https://registry.modelcontextprotocol.io/   # パブリックフォールバック
+permissions:
+  mcp_install: allow    # チームはインストール可能だが、プライベートレジストリのサーバーのみ事実上限定
+```
+
+詳細は [コンセプト: パーミッションモデル — `mcp_install`](permission-model.md#mcp_install-パーミッション) を参照してください。
+
+### ランタイムゲート: `permissions.mcp`
+
+MCP 呼び出しはプロセスを離れる前に 2 つのチェックを通過します：
 
 1. **Phase 宣言。** Phase は frontmatter の `permissions.mcp` に使用したいサーバーを必ずリストアップしなければなりません。ランタイムは `require_mcp(decl, server, ...)` を呼び出し、`server not in decl.mcp` の場合は宣言欠落を明示したエラーで失敗します。
 2. **承認。** 他のケイパビリティと同様に、Skill ごとの初回呼び出しでプロンプトが表示されます（`y` / `j` / `r` / `N`）。永続的な承認は `.reyn/approvals.yaml` に `<skill>/mcp.<server>` キーで保存されます。プロジェクト全体を信頼できる場合は `reyn.yaml` で `permissions.mcp: allow` と設定して事前承認できます。
@@ -197,7 +241,10 @@ MCP は *外部ケイパビリティへのアクセス* に適したツールで
 ## 関連項目
 
 - [How-to: MCP サーバーの使い方](../guide/for-skill-authors/use-an-mcp-server.md) — filesystem サーバーのクイックスタート
+- [Reference: `reyn mcp`](../reference/cli/mcp.md) — `search`、`install`、`list`、`remove`、`set-secret`、`clear-secret` の完全な CLI リファレンス
+- [Reference: `reyn secret`](../reference/cli/secret.md) — ユニバーサルシークレット管理
+- [コンセプト: シークレット管理](secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
 - [リファレンス: `read_local_files`](../reference/stdlib/read_local_files.md) — 最初の stdlib MCP Skill
 - [リファレンス: `reyn.yaml`](../reference/config/reyn-yaml.md#mcp-servers) — `mcp.servers:` の完全なスキーマ
-- [コンセプト: パーミッションモデル](permission-model.md) — `permissions.mcp` の位置づけ
+- [コンセプト: パーミッションモデル](permission-model.md) — `mcp_install` と `permissions.mcp`
 - [modelcontextprotocol.io](https://modelcontextprotocol.io) — 仕様、サーバーレジストリ、公式 SDK

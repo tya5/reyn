@@ -17,7 +17,23 @@ applies_to: [reyn.yaml, mcp.servers, read_local_files]
 
 ## 1. Install the server
 
-The filesystem server ships as an npm package. Smoke-test it standalone first — you don't want to debug both the server and the integration at once.
+### Recommended: `reyn mcp install`
+
+For servers listed in the MCP registry, use `reyn mcp install`. It handles the server binary, config, credentials, and the permission gate automatically:
+
+```bash
+# Discover servers first (optional)
+reyn mcp search "filesystem"
+
+# Install — handles everything in one step
+reyn mcp install io.github.modelcontextprotocol/server-filesystem
+```
+
+After install, the `mcp.servers.filesystem` entry is already in your config (in `.reyn/config.yaml` by default, or `reyn.yaml` if you pass `--scope project`). Skip to step 3.
+
+### Advanced: manual config
+
+If a server is not in the public registry, or you want full control over the config, add it manually. Smoke-test the server standalone first — you don't want to debug both the server and the integration at once:
 
 ```bash
 # Run it manually; it should print server info and wait on stdin
@@ -26,7 +42,7 @@ npx -y @modelcontextprotocol/server-filesystem .
 
 Press `Ctrl-C` once you see it accept the JSON-RPC handshake. (Each MCP server has its own install command — check the server's README. `pip`, `cargo`, and bare binaries are common alternatives.)
 
-## 2. Configure in `reyn.yaml`
+## 2. Configure in `reyn.yaml` (manual path)
 
 Add an `mcp.servers:` block. Pick a short, kebab-or-snake-case name (`filesystem` is conventional) — this is the name your skill will declare in `permissions.mcp` and emit in `mcp` ops.
 
@@ -43,12 +59,16 @@ mcp:
         - "."           # root the server can see; use absolute paths to widen
 ```
 
-Fields:
+For a server that requires credentials, store the value in `~/.reyn/secrets.env` and reference it as `${VAR}`:
 
-- `type: stdio` — local process; reyn launches it and speaks JSON-RPC over stdin/stdout.
-- `command` — the executable.
-- `args` — the argument vector. The trailing `.` restricts the server to the current directory; pass a different absolute path (or several) to expand its reach.
-- `env` — optional dict of extra environment variables (omitted here).
+```bash
+# Store once
+reyn secret set GITHUB_PERSONAL_ACCESS_TOKEN
+
+# Then in reyn.yaml:
+#   env:
+#     GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+```
 
 For HTTP servers swap to `type: http` with `url:` and `headers:` — see [Reference: reyn.yaml § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers).
 
@@ -118,7 +138,7 @@ grep '"mcp_' .reyn/events.jsonl | tail -n 5
 
 ## Troubleshooting
 
-**`MCP server 'filesystem' is not configured.`** The `mcp.servers.filesystem` block is missing or misnamed. Confirm with `cat reyn.yaml`; remember the name the skill uses (`filesystem`) must match the key in the config.
+**`MCP server 'filesystem' is not configured.`** The `mcp.servers.filesystem` block is missing or misnamed. Confirm with `cat reyn.yaml` (or `cat .reyn/config.yaml` if installed with `--scope local`); remember the name the skill uses (`filesystem`) must match the key in the config.
 
 **`MCP server 'filesystem' not declared in phase permissions.`** The phase's frontmatter is missing `permissions.mcp: [filesystem]`. Open the phase file and add it. This is the runtime gate, not a config issue.
 
@@ -130,15 +150,20 @@ permissions:
     filesystem: allow
 ```
 
-**Server crashes immediately.** Run the `command` + `args` manually (step 1) — it should accept stdin without exiting. If it fails standalone, fix the install before re-running reyn. The crash is reported as `mcp_failed` with the underlying error.
+**Server crashes immediately.** Run the `command` + `args` manually (step 1 of the manual path) — it should accept stdin without exiting. If it fails standalone, fix the install before re-running reyn. The crash is reported as `mcp_failed` with the underlying error.
 
-**`MCP config references undefined environment variable: ${TOKEN}`.** A `${VAR}` reference in the config didn't resolve. Export the variable in your shell, or remove the reference if optional. Missing vars expand to empty string and warn rather than fail.
+**`MCP config references undefined environment variable: ${TOKEN}`.** A `${VAR}` reference in the config didn't resolve. Run `reyn secret set TOKEN` to store the value, or export the variable in your shell. Missing vars expand to empty string and warn rather than fail.
+
+**`mcp_install` permission prompt on first install.** This is expected — reyn gates server additions by default (`mcp_install: ask`). Select `j` to persist the approval for this server. For non-interactive CI runs, pass `--non-interactive` and set `mcp_install: allow` in your config beforehand.
 
 **`reyn events tail` shows no `mcp_called`.** The skill never reached the `mcp` op — check its phase log to see whether the LLM emitted it. A common cause is the LLM picking `file.read` (default capability, project-scoped) instead of `mcp` because the path was inside the project; that's correct behaviour, not an error.
 
 ## See also
 
 - [Concepts: MCP](../../concepts/mcp.md) — protocol overview, transport choice, security model
+- [Concepts: secret handling](../../concepts/secret-handling.md) — credential storage and `${VAR}` interpolation
+- [Reference: `reyn mcp`](../../reference/cli/mcp.md) — `install`, `set-secret`, and other subcommands
+- [Reference: `reyn secret`](../../reference/cli/secret.md) — managing credentials
 - [Reference: `read_local_files`](../../reference/stdlib/read_local_files.md) — the example skill in detail
 - [Reference: `reyn.yaml` § MCP servers](../../reference/config/reyn-yaml.md#mcp-servers) — full schema
 - [How-to: manage permissions](../for-users/manage-permissions.md) — pre-approval, revoke, eval mode

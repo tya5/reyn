@@ -71,15 +71,74 @@ permissions:
 
 理由はコンポジションの安全性です。Skill A は信頼されているかもしれません。Skill A が（`run_skill` を通じて）サブスキル B を呼び出しても、B のパーミッションが推移的に付与されるわけではありません。B は自分自身のために求める必要があります。
 
+## `mcp_install` パーミッション {#mcp_install-パーミッション}
+
+`mcp_install` は **設定への新しい MCP サーバーの追加** をゲートします。これはランタイムのツール呼び出しをゲートする `permissions.mcp` とは別物です。
+
+```yaml
+permissions:
+  mcp_install: ask      # deny | ask | allow （デフォルト: ask）
+```
+
+| 値 | 動作 |
+|-------|-----------|
+| `ask`（デフォルト） | サーバー ID ごとの初回インストール時にインタラクティブプロンプト。承認は `mcp_install:<server_id>` キーで `.reyn/approvals.yaml` に永続化されます。 |
+| `allow` | プロンプトなしでインストール。 |
+| `deny` | すべてのインストール試行を即座に拒否。 |
+
+### スコープ層
+
+`mcp_install` は標準の 3 層マージに参加します：
+
+```yaml
+# ~/.reyn/config.yaml（ユーザースコープ）
+permissions:
+  mcp_install: allow     # 個人の開発機 — フリクションなし
+
+# <project>/reyn.yaml（プロジェクトスコープ — git にコミット）
+permissions:
+  mcp_install: deny      # チーム共有プロジェクト — サーバーリストは一元管理
+
+# <project>/reyn.local.yaml（ローカルスコープ — gitignored）
+permissions:
+  mcp_install: ask       # このプロジェクトの個人オーバーライド
+```
+
+### エンタープライズユースケース: 「承認済みサーバーのみ」ポリシー
+
+`mcp_install: allow` とプライベートレジストリを組み合わせて、インストールを許可しながら見えるサーバーを制限します：
+
+```yaml
+# enterprise reyn.yaml（プロジェクトスコープ）
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # プライベートレジストリ（承認済みサーバーのみ）
+    - https://registry.modelcontextprotocol.io/   # パブリックフォールバック（優先度低い）
+permissions:
+  mcp_install: allow
+```
+
+この設定でチームメンバーは `reyn mcp install <id>` を自由に実行できますが、プライベートレジストリに登録されたサーバーのみが検索可能です。パブリックレジストリはフォールバックですが、そこからインストールされるサーバーも同じ監査証跡（`mcp_server_installed` イベント）を通ります。レジストリの順序でパブリックパスを事実上制限することで、`deny` パーミッションレベルを必要とせず多層防御を実現します。
+
+### 監査証跡
+
+インストールが成功するたびに `server_id` と `scope` を持つ `mcp_server_installed` イベントが発行されます。フィルタリング：
+
+```bash
+grep '"mcp_server_installed"' .reyn/events.jsonl
+```
+
 ## パーミッションシステムではないもの
 
 - **Linux ケイパビリティサンドボックスではありません。** `mode: trusted` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。
-- **シークレットの保管庫ではありません。** 認証情報を approvals.yaml に入れたり、パーミッションで環境変数を隠そうとしないでください。
+- **シークレットの保管庫ではありません。** 認証情報を approvals.yaml に入れたり、パーミッションで環境変数を隠そうとしないでください。認証情報には [コンセプト: シークレット管理](secret-handling.md) を使用してください。
 - **ユーザーに対する保護ではありません。** `reyn.yaml` で `permissions: shell: allow` とした場合、シェルを承認したことになります。このシステムは意図せずケイパビリティが増大することを防ぐものであり、ユーザーの意図を防ぐものではありません。
 
 ## 参考
 
 - [Reference: permissions](../reference/config/permissions.md) — 完全なスキーマ
-- [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` キー
+- [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` キーと `permissions.mcp_install`
 - [Reference: state-dir](../reference/config/state-dir.md) — `.reyn/approvals.yaml`
+- [コンセプト: シークレット管理](secret-handling.md) — 認証情報のストレージ（`~/.reyn/secrets.env`）
+- [Reference: `reyn mcp`](../reference/cli/mcp.md) — `install` サブコマンドと `mcp_install` ゲートの連動
 - [How-to: manage permissions](../guide/for-users/manage-permissions.md)

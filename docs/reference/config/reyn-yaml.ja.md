@@ -187,21 +187,94 @@ permissions:
       - statistics
       - json
       - re
+  mcp_install: ask      # deny | ask | allow （デフォルト: ask）
 ```
+
+### `permissions.mcp_install`
+
+`reyn mcp install` または `mcp_install` Control IR op 経由で MCP サーバーを設定に追加できるかを制御します。3 つの値：
+
+| 値 | 動作 |
+|-------|-----------|
+| `ask`（デフォルト） | サーバーごとの初回インストール時にインタラクティブプロンプト。承認は `mcp_install:<server_id>` キーで `.reyn/approvals.yaml` に永続化されます。 |
+| `allow` | プロンプトなしでインストール。プライベートレジストリと組み合わせて「承認済みサーバーのみ」ポリシーを実現する際に有用。 |
+| `deny` | すべてのインストール試行を拒否。サーバーリストを一元管理するチーム設定のプロジェクトスコープ `reyn.yaml` に適切。 |
+
+この設定は標準のスコープ層マージに参加します。プロジェクトスコープの `reyn.yaml` で `deny` を設定し、個々の開発者が `reyn.local.yaml` で `mcp_install: ask` にオーバーライドすることができます。
+
+エンタープライズパターン — プライベートレジストリへのインストールを制限：
+
+```yaml
+# reyn.yaml（プロジェクトスコープ — git にコミット）
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # プライベートレジストリを先頭に
+    - https://registry.modelcontextprotocol.io/   # パブリックフォールバック
+permissions:
+  mcp_install: allow    # チームはインストール可能だが、上記レジストリのサーバーのみ事実上限定
+```
+
+スコープ層との詳細な連動とエンタープライズユースケースは [コンセプト: パーミッションモデル](../../concepts/permission-model.md#mcp_install-パーミッション) を参照してください。
 
 完全な Permission 文法は `reference/config/permissions.md` に記載されています。
 
+## `${VAR}` interpolation {#var-interpolation}
+
+`reyn.yaml`（または `reyn.local.yaml` / `~/.reyn/config.yaml`）の任意のセクションの任意の文字列フィールドで、`${VAR}` 構文を使って環境変数を参照できます。変数は起動時、`~/.reyn/secrets.env` を環境変数にロードした後に `os.environ` から解決されます（詳細は [コンセプト: シークレット管理](../../concepts/secret-handling.md) 参照）。
+
+```yaml
+# reyn.yaml — ${VAR} はすべての文字列フィールドで使用可能
+models:
+  default-sonnet:
+    model: claude-sonnet-4-5
+    api_key: ${ANTHROPIC_API_KEY}          # LLM API キー — secrets.env またはシェルから解決
+    extra_body:
+      headers:
+        Authorization: ${LITELLM_PROXY_TOKEN}
+
+litellm:
+  api_base: ${LITELLM_API_BASE}            # LiteLLM プロキシ URL
+
+mcp:
+  servers:
+    github:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+    internal_tools:
+      type: http
+      url: https://tools.example.internal/mcp
+      headers:
+        Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
+```
+
+解決ルール：
+
+- `${VAR}` — 環境変数の値に展開されます。未定義の場合は警告を出して `""` に展開されます（ハードエラーにはなりません）。
+- `$$` — リテラルの `$` 記号（エスケープ）。
+- すべての YAML セクションのすべての文字列フィールドをネストした dict やリストも含めて再帰的にスキャンします。
+- シェルの環境変数は `~/.reyn/secrets.env` の値より優先されます。
+
+`~/.reyn/secrets.env` を管理するには `reyn secret set` / `reyn secret list` / `reyn secret clear` を使用します（[Reference: `reyn secret`](../../reference/cli/secret.md) 参照）。
+
 ## API キー
 
-API キーは環境変数から来なければなりません。`OPENAI_API_KEY`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` などです。`reyn.yaml` や `reyn.local.yaml` には絶対に書かないでください。
+API キーとトークンは環境変数から来なければなりません。`reyn.yaml` にリテラル値を書かないでください。推奨パターン：
+
+1. 一度だけ値を保存: `reyn secret set ANTHROPIC_API_KEY`
+2. `reyn.yaml` で参照: `api_key: ${ANTHROPIC_API_KEY}`
+
+`reyn.yaml` や `reyn.local.yaml` にトークン値をインラインで貼り付けないでください。これらは git にコミットされ、リポジトリへのアクセス権を持つすべての人が読めます。
 
 ## プロキシ / `api_base`
 
-モデルをローカルの LiteLLM プロキシ経由でルーティングする場合は、URL を `reyn.yaml` ではなく `reyn.local.yaml`（gitignored）に書きます:
+モデルをローカルの LiteLLM プロキシ経由でルーティングする場合は、URL を `reyn.yaml` ではなく `reyn.local.yaml`（gitignored）に書きます。環境変数の参照も使えます：
 
 ```yaml
 # reyn.local.yaml
-api_base: http://localhost:4000
+api_base: ${LITELLM_API_BASE}    # または直接書く: http://localhost:4000
 ```
 
 ## 解決順序
@@ -266,7 +339,58 @@ cost:
 
 **台帳の場所:** `.reyn/state/budget_ledger.jsonl` — LLM 呼び出しごとに 1 レコード、fsync 付きの追記専用。このファイルは自動的にローテーションされません。月あたり数 MB 程度で成長し、必要に応じて手動でアーカイブできます。
 
+## MCP サーバー {#mcp-servers}
+
+reyn が [Model Context Protocol](../../concepts/mcp.md) 経由で呼び出せる外部ツールサーバーです。`mcp.servers:` の各エントリは短い名前でキー付けされます（Skill が `permissions.mcp` で宣言し、`mcp` ops で発行するのと同じ名前）。
+
+サーバーを追加する推奨方法は `reyn mcp install <server_id>`（[Reference: `reyn mcp`](../../reference/cli/mcp.md) 参照）です。エントリを自動的に書き込み、`~/.reyn/secrets.env` 経由で認証情報を処理します。手動設定も完全にサポートされています。
+
+```yaml
+mcp:
+  servers:
+    # stdio: ローカルプロセス、stdin/stdout 越しに JSON-RPC（大多数の公式サーバー）
+    filesystem:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      env:
+        FS_LOG_LEVEL: "info"
+
+    # ~/.reyn/secrets.env からの認証情報を持つ stdio サーバー
+    github:
+      type: stdio
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-github"]
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ${GITHUB_PERSONAL_ACCESS_TOKEN}
+
+    # http: ホスト型サーバー、Streamable HTTP 越しの JSON-RPC
+    internal_tools:
+      type: http
+      url: https://tools.example.internal/mcp
+      headers:
+        Authorization: "Bearer ${INTERNAL_TOOLS_TOKEN}"
+```
+
+| フィールド | 型 | 必須の対象 | 説明 |
+|-------|------|--------------|-------------|
+| `type` | string | すべて | `stdio` \| `http` \| `sse` |
+| `command` | string | stdio | 起動する実行ファイル。 |
+| `args` | list[string] | stdio（任意） | `command` に渡す引数ベクター。 |
+| `env` | map[string,string] | stdio（任意） | 起動プロセスへの追加環境変数。値は `${VAR}` 展開に対応。 |
+| `url` | string | http, sse | エンドポイント URL。 |
+| `headers` | map[string,string] | http, sse（任意） | 静的リクエストヘッダー。値は `${VAR}` 展開に対応。 |
+
+サーバーは設定ソースをまたいでマージされます: `~/.reyn/config.yaml` ⊕ `reyn.yaml` ⊕ `reyn.local.yaml`。マージは `mcp.servers` キーの shallow union です。マシンごとの `reyn.local.yaml` が残りを再宣言せずに単一サーバーを追加・上書きできます。
+
+MCP ランタイムはオプション依存です。公式の `mcp` Python SDK を取り込むには `pip install -e ".[mcp]"` でインストールします。
+
+[コンセプト: MCP](../../concepts/mcp.md) でプロトコル概要、[How-to: MCP サーバーを使う](../../guide/for-skill-authors/use-an-mcp-server.md) でエンドツーエンドのクイックスタートを参照してください。
+
 ## 関連情報
 
 - `reference/config/permissions.md` — 完全な Permission 文法
 - `reference/config/state-dir.md` — `.reyn/` レイアウト
+- [コンセプト: シークレット管理](../../concepts/secret-handling.md) — `~/.reyn/secrets.env` と `${VAR}` interpolation
+- [Reference: `reyn secret`](../../reference/cli/secret.md) — CLI によるシークレット管理
+- [Reference: `reyn mcp`](../../reference/cli/mcp.md) — MCP サーバー管理 CLI

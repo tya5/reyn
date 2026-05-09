@@ -90,15 +90,74 @@ Approvals are keyed by skill, not globally. If skill A asks "can you write to `/
 
 The reason is composition safety. Skill A might be trusted; skill A invoking sub-skill B (via `run_skill`) doesn't transitively grant B's permissions. B has to ask for its own.
 
+## `mcp_install` permission {#mcp_install-permission}
+
+`mcp_install` gates **adding a new MCP server to the configuration** — it is distinct from `permissions.mcp` (which gates runtime tool calls from an already-configured server).
+
+```yaml
+permissions:
+  mcp_install: ask      # deny | ask | allow (default: ask)
+```
+
+| Value | Behaviour |
+|-------|-----------|
+| `ask` (default) | Interactive prompt on first install per server ID. Approval persists to `.reyn/approvals.yaml` under `mcp_install:<server_id>`. |
+| `allow` | Install proceeds without a prompt. |
+| `deny` | All install attempts are rejected immediately. |
+
+### Scope tiers
+
+`mcp_install` participates in the standard three-tier merge:
+
+```yaml
+# ~/.reyn/config.yaml (user scope)
+permissions:
+  mcp_install: allow     # personal dev machine — no friction
+
+# <project>/reyn.yaml (project scope — committed to git)
+permissions:
+  mcp_install: deny      # team-shared project — server list is centrally managed
+
+# <project>/reyn.local.yaml (local scope — gitignored)
+permissions:
+  mcp_install: ask       # personal override for this project
+```
+
+### Enterprise use case: "approved servers only" policy
+
+Combine `mcp_install: allow` with a private registry to allow installs while restricting which servers are visible:
+
+```yaml
+# enterprise reyn.yaml (project scope)
+mcp:
+  registries:
+    - https://mcp-registry.internal.acme.com/    # private registry (approved servers only)
+    - https://registry.modelcontextprotocol.io/   # public fallback (lower priority)
+permissions:
+  mcp_install: allow
+```
+
+With this configuration, team members can run `reyn mcp install <id>` freely — but only servers registered in the private registry are discoverable. The public registry is a fallback but any server installed from it still goes through the same audit trail (`mcp_server_installed` event). Combining `deny` on the public path via registry ordering creates a layered defence without requiring `deny` permission level.
+
+### Audit trail
+
+Every successful install emits a `mcp_server_installed` event with `server_id` and `scope`. Filter with:
+
+```bash
+grep '"mcp_server_installed"' .reyn/events.jsonl
+```
+
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step in `mode: trusted` runs as the same user; reyn doesn't sandbox the kernel.
-- **Not a secret keeper.** Don't put credentials in approvals.yaml or rely on permissions to hide environment variables.
+- **Not a secret keeper.** Don't put credentials in approvals.yaml or rely on permissions to hide environment variables. Use [Concepts: secret handling](secret-handling.md) for credentials.
 - **Not protection against the user.** If you `permissions: shell: allow` in reyn.yaml, you've authorized shell. The system is protecting against accidental capability creep, not user intent.
 
 ## See also
 
 - [Reference: permissions](../reference/config/permissions.md) — full schema
-- [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` key
+- [Reference: reyn.yaml](../reference/config/reyn-yaml.md) — `permissions:` key and `permissions.mcp_install`
 - [Reference: state-dir](../reference/config/state-dir.md) — `.reyn/approvals.yaml`
+- [Concepts: secret handling](secret-handling.md) — credential storage (`~/.reyn/secrets.env`)
+- [Reference: `reyn mcp`](../reference/cli/mcp.md) — `install` subcommand and `mcp_install` gate interaction
 - [How-to: manage permissions](../guide/for-users/manage-permissions.md)
