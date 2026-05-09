@@ -1,6 +1,6 @@
 ---
 title: Reyn — OSS ローンチ前戦略的優先事項
-last_updated: 2026-05-08
+last_updated: 2026-05-09
 status: stable
 based_on:
   - competitive/langgraph.md
@@ -8,6 +8,8 @@ based_on:
   - competitive/autogen.md
   - competitive/crewai.md
   - competitive/dify.md
+  - competitive/openclaw.md
+  - competitive/hermes-agent.md
   - landscape/emerging-players.md
   - docs_audit: 2026-05-08（docs/en/ + docs/ja/ + stdlib/skills/ 全体監査）
 ---
@@ -205,6 +207,10 @@ based_on:
 
 **vs 新興勢力（Microsoft Agent Framework / PydanticAI 等）**: Microsoft Agent Framework は Reyn の直接的な最大脅威（enterprise + Azure エコシステム + .NET/Python 対応）。日本の大手企業の多くが Microsoft 製品を使っており、Entra ID 統合の訴求力は強い。対抗策は「クラウドロックイン vs. ポータブルな OS 設計」で差別化する。Reyn の skill は OS 変更不要で移植可能（P7）であり、Azure を使わなくても動くことを強調する。PydanticAI は思想的に近い（型安全バリデーション）が OS 層を持たないため、Reyn の上位概念として位置づけられる。Agno の「5,000x faster」ベンチマークに対しては「確実性（N 回連続完走率）」ベンチマークで応じ、速度競争に入らない。
 
+**vs OpenClaw**: OpenClaw（旧 Clawdbot/Moltbot）は 2026-03 までに 370K stars・500K インスタンスを達成し、「デファクトの grassroots エージェント OS」になりつつある。ただしその性格は Reyn とほぼ正反対: 個人ユーザー向けメッセージング PF UI・LLM 完全自律・セキュリティは後付け（138 CVE、CVSS 9.9 含む）・ambient authority モデル（per-skill ゲートなし）。戦略は真っ向対抗ではなく **「OpenClaw の governance-ready 版」** としてポジショニングすることだ。「OpenClaw は動く、Reyn は動くと保証できる」という訴求軸。日本エンタープライズが OpenClaw の 138 CVE と ambient authority を懸念する場面で、Reyn の P4/P5/P6 が直接の回答になる。また OpenClaw の急成長は「エンタープライズでも自律エージェントへの期待が高まっている」という市場シグナルであり、Reyn のターゲットへの追い風でもある。OpenClaw 開発者が OpenAI に入社し非営利財団移管の方針が出たため、プロジェクト運営の持続可能性も今後の注視点。
+
+**vs Hermes Agent**: Hermes Agent（Nous Research、MIT、2026-02）は「自己改善するエージェント」という新カテゴリを GEPA（ICLR 2026 Oral）で定義し、7 週で 95K stars・139K stars（2026-05）を達成した。Reyn の設計哲学（predictability over autonomy）と真正面から対立する哲学（autonomy + self-improvement）を持つ。短期（2026）では Hermes v0.x の API 不安定・監査ログ未出荷（Issue #487）により本番エンタープライズ採用は困難で、Reyn の優位性（P6 出荷済み・WAL 自動回復）は明確。ただし Hermes が v1.0（2026 末 ETA）を出荷し Issue #487 が完了した場合、「監査ログがない」という最大の弱点が解消される。そのシナリオへの準備として: (a) P6 の「出荷済み・本番実績あり」という先行者優位を強調する外向きドキュメント、(b) Reyn の「再現可能な実行（スキルがバージョン固定）」vs Hermes の「自己改善（スキルが変化）」という二分法の訴求を確立する、の 2 点が中期の優先事項。長期的には Hermes の GEPA が示す「繰り返しタスクで 40% 速度向上」という価値を Reyn が提供できないままでは、同じ組織内で Hermes に置き換えられるリスクがある（→ P3: 自己改善/永続メモリの研究着手）。
+
 ---
 
 ## OSS ローンチ前チェックリスト
@@ -245,12 +251,15 @@ based_on:
 ### P3: 中長期
 
 - [ ] RBAC / SSO 実装（ADR として設計先行）
-- [ ] hash chain による改ざん検知（event log の P6 強化）
+- [ ] hash chain による改ざん検知（event log の P6 強化）— Hermes Issue #487 出荷前に完了させ「先行者」ポジションを確保
 - [ ] PostgreSQL / DB バックエンドの Checkpointer（LangGraph の checkpointer に相当するスケーラビリティ）
 - [ ] A2A プロトコル対応（`run_remote_agent` op）
 - [ ] Time Travel デバッグ CLI（event log リプレイの UI）
 - [ ] TypeScript SDK（日本フロントエンド開発者・Mastra 対抗）
 - [ ] Skill registry（`reyn install <skill>` CLI）— コミュニティ skill 流通の基盤
+- [ ] 永続メモリ基盤（Hermes の 3 レイヤーメモリに相当）— セッション横断ユーザーモデリング。workspace を SSoT として拡張する設計なら P5 と整合
+- [ ] スキル自動生成 PoC（GEPA 参考）— 実行トレースから skill.md 候補を生成する研究。本番化は 2027+ 想定だが ADR で方向性を固める
+- [ ] 弱 LLM 信頼度スコアリング（Hermes の fallback provider パターンを Reyn P4 制約と組み合わせたコスト最適化）
 
 ---
 
@@ -261,6 +270,8 @@ based_on:
 - [competitive/autogen.md](../competitive/autogen.md)
 - [competitive/crewai.md](../competitive/crewai.md)
 - [competitive/dify.md](../competitive/dify.md)
+- [competitive/openclaw.md](../competitive/openclaw.md)
+- [competitive/hermes-agent.md](../competitive/hermes-agent.md)
 - [competitive/README.md](../competitive/README.md) — 横比較テーブル
 - [landscape/emerging-players.md](emerging-players.md)
 - [positioning/reyn-differentiators.md](../positioning/reyn-differentiators.md)
