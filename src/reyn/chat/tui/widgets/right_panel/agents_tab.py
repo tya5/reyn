@@ -417,18 +417,6 @@ def render_agents(
         is_attached = name == attached
         in_loaded = name in loaded
 
-        # ── agent label ────────────────────────────────────────────
-        label = RichText()
-        label.append("▶ " if is_attached else "  ", style="#555555")
-        label.append(name, style="bold " + _CORAL if is_attached else "#dddddd")
-        label.append("  ")
-        label.append(
-            "● running" if in_loaded else "○ idle",
-            style="#44cc88" if in_loaded else "#555555",
-        )
-
-        tree = RichTree(label, guide_style="#333333")
-
         # ── running skills ─────────────────────────────────────────
         agent_skills = [
             (rid, info)
@@ -437,6 +425,37 @@ def render_agents(
         ]
 
         agent_plans = _plans_for_agent(registry, name)
+
+        # ── agent label ────────────────────────────────────────────
+        # Three-state semantics, not two:
+        #   ● running  (green)  — at least one skill / plan in flight
+        #   ◐ ready    (amber)  — session loaded but nothing in flight
+        #   ○ idle     (grey)   — session not loaded
+        # Old behaviour collapsed "loaded" and "actively executing" into
+        # a single "running" badge, which made an idle-but-loaded agent
+        # show "● running" alongside the idle-context tail (last/↳),
+        # confusing the user about whether anything was actually
+        # happening.
+        has_work = bool(agent_skills) or bool(agent_plans)
+        if has_work:
+            status_glyph, status_text, status_style = (
+                "● ", "running", "#44cc88",
+            )
+        elif in_loaded:
+            status_glyph, status_text, status_style = (
+                "◐ ", "ready", "#aaaa55",
+            )
+        else:
+            status_glyph, status_text, status_style = (
+                "○ ", "idle", "#555555",
+            )
+        label = RichText()
+        label.append("▶ " if is_attached else "  ", style="#555555")
+        label.append(name, style="bold " + _CORAL if is_attached else "#dddddd")
+        label.append("  ")
+        label.append(status_glyph + status_text, style=status_style)
+
+        tree = RichTree(label, guide_style="#333333")
 
         def _cursor_prefix(idx: int) -> tuple[str, str]:
             """Return (prefix, name_style) for selectable item ``idx``.
