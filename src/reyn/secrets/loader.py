@@ -25,6 +25,15 @@ _SECRETS_FILE = Path.home() / ".reyn" / "secrets.env"
 
 
 def _default_secrets_path() -> Path:
+    """Return the effective secrets.env path.
+
+    The path is determined at *call time* (not module import time) so that
+    ``REYN_SECRETS_PATH`` set by a pytest fixture is honoured without
+    requiring module reload.  Production code never sets this variable.
+    """
+    override = os.environ.get("REYN_SECRETS_PATH")
+    if override:
+        return Path(override)
     return _SECRETS_FILE
 
 

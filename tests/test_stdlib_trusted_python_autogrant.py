@@ -6,15 +6,19 @@ auto-allow their trusted Python preprocessor steps without requiring the user
 to pass --allow-untrusted-python.  User-provided skills (reyn/local/,
 reyn/project/) must still require the flag — the safety gate must not regress.
 
-Two sub-invariants:
+Three sub-invariants:
   - is_stdlib_skill() returns True for a path inside stdlib_root()
   - is_stdlib_skill() returns False for a path outside stdlib_root()
+  - is_stdlib_skill() returns False for a reyn/project/ path
 
-Two behavioral invariants (via PermissionResolver — the same resolver that
+Four behavioral invariants (via PermissionResolver — the same resolver that
 ``reyn mcp install`` and ``reyn run`` construct):
   - stdlib skill dir → trusted_python_allowed=True → trusted step succeeds
+    (config-approved path)
   - non-stdlib skill dir → trusted_python_allowed=False (default) → trusted
     step raises PermissionError (safety regression guard)
+  - --non-interactive + trusted_python_allowed=True → silent allow (no prompt)
+  - --non-interactive + trusted_python_allowed=False → silent deny (safety)
 """
 from __future__ import annotations
 
@@ -140,5 +144,64 @@ def test_user_skill_trusted_python_still_requires_flag(tmp_path):
     bus = _AutoApproveInterventionBus()
 
     # Must raise — user skill trusted python steps require the explicit flag.
+    with pytest.raises(PermissionError, match="--allow-untrusted-python"):
+        _run(resolver.require_python(decl, "./step.py", "run", bus, skill_name="my_skill"))
+
+
+# ---------------------------------------------------------------------------
+# Non-interactive mode: silent allow / silent deny
+# ---------------------------------------------------------------------------
+
+
+def _make_resolver_no_config(*, trusted_python_allowed: bool, tmp_path: Path) -> PermissionResolver:
+    """Resolver without any config-level python.trusted grant.
+
+    This exercises the real non-interactive gate (no config bypass),
+    mirroring what ``reyn mcp install --non-interactive`` actually constructs.
+    """
+    return PermissionResolver(
+        config_permissions={},
+        project_root=tmp_path,
+        interactive=False,
+        trusted_python_allowed=trusted_python_allowed,
+    )
+
+
+class _DenyAllInterventionBus:
+    """Minimal bus that errors if called — proves no prompt was issued."""
+
+    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+        raise AssertionError(
+            f"InterventionBus.request was called in non-interactive mode: {iv}"
+        )
+
+
+def test_non_interactive_stdlib_trusted_python_silent_allow(tmp_path):
+    """Tier 2: --non-interactive + trusted_python_allowed=True → silent allow.
+
+    OS invariant: stdlib skills running under --non-interactive must not block
+    on a prompt.  require_python must succeed without firing InterventionBus.
+    """
+    resolver = _make_resolver_no_config(trusted_python_allowed=True, tmp_path=tmp_path)
+    decl = _make_trusted_decl()
+    bus = _DenyAllInterventionBus()
+
+    # Must not raise and must not call the bus.
+    perm = _run(resolver.require_python(decl, "./step.py", "run", bus, skill_name="mcp_install"))
+    assert perm.mode == "trusted"
+
+
+def test_non_interactive_user_skill_trusted_python_silent_deny(tmp_path):
+    """Tier 2: --non-interactive + trusted_python_allowed=False → silent deny.
+
+    Safety regression guard: user-supplied skills must still be blocked in
+    non-interactive mode.  No prompt fires — the flag-absent check raises
+    PermissionError before any bus interaction.
+    """
+    resolver = _make_resolver_no_config(trusted_python_allowed=False, tmp_path=tmp_path)
+    decl = _make_trusted_decl()
+    bus = _DenyAllInterventionBus()
+
+    # Must raise with the --allow-untrusted-python message (not "denied by user").
     with pytest.raises(PermissionError, match="--allow-untrusted-python"):
         _run(resolver.require_python(decl, "./step.py", "run", bus, skill_name="my_skill"))

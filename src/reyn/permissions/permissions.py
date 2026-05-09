@@ -528,6 +528,13 @@ class PermissionResolver:
     ) -> bool:
         """Approve a python step; persist on yes."""
         if not self._interactive:
+            # stdlib skills set trusted_python_allowed=True — their trusted steps
+            # are safe by construction and must auto-approve even in non-interactive
+            # mode (--non-interactive).  User-supplied trusted steps without the
+            # flag are already hard-rejected in startup_guard before this point.
+            if mode == "trusted" and self._trusted_python_allowed:
+                self._session[key] = True
+                return True
             self._session[key] = False
             return False
         verb = "TRUSTED" if mode == "trusted" else "pure"
@@ -732,6 +739,11 @@ class PermissionResolver:
                     f"only when you trust the skill source."
                 )
             key = f"{skill_name}/python.trusted/{module}:{function}"
+            # Non-interactive + trusted_python_allowed=True (stdlib skills) must
+            # auto-approve without a prompt.  Pre-seed the session key so _approve()
+            # returns True instead of auto-denying the non-interactive branch.
+            if not self._interactive and self._trusted_python_allowed:
+                self._session.setdefault(key, True)
             if not await self._approve(key, f"trusted python step: {module}:{function}", bus):
                 raise PermissionError(
                     f"trusted python step {module}:{function} denied by user"

@@ -25,6 +25,22 @@ from pathlib import Path
 
 import pytest
 
+# ── Secret store isolation ─────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _isolated_secrets(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Redirect all secret-store operations to a per-test tmp dir.
+
+    Every test runs with REYN_SECRETS_PATH pointing at a throwaway file under
+    pytest's tmp_path so that ``~/.reyn/secrets.env`` is never touched.
+
+    The env var is restored to its prior value (or unset) automatically by
+    monkeypatch at teardown — no manual cleanup needed.
+    """
+    tmp_secrets = tmp_path / "secrets.env"
+    monkeypatch.setenv("REYN_SECRETS_PATH", str(tmp_secrets))
+
 # ── Marker registration ────────────────────────────────────────────────────────
 
 
