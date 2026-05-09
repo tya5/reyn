@@ -84,7 +84,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
 | [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
 
-> Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は **`reyn chat` (= local + embedded Web UI server を session bind で同梱) + `reyn serve` / `reyn client` (= 別軸で multi-user / multi-device path)**。 embedded thesis は `reyn chat` 内に温存、 server-client 軸を併設。 実現性検討は未着手。
+> Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は **`reyn chat` (= local + embedded Web UI server を session bind で同梱、 `--host` flag で remote 接続) + `reyn serve` (= explicit long-running server)**。 業界慣行 (Ollama / Docker / vLLM) に合わせ `reyn client` subcommand は廃止、 remote 接続も `reyn chat --host <addr>` or `REYN_HOST=...` env var に統合。 embedded thesis は `reyn chat` 内に温存。 実現性検討は未着手。
 
 ## Format
 
