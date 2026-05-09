@@ -621,31 +621,25 @@ def build_tools(
     #         attacker's server logs them) or to probe internal endpoints, so
     #         the operator enables it explicitly via `web.fetch: allow` in
     #         reyn.yaml.
-    specs.append(
-        # ── E1: web_search (always available) ────────────────────────────────
-        ToolSpec(
-            name="web_search",
-            description=(
-                "Search the public web with DuckDuckGo and return "
-                "structured results. Standard search operators are "
-                "supported in `query`: `site:<domain>` to scope to "
-                "one site (e.g. `site:news.ycombinator.com`), "
-                "`\"phrase\"` for exact match, `-term` to exclude. "
-                "Use them when the user's intent is site-specific "
-                "or phrase-anchored; plain keywords work otherwise. "
-                "query: search string. "
-                "max_results: cap on returned results (default 5)."
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "max_results": {"type": "integer"},
-                },
-                "required": ["query"],
-            },
-        )
-    )
+    # ── E1: web_search (always available) — sourced from unified registry ────
+    # ADR-0026 M2: web_search is the first capability migrated to the unified
+    # ToolRegistry. build_tools() renders it via WEB_SEARCH.render_for_router()
+    # which produces byte-identical output to the prior ToolSpec literal.
+    # The ToolSpec literal above is the historical source; WEB_SEARCH is now
+    # the single source of truth. M4 cleanup removes the ToolSpec pattern here.
+    from reyn.tools import get_default_registry as _get_default_registry
+    _registry = _get_default_registry()
+    _web_search_def = _registry.lookup("web_search")
+    if _web_search_def is not None and _web_search_def.gates.router == "allow":
+        # Render via unified ToolDefinition; produces the OpenAI tools[] shape.
+        # Byte-identity with the prior ToolSpec.to_openai_dict() is verified
+        # by test_web_search_unified.py.
+        _ws_rendered = _web_search_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_ws_rendered["function"]["name"],
+            description=_ws_rendered["function"]["description"],
+            parameters=_ws_rendered["function"]["parameters"],
+        ))
 
     # ── E2: web_fetch (operator opt-in via web.fetch: allow) ──────────────────
     if web_fetch_allowed:

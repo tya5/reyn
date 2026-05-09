@@ -209,22 +209,31 @@ Adopt Option 2's role separation for Type B, but explicitly close the three Type
 
 ---
 
-## 9. Implementation: unified registry (M1 landed; M2 pending)
+## 9. Implementation: unified registry (M1 landed — edd4c1b; M2 POC web_search migrated)
 
 The dual-implementation architecture described in this document (two separate
 catalogs: `router_tools.py` / `OP_KIND_MODEL_MAP`) is the historical baseline.
 ADR-0026 (Status: Proposed) closes the structural drift by introducing a single
 `ToolDefinition` per capability with two render methods.
 
-**M1 status (landed):** The infrastructure module `src/reyn/tools/` is in place:
+**M1 status (landed — commit `edd4c1b`):** The infrastructure module `src/reyn/tools/` is in place:
 
 - `ToolDefinition`, `ToolGates`, `ToolContext`, `ToolHandler`, `ToolResult` — in `src/reyn/tools/types.py`
 - `ToolRegistry` — in `src/reyn/tools/registry.py`
 - `invoke_tool`, `ToolNotFound`, `ToolGateRefused` — in `src/reyn/tools/dispatch.py`
 
-No capabilities have been migrated yet. `build_tools()` and `OP_KIND_MODEL_MAP`
-remain the active dispatch paths. M2 POC migrates `web_search` as the first
-capability; M3 rolls out the remaining 12 capabilities; M4 removes the legacy
-structures.
+**M2 status (POC landed):** `web_search` is the first capability migrated to
+the unified registry. `src/reyn/tools/web_search.py` contains the `WEB_SEARCH`
+`ToolDefinition` instance and a thin adapter wrapping the legacy
+`handle_web_search` handler. `build_tools()` now derives `web_search` from the
+registry via `render_for_router()`, producing byte-identical output to the prior
+`ToolSpec` literal (LLMReplay fixtures unchanged). `get_default_registry()` in
+`src/reyn/tools/__init__.py` is the startup entry point; M3 capability migrations
+register additional tools there. The phase-side dispatch path
+(`OP_KIND_MODEL_MAP` / `ControlIRExecutor`) is unchanged in M2 — that unification
+is M3 territory. All M2 verification gates passed: byte-identity GREEN, drift
+test GREEN, full suite 1500 passed / 2 xfailed, mkdocs strict empty.
+
+M3 will roll out the remaining 12 capabilities; M4 removes the legacy structures.
 
 **Cross-reference:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

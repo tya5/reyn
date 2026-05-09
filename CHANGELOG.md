@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ADR-0026 M2 POC: `web_search` migrated to unified `ToolDefinition` in `src/reyn/tools/web_search.py`; `build_tools()` and `get_default_registry()` derive it from the registry; byte-identity with prior `ToolSpec` literal verified (LLMReplay fixtures unchanged); 14 new Tier 2 invariants in `tests/test_web_search_unified.py`
 - `scripts/dogfood_long_session.py` long-lived-session driver (370 lines): CLI drives the A2A JSON-RPC endpoint with N consecutive prompts on the same agent, persisting history naturally (mirrors production); records empty rate by turn position, token counts, latency p50, JSON structured output (= `32d31b6`)
 - `dogfood/scenarios/long_session_v1.yaml` — 7 scenarios covering research chains, pronoun followup, reference-back, multi-source compare, and repetitive context-growth stress (= `32d31b6`)
 - `scripts/hn_research.py` — reusable industry-research pipeline: site-scoped DDG search → Algolia HN API per-item fetch → cross-thread digest. Concurrent fetch, /tmp cache, `--json` structured output; no new pip deps (= `a6c780f`)

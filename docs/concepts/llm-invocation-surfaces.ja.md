@@ -209,17 +209,19 @@ Type B には Option 2 の役割分離を採用しつつ、3つの Type C conven
 
 ---
 
-## 9. 実装: 統合 tool registry（M1 着地済み、M2 待ち）
+## 9. 実装: 統合 tool registry（M1 着地済み — edd4c1b; M2 POC web_search 移行済み）
 
 本ドキュメントで説明した二重実装アーキテクチャ（`router_tools.py` / `OP_KIND_MODEL_MAP` の 2 つのカタログ）は歴史的ベースラインである。
 ADR-0026（ステータス: Proposed）は、1 つの `ToolDefinition` に 2 つの render メソッドを持たせることで構造的なドリフトを解消する。
 
-**M1 ステータス（着地済み）:** インフラモジュール `src/reyn/tools/` が存在する:
+**M1 ステータス（着地済み — commit `edd4c1b`）:** インフラモジュール `src/reyn/tools/` が存在する:
 
 - `ToolDefinition`, `ToolGates`, `ToolContext`, `ToolHandler`, `ToolResult` — `src/reyn/tools/types.py`
 - `ToolRegistry` — `src/reyn/tools/registry.py`
 - `invoke_tool`, `ToolNotFound`, `ToolGateRefused` — `src/reyn/tools/dispatch.py`
 
-現時点ではどのケーパビリティも移行されていない。`build_tools()` と `OP_KIND_MODEL_MAP` が引き続き有効なディスパッチパスである。M2 POC で `web_search` を最初のケーパビリティとして移行し、M3 で残り 12 件を順次移行、M4 でレガシー構造を削除する。
+**M2 ステータス（POC 着地済み）:** `web_search` が統合 registry に移行された最初のケーパビリティである。`src/reyn/tools/web_search.py` に `WEB_SEARCH` `ToolDefinition` インスタンスとレガシー `handle_web_search` をラップするアダプターが含まれる。`build_tools()` は `render_for_router()` 経由で registry から `web_search` を導出し、従来の `ToolSpec` リテラルとバイト同一の出力を生成する（LLMReplay フィクスチャは変更なし）。フェーズ側ディスパッチパス（`OP_KIND_MODEL_MAP` / `ControlIRExecutor`）は M2 では変更なし — その統合は M3 の範囲。すべての M2 検証ゲートが通過: バイト同一性 GREEN、ドリフトテスト GREEN、フルスイート 1500 passed / 2 xfailed、mkdocs strict エラーなし。
+
+M3 で残り 12 件を順次移行し、M4 でレガシー構造を削除する。
 
 **参照:** [../deep-dives/decisions/0026-unified-tool-registry.md](../deep-dives/decisions/0026-unified-tool-registry.md)

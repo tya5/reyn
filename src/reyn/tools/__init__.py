@@ -21,4 +21,22 @@ __all__ = [
     "ToolHandler",
     "ToolResult",
     "ToolRegistry",
+    "get_default_registry",
 ]
+
+
+def get_default_registry() -> ToolRegistry:
+    """Build and return the default ToolRegistry with all migrated capabilities.
+
+    M2: web_search is the first capability in the registry.
+    M3: additional capabilities will be registered here as they migrate.
+
+    Returns a fresh ToolRegistry instance each call (lightweight construction;
+    callers may cache the result if needed).
+    """
+    # Lazy import to avoid circular dependencies at package-init time.
+    from reyn.tools.web_search import WEB_SEARCH
+
+    registry = ToolRegistry()
+    registry.register(WEB_SEARCH)
+    return registry
