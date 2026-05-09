@@ -84,7 +84,7 @@ historical value with status updated to "superseded by ADR-XXXX").
 | [0026](0026-unified-tool-registry.md) | Unified tool registry — single ToolDefinition for router and phase surfaces (Proposed) |
 | [0027](0027-audit-seal-separation.md) | AuditSeal を Events (P6) から分離 — compliance と operational の責務境界 (Proposed) |
 
-> Embedded Web Server UX (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/embedded-web-server-ux.md` 参照。
+> Web UI direction (= 元 ADR-0028) は positioning doc に re-class、 `docs/deep-dives/research/positioning/web-ui-direction.md` 参照。 現在 vision は `reyn serve` + `reyn client` model (= 旧 embedded same-process 案から direction shift)、 実現性検討は未着手。
 
 ## Format
 
