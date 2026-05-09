@@ -261,7 +261,7 @@ class RouterHostAdapter:
             max_results=max_results,
             backend="duckduckgo",
         )
-        ctx = self._make_router_op_context()
+        ctx = self.make_router_op_context()
         return await handle_web_search(op, ctx, caller="control_ir")
 
     async def web_fetch(self, *, url: str, max_length: int) -> dict:
@@ -278,7 +278,7 @@ class RouterHostAdapter:
             max_length=max_length,
             timeout=15.0,
         )
-        ctx = self._make_router_op_context()
+        ctx = self.make_router_op_context()
         return await handle_web_fetch(op, ctx, caller="control_ir")
 
     async def reyn_src_list(self, *, path: str) -> dict:
@@ -640,8 +640,15 @@ class RouterHostAdapter:
             })
         return result
 
-    def _make_router_op_context(self) -> Any:
-        """Build a minimal OpContext for router-initiated file/MCP ops.
+    def make_router_op_context(self) -> Any:
+        """Build an OpContext for router-initiated file / MCP / web ops.
+
+        Public method (ADR-0026 Phase 3.5): the unified registry handlers
+        in ``src/reyn/tools/`` delegate to op_runtime via this factory so
+        the OpContext carries the operator-declared PermissionDecl and the
+        Workspace with ``skill_name="chat_router"``. Without this, handlers
+        would synthesize a ``PermissionDecl()`` empty default and op_runtime
+        permission gates would deny operations.
 
         Uses the injected events log and permission resolver. The skill_name
         ``"chat_router"`` is used for permission key lookups. PermissionDecl

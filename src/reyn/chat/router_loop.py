@@ -224,6 +224,13 @@ class RouterLoopHost(Protocol):
     async def mcp_call_tool(self, server: str, tool: str,
                              args: dict) -> dict: ...
 
+    # OpContext factory for unified-registry handlers (ADR-0026 Phase 3.5).
+    # Builds a permission-aware OpContext with the operator-declared
+    # PermissionDecl + Workspace(skill_name="chat_router") + mcp_servers,
+    # so handlers in src/reyn/tools/{file,mcp,web*}.py can delegate to
+    # op_runtime with the same gating the legacy router branches had.
+    def make_router_op_context(self) -> Any: ...
+
     # Resolve router model (config "router" → real model id)
     def resolve_model(self, name: str) -> str: ...
 
@@ -714,6 +721,13 @@ class RouterLoop:
         # that the read-only handlers don't consult (= behavior preserved).
         "reyn_src_list", "reyn_src_read",
         "web_search", "web_fetch",
+        # Phase 3.5-A+C — file cluster.  Handlers consume
+        # RouterCallerState.op_context_factory (= host.make_router_op_context)
+        # so op_runtime sees the operator-declared PermissionDecl /
+        # Workspace, matching legacy router-branch behavior.
+        # _normalise_router_tool_result unwraps read_file / list_directory
+        # to the bare-content / bare-list shapes the host adapter returned.
+        "read_file", "write_file", "delete_file", "list_directory",
     })
 
     def _build_router_caller_state(self) -> Any:
@@ -772,6 +786,12 @@ class RouterLoop:
             budget=self.budget,
             router_model=self.router_model,
             available_tool_names=list(self._tool_names),
+            # OpContext factory (= for file / mcp / web handlers; Phase 3.5-A+C).
+            # ``getattr`` fallback keeps test stubs (= FakeRouterHost without
+            # the method) compatible — the handler then uses its minimal
+            # synthesis path, which is fine for tests that don't exercise
+            # permission gating.
+            op_context_factory=getattr(self.host, "make_router_op_context", None),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
@@ -781,6 +801,13 @@ class RouterLoop:
         the canonical handler from ``src/reyn/tools/<name>.py``. Wrapped
         externally by ``dispatch_tool`` (= same cross-cutting events /
         validation / error envelope as the legacy invoker path).
+
+        Some handlers return raw op_runtime dict envelopes whereas the
+        legacy router branches returned extracted shapes (= the host
+        adapter did the extraction).  ``_normalise_router_tool_result``
+        replicates that extraction so byte-identity with prior LLM-visible
+        output is preserved (= refactor-only migration, no external spec
+        change).
         """
         from reyn.tools import get_default_registry
         from reyn.tools.dispatch import invoke_tool
@@ -794,7 +821,33 @@ class RouterLoop:
             caller_kind="router",
             router_state=rs,
         )
-        return await invoke_tool(get_default_registry(), name, args, tool_ctx)
+        result = await invoke_tool(get_default_registry(), name, args, tool_ctx)
+        return self._normalise_router_tool_result(name, result)
+
+    @staticmethod
+    def _normalise_router_tool_result(name: str, result: Any) -> Any:
+        """Match registry-handler output to the legacy router-branch shape.
+
+        File handlers in ``src/reyn/tools/file.py`` return raw op_runtime
+        dict envelopes (e.g. ``{"kind": "file", "op": "read", "status":
+        "ok", "content": "..."}``) but the legacy router path
+        (RouterHostAdapter.file_read / file_list_directory) extracted
+        ``content`` / ``entries`` before returning so the LLM saw a
+        bare string / list. This helper applies the same extraction so
+        registry dispatch is LLM-visible-identical to the prior path.
+        """
+        import json
+        if name == "read_file":
+            if isinstance(result, dict):
+                if "content" in result:
+                    return result["content"]
+                return json.dumps(result)
+            return result
+        if name == "list_directory":
+            if isinstance(result, dict):
+                return result.get("entries", [result])
+            return result
+        return result
 
     async def _invoke_router_tool(self, name: str, args: dict) -> Any:
         """Execute a validated tool call by name.
@@ -838,16 +891,6 @@ class RouterLoop:
             return await self._remember(layer=layer, **args)
         if name == "forget_memory":
             return await self._forget(args["layer"], args["slug"])
-
-        # C. File
-        if name == "list_directory":
-            return await self.host.file_list_directory(args["path"])
-        if name == "read_file":
-            return await self.host.file_read(args["path"])
-        if name == "write_file":
-            return await self.host.file_write(args["path"], args["content"])
-        if name == "delete_file":
-            return await self.host.file_delete(args["path"])
 
         # D. MCP
         if name == "list_mcp_servers":

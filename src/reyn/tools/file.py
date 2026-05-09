@@ -88,20 +88,26 @@ _DELETE_FILE_PARAMETERS: dict[str, Any] = {
 
 
 def _build_legacy_op_context(ctx: ToolContext) -> Any:
-    """Build a minimal OpContext from the unified ToolContext.
+    """Build an OpContext for op_runtime delegation.
 
-    PermissionDecl() defaults are used (= empty, no granted paths) because
-    the ToolContext does not carry the router-level permission declarations.
-    In practice, the router dispatcher gates access before calling the handler
-    (via ToolGates + Phase.allowed_ops); the op_runtime permission_resolver
-    may be None (no further gating) or provided via ctx.permission_resolver.
+    Preferred (= router-side production, ADR-0026 Phase 3.5): use the
+    ``ctx.router_state.op_context_factory`` callable bound by
+    RouterLoop. The factory yields the same OpContext the legacy router
+    branches received — populated PermissionDecl (= operator file/mcp
+    declarations), Workspace with ``skill_name="chat_router"``, and the
+    flattened MCP servers map.
 
-    This mirrors the pattern in web_fetch.py. For file ops in production
-    session context the upstream router_loop already restricts which paths
-    are surfaced to the LLM via build_tools(); the PermissionDecl() empty
-    default means the op_runtime layer won't double-enforce — which is safe
-    for M3 and documented in ADR-0026 Open Q #7 migration note.
+    Fallback (= phase-side dispatch, test sites): synthesize a minimal
+    OpContext from ToolContext fields with ``PermissionDecl()`` empty.
+    The fallback is documented as M3 transitional in ADR-0026 Open Q #7;
+    callers that need real permission gating must populate
+    ``router_state.op_context_factory`` (router) or supply
+    ``phase_state.op_context`` (phase) when those wirings land.
     """
+    rs = ctx.router_state
+    if rs is not None and rs.op_context_factory is not None:
+        return rs.op_context_factory()
+
     from reyn.op_runtime.context import OpContext
     from reyn.permissions.permissions import PermissionDecl
 
