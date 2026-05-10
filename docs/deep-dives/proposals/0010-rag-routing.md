@@ -1,4 +1,4 @@
-# FP-0010: RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter
+# FP-0010: RAG Routing — Semantic Pre-filter for Skill Catalog + Routing History
 
 **Status**: proposed
 **Proposed**: 2026-05-10
@@ -8,78 +8,82 @@
 
 ## Summary
 
-router がユーザー入力に対して LLM を呼ぶ前に、OS レベルで `recall` を実行して
-関連スキル候補を top-K に絞り、「Suggested for this request」セクションとして
-システムプロンプトに注入する。スキル数が増えても LLM が見る候補を一定に保てる。
-インデックスが未構築の場合はセクションをスキップし、既存動作にフォールバックする。
+Before calling the LLM for a user request, the OS executes `recall` at the OS level
+to narrow relevant skill candidates down to a top-K list and injects them into the
+system prompt as a "Suggested for this request" section. This keeps the number of
+candidates the LLM sees constant even as the skill count grows.
+If no index has been built, the section is skipped and behavior falls back to the existing flow.
 
 ---
 
 ## Motivation
 
-### ツール数増加への耐性
+### Resilience to Growing Tool Count
 
-現在の router は 14〜23 個のツールをフラットに提示する。
-FP-0006〜0009 が実装されるとスキルの種類がさらに増え、LLM の選択精度が劣化する。
+The current router presents 14–23 tools in a flat list.
+As FP-0006 through FP-0009 are implemented, the number of skill types will grow further,
+degrading the LLM's selection accuracy.
 
 ```
-現在:  LLM → 全スキル一覧から選択（スキルが100個になると非現実的）
-本 FP: OS が recall で top-K に絞る → LLM は絞られた候補を見てから選択
+Current:   LLM → selects from a full skill list (impractical at 100 skills)
+This FP:   OS narrows to top-K via recall → LLM selects from the narrowed candidates
 ```
 
-### Layer 2：使うほど賢くなる
+### Layer 2: Gets Smarter with Use
 
-ルーティング履歴（`routing_decided` イベント）が蓄積すると、
-「過去に似たリクエストで成功したスキル」を few-shot ヒントとして使えるようになる。
-FP-0009（Operational Intelligence）の基盤がこれを自動で育てる。
+As routing history (`routing_decided` events) accumulates, "skills that succeeded for
+similar past requests" can be used as few-shot hints.
+The foundation from FP-0009 (Operational Intelligence) grows this automatically.
 
 ---
 
-## 設計の核心
+## Core Design
 
-### recall は LLM のツールではなく OS の前処理
+### recall as OS Pre-processing, Not an LLM Tool
 
 ```
-【採用しない案 A】
-  ユーザー入力 → LLM → recall ツール呼び出し → 結果を見て invoke_skill
-  問題: 毎ターン 1 ツール呼び出し分の遅延。LLM が recall を呼ぶかどうかを誤判断する。
+[Rejected approach A]
+  User input → LLM → recall tool call → sees result → invoke_skill
+  Problem: One tool-call latency per turn. The LLM may misjudge whether to call recall.
 
-【採用する案 B】
-  ユーザー入力 → [OS] recall 実行 → SP に top-K 注入 → LLM が最初から候補を参照
-  利点: 追加ターン不要。インデックスなし時はセクションをスキップするだけ。
+[Adopted approach B]
+  User input → [OS] recall executed → top-K injected into SP → LLM sees candidates from the start
+  Advantage: No extra turn. If no index exists, simply skip the section.
 ```
 
-`indexed_sources` セクションが `router_loop.py` でSP構築前に注入される構造と対称。
+This is symmetric with how the `indexed_sources` section is injected before SP construction
+in `router_loop.py`.
 
-### インデックスなし → スキップ（グレースフルデグラデーション）
+### No Index → Skip (Graceful Degradation)
 
 ```python
 # router_loop.py
 routing_hints = await recall_for_routing(user_input)  # None if no index
 system_prompt = build_system_prompt(
     ...,
-    routing_hints=routing_hints,  # None → セクションなし（既存動作を維持）
+    routing_hints=routing_hints,  # None → no section (existing behavior preserved)
 )
 ```
 
-### P4 遵守
+### P4 Compliance
 
-recall 結果はあくまで**ヒント**。最終制約は `invoke_skill` の enum（OS 提供の候補セット）。
-LLM がヒントを無視して `list_skills` を使うことも正しい動作。
+The recall results are **hints only**. The final constraint is the `invoke_skill` enum
+(the candidate set provided by the OS).
+It is also correct behavior for the LLM to ignore the hints and use `list_skills`.
 
 ---
 
 ## Proposed implementation
 
-### Component A — OS レベルの recall pre-filter（SMALL）
+### Component A — OS-Level recall Pre-filter (SMALL)
 
-**`src/reyn/chat/router_loop.py` の変更:**
+**Changes to `src/reyn/chat/router_loop.py`:**
 
 ```python
 async def _build_routing_hints(user_input: str) -> RoutingHints | None:
     """
-    skill_catalog と routing_history に対して recall を実行する。
-    いずれのインデックスも存在しない場合は None を返す（スキップ）。
+    Execute recall against skill_catalog and routing_history.
+    Returns None (skip) if neither index exists.
     """
     manifest = get_source_manifest(Path.cwd())
     if not manifest.has_source("skill_catalog") \
@@ -90,175 +94,177 @@ async def _build_routing_hints(user_input: str) -> RoutingHints | None:
         query=user_input,
         sources=["skill_catalog", "routing_history"],
         top_k=5,
-        filter={"outcome": "success"},   # Layer 2: 成功ルートのみ
+        filter={"outcome": "success"},   # Layer 2: successful routes only
     )
     return RoutingHints(results=results)
 ```
 
-`recall_op` は既存の `src/reyn/op_runtime/recall.py` をそのまま使用。
-新たな OS 変更はこの呼び出しラッパーのみ。
+`recall_op` uses the existing `src/reyn/op_runtime/recall.py` as-is.
+The only new OS change is this call wrapper.
 
-### Component B — `routing_decided` P6 イベント（SMALL）
+### Component B — `routing_decided` P6 Event (SMALL)
 
-router が `invoke_skill` を実行したタイミングで emit する。
-Layer 2 の知識ベースになる。
+Emitted when the router executes `invoke_skill`.
+Becomes the knowledge base for Layer 2.
 
 ```python
-# router_loop.py — invoke_skill ツールハンドラ内
+# router_loop.py — inside the invoke_skill tool handler
 event_log.emit("routing_decided",
-    user_input=user_input,               # ユーザーの自然言語入力
-    chosen_skill=skill_name,             # 選ばれたスキル
+    user_input=user_input,               # User's natural-language input
+    chosen_skill=skill_name,             # The skill that was selected
     top_k_considered=[r.name for r in routing_hints.results] if routing_hints else [],
     routing_source=routing_source,       # "rag_hint" | "list_skills" | "explicit"
-    outcome=None,                        # 実行後に "success" / "wrong_skill" で更新
+    outcome=None,                        # Updated to "success" / "wrong_skill" after execution
 )
 ```
 
-`outcome` フィールドはスキル実行完了後に `run_skill_completed` と突合して更新する。
-「ユーザーが同ターン内で別スキルを再実行 → wrong_skill」として検出。
+The `outcome` field is updated by reconciling with `run_skill_completed` after skill execution.
+"User re-runs a different skill in the same turn → detected as wrong_skill."
 
-### Component C — 「Suggested for this request」セクション（SMALL）
+### Component C — "Suggested for this request" Section (SMALL)
 
-**`src/reyn/chat/router_system_prompt.py` の変更:**
+**Changes to `src/reyn/chat/router_system_prompt.py`:**
 
 ```
 ## Suggested for this request
-あなたのリクエストに最も関連するスキル:
+The most relevant skills for your request:
 
-1. **swe_bench** — SWE-bench タスクを解く（スキルカタログより）
-2. **code_review** — コードをレビューする（過去の類似リクエストより）
+1. **swe_bench** — Solve a SWE-bench task (from skill catalog)
+2. **code_review** — Review code (from similar past requests)
 
-そのまま invoke_skill で実行できます。
-別のスキルが必要な場合は list_skills で一覧を確認してください。
+You can invoke these directly with invoke_skill.
+If you need a different skill, use list_skills to see the full list.
 ```
 
-`routing_hints` が None（インデックスなし）→ セクション全体を省略。
-`routing_hints` が空（インデックスあり・ヒットなし）→ セクション省略（混乱を避ける）。
+`routing_hints` is None (no index) → the entire section is omitted.
+`routing_hints` is empty (index exists but no hits) → section is omitted (to avoid confusion).
 
-セクションの挿入位置: `## Skills` セクションの直前（最も目立つ位置）。
+Insertion position: immediately before the `## Skills` section (most prominent position).
 
-### Component D — スキルカタログのインデックス化（SMALL）
+### Component D — Indexing the Skill Catalog (SMALL)
 
-`skill_catalog` ソースを `index_docs` で構築するコマンドを追加。
+Add a command to build the `skill_catalog` source with `index_docs`.
 
 ```
 reyn run index_docs --source skill_catalog
 ```
 
-skill.md のチャンク設計（ドキュメントと異なり構造化）:
+Chunk design for skill.md (structured, unlike documents):
 
 ```
 [skill chunk: swe_bench]
 name: swe_bench
-description: SWE-bench タスクを解く — GitHub issue のコード修正と検証
+description: Solve a SWE-bench task — code fix and verification for a GitHub issue
 tags: coding, benchmark, github, testing
-input: リポジトリURL, issueの説明, テストパッチ
+input: repository URL, issue description, test patch
 ```
 
-**自動更新トリガー（将来）:** スキルが追加・変更されたときに `skill_catalog` を再インデックスするフック。現時点は手動実行。
+**Auto-update trigger (future):** A hook to re-index `skill_catalog` when a skill is added or changed.
+Manual execution for now.
 
-#### オプション: `example_phrases` フィールド
+#### Optional: `example_phrases` Field
 
-skill.md frontmatter に任意フィールドとして追加。スキル作者がセマンティックマッチを調整できる。
+An optional field added to skill.md frontmatter. Skill authors can use it to tune semantic matching.
 
 ```yaml
 # skill.md frontmatter
 example_phrases:
-  - "バグを修正して"
-  - "テストが通るようにして"
-  - "プルリクエストのコードを直して"
+  - "fix the bug"
+  - "make the tests pass"
+  - "fix the code in the pull request"
 ```
 
-`index_docs` がこのフィールドをチャンクに含める（スキル作者任意）。
+`index_docs` includes this field in the chunk (at the skill author's discretion).
 
-### Component E — ルーティング履歴のインデックス化（SMALL）
+### Component E — Indexing the Routing History (SMALL)
 
-FP-0009 の `index_events` に `routing_decided` イベントの処理を追加。
+Add processing for `routing_decided` events to FP-0009's `index_events`.
 
 ```
 [routing history chunk]
-user_input: "django のバグを修正して"
+user_input: "fix the bug in django"
 chosen_skill: swe_bench
 routing_source: explicit
 outcome: success
 timestamp: 2026-05-10T09:15:00
 ```
 
-フィルタリング: `outcome == "success"` のみインデックス化。
-失敗・訂正されたルートは除外（誤った few-shot を防ぐ）。
+Filtering: index only entries where `outcome == "success"`.
+Failed or corrected routes are excluded (to prevent incorrect few-shots).
 
 ---
 
-## 段階的実装
+## Phased Implementation
 
-| Phase | 内容 | 前提 |
+| Phase | Content | Prerequisites |
 |---|---|---|
-| **Phase 1** | Component A〜D（Layer 1: スキルカタログ）| ADR-0033 RAG ✅ |
-| **Phase 2** | Component B の `outcome` 更新 + Component E（Layer 2: ルーティング履歴）| FP-0009 |
+| **Phase 1** | Components A–D (Layer 1: skill catalog) | ADR-0033 RAG ✅ |
+| **Phase 2** | Component B `outcome` update + Component E (Layer 2: routing history) | FP-0009 |
 
-Phase 1 単独でも「スキルカタログ semantic routing」として価値がある。
-Phase 2 は FP-0009 の `index_events` が育ってから追加。
+Phase 1 alone is valuable as "skill catalog semantic routing."
+Phase 2 is added after FP-0009's `index_events` has matured.
 
 ---
 
-## フロー全体図
+## Full Flow Diagram
 
 ```
-ユーザー入力
+User input
     ↓
 [OS] recall(sources=["skill_catalog", "routing_history"], filter={outcome:success})
-    ├─ インデックスなし → None（スキップ）
-    └─ あり → top-5 candidates
+    ├─ No index → None (skip)
+    └─ Index exists → top-5 candidates
     ↓
 [OS] build_system_prompt(routing_hints=top_5)
-    → "## Suggested for this request" セクション注入（または省略）
+    → Inject "## Suggested for this request" section (or omit)
     ↓
-[LLM] ヒントを参照して invoke_skill (enum 制約) または list_skills
+[LLM] invoke_skill (enum constraint) or list_skills, referring to hints
     ↓
-[P6] routing_decided イベント emit（user_input / chosen_skill / routing_source）
+[P6] routing_decided event emitted (user_input / chosen_skill / routing_source)
     ↓
-スキル実行完了後 → outcome 更新（success / wrong_skill）
+After skill execution completes → outcome updated (success / wrong_skill)
     ↓
-[FP-0009] index_events が定期的に routing_history をインデックス化
-    → Layer 2 が自己育成
+[FP-0009] index_events periodically indexes routing_history
+    → Layer 2 self-grows
 ```
 
 ---
 
 ## Dependencies
 
-- ADR-0033 RAG Phase 1（✅ landed）— `recall` op / SourceManifest が前提
-- `src/reyn/chat/router_loop.py` — Component A / B（recall pre-filter + event emit）
-- `src/reyn/chat/router_system_prompt.py` — Component C（セクション追加）
-- `src/reyn/op_runtime/recall.py` — 変更なし（既存 recall op をそのまま使用）
-- FP-0009（Operational Intelligence）— Component E の `routing_decided` 処理（Phase 2 のみ）
+- ADR-0033 RAG Phase 1 (✅ landed) — `recall` op / SourceManifest are prerequisites
+- `src/reyn/chat/router_loop.py` — Components A / B (recall pre-filter + event emit)
+- `src/reyn/chat/router_system_prompt.py` — Component C (add section)
+- `src/reyn/op_runtime/recall.py` — no changes (existing recall op used as-is)
+- FP-0009 (Operational Intelligence) — Component E's `routing_decided` processing (Phase 2 only)
 
-前提 PR: なし。Phase 1 は FP-0009 なしで独立実装可能。
+No prerequisite PRs. Phase 1 can be implemented independently without FP-0009.
 
 ---
 
 ## Cost estimate
 
-**合計: MEDIUM**
+**Total: MEDIUM**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| Component A: recall pre-filter（router_loop.py）| SMALL | recall_op 呼び出しラッパー |
-| Component B: routing_decided イベント + outcome 更新 | SMALL | emit 1 箇所 + run_skill_completed との突合 |
-| Component C: SP への "Suggested" セクション注入 | SMALL | router_system_prompt.py に節追加 |
-| Component D: skill_catalog インデックス化 + チャンク設計 | SMALL | index_docs の source 設定追加 |
-| Component E: routing_history インデックス化（Phase 2）| SMALL | FP-0009 index_events の拡張 |
-| テスト（Tier 2: router invariant）| SMALL | インデックスなし時のスキップ動作の contract test |
+| Component A: recall pre-filter (router_loop.py) | SMALL | recall_op call wrapper |
+| Component B: routing_decided event + outcome update | SMALL | emit in 1 place + reconciliation with run_skill_completed |
+| Component C: inject "Suggested" section into SP | SMALL | Add section to router_system_prompt.py |
+| Component D: skill_catalog indexing + chunk design | SMALL | Add source config to index_docs |
+| Component E: routing_history indexing (Phase 2) | SMALL | Extension of FP-0009 index_events |
+| Tests (Tier 2: router invariant) | SMALL | Contract test for skip behavior when no index exists |
 
-ボトルネックは **Component B の outcome 更新**（スキル実行後の成否と routing_decided の突合ロジック）。
+Bottleneck is **Component B's outcome update** (the reconciliation logic between
+post-skill-execution success/failure and routing_decided).
 
 ---
 
 ## Related
 
-- `src/reyn/chat/router_loop.py` — recall pre-filter 挿入点
-- `src/reyn/chat/router_system_prompt.py` — "Suggested" セクション追加
-- `src/reyn/op_runtime/recall.py` — 既存 recall op（変更なし）
-- `src/reyn/index/source_manifest.py` — has_source() で存在チェック
-- ADR-0033 (`docs/deep-dives/decisions/0033-rag-extensible-os.md`) — RAG 基盤
-- FP-0009 (`0009-operational-intelligence.md`) — routing_history の自己育成基盤
+- `src/reyn/chat/router_loop.py` — recall pre-filter insertion point
+- `src/reyn/chat/router_system_prompt.py` — add "Suggested" section
+- `src/reyn/op_runtime/recall.py` — existing recall op (no changes)
+- `src/reyn/index/source_manifest.py` — has_source() for existence check
+- ADR-0033 (`docs/deep-dives/decisions/0033-rag-extensible-os.md`) — RAG foundation
+- FP-0009 (`0009-operational-intelligence.md`) — self-growing foundation for routing_history

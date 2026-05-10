@@ -1,4 +1,4 @@
-# FP-0009: Operational Intelligence — イベントログの RAG インデックス化
+# FP-0009: Operational Intelligence — Indexing Event Logs with RAG
 
 **Status**: proposed
 **Proposed**: 2026-05-10
@@ -8,55 +8,57 @@
 
 ## Summary
 
-P6 イベントログ（`.reyn/events/*.jsonl`）を `index_docs` + `recall` op の RAG インフラ上で
-インデックス化することで、Reyn が自分の実行履歴を知識ベースとして活用できるようにする。
-「監査用記録」だったイベントログが「operational intelligence」になる。
+By indexing P6 event logs (`.reyn/events/*.jsonl`) through the RAG infrastructure of the
+`index_docs` + `recall` ops, Reyn can leverage its own execution history as a knowledge base.
+Event logs that were once "records for auditing" become "operational intelligence."
 
-FP-0006（スキル自己改善）・FP-0007（評価インフラ）・FP-0008（SWE-bench）の
-`collect_traces` / レポート生成 / 過去事例参照が、この基盤の上に自然に乗る。
+The `collect_traces` / report generation / past-case lookup used by FP-0006 (skill self-improvement),
+FP-0007 (evaluation infrastructure), and FP-0008 (SWE-bench) all sit naturally on this foundation.
 
 ---
 
 ## Motivation
 
-### P6 + RAG の組み合わせが生む構造
+### The Structure Created by P6 + RAG
 
 ```
-通常の RAG:         外部ドキュメント → index → recall → 回答生成
-                              ↓
-Operational Intelligence:  自分の実行履歴 → index → recall → 自分の改善・分析
+Ordinary RAG:            External documents → index → recall → answer generation
+                                   ↓
+Operational Intelligence:  Own execution history → index → recall → self-improvement & analysis
 ```
 
-P6 は append-only で全実行履歴を持つ。RAG Phase 1（ADR-0033）が landed したことで、
-この履歴をセマンティック検索可能にする条件が整った。
+P6 is append-only and holds the full execution history. With RAG Phase 1 (ADR-0033) landed,
+the conditions are in place to make this history semantically searchable.
 
-### 線形スキャンとの違い
+### Difference from Linear Scanning
 
-現状の `read_file(events/*.jsonl)` は全イベントを読む必要がある。
+The current approach of `read_file(events/*.jsonl)` requires reading all events.
 
 ```
-イベントが 10,000 件蓄積した場合:
-  read_file: 全件スキャン → コンテキスト溢れ・コスト増大
-  recall op: "my_skill の phase2 失敗パターン" → 関連 20 件を semantic 取得
+With 10,000 accumulated events:
+  read_file: full scan → context overflow and rising cost
+  recall op: "phase2 failure patterns in my_skill" → semantically retrieves 20 relevant entries
 ```
 
-運用が長くなるほど線形スキャンは非現実的になり、セマンティック検索の優位が増す。
+The longer Reyn has been running, the less practical linear scanning becomes, and the greater
+the advantage of semantic search.
 
-### 活用ユースケース
+### Use Cases
 
-| ユースケース | クエリ例 | 活用先 |
+| Use case | Example query | Consumer |
 |---|---|---|
-| スキル自己改善 | 「my_skill の verify フェーズでの失敗パターン」 | FP-0006 collect_traces |
-| 評価レポート | 「先週のコスト上位スキルと失敗理由」 | FP-0007 |
-| 過去事例参照 | 「django リポジトリへの過去の修正でうまくいったアプローチ」 | FP-0008 SWE-bench |
-| デバッグ | 「PermissionError が最後に起きたのはいつ・どう解決したか」 | 一般用途 |
-| コスト分析 | 「月間コストが急増した日のスキル実行履歴」 | 運用 |
+| Skill self-improvement | "Failure patterns in the verify phase of my_skill" | FP-0006 collect_traces |
+| Evaluation reporting | "Top-cost skills last week and reasons for failures" | FP-0007 |
+| Past-case lookup | "Approaches that worked well in past fixes to the django repository" | FP-0008 SWE-bench |
+| Debugging | "When did the last PermissionError occur and how was it resolved" | General purpose |
+| Cost analysis | "Skill execution history on the day monthly cost spiked" | Operations |
 
 ---
 
-## 設計の核心：チャンク単位は「1 run」
+## Core Design: Chunk Unit is "1 run"
 
-イベントは 1 行 = 1 イベントのJSONL だが、意味的なまとまりは **1 run**（start → complete）。
+Events are stored as JSONL with one event per line, but the meaningful unit is **1 run**
+(start → complete).
 
 ```jsonl
 {"type": "run_skill_started",   "data": {"skill": "my_skill", "skill_version_hash": "abc"}}
@@ -67,7 +69,7 @@ P6 は append-only で全実行履歴を持つ。RAG Phase 1（ADR-0033）が la
 {"type": "run_skill_completed", "data": {"skill": "my_skill", "status": "success"}}
 ```
 
-これを 1 チャンクに変換:
+This is converted into a single chunk:
 
 ```
 [run chunk]
@@ -82,53 +84,53 @@ tool_calls: grep(×3), read_file(×5), edit_file(×2), shell(×1)
 cost_usd: 0.18
 ```
 
-この形式なら「失敗した run」「特定フェーズでエラーが出た run」「コストが高い run」を
-セマンティック検索で効率的に取得できる。
+With this format, "failed runs," "runs where an error occurred in a specific phase," and
+"high-cost runs" can all be retrieved efficiently by semantic search.
 
 ---
 
 ## Proposed implementation
 
-### Component A — `index_events` stdlib スキル（MEDIUM）
+### Component A — `index_events` stdlib Skill (MEDIUM)
 
-イベント JSONL を run 単位でチャンク化し、RAG インデックスに書き込むスキル。
+A skill that chunks event JSONL by run and writes to the RAG index.
 
 ```
 src/reyn/stdlib/skills/index_events/
   skill.md
   phases/
-    scan.md          ← 新規イベントの範囲を特定（incremental）
-    chunk.md         ← run 単位でチャンク化
-    index.md         ← embed + index_write op でインデックス化
+    scan.md          ← Identify the range of new events (incremental)
+    chunk.md         ← Chunk by run unit
+    index.md         ← Index using embed + index_write ops
 ```
 
-**incremental indexing の仕組み**:
+**Incremental indexing mechanism**:
 
-カーソルファイル `.reyn/index/events_cursor` に最終インデックス済みタイムスタンプを保存。
-次回実行時はそれ以降のイベントのみ処理する。
+The last-indexed timestamp is saved to a cursor file at `.reyn/index/events_cursor`.
+On the next run, only events after that timestamp are processed.
 
 ```
-scan フェーズ:
+scan phase:
   read_file(.reyn/index/events_cursor) → last_indexed_at
-  glob_files(events/*.jsonl) → 対象ファイル一覧
-  新規イベント（last_indexed_at 以降）を特定
+  glob_files(events/*.jsonl) → list of target files
+  identify new events (after last_indexed_at)
 
-chunk フェーズ:
-  各 run（run_skill_started → run_skill_completed）を 1 チャンクに変換
-  失敗 run は error detail を追加フィールドとして保持
+chunk phase:
+  convert each run (run_skill_started → run_skill_completed) into 1 chunk
+  failed runs retain error details as additional fields
 
-index フェーズ:
-  embed op → run チャンクのベクトル化
-  index_write op → SqliteIndexBackend に書き込み
-  write_file(.reyn/index/events_cursor) → カーソル更新
+index phase:
+  embed op → vectorize run chunks
+  index_write op → write to SqliteIndexBackend
+  write_file(.reyn/index/events_cursor) → update cursor
 ```
 
-**skill.md frontmatter の骨格**:
+**skill.md frontmatter skeleton**:
 
 ```yaml
 ---
 name: index_events
-description: P6 イベントログを run 単位でインデックス化する — operational intelligence の基盤
+description: Index P6 event logs by run unit — the foundation for operational intelligence
 entry_phase: scan
 graph:
   scan:  [chunk]
@@ -136,138 +138,138 @@ graph:
   index: []
 final_output_schema: index_events_summary
 input_schema:
-  since: string | null    # ISO timestamp。null = カーソルから自動取得
-  skills: list[str] | null  # 特定スキルのみ対象。null = 全スキル
+  since: string | null    # ISO timestamp. null = auto-retrieved from cursor
+  skills: list[str] | null  # Target specific skills only. null = all skills
 permissions:
   file:
     read: [".reyn/events/", ".reyn/index/"]
-    write: [".reyn/index/"]   # デフォルトゾーン内なので宣言不要だが明示
+    write: [".reyn/index/"]   # Within the default zone, but made explicit here
 ---
 ```
 
-### Component B — 定期インデックス更新（SMALL）
+### Component B — Periodic Index Updates (SMALL)
 
-FP-0001（A2A task lifecycle）の cron 機構と接続し、
-`index_events` を定期実行する設定を追加。
+Connect to the cron mechanism from FP-0001 (A2A task lifecycle) and add a configuration
+for running `index_events` on a schedule.
 
 ```yaml
 # reyn.yaml
 operational_intelligence:
   index_events:
     enabled: true
-    schedule: "0 */6 * * *"   # 6 時間ごと（デフォルト）
-    skills: null               # null = 全スキル
+    schedule: "0 */6 * * *"   # Every 6 hours (default)
+    skills: null               # null = all skills
 ```
 
-手動実行:
+Manual execution:
 ```
 reyn run index_events
 reyn run index_events --input '{"since": "2026-05-01T00:00:00"}'
 ```
 
-### Component C — recall op からの利用パターン（SMALL）
+### Component C — Usage Patterns from the recall Op (SMALL)
 
-`index_events` でインデックス化されたイベントは、
-既存の `recall` op でそのまま検索できる（新規実装不要）。
+Events indexed by `index_events` can be searched directly with the existing `recall` op
+(no new implementation needed).
 
 ```yaml
-# スキルの任意フェーズから
+# From any phase in a skill
 - op: recall
-  query: "{{ skill_name }} の verify フェーズでの失敗パターン"
-  sources: ["events"]   # index_events が登録したソース名
+  query: "failure patterns in the verify phase of {{ skill_name }}"
+  sources: ["events"]   # Source name registered by index_events
   top_k: 10
 ```
 
-FP-0006 `collect_traces` フェーズの実装:
+Implementation of the FP-0006 `collect_traces` phase:
 
 ```markdown
-# collect_traces（FP-0006 Component C の実装）
+# collect_traces (implementation of FP-0006 Component C)
 
-recall op で対象スキルの失敗パターンを取得:
+Retrieve failure patterns for the target skill using the recall op:
   query: "{{ input.skill_name }} failure error phase"
   sources: ["events"]
   top_k: 20
 
-結果を traces_summary.md として workspace に保存。
-index_events が未実行の場合は read_file(events/*.jsonl) にフォールバック。
+Save results as traces_summary.md in the workspace.
+Falls back to read_file(events/*.jsonl) if index_events has not been run.
 ```
 
-### Component D — 組み込みクエリパターン（SMALL）
+### Component D — Built-in Query Patterns (SMALL)
 
-よく使うクエリをスキルとして提供。ユーザーが `reyn run` で即使える。
+Provide commonly used queries as skills that users can run immediately with `reyn run`.
 
 ```
 src/reyn/stdlib/skills/ops_report/
-  skill.md    ← "先週の実行サマリーを出力する" レポートスキル
+  skill.md    ← A report skill that outputs a weekly execution summary
 ```
 
-レポートスキルの出力例:
+Example report skill output:
 
 ```
-[週次 ops レポート 2026-W19]
-実行スキル: 5 種類、合計 127 回
-成功率: 91.3% (116/127)
-平均コスト: $0.21 / run
-失敗頻度が高いスキル: swe_bench (3/10 失敗)
-  → 主な原因: verify フェーズでのテスト実行タイムアウト (shell op 60s 上限)
-  → 推奨: FP-0004 の safety.timeout.phase_seconds を延長
+[Weekly ops report 2026-W19]
+Skills run: 5 types, 127 total executions
+Success rate: 91.3% (116/127)
+Average cost: $0.21 / run
+Highest-failure skill: swe_bench (3/10 failures)
+  → Primary cause: test execution timeout in verify phase (shell op 60s limit)
+  → Recommendation: Extend safety.timeout.phase_seconds per FP-0004
 ```
 
 ---
 
-## RAG Phase 1 との関係
+## Relationship with RAG Phase 1
 
-`index_events` は `index_docs` の「イベントログ特化バリアント」として設計する。
+`index_events` is designed as an "event-log-specialized variant" of `index_docs`.
 
 | | `index_docs` | `index_events` |
 |---|---|---|
-| 入力ソース | ドキュメントファイル（.md / .txt / etc.）| P6 イベント JSONL |
-| チャンク単位 | LLM が戦略決定（文書構造に依存）| run 単位（固定）|
-| チャンク内容 | ドキュメントの一節 | run サマリー（構造化）|
-| incremental | ファイルの hash 変化で判断 | タイムスタンプカーソル |
-| バックエンド | SqliteIndexBackend（共通）| SqliteIndexBackend（共通）|
+| Input source | Document files (.md / .txt / etc.) | P6 event JSONL |
+| Chunk unit | LLM decides strategy (depends on document structure) | Per run (fixed) |
+| Chunk content | A passage from a document | Run summary (structured) |
+| Incremental | Determined by file hash changes | Timestamp cursor |
+| Backend | SqliteIndexBackend (shared) | SqliteIndexBackend (shared) |
 
-OS レイヤーの変更は不要。スキルとして実装するため P7 遵守。
+No changes to the OS layer. Implemented as a skill, so P7 compliant.
 
 ---
 
 ## Dependencies
 
-- ADR-0033 RAG Phase 1（landed、commit 1e6f153）— `embed` / `index_write` / `recall` op が前提
-- `src/reyn/stdlib/skills/index_docs/` — 実装パターンの参考（chunkers.py のアプローチ）
-- FP-0001（A2A task lifecycle）— Component B の cron 定期実行
-- FP-0006（スキル自己改善）— `collect_traces` がこの基盤を使用
-- FP-0007（評価インフラ）— evaluation report がこの基盤を使用
-- FP-0008（SWE-bench）— 過去事例参照がこの基盤を使用
+- ADR-0033 RAG Phase 1 (landed, commit 1e6f153) — `embed` / `index_write` / `recall` ops are prerequisites
+- `src/reyn/stdlib/skills/index_docs/` — reference for implementation patterns (chunkers.py approach)
+- FP-0001 (A2A task lifecycle) — cron periodic execution for Component B
+- FP-0006 (skill self-improvement) — `collect_traces` uses this foundation
+- FP-0007 (evaluation infrastructure) — evaluation reports use this foundation
+- FP-0008 (SWE-bench) — past-case lookup uses this foundation
 
-前提 PR: ADR-0033 Phase 1（✅ 完了）。FP-0001 は Component B のみの依存で、
-Component A / C / D は独立実装可能。
+No prerequisite PRs: ADR-0033 Phase 1 (✅ complete). FP-0001 is only a dependency for
+Component B; Components A / C / D can be implemented independently.
 
 ---
 
 ## Cost estimate
 
-**合計: MEDIUM**
+**Total: MEDIUM**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| Component A: `index_events` スキル（3 フェーズ）| MEDIUM | run 単位チャンク変換ロジックが主 |
-| Component B: 定期実行設定（reyn.yaml + cron）| SMALL | FP-0001 が前提 |
-| Component C: recall op からの利用パターン文書化 | SMALL | 実装不要。スキル設計ガイドの追記のみ |
-| Component D: `ops_report` スキル | SMALL | レポート出力スキル |
+| Component A: `index_events` skill (3 phases) | MEDIUM | Main work is the run-unit chunking conversion logic |
+| Component B: periodic execution config (reyn.yaml + cron) | SMALL | Requires FP-0001 |
+| Component C: documenting recall op usage patterns | SMALL | No implementation needed; only skill design guide additions |
+| Component D: `ops_report` skill | SMALL | Report output skill |
 
-ボトルネックは **Component A の chunk フェーズ**（run 境界の検出と
-失敗情報の適切な要約フォーマット）。
+Bottleneck is **Component A's chunk phase** (run boundary detection and appropriate
+summary formatting of failure information).
 
 ---
 
 ## Related
 
-- `src/reyn/events/events.py` — P6 イベント基盤
-- `src/reyn/index/` — IndexBackend + SourceManifest（ADR-0033 landed）
-- `src/reyn/op_runtime/recall.py` — recall macro op（ADR-0033 landed）
-- `src/reyn/stdlib/skills/index_docs/` — 実装参考
-- ADR-0033 (`docs/deep-dives/decisions/0033-rag-extensible-os.md`) — RAG 設計
-- FP-0006 (`0006-skill-self-improvement.md`) — collect_traces の利用元
-- FP-0007 (`0007-evaluation-infrastructure.md`) — 評価レポートの利用元
-- FP-0008 (`0008-swe-bench-integration.md`) — 過去事例参照の利用元
+- `src/reyn/events/events.py` — P6 event foundation
+- `src/reyn/index/` — IndexBackend + SourceManifest (ADR-0033 landed)
+- `src/reyn/op_runtime/recall.py` — recall macro op (ADR-0033 landed)
+- `src/reyn/stdlib/skills/index_docs/` — implementation reference
+- ADR-0033 (`docs/deep-dives/decisions/0033-rag-extensible-os.md`) — RAG design
+- FP-0006 (`0006-skill-self-improvement.md`) — consumer of collect_traces
+- FP-0007 (`0007-evaluation-infrastructure.md`) — consumer of evaluation reports
+- FP-0008 (`0008-swe-bench-integration.md`) — consumer of past-case lookup

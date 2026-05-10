@@ -1,154 +1,157 @@
 ---
-title: "Milestone: Reyn Flywheel — 自己改善と監査の両立"
+title: "Milestone: Reyn Flywheel — Self-Improvement and Auditability Together"
 last_updated: 2026-05-10
 status: vision
 ---
 
-# Milestone: Reyn Flywheel — 自己改善と監査の両立
+# Milestone: Reyn Flywheel — Self-Improvement and Auditability Together
 
-> **「使うたびに賢くなる。ただし、何をどう学んだか全部説明できる。」**
-
----
-
-## このマイルストンが意味すること
-
-AI agent フレームワークの競合状況を調査した結果（2026-05）、
-**自己改善と監査可能性を同時に出荷しているプロダクトは存在しない**ことが確認された。
-
-```
-Hermes GEPA:   自己改善 ✅ / 監査可能 ❌（Issue #17619 で EU AI 法違反が指摘）
-LangSmith:     自己改善 ❌ / 監査可能 △（観測のみ）
-その他:         どちらか一方のみ
-```
-
-このマイルストンが達成されると、Reyn は現時点で誰も解いていない問題を
-production-grade で解決した最初のフレームワークになる。
+> **"Gets smarter with every use. But it can always explain what it learned and how."**
 
 ---
 
-## なぜ構造的に難しいか
+## What This Milestone Means
 
-自己改善と監査可能性は通常トレードオフになる:
+A survey of the competitive AI agent framework landscape (2026-05) confirmed:
+**no product ships self-improvement and auditability at the same time.**
 
 ```
-自己改善しようとすると
-  → LLM がシステムを書き換える
-  → 何が変わったか追跡しにくくなる
-  → 監査可能性が下がる
-
-監査可能性を保とうとすると
-  → 変更に承認ゲートを設ける
-  → 自己改善が止まる / 遅くなる
+Hermes GEPA:   self-improvement ✅ / auditable ❌  (EU AI Act violation flagged in Issue #17619)
+LangSmith:     self-improvement ❌ / auditable △   (observation only)
+Others:        one or the other, never both
 ```
 
-Reyn がこれを両立できる理由は、**P6 イベントログ + Permission model**という
-アーキテクチャレベルの設計が先にあるから。
-
-- スキルの変更も `write_file` op → P6 に記録される（監査）
-- `write_file` は Permission check を通る（制御）
-- WAL で変更前後が追跡可能（ロールバック）
-
-自己改善が「通常の OS 実行」として走るため、改善の証跡が自動的に残る。
+When this milestone is reached, Reyn becomes the first framework to solve this
+problem at production grade — a problem no one has solved yet.
 
 ---
 
-## フライホイールの構造
+## Why This Is Structurally Hard
+
+Self-improvement and auditability are normally in tension:
+
+```
+When you pursue self-improvement
+  → the LLM rewrites the system
+  → tracking what changed becomes difficult
+  → auditability degrades
+
+When you preserve auditability
+  → changes require approval gates
+  → self-improvement stalls or slows
+```
+
+The reason Reyn can achieve both is that the architectural foundations —
+the **P6 event log + Permission model** — were in place first.
+
+- Skill changes go through `write_file` op → recorded in P6 (audit)
+- `write_file` passes through a Permission check (control)
+- WAL tracks before and after each change (rollback)
+
+Because self-improvement runs as "ordinary OS execution," an improvement trail
+is created automatically.
+
+---
+
+## Structure of the Flywheel
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                                                     │
-│   👤 使う → 📋 記録される → 🔍 インデックス化される  │
-│        ↑                                    │        │
-│        └──── ✨ 次の実行が改善される ◄──────┘        │
+│   Use it → Record it → Index it                     │
+│        ↑                    │                        │
+│        └──── Next run improves ◄──────┘              │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
 
-フライホイールの特性:
-- **最初から一定品質がある**ことが前提（品質が低いと逆回転する）
-- **使い続けるほど加速する**（ルーティング精度・スキル品質の両方が向上）
-- **全変化が P6 に記録される**（何をどう学んだかが説明可能）
+Properties of the flywheel:
+- **Starts at baseline quality** — quality must be adequate from the start (poor quality reverses the wheel)
+- **Accelerates with continued use** (both routing accuracy and skill quality improve)
+- **Every change is recorded in P6** (what was learned and how is always explainable)
 
 ---
 
-## 構成 FP と依存関係
+## Component FPs and Dependencies
 
 ```
-[基盤 — 達成済み]
+[Foundation — complete]
   ADR-0033 RAG Phase 1 ✅
-    embed / index_write / recall / index_query op
-    index_docs スキル
+    embed / index_write / recall / index_query ops
+    index_docs skill
     SqliteIndexBackend / SourceManifest
 
-[Layer 1 — 比較的確実]
+[Layer 1 — relatively achievable]
   FP-0009 Operational Intelligence
-    index_events スキル（イベントログ → 知識ベース）
-    ↓ が前提になる
-  FP-0007 評価インフラ
+    index_events skill (event log → knowledge base)
+    ↓ prerequisite for the following
+  FP-0007 Evaluation Infrastructure
     P6 export adapter / reyn eval CLI
-  FP-0010 RAG ルーティング Phase 1
-    スキルカタログの semantic pre-filter
+  FP-0010 RAG Routing Phase 1
+    semantic pre-filter for the skill catalog
 
-[Layer 2 — モデル品質依存]
-  FP-0006 スキル自己改善
-    collect_traces → 失敗分析 → plan_improvements
-    ← "失敗を正確に分析できるモデル強度" が必要
-  FP-0010 RAG ルーティング Phase 2
-    routing_decided 履歴から学習
-    ← FP-0009 が育ってから
+[Layer 2 — model quality dependent]
+  FP-0006 Skill Self-Improvement
+    collect_traces → failure analysis → plan_improvements
+    ← requires "model strength sufficient to accurately analyze failures"
+  FP-0010 RAG Routing Phase 2
+    learning from routing_decided history
+    ← after FP-0009 has matured
   FP-0008 SWE-bench
-    コード修正・検証ループ
-    ← frontier モデル相当が必要
+    code modification and verification loop
+    ← requires frontier-equivalent model
 
-[フライホイール完成条件]
-  FP-0009 + FP-0006 + FP-0010 Phase 2 が揃ったとき
+[Flywheel completion condition]
+  FP-0009 + FP-0006 + FP-0010 Phase 2 all in place
 ```
 
 ---
 
-## 現状の正直な評価
+## An Honest Assessment of the Current State
 
-| 項目 | 状態 | 備考 |
+| Item | Status | Notes |
 |---|---|---|
-| 設計の正しさ | ✅ 確認済み | 競合調査・アーキテクチャ分析から |
-| 基盤インフラ | ✅ 実装済み | P6 + RAG Phase 1 |
-| FP-0009〜0010 Phase 1 | 🔧 設計済み・未実装 | 比較的達成可能 |
-| FP-0006 自己改善品質 | ⚠️ 不確定 | モデル強度に依存 |
-| FP-0008 SWE-bench | ⚠️ 不確定 | flash-lite では困難 |
-| フライホイール e2e | 🔭 未検証 | 各パーツの品質が揃ってから |
+| Correctness of the design | ✅ confirmed | from competitive research and architecture analysis |
+| Foundation infrastructure | ✅ implemented | P6 + RAG Phase 1 |
+| FP-0009–0010 Phase 1 | 🔧 designed, not yet implemented | relatively achievable |
+| FP-0006 self-improvement quality | ⚠️ uncertain | depends on model strength |
+| FP-0008 SWE-bench | ⚠️ uncertain | difficult with flash-lite |
+| Flywheel end-to-end | 🔭 unvalidated | depends on all components reaching sufficient quality |
 
-**現時点では机上の設計**。基盤は本物だが、フライホイールとして回るかは
-モデル品質・e2e 品質の積み重ねによる。
-
----
-
-## 達成条件
-
-以下が揃ったとき「フライホイール milestone 達成」と見なす:
-
-1. `index_events` が P6 ログをインデックス化し `recall` で検索できる
-2. `reyn eval compare` でスキルバージョン間の回帰比較が出力できる
-3. RAG ルーティングが skill catalog から top-K を提示し、実際のルーティング精度が向上する
-4. `skill_improver` が過去の失敗トレースを使って改善案を生成し、スコアが向上する
-5. これら全ての変更が P6 に記録され、`routing_decided` / `skill_improved` / `skill_rolled_back` イベントで追跡できる
+**At this point the flywheel is a design on paper.** The foundations are real, but whether
+it will spin as a flywheel depends on accumulated quality from the model and end-to-end layers.
 
 ---
 
-## このマイルストンが開く先
+## Completion Criteria
 
-フライホイールが回り始めると、Reyn は「構築したもの」から「育つもの」に変わる。
+The "flywheel milestone achieved" verdict is declared when all of the following hold:
 
-**OSS ローンチ後のメッセージとして:**
-
-> 「Reyn を使い続けるほど、あなたの組織のワークフローに最適化されていきます。
->  ただし、何をどう学んだかは全て記録されているので、いつでも確認・ロールバックできます。」
-
-これは日本企業が求める「制御できる AI」と、
-グローバル市場が求める「賢くなる AI」を同時に満たすポジショニングになる。
+1. `index_events` indexes the P6 log and it is searchable via `recall`
+2. `reyn eval compare` outputs regression comparisons between skill versions
+3. RAG routing presents top-K results from the skill catalog and measurably improves actual routing accuracy
+4. `skill_improver` generates improvement proposals from past failure traces and scores improve
+5. All of these changes are recorded in P6 and trackable via `routing_decided` / `skill_improved` / `skill_rolled_back` events
 
 ---
 
-## 関連ドキュメント
+## What This Milestone Opens
+
+When the flywheel starts turning, Reyn shifts from something you build with
+to something that grows with you.
+
+**As an OSS launch message:**
+
+> "The longer you use Reyn, the more it optimizes for your organization's workflows.
+>  And because everything it learns is recorded, you can inspect or roll back any change,
+>  at any time."
+
+This is a positioning that simultaneously satisfies the "controllable AI" that Japanese
+enterprises demand and the "AI that gets smarter" that global markets expect.
+
+---
+
+## Related Documents
 
 - `docs/deep-dives/proposals/0006-skill-self-improvement.md`
 - `docs/deep-dives/proposals/0007-evaluation-infrastructure.md`

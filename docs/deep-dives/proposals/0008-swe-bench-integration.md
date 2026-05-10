@@ -1,4 +1,4 @@
-# FP-0008: SWE-bench 参加インフラ — stdlib スキル + バッチ実行
+# FP-0008: SWE-bench Participation Infrastructure — stdlib Skill + Batch Execution
 
 **Status**: proposed
 **Proposed**: 2026-05-10
@@ -8,58 +8,58 @@
 
 ## Summary
 
-Reyn が SWE-bench Verified（コーディング agent ベンチマークのデファクト標準）に
-参加できるようにする。必要な能力（file edit / shell / git）は既存 op で揃っており、
-追加するのは (A) `swe_bench` stdlib スキルと (B) `reyn eval benchmark` バッチ実行コマンドの 2 つ。
+Enable Reyn to participate in SWE-bench Verified (the de facto standard benchmark for coding agents).
+The required capabilities (file edit / shell / git) are already covered by existing ops. The only
+additions are (A) a `swe_bench` stdlib skill and (B) a `reyn eval benchmark` batch execution command.
 
 ---
 
 ## Motivation
 
-### SWE-bench の業界的位置付け
+### SWE-bench's Industry Position
 
-SWE-bench Verified は 2026 年時点でコーディング agent のデファクト評価基準。
-主要フレームワーク・モデルベンダーがスコアを競っており、
-**Reyn が参加できること自体が OSS ローンチ時の信頼性の証明になる**。
+SWE-bench Verified is, as of 2026, the de facto evaluation standard for coding agents.
+Major frameworks and model vendors compete on scores, and **being able to participate in it
+is itself a proof of credibility at OSS launch time**.
 
-Claude Opus 4.7 が 87.6%（2026-04）でほぼ上限に達しているため、
-モデル性能より「Reyn のアーキテクチャが本番コーディングタスクで機能するか」の
-実証として使える。
+Since Claude Opus 4.7 has nearly reached the ceiling at 87.6% (2026-04), it can be used less
+as a model performance comparison and more as a demonstration that "Reyn's architecture works
+for real production coding tasks."
 
-### Reyn の既存能力で参加できる
+### Reyn Already Has What It Takes
 
-SWE-bench が要求する能力:
+Capabilities required by SWE-bench:
 
-| 要求 | Reyn の対応 |
+| Requirement | Reyn's coverage |
 |---|---|
-| コードファイルの読み取り | `read_file` op ✅ |
-| ファイル編集 | `edit_file` op ✅ |
-| テスト実行 | `shell` op ✅ |
-| git diff の取得 | `shell` op (`git diff`) ✅ |
-| リポジトリ grep | `grep` op ✅ |
+| Reading code files | `read_file` op ✅ |
+| Editing files | `edit_file` op ✅ |
+| Running tests | `shell` op ✅ |
+| Getting git diffs | `shell` op (`git diff`) ✅ |
+| Grepping a repository | `grep` op ✅ |
 
-OS 変更不要。スキルとして実装できる（P7 遵守）。
+No OS changes needed. Implementable as a skill (P7 compliant).
 
 ---
 
-## SWE-bench の仕組み
+## How SWE-bench Works
 
 ```
 SWE-bench harness
-  → タスクデータを渡す (instance_id, repo, base_commit, problem_statement)
-  → Reyn が swe_bench スキルを実行
-  → git patch (diff) を出力
-  → harness が patch を apply してテスト実行
-  → pass / fail を判定
+  → passes task data (instance_id, repo, base_commit, problem_statement)
+  → Reyn runs the swe_bench skill
+  → outputs a git patch (diff)
+  → harness applies the patch and runs tests
+  → judges pass / fail
 ```
 
-Reyn の呼び出し口:
+Reyn's entry point:
 
 ```
-# 単一タスク
+# Single task
 reyn run swe_bench --input instance.json --output patch.diff
 
-# バッチ（500 問）
+# Batch (500 problems)
 reyn eval benchmark swe_bench --tasks swe_bench_verified.jsonl --output results/
 ```
 
@@ -67,34 +67,34 @@ reyn eval benchmark swe_bench --tasks swe_bench_verified.jsonl --output results/
 
 ## Proposed implementation
 
-### Component A — `swe_bench` stdlib スキル（MEDIUM）
+### Component A — `swe_bench` stdlib Skill (MEDIUM)
 
 ```
 src/reyn/stdlib/skills/swe_bench/
   skill.md
   phases/
-    setup.md          ← リポジトリを base_commit にチェックアウト
-    explore.md        ← problem_statement を読み、関連コードを grep で特定
-    plan.md           ← 修正方針を決定
-    apply.md          ← edit_file / write_file で変更を実装
-    verify.md         ← shell で失敗テストを実行し、通過を確認
-    report.md         ← git diff を取得し最終出力を整形
+    setup.md          ← Check out the repository at base_commit
+    explore.md        ← Read problem_statement, locate relevant code via grep
+    plan.md           ← Decide on a fix strategy
+    apply.md          ← Implement changes with edit_file / write_file
+    verify.md         ← Run failing tests with shell and confirm they pass
+    report.md         ← Generate git diff and format final output
 ```
 
-**skill.md frontmatter の骨格**:
+**skill.md frontmatter skeleton**:
 
 ```yaml
 ---
 name: swe_bench
-description: SWE-bench タスクを解く — GitHub issue のコード修正と検証
+description: Solve a SWE-bench task — code fix and verification for a GitHub issue
 entry_phase: setup
 graph:
   setup:     [explore]
   explore:   [plan]
   plan:      [apply]
-  apply:     [verify, plan]   # テスト失敗なら plan に戻る
-  verify:    [report, apply]  # 検証失敗なら apply に戻る
-  report:    []               # 終了
+  apply:     [verify, plan]   # Return to plan if tests fail
+  verify:    [report, apply]  # Return to apply if verification fails
+  report:    []               # Terminal
 final_output_schema: swe_bench_result
 input_schema:
   instance_id: string
@@ -102,83 +102,83 @@ input_schema:
   base_commit: string
   problem_statement: string
   hints_text: string          # optional
-  test_patch: string          # 評価用テスト（実行のみ、編集不可）
+  test_patch: string          # Evaluation tests (run only, must not be edited)
 permissions:
   file:
     read: ["*"]
-    write: ["*"]              # リポジトリ全体への書き込みが必要
-  shell: true                 # git / テストランナー実行
+    write: ["*"]              # Writes to the entire repository are required
+  shell: true                 # git / test runner execution
 ---
 ```
 
-**各フェーズの役割**:
+**Role of each phase**:
 
-`setup` — リポジトリを base_commit にチェックアウトし、
-テスト環境を準備する（shell op で `git checkout <base_commit>`）。
+`setup` — Check out the repository at base_commit and prepare the test environment
+(using `git checkout <base_commit>` via the shell op).
 
-`explore` — `problem_statement` から修正すべきファイル・関数を特定。
-`grep` op で関連コードを検索し、`read_file` で文脈を収集する。
-結果を workspace の `exploration.md` に保存。
+`explore` — Identify files and functions to fix from the `problem_statement`.
+Search related code with the `grep` op and collect context with `read_file`.
+Save results to `exploration.md` in the workspace.
 
-`plan` — exploration 結果をもとに修正計画を立案。
-変更対象ファイル・修正内容を `plan.md` に保存。
+`plan` — Draft a fix plan based on the exploration results.
+Save the target files and intended changes to `plan.md`.
 
-`apply` — `plan.md` に従い `edit_file` / `write_file` で変更を実施。
-1 ファイルずつ修正し、構文エラーがないか基本確認。
+`apply` — Implement changes with `edit_file` / `write_file` following `plan.md`.
+Fix one file at a time and perform basic syntax checks.
 
-`verify` — `test_patch` のテストを `shell` op で実行。
-全テスト通過 → `report` へ。失敗 → `apply` に戻る（最大 `max_retries: 3`）。
+`verify` — Run the tests from `test_patch` with the `shell` op.
+All tests pass → go to `report`. Failure → return to `apply` (up to `max_retries: 3`).
 
-`report` — `git diff HEAD` を実行して patch を生成。
-SWE-bench が期待するフォーマットで `final_output` に格納。
+`report` — Run `git diff HEAD` to generate the patch.
+Store in `final_output` in the format expected by SWE-bench.
 
 **final_output_schema**:
 
 ```python
 class SweBenchResult(BaseModel):
     instance_id: str
-    patch: str          # git diff の出力
+    patch: str          # Output of git diff
     tests_passed: bool
-    attempts: int       # verify ループの回数
+    attempts: int       # Number of verify loop iterations
 ```
 
-### Component B — `reyn eval benchmark` バッチ実行コマンド（MEDIUM）
+### Component B — `reyn eval benchmark` Batch Execution Command (MEDIUM)
 
-SWE-bench Verified の 500 問を効率的に実行するバッチランナー。
+A batch runner for efficiently executing all 500 problems in SWE-bench Verified.
 
 ```
 reyn eval benchmark <skill_name> \
   --tasks swe_bench_verified.jsonl \
   --output results/ \
   --concurrency 4 \
-  [--limit 50]              # 先にサブセットで試す
-  [--resume]                # 途中から再開
+  [--limit 50]              # Try a subset first
+  [--resume]                # Resume from a checkpoint
 ```
 
-**入力 JSONL フォーマット**（SWE-bench 公式データセットのフォーマットをそのまま使用）:
+**Input JSONL format** (using the official SWE-bench dataset format as-is):
 
 ```jsonl
 {"instance_id": "django__django-1234", "repo": "django/django", "base_commit": "abc123", "problem_statement": "...", "hints_text": "...", "test_patch": "..."}
 ```
 
-**出力ディレクトリ構造**:
+**Output directory structure**:
 
 ```
 results/
   run_<timestamp>/
-    summary.json          ← 全体の pass rate / 実行時間 / コスト集計
+    summary.json          ← Overall pass rate / execution time / cost aggregation
     patches/
       django__django-1234.diff
       ...
     logs/
-      django__django-1234.jsonl  ← P6 イベントログ（per instance）
+      django__django-1234.jsonl  ← P6 event log (per instance)
 ```
 
-**`--resume` の動作**:
-`results/run_<timestamp>/summary.json` から完了済み instance_id を読み取り、
-未実行分のみ実行する（実行中断後の再開）。
+**`--resume` behavior**:
+Reads completed instance_ids from `results/run_<timestamp>/summary.json` and
+runs only the remaining ones (for resuming after interruption).
 
-**summary.json フォーマット**:
+**summary.json format**:
 
 ```json
 {
@@ -194,81 +194,81 @@ results/
 }
 ```
 
-### SWE-bench harness との接続
+### Connecting to the SWE-bench Harness
 
-SWE-bench の公式評価は Docker コンテナ内で実行される。接続方法:
+The official SWE-bench evaluation runs inside a Docker container. Connection methods:
 
-**方法 1: CLI 直接実行（推奨）**
+**Method 1: Direct CLI execution (recommended)**
 
 ```bash
-# SWE-bench harness から呼び出す wrapper script
+# Wrapper script called by the SWE-bench harness
 reyn run swe_bench \
   --input '{"instance_id": "...", "repo": "...", ...}' \
   --output-field patch \
   > patch.diff
 ```
 
-**方法 2: A2A エンドポイント経由**
+**Method 2: Via A2A endpoint**
 
 ```
-reyn web  # localhost:8080 で起動
-# harness が POST /a2a/agents/swe_bench に message/send
+reyn web  # Start on localhost:8080
+# harness sends POST /a2a/agents/swe_bench with message/send
 ```
 
-A2A エンドポイント（`reyn web`）は既存実装のため追加変更なし。
+The A2A endpoint (`reyn web`) is an existing implementation and requires no additional changes.
 
 ---
 
-## FP-0007 との関係
+## Relationship with FP-0007
 
-| FP | 関係 |
+| FP | Relationship |
 |---|---|
-| FP-0007（評価インフラ）| `reyn eval benchmark` のバッチ runner は Component B（`reyn eval run`）の拡張版。`reyn eval benchmark` が N 問を、`reyn eval run` が 1 スキル × M テストケースをそれぞれ担当 |
-| FP-0007 Component A（export）| バッチ実行の P6 ログを Langfuse に export することで、どのフェーズで失敗が多いかの可視化が可能 |
+| FP-0007 (Evaluation Infrastructure) | The `reyn eval benchmark` batch runner is an extension of Component B (`reyn eval run`). `reyn eval benchmark` handles N problems, while `reyn eval run` handles 1 skill × M test cases |
+| FP-0007 Component A (export) | Exporting batch run P6 logs to Langfuse enables visualization of which phases fail most often |
 
 ---
 
 ## Dependencies
 
-- `src/reyn/stdlib/skills/` — `swe_bench/` 追加（OS 変更なし）
-- `src/reyn/cli/eval.py` — `benchmark` サブコマンド追加（FP-0007 Component B と同ファイル）
-- `src/reyn/op_runtime/shell.py` — shell op（既存、変更なし）
-- FP-0007: `reyn eval benchmark` は FP-0007 の eval.py と同ファイルに実装するため
-  同時または FP-0007 後にリリースが望ましい。ただし独立実装は可能。
+- `src/reyn/stdlib/skills/` — add `swe_bench/` (no OS changes)
+- `src/reyn/cli/eval.py` — add `benchmark` subcommand (same file as FP-0007 Component B)
+- `src/reyn/op_runtime/shell.py` — shell op (existing, no changes)
+- FP-0007: `reyn eval benchmark` is implemented in the same file as FP-0007's eval.py, so
+  simultaneous or post-FP-0007 release is preferable. Independent implementation is possible.
 
-前提 PR: なし（swe_bench スキルは OS 変更不要で独立実装可能）。
+No prerequisite PRs: the swe_bench skill can be implemented independently with no OS changes.
 
 ---
 
 ## Cost estimate
 
-**合計: LARGE**
+**Total: LARGE**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| Component A: `swe_bench` スキル（6 フェーズ）| MEDIUM | フェーズ設計 + 各 phase instruction の調整 |
-| Component A: `apply` / `verify` のループ調整 | MEDIUM | retry 上限・regression 検出の動作確認 |
-| Component B: `reyn eval benchmark` CLI | MEDIUM | concurrency / resume / summary.json 出力 |
-| SWE-bench harness との接続検証 | SMALL | CLI wrapper + A2A 接続テスト |
-| **合計** | **LARGE** | ボトルネックは verify ループの品質（pass rate に直結）|
+| Component A: `swe_bench` skill (6 phases) | MEDIUM | Phase design + tuning each phase instruction |
+| Component A: `apply` / `verify` loop tuning | MEDIUM | Retry limit and regression detection behavior verification |
+| Component B: `reyn eval benchmark` CLI | MEDIUM | concurrency / resume / summary.json output |
+| SWE-bench harness integration verification | SMALL | CLI wrapper + A2A connection test |
+| **Total** | **LARGE** | Bottleneck is verify loop quality (directly impacts pass rate) |
 
 ---
 
-## 期待成果
+## Expected Outcomes
 
-| 指標 | 目標 |
+| Metric | Target |
 |---|---|
-| Pass rate (SWE-bench Verified) | 40%+ （frontier モデル使用時、Hermes 相当）|
-| コスト / instance | $0.30〜0.50（flash モデル使用時）|
-| OSS ローンチへの効果 | 「Reyn で SWE-bench を回した」という実績がエコシステム信頼に寄与 |
+| Pass rate (SWE-bench Verified) | 40%+ (with frontier model, equivalent to Hermes) |
+| Cost / instance | $0.30–0.50 (using flash model) |
+| Effect on OSS launch | A track record of "running SWE-bench with Reyn" contributes to ecosystem credibility |
 
 ---
 
 ## Related
 
-- `src/reyn/stdlib/skills/skill_improver/` — 複数フェーズスキルの実装参考
-- `src/reyn/op_runtime/shell.py` — shell op（git / テストランナー実行に使用）
-- FP-0007 (`0007-evaluation-infrastructure.md`) — eval CLI と export の共通基盤
-- FP-0006 (`0006-skill-self-improvement.md`) — swe_bench スキル自体を自己改善する将来パス
+- `src/reyn/stdlib/skills/skill_improver/` — reference for multi-phase skill implementation
+- `src/reyn/op_runtime/shell.py` — shell op (used for git / test runner execution)
+- FP-0007 (`0007-evaluation-infrastructure.md`) — shared foundation for eval CLI and export
+- FP-0006 (`0006-skill-self-improvement.md`) — a future path to self-improve the swe_bench skill itself
 - [SWE-bench Verified](https://www.swebench.com/)
 - [SWE-bench GitHub](https://github.com/princeton-nlp/SWE-bench)

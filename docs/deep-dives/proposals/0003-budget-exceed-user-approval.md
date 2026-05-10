@@ -1,4 +1,4 @@
-# FP-0003: budget 超過時のユーザー許諾・再開フロー
+# FP-0003: User approval and resume flow on budget exceed
 
 **Status**: done (landed 2026-05-10, commit pending)
 **Proposed**: 2026-05-10
@@ -9,71 +9,71 @@
 
 ## Summary
 
-現在 `per_chain_skill_calls` / `per_chain_skill_tokens` の hard limit に達すると
-スキル起動が即時拒否され、再開手段がない。
-budget 超過時に `ask_user` 経由でユーザーへ許諾を求め、承認された場合に
-チェーンの budget をリセットして spawn を再試行する仕組みを追加する。
+Currently, when the `per_chain_skill_calls` / `per_chain_skill_tokens` hard limit is reached,
+skill invocation is immediately rejected with no way to resume.
+This proposal adds a mechanism to prompt the user for approval via `ask_user` when the budget is exceeded,
+and — if approved — reset the chain's budget and retry the spawn.
 
 ---
 
 ## Motivation
 
-### 現状の問題
+### Current problem
 
 ```
-hard_limit 到達 → スキル起動を即時拒否（return）
-                → ユーザーへエラーメッセージ
-                → その spawn インスタンスは失われる
-                → 再開するにはユーザーが手動で /budget reset を実行し
-                  同じリクエストをもう一度送り直す必要がある
+hard_limit reached → skill invocation immediately rejected (return)
+                   → error message shown to user
+                   → that spawn instance is lost
+                   → to resume, the user must manually run /budget reset
+                     and re-send the same request from scratch
 ```
 
-- 長時間の multi-agent タスクでチェーン途中に budget 上限に達した場合、
-  それまでの途中結果が捨てられる
-- `/budget reset` はカウンタ全体をリセットするため、
-  意図しない他チェーンへの影響を防げない
-- ユーザーが「この作業は続けて良い」と判断できるのに、
-  システムが強制終了してしまう
+- For long-running multi-agent tasks that hit the budget limit mid-chain,
+  all intermediate results accumulated so far are discarded
+- `/budget reset` resets the entire counter, which cannot prevent
+  unintended impact on other chains
+- The user may well judge "this work should continue," yet the system
+  forces a hard stop
 
-### ユースケース
+### Use cases
 
-- 大規模コード生成タスクで `skill_builder` が想定より多く呼ばれた場合に途中確認
-- 調査タスクで web_search / read_local_files が上限に達した際に承認して継続
-- hard limit を保険として設定しつつ、必要なら突破できる柔軟性を持たせたい
+- Large code-generation tasks where `skill_builder` is called more than expected — prompt mid-way
+- Research tasks where `web_search` / `read_local_files` hit the limit — approve to continue
+- Using hard limits as a safety net while retaining the flexibility to exceed them when necessary
 
 ---
 
 ## Proposed implementation
 
-### フロー
+### Flow
 
 ```
-hard_limit 到達
+hard_limit reached
     ↓
-ask_user("skill 'X' が上限 N 回に達しました。追加で M 回まで継続しますか？ [yes/no]")
+ask_user("skill 'X' has reached limit N. Continue for up to M more calls? [yes/no]")
     ↓
-/answer yes  →  reset_chain(chain_id) + spawn を再試行（+M 回 extension）
-/answer no   →  現在と同じ即時拒否（エラーメッセージ）
-タイムアウト →  /answer no と同扱い（デフォルト拒否）
+/answer yes  →  extend_chain(chain_id) + retry spawn (+M extension)
+/answer no   →  same immediate rejection as today (error message)
+timeout      →  treated as /answer no (default deny)
 ```
 
-### 実装箇所
+### Implementation locations
 
-**session.py（budget 超過パス）:**
+**session.py (budget exceeded path):**
 
 ```python
-# 現在
+# current
 if not check.allowed:
     self._emit_budget_exceeded(...)
-    return  # 即時拒否
+    return  # immediate reject
 
-# 変更後（ask_on_exceed が有効な場合）
+# after change (when ask_on_exceed is enabled)
 if not check.allowed:
     if self._should_ask_on_exceed(check):
         approved = await self._ask_budget_approval(chain_id, skill_name, check)
         if approved:
             self._budget.extend_chain(chain_id, skill_name, extension_calls=N)
-            # spawn を再実行
+            # retry spawn
         else:
             self._emit_budget_exceeded(...)
             return
@@ -82,12 +82,12 @@ if not check.allowed:
         return
 ```
 
-**InterventionBus との接続:**
+**Connection to InterventionBus:**
 
-既存の `InterventionBus.ask(question)` を利用。
-`ask_user` Control IR op と同一の pause / resume 基盤を流用する。
+Reuses the existing `InterventionBus.ask(question)`.
+Leverages the same pause / resume infrastructure as the `ask_user` Control IR op.
 
-### 設定
+### Configuration
 
 ```yaml
 # reyn.yaml
@@ -95,51 +95,51 @@ cost:
   per_chain_skill_calls:
     hard_limit: 5
     warn_ratio: 0.8
-    ask_on_exceed: true    # 追加フラグ（デフォルト: false = 現在の挙動を維持）
-    extension_calls: 3     # 承認時に追加付与する回数
+    ask_on_exceed: true    # new flag (default: false = preserves current behavior)
+    extension_calls: 3     # number of additional calls granted on approval
 ```
 
-`ask_on_exceed: false`（デフォルト）では現在の挙動を完全に維持する。
-opt-in 設計のため既存ユーザーへの影響なし。
+`ask_on_exceed: false` (default) preserves current behavior exactly.
+Opt-in design — no impact on existing users.
 
-### extension の設計
+### Extension design
 
-- `reset_chain()` ではなく `extend_chain(chain_id, skill, +N)` として
-  カウンタを部分的に拡張するのみ（他スキル・他チェーンに影響しない）
-- 承認ごとに `extension_calls` 分だけ上限を引き上げ
-- 何度でも承認可能（都度 ask_user を発火）
+- Uses `extend_chain(chain_id, skill, +N)` rather than `reset_chain()`,
+  partially extending the counter only (no impact on other skills or chains)
+- Each approval raises the limit by `extension_calls`
+- Approval can happen any number of times (ask_user fires on each occurrence)
 
 ---
 
 ## Dependencies
 
-- `src/reyn/budget/budget.py` — `extend_chain()` メソッド追加
-- `src/reyn/chat/session.py` — budget 超過パスに ask_user フック追加
-- `src/reyn/user_intervention.py` / `InterventionBus` — 既存、変更不要
-- `src/reyn/config.py` — `CostLimitConfig` に `ask_on_exceed`, `extension_calls` 追加
+- `src/reyn/budget/budget.py` — add `extend_chain()` method
+- `src/reyn/chat/session.py` — add ask_user hook to budget exceeded path
+- `src/reyn/user_intervention.py` / `InterventionBus` — existing, no changes needed
+- `src/reyn/config.py` — add `ask_on_exceed`, `extension_calls` to `CostLimitConfig`
 
-前提 PR: なし（独立して実装可能）
+Prerequisite PRs: none (can be implemented independently)
 
 ---
 
 ## Cost estimate
 
-**合計: SMALL**
+**Total: SMALL**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| `CostLimitConfig` にフラグ追加 | SMALL | フィールド 2 つ追加のみ |
-| `extend_chain()` メソッド実装 | SMALL | カウンタ上限の部分拡張 |
-| session.py 超過パスに ask_user 追加 | SMALL | InterventionBus 呼び出し 1 箇所 |
-| タイムアウト時デフォルト拒否 | SMALL | ask_user の timeout 引数で対応 |
+| Add flags to `CostLimitConfig` | SMALL | add 2 fields only |
+| Implement `extend_chain()` method | SMALL | partial counter limit extension |
+| Add ask_user to session.py exceeded path | SMALL | one InterventionBus call |
+| Default deny on timeout | SMALL | handled via ask_user timeout argument |
 
-ボトルネックなし。全タスク SMALL。
+No bottlenecks. All tasks are SMALL.
 
 ---
 
 ## Related
 
-- `src/reyn/budget/budget.py` — BudgetTracker 実装
-- `src/reyn/chat/session.py:2554` — 現行の budget 超過パス
-- `src/reyn/user_intervention.py` — InterventionBus（ask_user 基盤）
-- FP-0001 (`0001-a2a-task-lifecycle.md`) — 同じ InterventionBus を A2A に繋げる提案
+- `src/reyn/budget/budget.py` — BudgetTracker implementation
+- `src/reyn/chat/session.py:2554` — current budget exceeded path
+- `src/reyn/user_intervention.py` — InterventionBus (ask_user infrastructure)
+- FP-0001 (`0001-a2a-task-lifecycle.md`) — proposal to connect the same InterventionBus to A2A

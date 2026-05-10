@@ -1,78 +1,80 @@
 # Feature Proposals
 
-機能実装の提案をまとめるディレクトリ。
+A directory collecting proposals for feature implementation.
 
-ADR（`decisions/`）は「なぜその設計を選んだか」の記録。
-このディレクトリは「何を実装すべきか」の提案。
+ADRs (`decisions/`) record "why a particular design was chosen."
+This directory holds proposals for "what should be implemented."
 
 ---
 
-## ファイル命名規則
+## File Naming Convention
 
 ```
 NNNN-<kebab-case-title>.md
 ```
 
-例: `0001-a2a-task-lifecycle.md`
+Example: `0001-a2a-task-lifecycle.md`
 
 ---
 
-## ステータス
+## Status Values
 
-| 値 | 意味 |
+| Value | Meaning |
 |---|---|
-| `proposed` | 提案済み、未着手 |
-| `accepted` | 実装決定 |
-| `in-progress` | 実装中（PR 番号を記載） |
-| `done` | 実装完了（commit/PR を記載） |
-| `deferred` | 保留（理由を記載） |
-| `rejected` | 却下（理由を記載） |
+| `proposed` | Proposed, not yet started |
+| `accepted` | Implementation approved |
+| `in-progress` | Implementation underway (include PR number) |
+| `done` | Implementation complete (include commit/PR) |
+| `deferred` | On hold (include reason) |
+| `rejected` | Rejected (include reason) |
 
 ---
 
-## フォーマット
+## Format
 
-各提案ファイルには以下のセクションを含める：
+Each proposal file should include the following sections:
 
 ```markdown
-# FP-NNNN: タイトル
+# FP-NNNN: Title
 
 **Status**: proposed
 **Proposed**: YYYY-MM-DD
-**Author**: (セッション名 or 担当者)
+**Author**: (session name or owner)
 
 ## Summary
-1 段落で何を・なぜ実装するか。
+One paragraph describing what to implement and why.
 
 ## Motivation
-ユースケース・背景・競合との比較など。
+Use cases, background, comparison with alternatives, etc.
 
 ## Proposed implementation
-実装方針の概要（詳細設計は ADR に委譲）。
+Overview of the implementation approach (detailed design delegated to ADR).
 
 ## Dependencies
-前提となる実装・PR。
+Prerequisites — other implementations or PRs this depends on.
 
 ## Cost estimate
-SMALL / MEDIUM / LARGE（根拠付き）。
+SMALL / MEDIUM / LARGE (with rationale).
 
 ## Related
-関連 ADR・PR・docs へのリンク。
+Links to related ADRs, PRs, and docs.
 ```
 
 ---
 
 ## Index
 
-| # | タイトル | Status | コスト |
+| # | Title | Status | Cost |
 |---|---|---|---|
-| [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification 対応 | proposed | MEDIUM |
-| [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — 統合ドキュメント検索スキル | done (ADR-0033 Accepted、 1e6f153) | LARGE |
-| [0003](0003-budget-exceed-user-approval.md) | budget 超過時のユーザー許諾・再開フロー | proposed | SMALL |
-| [0004](0004-safety-config-ux.md) | safety 設定 UX 改善 — 概念レイヤーとの整合 | proposed | MEDIUM |
-| [0005](0005-safety-as-checkpoint.md) | safety limit をチェックポイントとして扱う — Permission モデルとの統合 | proposed | LARGE |
-| [0006](0006-skill-self-improvement.md) | スキル自己改善 — 実行トレース駆動 + バージョン管理 + ロールバック | proposed | MEDIUM |
-| [0007](0007-evaluation-infrastructure.md) | Agent 評価インフラ — P6 トレース export + スキル回帰評価 | proposed | LARGE |
-| [0008](0008-swe-bench-integration.md) | SWE-bench 参加インフラ — stdlib スキル + バッチ実行 | proposed | LARGE |
-| [0009](0009-operational-intelligence.md) | Operational Intelligence — イベントログの RAG インデックス化 | proposed | MEDIUM |
-| [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |
+| [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification support | proposed | MEDIUM |
+| [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — unified document retrieval skill | done (ADR-0033 Accepted, 1e6f153) | LARGE |
+| [0003](0003-budget-exceed-user-approval.md) | User approval and resume flow on budget exceed | proposed | SMALL |
+| [0004](0004-safety-config-ux.md) | safety config UX improvements — alignment with conceptual layer | proposed | MEDIUM |
+| [0005](0005-safety-as-checkpoint.md) | Treat safety limits as checkpoints — integration with Permission model | proposed | LARGE |
+| [0006](0006-skill-self-improvement.md) | Skill self-improvement — execution-trace-driven + versioning + rollback | proposed | MEDIUM |
+| [0007](0007-evaluation-infrastructure.md) | Agent evaluation infrastructure — P6 trace export + skill regression evaluation | proposed | LARGE |
+| [0008](0008-swe-bench-integration.md) | SWE-bench participation infrastructure — stdlib skill + batch execution | proposed | LARGE |
+| [0009](0009-operational-intelligence.md) | Operational Intelligence — RAG indexing of event logs | proposed | MEDIUM |
+| [0010](0010-rag-routing.md) | RAG routing — semantic pre-filter for skill catalog + routing history | proposed | MEDIUM |
+| [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | proposed | SMALL |
+| [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | proposed | LARGE |
