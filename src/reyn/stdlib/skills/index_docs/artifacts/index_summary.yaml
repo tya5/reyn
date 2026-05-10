@@ -2,36 +2,70 @@ name: index_summary
 description: |
   Caller-facing summary of a completed index_docs run. Returned by the
   skill postprocessor after chunk + embed + index_write pipeline completes.
+
+  Fields are nested under their respective postprocessor step outputs:
+  - chunk_stats: result of apply_strategy (python step)
+  - embed_result: result of embed op
+  - index_result: result of index_write op
+
+  The source field and strategy fields (boundary, max_chunk_size_tokens) are
+  echoed from the LLM's chunk_strategy decision artifact.
+
+  Bug note (batch 17 S2): the original schema had top-level required fields
+  (chunk_count, embedded_count, etc.) but the postprocessor steps write into
+  data.chunk_stats, data.embed_result, data.index_result sub-dicts.
+  Schema updated to match actual postprocessor output structure.
 schema:
   type: object
-  required: [source, chunk_count, embedded_count, skipped_count, written_count]
+  required: [source, chunk_stats, embed_result, index_result]
   properties:
     source:
       type: string
-      description: Logical source name that was indexed.
-    chunk_count:
-      type: integer
-      minimum: 0
-      description: Total chunks produced by the chunker step.
-    embedded_count:
-      type: integer
-      minimum: 0
-      description: Chunks that were embedded (new or changed).
-    skipped_count:
-      type: integer
-      minimum: 0
-      description: Chunks skipped (content_hash already in output_artifact).
-    written_count:
-      type: integer
-      minimum: 0
-      description: Chunks written to the index backend.
-    written_to_index:
-      type: integer
-      minimum: 0
-      description: Alias for written_count (index_write result).
+      description: Logical source name that was indexed (echoed from chunk_strategy).
     boundary:
       type: string
       description: Chunk boundary strategy used (from chunk_strategy).
     max_chunk_size_tokens:
       type: integer
       description: Max chunk size (from chunk_strategy).
+    chunk_stats:
+      type: object
+      required: [chunk_count, source_lock_acquired]
+      description: Result of the apply_strategy python step.
+      properties:
+        chunk_count:
+          type: integer
+          minimum: 0
+          description: Total chunks produced by the chunker step.
+        source_lock_acquired:
+          type: boolean
+          description: Whether the source-level lock was acquired.
+        chunks_path:
+          type: string
+          description: Path to chunks.jsonl within the workspace.
+    embed_result:
+      type: object
+      required: [embedded_count, skipped_count]
+      description: Result of the embed op.
+      properties:
+        embedded_count:
+          type: integer
+          minimum: 0
+          description: Chunks that were embedded (new or changed).
+        skipped_count:
+          type: integer
+          minimum: 0
+          description: Chunks skipped (content_hash already in output_artifact).
+    index_result:
+      type: object
+      required: [written]
+      description: Result of the index_write op.
+      properties:
+        written:
+          type: integer
+          minimum: 0
+          description: Chunks written to the index backend.
+        skipped:
+          type: integer
+          minimum: 0
+          description: Chunks skipped by index_write (duplicate content_hash).

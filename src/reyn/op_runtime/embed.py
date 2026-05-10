@@ -164,7 +164,10 @@ async def handle(
     # Instantiate provider — phase 1 always litellm; config injected via env.
     # OpContext does not yet expose embedding config directly (Wave 2G wires it);
     # for now use empty config (provider reads LITELLM_API_BASE from env).
-    provider = get_provider("litellm", config={})
+    # REYN_EMBEDDING_PROVIDER env var allows dogfood/test overrides (e.g. "fake").
+    import os as _os
+    _provider_name = _os.environ.get("REYN_EMBEDDING_PROVIDER", "litellm")
+    provider = get_provider(_provider_name, config={})
 
     if op.texts is not None:
         # Form A: inline embed

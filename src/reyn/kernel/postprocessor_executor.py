@@ -283,10 +283,25 @@ class PostprocessorExecutor:
             if emit_wal:
                 await self._wal_step_completed(op_invocation_id, step.type, args_hash, result)
 
+        # Rename artifact type to the postprocessor's declared output_name.
+        # After all steps run, the artifact still has the LLM's finish-artifact
+        # type (e.g. "chunk_strategy"). The postprocessor contract specifies
+        # a different caller-facing type (e.g. "index_summary"). Rename now
+        # so the final output_schema validation succeeds and the caller receives
+        # the correct artifact type. Dogfood batch 17 S2 first exposed this
+        # (B17-S2-2): result["type"] remained "chunk_strategy" while the
+        # output_schema required type.const == "index_summary".
+        if postprocessor.output_name and postprocessor.output_name != "artifact":
+            result = dict(result, type=postprocessor.output_name)
+
         # Final output validation against postprocessor.output_schema.
-        data = result.get("data", {})
+        # output_schema is the full artifact schema ({type, data} envelope) —
+        # validate the full result, not just result.get("data", {}). The
+        # previous bug validated the inner data dict against the outer schema,
+        # which always failed with "'type' is a required property".
+        # Dogfood batch 17 S2 first discovered this (B17-S2-1).
         validator = jsonschema.Draft7Validator(postprocessor.output_schema)
-        errors = sorted(validator.iter_errors(data), key=str)
+        errors = sorted(validator.iter_errors(result), key=str)
         if errors:
             messages = [e.message for e in errors[:5]]
             raise PostprocessorError(
