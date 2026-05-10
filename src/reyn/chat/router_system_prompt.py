@@ -375,34 +375,21 @@ def build_system_prompt(
         parts.append(
             "    for these queries."
         )
-        # ── R-RAG-srcread guidance (B18 batch 18 finding) ──────────────────
-        # When the user asks "how is X implemented?" / "explain how X works"
-        # about a topic that an indexed source covers semantically, the LLM
-        # tends to default to file_read / reyn_src_read on README.md instead
-        # of recall — file ops "feel" more direct but they are NOT semantic
-        # search. Force the routing to recall when an indexed source matches
-        # the topic of the question.
-        parts.append(
-            "  - For 'how is X implemented?', 'explain how X works', or"
-        )
-        parts.append(
-            "    'how does X work?' style questions: if an indexed source"
-        )
-        parts.append(
-            "    covers the topic semantically (see Indexed sources section"
-        )
-        parts.append(
-            "    descriptions), prefer the `recall` tool over file_read /"
-        )
-        parts.append(
-            "    reyn_src_read. File ops give you the literal file content;"
-        )
-        parts.append(
-            "    recall gives you the semantically-relevant chunks across"
-        )
-        parts.append(
-            "    the indexed source. For semantic explanations, recall wins."
-        )
+        # NOTE (batch 19 self-audit, post `1c5856d` revert): a previous
+        # iteration added "for 'how is X implemented?' prefer recall over
+        # reyn_src_read" guidance here, motivated by S6 batch-18 0/3 refuted.
+        # The fix was reverted because the scenario design itself was the
+        # flaw: "How is recall implemented?" is a code-reading query (= the
+        # answer lives in source files, NOT in the indexed concept docs),
+        # and reyn_src_read's description claims this exact use case
+        # ("how does Reyn / how does Reyn's X work?"). Adding generic
+        # "prefer recall" guidance here actively conflicted with that
+        # specialised tool description and was the wrong layer to fix.
+        # Real R-RAG-srcread evidence requires a scenario where indexed
+        # docs semantically cover the prompt topic; until then, treat
+        # affordance-bias as hypothesis only. See
+        # docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/
+        # retrospective.md for the full audit.
         # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
         # When 0 indexed sources are available, the LLM must actively tell the
         # user how to add them instead of silently defaulting to memory.
