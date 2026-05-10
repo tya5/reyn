@@ -147,7 +147,13 @@ Target files:
 - `docs/reference/runtime/control-ir.md` — `sandboxed_exec` op section (**NEVER rule: must
   be updated in the same PR as `sandboxed_exec` op registration in `OP_KIND_MODEL_MAP`**)
 
-### Component B — `LandlockBackend` (MEDIUM)
+### Component B — `LandlockBackend` (MEDIUM) — contributor-friendly
+
+> **Note**: The primary maintainer develops on macOS only. Component B cannot be verified
+> without a Linux environment (Docker or Linux CI such as GitHub Actions `ubuntu-latest`).
+> This component is explicitly marked as **contributor-friendly** — Linux contributors are
+> welcome to implement and verify this backend independently against the `SandboxBackend`
+> Protocol defined in Component A.
 
 Linux 5.13+ backend. Uses the `landlock` PyPI package (supports ABI versions 1–4).
 

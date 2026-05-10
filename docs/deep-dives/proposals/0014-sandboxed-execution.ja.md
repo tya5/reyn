@@ -143,7 +143,13 @@ P6 イベント：`sandbox_applied`（ポリシー適用成功時）、`sandbox_
 - `docs/reference/runtime/control-ir.md` — `sandboxed_exec` op セクション（**NEVER ルール：
   `OP_KIND_MODEL_MAP` への `sandboxed_exec` op 登録と同じ PR で更新必須**）
 
-### Component B — `LandlockBackend`（MEDIUM）
+### Component B — `LandlockBackend`（MEDIUM）— コントリビュータ向け
+
+> **注記**: 主要メンテナーの開発環境は macOS のみ。Component B は Linux 環境（Docker または
+> GitHub Actions `ubuntu-latest` などの Linux CI）なしには検証できない。
+> このコンポーネントは明示的に **コントリビュータ向け** としてマークされており、
+> Linux 環境を持つコントリビュータが Component A で定義した `SandboxBackend` Protocol に従って
+> 独立に実装・検証することを歓迎する。
 
 Linux 5.13+ バックエンド。`landlock` PyPI パッケージ（ABI バージョン 1〜4 対応）を使用。
 
