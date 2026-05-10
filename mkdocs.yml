@@ -95,6 +95,7 @@ nav:
           - Operations:
               - guide/for-skill-authors/debug-with-events.md
               - guide/for-skill-authors/use-an-mcp-server.md
+              - guide/for-skill-authors/understand-why-reyn-stops.md
           - UX & polish:
               - guide/for-skill-authors/author-a-design.md
               - guide/for-skill-authors/localize-output.md

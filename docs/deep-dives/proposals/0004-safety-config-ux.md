@@ -1,8 +1,9 @@
 # FP-0004: safety 設定 UX 改善 — 概念レイヤーとの整合
 
-**Status**: proposed
+**Status**: done (landed 2026-05-10)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Implemented**: 2026-05-10 — `SafetyConfig` + `LoopConfig` + `TimeoutConfig` dataclasses (`src/reyn/config.py`) + deprecation-aware reader (`_build_safety_config` + `_build_*_config_with_safety`) + `hint_config_key` on `LoopLimitExceededError` / `PhaseBudgetExceededError` / `RouterCapExceeded` + chain-timeout / max-hop-depth error message hints + `docs/guide/for-skill-authors/understand-why-reyn-stops.md` (en+ja) + 11 Tier 2 invariants (`tests/test_safety_config.py`). Backward-compatible: legacy keys (`limits.*` / `multi_agent.*` / `cost.router_invocations_per_turn` / `cost.per_chain_skill_calls.hard_limit`) continue to work as fallback when new keys absent; new keys win when both set.
 
 ---
 

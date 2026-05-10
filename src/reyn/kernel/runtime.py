@@ -41,14 +41,32 @@ from reyn.workspace.workspace import Workspace
 
 
 class LoopLimitExceededError(Exception):
-    pass
+    """Raised when a phase is entered more than ``safety.loop.max_phase_visits``
+    times in one skill run.
+
+    FP-0004: ``hint_config_key`` carries the user-facing config key the
+    operator should raise to allow the run to continue. Callers building
+    user-visible messages should append ``f"→ Raise {exc.hint_config_key}
+    to allow more iterations."``.
+    """
+
+    hint_config_key: str = "safety.loop.max_phase_visits"
 
 
 class PhaseBudgetExceededError(Exception):
-    """Raised when a phase exceeds its wall-clock budget (limits.phase.max_wall_seconds)."""
+    """Raised when a phase exceeds its wall-clock budget
+    (``safety.timeout.phase_seconds`` / legacy ``limits.phase.max_wall_seconds``).
+
+    ``hint_config_key`` (FP-0004) names the config knob the operator
+    should adjust to allow longer phase wall-clock budgets.
+    """
+
+    hint_config_key: str = "safety.timeout.phase_seconds"
+
     def __init__(self, phase: str, elapsed: float, budget: float) -> None:
         super().__init__(
-            f"Phase '{phase}' exceeded wall-clock budget: {elapsed:.2f}s > {budget:.3g}s"
+            f"Phase '{phase}' exceeded wall-clock budget: {elapsed:.2f}s > {budget:.3g}s. "
+            f"→ Raise {PhaseBudgetExceededError.hint_config_key} to allow longer phase runs."
         )
         self.phase = phase
         self.elapsed = elapsed
@@ -321,8 +339,11 @@ class OSRuntime:
         count = self._visit_counts.get(phase_name, 0)
         if max_visits and count >= max_visits:
             self.events.emit("loop_limit_exceeded", phase=phase_name, visit_count=count, max=max_visits)
+            # FP-0004: hint at the config key the operator can raise.
             raise LoopLimitExceededError(
-                f"Phase '{phase_name}' reached max_phase_visits={max_visits}"
+                f"Phase '{phase_name}' reached max_phase_visits={max_visits}. "
+                f"→ Raise {LoopLimitExceededError.hint_config_key} to allow "
+                f"more iterations."
             )
         self._visit_counts[phase_name] = count + 1
         # Reset wall-clock timer for this visit. Soft budget checks at retry/turn boundaries

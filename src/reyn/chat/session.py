@@ -157,11 +157,19 @@ _TOOL_FAILED_FALLBACK_MSG: dict[str, str] = {
 class RouterCapExceeded(Exception):
     """Raised when a user turn (or top-level agent_request) drives more
     skill_router invocations than the configured cap. Caught by handlers,
-    which surface a structured fallback reply to the user / requester."""
+    which surface a structured fallback reply to the user / requester.
+
+    FP-0004: ``hint_config_key`` is the user-facing config knob to raise
+    when an operator decides the cap is too tight for their workload.
+    """
+
+    hint_config_key: str = "safety.loop.max_router_calls_per_turn"
 
     def __init__(self, count: int, cap: int, last_reason: str = "") -> None:
         super().__init__(
-            f"Router exhausted retry budget ({count}/{cap}) for this turn"
+            f"Router exhausted retry budget ({count}/{cap}) for this turn. "
+            f"→ Raise {RouterCapExceeded.hint_config_key} to allow more "
+            f"router invocations per turn (0 = unlimited)."
         )
         self.count = count
         self.cap = cap
@@ -1762,11 +1770,14 @@ class ChatSession:
         inbox payload and is recorded in history meta + events.
         """
         if depth > self._max_hop_depth:
+            # FP-0004: hint at the config key the operator can raise.
             await self._put_outbox(OutboxMessage(
                 kind="error",
                 text=(
                     f"agent message depth {depth} exceeds limit "
-                    f"{self._max_hop_depth}; chain refused"
+                    f"{self._max_hop_depth}; chain refused. "
+                    f"→ Raise safety.loop.max_agent_hops to allow deeper "
+                    f"delegation chains."
                 ),
                 meta={"chain_id": chain_id},
             ))
@@ -2200,10 +2211,13 @@ class ChatSession:
         if pending is None:
             return  # resolved between sleep wake and fire — nothing to do
         waiting = sorted(pending.waiting_on)
+        # FP-0004: hint at the config key the operator can raise.
         error_text = (
             f"chain timeout: {len(waiting)} delegate(s) "
             f"({', '.join(waiting) or 'unknown'}) did not respond within "
-            f"{self._chain_timeout_seconds:g}s"
+            f"{self._chain_timeout_seconds:g}s. "
+            f"→ Raise safety.timeout.chain_seconds to wait longer "
+            f"(0 = no timeout)."
         )
         self._chat_events.emit(
             "chain_timeout",

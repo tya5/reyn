@@ -48,9 +48,113 @@ class PhaseLimitsConfig:
 
 @dataclass
 class LimitsConfig:
-    """`limits:` — central place for runtime bounds (timeouts, retries, caps)."""
+    """`limits:` — central place for runtime bounds (timeouts, retries, caps).
+
+    Note (FP-0004): the user-facing schema preferred for new configs is
+    ``safety:`` (= ``safety.loop`` + ``safety.timeout``), which groups by the
+    *reason Reyn might stop* rather than by internal component. The
+    ``LimitsConfig`` dataclass remains the canonical internal carrier so
+    runtime / skill-runner code keeps working unchanged; the loader fills
+    both ``safety`` and ``limits`` from whichever key the user wrote.
+    """
     llm: LLMLimitsConfig = field(default_factory=LLMLimitsConfig)
     phase: PhaseLimitsConfig = field(default_factory=PhaseLimitsConfig)
+
+
+# ── FP-0004: safety: section (user-facing unified schema) ──────────────────
+
+
+@dataclass
+class LoopConfig:
+    """`safety.loop:` — caps that catch repetitive / runaway behaviour.
+
+    These are *loop-detection* limits (= "the agent is doing the same thing
+    over and over"). Hitting one of these is normal during exploratory
+    development; raising the cap is the right operator response when the
+    workload genuinely needs more iterations.
+
+    Fields:
+        max_act_turns_per_phase:
+            Global default for the per-phase ``max_act_turns`` (= LLM ↔ op
+            volleys inside one phase visit). Skill / phase frontmatter still
+            wins when set. ``0`` = unlimited.
+        max_phase_visits:
+            How many times any single phase may be entered in one skill run.
+            Maps to ``LimitsConfig.phase.max_visits``.
+        max_router_calls_per_turn:
+            Cap on chat-router invocations within a single user turn.
+            Maps to ``CostConfig.router_invocations_per_turn``. ``0`` = unlimited.
+        max_agent_hops:
+            Maximum delegation depth (= user → A → B → C is 3 hops).
+            Maps to ``MultiAgentConfig.max_hop_depth``.
+        max_skill_calls_per_chain:
+            Cap on skill spawns per (chain, skill) pair, surfaced via
+            ``CostConfig.per_chain_skill_calls.hard_limit``. ``None`` =
+            unlimited (= matches the existing default).
+    """
+
+    max_act_turns_per_phase: int = 10
+    max_phase_visits: int = 25
+    max_router_calls_per_turn: int = 3
+    max_agent_hops: int = 3
+    max_skill_calls_per_chain: int | None = None
+
+
+@dataclass
+class TimeoutConfig:
+    """`safety.timeout:` — wall-clock bounds.
+
+    These are *timeout* limits (= "this is taking too long"). Hitting one
+    almost always means a slow LLM, a stuck delegation, or an unbounded
+    loop in user code. Raise the cap when the workload legitimately needs
+    longer; investigate when it shouldn't.
+
+    Fields:
+        llm_call_seconds:
+            Per-call timeout passed to ``litellm.acompletion``. Maps to
+            ``LimitsConfig.llm.timeout``.
+        llm_max_retries:
+            Transient-error retry budget per call. Maps to
+            ``LimitsConfig.llm.max_retries``.
+        phase_seconds:
+            Soft wall-clock budget for one phase visit. ``0`` = unlimited.
+            Maps to ``LimitsConfig.phase.max_wall_seconds``.
+        chain_seconds:
+            How long a multi-agent pending chain waits for a delegate
+            reply before the runtime synthesises an upstream error. Maps
+            to ``MultiAgentConfig.chain_timeout_seconds``. ``0`` (or any
+            non-positive value) disables.
+    """
+
+    llm_call_seconds: float = 60.0
+    llm_max_retries: int = 3
+    phase_seconds: float = 0.0
+    chain_seconds: float = 60.0
+
+
+@dataclass
+class SafetyConfig:
+    """`safety:` — unified, user-facing namespace for stop conditions.
+
+    Reyn stops a run for one of three reasons: a loop was detected, a
+    timeout fired, or the budget was exceeded. The first two are grouped
+    under ``safety.loop`` / ``safety.timeout``; budget caps stay under
+    ``cost:`` because they are financial knobs (per-agent / daily /
+    monthly token + USD limits) rather than runaway-detection knobs.
+
+    See ``docs/guide/for-skill-authors/understand-why-reyn-stops.md`` for
+    the operator's mental model.
+
+    Backward compatibility (FP-0004): the loader reads both this
+    ``safety:`` section and the legacy ``limits:`` / ``multi_agent:`` /
+    ``cost.router_invocations_per_turn`` / ``cost.per_chain_skill_calls``
+    keys. New keys win when set; old keys provide fallback when new keys
+    are missing. Old keys remain functional through the next major
+    version.
+    """
+
+    loop: LoopConfig = field(default_factory=LoopConfig)
+    timeout: TimeoutConfig = field(default_factory=TimeoutConfig)
 
 
 @dataclass
@@ -484,6 +588,16 @@ class ReynConfig:
     # RAG embedding settings (ADR-0033 Phase 1). Default-completed: usable
     # without any reyn.yaml edits after `pip install reyn` + OPENAI_API_KEY.
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    # FP-0004: user-facing unified namespace for stop conditions
+    # (safety.loop.* + safety.timeout.*). The loader fills this from the
+    # new ``safety:`` keys with fallback to legacy ``limits:`` /
+    # ``multi_agent:`` / ``cost.*`` keys, and ALSO back-fills the legacy
+    # dataclasses (``limits``, ``multi_agent``, ``cost.router_invocations_per_turn``,
+    # ``cost.per_chain_skill_calls.hard_limit``) so existing consumers keep
+    # working. Read this when emitting hint messages or surfacing the
+    # operator's mental model; consumers that already read ``limits.*`` can
+    # continue to do so.
+    safety: SafetyConfig = field(default_factory=SafetyConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -736,6 +850,19 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         # case where the user explicitly set output_language to "" or
         # null in yaml (= "I want the OS to not pin a language").
         output_language = None
+    # FP-0004: parse the new ``safety:`` section first, then build the
+    # legacy dataclasses with values that prefer ``safety.*`` when set,
+    # falling back to ``limits.*`` / ``multi_agent.*`` / ``cost.*`` for
+    # backward compat. This way existing reference sites (which read the
+    # legacy fields) keep working while new operators get a unified
+    # ``safety:`` namespace.
+    safety_raw = merged.get("safety") if isinstance(merged.get("safety"), dict) else {}
+    safety = _build_safety_config(safety_raw)
+    limits = _build_limits_config_with_safety(merged.get("limits"), safety, safety_raw)
+    multi_agent = _build_multi_agent_config_with_safety(
+        merged.get("multi_agent"), safety, safety_raw,
+    )
+    cost = _build_cost_config_with_safety(merged.get("cost"), safety, safety_raw)
     return ReynConfig(
         model=str(merged.get("model", "standard")),
         output_language=output_language,
@@ -746,13 +873,13 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         },
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
-        limits=_build_limits_config(merged.get("limits")),
+        limits=limits,
         mcp=dict(merged.get("mcp") or {}),
         python=_build_python_config(merged.get("python")),
         chat=_build_chat_config(merged.get("chat")),
-        multi_agent=_build_multi_agent_config(merged.get("multi_agent")),
+        multi_agent=multi_agent,
         events=_build_events_config(merged.get("events")),
-        cost=_build_cost_config(merged.get("cost")),
+        cost=cost,
         skill_resume=_build_skill_resume_config(merged.get("skill_resume")),
         plan_resume_raw=(
             merged.get("plan_resume")
@@ -760,6 +887,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         ),
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),
+        safety=safety,
     )
 
 
@@ -908,6 +1036,201 @@ def _build_cost_config(raw: object) -> CostConfig:
         daily_cost_usd=_build_cost_limit(raw.get("daily_cost_usd")),
         monthly_tokens=_build_cost_limit(raw.get("monthly_tokens")),
         monthly_cost_usd=_build_cost_limit(raw.get("monthly_cost_usd")),
+    )
+
+
+# ── FP-0004: safety: section parsers ───────────────────────────────────────
+
+
+def _build_safety_config(raw: object) -> SafetyConfig:
+    """Parse the user-facing ``safety:`` section.
+
+    Empty / missing returns full defaults. Unknown / malformed values
+    fall back to defaults silently — config-level errors should not
+    abort startup (logger.warning is the convention used elsewhere).
+    """
+    if not isinstance(raw, dict):
+        return SafetyConfig()
+    loop_raw = raw.get("loop") or {}
+    if not isinstance(loop_raw, dict):
+        loop_raw = {}
+    timeout_raw = raw.get("timeout") or {}
+    if not isinstance(timeout_raw, dict):
+        timeout_raw = {}
+
+    loop_defaults = LoopConfig()
+    timeout_defaults = TimeoutConfig()
+
+    # ``max_skill_calls_per_chain`` is special-cased: None = unlimited.
+    skill_calls_raw = loop_raw.get("max_skill_calls_per_chain", None)
+    skill_calls: int | None
+    if skill_calls_raw is None:
+        skill_calls = None
+    else:
+        try:
+            skill_calls = int(skill_calls_raw)
+            if skill_calls < 0:
+                skill_calls = None
+        except (TypeError, ValueError):
+            skill_calls = None
+
+    loop = LoopConfig(
+        max_act_turns_per_phase=int(loop_raw.get(
+            "max_act_turns_per_phase", loop_defaults.max_act_turns_per_phase,
+        )),
+        max_phase_visits=int(loop_raw.get(
+            "max_phase_visits", loop_defaults.max_phase_visits,
+        )),
+        max_router_calls_per_turn=int(loop_raw.get(
+            "max_router_calls_per_turn", loop_defaults.max_router_calls_per_turn,
+        )),
+        max_agent_hops=int(loop_raw.get(
+            "max_agent_hops", loop_defaults.max_agent_hops,
+        )),
+        max_skill_calls_per_chain=skill_calls,
+    )
+    timeout = TimeoutConfig(
+        llm_call_seconds=float(timeout_raw.get(
+            "llm_call_seconds", timeout_defaults.llm_call_seconds,
+        )),
+        llm_max_retries=int(timeout_raw.get(
+            "llm_max_retries", timeout_defaults.llm_max_retries,
+        )),
+        phase_seconds=float(timeout_raw.get(
+            "phase_seconds", timeout_defaults.phase_seconds,
+        )),
+        chain_seconds=float(timeout_raw.get(
+            "chain_seconds", timeout_defaults.chain_seconds,
+        )),
+    )
+    return SafetyConfig(loop=loop, timeout=timeout)
+
+
+def _has_loop_key(safety_raw: object, key: str) -> bool:
+    """True iff ``safety.loop.<key>`` was explicitly set in YAML."""
+    if not isinstance(safety_raw, dict):
+        return False
+    loop = safety_raw.get("loop")
+    return isinstance(loop, dict) and key in loop
+
+
+def _has_timeout_key(safety_raw: object, key: str) -> bool:
+    """True iff ``safety.timeout.<key>`` was explicitly set in YAML."""
+    if not isinstance(safety_raw, dict):
+        return False
+    timeout = safety_raw.get("timeout")
+    return isinstance(timeout, dict) and key in timeout
+
+
+def _build_limits_config_with_safety(
+    raw: object, safety: SafetyConfig, safety_raw: object,
+) -> LimitsConfig:
+    """Build ``LimitsConfig`` from legacy ``limits:`` keys, with
+    ``safety.loop.max_phase_visits`` / ``safety.timeout.*`` overriding when
+    present.
+
+    New keys win when explicitly set; legacy keys provide fallback
+    otherwise. This preserves byte-for-byte behaviour for configs that
+    only use the old schema.
+    """
+    legacy = _build_limits_config(raw)
+
+    llm_timeout = (
+        safety.timeout.llm_call_seconds
+        if _has_timeout_key(safety_raw, "llm_call_seconds")
+        else legacy.llm.timeout
+    )
+    llm_max_retries = (
+        safety.timeout.llm_max_retries
+        if _has_timeout_key(safety_raw, "llm_max_retries")
+        else legacy.llm.max_retries
+    )
+    phase_max_visits = (
+        safety.loop.max_phase_visits
+        if _has_loop_key(safety_raw, "max_phase_visits")
+        else legacy.phase.max_visits
+    )
+    phase_max_wall_seconds = (
+        safety.timeout.phase_seconds
+        if _has_timeout_key(safety_raw, "phase_seconds")
+        else legacy.phase.max_wall_seconds
+    )
+    return LimitsConfig(
+        llm=LLMLimitsConfig(timeout=llm_timeout, max_retries=llm_max_retries),
+        phase=PhaseLimitsConfig(
+            max_visits=phase_max_visits, max_wall_seconds=phase_max_wall_seconds,
+        ),
+    )
+
+
+def _build_multi_agent_config_with_safety(
+    raw: object, safety: SafetyConfig, safety_raw: object,
+) -> MultiAgentConfig:
+    """Build ``MultiAgentConfig`` from legacy keys, with
+    ``safety.loop.max_agent_hops`` / ``safety.timeout.chain_seconds``
+    overriding when present.
+    """
+    legacy = _build_multi_agent_config(raw)
+    max_hop_depth = (
+        safety.loop.max_agent_hops
+        if _has_loop_key(safety_raw, "max_agent_hops")
+        else legacy.max_hop_depth
+    )
+    chain_timeout = (
+        safety.timeout.chain_seconds
+        if _has_timeout_key(safety_raw, "chain_seconds")
+        else legacy.chain_timeout_seconds
+    )
+    return MultiAgentConfig(
+        max_hop_depth=max_hop_depth,
+        chain_timeout_seconds=chain_timeout,
+    )
+
+
+def _build_cost_config_with_safety(
+    raw: object, safety: SafetyConfig, safety_raw: object,
+) -> CostConfig:
+    """Build ``CostConfig`` from legacy ``cost:`` keys, with
+    ``safety.loop.max_router_calls_per_turn`` and
+    ``safety.loop.max_skill_calls_per_chain`` overriding when present.
+
+    The other ``cost.*`` financial fields (per-agent tokens, daily / monthly
+    USD caps, rate limits) are not part of the safety: namespace and
+    remain under ``cost:`` exclusively.
+    """
+    legacy = _build_cost_config(raw)
+    router_cap = (
+        safety.loop.max_router_calls_per_turn
+        if _has_loop_key(safety_raw, "max_router_calls_per_turn")
+        else legacy.router_invocations_per_turn
+    )
+    per_chain_skill_calls = legacy.per_chain_skill_calls
+    if _has_loop_key(safety_raw, "max_skill_calls_per_chain"):
+        # Only override the hard_limit; preserve any other legacy fields
+        # (warn_ratio, ask_on_exceed, extension_calls).
+        new_hard: float | None
+        if safety.loop.max_skill_calls_per_chain is None:
+            new_hard = None
+        else:
+            new_hard = float(safety.loop.max_skill_calls_per_chain)
+        per_chain_skill_calls = CostLimitConfig(
+            hard_limit=new_hard,
+            warn_ratio=legacy.per_chain_skill_calls.warn_ratio,
+            ask_on_exceed=legacy.per_chain_skill_calls.ask_on_exceed,
+            extension_calls=legacy.per_chain_skill_calls.extension_calls,
+        )
+    return CostConfig(
+        per_agent_tokens=legacy.per_agent_tokens,
+        per_agent_cost_usd=legacy.per_agent_cost_usd,
+        per_chain_skill_calls=per_chain_skill_calls,
+        per_chain_skill_tokens=legacy.per_chain_skill_tokens,
+        rate_limit_per_minute=legacy.rate_limit_per_minute,
+        rate_limit_warn_ratio=legacy.rate_limit_warn_ratio,
+        router_invocations_per_turn=router_cap,
+        daily_tokens=legacy.daily_tokens,
+        daily_cost_usd=legacy.daily_cost_usd,
+        monthly_tokens=legacy.monthly_tokens,
+        monthly_cost_usd=legacy.monthly_cost_usd,
     )
 
 
