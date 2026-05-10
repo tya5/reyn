@@ -600,6 +600,43 @@ def build_tools(
             dispatch_kind=_reyn_src_read_def.dispatch_kind,
         ))
 
+    # ── H. RAG tools (always present when registered) ────────────────────────
+    #
+    # `recall` performs semantic search over indexed sources; `drop_source`
+    # removes an indexed source (permission-gated at the op level via the
+    # index_drop permission resolver gate).  Both are gated only by registry
+    # gates (= gates.router="allow"); no operator config is required to expose
+    # them — they appear unconditionally when the registry contains them.
+    #
+    # ADR-0033 Phase 1: wired here after the reyn_src cluster (F) and before
+    # MCP (D) so the LLM sees them as first-class tools rather than
+    # capability-gated extras.
+    #
+    # B17-S6-1 / B17-S8-2 fix: these were registered in ToolRegistry but
+    # missing from build_tools(), so the LLM could not see or call them.
+
+    # ── H1: recall ───────────────────────────────────────────────────────────
+    _recall_def = _registry.lookup("recall")
+    if _recall_def is not None and _recall_def.gates.router == "allow":
+        _recall_rendered = _recall_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_recall_rendered["function"]["name"],
+            description=_recall_rendered["function"]["description"],
+            parameters=_recall_rendered["function"]["parameters"],
+            dispatch_kind=_recall_def.dispatch_kind,
+        ))
+
+    # ── H2: drop_source ──────────────────────────────────────────────────────
+    _drop_source_def = _registry.lookup("drop_source")
+    if _drop_source_def is not None and _drop_source_def.gates.router == "allow":
+        _drop_source_rendered = _drop_source_def.render_for_router()
+        specs.append(ToolSpec(
+            name=_drop_source_rendered["function"]["name"],
+            description=_drop_source_rendered["function"]["description"],
+            parameters=_drop_source_rendered["function"]["parameters"],
+            dispatch_kind=_drop_source_def.dispatch_kind,
+        ))
+
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
     if mcp_servers:
         # ── D1: list_mcp_servers ─────────────────────────────────────────────

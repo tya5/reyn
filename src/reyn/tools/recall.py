@@ -47,7 +47,6 @@ _RECALL_PARAMETERS: dict[str, Any] = {
         },
         "filters": {
             "type": "object",
-            "additionalProperties": {"type": "string"},
             "default": {},
             "description": (
                 "ChunkMetadata field equality filters (e.g. source_path)."

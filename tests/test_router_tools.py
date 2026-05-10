@@ -41,6 +41,10 @@ EXPECTED_TOOL_NAMES = [
     # public OSS repo, not the user's files, so no permission gate.
     "reyn_src_list",
     "reyn_src_read",
+    # recall + drop_source (H1/H2, ADR-0033 Phase 1) — always exposed
+    # when the ToolRegistry contains them (B17-S6-1 / B17-S8-2 fix).
+    "recall",
+    "drop_source",
 ]
 
 
@@ -86,14 +90,15 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_15_tools_when_no_extras():
+def test_build_tools_returns_17_tools_when_no_extras():
     """No file / MCP / web_fetch extras: 11 baseline + web_search (E1,
     always on) + reyn_src_list + reyn_src_read (F1/F2, always on) +
-    plan (G1, always on). All file-class tools and MCP / web_fetch
-    remain gated, so 15 total at the unconfigured baseline.
+    plan (G1, always on) + recall + drop_source (H1/H2, always on).
+    All file-class tools and MCP / web_fetch remain gated, so 17 total
+    at the unconfigured baseline (B17-S6-1 / B17-S8-2 fix adds H1+H2).
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 15, f"Expected 15 tools, got {len(tools)}"
+    assert len(tools) == 17, f"Expected 17 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -259,8 +264,9 @@ def test_mcp_tools_present_when_servers_configured():
 
 def test_total_tool_count_with_full_permissions():
     """Full file + MCP + web permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 + 1 plan G1 = 23
-    tools total."""
+    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 + 1 plan G1
+    + 2 RAG H1-H2 (recall + drop_source) = 25 tools total
+    (B17-S6-1 / B17-S8-2 fix adds H1+H2)."""
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,
@@ -268,7 +274,7 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 23, f"Expected 23 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 25, f"Expected 25 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
@@ -306,3 +312,58 @@ def test_nested_objects_max_depth_1_full_permissions():
             f"Tool '{fn['name']}' has nested object properties at depth "
             f"{max_depth} (max allowed: 1)"
         )
+
+
+# ── B17-S6-1 / B17-S8-2 fix: recall + drop_source wiring tests ───────────────
+
+
+def test_recall_in_build_tools():
+    """Tier 2: recall ToolDefinition is exposed in build_tools() for router LLM.
+
+    B17-S6-1 fix: RECALL was registered in ToolRegistry but missing from
+    build_tools(), so the LLM could not see or call it (S5/S6 blocked).
+    """
+    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tool_names = [t["function"]["name"] for t in tools]
+    assert "recall" in tool_names, (
+        f"'recall' missing from build_tools() output; got: {tool_names}"
+    )
+
+
+def test_drop_source_in_build_tools():
+    """Tier 2: drop_source ToolDefinition is exposed in build_tools() for router LLM.
+
+    B17-S8-2 fix: DROP_SOURCE was registered in ToolRegistry but missing from
+    build_tools(), so the LLM could not see or call it (S8 blocked).
+    """
+    tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
+    tool_names = [t["function"]["name"] for t in tools]
+    assert "drop_source" in tool_names, (
+        f"'drop_source' missing from build_tools() output; got: {tool_names}"
+    )
+
+
+def test_recall_in_dispatch_registry():
+    """Tier 2: recall is in RouterLoop._REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+
+    B17-S6-1 fix: without this, dispatch_tool would fall through to the
+    legacy if/elif tree and return {"error": "unhandled tool: recall"}.
+    _REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
+    """
+    from reyn.chat.router_loop import RouterLoop
+    assert "recall" in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
+        "'recall' missing from RouterLoop._REGISTRY_DISPATCH_TOOLS"
+    )
+
+
+def test_drop_source_in_dispatch_registry():
+    """Tier 2: drop_source is in RouterLoop._REGISTRY_DISPATCH_TOOLS for runtime dispatch.
+
+    B17-S8-2 fix: without this, dispatch_tool would fall through to the
+    legacy if/elif tree and return {"error": "unhandled tool: drop_source"}.
+    _REGISTRY_DISPATCH_TOOLS is a class attribute on RouterLoop.
+    """
+    from reyn.chat.router_loop import RouterLoop
+    assert "drop_source" in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
+        "'drop_source' missing from RouterLoop._REGISTRY_DISPATCH_TOOLS"
+    )

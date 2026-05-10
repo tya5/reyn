@@ -760,6 +760,13 @@ class RouterLoop:
         # cannot guarantee.
         "list_memory", "read_memory_body",
         "remember_shared", "remember_agent", "forget_memory",
+        # H1/H2: RAG tools (ADR-0033 Phase 1, B17-S6-1 / B17-S8-2 fix).
+        # Handlers in src/reyn/tools/recall.py and src/reyn/tools/drop_source.py
+        # delegate to op_runtime.recall / op_runtime.index_drop via execute_op.
+        # OpContext is constructed from ctx.router_state.op_context_factory
+        # (= host.make_router_op_context) so the permission resolver and
+        # intervention_bus are present for the index_drop gate.
+        "recall", "drop_source",
     })
 
     def _build_router_caller_state(self) -> Any:
