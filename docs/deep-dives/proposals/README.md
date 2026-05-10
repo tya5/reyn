@@ -70,3 +70,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — 統合ドキュメント検索スキル | done (ADR-0033 Accepted、 1e6f153) | LARGE |
 | [0003](0003-budget-exceed-user-approval.md) | budget 超過時のユーザー許諾・再開フロー | proposed | SMALL |
 | [0004](0004-safety-config-ux.md) | safety 設定 UX 改善 — 概念レイヤーとの整合 | proposed | MEDIUM |
+| [0005](0005-safety-as-checkpoint.md) | safety limit をチェックポイントとして扱う — Permission モデルとの統合 | proposed | LARGE |
