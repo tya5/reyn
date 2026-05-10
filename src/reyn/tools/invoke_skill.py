@@ -109,6 +109,15 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     applied here so a hallucinated skill name is rejected before the
     sub-skill task spawns.
 
+    FP-0012 chat-mode preference: when ``rs.spawn_skill_fn`` is
+    populated (= chat-mode RouterLoop, ChatSession host), prefer the
+    non-blocking spawn path. The handler returns the spawn-ack
+    ``{status: "spawned", run_id, chain_id, note}`` immediately and the
+    background task delivers completion via the ``skill_completed``
+    inbox kind. Plan-mode RouterLoops leave ``spawn_skill_fn=None`` so
+    plan steps keep blocking semantics (= step's LLM sees the actual
+    skill result and can synthesize the next step's input).
+
     Fallback (= phase-side dispatch / test sites): build a transient
     RunSkillIROp + minimal OpContext and call op_runtime.run_skill.handle
     directly.  PR14 chain semantics do not apply phase-side, so the
@@ -117,7 +126,9 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     rs = ctx.router_state
 
     # Router path — delegate via the populated callable (chain_id bound)
-    if rs is not None and rs.run_skill_fn is not None:
+    if rs is not None and (
+        rs.spawn_skill_fn is not None or rs.run_skill_fn is not None
+    ):
         # Defense Layer B: validate skill name against available_skills
         # so hallucinated names raise before spawning. Mirrors the
         # explicit check in the legacy RouterLoop branch (now removed).
@@ -129,6 +140,13 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
                     f"skill {skill_name!r} not found; "
                     f"available: {sorted(available)}"
                 )
+        # FP-0012: prefer non-blocking spawn when chat-mode binding is
+        # active. Plan-mode falls through to run_skill_fn (blocking).
+        if rs.spawn_skill_fn is not None:
+            return await rs.spawn_skill_fn(
+                skill=skill_name,
+                input=args["input"],
+            )
         return await rs.run_skill_fn(
             skill=skill_name,
             input=args["input"],

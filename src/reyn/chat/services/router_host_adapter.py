@@ -78,6 +78,10 @@ class RouterHostAdapter:
         Async callback ``(server: str, tool: str, args: dict) -> dict``.
     run_skill_awaitable:
         Async callback ``(*, skill: str, input: dict, chain_id: str) -> dict``.
+    spawn_skill:
+        Async callback ``(*, skill, input, chain_id) -> dict`` — FP-0012
+        non-blocking dispatch returning the spawn-ack
+        ``{status: "spawned", run_id, chain_id, note}`` immediately.
     send_to_agent:
         Async callback ``(*, to, request, depth, chain_id) -> None``.
     put_outbox:
@@ -126,6 +130,7 @@ class RouterHostAdapter:
         mcp_call_tool: Callable[..., Awaitable[dict]],
         # Action callbacks
         run_skill_awaitable: Callable[..., Awaitable[dict]],
+        spawn_skill: Callable[..., Awaitable[dict]],
         send_to_agent: Callable[..., Awaitable[None]],
         put_outbox: Callable[..., Awaitable[None]],
         append_history: Callable,
@@ -162,6 +167,7 @@ class RouterHostAdapter:
         self._mcp_call_tool_cb = mcp_call_tool
         # Action callbacks
         self._run_skill_awaitable_cb = run_skill_awaitable
+        self._spawn_skill_cb = spawn_skill
         self._send_to_agent_cb = send_to_agent
         self._put_outbox_cb = put_outbox
         self._append_history_cb = append_history
@@ -337,6 +343,18 @@ class RouterHostAdapter:
     async def run_skill_awaitable(self, *, skill: str, input: dict,
                                    chain_id: str) -> dict:
         return await self._run_skill_awaitable_cb(
+            {"skill": skill, "input": input}, chain_id=chain_id,
+        )
+
+    async def spawn_skill(self, *, skill: str, input: dict,
+                          chain_id: str) -> dict:
+        """FP-0012 non-blocking spawn — returns immediately with the
+        ``{status: "spawned", run_id, chain_id, note}`` ack. The skill
+        runs in the background; completion arrives via the
+        ``skill_completed`` inbox kind. See ``ChatSession.spawn_skill``
+        for the underlying implementation.
+        """
+        return await self._spawn_skill_cb(
             {"skill": skill, "input": input}, chain_id=chain_id,
         )
 

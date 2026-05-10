@@ -494,22 +494,48 @@ def build_system_prompt(
     parts.append(
         "  - (list_memory is available for hierarchical browsing if needed.)"
     )
-    # ── Post-invoke_skill narration (FP-0011) ──────────────────────────────────
-    # The dedicated `skill_narrator` skill was removed; the router LLM is now
-    # solely responsible for turning the invoke_skill result into a
-    # natural-language reply. The previous narrator covered the success path
-    # (the failure path was always the router's job) — this guidance unifies
-    # both, with an explicit anti-optimism rule for the error case observed in
-    # the 2026-05-10 G4 spike (= flash-tier router ignored `status="error"` and
-    # narrated success anyway when narrator was bypassed).
+    # ── invoke_skill: spawn-ack + completion narration (FP-0012) ───────────────
+    # Skills now run asynchronously in the background. invoke_skill returns
+    # ``{status: "spawned", run_id, chain_id, note}`` IMMEDIATELY (= the task
+    # is running but the result isn't here yet). When the skill finishes the
+    # OS injects a ``[task_completed]`` user message into the conversation
+    # carrying the structured result; that's the LLM's cue to narrate.
+    #
+    # The anti-optimism rule (originally FP-0011 Component B) is preserved on
+    # the completion side: errors MUST be surfaced verbatim, never narrated
+    # as success.
     parts.append(
-        "  - After invoke_skill returns: reply in 1-2 sentences summarising"
+        "  - When invoke_skill returns {status: \"spawned\", chain_id, run_id, note}:"
     )
     parts.append(
-        "    what the skill accomplished. Extract the user-relevant fields"
+        "    the skill is running in the background. Reply ONCE with a 1-sentence"
     )
     parts.append(
-        "    from `data` — do not echo the raw JSON. Status guidance:"
+        "    acknowledgment ('Started <skill> — I'll let you know when it finishes.')."
+    )
+    parts.append(
+        "    Mention /tasks if the user wants to inspect progress. Do NOT call"
+    )
+    parts.append(
+        "    invoke_skill again for the same request (it's already running)."
+    )
+    parts.append(
+        "    Do NOT ask follow-up questions about the in-flight task; wait for"
+    )
+    parts.append(
+        "    the [task_completed] message."
+    )
+    parts.append(
+        "  - When you see a user message starting with [task_completed]: a"
+    )
+    parts.append(
+        "    background skill finished. Read the `status` and `result` fields"
+    )
+    parts.append(
+        "    from that message and narrate in 1-2 sentences. Extract the"
+    )
+    parts.append(
+        "    user-relevant fields — do not echo the raw JSON. Status guidance:"
     )
     parts.append(
         '      * "finished"             — confirm completion; if applicable, hint at the next step.'
@@ -521,7 +547,7 @@ def build_system_prompt(
         "        with higher safety.loop.max_phase_visits."
     )
     parts.append(
-        '      * "error" / any non-"finished" status, OR `data.error` is present —'
+        '      * "error" / any non-"finished" status, OR result.error is present —'
     )
     parts.append(
         "        your reply MUST surface the specific error verbatim. Do NOT"

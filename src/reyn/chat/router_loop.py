@@ -200,6 +200,15 @@ class RouterLoopHost(Protocol):
     async def run_skill_awaitable(self, *, skill: str, input: dict,
                                    chain_id: str) -> dict: ...
 
+    # FP-0012: non-blocking skill dispatch. Chat-mode hosts return
+    # ``{status: "spawned", run_id, chain_id, note}`` immediately and
+    # deliver completion via the ``skill_completed`` inbox kind. Hosts
+    # that don't support spawn semantics (e.g. plan-mode steps) leave
+    # this method un-bound (= duck-typing / hasattr check) so the
+    # invoke_skill handler falls back to ``run_skill_awaitable``.
+    async def spawn_skill(self, *, skill: str, input: dict,
+                          chain_id: str) -> dict: ...
+
     async def send_to_agent(self, *, to: str, request: str, depth: int,
                             chain_id: str) -> None: ...
 
@@ -802,6 +811,20 @@ class RouterLoop:
                 skill=skill, input=input, chain_id=self.chain_id,
             )
 
+        # FP-0012: non-blocking spawn binding. Only chat-mode hosts
+        # implement ``spawn_skill``; plan-mode ``_PlanStepHost`` does not,
+        # so the hasattr check leaves this None and invoke_skill falls
+        # back to run_skill_fn (= blocking) inside plan steps.
+        _spawn_skill_bound: Any = None
+        if hasattr(self.host, "spawn_skill") and callable(
+            getattr(self.host, "spawn_skill", None)
+        ):
+            async def _spawn_skill_bound_impl(*, skill: str, input: dict) -> Any:
+                return await self.host.spawn_skill(
+                    skill=skill, input=input, chain_id=self.chain_id,
+                )
+            _spawn_skill_bound = _spawn_skill_bound_impl
+
         async def _dispatch_plan_bound(*, args: dict) -> Any:
             from reyn.chat.planner import dispatch_plan_tool
             return await dispatch_plan_tool(
@@ -826,8 +849,12 @@ class RouterLoop:
             dispatch_plan_tool=_dispatch_plan_bound,
             # Skill invocation bridge (= for invoke_skill handler;
             # Phase 3.5-B-light) — chain_id pre-bound to preserve PR14
-            # multi-hop chain semantics.
+            # multi-hop chain semantics. Plan-mode keeps using this for
+            # blocking step execution; chat-mode prefers spawn_skill_fn.
             run_skill_fn=_run_skill_bound,
+            # FP-0012: non-blocking spawn binding for chat-mode invoke_skill.
+            # None for plan-mode hosts (= no spawn_skill method on host).
+            spawn_skill_fn=_spawn_skill_bound,
             # Memory tool bridges (= for memory cluster handlers;
             # Phase 3.5-B-heavy) — bound to RouterLoop's private helpers
             # so registry handlers consume the same agent-aware

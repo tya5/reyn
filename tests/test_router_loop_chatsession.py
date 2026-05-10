@@ -116,39 +116,52 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: ChatSession→RouterLoop skill invocation — round 1 invokes skill, round 2 produces text reply in outbox. AsyncMock required for multi-round e2e path.
+    """Tier 1 framework boundary: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking), round 2 produces ack in outbox. AsyncMock required for multi-round e2e path.
 
-    Script: round 1 invoke_skill, round 2 text reply.
-    Mock skill execution via _run_skill_awaitable.
-    Assert skill ran and outbox has final text reply.
+    Post-FP-0012 contract: invoke_skill returns the spawn-ack
+    ``{status: "spawned", run_id, chain_id, note}`` synchronously and
+    the actual skill task runs in the background. The router LLM gets
+    the ack as tool_result and produces a 1-sentence acknowledgment.
+    Completion narration arrives later via the ``skill_completed``
+    inbox kind, which is exercised by
+    ``test_skill_completed_inbox_enqueued_on_finish`` in
+    test_session_invariants.py.
+
+    Script: round 1 invoke_skill (spawn), round 2 ack text.
+    Mock chat-mode dispatch via ``host.spawn_skill``.
+    Assert spawn fired and outbox has the ack text.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    skill_ran = {"called": False}
-
-    async def fake_run_skill_awaitable(spec, *, chain_id):
-        skill_ran["called"] = True
-        return {"status": "finished", "data": {"result": "done"}}
+    spawn_called = {"called": False}
 
     rounds = [
         _tool_result([{"name": "invoke_skill", "args": {
             "name": "some_skill",
             "input": {"type": "test", "data": {}},
         }}]),
-        _text_result("Skill complete."),
+        _text_result("Started some_skill — I'll let you know when it finishes."),
     ]
 
     async def run():
-        # patch on the adapter — RouterLoop calls host.run_skill_awaitable directly.
-        async def fake_adapter_run_skill(*, skill, input, chain_id):
-            skill_ran["called"] = True
-            return {"status": "finished", "data": {"result": "done"}}
+        # FP-0012: chat-mode invoke_skill goes through host.spawn_skill,
+        # which returns the spawn-ack dict synchronously. RouterLoop
+        # forwards it to the LLM as tool_result; the LLM acknowledges.
+        async def fake_adapter_spawn_skill(*, skill, input, chain_id):
+            spawn_called["called"] = True
+            return {
+                "status": "spawned",
+                "run_id": "20260510T000000Z_some_skill_aaaa",
+                "chain_id": chain_id,
+                "skill": skill,
+                "note": "Running in the background. I will notify you when it completes. Use /tasks to check progress.",
+            }
 
         with patch("reyn.chat.router_loop.call_llm_tools", new_callable=AsyncMock) as mock_llm, \
-             patch.object(session._router_host, "run_skill_awaitable",
-                          side_effect=fake_adapter_run_skill), \
+             patch.object(session._router_host, "spawn_skill",
+                          side_effect=fake_adapter_spawn_skill), \
              patch.object(session._router_host, "list_available_skills",
                           return_value=[{"name": "some_skill", "category": "general"}]):
             mock_llm.side_effect = rounds
@@ -156,11 +169,11 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
 
     _run(run())
 
-    assert skill_ran["called"], "Skill should have been invoked"
+    assert spawn_called["called"], "Skill should have been spawned"
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
     assert len(agent_msgs) == 1
-    assert agent_msgs[0].text == "Skill complete."
+    assert "Started some_skill" in agent_msgs[0].text
 
 
 # ---------------------------------------------------------------------------

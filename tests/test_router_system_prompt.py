@@ -552,19 +552,24 @@ class TestBehaviourRulesAfterF3F9Fix:
 
 
 class TestPostInvokeSkillNarrationGuidance:
-    """Tier 2: FP-0011 Component B — post-invoke_skill narration rules
-    are wired into the Behaviour section.
+    """Tier 2: FP-0011 Component B + FP-0012 Component C — invoke_skill
+    spawn-ack and completion-narration rules are wired into the Behaviour
+    section.
 
     Replaces the coverage previously provided by the narrator skill tests
-    (test_replay_narrator + test_narrator_drift). With skill_narrator
-    removed (FP-0011 Component A/C), the router LLM is solely responsible
-    for turning invoke_skill results into natural-language replies; the
-    SP must include explicit guidance and an anti-optimism rule for the
-    error case observed in the 2026-05-10 G4 spike.
+    (test_replay_narrator + test_narrator_drift). FP-0011 removed the
+    dedicated skill_narrator; FP-0012 then made invoke_skill non-blocking
+    so the router LLM now has TWO narration moments per skill run:
+
+    1. spawn ack — when invoke_skill returns ``{status: "spawned", ...}``,
+       the LLM acknowledges and tells the user about ``/tasks``.
+    2. completion narration — when a ``[task_completed]`` user message
+       arrives, the LLM extracts result fields and narrates in 1-2
+       sentences, with an anti-optimism rule for errors.
     """
 
-    def test_post_invoke_skill_guidance_present(self):
-        """Tier 2: SP includes 'After invoke_skill returns' narration block."""
+    def test_spawned_ack_guidance_present(self):
+        """Tier 2: SP teaches the LLM how to handle the spawn ack from invoke_skill (FP-0012)."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="assistant",
@@ -572,11 +577,26 @@ class TestPostInvokeSkillNarrationGuidance:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        # Trigger phrase that introduces the narration rule.
-        assert "After invoke_skill returns" in prompt, (
-            "FP-0011 Component B: SP must instruct the router LLM how to "
-            "narrate invoke_skill results inline (skill_narrator was removed)"
+        # The spawn-ack branch must reference the literal status the
+        # router sees so the LLM matches structurally.
+        assert '{status: "spawned"' in prompt
+        # The user-facing affordance for inspecting in-flight tasks.
+        assert "/tasks" in prompt
+        # Anti-double-dispatch guard — LLM must not call invoke_skill twice
+        # for the same request.
+        assert "Do NOT call" in prompt and "invoke_skill again" in prompt
+
+    def test_completion_narration_guidance_present(self):
+        """Tier 2: SP teaches the LLM how to handle the [task_completed] user message (FP-0012)."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("any_skill", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
         )
+        # The completion message header the LLM should match.
+        assert "[task_completed]" in prompt
         # 1-2 sentence target + extract-from-data signal.
         assert "1-2 sentences" in prompt
         assert "do not echo the raw JSON" in prompt
@@ -588,10 +608,10 @@ class TestPostInvokeSkillNarrationGuidance:
         """Tier 2: SP enforces anti-optimism — error status MUST be surfaced.
 
         The 2026-05-10 G4 spike observed the strong (flash) tier router
-        narrating success even when tool_result.status == "error" and
-        data.error was populated. Component B was strengthened beyond
-        the proposal draft to add an explicit MUST rule + verbatim-quote
-        directive. This test pins the structural contract.
+        narrating success even when status == "error" and a `result.error`
+        field was populated. The strengthened anti-optimism rule (FP-0011
+        Component B, retained verbatim under FP-0012 Component C) pins
+        the structural contract.
         """
         prompt = build_system_prompt(
             agent_name="chat",
@@ -602,7 +622,10 @@ class TestPostInvokeSkillNarrationGuidance:
         )
         # The error/non-finished branch must be present.
         assert '"error"' in prompt
-        assert "data.error" in prompt
+        # The result.error reference (= post-FP-0012 wording — completion
+        # message exposes the field as ``result.error`` in the [task_completed]
+        # block, vs FP-0011's ``data.error`` in the inline tool_result).
+        assert "result.error" in prompt
         # Imperative MUST + ban on success-narration.
         assert "MUST surface" in prompt
         assert "Do NOT" in prompt and "narrate as success" in prompt

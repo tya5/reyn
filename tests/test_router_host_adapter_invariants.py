@@ -75,6 +75,17 @@ async def _null_run_skill(spec, *, chain_id) -> dict:
     return {"status": "finished", "data": {}}
 
 
+async def _null_spawn_skill(spec, *, chain_id) -> dict:
+    """FP-0012: spawn-ack stub for adapter tests."""
+    return {
+        "status": "spawned",
+        "run_id": "test-run-id",
+        "chain_id": chain_id,
+        "skill": spec.get("skill", ""),
+        "note": "test stub",
+    }
+
+
 async def _null_send_to_agent(*, to, request, depth, chain_id) -> None:
     pass
 
@@ -145,6 +156,7 @@ def _make_adapter(
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
+        spawn_skill=_null_spawn_skill,
         send_to_agent=_null_send_to_agent,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,
@@ -269,6 +281,7 @@ def test_delegation_tracker_appended_on_send_to_agent(tmp_path):
         mcp_list_tools=_null_mcp_list_tools,
         mcp_call_tool=_null_mcp_call_tool,
         run_skill_awaitable=_null_run_skill,
+        spawn_skill=_null_spawn_skill,
         send_to_agent=fake_send,
         put_outbox=_null_put_outbox,
         append_history=_null_append_history,

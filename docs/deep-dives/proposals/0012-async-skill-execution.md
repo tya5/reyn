@@ -1,8 +1,40 @@
 # FP-0012: Async Skill/Agent/Plan Execution — Non-blocking Long-running Tasks
 
-**Status**: proposed
+**Status**: **LANDED 2026-05-10** (Components A+B+C+D+E in a single commit;
+chat-mode invoke_skill is now non-blocking, plan-mode keeps blocking
+semantics for sequential step execution).
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+## Landing notes (2026-05-10)
+
+Implemented per the proposal with these context-driven refinements:
+
+- **`run_skill_fn` retained alongside new `spawn_skill_fn`**: chat-mode
+  RouterLoops bind `spawn_skill_fn` (= non-blocking) and invoke_skill
+  prefers it; plan-mode RouterLoops bind only `run_skill_fn` (= blocking)
+  so per-step sequential synthesis still works. invoke_skill's `_handle`
+  picks spawn over run when both are wired (chat-mode); plan-mode falls
+  through to the blocking path.
+- **`_run_skill_awaitable` not deleted**: kept as the plan-mode blocking
+  call site. The FP-0011 contract test was reframed but not removed; a
+  new `test_spawn_skill_for_router_returns_spawn_ack` covers the chat
+  path.
+- **Anti-optimism rule preserved**: the FP-0011 Component B
+  strengthening (= MUST surface `data.error` / `result.error`
+  verbatim) is retained in the new Component C `[task_completed]`
+  narration block.
+- **No G4 spike**: 5-track pre-fix multi-agent context analysis was
+  used instead (memory `feedback_pre_fix_context_analysis.md` pattern,
+  batch 22 lift). Tracks 1-5 audited invoke_skill flow, inbox
+  architecture, dead-vs-live infra, chain_id correlation, and test
+  surface. Findings flipped the proposal's "infra is already there as
+  dead code" framing to "the dicts are LIVE; the actual gap is in
+  invoke_skill's handler + session.run() loop wiring".
+- **Follow-up dogfood**: N≥10 chat-mode session test recommended to
+  verify (a) router LLM produces sensible spawn-ack text on weak +
+  strong tier, (b) `[task_completed]` narration extracts the right
+  fields, (c) anti-optimism rule fires on synthesised error completions.
 
 ---
 

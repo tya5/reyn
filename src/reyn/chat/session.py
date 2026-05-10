@@ -710,6 +710,7 @@ class ChatSession:
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
             run_skill_awaitable=self._run_skill_awaitable,
+            spawn_skill=self._spawn_skill_for_router,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -909,6 +910,11 @@ class ChatSession:
                     await self._handle_agent_request(payload)
                 elif kind == "agent_response":
                     await self._handle_agent_response(payload)
+                elif kind == "skill_completed":
+                    # FP-0012: a background-spawned skill finished. Inject a
+                    # user-role completion message into the existing thread
+                    # and run one router LLM turn for narration.
+                    await self._handle_skill_completed(payload)
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
@@ -2168,6 +2174,82 @@ class ChatSession:
             ))
             return
 
+    async def _handle_skill_completed(self, payload: dict) -> None:
+        """FP-0012: drive narration of a background-spawned skill's completion.
+
+        Called from ``run()`` when a ``skill_completed`` inbox message
+        arrives (= enqueued by ``_run_one_skill`` on terminal status).
+        Injects a synthesized ``user``-role message into the existing
+        conversation thread carrying the structured completion data,
+        then runs one router LLM turn so the LLM extracts user-relevant
+        fields and produces a 1-2 sentence narration.
+
+        The user-role injection is the only currently-supported way to
+        re-engage the router LLM mid-conversation: tool_result messages
+        require a paired ``tool_use`` block that has already been
+        consumed (the spawn-ack), so a second tool_result for the same
+        invocation isn't valid per OpenAI / Anthropic API rules.
+
+        ``meta.source="skill_completion"`` distinguishes this from a
+        genuine user-typed message in audit / replay paths; the LLM
+        sees the text content but not the meta envelope.
+        """
+        run_id = payload.get("run_id", "")
+        skill_name = payload.get("skill", "")
+        status = payload.get("status") or "finished"
+        chain_id_raw = payload.get("chain_id") or ""
+        chain_id = chain_id_raw or _new_chain_id()
+        data = payload.get("data") or {}
+
+        # Build the user-role message text. Use a stable header so the
+        # router SP's completion-narration rule (Component C) can match
+        # on `[task_completed]` reliably. JSON-encode `data` so the LLM
+        # sees the actual fields (= avoids lossy string coercion).
+        try:
+            data_str = json.dumps(data, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            data_str = repr(data)
+        injected_text = (
+            f"[task_completed] chain_id={chain_id} run_id={run_id}\n"
+            f"skill: {skill_name}  status: {status}\n"
+            f"result: {data_str}\n\n"
+            "Please summarize what completed for the user in 1-2 sentences "
+            "per the post-invoke_skill narration rules in your instructions."
+        )
+
+        self._append_history(ChatMessage(
+            role="user", text=injected_text, ts=_now_iso(),
+            meta={
+                "source": "skill_completion",
+                "skill": skill_name,
+                "run_id": run_id,
+                "status": status,
+                "chain_id": chain_id,
+            },
+        ))
+        self._chat_events.emit(
+            "skill_completion_injected",
+            run_id=run_id, skill=skill_name, status=status, chain_id=chain_id,
+        )
+
+        # Reset the per-turn router cap counter — completion narration is a
+        # fresh turn boundary from the user's perspective (a new outbox reply
+        # will be produced).
+        self._reset_router_turn_counter()
+
+        try:
+            await self._run_router_loop(injected_text, chain_id)
+        except RouterCapExceeded as exc:
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            return
+        except Exception as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"router failed (skill_completed): {exc}",
+                meta={"chain_id": chain_id, "skill": skill_name, "run_id": run_id},
+            ))
+            return
+
     async def _resolve_pending_chain(
         self, pending: "_PendingChain", *, from_agent: str, last_response: str = "",
     ) -> None:
@@ -2429,36 +2511,6 @@ class ChatSession:
                 text=f"chain peer discarded: failed to notify upstream: {exc}",
                 meta={"chain_id": chain_id},
             ))
-
-    async def _dispatch_routing_decision_for_user(
-        self, decision: dict, *, chain_id: str, depth: int,
-    ) -> None:
-        """Common user-facing tail of `_handle_user_message` / agent_response
-        when chain_id has no pending entry. Pushes reply_text to the user
-        outbox + history, spawns any skills, and forwards delegations on
-        the same chain (depth+1)."""
-        reply_text = (decision.get("reply_text") or "").strip()
-        skills_to_run = decision.get("skills_to_run") or []
-        messages_to_agents = decision.get("messages_to_agents") or []
-
-        if reply_text:
-            await self._put_outbox(OutboxMessage(
-                kind="agent", text=reply_text, meta={"chain_id": chain_id},
-            ))
-            self._append_history(ChatMessage(
-                role="agent", text=reply_text, ts=_now_iso(),
-                meta={"chain_id": chain_id},
-            ))
-        for spec in skills_to_run:
-            await self._spawn_skill(spec, chain_id=chain_id)
-        for msg in messages_to_agents:
-            to = (msg.get("to") or "").strip()
-            request = (msg.get("request") or "").strip()
-            if to and request:
-                await self._send_to_agent(
-                    to=to, request=request,
-                    depth=depth + 1, chain_id=chain_id,
-                )
 
     # ── slash command dispatch ──────────────────────────────────────────────────
 
@@ -2727,6 +2779,65 @@ class ChatSession:
 
     # ── skill spawn ─────────────────────────────────────────────────────────────
 
+    async def _spawn_skill_for_router(
+        self, spec: dict, *, chain_id: str
+    ) -> dict:
+        """FP-0012 non-blocking router-side spawn entry point.
+
+        Wrapper over ``_spawn_skill`` that returns the spawn-ack dict
+        the LLM consumes via ``invoke_skill``'s tool_result. The actual
+        skill task is created by ``_spawn_skill`` (which already does
+        ``asyncio.create_task`` + populates ``running_skills`` /
+        ``running_skills_started_at`` / ``running_skills_chain``); we
+        capture the run_id assigned during spawn by snapshotting the
+        ``running_skills`` dict before / after the call.
+
+        Refusals (= allowlist deny / budget hard-cap) are surfaced as
+        ``{"status": "error", "data": {"error": ...}}`` so the router
+        LLM narrates them per the SP's anti-optimism rule (FP-0011
+        Component B). The ack shape is contract-stable:
+
+            {"status": "spawned", "run_id": "...",
+             "chain_id": "...",   "note": "..."}
+        """
+        before = set(self.running_skills.keys())
+        await self._spawn_skill(spec, chain_id=chain_id)
+        after = set(self.running_skills.keys())
+        new_run_ids = after - before
+        if not new_run_ids:
+            # _spawn_skill returned without creating a task (= refused
+            # by allowlist / budget gate / invalid spec). The session
+            # already surfaced an error outbox message; mirror it as
+            # tool_result so the router LLM narrates the refusal text.
+            return {
+                "status": "error",
+                "data": {
+                    "error": (
+                        f"skill {spec.get('skill')!r} could not be spawned "
+                        f"(see prior outbox message for the specific reason)"
+                    ),
+                    "skill": spec.get("skill"),
+                },
+            }
+        # In the rare case multiple tasks landed concurrently, pick the
+        # one matching the requested skill name.
+        run_id = next(iter(new_run_ids))
+        for rid in new_run_ids:
+            if rid.split("_", 2)[1:2] == [str(spec.get("skill"))]:
+                run_id = rid
+                break
+        return {
+            "status": "spawned",
+            "run_id": run_id,
+            "chain_id": chain_id,
+            "skill": spec.get("skill"),
+            "note": (
+                "Running in the background. "
+                "I will notify you when it completes. "
+                "Use /tasks to check progress."
+            ),
+        }
+
     async def _spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
@@ -2875,6 +2986,10 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"skill not found: {skill_name}", meta=meta,
             ))
+            await self._enqueue_skill_completed(
+                run_id=run_id, skill=skill_name, chain_id=chain_id,
+                status="error", data={"error": f"skill not found: {skill_name}"},
+            )
             return
         try:
             skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
@@ -2887,6 +3002,10 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
             ))
+            await self._enqueue_skill_completed(
+                run_id=run_id, skill=skill_name, chain_id=chain_id,
+                status="error", data={"error": f"failed to load {skill_name}: {exc}"},
+            )
             return
 
         from reyn.chat.forwarder import ChatEventForwarder
@@ -2907,12 +3026,20 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(
                 kind="status", text="cancelled", meta=meta,
             ))
+            # FP-0012: do NOT enqueue skill_completed for cancellation — the
+            # cancelling code path (e.g. /skill discard, shutdown drain)
+            # owns the user-facing notification + cross-agent chain notify
+            # via R-D14. Re-raise so asyncio task done-callback propagates.
             raise
         except Exception as exc:
             self._chat_events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed: {exc}", meta=meta,
             ))
+            await self._enqueue_skill_completed(
+                run_id=run_id, skill=skill_name, chain_id=chain_id,
+                status="error", data={"error": str(exc)},
+            )
             return
 
         # PR22: surface budget_exceeded result as a user-facing error.
@@ -2927,6 +3054,11 @@ class ChatSession:
                 text=result.error or "budget exceeded",
                 meta=meta,
             ))
+            await self._enqueue_skill_completed(
+                run_id=run_id, skill=skill_name, chain_id=chain_id,
+                status="budget_exceeded",
+                data={"error": result.error or "budget exceeded"},
+            )
             return
 
         self._accumulate(result)
@@ -2934,10 +3066,53 @@ class ChatSession:
             "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
         )
 
-        # FP-0011: skill_narrator removed — the router LLM narrates the result
-        # inline on its post-tool turn (see router_system_prompt.py post-
-        # invoke_skill guidance). The tool result {"status", "data"} flows back
-        # to the router loop unchanged; the LLM extracts user-relevant fields.
+        # FP-0012: enqueue completion message into inbox so the chat router
+        # picks it up on the next ``run()`` iteration. The handler injects
+        # a user-role message into the existing conversation thread and
+        # runs one router LLM turn for narration (= replaces the synchronous
+        # tool_result narration of FP-0011). The router LLM has full thread
+        # context (= original spawn ack + intermediate exchanges + completion)
+        # so it can correlate via ``chain_id`` and narrate accurately.
+        await self._enqueue_skill_completed(
+            run_id=run_id, skill=skill_name, chain_id=chain_id,
+            status=result.status or "finished",
+            data=result.data or {},
+        )
+
+    async def _enqueue_skill_completed(
+        self,
+        *,
+        run_id: str,
+        skill: str,
+        chain_id: str | None,
+        status: str,
+        data: dict,
+    ) -> None:
+        """FP-0012: enqueue a ``skill_completed`` inbox message so the
+        chat ``run()`` loop picks up the completion on its next iteration.
+
+        Bounded by a try/except — if the session is shutting down (= journal
+        closed) we swallow the error and rely on the outbox already-emitted
+        status/error message for user visibility. The skill_run_completed /
+        skill_run_failed event was emitted by the caller; that's the audit
+        truth (P6). The inbox message is just the narration trigger.
+        """
+        try:
+            await self._put_inbox(
+                "skill_completed",
+                {
+                    "run_id": run_id,
+                    "skill": skill,
+                    "chain_id": chain_id or "",
+                    "status": status,
+                    "data": data,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "skill_completed inbox enqueue failed for run_id=%s skill=%s: %s",
+                run_id, skill, exc,
+            )
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on ChatSession because the
