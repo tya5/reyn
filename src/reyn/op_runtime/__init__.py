@@ -107,6 +107,7 @@ from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import run_skill as _run_skill  # noqa: F401, E402
+from . import sandboxed_exec as _sandboxed_exec  # noqa: F401, E402
 from . import shell as _shell  # noqa: F401, E402
 from . import web as _web  # noqa: F401, E402
 

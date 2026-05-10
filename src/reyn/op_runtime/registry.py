@@ -65,6 +65,7 @@ from reyn.schemas.models import (
     MCPIROp,
     RecallIROp,
     RunSkillIROp,
+    SandboxedExecIROp,
     ShellIROp,
     WebFetchIROp,
     WebSearchIROp,
@@ -122,6 +123,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "index_query": IndexQueryIROp,
     "recall":      RecallIROp,
     "index_drop":  IndexDropIROp,
+    # FP-0017: sandboxed_exec — argv under SandboxPolicy via SandboxBackend.
+    "sandboxed_exec": SandboxedExecIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -165,6 +168,8 @@ OP_PURITY: dict[str, OpPurity] = {
     "recall":      OpPurity.external,
     # - index_drop: deletes backend collection + manifest entry.
     "index_drop":  OpPurity.side_effect,
+    # FP-0017: sandboxed_exec — same external side-effect class as shell.
+    "sandboxed_exec": OpPurity.external,
 }
 
 

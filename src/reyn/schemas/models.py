@@ -250,6 +250,28 @@ class ShellIROp(BaseModel):
     timeout: int = 120        # seconds
 
 
+class SandboxedExecIROp(BaseModel):
+    """Execute a command under a SandboxPolicy (FP-0017).
+
+    Unlike ShellIROp (= raw `subprocess.run`, deprecated by FP-0017), this op
+    routes through a SandboxBackend that enforces the declared policy. The
+    OS selects the backend per platform; today the default is NoopBackend
+    (= no enforcement). Future waves add SeatbeltBackend (macOS) and
+    LandlockBackend (Linux).
+
+    Policy fields mirror `reyn.sandbox.policy.SandboxPolicy` (= the dataclass
+    the backend ultimately receives).
+    """
+    kind: Literal["sandboxed_exec"]
+    argv: list[str]                                      # command + args; argv[0] is the executable
+    network: bool = False                                # allow outbound network
+    read_paths: list[str] = Field(default_factory=list)  # readable filesystem paths
+    write_paths: list[str] = Field(default_factory=list) # writable filesystem paths
+    allow_subprocess: bool = False                       # may spawn children
+    env_passthrough: list[str] = Field(default_factory=list)  # env-var allowlist
+    timeout_seconds: int = 60                            # wall-clock cap
+
+
 class LintIROp(BaseModel):
     kind: Literal["lint"]
     skill_path: str            # workspace-relative path to the skill directory (e.g. "reyn/local/my_skill")
@@ -419,6 +441,7 @@ ControlIROp = Annotated[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
+        SandboxedExecIROp,
     ],
     Field(discriminator="kind"),
 ]

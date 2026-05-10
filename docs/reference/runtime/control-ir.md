@@ -16,7 +16,8 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `ask_user` | Pause the phase and ask the user a question | none (always allowed) |
 | `run_skill` | Run another skill as a sub-workflow | none (skill-level decision) |
 | `lint` | Run the DSL linter on a skill directory | none |
-| `shell` | Run a shell command | `shell` (off by default; needs `--allow-shell`) |
+| `shell` | Run a shell command (**deprecated** — use `sandboxed_exec`, FP-0017) | `shell` (off by default; needs `--allow-shell`) |
+| `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (FP-0017) | enforced by backend (`SandboxPolicy`) |
 | `web_search` | Search the public web via DuckDuckGo | none (always allowed) |
 | `web_fetch` | Fetch a single URL and return extracted text | `web.fetch: allow` in `reyn.yaml` |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
@@ -108,6 +109,38 @@ Executes a shell command. **Off by default.** The runtime must be started with `
 ```
 
 If shell is denied, the OS emits `shell_not_allowed` and returns a denial result rather than failing the phase.
+
+**Deprecated by FP-0017.** Will be removed in 1.0. Use `sandboxed_exec` (below) — it routes through a `SandboxBackend` that enforces the declared `SandboxPolicy`. A `DeprecationWarning` is emitted on first `shell` invocation per skill.
+
+## `sandboxed_exec`
+
+Executes `argv` under a declared `SandboxPolicy` via the OS's selected `SandboxBackend` (FP-0017). Replaces `shell` for cases that need (or will need, once `SeatbeltBackend` / `LandlockBackend` land) real isolation enforcement.
+
+```json
+{
+  "kind": "sandboxed_exec",
+  "argv": ["echo", "hello"],
+  "network": false,
+  "read_paths": ["{{workspace}}"],
+  "write_paths": ["{{workspace}}/output"],
+  "allow_subprocess": false,
+  "env_passthrough": ["PATH"],
+  "timeout_seconds": 60
+}
+```
+
+Fields:
+- `argv` (required) — command + arguments. `argv[0]` is the executable.
+- `network` (optional, default `false`) — allow outbound network.
+- `read_paths` (optional) — filesystem paths the process may read (glob patterns OK).
+- `write_paths` (optional) — filesystem paths the process may write.
+- `allow_subprocess` (optional, default `false`) — may spawn children.
+- `env_passthrough` (optional) — env-var names that pass through (others are stripped).
+- `timeout_seconds` (optional, default `60`) — wall-clock cap.
+
+Backend selection is OS-internal. Today the default is `NoopBackend` (= no enforcement; emits a one-time WARN). Future waves add `SeatbeltBackend` (macOS) and `LandlockBackend` (Linux). Result fields: `returncode`, `stdout`, `stderr`, `truncated`, `backend`.
+
+Events emitted: `sandboxed_exec_started`, `sandboxed_exec_completed` (P6 audit trail).
 
 ## `web_search`
 
