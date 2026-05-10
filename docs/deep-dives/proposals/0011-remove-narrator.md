@@ -1,12 +1,19 @@
 # FP-0011: Remove `skill_narrator` — Let the Router LLM Narrate Skill Results
 
-**Status**: spike-validated, **land with caveat for flash strong tier**
+**Status**: **spike-validated, land-recommended (= net quality improvement)**
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
-**Spike validated**: 2026-05-10 — see `docs/deep-dives/journal/dogfood/2026-05-10-fp-0011-narrator-removal-spike.md`. Events-audited 18 runs (= 2 scenarios × 3 conditions × N=3) yields 17/18 truthful narration (= 94%), with the single hallucination in the flash strong tier (= router LLM with narrator-off saw `tool_returned.result.status="error"` directly but narrated success). Conclusions:
-1. flash-lite default user → narrator removal is **0% regression** (= 6/6 truthful)
-2. flash strong tier → 1/6 hallucination (= 95% CI 0-46%, N=6 directional only). Recommend Component B SP guidance strengthening (= explicit anti-optimism rule on `status="error"` / `data.error` field) before marketing FP-0011 for flash users.
-3. Driver findings during spike yielded 7 infra bugs + 1 architectural finding (= `R-PURE-MODE-REDEFINE` residual added to plan file).
+**Spike validated**: 2026-05-10 — see `docs/deep-dives/journal/dogfood/2026-05-10-fp-0011-narrator-removal-spike.md`. Three stages of context analysis flipped the spike framing from "regression" to "net quality improvement":
+
+1. **narrator only fires on success path** (= 2/18 spike runs invoked narrator; failure-path narration has always been the router LLM's job). FP-0011 affects only the success-path narration, not failure-path.
+2. **narrator hallucinates skill names** (= shot 1 narrator said "image_captioning, 4 files"; tool_result said "string_length"; router-narration correctly said string_length). narrator is not a trustworthy ground-truth source.
+3. **router LLM uses tool_result as ground truth + overrides narrator's output** in the user-visible reply. Removing narrator eliminates one (unreliable) parallel output without losing quality.
+
+Events-audited 18 runs yield 17/18 truthful (= 94%); the single hallucination (= narr-3 SE shot 2) occurred when router (flash) ignored `tool_result.status="error"` — unrelated to narrator removal.
+
+**Recommendation**: land Components A + B + C + D + E as proposed. Component B SP guidance should be **tightened beyond the draft** to add explicit anti-optimism rule for `status="error"` / `data.error` field (= prevents the observed flash strong-tier failure-mode). N≥10 retest on flash strong tier post-strengthen recommended to confirm hallucination rate drops to ~0.
+
+Driver findings during spike yielded 7 infra bugs + 1 architectural follow-up (= `R-PURE-MODE-REDEFINE` residual in plan file).
 
 ---
 

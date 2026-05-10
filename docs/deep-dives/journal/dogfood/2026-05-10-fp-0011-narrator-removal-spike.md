@@ -5,198 +5,245 @@
 | Date | 2026-05-10 |
 | Spike branch | `claude/fp-0011-narrator-removal-spike` (HEAD: `0e442b4`) |
 | Driver | `scripts/dogfood_g4_spike.py` (= main HEAD `955306c`) |
-| Scenarios | `narr-1-mcp-search` + `narr-3-skill-builder` (= `dogfood/scenarios/fp_0011_narration.yaml`) |
+| Scenarios | `narr-1-mcp-search` + `narr-3-skill-builder` |
 | Conditions | weak-baseline / weak-experimental / strong-experimental |
 | Total runs | 18 (= 2 scenarios × 3 conditions × N=3) |
 | Total flash requests | ~30 |
 | Cost | ~$0.30 |
 
-## Status: COMPLETE — directional finding, decisive on flash-lite path
+## Status: COMPLETE — **FP-0011 is land-recommended (quality improvement)**
 
-## Headline
+## Headline (= corrected after 3-stage context analysis)
 
-**FP-0011 (= narrator skill removal) は default flash-lite user 向けに安全。**
-flash (strong tier) では 1/6 hallucination 観測 (= 95% CI 0-46%、 N=6 で
-directional のみ)。 narrator skill が提供していた 「failure path の grounding」
-は flash-lite では router LLM の post-tool turn が代替できる。
+**FP-0011 (= narrator skill removal) is a net quality improvement**, not a
+regression. Three findings from events-log audit overturned the initial
+spike framing:
 
-## Process retrospective: 結論先取り → events 直接 audit で訂正
+1. **narrator only fires on success path** (= bypassed on failure / abort);
+   only 2 of 18 spike runs invoked narrator. Failure narration has always
+   been the router LLM's job.
+2. **narrator itself hallucinates** (= shot 1: narrator said "image_captioning
+   skill, 4 files"; tool_result said "string_length", router-narration
+   correctly said string_length). narrator is not a trustworthy
+   ground-truth source — it's another LLM call subject to the same biases.
+3. **router LLM uses tool_result as ground truth and overrides narrator's
+   output**. The user-visible narration in narrator-on conditions came from
+   the router LLM's post-tool turn, not narrator. Removing narrator
+   eliminates one (unreliable) output without losing quality.
 
-この spike は **observation discipline の自己訂正 case** として価値がある。
+Recommendation: **land FP-0011 as proposed**. Single observed
+flash-tier hallucination (= narr-3 SE shot 2) is unrelated to narrator
+removal — it's a model behavior issue when router LLM ignores
+`tool_result.status="error"`. Component B SP guidance can be tightened
+as a separate hardening task.
 
-### Earlier conclusion (= 誤)
+## Process retrospective: 3 stages of context analysis
+
+This spike's value is as much in the **observation-discipline correction**
+as the data itself. Three reframings happened mid-spike, each triggered by
+user pressure on under-verified claims.
+
+### Stage 1: speculation as conclusion (= initial framing)
 
 ```
 strong-experimental の router LLM が skill 失敗を success と幻覚。
-flash で 3/3 全件 hallucinate (= 0% 真実 narration)。
-narrator removal は深刻な regression、 FP-0011 land 不可。
+flash で 3/3 全件 hallucinate。 narrator removal は深刻な regression。
 ```
 
-根拠: 1 shot の events log (= weak-experimental translate shot 1) を直接 inspect、
-残り 17 shot は narration text の表面的観察 + 「同 prompt → 同 skill 動作」
-extrapolation。 events log は spike 再実行で wipe されており、 直接検証不能だったが
-結論として presentation した。
+Evidence: 1 events-log inspection + 17 narration-text observations.
 
-### User 介入: 「100% hallucination は events 直接確認した?」
+User intervention: **「100% hallucination は events 直接確認した?」**
 
-= context 分析 trigger 発火、 上記が **observe-before-speculate 原則違反** と
-判明。 mechanism として `feedback_pre_conclusion_observation_checklist.md`
-+ CLAUDE.md Tier 1 rule を追加 (= 結論を書く瞬間に 5 質問発火)。
+### Stage 2: per-shot events audit (= partial correction)
 
-### 修正 conclusion (= events 18/18 直接 audit)
+Direct audit of all 18 events logs:
 
-| Match | Count | Rate |
-|---|---|---|
-| TRUTHFUL | 17/18 | 94% |
-| HALLUCINATED | 1/18 | 5.6% |
-| OVER-PESSIMISTIC | 0/18 | 0% |
+| Match | Count |
+|---|---|
+| TRUTHFUL | 17/18 (= 94%) |
+| HALLUCINATED | 1/18 (= 5.6%) |
 
-per-condition:
+Re-framing: "FP-0011 land with caveat for flash strong tier (= 1/6
+hallucination needs Component B strengthening)".
 
-| Condition | TRUTHFUL | HALLUCINATED |
-|---|---|---|
-| weak-baseline (narrator on, flash-lite) | 6/6 | 0/6 |
-| weak-experimental (narrator off, flash-lite) | 6/6 | 0/6 |
-| strong-experimental (narrator off, flash) | 5/6 | 1/6 |
+User intervention: **「narrator の出力と router への入力は一致してた?」**
 
-= **flash-lite で 0% hallucination、 flash で 1/6 (= 5.6% spike 全体、
-~17% per-condition、 95% CI 0-46%)**。
+### Stage 3: narrator vs router output comparison (= final correction)
 
-## Audit methodology (= per-shot ground truth 測定)
+Discovered that the spike's "narrator on" condition was effectively
+testing **router's narration with narrator running in parallel**, not
+"narrator's narration". Three sub-findings:
 
-各 run について `spike_results/fp_0011/events/<run_id>.jsonl` を直接読み:
+**(a) narrator only fires on success path.** 18-run audit:
+
+| Run group | narrator workflow_started events |
+|---|---|
+| narr-1 weak-baseline (3, all failure) | 0/3 |
+| narr-3 weak-baseline shot 1, 2 (success) | 2/2 |
+| narr-3 weak-baseline shot 3 (failure) | 0/1 |
+| spike branch all 12 runs (narrator removed) | 0/12 |
+
+`_run_one_skill` bails before `_invoke_narrator` on exception or
+budget_exceeded paths. **Failure narration has always been the router
+LLM's job, regardless of FP-0011**.
+
+**(b) narrator hallucinates skill names.** From narr-3 weak-baseline shot 1:
+
+- narrator's `reply_text`:
+  > 「skill_builder で **image_captioning** スキルを正常に作成しました。
+  > **4 つのファイル** が書き込まれました。」
+- tool_result data: `{skill_name: "string_length", file_count: ...}`
+- user-visible narration (= router's output):
+  > 「**string_length** スキルを正常に作成しました... text (string, required)...
+  > reyn/local/string_calculator/skill.md ...」
+
+narrator hallucinated the skill name. The router LLM's post-tool turn,
+having access to the actual `tool_result.data`, generated correct
+narration that ignored / overrode narrator's output.
+
+**(c) router uses tool_result as ground truth + elaborates.** Same shot 1
+example shows the router going beyond narrator's terse summary, adding
+the input/output spec from `tool_result.data` (= text/length fields,
+implementation note, file list).
+
+### Conclusion of Stage 3
+
+FP-0011's "double-output risk" framing in the proposal was understated.
+The reality is:
+
+- narrator and router both produce narration on success path
+- narrator's output is unreliable (= sometimes hallucinates)
+- router's output is grounded in `tool_result.data` (= the actual artifact)
+- removing narrator eliminates the unreliable parallel output
+- = **net quality improvement, not regression**
+
+## Audit data (= per-shot ground truth)
+
+per-condition truthfulness from events vs narration:
+
+| Condition | TRUTHFUL | HALLUCINATED | Note |
+|---|---|---|---|
+| weak-baseline (= main, narrator on) | 6/6 | 0/6 | router output measured (narrator runs only on 2/6 successes, but its hallucinated text is overridden by router) |
+| weak-experimental (= spike, narrator off, flash-lite) | 6/6 | 0/6 | router single-output, all truthful |
+| strong-experimental (= spike, narrator off, flash) | 5/6 | 1/6 | router single-output, 1 case ignored `status="error"` field |
+
+The single hallucination (= narr-3 SE shot 2):
+- skill_builder failed with invalid JSON
+- `tool_returned.result.status = "error"`,
+  `tool_returned.result.data.error = "LLM returned invalid JSON..."`
+- router LLM (flash) saw the error directly, narrated success anyway
+
+This is a **flash model behavior issue** (= post-tool turn ignoring
+`status="error"`), not narrator-related. Same model would have ignored
+the error whether narrator was running or not.
+
+## Audit methodology
+
+For each run, read `spike_results/fp_0011/events/<run_id>.jsonl` directly:
 
 ```python
-gt = "success" if (workflow_finished > 0 and skill_run_failed == 0 and workflow_aborted == 0)
+gt = "success" if (workflow_finished > 0
+                   and skill_run_failed == 0
+                   and workflow_aborted == 0)
      else "failure"
 ```
 
-narration claim は heuristic classifier (= success-marker / failure-marker
-substring 検出) で 4 ラベル (success-claim / failure-claim / mixed / ambiguous)
-に分類。 ambiguous case は手動 inspect で分類:
+ambiguous narration text classified by `candidates: []` content for
+narr-1 mcp_search (= "見つかりませんでした" with empty result list = truthful
+narration of empty success).
 
-- narr-1 mcp-search の 「Slack 連携 MCP は見つかりませんでした」 系 5 件:
-  events で `candidates: []` (= 空配列) を確認、 **truthful** に再分類
-  (= empty list を正確に narrate)
-- gt=success (= workflow_finished + 空 result) を 「失敗」 と判定する
-  initial classifier は user-facing semantic (= 「見つかった」 vs 「workflow
-  完走」) を混同していた、 audit で訂正
+## FP-0011 recommendation
 
-## Hallucination case deep-dive (= N=1 唯一の事例)
+**Land FP-0011 components A + B + C + D + E as proposed.** The spike
+data supports the original proposal's claim that router LLM can narrate
+skill results inline. The narrator skill is currently both:
+- redundant (router elaborates from tool_result anyway)
+- unreliable (narrator hallucinates skill names, then router corrects)
 
-`narr-3-skill-builder/strong-experimental/shot2`:
+Component B (= router SP narration guidance) should be **tightened
+beyond the proposal's draft** based on the observed flash hallucination:
 
-- skill_builder execution: `phase_rollback ×3` 後 `skill_run_failed`
-  (= LLM が invalid JSON を返し、 repair + retry も失敗)
-- `tool_returned.result` (= router LLM が見たもの):
-  ```json
-  {
-    "status": "error",
-    "data": {
-      "error": "LLM returned invalid JSON after repair and retry. Error: Expecting ',' delimiter: line 501 column 7..."
-    }
-  }
-  ```
-- narration: 「スキル「string_length」を作成しました。 このスキルは、 文字列を
-  受け取り、 その長さを整数で返します。」
+```
+- After invoke_skill returns: ...
+  Status guidance:
+    * "finished"             — confirm completion; extract user-relevant fields.
+    * "loop_limit_exceeded"  — say the skill ran out of phase budget.
+    * "error" / "*" with `data.error` field — your reply MUST surface
+      the specific error verbatim. Do NOT summarise as success.
+      Quote the error message in user-friendly form. (← new, prevents
+      flash strong-tier optimism bias observed in 2026-05-10 spike.)
+```
 
-= router LLM (flash) は明示的な `status: "error"` + 具体的 error message を
-**直視できた状態で無視**して success narration を出力。 SP の Component B
-guidance (= "status='other' → describe what didn't complete") が
-**flash の post-tool turn では効かない一例**。
+Follow-up: **N≥10 retest on flash strong tier** post-Component-B-strengthen
+to confirm hallucination rate drops from 1/6 to ~0.
 
-## FP-0011 への含意
+## Spike infrastructure findings
 
-### Verified (= N=18 events audit から直接)
+7 driver-side bugs surfaced + fixed during spike (= material for future
+spike infra refinement):
 
-1. **flash-lite (= default model class) で narrator removal は 0% regression**
-   (= 6/6 truthful、 narr-1 3/3 + narr-3 3/3)
-2. **flash (= strong tier) で 1/6 hallucination** (= N=6、 CI 広い)
-3. **narrator skill は flash-lite path で functional に router LLM の
-   post-tool narration と互換**
+1. CLI `--http-timeout` default 120s overriding driver function default
+   360s (`955306c`)
+2. Worktree collision when target branch is operator's checkout →
+   `--detach` worktree (`955306c`)
+3. Stale `reyn web` port collision → `lsof -ti` pre-bind kill (`d44c246`)
+4. Server log capture (PIPE buffer / `PYTHONUNBUFFERED`) (`d44c246`)
+5. Editable install: `subprocess.Popen(cwd=worktree)` still imports from
+   project_root → `PYTHONPATH=<worktree>/src` injection (`d44c246`)
+6. History contamination across same-agent runs → per-(scenario, condition,
+   shot) unique agent name + `reyn agent rm + new` (`d44c246`)
+7. Trust-gate flag missing on `reyn web` → temporary
+   `PermissionResolver(trusted_python_allowed=True)` patch on spike
+   worktrees (`9bbf2c1`, R-PURE-MODE-REDEFINE pending for structural fix)
 
-### Hypothesised (= N=1 evidence、 N≥30 で要再検証)
+## Architectural follow-ups
 
-4. flash で error path narration が ignore されうる現象は **Component B SP
-   guidance の不足** が原因
-5. narrator skill は **structured failure narration の grounding mechanism**
-   として flash の optimism bias を抑える働きを持つ可能性
+- **R-PURE-MODE-REDEFINE** (~3-5 day): pure mode formal property
+  redefinition (= "ambient sources only" single property) + stdlib
+  python I/O refactor to run_ops. See plan file for full detail.
+- **R-WEB-TRUSTED-PYTHON** (= initial proposal): wrong-layer fix,
+  superseded by R-PURE-MODE-REDEFINE.
 
-### Recommendation
+## Lessons (= reusable observation discipline patterns)
 
-**Land FP-0011 with caveat**:
+### 1. Pre-conclusion observation checklist mechanism (= new)
 
-- flash-lite default user 向けには as-proposed で land 安全
-- flash strong tier 向けには Component B SP guidance 強化:
-  - 例: "If the tool result contains `status: \"error\"` or
-    `data.error`, your reply MUST surface the specific error rather
-    than summarising as success."
-- 強化後に N=10 retest で flash hallucination rate を再測定
+`feedback_pre_conclusion_observation_checklist.md` + CLAUDE.md Tier 1
+rule. Trigger words (= 結論 / 100% / 全件 / N/N / pattern / decisive /
+attractor / hallucination) fire a 5-question checklist at write time:
 
-## Spike infrastructure findings (= driver / methodology 改善)
+1. specific observations enumerated?
+2. primary data or inference?
+3. falsifying data sought?
+4. observation infra supports the claim?
+5. N/N directly inspected or extrapolated?
 
-spike 実行中に発見・修正した driver bugs (= retrospective material):
+### 2. Cascading stages of correction
 
-1. **CLI `--http-timeout` default 120s** が driver 関数 default 360s を上書き
-   → primary 1st run で weak-experimental shot 1/2 が driver-side timeout
-   (`955306c` で 360s に修正)
-2. **worktree 衝突** (= 既に checkout の branch を `worktree add` 不可) →
-   `--detach` worktree + 専用 mcp_server.py timeout patch (`955306c`)
-3. **Port 衝突** (= stale `reyn web` PID が port hold) → `lsof -ti` で
-   pre-bind kill (`d44c246`)
-4. **Server log capture** (= PIPE buffer 遅延) → file redirect +
-   `PYTHONUNBUFFERED=1` (`d44c246`)
-5. **Editable install bug** (= `subprocess.Popen(cwd=worktree)` でも import
-   は project_root から) → `PYTHONPATH=<worktree>/src` 注入で worktree code
-   実際 load (`d44c246`、 spike 価値の根本前提)
-6. **History contamination** (= 同 worktree の同 agent で previous run 結果
-   が cache return) → per-(scenario, condition, shot) unique agent name +
-   `reyn agent rm + new` で fresh state (`d44c246`)
-7. **Trust-gate flag missing on reyn web** (= mcp_search / skill_improver
-   等の stdlib trusted python が不可) → spike worktree で
-   `PermissionResolver(trusted_python_allowed=True)` を default flip
-   (= 一時的 bypass、 R-PURE-MODE-REDEFINE で構造的 fix 待ち)
+This spike went through **3 stages of reframing**, each triggered by
+user pressure on under-verified claims:
 
-## Architectural follow-ups (= spike から派生した residuals)
+| Stage | Claim | Verification gap | Trigger |
+|---|---|---|---|
+| 1 | "100% hallucination on flash" | only 1 events log inspected | "100% は events 直接確認した?" |
+| 2 | "5.6% hallucination, FP-0011 risky" | events audited, but narrator role assumed | "narrator output と router input 一致してた?" |
+| 3 | "FP-0011 quality improvement" | full architectural model verified | (final) |
 
-- **R-PURE-MODE-REDEFINE** (~3-5 day): pure mode の formal property を
-  「ambient sources only」 single-property に redefine + stdlib python の I/O を
-  run_op に分離。 `_python_allowlist.py` のコメント (= 「no I/O」) と実態
-  (= time / random / secrets / zoneinfo は I/O) の不整合解消、 author-facing
-  contract を文書化。 詳細 = plan file 参照。
-- **R-WEB-TRUSTED-PYTHON** (= 旧案): `reyn web` に
-  `--allow-untrusted-python` flag 追加 → wrong-layer fix と判定、
-  R-PURE-MODE-REDEFINE で supersede。
-- **multi-scenario shared-agent contamination** (= narr-3 weak-baseline
-  shot 2 が 32 calls cap_exceeded): 複数 scenarios 跨ぐ場合、 同 agent で
-  history が積まれて router が前 scenario の作業 context で次 scenario を
-  解釈。 driver の per-(scenario, condition, shot) agent isolation を
-  per-(scenario × condition × shot) のままで OK (= 既に分離済) だが、
-  scenarios 間の prompt influence は別 issue として認識。
+Each correction came from asking: **"what's the minimal direct observation
+that would falsify or validate this claim?"** and going to look. The
+context-analysis trigger mechanism (= layer 1) catches stage 1; layer 2
+(= asking about input/output flow) needs explicit thinking about
+**system architecture**, not just per-run data.
 
-## Lessons (= reusable for future spikes)
+### 3. Don't confuse **narration produced by component X** with
+**narration the user sees**
 
-### 1. Pre-conclusion observation checklist (= 新規 mechanism)
+In a multi-component pipeline (= narrator + router), the user-visible
+output may not be from the component you're testing. Always trace the
+final-output provenance through the stack before making per-component
+quality claims.
 
-`feedback_pre_conclusion_observation_checklist.md` + CLAUDE.md Tier 1 rule。
-結論 / 100% / 全件 / pattern 等の trigger word を書く瞬間に 5 質問発火:
-1. specific observations 列挙できる?
-2. primary data か inference か?
-3. 反証 data 探索した?
-4. 観測 infra は claim を support する?
-5. N/N の直接 inspect か extrapolate か?
+### 4. driver bug 7 件 = "primary 1st run is always confounded" reality
 
-self-test で earlier 「100% hallucination」 主張に適用 → 4/5 質問 ✗ で
-「verified finding」 ではなく 「観測仮説」 framing が正解と判明。
-
-### 2. Events log は wipe しない、 N=18 全件 audit が結論の前提
-
-「driver で events captured per-run」 がある状態でも、 「narration text のみ
-からの推論」 で結論を書く trap に落ちる。 spike retrospective を書く時は
-**全 N runs について events log 直接 inspect** を強制する。
-
-### 3. driver bug 7 件 surface = "primary 1st run = 駄目で当然" を計上する
-
-spike infrastructure を初回稼働させると **driver bug が必ず複数 surface**
-する。 1st primary run の data はほぼ confounded、 2nd run 以降が valid。
-「primary 1 回で結論」 期待を持たない、 budget には iteration cost を入れる。
+Primary spike infrastructure surfaces multiple bugs first run. Budget for
+2-3 iterations before data is meaningfully clean.
