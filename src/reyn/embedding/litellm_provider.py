@@ -136,13 +136,38 @@ class LiteLLMEmbeddingProvider:
               tokenizer         str (default "cl100k_base")
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
-        self._classes: dict[str, Any] = config.get("classes", {})
-        self._batch_size: int = int(config.get("batch_size", 100))
-        self._max_concurrent: int = int(config.get("max_concurrent_batches", 1))
-        self._max_retries: int = int(config.get("max_retries", 3))
-        self._retry_backoff: float = float(config.get("retry_backoff", 2.0))
-        self.tokenizer: str = config.get("tokenizer", "cl100k_base")
+    def __init__(self, config: "dict[str, Any] | Any | None" = None) -> None:
+        # Accept either:
+        #   (a) a plain dict (legacy / test path), or
+        #   (b) an EmbeddingConfig dataclass (production path from load_config()).
+        # Distinguished by presence of the dataclass-only ``classes`` attribute
+        # carrying EmbeddingClassSpec values; we duck-type to avoid an
+        # import cycle on reyn.config from this leaf module.
+        if config is None:
+            config = {}
+        if not isinstance(config, dict) and hasattr(config, "classes"):
+            # EmbeddingConfig dataclass: classes is dict[str, EmbeddingClassSpec].
+            # Flatten to the str-form expected by _resolve_model_from_config.
+            self._classes = {
+                name: spec.model for name, spec in config.classes.items()
+            }
+            self._batch_size = int(config.batch_size)
+            self._max_concurrent = int(config.max_concurrent_batches)
+            self._max_retries = int(config.max_retries)
+            # Literal[exponential|linear] → numeric base used in 2^attempt sleep.
+            self._retry_backoff = (
+                2.0 if config.retry_backoff == "exponential" else 1.5
+            )
+            self.tokenizer = str(config.tokenizer)
+        else:
+            self._classes: dict[str, Any] = config.get("classes", {})
+            self._batch_size: int = int(config.get("batch_size", 100))
+            self._max_concurrent: int = int(
+                config.get("max_concurrent_batches", 1)
+            )
+            self._max_retries: int = int(config.get("max_retries", 3))
+            self._retry_backoff: float = float(config.get("retry_backoff", 2.0))
+            self.tokenizer: str = config.get("tokenizer", "cl100k_base")
 
     # ── Model resolution ───────────────────────────────────────────────────
 
@@ -276,12 +301,22 @@ class LiteLLMEmbeddingProvider:
         total_tokens = 0
         canonical_model = fallback_model
 
-        # litellm EmbeddingResponse: response.data = list of Embedding objects
-        # each with .embedding (list[float]) and .index
+        # litellm EmbeddingResponse.data is a list whose items can be either:
+        #   (a) Embedding objects with .index / .embedding attrs (typical), or
+        #   (b) plain dicts {"index": int, "embedding": [...]} (some
+        #       provider passthroughs / proxy paths return this shape).
+        # Tolerate both so we don't lose vectors when the provider chooses
+        # the dict serialisation.
+        def _idx(e: Any) -> int:
+            return e["index"] if isinstance(e, dict) else getattr(e, "index", 0)
+
+        def _vec(e: Any) -> list[float]:
+            v = e["embedding"] if isinstance(e, dict) else getattr(e, "embedding", [])
+            return list(v)
+
         try:
-            # Sort by index to ensure order matches input
-            items = sorted(response.data, key=lambda e: e.index)
-            vectors = [list(e.embedding) for e in items]
+            items = sorted(response.data, key=_idx)
+            vectors = [_vec(e) for e in items]
         except Exception as exc:
             logger.warning("failed to parse embedding vectors: %s", exc)
 
