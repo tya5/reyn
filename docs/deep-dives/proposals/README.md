@@ -68,3 +68,11 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 |---|---|---|---|
 | [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification 対応 | proposed | MEDIUM |
 | [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — 統合ドキュメント検索スキル | done (ADR-0033 Accepted、 1e6f153) | LARGE |
+| [0003](0003-budget-exceed-user-approval.md) | budget 超過時のユーザー許諾・再開フロー | proposed | SMALL |
+| [0004](0004-safety-config-ux.md) | safety 設定 UX 改善 — 概念レイヤーとの整合 | proposed | MEDIUM |
+| [0005](0005-safety-as-checkpoint.md) | safety limit をチェックポイントとして扱う — Permission モデルとの統合 | proposed | LARGE |
+| [0006](0006-skill-self-improvement.md) | スキル自己改善 — 実行トレース駆動 + バージョン管理 + ロールバック | proposed | MEDIUM |
+| [0007](0007-evaluation-infrastructure.md) | Agent 評価インフラ — P6 トレース export + スキル回帰評価 | proposed | LARGE |
+| [0008](0008-swe-bench-integration.md) | SWE-bench 参加インフラ — stdlib スキル + バッチ実行 | proposed | LARGE |
+| [0009](0009-operational-intelligence.md) | Operational Intelligence — イベントログの RAG インデックス化 | proposed | MEDIUM |
+| [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |
