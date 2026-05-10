@@ -76,3 +76,4 @@ Links to related ADRs, PRs, and docs.
 | [0008](0008-swe-bench-integration.md) | SWE-bench participation infrastructure — stdlib skill + batch execution | proposed | LARGE |
 | [0009](0009-operational-intelligence.md) | Operational Intelligence — RAG indexing of event logs | proposed | MEDIUM |
 | [0010](0010-rag-routing.md) | RAG routing — semantic pre-filter for skill catalog + routing history | proposed | MEDIUM |
+| [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | proposed | SMALL |
