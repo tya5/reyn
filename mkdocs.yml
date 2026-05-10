@@ -113,6 +113,7 @@ nav:
           - reference/cli/chat.md
           - reference/cli/mcp.md
           - reference/cli/secret.md
+          - reference/cli/source.md
           - reference/cli/agent.md
           - reference/cli/topology.md
           - reference/cli/common-flags.md
@@ -164,6 +165,7 @@ nav:
       - concepts/permission-model.md
       - concepts/secret-handling.md
       - concepts/mcp.md
+      - concepts/rag.md
       - concepts/a2a.md
       - concepts/memory.md
       - concepts/multi-agent.md
