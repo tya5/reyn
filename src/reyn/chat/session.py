@@ -2843,6 +2843,8 @@ class ChatSession:
             file_write=file_write,
             mcp=mcp_names,
             allowed_mcp=self._allowed_mcp,
+            mcp_install=True,   # ADR-0029: allow ask gate to fire for MCP install
+            index_drop=True,    # B17-S8-3: allow ask gate to fire for index drop
         )
 
         workspace = Workspace(

@@ -1263,3 +1263,35 @@ async def test_no_double_history_append_on_agent_reply(tmp_path, monkeypatch):
         f"B4-H1: history entry text mismatch; expected {NARRATED!r}, "
         f"got {new_entries[0].text!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# B17-S8-3 fix: router op context declares index_drop permission
+# ---------------------------------------------------------------------------
+
+
+def test_router_op_context_declares_index_drop(tmp_path, monkeypatch):
+    """Tier 2: router op context declares index_drop=True so ask gate can fire.
+
+    B17-S8-3 invariant: _make_router_op_context() must set index_drop=True on
+    the PermissionDecl it constructs. Without it, require_index_drop() raises at
+    the decl guard (step 1) before the interactive ask UI can fire — making
+    drop_source via chat permanently unreachable regardless of config.
+
+    Pattern mirrors ADR-0029 mcp_install: declared True enables the ask gate;
+    runtime gating (allow/ask/deny) is controlled by permissions.index_drop
+    in reyn.yaml, which is a separate concern.
+
+    Observation: the test calls _make_router_op_context() and reads
+    ctx.permission_decl.index_drop — public attribute on a public dataclass
+    (PermissionDecl). No private internal state is asserted.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    session = _make_session(tmp_path)
+    ctx = session._make_router_op_context()
+
+    assert ctx.permission_decl.index_drop is True, (
+        "B17-S8-3: router op context must declare index_drop=True so the "
+        "ask gate can fire; got False (= decl guard blocks before prompt)"
+    )
