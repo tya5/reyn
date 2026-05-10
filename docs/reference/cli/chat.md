@@ -61,8 +61,11 @@ While a session is active, lines starting with `/` are intercepted and never rou
 | `/plan list` | Show active plan runs (combined view: in-flight tasks + pending-resume) |
 | `/plan discard <plan_id>` | Abort a specific plan run + cleanup; notifies waiting peer agents via R-D14 |
 | `/plan resume <plan_id> --from <step_id>` | Surgical operator escape hatch; clears step results from the target step onward and re-launches with a fresh resume_plan (ADR-0023 §3.7) |
+| `/tasks` | Unified view spanning skill runs + plan tasks (FP-0012). Same as `/tasks list` |
+| `/tasks status <prefix>` | Show current phase + elapsed for a specific task (skill or plan) |
+| `/tasks kill <prefix>` | Cancel a specific task; prefix matches against both skill run_ids and plan_ids |
 
-`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step.
+`/list` / `/cancel` / `/answer` are foundational — they let multiple skill runs and interventions coexist without blocking the prompt. `/agents` / `/attach` are the multi-agent workflow primitives. `/skill` and `/plan` are crash-recovery operator commands that surface the per-skill-run and per-plan-run lifecycle: inspect what is running, abort a stuck run, or surgically re-run a plan from a specific step. `/tasks` is the unified entry point that spans both — the LLM also points users at `/tasks` after a skill is spawned (FP-0012 chat-mode async dispatch).
 
 ## Multi-agent behavior
 

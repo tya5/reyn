@@ -19,7 +19,7 @@ applies_to: [profile.yaml, allowed_skills]
 
 `allowed_skills` does **not** affect:
 
-- **stdlib system skills** — `skill_router`, `chat_compactor`, `skill_narrator`. These are always available; an agent with `allowed_skills: []` still chats and narrates.
+- **stdlib system skills** — `skill_router`, `chat_compactor`. These are always available; an agent with `allowed_skills: []` still chats. (FP-0011 removed the previous `skill_narrator` skill — the router LLM now narrates skill completions inline.)
 - **agent-to-agent delegation** — `messages_to_agents` is governed by topology rules, not the skill allowlist. An agent with no skills can still delegate to a peer that has them.
 - **memory access** — both shared and agent-scoped memory layers remain readable / writable.
 

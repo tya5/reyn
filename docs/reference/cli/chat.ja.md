@@ -61,8 +61,11 @@ reyn chat researcher
 | `/plan list` | 実行中の Plan を表示（動作中 task と resume 待ちを組み合わせて表示） |
 | `/plan discard <plan_id>` | 特定の Plan を中止して cleanup を実行。R-D14 経由で待機中の peer agent に通知 |
 | `/plan resume <plan_id> --from <step_id>` | 特定 step から Plan を再実行するオペレーター向け escape hatch（ADR-0023 §3.7） |
+| `/tasks` | Skill 実行と Plan task を横断する統合ビュー（FP-0012）。`/tasks list` と同じ |
+| `/tasks status <prefix>` | 特定 task の current phase + 経過時間を表示（Skill / Plan どちらでも prefix で解決） |
+| `/tasks kill <prefix>` | 特定 task を中止。prefix は Skill の run_id と Plan の plan_id 両方とマッチ |
 
-`/list` / `/cancel` / `/answer` は基盤となります。複数の Skill 実行と介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` はマルチエージェントワークフローのプリミティブです。`/skill` / `/plan` は crash recovery オペレーターコマンドで、per-skill-run / per-plan-run のライフサイクルを surface します。
+`/list` / `/cancel` / `/answer` は基盤となります。複数の Skill 実行と介入がプロンプトをブロックせずに共存できます。`/agents` / `/attach` はマルチエージェントワークフローのプリミティブです。`/skill` / `/plan` は crash recovery オペレーターコマンドで、per-skill-run / per-plan-run のライフサイクルを surface します。`/tasks` はその両方を横断する統合エントリーポイントで、Skill が spawn された後に LLM が user に `/tasks` で進捗確認を案内します（FP-0012 chat-mode 非同期 dispatch）。
 
 ## マルチエージェントの動作
 

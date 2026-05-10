@@ -172,6 +172,7 @@ nav:
       - concepts/multi-agent.md
       - concepts/topology.md
       - concepts/plan-mode.md
+      - concepts/async-skill-execution.md
       - concepts/preprocessor.md
       - concepts/postprocessor.md
       - concepts/skill-design-patterns.md
