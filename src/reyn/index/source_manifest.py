@@ -223,20 +223,25 @@ class SourceManifest:
         entries = await self.get_all()
 
         if not entries:
+            # JSON-form invocation (= flag form does not exist; the previous
+            # text was hard-coded into the router system prompt and was
+            # actively teaching the LLM the wrong syntax — fixed in the
+            # 1.0 release-readiness wave).
             return (
                 "## Indexed sources (0 available)\n"
                 "\n"
                 "No indexed sources yet. To enable retrieval over your data:\n"
                 "\n"
                 "```\n"
-                "reyn run index_docs --source <name> --path <glob> --description <text>\n"
+                "reyn run index_docs '{\"source\":\"<name>\",\"path\":\"<glob>\","
+                "\"description\":\"<text>\"}'\n"
                 "```\n"
                 "\n"
                 "Examples:\n"
-                '- `reyn run index_docs --source memory --path ".reyn/memory/*.md"'
-                ' --description "User notes"`\n'
-                '- `reyn run index_docs --source my_code --path "src/**/*.py"'
-                ' --description "Python source"`\n'
+                '- `reyn run index_docs \'{"source":"memory","path":".reyn/memory/*.md",'
+                '"description":"User notes"}\'`\n'
+                '- `reyn run index_docs \'{"source":"my_code","path":"src/**/*.py",'
+                '"description":"Python source"}\'`\n'
             )
 
         n = len(entries)

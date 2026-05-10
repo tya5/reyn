@@ -25,9 +25,13 @@ async def _input_loop(
     registry: AgentRegistry,
     prompt_session: PromptSession,
     renderer: ChatRenderer,
+    reply_seen: asyncio.Event | None = None,
 ) -> None:
     is_tty = sys.stdin.isatty()
     while True:
+        # Track whether this iteration submitted user text so we know
+        # whether to wait for a reply on EOF (= non-TTY scripted use).
+        submitted_this_turn = False
         try:
             if is_tty:
                 with patch_stdout():
@@ -43,6 +47,18 @@ async def _input_loop(
                     raise EOFError
                 text = line
         except (EOFError, KeyboardInterrupt):
+            # Non-TTY EOF: the user's last submitted turn (if any) is
+            # likely still in flight. Wait briefly for the output loop
+            # to render an agent reply before shutting down — without
+            # this wait, asyncio.wait(FIRST_COMPLETED) cancels the
+            # output loop mid-LLM-round and the reply never reaches
+            # stdout (= prior behaviour broke all piped / scripted use,
+            # the reply was visible only in history.jsonl).
+            if not is_tty and reply_seen is not None:
+                try:
+                    await asyncio.wait_for(reply_seen.wait(), timeout=300.0)
+                except asyncio.TimeoutError:
+                    pass
             await registry.shutdown()
             return
         text = (text or "").strip()
@@ -56,9 +72,17 @@ async def _input_loop(
             renderer.message(_simple_status("no agent attached; try :agents"))
             continue
         await attached.submit_user_text(text)
+        submitted_this_turn = True
+        # Reset the reply-seen event so the next turn's wait starts fresh.
+        if reply_seen is not None and submitted_this_turn:
+            reply_seen.clear()
 
 
-async def _output_loop(registry: AgentRegistry, renderer: ChatRenderer) -> None:
+async def _output_loop(
+    registry: AgentRegistry,
+    renderer: ChatRenderer,
+    reply_seen: asyncio.Event | None = None,
+) -> None:
     is_tty = sys.stdout.isatty()
     while True:
         msg = await registry.repl_outbox.get()
@@ -72,6 +96,11 @@ async def _output_loop(registry: AgentRegistry, renderer: ChatRenderer) -> None:
             await run_in_terminal(lambda m=msg: renderer.message(m))
         else:
             renderer.message(msg)
+        # Signal end-of-turn for non-TTY drain wait. "agent" is the
+        # canonical reply kind; "skill_done" / "error" also count as
+        # turn-terminal so a skill-launch chat doesn't hang on EOF.
+        if reply_seen is not None and msg.kind in {"agent", "skill_done", "error"}:
+            reply_seen.set()
 
 
 def _simple_status(text: str):
@@ -95,8 +124,18 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
 
     renderer.banner(attached.agent_name)
 
-    inputs = asyncio.create_task(_input_loop(registry, prompt_session, renderer))
-    outputs = asyncio.create_task(_output_loop(registry, renderer))
+    # Shared event so the input loop's EOF-handler can wait for the
+    # output loop to render an agent reply before shutting down. Only
+    # used in non-TTY mode; passing it unconditionally is harmless
+    # because the input loop only awaits it when `is_tty` is False.
+    reply_seen: asyncio.Event = asyncio.Event()
+
+    inputs = asyncio.create_task(
+        _input_loop(registry, prompt_session, renderer, reply_seen)
+    )
+    outputs = asyncio.create_task(
+        _output_loop(registry, renderer, reply_seen)
+    )
 
     try:
         # Wait until one of the loops returns (user `/quit` or EOF).

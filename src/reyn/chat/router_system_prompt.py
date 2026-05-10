@@ -410,7 +410,8 @@ def build_system_prompt(
             "    sources or what they can do: explicitly tell them to run"
         )
         parts.append(
-            "    `reyn run index_docs --source <name> --path <glob> --description <text>`"
+            "    `reyn run index_docs '{\"source\":\"<name>\",\"path\":\"<glob>\""
+            ",\"description\":\"<text>\"}'`"
         )
         parts.append(
             "    to enable indexed retrieval. Do NOT answer with memory-only."

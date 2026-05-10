@@ -51,7 +51,10 @@ def register(sub: argparse._SubParsersAction) -> None:
         "--yes",
         "-y",
         action="store_true",
-        help="Skip confirmation prompt",
+        help=(
+            "Skip CLI confirmation prompt AND pre-approve the index_drop "
+            "permission gate. Use for scripted / piped invocations."
+        ),
     )
     rm_p.set_defaults(func=cmd_rm)
 
@@ -90,7 +93,8 @@ async def _cmd_list_async(args: argparse.Namespace) -> int:
     if not sources:
         print(
             "No indexed sources. Run:\n"
-            "  reyn run index_docs --source <name> --path <glob> --description <text>"
+            '  reyn run index_docs \'{"source":"<name>","path":"<glob>",'
+            '"description":"<text>"}\''
         )
         return 0
 
@@ -186,9 +190,21 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
     try:
         from reyn.config import load_config
         config = load_config()
-        perm_config = getattr(config, "permissions", {}) or {}
+        perm_config = dict(getattr(config, "permissions", {}) or {})
     except Exception:
         perm_config = {}
+
+    # When --yes / -y is supplied OR REYN_INDEX_DROP_AUTO_APPROVE=1 is set,
+    # treat index_drop as pre-approved at the config level so the
+    # permission resolver does not fall through to ask_user / interactive
+    # prompt (= which auto-denies under non-TTY stdin and previously broke
+    # `reyn source rm --yes` in scripted / piped use). The user has
+    # explicitly opted in to the destructive op via the flag.
+    import os as _os
+    if getattr(args, "yes", False) or _os.environ.get(
+        "REYN_INDEX_DROP_AUTO_APPROVE"
+    ) == "1":
+        perm_config["index_drop"] = "allow"
 
     perm_resolver = PermissionResolver(
         config_permissions=perm_config,
@@ -213,6 +229,13 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
     if result.get("status") in ("error", "denied"):
         err = result.get("error", "(unknown error)")
         print(f"Failed to remove source '{args.name}': {err}", file=sys.stderr)
+        if result.get("status") == "denied":
+            print(
+                "Hint: pass --yes / -y to pre-approve the index_drop "
+                "permission, or set permissions.index_drop: allow in "
+                "reyn.yaml.",
+                file=sys.stderr,
+            )
         return 1
 
     chunks_dropped = result.get("chunks_dropped", 0)
