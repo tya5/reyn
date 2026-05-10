@@ -341,6 +341,49 @@ These warrant follow-up ADRs once this proposal is accepted in principle:
    gate the entire run, the import, or each call? Current design:
    import-level gate (= flag enables the import; permission grant
    covers individual calls per skill).
+7. **ADR-G: AST validator scope + long-term debt reduction trajectory.**
+   The current AST validator has three responsibilities with very
+   different maintenance profiles:
+
+   | Check | Coverage | Maintenance | Cost |
+   |---|---|---|---|
+   | Import allowlist (`import os` reject) | ~99% casual mistakes | allowlist list updates | low |
+   | Banned builtin reference (`open` / `eval`) | ~95% casual mistakes | banned list updates | low |
+   | Escape-pattern detection (`__class__` / `__subclasses__` / `__builtins__` attribute) | 0–20% motivated attackers | Python evolution + new metaprogramming | growing, indefinite |
+
+   Escape-pattern detection is best-effort by design (the module
+   docstring already says "Honest limit: this is defense-in-depth, not
+   a real sandbox") but accrues maintenance debt every Python release.
+   AST-level metaprogramming detection cannot defeat `getattr` chains
+   or string-encoded names; the real boundary is the subprocess +
+   permission system.
+
+   This FP adopts a **three-phase debt-reduction trajectory**:
+
+   - **Phase 1 (= this FP, single commit)**: Add `reyn.safe.*` to
+     allowlist; reject `reyn.unsafe.*` from safe mode; **drop
+     escape-pattern detection** (~70 lines + associated tests).
+     Rewrite the validator docstring to be honest about its scope:
+     "import allowlist + banned-builtin reference detection — NOT a
+     sandbox. Determined escape attempts are caught by subprocess
+     isolation + permission gating, not here."
+   - **Phase 2 (= incremental, post-FP-0014)**: Grow `reyn.safe.*`
+     surface to cover stdlib usage patterns observed in real skills.
+     Each addition is an opportunity to remove a stdlib module from
+     the safe-mode allowlist (= the equivalent functionality is now
+     via `reyn.safe.*`).
+   - **Phase 3 (= end state, trigger: `reyn.safe.*` mature)**: Shrink
+     safe-mode allowlist to **`reyn.safe.*` only**. The AST validator
+     reduces to ~10 lines (= "only `from reyn.safe import X` allowed,
+     no other imports"). Maintenance debt: ~zero, surface stable
+     across Python versions because `reyn.safe.*` is the API surface
+     and authors cannot reach Python's metaprogramming primitives at
+     all.
+
+   This trajectory makes FP-0014 not just a rename + package proposal
+   but also a **structural fix for indefinite AST maintenance debt**
+   — the maintenance cost asymptotes to a constant rather than growing
+   with Python.
 
 ---
 
@@ -365,35 +408,43 @@ the 5-line yaml fix on rebase.
 1. Rename schema field + permission keys + CLI flag + env vars.
 2. Ship `reyn.api.safe` + `reyn.api.unsafe` packages with initial surface
    (Scope A: subprocess-local stdlib wrappers).
-3. Refactor 7 stdlib skills (= drop `mode: trusted`, move I/O appropriately).
-4. Consolidate `file_*` run_op kinds → single `file` op (= ADR-C resolution).
-5. Update `reyn lint` with 3 new rules.
+3. **AST validator scope reduction (ADR-G Phase 1)**: extend allowlist
+   to recognise `reyn.safe.*`, explicit-reject `reyn.unsafe.*` from
+   safe mode, drop escape-pattern detection (= `__class__` /
+   `__subclasses__` / `__builtins__` attribute walks). Rewrite
+   validator docstring with honest scope.
+4. Refactor 7 stdlib skills (= drop `mode: trusted`, move I/O appropriately).
+5. Consolidate `file_*` run_op kinds → single `file` op (= ADR-C resolution).
+6. Update `reyn lint` with 3 new rules.
 7. Docs sweep: rename concept doc, write `python-unsafe-mode.md` pair,
    add API package reference, update glossary / preprocessor doc /
-   manage-permissions doc. EN + JA mirror.
+   manage-permissions doc. EN + JA mirror. Document AST validator's
+   honest scope (ADR-G Phase 1).
 8. Test sweep: regenerate fixtures, update assertions, add coverage for
-   new API package wrappers.
-9. ADR drafting for the 6 open questions (= as needed during implementation).
+   new API package wrappers. Delete escape-pattern detection tests.
+9. ADR drafting for the open questions (A, C–G as needed during implementation).
 
 ---
 
 ## Cost estimate
 
-**MEDIUM** (~4.5 days focused work, parallelisable).
+**MEDIUM** (~4 days focused work, parallelisable).
 
 | Item | Estimate |
 |---|---|
 | Mechanical rename (schema + permissions + CLI flag + env vars + tests) | ~0.5 day |
 | `reyn.safe` + `reyn.unsafe` packages + wrapper tests (Scope A) | ~1 day |
+| AST validator scope reduction (= ADR-G Phase 1: allow `reyn.safe.*`, reject `reyn.unsafe.*` from safe, drop escape-pattern detection) | ~0.25 day (= net deletion) |
 | Stdlib 7-skill refactor | ~1 day |
 | Linter rules | ~0.5 day |
 | run_op kind consolidation (`file_*` → `file`) + IR migration | ~0.5 day |
 | Docs sweep EN+JA (concept docs + glossary + preprocessor + manage-permissions + reference) | ~0.5 day |
 | Dogfood verify (= mcp_install / index_docs / skill_improver e2e) | ~0.5 day |
-| ADR drafting (A, C–F, as needed; ADR-B resolved in this FP) | ~0.5 day |
+| ADR drafting (A, C–G, as needed; ADR-B resolved in this FP) | ~0.5 day |
 
-**Total: ~4 days** (= refined from ~4.5d after ADR-B was resolved by
-construction; dispatch wiring item dropped).
+**Total: ~4 days** (= ADR-G Phase 1 is net deletion so doesn't add to
+the budget; ADR-B was resolved by construction so dispatch wiring item
+dropped).
 
 Sonnet-parallelisable: rename + docs sweep + linter rules + stdlib
 refactor are largely independent. Stdlib refactor is the critical path

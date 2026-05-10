@@ -311,6 +311,42 @@ producer (= LLM-driven phase output) 更新。 LLMReplay fixture 再記録
    flag は run 全体 / import / 各 call のどれを gate するか。 現設計案: import
    レベル gate (= flag が import を enable、 permission grant が skill 単位
    個別 call を cover)。
+7. **ADR-G: AST validator の scope + 長期 debt reduction trajectory**。
+   現 AST validator は 3 つの責務を持ち、 maintenance profile が大きく違う:
+
+   | Check | Coverage | Maintenance | Cost |
+   |---|---|---|---|
+   | Import allowlist (`import os` reject) | ~99% casual mistakes | allowlist 更新のみ | low |
+   | Banned builtin 参照 (`open` / `eval`) | ~95% casual mistakes | banned list 更新のみ | low |
+   | Escape-pattern detection (`__class__` / `__subclasses__` / `__builtins__` attribute) | 0–20% motivated attackers | Python 進化追従 + 新 metaprogramming | **増加傾向、 indefinite** |
+
+   Escape-pattern detection は best-effort 設計 (= 既に module docstring が
+   「Honest limit: this is defense-in-depth, not a real sandbox」 と認める) で、
+   Python release ごとに maintenance debt が増える。 AST 層の metaprogramming
+   検出は `getattr` chain / 文字列 encode を defeat できない、 real boundary は
+   subprocess + permission 系。
+
+   本 FP は **3-phase debt-reduction trajectory** を採用:
+
+   - **Phase 1 (= 本 FP、 1 commit)**: `reyn.safe.*` を allowlist 追加、
+     `reyn.unsafe.*` を safe mode から explicit reject、 **escape-pattern
+     detection を drop** (~70 行 + 関連 test 削除)。 validator docstring を
+     正直な scope に書き直し: 「import allowlist + banned-builtin 参照検出
+     — sandbox ではない。 determined escape attempts は subprocess isolation +
+     permission gating が catch、 ここではない」。
+   - **Phase 2 (= incremental、 post-FP-0014)**: 実際の skill 内 stdlib 使用
+     pattern に対し `reyn.safe.*` surface を成長させる。 各追加が safe mode
+     allowlist から stdlib module を 1 件削除する機会になる (= 等価機能が
+     `reyn.safe.*` 経由で覆われた)。
+   - **Phase 3 (= end state、 trigger: `reyn.safe.*` 成熟)**: safe mode
+     allowlist を **`reyn.safe.*` のみ** に縮小。 AST validator は ~10 行に
+     縮退 (= 「`from reyn.safe import X` 以外の import 不可」)。 maintenance
+     debt: ~zero、 Python version 跨ぎで安定 (= author は `reyn.safe.*` 経由
+     でしか何もできない、 Python の metaprogramming primitive に届かない)。
+
+   この trajectory により本 FP は単なる rename + package 提案でなく、
+   **indefinite AST maintenance debt の structural fix** になる — maintenance
+   cost が Python と共に成長するのでなく定数に asymptote する。
 
 ---
 
@@ -335,34 +371,42 @@ producer (= LLM-driven phase output) 更新。 LLMReplay fixture 再記録
 1. schema field + permission key + CLI flag + env var を rename。
 2. `reyn.api.safe` + `reyn.api.unsafe` package を初期 surface で出荷
    (Scope A: subprocess-local stdlib wrapper)。
-3. 7 stdlib skill を refactor (= `mode: trusted` 削除、 I/O を適切に移動)。
-4. `file_*` run_op kind 統合 (= ADR-C 解決) → `file` 1 op。
-5. `reyn lint` に 3 ルール追加。
+3. **AST validator scope 削減 (ADR-G Phase 1)**: allowlist を `reyn.safe.*`
+   認識に拡張、 `reyn.unsafe.*` を safe mode から explicit reject、
+   escape-pattern detection (= `__class__` / `__subclasses__` /
+   `__builtins__` attribute walk) を drop。 validator docstring を正直な
+   scope に書き直し。
+4. 7 stdlib skill を refactor (= `mode: trusted` 削除、 I/O を適切に移動)。
+5. `file_*` run_op kind 統合 (= ADR-C 解決) → `file` 1 op。
+6. `reyn lint` に 3 ルール追加。
 7. Docs sweep: concept doc rename、 `python-unsafe-mode.md` pair 新規、
    API package reference 追加、 glossary / preprocessor / manage-permissions
-   doc 更新。 EN + JA mirror。
+   doc 更新。 EN + JA mirror。 AST validator の正直な scope を明文化
+   (= ADR-G Phase 1)。
 8. Test sweep: fixture 再生、 assertion 更新、 API package wrapper の coverage 追加。
-9. ADR drafting (= 6 open question を実装中に必要に応じて)。
+   Escape-pattern detection の test を delete。
+9. ADR drafting (= open question A、 C-G、 実装中に必要に応じて)。
 
 ---
 
 ## Cost estimate
 
-**MEDIUM** (~4.5 day focused、 sonnet 並列で短縮可能)。
+**MEDIUM** (~4 day focused、 sonnet 並列で短縮可能)。
 
 | 項目 | 見積もり |
 |---|---|
 | mechanical rename (schema + permissions + CLI flag + env vars + tests) | ~0.5 day |
 | `reyn.safe` + `reyn.unsafe` package + wrapper test (Scope A) | ~1 day |
+| AST validator scope 削減 (= ADR-G Phase 1: `reyn.safe.*` allow、 `reyn.unsafe.*` を safe から reject、 escape-pattern detection drop) | ~0.25 day (= 純削除) |
 | stdlib 7-skill refactor | ~1 day |
 | linter rules | ~0.5 day |
 | run_op kind 統合 (`file_*` → `file`) + IR migration | ~0.5 day |
 | Docs sweep EN+JA (concept doc + glossary + preprocessor + manage-permissions + reference) | ~0.5 day |
 | Dogfood verify (= mcp_install / index_docs / skill_improver e2e) | ~0.5 day |
-| ADR drafting (A, C–F、 必要なもの; ADR-B は本 FP 内で resolved) | ~0.5 day |
+| ADR drafting (A, C–G、 必要なもの; ADR-B は本 FP 内で resolved) | ~0.5 day |
 
-**合計 ~4 day** (= ADR-B 構造的解決で ~4.5d → ~4d に refine、 dispatch wiring
-item 削除)。
+**合計 ~4 day** (= ADR-G Phase 1 は純削除なので budget 増えず、 ADR-B 構造的
+解決で dispatch wiring item 削除)。
 
 Sonnet 並列化可能: rename + docs sweep + linter rules + stdlib refactor は
 独立。 stdlib refactor が critical path (= rename + API package land に依存)。
