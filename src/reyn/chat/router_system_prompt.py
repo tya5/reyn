@@ -494,6 +494,29 @@ def build_system_prompt(
     parts.append(
         "  - (list_memory is available for hierarchical browsing if needed.)"
     )
+    # FP-0011 spike (Component B): post-invoke_skill narration guidance.
+    # Router LLM replaces the dedicated narrator skill for the spike.
+    parts.append(
+        "  - After invoke_skill returns: reply in 1-2 sentences summarising"
+    )
+    parts.append(
+        "    what the skill accomplished. Extract the user-relevant fields"
+    )
+    parts.append(
+        "    from `data` — do not echo the raw JSON. Status guidance:"
+    )
+    parts.append(
+        '      * "finished"             — confirm completion; if applicable, hint at the next step.'
+    )
+    parts.append(
+        '      * "loop_limit_exceeded"  — say the skill ran out of phase budget; suggest re-running'
+    )
+    parts.append(
+        "        with higher safety.loop.max_phase_visits."
+    )
+    parts.append(
+        "      * other                  — describe what didn't complete; suggest the most likely fix."
+    )
     parts.append(
         "  - Use parallel tool_calls when discovery / fetches are independent."
     )
