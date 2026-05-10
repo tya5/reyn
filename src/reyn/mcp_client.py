@@ -178,6 +178,20 @@ class MCPClient:
         return stdio_client(params)
 
     def _open_http(self):
+        """Open the Streamable HTTP transport.
+
+        Reads from ``self._config``:
+          - ``url`` (required) — full MCP endpoint URL.
+          - ``headers`` (optional dict[str, str]) — HTTP headers sent on
+            every request to the server. Used for ``Authorization: Bearer
+            <token>`` and API-key style auth required by hosted MCP servers
+            (GitHub MCP, Atlassian MCP, internal enterprise MCPs).  This is
+            FP-0016 Component A. Values are passed through verbatim;
+            ``${VAR}`` interpolation is the caller's responsibility (the
+            standard load_config path applies ``expand_env`` recursively
+            across the whole merged config — see ADR-0030).
+          - ``timeout`` (optional, default 30) — request timeout in seconds.
+        """
         from mcp.client.streamable_http import streamablehttp_client
 
         url = self._config.get("url")

@@ -538,14 +538,29 @@ class ReynConfig:
     permissions: dict = field(default_factory=dict)
     # MCP server definitions.  Merged across config sources (servers dict is shallow-merged;
     # local overrides project which overrides global).
+    #
+    # Per-server schema (raw dict; no dataclass — kept flexible so new MCP SDK
+    # transport options can be added without OS changes per P7):
+    #   type:    "stdio" | "http" | "sse"   (required; transport selector)
+    #   command, args, env, cwd             (stdio transport)
+    #   url, headers, timeout               (http / streamable-http transport)
+    #
+    # ``headers`` is an optional ``dict[str, str]`` of HTTP headers passed at
+    # connection time to HTTP-mode MCP servers (FP-0016 Component A). Used
+    # for Bearer tokens, API keys, and any other auth / versioning headers
+    # the upstream server requires.  Values support ``${VAR}`` env
+    # interpolation (ADR-0030) so secrets stay out of yaml — the env vars
+    # are sourced from the process environment + ``~/.reyn/secrets.env``.
+    #
     # Example:
     #   mcp:
     #     servers:
-    #       my_tool:
+    #       github:
     #         type: http
-    #         url: http://localhost:3000/mcp
+    #         url: https://api.githubcopilot.com/mcp/
     #         headers:
-    #           Authorization: "Bearer ${MY_TOKEN}"
+    #           Authorization: "Bearer ${GITHUB_TOKEN}"
+    #           X-API-Version: "2024-01-01"
     mcp: dict = field(default_factory=dict)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
