@@ -193,41 +193,54 @@ Initial surface (= can grow):
 ### Component C — `reyn.unsafe` package
 
 Shipped under `src/reyn/api/unsafe/`. Importable from `unsafe`-mode
-python steps (= AST validator allows). Each function is a thin wrapper
-that dispatches to the corresponding run_op primitive.
+python steps (= AST validator allows).
+
+**Scope A (this FP — default)**: each helper is a vetted thin wrapper
+over stdlib I/O, executing **inside the python step's subprocess**.
+Permission was already granted at parent level when `mode: unsafe` was
+approved for the skill at startup; individual calls are NOT audited
+per-invocation (= step-level audit only — same granularity as today's
+`mode: trusted` direct `open()`). The win is namespace + type hints +
+autocomplete + docstrings, not finer audit.
 
 ```python
-# src/reyn/api/unsafe/file.py
-from reyn.api._internal import dispatch_op
-
+# src/reyn/api/unsafe/file.py — runs INSIDE the python step's subprocess
 def read(path: str, *, encoding: str = "utf-8") -> str:
-    """Read a file. Permission: file_read on `path`.
+    """Read a file.
 
-    Wraps the internal file_read run_op. The same permission gate,
-    event emission, and LLMReplay capture apply as if file_read were
-    invoked declaratively.
+    Runs in the python step's subprocess. Permission for filesystem
+    access was granted when `mode: unsafe` was approved for this skill
+    at startup; individual reads are NOT audited per-call (= step-level
+    audit only). For finer audit see FP-0015 (deferred).
     """
-    return dispatch_op("file", verb="read", path=path, encoding=encoding)
+    with open(path, encoding=encoding) as f:
+        return f.read()
 
 def write(path: str, content: str, *, encoding: str = "utf-8") -> None:
-    """Write a file. Permission: file_write on `path`."""
-    dispatch_op("file", verb="write", path=path, content=content, encoding=encoding)
+    """Write a file. Step-level audit (= same as Scope A above)."""
+    with open(path, "w", encoding=encoding) as f:
+        f.write(content)
 
 def glob(pattern: str) -> list[str]:
-    """List paths matching glob pattern. Permission: file_read on each match."""
-    return dispatch_op("file", verb="glob", pattern=pattern)
+    """Glob match."""
+    import glob as _glob
+    return sorted(_glob.glob(pattern, recursive=True))
 ```
 
 Initial surface:
 
 - `reyn.unsafe.file` — read / write / delete / glob / exists / stat
-- `reyn.unsafe.http` — get / post / put / delete (= JSON body convention, auto-encode)
-- `reyn.unsafe.shell` — run(argv, cwd=, env=) → CompletedProcess-like
+- `reyn.unsafe.http` — get / post / put / delete (= JSON body convention, auto-encode, wraps `urllib.request`)
+- `reyn.unsafe.shell` — run(argv, cwd=, env=) → CompletedProcess-like (= wraps `subprocess.run`)
 - `reyn.unsafe.workspace` — path() / cwd() / list_artifacts() (= ergonomic workspace access)
-- `reyn.unsafe.env` — get(key) (= explicit env read, gated)
+- `reyn.unsafe.env` — get(key) (= explicit env read)
 
-Permission gating still goes through `PermissionResolver.require_*` — the
-wrapper just translates Python args into the run_op IR shape.
+**Scope B (deferred — FP-0015)**: bidirectional RPC channel from child
+back to parent's run_op dispatcher gives per-call audit (permission
+re-check, event emission, LLMReplay capture per invocation). Out of
+scope here; pointer in `Related`. Scope A leaves the namespace (=
+`reyn.unsafe.*`) as the future hookup point — Scope B replaces the
+wrapper bodies without breaking author-visible API.
 
 ### Component D — `run_op` kind consolidation
 
@@ -289,13 +302,26 @@ These warrant follow-up ADRs once this proposal is accepted in principle:
    protects `reyn.safe.*` / `reyn.unsafe.*` consumers from breakage?
    Semver against the package independent of Reyn core? Or pinned to
    Reyn version?
-2. **ADR-B: Dispatch internals.** `reyn.unsafe.file.read()` needs to
-   reach the running phase's run_op dispatcher. Today the dispatcher
-   is bound to the phase execution context. How does an arbitrary
-   Python function-call get the right context? Options:
-   (a) contextvars-based ambient dispatcher, (b) explicit `ctx` arg
-   threaded by the harness, (c) `__init__.py`-level setup that the
-   python harness injects.
+2. **ADR-B: Audit granularity (Scope A vs Scope B).** **Resolved by
+   construction**: `python_runner.py` invokes
+   `reyn.kernel._python_harness` as a `subprocess.run` child — contextvars
+   and ambient dispatchers do NOT cross the process boundary. The
+   parent's `dispatch_op` is unreachable from the child without an
+   explicit bidirectional RPC channel.
+
+   This FP adopts **Scope A**: `reyn.unsafe.*` helpers run inside the
+   subprocess and call stdlib I/O directly. Permission gate is parent-
+   side step-level (= existing `python.unsafe` permission grant at
+   startup), event emit is step-level (`python_started` /
+   `python_completed`). **Same audit granularity as today's `mode:
+   trusted` direct `open()` — no regression**, with namespace + type
+   hints + autocomplete + docstrings as net wins.
+
+   **Scope B (= per-call audit via bidirectional RPC)** is deferred to
+   **FP-0015**. Trigger: enterprise audit requirements that need
+   per-invocation gating / events. Scope A leaves `reyn.unsafe.*` as
+   the future hookup point — Scope B replaces wrapper bodies without
+   breaking the API surface authors depend on.
 3. **ADR-C: `run_op` consolidation scope.** `file_*` → `file` is
    straightforward. `iterate` / `validate` / `lint_plan` are different
    shapes — keep separate or consolidate? `python` itself is a run_op
@@ -337,11 +363,11 @@ No phased rollout — clean break in one commit, current users (= us) take
 the 5-line yaml fix on rebase.
 
 1. Rename schema field + permission keys + CLI flag + env vars.
-2. Ship `reyn.api.safe` + `reyn.api.unsafe` packages with initial surface.
-3. Wire ambient dispatcher (= ADR-B resolution).
-4. Refactor 7 stdlib skills (= drop `mode: trusted`, move I/O appropriately).
-5. Consolidate `file_*` run_op kinds → single `file` op (= ADR-C resolution).
-6. Update `reyn lint` with 3 new rules.
+2. Ship `reyn.api.safe` + `reyn.api.unsafe` packages with initial surface
+   (Scope A: subprocess-local stdlib wrappers).
+3. Refactor 7 stdlib skills (= drop `mode: trusted`, move I/O appropriately).
+4. Consolidate `file_*` run_op kinds → single `file` op (= ADR-C resolution).
+5. Update `reyn lint` with 3 new rules.
 7. Docs sweep: rename concept doc, write `python-unsafe-mode.md` pair,
    add API package reference, update glossary / preprocessor doc /
    manage-permissions doc. EN + JA mirror.
@@ -358,28 +384,31 @@ the 5-line yaml fix on rebase.
 | Item | Estimate |
 |---|---|
 | Mechanical rename (schema + permissions + CLI flag + env vars + tests) | ~0.5 day |
-| `reyn.safe` + `reyn.unsafe` packages + wrapper tests | ~1 day |
-| Dispatch context wiring (ADR-B resolution) | ~0.5 day |
+| `reyn.safe` + `reyn.unsafe` packages + wrapper tests (Scope A) | ~1 day |
 | Stdlib 7-skill refactor | ~1 day |
 | Linter rules | ~0.5 day |
 | run_op kind consolidation (`file_*` → `file`) + IR migration | ~0.5 day |
 | Docs sweep EN+JA (concept docs + glossary + preprocessor + manage-permissions + reference) | ~0.5 day |
 | Dogfood verify (= mcp_install / index_docs / skill_improver e2e) | ~0.5 day |
-| ADR drafting (A–F, as needed) | ~0.5 day |
+| ADR drafting (A, C–F, as needed; ADR-B resolved in this FP) | ~0.5 day |
+
+**Total: ~4 days** (= refined from ~4.5d after ADR-B was resolved by
+construction; dispatch wiring item dropped).
 
 Sonnet-parallelisable: rename + docs sweep + linter rules + stdlib
-refactor are largely independent. Dispatch context wiring is the
-critical path (= other items depend on it).
+refactor are largely independent. Stdlib refactor is the critical path
+(= depends on rename + API package landing).
 
 ---
 
 ## Risks
 
-- **Dispatch context resolution (ADR-B)** is non-trivial. If
-  contextvars-based and the python harness uses subprocess execution
-  (it does today), contextvars don't cross the process boundary. Need
-  an explicit ctx threading or a serialisation protocol over the
-  parent-child JSON channel.
+- ~~**Dispatch context resolution (ADR-B)**~~ — **resolved by
+  construction**. Subprocess boundary makes contextvars-based
+  dispatch impossible without bidirectional RPC; this FP adopts
+  Scope A (= subprocess-local helpers, step-level audit, same as
+  today's `mode: trusted`). Scope B (= per-call audit) is deferred
+  to FP-0015.
 - **Stdlib refactor reveals missing run_op primitives.** Once the 7
   skills are audited in detail, the Class A case (index_docs file
   write + lock) may need a new run_op primitive (file lock acquire/
@@ -402,6 +431,12 @@ critical path (= other items depend on it).
 - **R-PURE-MODE-REDEFINE Step 2 (plan file residual)** — **superseded
   by this FP**. Step 2's stdlib refactor scope is folded in as
   Component E.
+- **FP-0015 (deferred)** — Per-call audit via bidirectional RPC
+  (= Scope B from ADR-B above). `reyn.unsafe.*` wrapper bodies switch
+  from subprocess-local stdlib calls to dispatched RPC to the parent's
+  `dispatch_op`. Author-visible API unchanged; audit granularity
+  improves from step-level to per-call. Trigger: enterprise audit
+  requirements.
 - **ADR-0020 skill-only permissions (commit `7b93025` / `3dab751`)** —
   permission declaration unit this proposal reuses.
 - **PR37 unified dispatch (commit `d06cb94`)** — dispatch + permission

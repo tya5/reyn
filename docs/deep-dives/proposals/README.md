@@ -80,3 +80,4 @@ Links to related ADRs, PRs, and docs.
 | [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | done (LANDED 2026-05-10, commit `c9e79d6`) | LARGE |
 | [0013](0013-unified-inbox-outbox-transport.md) | Unified inbox/outbox transport abstraction — collapse CUI vs MCP/A2A skew | accepted (ADR-A green-light 2026-05-11) | LARGE |
 | [0014](0014-python-step-api-package.md) | Python step API package + rename modes (pure→safe, trusted→unsafe) | proposed | MEDIUM |
+| [0015](0015-fine-grained-python-step-audit.md) | Fine-grained per-call Python step audit (bidirectional RPC) | deferred (= awaiting enterprise audit requirement) | MEDIUM |

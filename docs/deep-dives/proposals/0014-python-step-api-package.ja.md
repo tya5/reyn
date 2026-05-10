@@ -177,40 +177,51 @@ from . import hash, schema, text, time, random, json
 ### Component C — `reyn.unsafe` package
 
 `src/reyn/api/unsafe/` 配下に出荷。 `unsafe`-mode python step から import 可
-(= AST validator が allow)。 各関数は対応する run_op primitive に dispatch する
-薄い wrapper。
+(= AST validator が allow)。
+
+**Scope A (本 FP — default)**: 各 helper は stdlib I/O を vetted 経由で wrap、
+**python step の subprocess 内で実行**。 Permission は parent 側で skill 起動時
+(= `mode: unsafe` 承認時) に grant 済み、 個別 call は per-invocation audit なし
+(= step-level audit のみ、 現状の `mode: trusted` 直 `open()` と同精度)。 win は
+namespace + type hints + autocomplete + docstring、 audit 細粒度ではない。
 
 ```python
-# src/reyn/api/unsafe/file.py
-from reyn.api._internal import dispatch_op
-
+# src/reyn/api/unsafe/file.py — python step subprocess 内で実行
 def read(path: str, *, encoding: str = "utf-8") -> str:
-    """File 読込。 Permission: `path` に対する file_read。
+    """File 読込。
 
-    内部 file_read run_op の wrapper。 declarative file_read と同じ
-    permission gate / event emission / LLMReplay capture が適用される。
+    Python step の subprocess 内で実行。 filesystem access permission は
+    skill 起動時の `mode: unsafe` 承認で grant 済み、 個別 read は
+    per-call audit なし (= step-level audit のみ)。 細粒度 audit は
+    FP-0015 (deferred) 参照。
     """
-    return dispatch_op("file", verb="read", path=path, encoding=encoding)
+    with open(path, encoding=encoding) as f:
+        return f.read()
 
 def write(path: str, content: str, *, encoding: str = "utf-8") -> None:
-    """File 書込。 Permission: `path` に対する file_write。"""
-    dispatch_op("file", verb="write", path=path, content=content, encoding=encoding)
+    """File 書込。 Step-level audit (= Scope A、 上記と同)。"""
+    with open(path, "w", encoding=encoding) as f:
+        f.write(content)
 
 def glob(pattern: str) -> list[str]:
-    """glob match。 Permission: 各 match に対する file_read。"""
-    return dispatch_op("file", verb="glob", pattern=pattern)
+    """Glob match。"""
+    import glob as _glob
+    return sorted(_glob.glob(pattern, recursive=True))
 ```
 
 初期 surface:
 
 - `reyn.unsafe.file` — read / write / delete / glob / exists / stat
-- `reyn.unsafe.http` — get / post / put / delete (= JSON body 規約、 auto-encode)
-- `reyn.unsafe.shell` — `run(argv, cwd=, env=)` → CompletedProcess 風
+- `reyn.unsafe.http` — get / post / put / delete (= JSON body 規約、 auto-encode、 `urllib.request` wrap)
+- `reyn.unsafe.shell` — `run(argv, cwd=, env=)` → CompletedProcess 風 (= `subprocess.run` wrap)
 - `reyn.unsafe.workspace` — `path()` / `cwd()` / `list_artifacts()` (= ergonomic workspace access)
-- `reyn.unsafe.env` — `get(key)` (= 明示 env read、 gated)
+- `reyn.unsafe.env` — `get(key)` (= 明示 env read)
 
-Permission gating は引き続き `PermissionResolver.require_*` を経由 — wrapper は
-Python args を run_op IR shape に翻訳するだけ。
+**Scope B (deferred — FP-0015)**: child → parent の run_op dispatcher 向け
+双方向 RPC channel を導入、 per-call audit (= 各 invocation で permission re-check
+/ event emission / LLMReplay capture) を実現。 本 FP 範囲外、 `Related` で pointer。
+Scope A は namespace (= `reyn.unsafe.*`) を未来の hookup point として残置 — Scope B
+は author-visible API を壊さず wrapper body だけ差し替える。
 
 ### Component D — `run_op` kind 統合
 
@@ -268,12 +279,23 @@ producer (= LLM-driven phase output) 更新。 LLMReplay fixture 再記録
 1. **ADR-A: API package surface 安定性**。 `reyn.safe.*` / `reyn.unsafe.*`
    consumer を breaking change から守る versioning 戦略。 Reyn core から独立
    semver か Reyn version pin か。
-2. **ADR-B: Dispatch internals**。 `reyn.unsafe.file.read()` は現 phase の
-   run_op dispatcher に到達する必要がある。 現 dispatcher は phase 実行
-   context に bind。 任意 Python 関数 call からどう正しい context を取るか。
-   選択肢: (a) contextvars ベース ambient dispatcher、 (b) harness が threading
-   する明示 `ctx` arg、 (c) python harness が inject する `__init__.py` レベル
-   setup。
+2. **ADR-B: Audit 細粒度 (Scope A vs Scope B)**。 **構造的に resolved**:
+   `python_runner.py` が `reyn.kernel._python_harness` を `subprocess.run`
+   子プロセスとして起動する都合上、 contextvars / ambient dispatcher は
+   process boundary を越えない。 child から parent の `dispatch_op` には
+   明示双方向 RPC なしには到達不能。
+
+   本 FP は **Scope A** を採用: `reyn.unsafe.*` helper は subprocess 内で
+   stdlib I/O を直接 call する。 Permission gate は parent 側 step 単位
+   (= 起動時の `python.unsafe` permission grant)、 event emit は step 単位
+   (`python_started` / `python_completed`)。 **audit 細粒度は現状の `mode:
+   trusted` 直 `open()` と同等 — regression なし**、 namespace + type hints +
+   autocomplete + docstring を net win として獲得。
+
+   **Scope B (= 双方向 RPC 経由 per-call audit)** は **FP-0015** に deferred。
+   Trigger: per-invocation gating / event が必要な enterprise audit 要件。
+   Scope A は `reyn.unsafe.*` を future hookup point として残す — Scope B は
+   author 視野の API を壊さず wrapper body だけ差し替える。
 3. **ADR-C: `run_op` 統合 scope**。 `file_*` → `file` は straightforward。
    `iterate` / `validate` / `lint_plan` は形状違い、 別 kind 維持か統合か。
    `python` 自体も run_op kind、 entry point として維持か rename か。
@@ -311,11 +333,11 @@ producer (= LLM-driven phase output) 更新。 LLMReplay fixture 再記録
 5 行 yaml 修正で吸収。
 
 1. schema field + permission key + CLI flag + env var を rename。
-2. `reyn.api.safe` + `reyn.api.unsafe` package を初期 surface で出荷。
-3. ambient dispatcher を wire (= ADR-B 解決)。
-4. 7 stdlib skill を refactor (= `mode: trusted` 削除、 I/O を適切に移動)。
-5. `file_*` run_op kind 統合 (= ADR-C 解決) → `file` 1 op。
-6. `reyn lint` に 3 ルール追加。
+2. `reyn.api.safe` + `reyn.api.unsafe` package を初期 surface で出荷
+   (Scope A: subprocess-local stdlib wrapper)。
+3. 7 stdlib skill を refactor (= `mode: trusted` 削除、 I/O を適切に移動)。
+4. `file_*` run_op kind 統合 (= ADR-C 解決) → `file` 1 op。
+5. `reyn lint` に 3 ルール追加。
 7. Docs sweep: concept doc rename、 `python-unsafe-mode.md` pair 新規、
    API package reference 追加、 glossary / preprocessor / manage-permissions
    doc 更新。 EN + JA mirror。
@@ -331,26 +353,28 @@ producer (= LLM-driven phase output) 更新。 LLMReplay fixture 再記録
 | 項目 | 見積もり |
 |---|---|
 | mechanical rename (schema + permissions + CLI flag + env vars + tests) | ~0.5 day |
-| `reyn.safe` + `reyn.unsafe` package + wrapper test | ~1 day |
-| Dispatch context wiring (ADR-B 解決) | ~0.5 day |
+| `reyn.safe` + `reyn.unsafe` package + wrapper test (Scope A) | ~1 day |
 | stdlib 7-skill refactor | ~1 day |
 | linter rules | ~0.5 day |
 | run_op kind 統合 (`file_*` → `file`) + IR migration | ~0.5 day |
 | Docs sweep EN+JA (concept doc + glossary + preprocessor + manage-permissions + reference) | ~0.5 day |
 | Dogfood verify (= mcp_install / index_docs / skill_improver e2e) | ~0.5 day |
-| ADR drafting (A–F、 必要なもの) | ~0.5 day |
+| ADR drafting (A, C–F、 必要なもの; ADR-B は本 FP 内で resolved) | ~0.5 day |
+
+**合計 ~4 day** (= ADR-B 構造的解決で ~4.5d → ~4d に refine、 dispatch wiring
+item 削除)。
 
 Sonnet 並列化可能: rename + docs sweep + linter rules + stdlib refactor は
-独立。 Dispatch context wiring が critical path (= 他 item の前提)。
+独立。 stdlib refactor が critical path (= rename + API package land に依存)。
 
 ---
 
 ## Risks
 
-- **Dispatch context 解決 (ADR-B)** が non-trivial。 contextvars ベースで python
-  harness が subprocess 実行 (= 現状そう) すると contextvars は process boundary
-  を越えない。 明示 ctx threading か parent-child JSON channel 越し serialization
-  protocol が必要。
+- ~~**Dispatch context 解決 (ADR-B)**~~ — **構造的に resolved**。 subprocess
+  boundary により contextvars ベース dispatch は不可、 本 FP は Scope A
+  採用 (= subprocess-local helper、 step-level audit、 現状の `mode: trusted` と
+  同等)。 Scope B (= per-call audit) は FP-0015 に deferred。
 - **Stdlib refactor で run_op primitive 不足が露呈**。 7 skill を詳細 audit すると
   Class A (index_docs file write + lock) が今ない run_op primitive (= file lock
   acquire/release semantics) を要求する可能性。 scope add ~0.5 day。
@@ -369,6 +393,10 @@ Sonnet 並列化可能: rename + docs sweep + linter rules + stdlib refactor は
   pure mode (= safe に rename) の author-facing 定義。
 - **R-PURE-MODE-REDEFINE Step 2 (plan file 残件)** — **本 FP が supersede**。
   Step 2 の stdlib refactor scope は Component E に吸収。
+- **FP-0015 (deferred)** — 双方向 RPC 経由 per-call audit (= ADR-B 上記
+  Scope B)。 `reyn.unsafe.*` wrapper body を subprocess-local stdlib call から
+  parent `dispatch_op` への RPC に切替。 author 視野 API は変更なし、 audit 細粒度
+  が step-level → per-call に向上。 Trigger: enterprise audit 要件。
 - **ADR-0020 skill-only permissions (commit `7b93025` / `3dab751`)** — 本提案
   が reuse する permission 宣言単位。
 - **PR37 unified dispatch (commit `d06cb94`)** — API package が call する
