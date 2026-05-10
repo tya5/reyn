@@ -61,7 +61,9 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
+    from reyn.tools.drop_source import DROP_SOURCE
     from reyn.tools.plan import PLAN
+    from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
     from reyn.tools.shell import SHELL
     from reyn.tools.web_fetch import WEB_FETCH
@@ -72,6 +74,9 @@ def get_default_registry() -> ToolRegistry:
     registry.register(WEB_SEARCH)
     registry.register(WEB_FETCH)
     registry.register(INVOKE_SKILL)
+    # RAG ops (ADR-0033 Phase 1)
+    registry.register(RECALL)
+    registry.register(DROP_SOURCE)
     # File ops (Wave 2 — Open Q #6 fine-grained naming)
     registry.register(READ_FILE)
     registry.register(WRITE_FILE)

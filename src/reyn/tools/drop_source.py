@@ -1,0 +1,101 @@
+"""drop_source ToolDefinition (ADR-0033 Phase 1).
+
+DROP_SOURCE is both router-callable and phase-callable (gates.router=allow,
+gates.phase=allow). It is the LLM entry point for removing an indexed source
+entirely (SQLite backend + manifest entry).
+
+The handler delegates to op_runtime.index_drop.handle, which:
+  1. Gates via permission resolver (index_drop: ask default, ADR-0029 mirror)
+  2. Calls SqliteIndexBackend.drop
+  3. Removes the SourceManifest entry
+  4. Emits ``index_dropped`` P6 event
+
+Per ADR-0026: the ToolDefinition lives here; registration is in
+get_default_registry() in tools/__init__.py.
+"""
+from __future__ import annotations
+
+from typing import Any, Mapping
+
+from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+
+_DROP_SOURCE_DESCRIPTION = (
+    "Remove an indexed source entirely (= delete its SQLite + manifest entry). "
+    "Use when retiring trial sources or replacing with a different strategy. "
+    "Permission-gated; user is prompted to confirm."
+)
+
+_DROP_SOURCE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source": {
+            "type": "string",
+            "description": (
+                "Logical source name to remove (from Indexed sources list)."
+            ),
+        },
+    },
+    "required": ["source"],
+}
+
+
+async def _handle_drop_source(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Dispatch the index_drop op via op_runtime.
+
+    Builds an IndexDropIROp from args and delegates to the registered
+    index_drop handler, which owns the full lifecycle: permission gate,
+    backend drop, manifest removal, and P6 event emit.
+    """
+    from reyn.op_runtime import execute_op
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl
+    from reyn.schemas.models import IndexDropIROp
+
+    op = IndexDropIROp(
+        kind="index_drop",
+        source=str(args["source"]),
+    )
+
+    # Obtain or build OpContext from ToolContext.
+    _op_ctx = (
+        ctx.phase_state.op_context
+        if ctx.phase_state is not None
+        else None
+    )
+    if _op_ctx is not None and isinstance(_op_ctx, OpContext):
+        legacy_ctx = _op_ctx
+    elif (
+        ctx.router_state is not None
+        and ctx.router_state.op_context_factory is not None
+    ):
+        legacy_ctx = ctx.router_state.op_context_factory()
+    else:
+        # Minimal context: index_drop is destructive — permission resolver
+        # and intervention_bus must be present for the gate to fire.
+        # Callers (RouterLoop) must supply op_context_factory; this fallback
+        # builds a context that will trigger the resolver's non-interactive
+        # denial if no bus is supplied.
+        legacy_ctx = OpContext(
+            workspace=ctx.workspace,
+            events=ctx.events,
+            permission_decl=PermissionDecl(index_drop=True),
+            permission_resolver=ctx.permission_resolver,
+            skill_name="",
+            intervention_bus=None,
+            subscribers=getattr(ctx.events, "subscribers", []),
+        )
+
+    return await execute_op(op, legacy_ctx, caller="control_ir")
+
+
+DROP_SOURCE = ToolDefinition(
+    name="drop_source",
+    description=_DROP_SOURCE_DESCRIPTION,
+    parameters=_DROP_SOURCE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_drop_source,
+    category="io",
+    purity="side_effect",
+)
