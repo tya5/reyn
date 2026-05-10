@@ -1,0 +1,255 @@
+# fp_0011_narration.yaml — G4 spike scenarios for FP-0011 narration quality
+#
+# Purpose:
+#   Test whether the router LLM (skill_narrator removed) produces narration of
+#   comparable or better quality than the dedicated narrator. Each scenario
+#   triggers invoke_skill against a specific stdlib skill and ends with a
+#   narration of the result. Five scenarios with intentionally diverse
+#   final_output shapes stress-test field-extraction breadth.
+#
+# Skill selection summary:
+#   narr-1  mcp_search        → mcp_candidate_list   (array of structs, 3-field items)
+#   narr-2  eval              → eval_result           (numeric + boolean + prose)
+#   narr-3  skill_builder     → skill_builder_result  (multi-field: 7 required fields)
+#   narr-4  skill_improver    → improvement_result    (rich: enum + array + 12 fields)
+#   narr-5  read_local_files  → file_content_response (2-field: long prose + path list)
+#
+# Scenario design audit (4 dimensions per scenario):
+#
+#   narr-1 (mcp_search):
+#     data ✓   mcp_candidate_list.candidates is an array of objects (name/repo_url/description).
+#              Narration must iterate the array and extract per-item fields — non-trivial.
+#     affordance ✓  "Slack と連携できる MCP サーバーを探して" naturally triggers mcp_search
+#                   per skill routing examples. Router cannot satisfy this with read_file.
+#     source-count ✓  Only mcp_search hits the live MCP registry. No alternative tool
+#                     in stdlib provides registry results.
+#     alt-path ✓  direct_llm would hallucinate registry data; mcp_search is the only
+#                 grounded path. Router has a clear reason to use invoke_skill.
+#
+#   narr-2 (eval):
+#     data ✓   eval_result has 7 required numeric/boolean fields (passed, overall_score,
+#              passed_criteria, total_criteria, weakest_phase, spec_path, summary).
+#              Narration must lift numeric counts and a boolean — distinct shape.
+#     affordance ✓  "direct_llm を eval して" is listed verbatim in eval routing examples.
+#              Requires a pre-existing eval.md (see notes for prerequisite).
+#     source-count ✓  Eval score is produced by the eval skill's judge_phase loop; no
+#                     other stdlib path yields passed/overall_score fields.
+#     alt-path ✓  Router cannot answer "eval した結果" without actually running eval.
+#              stable_knowledge is excluded by routing.when_not_to_use.
+#
+#   narr-3 (skill_builder):
+#     data ✓   skill_builder_result has 7 required fields including files_written (array),
+#              file_count (integer), lint_passed (boolean), and summary (string).
+#              Narration must cover a mix of scalar + array + boolean.
+#     affordance ✓  "新しいスキルを作って" is in skill_builder positive examples.
+#              Prompt is a natural user request.
+#     source-count ✓  Only skill_builder generates and lints DSL files. The output
+#                     fields (files_written, skill_path, lint_passed) are not available
+#                     from any other tool.
+#     alt-path ✓  Router cannot fabricate file paths; invoke_skill is the only grounded
+#                 option. skill_improver excluded because input is a new skill, not
+#                 an existing one (routing.when_not_to_use).
+#
+#   narr-4 (skill_improver):
+#     data ✓   improvement_result has 12 required fields including score_history (array
+#              of floats), termination_reason (enum), copied_back (boolean), and summary
+#              (prose). This is the richest output shape in the spike — tests deep
+#              field extraction including nested numeric arrays.
+#     affordance ✓  "スキル X を改善して" is listed in skill_improver positive examples.
+#              Requires a pre-existing skill with eval.md (see notes).
+#     source-count ✓  improvement_result fields (score_history, termination_reason,
+#                     work_skill_root) exist only as skill_improver output.
+#     alt-path ✓  Router cannot guess score history. invoke_skill is forced.
+#              eval is excluded (it evaluates but does not improve).
+#
+#   narr-5 (read_local_files):
+#     data ✓   file_content_response has 2 fields: response (long prose) and
+#              files_read (string array). Narration of a "reading" result is a
+#              qualitatively different challenge — the key content is a long
+#              synthesised prose block, not a set of scalars.
+#     affordance ✓  "README を読んで概要を教えて" is in read_local_files positive
+#              examples. Natural Japanese user prompt.
+#     source-count ✓  file_content_response.files_read lists actual paths read — only
+#                     read_local_files (via MCP) produces this grounded path list.
+#     alt-path ✓  stable_knowledge cannot read project files. Router must use
+#              invoke_skill to get file contents. Requires filesystem MCP server
+#              configured (see notes).
+#
+# Failure-case scenario (narr-F):
+#   A deterministic OS-level loop_limit_exceeded in a single-prompt stdlib scenario
+#   is not reliably achievable with the current stdlib. skill_improver self-terminates
+#   at max_iterations (default 3) before the OS max_phase_visits cap fires. eval runs
+#   at most 2 phases. skill_builder has a fixed 5-phase linear graph. No stdlib skill
+#   is designed to loop indefinitely. See TODO block at end of file.
+
+metadata:
+  name: fp_0011_narration
+  description: >
+    G4 spike: 5 scenarios with diverse final_output shapes to test whether
+    router-level narration matches dedicated skill_narrator quality.
+  version: 1
+  spike_id: FP-0011
+  note: >
+    Run with the G4 spike driver (track B). The driver invokes each
+    scenario's user_prompt against the configured agent, verifies
+    expected_skill appears in the events log, checks run status, then
+    scores field_extraction via judge_focus fields. Pre-run prerequisites
+    are documented per scenario in the notes field.
+
+scenarios:
+  - id: narr-1-mcp-search
+    description: >
+      Narration of an mcp_candidate_list result. Tests that the narrator can
+      iterate a candidates array and extract per-item fields (name, repo_url,
+      description) rather than collapsing the list to a single string.
+    user_prompt: |
+      Slack と連携できる MCP サーバーを探してください。
+      見つかったサーバーについて、名前・URL・概要を教えてください。
+    expected_skill: mcp_search
+    expected_status: finished
+    judge_focus:
+      - candidates
+      - candidates[].name
+      - candidates[].repo_url
+      - candidates[].description
+
+  - id: narr-2-eval-numeric
+    description: >
+      Narration of an eval_result. Tests extraction of numeric and boolean
+      fields (overall_score, passed_criteria, total_criteria, passed) together
+      with prose fields (weakest_phase, summary). Distinct shape from the
+      list-of-structs in narr-1.
+    user_prompt: |
+      direct_llm スキルを eval してください。
+      スコアと合否、そしてどのフェーズが最も弱かったかを報告してください。
+    expected_skill: eval
+    expected_status: finished
+    judge_focus:
+      - passed
+      - overall_score
+      - passed_criteria
+      - total_criteria
+      - weakest_phase
+      - summary
+    notes: >
+      PREREQUISITE: a valid eval.md must exist for direct_llm before running
+      this scenario. Run `reyn run eval_builder "direct_llm の eval を作って"`
+      first, or ensure reyn/local/direct_llm/eval.md (or the stdlib equivalent)
+      is present. Without an eval.md the run reaches ask_user and stalls.
+
+  - id: narr-3-skill-builder
+    description: >
+      Narration of a skill_builder_result. Tests extraction of a mixed-type
+      output: strings (skill_name, skill_path, summary), an array
+      (files_written), an integer (file_count), and a boolean (lint_passed).
+    user_prompt: |
+      「テキストを受け取って日本語に翻訳する」スキルを新しく作ってください。
+      スキル名は translate_text にしてください。
+    expected_skill: skill_builder
+    expected_status: finished
+    judge_focus:
+      - skill_name
+      - skill_path
+      - files_written
+      - file_count
+      - lint_passed
+      - summary
+    notes: >
+      skill_builder generates DSL files under reyn/local/translate_text/.
+      If that directory already exists from a prior spike run, skill_builder
+      will overwrite it — no manual cleanup needed between runs, but be aware
+      narr-4 depends on this output. lint_passed: false is still a finished
+      run; the narrator should report lint_issues in that case.
+
+  - id: narr-4-skill-improver
+    description: >
+      Narration of an improvement_result. Tests the richest output shape in
+      the spike: score_history (float array), termination_reason (enum),
+      iterations_performed and file_count (integers), copied_back (boolean),
+      plus two prose fields (summary, next_steps).
+    user_prompt: |
+      reyn/local/translate_text スキルを改善してください。
+      最大 2 イテレーションで eval スコア 0.85 以上を目指してください。
+    expected_skill: skill_improver
+    expected_status: finished
+    judge_focus:
+      - iterations_performed
+      - initial_score
+      - final_score
+      - score_history
+      - termination_reason
+      - files_modified
+      - copied_back
+      - summary
+      - next_steps
+    notes: >
+      PREREQUISITE: narr-3-skill-builder must have run successfully first so
+      that reyn/local/translate_text/ exists. skill_improver auto-generates
+      an eval.md via eval_builder if one is missing — this adds one extra
+      skill invocation and latency but does not block the run. Expected
+      termination_reason is max_iterations_reached (cap = 2) or
+      score_threshold_met; either is a valid finished run for narration.
+
+  - id: narr-5-read-local-files
+    description: >
+      Narration of a file_content_response. Tests extraction of a long-form
+      prose field (response) alongside a string array (files_read). Narrating
+      a "reading" result is qualitatively different from scalar-field
+      extraction — the narrator must ground itself in the file contents, not
+      just enumerate field names.
+    user_prompt: |
+      read_local_files スキルを使って、 プロジェクトの README を読み、
+      主要なコンセプトと使い方の概要を教えてください。
+    expected_skill: read_local_files
+    expected_status: finished
+    judge_focus:
+      - response
+      - files_read
+    notes: >
+      AUDIT FIX (2026-05-10): user_prompt was originally
+      "プロジェクトの README を読んで...". Independent 4-dimension audit
+      (= post-Track-C re-verification) flagged this as FAIL on tool
+      affordance match — the read_file router tool description explicitly
+      mentions README at project root, creating a strong competition. Per
+      audit fix option (A), prompt now names "read_local_files スキル" so
+      the SP's ABSOLUTE routing rule fires and read_file is excluded.
+
+      PREREQUISITE: a filesystem MCP server named "filesystem" must be
+      configured in reyn.yaml pointing at the project root. Without it the
+      skill aborts with a permission error at the mcp op gate. Minimal
+      reyn.yaml entry needed:
+        mcp:
+          servers:
+            filesystem:
+              url: http://localhost:8765/mcp
+      The judge should check that (a) the response field content is
+      substantively referenced in the narration (not just "a response was
+      generated"), and (b) the files_read list is enumerated with actual paths.
+
+# TODO — 6th scenario (failure case): DEFERRED
+#
+#   A deterministic single-prompt OS-level loop_limit_exceeded is not
+#   reliably achievable with the current stdlib:
+#
+#   - skill_improver self-terminates at max_iterations (default 3) before
+#     the OS max_phase_visits cap fires. Raising max_iterations in the prompt
+#     produces a long run, not a fast failure.
+#   - eval runs at most 2 phases (run_target + evaluate); cannot loop.
+#   - skill_builder has a fixed 5-phase linear graph; no loop.
+#   - mcp_search and read_local_files are single-phase skills.
+#
+#   Recommended paths to a reliable failure case:
+#     Option A (preferred) — implement a minimal fixture skill under
+#       reyn/local/ that declares a trivial A→B→A loop graph with a low
+#       max_phase_visits override; design a scenario that invokes it.
+#       This is deterministic and does not affect other scenarios.
+#     Option B — set max_phase_visits: 4 in reyn.yaml project-wide and
+#       trigger skill_improver with max_iterations: 999 in the prompt.
+#       Risk: interferes with narr-3/narr-4 if run concurrently.
+#     Option C — accept budget_exceeded as proxy: invoke skill_builder with
+#       an unusually large skill description to exhaust per-chain token
+#       budget. Reliability depends on per-chain budget configuration.
+#
+#   Defer to track B decision on which failure signal the driver can verify
+#   from the events log. Option A is recommended; the fixture is a 10-line
+#   DSL stub (2 phase files + skill.md).

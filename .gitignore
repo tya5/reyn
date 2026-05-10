@@ -50,3 +50,7 @@ website/dist/
 zenn-book/
 scripts/s5_driver_main.py
 artifacts/
+
+# G4 spike runtime output
+spike_results/
+.spike_*/
