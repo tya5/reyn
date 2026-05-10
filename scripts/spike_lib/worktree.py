@@ -100,17 +100,82 @@ def remove_model_override(worktree: Path) -> None:
         local_yaml.unlink()
 
 
+def _kill_port_holders(port: int) -> None:
+    """Kill any process listening on ``port`` so the next bind succeeds.
+
+    Prior driver runs that crashed without clean shutdown leave stale
+    `reyn web` subprocesses holding the port. The next driver run's
+    bind silently fails and health check hits the stale server, leading
+    to confusing 500s.
+    """
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except Exception:
+        return
+    pids = [p.strip() for p in result.stdout.split() if p.strip().isdigit()]
+    for pid in pids:
+        try:
+            subprocess.run(["kill", "-TERM", pid], timeout=5)
+        except Exception:
+            pass
+    if pids:
+        time.sleep(0.5)
+
+
 def start_web_server(
     worktree: Path, port: int, env_extras: dict[str, str]
 ) -> subprocess.Popen:  # type: ignore[type-arg]
-    env = {**os.environ, **env_extras}
-    return subprocess.Popen(
+    """Spawn reyn web in the worktree.
+
+    Bug 1 fix: ``cwd=worktree`` is NOT enough. ``reyn`` is installed
+    via ``pip install -e .`` against project_root, so the subprocess'
+    ``import reyn`` resolves to project_root/src/reyn — i.e. the
+    operator's main checkout — regardless of cwd. The git worktree
+    on disk has the spike branch's session.py but no Python ever
+    loads it. The result: spike branch code changes are silently
+    invisible to spike runs (= every condition behaves like main).
+
+    Override by injecting ``PYTHONPATH=<worktree>/src`` so the
+    subprocess imports the spike branch's reyn package first,
+    shadowing the editable install. The worktree's source tree is
+    self-contained (= same layout as project_root) so a single path
+    suffices.
+    """
+    # Port collision guard: kill any stray reyn web on the target port
+    # so the new subprocess gets a clean bind. Otherwise health check
+    # hits a stale server with stale state and the new subprocess silently
+    # fails — yielding cryptic 500s with empty logs.
+    _kill_port_holders(port)
+
+    pythonpath = str(worktree / "src")
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        pythonpath = f"{pythonpath}{os.pathsep}{existing_pythonpath}"
+    # Disable Python output buffering in subprocess so logs flush
+    # synchronously to file. Uvicorn defaults to line-buffered stdout
+    # but uses Python's sys.stdout which buffers when not a TTY.
+    env = {
+        **os.environ, **env_extras,
+        "PYTHONPATH": pythonpath,
+        "PYTHONUNBUFFERED": "1",
+    }
+    # Redirect stderr/stdout to per-port log files so the operator can
+    # tail them post-run for debugging.
+    log_path = Path(f"/tmp/reyn-spike-server-{port}.log")
+    log_fh = open(log_path, "w", buffering=1)  # noqa: SIM115
+    proc = subprocess.Popen(
         ["reyn", "web", "--port", str(port)],
         cwd=str(worktree),
         env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=log_fh,
+        stderr=log_fh,
     )
+    proc._spike_log_path = log_path  # type: ignore[attr-defined]
+    proc._spike_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
 
 
 def wait_for_server(port: int, timeout_s: float = 30.0) -> bool:

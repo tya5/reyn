@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
@@ -136,6 +137,55 @@ def _load_scenarios(path: Path) -> list[dict]:
     return enabled_scenarios
 
 
+# ── Agent provisioning (Bug 2 fix) ────────────────────────────────────────────
+
+
+def _ensure_agent(*, worktree: Path, name: str) -> None:
+    """Create a Reyn agent in the worktree, REPLACING any existing one.
+
+    The A2A endpoint does NOT auto-create unknown agents (= returns
+    JSON-RPC -32602), so the spike driver must pre-provision each
+    unique agent name before POSTing.
+
+    Replace semantics: if the agent already exists (= leftover from a
+    prior driver run with the same agent name), `reyn agent rm` it
+    first so each invocation starts with a fresh ChatSession + empty
+    history. The driver's idempotent-resume mechanism (= runs.jsonl)
+    handles the "skip completed runs" case BEFORE this is called, so
+    by the time _ensure_agent fires the run is genuinely new and
+    state-reset is correct.
+    """
+    import subprocess as _sp
+    pythonpath = str(worktree / "src")
+    existing = os.environ.get("PYTHONPATH", "")
+    if existing:
+        pythonpath = f"{pythonpath}{os.pathsep}{existing}"
+    env = {**os.environ, "PYTHONPATH": pythonpath}
+
+    # rm if exists (idempotent — non-zero on missing is fine)
+    _sp.run(
+        ["reyn", "agent", "rm", name, "--yes"],
+        cwd=str(worktree), env=env, capture_output=True, text=True,
+    )
+    # Also wipe agent's events dir (rm only handles the agent profile/state)
+    import shutil as _shutil
+    events_dir = worktree / ".reyn" / "events" / "agents" / name
+    if events_dir.exists():
+        _shutil.rmtree(events_dir, ignore_errors=True)
+
+    # create fresh
+    result = _sp.run(
+        ["reyn", "agent", "new", name],
+        cwd=str(worktree), env=env, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(
+            f"[driver] warning: reyn agent new {name!r} failed: "
+            f"{result.stderr.strip() or result.stdout.strip()}",
+            flush=True,
+        )
+
+
 # ── One-shot runner ───────────────────────────────────────────────────────────
 
 
@@ -147,7 +197,7 @@ def _run_one_shot(
     port: int,
     reyn_dot: Path,
     agent: str = "default",
-    http_timeout: float = 120.0,
+    http_timeout: float = 360.0,  # > spike-side A2A timeout (300s)
     llm_call_cap: int = 30,
 ) -> dict:
     """POST scenario prompt; collect response + events. Returns partial record."""
@@ -261,7 +311,7 @@ def run_spike(
     out_dir: Path,
     project_root: Path,
     smoke_test: bool = False,
-    http_timeout: float = 120.0,
+    http_timeout: float = 360.0,  # > spike-side A2A timeout (300s)
     llm_call_cap: int = 30,
 ) -> list[dict]:
     """Drive the full spike matrix. Returns list of completed run records."""
@@ -336,6 +386,24 @@ def run_spike(
             if wt.resolve() != project_root.resolve():
                 write_model_override(wt, model_class, STRONG_MODEL_STRING)
 
+            # Pre-create all unique agents BEFORE starting the server, so
+            # the AgentRegistry sees them on disk at boot. Creating after
+            # boot has shown a race where the runtime check sometimes
+            # surfaces 500 instead of finding the freshly-created agent
+            # (root cause unidentified; pre-creation sidesteps it).
+            agent_names = []
+            for sc in scenarios_to_run:
+                for shot in shot_range:
+                    sc_idx = sc["id"].split("-")[0].lstrip("narr") or sc["id"][:6]
+                    cond_short = {
+                        "weak-baseline": "wb",
+                        "weak-experimental": "we",
+                        "strong-experimental": "se",
+                    }.get(cond, cond[:6])
+                    agent_names.append(f"spike-s{sc_idx}-{cond_short}-sh{shot}")
+            for name in agent_names:
+                _ensure_agent(worktree=wt, name=name)
+
             # Start server
             print(f"[driver] starting reyn web --port {port} in {wt}", flush=True)
             server = start_web_server(wt, port, {})
@@ -371,11 +439,35 @@ def run_spike(
                     started_at = datetime.now(timezone.utc).isoformat()
                     print(f"  [run] {run_id} ...", end="", flush=True)
 
+                    # Per-(scenario, condition, shot) unique agent name —
+                    # already pre-created above before server start.
+                    cond_short = {
+                        "weak-baseline": "wb",
+                        "weak-experimental": "we",
+                        "strong-experimental": "se",
+                    }.get(cond, cond[:6])
+                    sc_idx = sc["id"].split("-")[0].lstrip("narr") or sc["id"][:6]
+                    agent_name = f"spike-s{sc_idx}-{cond_short}-sh{shot}"
                     result = _run_one_shot(
                         scenario=sc, condition=cond, shot=shot, port=port,
-                        reyn_dot=reyn_dot, http_timeout=http_timeout,
+                        reyn_dot=reyn_dot, agent=agent_name,
+                        http_timeout=http_timeout,
                         llm_call_cap=llm_call_cap,
                     )
+                    # Debug: dump server log on http_error so the operator
+                    # can see what crashed on the server side.
+                    if result["status"].startswith("http_error"):
+                        log_path = getattr(server, "_spike_log_path", None)
+                        if log_path is not None:
+                            try:
+                                content = Path(log_path).read_text(errors="replace")
+                                tail = "\n".join(content.splitlines()[-50:])
+                                print(
+                                    f"  [debug] server log {log_path} (last 50 lines):\n----\n{tail}\n----",
+                                    flush=True,
+                                )
+                            except Exception as exc:
+                                print(f"  [debug] could not read {log_path}: {exc}", flush=True)
                     ended_at = datetime.now(timezone.utc).isoformat()
                     print(f" {result['status']} ({result['calls']} calls, {result['elapsed_s']}s)", flush=True)
 

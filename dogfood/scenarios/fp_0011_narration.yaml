@@ -158,8 +158,10 @@ scenarios:
       output: strings (skill_name, skill_path, summary), an array
       (files_written), an integer (file_count), and a boolean (lint_passed).
     user_prompt: |
-      「テキストを受け取って日本語に翻訳する」スキルを新しく作ってください。
-      スキル名は translate_text にしてください。
+      skill_builder スキルを呼び出して translate_text という新しいスキルを
+      作ってください。 仕様: 「text フィールドで文字列を受け取り、 日本語に
+      翻訳した結果を返す」 シンプルな構造で OK です。 確認質問は不要、 最小
+      仕様で skill_builder を直接実行してください。
     expected_skill: skill_builder
     expected_status: finished
     judge_focus:
