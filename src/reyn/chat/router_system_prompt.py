@@ -27,6 +27,7 @@ def build_system_prompt(
     web_fetch_allowed: bool = False,
     output_language: str | None = None,
     project_context: str = "",
+    indexed_sources_section: str | None = None,
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -54,6 +55,12 @@ def build_system_prompt(
             language based on the user's input naturally. This avoids
             forcing a default (= "ja") onto users who haven't expressed
             a preference.
+        indexed_sources_section: pre-rendered "## Indexed sources ..."
+            markdown string from ``SourceManifest.format_for_prompt()``.
+            When provided, injected verbatim after the Memory section.
+            When None (default), no Indexed sources section is emitted
+            (= backward compat for callers that have not yet wired up
+            the manifest, e.g. tests and non-chat execution paths).
     """
     skill_section = _render_skills(available_skills)
     agent_section = _render_agents(available_agents)
@@ -235,6 +242,15 @@ def build_system_prompt(
     for line in memory_section:
         parts.append(f"  {line}")
     parts.append("")
+    # ── Indexed sources (ADR-0033 UX gap fix A) ─────────────────────────────
+    # Injected verbatim from SourceManifest.format_for_prompt() which already
+    # renders the empty-state getting-started hint when 0 sources exist.
+    # Placed after Memory (conceptually similar recall stores) and before
+    # Files / MCP (distinct resource axes). When None, the section is omitted
+    # entirely for backward compat (tests + non-chat paths).
+    if indexed_sources_section is not None:
+        parts.append(indexed_sources_section)
+        parts.append("")
     if file_section:
         parts.append("## Files (resource axis — permission-scoped)")
         for line in file_section:

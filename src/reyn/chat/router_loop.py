@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from reyn.chat.router_system_prompt import build_system_prompt
@@ -20,6 +21,7 @@ from reyn.chat.router_tools import (
 )
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
+from reyn.index.source_manifest import get_source_manifest
 from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 
@@ -376,6 +378,13 @@ class RouterLoop:
         if self._system_prompt_override is not None:
             system_prompt = self._system_prompt_override
         else:
+            # ADR-0033: pre-fetch indexed sources before building the
+            # (sync) system prompt. format_for_prompt() reads the mem
+            # cache (fast path when manifest already loaded) and returns
+            # the rendered section including the empty-state hint.
+            indexed_sources = await get_source_manifest(
+                Path.cwd()
+            ).format_for_prompt()
             system_prompt = build_system_prompt(
                 agent_name=host.agent_name,
                 agent_role=host.agent_role,
@@ -387,6 +396,7 @@ class RouterLoop:
                 web_fetch_allowed=host.get_web_fetch_allowed(),
                 output_language=host.output_language,
                 project_context=host.get_project_context(),
+                indexed_sources_section=indexed_sources,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
