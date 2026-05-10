@@ -36,6 +36,7 @@ investigate when it should not.
 | Router calls per turn | Chat router invoked too many times per user turn | 3 | `safety.loop.max_router_calls_per_turn` (0 = unlimited) |
 | Agent delegation depth | `user → A → B → C` chain too deep | 3 | `safety.loop.max_agent_hops` |
 | Skill spawns per chain | Same skill spawned too many times in one chain | unlimited | `safety.loop.skill_calls_per_chain.hard_limit` |
+| Skill tokens per chain | Same skill consumed too many tokens in one chain | unlimited | `safety.loop.skill_tokens_per_chain.hard_limit` |
 
 ### Example error
 
@@ -100,11 +101,13 @@ trigger an investigation or an explicit user approval.
 |---|---|---|
 | Per-agent tokens | One agent hit its token cap | `cost.per_agent_tokens.hard_limit` |
 | Per-agent USD | One agent hit its USD cap | `cost.per_agent_cost_usd.hard_limit` |
-| Per-(chain, skill) calls | Same skill spawned too many times in one chain | `safety.loop.skill_calls_per_chain.hard_limit` (also `cost.per_chain_skill_calls.hard_limit`) |
-| Per-(chain, skill) tokens | Same skill consumed too many tokens in one chain | `cost.per_chain_skill_tokens.hard_limit` |
 | Daily quota | All work today exceeded `daily_tokens` / `daily_cost_usd` | `cost.daily_tokens.hard_limit`, `cost.daily_cost_usd.hard_limit` |
 | Monthly quota | This month exceeded `monthly_tokens` / `monthly_cost_usd` | `cost.monthly_tokens.hard_limit`, `cost.monthly_cost_usd.hard_limit` |
 | Rate limit | One model hit its requests-per-minute cap | `cost.rate_limit_per_minute.<model>` |
+
+(Per-(chain, skill) call / token caps are loop-detection limits and
+live under `safety.loop.skill_calls_per_chain` /
+`safety.loop.skill_tokens_per_chain` — see §① above.)
 
 ### User-approval flow on hit (FP-0003)
 
@@ -113,11 +116,12 @@ approval flow instead of a hard refusal:
 
 ```yaml
 # reyn.local.yaml
-cost:
-  per_chain_skill_calls:
-    hard_limit: 5
-    ask_on_exceed: true       # prompt the user via ask_user
-    extension_calls: 3        # +3 spawns granted on approval
+safety:
+  loop:
+    skill_calls_per_chain:
+      hard_limit: 5
+      ask_on_exceed: true       # prompt the user via ask_user
+      extension_calls: 3        # +3 spawns granted on approval
 ```
 
 When the cap is hit, Reyn asks: *"Skill `X` has reached its cap of 5
