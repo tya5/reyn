@@ -1130,40 +1130,45 @@ class _FakeAgent:
         return self._run_result
 
 
+# ---------------------------------------------------------------------------
+# FP-0011: post-narrator-removal contract for _run_skill_awaitable
+# ---------------------------------------------------------------------------
+#
+# The previous B4-H1 tests in this section asserted that _run_skill_awaitable
+# pushed the narrator's reply into _router_loop_agent_replies and appended
+# exactly one history entry. Both behaviours are gone post-FP-0011 — the
+# router LLM narrates from the tool-result on its next turn instead. The new
+# contract is exercised by Component E (test_post_invoke_skill_narration_*).
+
+
 @pytest.mark.asyncio
-async def test_run_skill_awaitable_routes_to_router_loop_agent_replies(
+async def test_run_skill_awaitable_returns_status_data_no_outbox(
     tmp_path, monkeypatch
 ):
-    """Tier 2: _run_skill_awaitable narrator reply is captured in _router_loop_agent_replies.
+    """Tier 2: _run_skill_awaitable returns {status, data} and does NOT push to outbox.
 
-    B4-H1 invariant: when RouterLoop is active (i.e. _router_loop_agent_replies
-    is armed as a non-None list) and _run_skill_awaitable completes and narrates
-    a reply, the narrated text must appear in _router_loop_agent_replies.
+    FP-0011 invariant (replaces B4-H1): with skill_narrator removed,
+    _run_skill_awaitable's only side effect on success is the
+    skill_run_completed event + accumulate. It MUST NOT push to outbox or
+    append to history — that responsibility now sits with the router LLM's
+    post-invoke_skill turn (see router_system_prompt.py Component B guidance).
 
-    Without the fix, _run_skill_awaitable calls the internal _put_outbox directly
-    (bypassing the RouterLoopHost.put_outbox callback), leaving agent_replies empty
-    at RouterLoop exit → specialist-ran-but-no-reply false-positive.
-
-    Observation: _router_loop_agent_replies is a public-access field via the
-    armed/disarmed lifecycle in _handle_agent_request; we arm it directly here
-    to exercise the invariant without running a full agent_request flow.
+    Observation: read public surfaces — session.outbox snapshot, session.history,
+    _router_loop_agent_replies armed list. None should change as a result of
+    the awaitable call's narration path (the awaitable's own return value is
+    the only "narration" channel now).
     """
     monkeypatch.chdir(tmp_path)
 
     import reyn.chat.session as session_mod
     from reyn.kernel.runtime import RunResult
 
-    NARRATED = "カレーレシピを生成しました"
-
-    # Fake: resolve_skill_path returns a dummy path pair.
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
-    dummy_skill_root = tmp_path
 
     def _fake_resolve(skill_name):
-        return dummy_skill_dir, dummy_skill_root
+        return dummy_skill_dir, tmp_path
 
-    # Fake: load_dsl_skill returns a sentinel (agent.run is also faked).
     def _fake_load_dsl_skill(path, *, skill_root):
         return object()
 
@@ -1173,97 +1178,40 @@ async def test_run_skill_awaitable_routes_to_router_loop_agent_replies(
     session = _make_session(tmp_path)
     session.is_attached = True
 
-    # Fake _build_agent to return a scripted agent whose run() yields a clean result.
-    fake_result = RunResult(data={"reply": "ok"}, status="finished")
-
-    def _fake_build_agent(**kwargs):
-        return _FakeAgent(fake_result)
-
-    session._build_agent = _fake_build_agent  # real callable — policy-compliant
-
-    # Fake _invoke_narrator with a real async callable returning a fixed string.
-    async def _fake_narrator(skill_name, status, result, state_subdir):
-        return NARRATED
-
-    session._invoke_narrator = _fake_narrator  # real async callable
-
-    # Arm _router_loop_agent_replies to simulate active RouterLoop.
-    session._router_loop_agent_replies = []
-
-    spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
-    await session._run_skill_awaitable(spec, chain_id="chain-b4h1-001")
-
-    # Invariant: narrated reply must be captured in _router_loop_agent_replies.
-    assert session._router_loop_agent_replies == [NARRATED], (
-        f"B4-H1: narrated reply not captured in _router_loop_agent_replies; "
-        f"got: {session._router_loop_agent_replies!r}"
+    fake_result = RunResult(
+        data={"reply_text": "カレーレシピを生成しました"},
+        status="finished",
     )
-
-
-@pytest.mark.asyncio
-async def test_no_double_history_append_on_agent_reply(tmp_path, monkeypatch):
-    """Tier 2: _run_skill_awaitable appends narrator reply to history exactly once.
-
-    B4-H1 companion invariant: the B4-H1 fix adds _router_loop_agent_replies
-    capture after _put_outbox, but must NOT trigger a second _append_history
-    call. History is already appended before _put_outbox in _run_skill_awaitable;
-    the RouterLoopHost.put_outbox callback (which would normally append history
-    for kind="agent") is NOT called here because _run_skill_awaitable uses the
-    internal _put_outbox directly.
-
-    Observation: session.history is the public surface for history state.
-    We count entries before and after the call; exactly one new entry with the
-    narrator text must appear.
-    """
-    monkeypatch.chdir(tmp_path)
-
-    import reyn.chat.session as session_mod
-    from reyn.kernel.runtime import RunResult
-
-    NARRATED = "履歴重複テスト用ナレーション"
-
-    def _fake_resolve(skill_name):
-        return tmp_path / "skill", tmp_path
-
-    def _fake_load_dsl_skill(path, *, skill_root):
-        return object()
-
-    monkeypatch.setattr(session_mod, "resolve_skill_path", _fake_resolve)
-    monkeypatch.setattr(session_mod, "load_dsl_skill", _fake_load_dsl_skill)
-
-    session = _make_session(tmp_path)
-    session.is_attached = True
-
-    fake_result = RunResult(data={"text": "done"}, status="finished")
 
     def _fake_build_agent(**kwargs):
         return _FakeAgent(fake_result)
 
     session._build_agent = _fake_build_agent
 
-    async def _fake_narrator(skill_name, status, result, state_subdir):
-        return NARRATED
-
-    session._invoke_narrator = _fake_narrator
-
-    # Arm for RouterLoop capture (B4-H1 path).
+    # Arm RouterLoop reply capture so we can confirm it stays empty.
     session._router_loop_agent_replies = []
 
     history_before = len(session.history)
 
     spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
-    await session._run_skill_awaitable(spec, chain_id="chain-b4h1-hist-001")
+    ret = await session._run_skill_awaitable(spec, chain_id="chain-fp0011-001")
 
-    # Exactly one new history entry.
-    history_after = len(session.history)
-    new_entries = session.history[history_before:]
-    assert history_after - history_before == 1, (
-        f"B4-H1 double-append: expected 1 new history entry, got {history_after - history_before}; "
-        f"entries: {new_entries!r}"
+    # Contract 1: return shape exposes status + data verbatim.
+    assert ret == {
+        "status": "finished",
+        "data": {"reply_text": "カレーレシピを生成しました"},
+    }, f"FP-0011 contract: returned dict mismatch; got {ret!r}"
+
+    # Contract 2: no narration side effects on outbox / history /
+    # _router_loop_agent_replies — the router LLM is the narrator.
+    assert session._router_loop_agent_replies == [], (
+        "FP-0011 contract: _run_skill_awaitable must not push to "
+        "_router_loop_agent_replies; got "
+        f"{session._router_loop_agent_replies!r}"
     )
-    assert new_entries[0].text == NARRATED, (
-        f"B4-H1: history entry text mismatch; expected {NARRATED!r}, "
-        f"got {new_entries[0].text!r}"
+    assert len(session.history) == history_before, (
+        "FP-0011 contract: _run_skill_awaitable must not append to history; "
+        f"history grew by {len(session.history) - history_before} entries"
     )
 
 

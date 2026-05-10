@@ -193,12 +193,13 @@ class RouterHostAdapter:
     # --- Catalogue accessors ---
 
     def list_available_skills(self) -> list[dict]:
-        """Return enumerated skills with router/narrator/compactor excluded.
+        """Return enumerated skills with router/compactor excluded.
 
-        Also excludes chat_compactor and skill_narrator — internal
-        infrastructure not exposed to the LLM tool catalog.
+        Also excludes chat_compactor — internal infrastructure not exposed to
+        the LLM tool catalog. (FP-0011: skill_narrator was removed; the router
+        LLM narrates inline.)
         """
-        avail = self._skill_enumerate_fn({"skill_router", "chat_compactor", "skill_narrator"})
+        avail = self._skill_enumerate_fn({"skill_router", "chat_compactor"})
         if self._allowed_skills is not None:
             allow = set(self._allowed_skills)
             avail = [s for s in avail if s.get("name") in allow]

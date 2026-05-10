@@ -269,11 +269,11 @@ def test_resolve_model_uses_resolver(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: list_available_skills excludes router/narrator/compactor
+# Test 6: list_available_skills excludes router/compactor
 # ---------------------------------------------------------------------------
 
 def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
-    """Tier 2: OS invariant — RouterHostAdapter.list_available_skills() must never expose skill_router, chat_compactor, or skill_narrator to the LLM tool catalog."""
+    """Tier 2: OS invariant — RouterHostAdapter.list_available_skills() must never expose skill_router or chat_compactor to the LLM tool catalog. (FP-0011: skill_narrator was removed; the router LLM narrates inline.)"""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
 
@@ -281,6 +281,8 @@ def test_list_available_skills_excludes_stdlib_router(tmp_path, monkeypatch):
     names = {s.get("name") for s in skills}
     assert "skill_router" not in names
     assert "chat_compactor" not in names
+    # skill_narrator no longer exists post-FP-0011; the assertion is now that
+    # the name simply does not appear in any enumeration result.
     assert "skill_narrator" not in names
 
 

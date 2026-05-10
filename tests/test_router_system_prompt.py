@@ -549,3 +549,62 @@ class TestBehaviourRulesAfterF3F9Fix:
         assert "NO text replies" in prompt
         # JA examples must be present (placeholder form, P7-compliant)
         assert "<skill_name>" in prompt
+
+
+class TestPostInvokeSkillNarrationGuidance:
+    """Tier 2: FP-0011 Component B — post-invoke_skill narration rules
+    are wired into the Behaviour section.
+
+    Replaces the coverage previously provided by the narrator skill tests
+    (test_replay_narrator + test_narrator_drift). With skill_narrator
+    removed (FP-0011 Component A/C), the router LLM is solely responsible
+    for turning invoke_skill results into natural-language replies; the
+    SP must include explicit guidance and an anti-optimism rule for the
+    error case observed in the 2026-05-10 G4 spike.
+    """
+
+    def test_post_invoke_skill_guidance_present(self):
+        """Tier 2: SP includes 'After invoke_skill returns' narration block."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("any_skill", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        # Trigger phrase that introduces the narration rule.
+        assert "After invoke_skill returns" in prompt, (
+            "FP-0011 Component B: SP must instruct the router LLM how to "
+            "narrate invoke_skill results inline (skill_narrator was removed)"
+        )
+        # 1-2 sentence target + extract-from-data signal.
+        assert "1-2 sentences" in prompt
+        assert "do not echo the raw JSON" in prompt
+        # Status guidance covers the three buckets the proposal calls out.
+        assert '"finished"' in prompt
+        assert '"loop_limit_exceeded"' in prompt
+
+    def test_anti_optimism_rule_for_error_status(self):
+        """Tier 2: SP enforces anti-optimism — error status MUST be surfaced.
+
+        The 2026-05-10 G4 spike observed the strong (flash) tier router
+        narrating success even when tool_result.status == "error" and
+        data.error was populated. Component B was strengthened beyond
+        the proposal draft to add an explicit MUST rule + verbatim-quote
+        directive. This test pins the structural contract.
+        """
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("any_skill", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        # The error/non-finished branch must be present.
+        assert '"error"' in prompt
+        assert "data.error" in prompt
+        # Imperative MUST + ban on success-narration.
+        assert "MUST surface" in prompt
+        assert "Do NOT" in prompt and "narrate as success" in prompt
+        # The optimism-bias warning is the load-bearing phrase.
+        assert "Optimism bias" in prompt

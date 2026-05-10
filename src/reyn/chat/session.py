@@ -57,7 +57,6 @@ from reyn.user_intervention import (
 )
 
 ROUTER_SKILL_NAME = "skill_router"
-NARRATOR_SKILL_NAME = "skill_narrator"
 
 # Localized user-facing messages for the router retry-exhausted fallback (F8).
 # Keys are BCP-47-style language codes matching config `output_language`.
@@ -521,8 +520,8 @@ class ChatSession:
         self._safety_extensions: dict[str, float] = {}
         # PR15: optional skill allowlist sourced from profile.allowed_skills.
         # None = unrestricted (default, BC). Empty list = router runs but no
-        # skill spawn. stdlib router/compactor/narrator are NOT subject to
-        # this — they're always available regardless.
+        # skill spawn. stdlib router/compactor are NOT subject to this — they're
+        # always available regardless. (FP-0011: skill_narrator removed.)
         self._allowed_skills: list[str] | None = (
             list(allowed_skills) if allowed_skills is not None else None
         )
@@ -1579,32 +1578,6 @@ class ChatSession:
     @_router_last_reason.setter
     def _router_last_reason(self, value: str) -> None:
         self._budget._router_last_reason = value
-
-    async def _invoke_narrator(
-        self, skill_name: str, status: str, result: dict, state_subdir: str,
-    ) -> str | None:
-        """Run skill_narrator on a finished skill spawn; return reply_text.
-
-        Returns None on narration failure (e.g. lint error, LLM exception);
-        the caller's fallback raw-dump path takes over.
-        """
-        input_artifact = {
-            "type": "narration_request",
-            "data": {"skill": skill_name, "status": status, "result": result},
-        }
-        try:
-            run_result = await self._run_stdlib_skill(
-                NARRATOR_SKILL_NAME, input_artifact, state_subdir=state_subdir,
-                forward_events=False,  # narrator is one phase, no need to surface
-            )
-        except Exception as exc:
-            logger.warning("narrator skill failed for %r (%s): %s", skill_name, status, exc)
-            self._chat_events.emit("narrator_failed", skill=skill_name, status=status, error=str(exc))
-            return None
-        if not run_result.ok:
-            return None
-        text = (run_result.data or {}).get("reply_text")
-        return (text or "").strip() or None
 
     # ── intervention routing ─────────────────────────────────────────────────────
 
@@ -2961,52 +2934,10 @@ class ChatSession:
             "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
         )
 
-        # Hand the result to skill_narrator to phrase a natural-language report
-        # instead of dumping JSON to the user. Both narrate-success and the
-        # raw-dump fallback land in history as `role="agent"` with
-        # `meta.source="narrator"` — keeping the LLM-visible role surface to
-        # `user / agent / summary` (custom roles change LLM attention).
-        narrated = await self._invoke_narrator(
-            skill_name=skill_name,
-            status=result.status,
-            result=result.data,
-            state_subdir=f"narrator/{run_id}",
-        )
-        if narrated is None:
-            self._chat_events.emit(
-                "skill_narration_failed", run_id=run_id, skill=skill_name,
-            )
-
-        if narrated:
-            self._append_history(ChatMessage(
-                role="agent", text=narrated, ts=_now_iso(),
-                meta={
-                    "source": "narrator",
-                    "skill": skill_name,
-                    "run_id": run_id,
-                    "status": result.status,
-                },
-            ))
-            await self._put_outbox(OutboxMessage(
-                kind="agent", text=narrated, meta=meta,
-            ))
-        else:
-            # Fallback: raw dump so the user at least sees something.
-            summary = json.dumps(result.data, ensure_ascii=False, indent=2)
-            fallback = f"done (status={result.status})\n{summary}"
-            self._append_history(ChatMessage(
-                role="agent", text=fallback, ts=_now_iso(),
-                meta={
-                    "source": "narrator",
-                    "skill": skill_name,
-                    "run_id": run_id,
-                    "status": result.status,
-                    "narration_failed": True,
-                },
-            ))
-            await self._put_outbox(OutboxMessage(
-                kind="skill_done", text=fallback, meta=meta,
-            ))
+        # FP-0011: skill_narrator removed — the router LLM narrates the result
+        # inline on its post-tool turn (see router_system_prompt.py post-
+        # invoke_skill guidance). The tool result {"status", "data"} flows back
+        # to the router loop unchanged; the LLM extracts user-relevant fields.
 
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on ChatSession because the
@@ -3231,11 +3162,15 @@ class ChatSession:
 
     async def _run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
         """Awaitable variant of _spawn_skill. Runs a single skill, awaits its
-        completion, narrates result to outbox via _invoke_narrator, returns
-        the final_output dict.
+        completion, returns the final_output dict.
 
         spec format: {"skill": <name>, "input": <artifact dict>}
         Returns: {"status": "finished"|"error", "data": <final_output>}
+
+        FP-0011: narration is the router LLM's responsibility (post-invoke_skill
+        SP guidance). This method no longer pushes to outbox — the caller (= the
+        invoke_skill tool dispatcher) returns the dict to the router loop, and
+        the router LLM narrates from `data` on its next turn.
         """
         skill_name = spec.get("skill")
         input_artifact = spec.get("input")
@@ -3342,47 +3277,11 @@ class ChatSession:
             "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
         )
 
-        # Narrate so the user sees the work (same as _run_one_skill)
-        meta = _run_meta(run_id, skill_name)
-        narrated = await self._invoke_narrator(
-            skill_name=skill_name,
-            status=result.status,
-            result=result.data,
-            state_subdir=f"narrator/{run_id}",
-        )
-        if narrated:
-            self._append_history(ChatMessage(
-                role="agent", text=narrated, ts=_now_iso(),
-                meta={
-                    "source": "narrator",
-                    "skill": skill_name,
-                    "run_id": run_id,
-                    "status": result.status,
-                },
-            ))
-            await self._put_outbox(OutboxMessage(kind="agent", text=narrated, meta=meta))
-            # B4-H1: capture narrator reply for RouterLoop when active.
-            # _run_skill_awaitable calls the internal _put_outbox directly,
-            # bypassing the RouterLoopHost.put_outbox callback that normally
-            # updates _router_loop_agent_replies.  Mirror that logic here so
-            # specialist skill results reach _handle_agent_request / chain-resolve.
-            if self._router_loop_agent_replies is not None:
-                self._router_loop_agent_replies.append(narrated)
-        else:
-            summary = json.dumps(result.data, ensure_ascii=False, indent=2)
-            fallback = f"done (status={result.status})\n{summary}"
-            self._append_history(ChatMessage(
-                role="agent", text=fallback, ts=_now_iso(),
-                meta={
-                    "source": "narrator",
-                    "skill": skill_name,
-                    "run_id": run_id,
-                    "status": result.status,
-                    "narration_failed": True,
-                },
-            ))
-            await self._put_outbox(OutboxMessage(kind="skill_done", text=fallback, meta=meta))
-
+        # FP-0011: skill_narrator removed — the router LLM narrates inline on
+        # its post-invoke_skill turn (see router_system_prompt.py guidance).
+        # The tool-result dict returned below flows back to the router loop
+        # unchanged; the LLM picks user-relevant fields from `data` and surfaces
+        # error fields verbatim per the strengthened anti-optimism rule.
         return {"status": result.status or "finished", "data": result.data or {}}
 
     async def _mcp_list_servers(self) -> list[dict]:

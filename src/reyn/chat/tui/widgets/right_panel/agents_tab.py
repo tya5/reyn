@@ -74,7 +74,7 @@ def _recent_skill_runs_for_agent(
         if len(out) >= limit:
             break
         # Filename: "<isots>_<skill_name>.jsonl". The skill name itself
-        # may contain underscores (web_search_display, skill_narrator,
+        # may contain underscores (web_search_display, chat_compactor,
         # etc.), so split only ONCE — the head is the timestamp, the
         # tail is the entire skill name.
         stem = jsonl.stem
@@ -159,7 +159,7 @@ def _recent_skill_runs_for_agent(
             except Exception:
                 duration_s = 0.0
 
-        # ``run_id`` here is e.g. "20260508T234443Z_skill_narrator"; the
+        # ``run_id`` here is e.g. "20260508T234443Z_chat_compactor"; the
         # leading 8 chars ("20260508") are date-only and identical across
         # runs of the same skill on the same day, which makes the agents
         # tab unreadable. Use the time chunk (after the "T") so each

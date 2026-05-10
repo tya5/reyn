@@ -212,7 +212,7 @@ async def test_two_simultaneous_delegations_both_resolve(tmp_path: Path):
 _KNOWN_SKILL_NAMES: frozenset[str] = frozenset({
     "skill_router",
     "skill_improver",
-    "skill_narrator",
+    # FP-0011: skill_narrator removed; router LLM narrates inline.
     "skill_builder",
     "skill_importer",
     "chat_compactor",

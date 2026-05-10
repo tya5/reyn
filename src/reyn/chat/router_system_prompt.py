@@ -494,6 +494,50 @@ def build_system_prompt(
     parts.append(
         "  - (list_memory is available for hierarchical browsing if needed.)"
     )
+    # ── Post-invoke_skill narration (FP-0011) ──────────────────────────────────
+    # The dedicated `skill_narrator` skill was removed; the router LLM is now
+    # solely responsible for turning the invoke_skill result into a
+    # natural-language reply. The previous narrator covered the success path
+    # (the failure path was always the router's job) — this guidance unifies
+    # both, with an explicit anti-optimism rule for the error case observed in
+    # the 2026-05-10 G4 spike (= flash-tier router ignored `status="error"` and
+    # narrated success anyway when narrator was bypassed).
+    parts.append(
+        "  - After invoke_skill returns: reply in 1-2 sentences summarising"
+    )
+    parts.append(
+        "    what the skill accomplished. Extract the user-relevant fields"
+    )
+    parts.append(
+        "    from `data` — do not echo the raw JSON. Status guidance:"
+    )
+    parts.append(
+        '      * "finished"             — confirm completion; if applicable, hint at the next step.'
+    )
+    parts.append(
+        '      * "loop_limit_exceeded"  — say the skill ran out of phase budget; suggest re-running'
+    )
+    parts.append(
+        "        with higher safety.loop.max_phase_visits."
+    )
+    parts.append(
+        '      * "error" / any non-"finished" status, OR `data.error` is present —'
+    )
+    parts.append(
+        "        your reply MUST surface the specific error verbatim. Do NOT"
+    )
+    parts.append(
+        "        narrate as success. Quote the error message in user-friendly"
+    )
+    parts.append(
+        "        form (translate to output_language if set, but keep the failure"
+    )
+    parts.append(
+        "        signal explicit) and suggest the most likely fix. Optimism bias"
+    )
+    parts.append(
+        "        on errors is the single largest router-narration failure mode."
+    )
     parts.append(
         "  - Use parallel tool_calls when discovery / fetches are independent."
     )

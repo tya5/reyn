@@ -3,9 +3,9 @@
 PR10 introduced the file with the minimal schema (`name`, `role`,
 `created_at`). PR15 adds `allowed_skills`: an optional allowlist of
 project / stdlib skill names this agent may invoke. stdlib `skill_router`
-/ `chat_compactor` / `skill_narrator` are always available — the
-allowlist only constrains user-visible skills the router would otherwise
-hand off to.
+/ `chat_compactor` are always available — the allowlist only constrains
+user-visible skills the router would otherwise hand off to. (FP-0011:
+`skill_narrator` was removed; the router LLM narrates inline.)
 
 Semantics for `allowed_skills`:
 - absent / null  → no restriction (every project + stdlib skill, default)
@@ -40,8 +40,8 @@ class AgentProfile:
     role: str = ""
     created_at: str = ""
     # PR15: optional skill allowlist. None = unrestricted (default), [] = no
-    # skills at all, [...] = only those names. stdlib router/compactor/narrator
-    # are NOT subject to this list.
+    # skills at all, [...] = only those names. stdlib router/compactor are NOT
+    # subject to this list. (FP-0011: skill_narrator removed.)
     allowed_skills: list[str] | None = None
     # PR37: optional MCP server allowlist. None = no per-agent restriction
     # (inherits project config). "all" in YAML normalizes to None here.
