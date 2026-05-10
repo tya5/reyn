@@ -99,15 +99,29 @@ class PythonPermission:
     """Per-(module, function) permission for a python preprocessor step.
 
     Declared in a skill's frontmatter `permissions.python: [{...}]` block.
-    `pure` mode is sandboxed (AST + restricted builtins, see _python_harness);
-    `trusted` requires --allow-untrusted-python at runtime AND startup-guard
-    approval. `timeout` is wall-clock seconds; the parent SIGKILLs the child
-    when it elapses.
+    `safe` mode is AST-validated (import allowlist + banned builtin
+    references, see _python_harness); `unsafe` requires --allow-unsafe-python
+    at runtime AND startup-guard approval. `timeout` is wall-clock seconds;
+    the parent SIGKILLs the child when it elapses.
+
+    FP-0014 renamed `pure` → `safe` and `trusted` → `unsafe`. The legacy
+    keywords are still accepted at parse time during the Track A → B
+    transition (stdlib YAML lags); they are normalised to the new keywords
+    here and rejected by the linter.
     """
     module: str
     function: str
-    mode: str = "pure"   # "pure" | "trusted"
+    mode: str = "safe"   # "safe" | "unsafe"
     timeout: int = 30
+
+    def __post_init__(self) -> None:
+        # FP-0014: normalise legacy keywords (`pure` / `trusted`) to the
+        # new pair (`safe` / `unsafe`). Direct construction with legacy
+        # keywords keeps working during the Track A → B transition.
+        if self.mode == "pure":
+            self.mode = "safe"
+        elif self.mode == "trusted":
+            self.mode = "unsafe"
 
 
 @dataclass
@@ -167,10 +181,17 @@ class PermissionDecl:
             function = str(item.get("function", ""))
             if not module or not function:
                 continue
-            mode = str(item.get("mode", "pure"))
-            if mode not in ("pure", "trusted"):
+            mode = str(item.get("mode", "safe"))
+            # FP-0014: pure → safe, trusted → unsafe. Legacy keywords accepted
+            # transitionally (stdlib YAML lags Track A); normalised here and
+            # rejected by the linter. Drop the legacy branch after Track B.
+            if mode == "pure":
+                mode = "safe"
+            elif mode == "trusted":
+                mode = "unsafe"
+            if mode not in ("safe", "unsafe"):
                 raise ValueError(
-                    f"permissions.python: mode must be 'pure' or 'trusted', got {mode!r}"
+                    f"permissions.python: mode must be 'safe' or 'unsafe', got {mode!r}"
                 )
             timeout = int(item.get("timeout", 30))
             out.append(PythonPermission(
@@ -209,7 +230,10 @@ class PermissionResolver:
         config_permissions: dict,
         project_root: Path | None = None,
         interactive: bool = True,
-        trusted_python_allowed: bool = False,
+        unsafe_python_allowed: bool = False,
+        # FP-0014 compat: accept the legacy keyword name during the Track A → B
+        # transition. New callers should use `unsafe_python_allowed`.
+        trusted_python_allowed: bool | None = None,
     ) -> None:
         self._config = config_permissions or {}
         self._project_root = (project_root or Path.cwd()).resolve()
@@ -217,7 +241,9 @@ class PermissionResolver:
         self._approvals_path = self._project_root / ".reyn" / "approvals.yaml"
         self._session: dict[str, bool] = {}
         self._saved: dict[str, bool] = self._load_saved()
-        self._trusted_python_allowed = trusted_python_allowed
+        if trusted_python_allowed is not None:
+            unsafe_python_allowed = trusted_python_allowed
+        self._unsafe_python_allowed = unsafe_python_allowed
 
     # ── Persistence ──────────────────────────────────────────────────────────
 
@@ -284,8 +310,8 @@ class PermissionResolver:
     async def _approve(self, key: str, description: str, bus: InterventionBus) -> bool:
         if self._is_config_approved(key):
             return True
-        # Composite keys (e.g. "skill_router/python.pure/./mod.py:fn") accept
-        # a kind-level blanket grant in config (e.g. "python.pure: allow").
+        # Composite keys (e.g. "skill_router/python.safe/./mod.py:fn") accept
+        # a kind-level blanket grant in config (e.g. "python.safe: allow").
         # The startup_guard already honors this; mirror the behavior at the
         # runtime check so config and startup are consistent.
         for part in key.split("/"):
@@ -467,8 +493,8 @@ class PermissionResolver:
                 read_seen.add(key)
                 read_requests.append({"path": path, "scope": scope})
 
-        # Python preprocessor steps — both pure and trusted require approval.
-        # Trusted additionally needs trusted_python_allowed (checked here so the
+        # Python preprocessor steps — both safe and unsafe require approval.
+        # Unsafe additionally needs unsafe_python_allowed (checked here so the
         # user is told why their startup is being aborted before any prompts fire).
         python_requests: list[dict] = []
         python_seen: set[tuple] = set()
@@ -477,7 +503,7 @@ class PermissionResolver:
             if key in python_seen:
                 continue
             python_seen.add(key)
-            kind = "python.trusted" if entry.mode == "trusted" else "python.pure"
+            kind = "python.unsafe" if entry.mode == "unsafe" else "python.safe"
             if self._is_config_approved(kind):
                 continue
             approval_key = f"{skill_name}/{kind}/{entry.module}:{entry.function}"
@@ -488,14 +514,14 @@ class PermissionResolver:
                 "mode": entry.mode,
             })
 
-        # Hard-fail before prompting if a trusted step appears without the flag.
+        # Hard-fail before prompting if an unsafe step appears without the flag.
         for req in python_requests:
-            if req["mode"] == "trusted" and not self._trusted_python_allowed:
+            if req["mode"] == "unsafe" and not self._unsafe_python_allowed:
                 raise PermissionError(
-                    f"Skill '{skill_name}' declares a trusted "
+                    f"Skill '{skill_name}' declares an unsafe "
                     f"python step ({req['module']}:{req['function']}) but "
-                    f"--allow-untrusted-python was not provided. Re-run with the flag "
-                    f"to enable trusted-mode Python preprocessor steps."
+                    f"--allow-unsafe-python was not provided. Re-run with the flag "
+                    f"to enable unsafe-mode Python preprocessor steps."
                 )
 
         # ADR-0029: warn when skill declares mcp_install but config denies it.
@@ -523,7 +549,7 @@ class PermissionResolver:
                 req["path"], req["scope"], skill_name, "file.write", bus,
             )
         for req in python_requests:
-            kind = "python.trusted" if req["mode"] == "trusted" else "python.pure"
+            kind = "python.unsafe" if req["mode"] == "unsafe" else "python.safe"
             key = f"{skill_name}/{kind}/{req['module']}:{req['function']}"
             await self._prompt_python(key, req["module"], req["function"], req["mode"], bus)
 
@@ -532,16 +558,16 @@ class PermissionResolver:
     ) -> bool:
         """Approve a python step; persist on yes."""
         if not self._interactive:
-            # stdlib skills set trusted_python_allowed=True — their trusted steps
+            # stdlib skills set unsafe_python_allowed=True — their unsafe steps
             # are safe by construction and must auto-approve even in non-interactive
-            # mode (--non-interactive).  User-supplied trusted steps without the
+            # mode (--non-interactive).  User-supplied unsafe steps without the
             # flag are already hard-rejected in startup_guard before this point.
-            if mode == "trusted" and self._trusted_python_allowed:
+            if mode == "unsafe" and self._unsafe_python_allowed:
                 self._session[key] = True
                 return True
             self._session[key] = False
             return False
-        verb = "TRUSTED" if mode == "trusted" else "pure"
+        verb = "UNSAFE" if mode == "unsafe" else "safe"
         iv = UserIntervention(
             kind="permission.python",
             prompt=f"Python step ({verb}): {module}:{function}",
@@ -758,10 +784,10 @@ class PermissionResolver:
     ) -> PythonPermission:
         """Resolve which python permission entry applies; raise if denied.
 
-        Lookup is by (module, function). Pure-mode steps need a one-time
-        startup_guard approval (saved per skill+module:function). Trusted-mode
-        steps additionally require trusted_python_allowed=True (set by the
-        --allow-untrusted-python CLI flag).
+        Lookup is by (module, function). Safe-mode steps need a one-time
+        startup_guard approval (saved per skill+module:function). Unsafe-mode
+        steps additionally require unsafe_python_allowed=True (set by the
+        --allow-unsafe-python CLI flag).
         """
         matching = [
             p for p in decl.python
@@ -775,33 +801,33 @@ class PermissionResolver:
                 f"    python:\n"
                 f"      - module: {module}\n"
                 f"        function: {function}\n"
-                f"        mode: pure"
+                f"        mode: safe"
             )
         perm = matching[0]
-        if perm.mode == "trusted":
-            if not self._trusted_python_allowed:
+        if perm.mode == "unsafe":
+            if not self._unsafe_python_allowed:
                 raise PermissionError(
-                    f"python step {module}:{function} declares mode='trusted' "
-                    f"but --allow-untrusted-python was not provided. "
-                    f"Trusted python runs unrestricted user code; pass the flag "
+                    f"python step {module}:{function} declares mode='unsafe' "
+                    f"but --allow-unsafe-python was not provided. "
+                    f"Unsafe python runs unrestricted user code; pass the flag "
                     f"only when you trust the skill source."
                 )
-            key = f"{skill_name}/python.trusted/{module}:{function}"
-            # Non-interactive + trusted_python_allowed=True (stdlib skills) must
+            key = f"{skill_name}/python.unsafe/{module}:{function}"
+            # Non-interactive + unsafe_python_allowed=True (stdlib skills) must
             # auto-approve without a prompt.  Pre-seed the session key so _approve()
             # returns True instead of auto-denying the non-interactive branch.
-            if not self._interactive and self._trusted_python_allowed:
+            if not self._interactive and self._unsafe_python_allowed:
                 self._session.setdefault(key, True)
-            if not await self._approve(key, f"trusted python step: {module}:{function}", bus):
+            if not await self._approve(key, f"unsafe python step: {module}:{function}", bus):
                 raise PermissionError(
-                    f"trusted python step {module}:{function} denied by user"
+                    f"unsafe python step {module}:{function} denied by user"
                 )
             return perm
-        # pure mode
-        key = f"{skill_name}/python.pure/{module}:{function}"
-        if not await self._approve(key, f"pure python step: {module}:{function}", bus):
+        # safe mode
+        key = f"{skill_name}/python.safe/{module}:{function}"
+        if not await self._approve(key, f"safe python step: {module}:{function}", bus):
             raise PermissionError(
-                f"pure python step {module}:{function} denied by user"
+                f"safe python step {module}:{function} denied by user"
             )
         return perm
 

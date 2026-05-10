@@ -25,9 +25,9 @@ Note for skills using `python` preprocessor steps:
 
     (b) Set a project-wide allow in reyn.yaml:
           permissions:
-            python.pure: allow      # for pure-mode steps
-            python.trusted: allow   # for trusted-mode steps (also requires
-                                    # --allow-untrusted-python at runtime)
+            python.safe: allow      # for safe-mode steps
+            python.unsafe: allow    # for unsafe-mode steps (also requires
+                                    # --allow-unsafe-python at runtime)
 
   Without prior approval, the target's run will fail and the case will be
   marked as not-finished. The framing reads as a target-skill bug; it isn't.

@@ -40,7 +40,7 @@ class PythonStep(BaseModel):
 
     Phase declares both the function (here) and the permission to call it
     (in `permissions.python`). The function executes in a subprocess via
-    reyn._python_harness with the user's chosen mode (pure / trusted),
+    reyn._python_harness with the user's chosen mode (safe / unsafe),
     timeout, and 3rd-party allowlist. Its return value is placed at
     `into` and validated against `output_schema` so the LLM sees a
     typed enriched artifact.

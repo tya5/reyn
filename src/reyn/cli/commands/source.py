@@ -210,7 +210,7 @@ async def _cmd_rm_async(args: argparse.Namespace) -> int:
         config_permissions=perm_config,
         project_root=_find_project_root_safe(workspace_root),
         interactive=sys.stdin.isatty(),
-        trusted_python_allowed=False,
+        unsafe_python_allowed=False,
     )
 
     decl = PermissionDecl(index_drop=True)

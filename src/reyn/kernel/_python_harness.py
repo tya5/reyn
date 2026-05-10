@@ -2,7 +2,7 @@
 
 Invoked as `python -m reyn._python_harness`. Reads a JSON request from
 stdin, executes the user-supplied function under the requested mode
-(pure | trusted), and writes a JSON response to stdout.
+(safe | unsafe), and writes a JSON response to stdout.
 
 Wire format
 -----------
@@ -10,9 +10,9 @@ Request (stdin, single JSON object):
     {
       "module_path": "/abs/path/to/preprocessing.py",
       "function":    "compute_text_stats",
-      "mode":        "pure" | "trusted",
+      "mode":        "safe" | "unsafe",
       "artifact":    {...},                  # passed as the function's argument
-      "allowed_modules": ["numpy", ...]      # extra imports allowed in pure mode
+      "allowed_modules": ["numpy", ...]      # extra imports allowed in safe mode
     }
 
 Response (stdout, single JSON object):
@@ -39,68 +39,67 @@ from reyn.kernel._python_allowlist import (
     module_is_allowed,
 )
 
-# ── AST validation (pure mode) ──────────────────────────────────────────────
+# ── AST validation (safe mode) ──────────────────────────────────────────────
 
 
-_BANNED_NAMES = frozenset(BANNED_BUILTINS) | frozenset({
-    # Names whose mere reference enables sandbox escape.
-    "__builtins__",
-})
+class _SafeModeViolation(ValueError):
+    """Raised when user code does something safe mode disallows."""
 
 
-class _PureModeViolation(ValueError):
-    """Raised when user code does something pure mode disallows."""
+# Backwards-compatible alias — some external callers / tests reference the
+# old name. New code should use _SafeModeViolation.
+_PureModeViolation = _SafeModeViolation
 
 
-def _validate_pure_ast(tree: ast.Module, allowed_modules: frozenset[str]) -> None:
-    """Walk `tree` and reject anything outside the pure-mode allowlist.
+def _validate_safe_ast(tree: ast.Module, allowed_modules: frozenset[str]) -> None:
+    """Walk `tree` and reject anything outside the safe-mode allowlist.
 
     What this catches:
-      - import / from-import of disallowed modules
+      - import / from-import of modules outside the allowlist (including
+        explicit reject of `reyn.unsafe.*`)
       - bare references to banned names (open, eval, __import__, ...)
-      - attribute access onto __builtins__ / __class__ / __subclasses__ etc.
-        (best-effort — doesn't catch every metaprogramming trick)
 
-    What this does NOT catch:
-      - Determined attackers using getattr() chains or string-encoded names
-      - Side effects inside *allowed* libraries (pandas.read_csv, etc.)
+    What this does NOT catch (= NOT a sandbox):
+      - Determined attackers using getattr() chains, string-encoded names,
+        metaprogramming (`__class__.__bases__[0].__subclasses__()` and
+        friends), or any non-syntactic escape technique.
+      - Side effects inside *allowed* libraries.
 
-    Honest limit: this is defense-in-depth, not a real sandbox.
+    Honest scope: import allowlist + banned-builtin reference detection.
+    The real safety boundary is subprocess isolation + permission gating,
+    not this validator. AST-level escape-pattern detection was dropped in
+    FP-0014 (ADR-G Phase 1) — it accrued maintenance debt for ~zero
+    additional security against motivated attackers, and the subprocess
+    boundary is the actual line of defence.
     """
     for node in ast.walk(tree):
         # Imports
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if not module_is_allowed(alias.name, allowed_modules):
-                    raise _PureModeViolation(
-                        f"pure mode: import of {alias.name!r} not allowed; "
+                    raise _SafeModeViolation(
+                        f"safe mode: import of {alias.name!r} not allowed; "
                         f"allowed stdlib: {sorted(PURE_STDLIB_ALLOWLIST)}, "
                         f"plus user-allowed: {sorted(allowed_modules)}"
                     )
         elif isinstance(node, ast.ImportFrom):
             if node.module is None:
-                raise _PureModeViolation("pure mode: relative imports not allowed")
+                raise _SafeModeViolation("safe mode: relative imports not allowed")
             if not module_is_allowed(node.module, allowed_modules):
-                raise _PureModeViolation(
-                    f"pure mode: from-import of {node.module!r} not allowed"
+                raise _SafeModeViolation(
+                    f"safe mode: from-import of {node.module!r} not allowed"
                 )
         # Banned name references
         elif isinstance(node, ast.Name):
-            if node.id in _BANNED_NAMES:
-                raise _PureModeViolation(
-                    f"pure mode: reference to {node.id!r} is not allowed"
+            if node.id in BANNED_BUILTINS:
+                raise _SafeModeViolation(
+                    f"safe mode: reference to {node.id!r} is not allowed"
                 )
-        # Attribute access patterns commonly used to escape (best-effort).
-        elif isinstance(node, ast.Attribute):
-            # ().__class__.__bases__[0].__subclasses__() and friends
-            if node.attr in {
-                "__class__", "__bases__", "__subclasses__", "__mro__",
-                "__globals__", "__builtins__", "__import__", "__reduce__",
-                "__reduce_ex__", "__init_subclass__", "__subclasshook__",
-            }:
-                raise _PureModeViolation(
-                    f"pure mode: attribute access to {node.attr!r} is not allowed"
-                )
+
+
+# Backwards-compatible alias — the linter and some tests reference the old
+# name. New code should call _validate_safe_ast directly.
+_validate_pure_ast = _validate_safe_ast
 
 
 # ── Restricted execution environment ────────────────────────────────────────
@@ -128,10 +127,9 @@ def _build_restricted_builtins(allowed_modules: frozenset[str] = frozenset()) ->
     real_import = _builtins_module.__import__
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
-        top = name.split(".", 1)[0]
-        if not module_is_allowed(top, allowed_modules):
+        if not module_is_allowed(name, allowed_modules):
             raise ImportError(
-                f"pure mode: import of {name!r} not allowed; "
+                f"safe mode: import of {name!r} not allowed; "
                 f"allowed stdlib: {sorted(PURE_STDLIB_ALLOWLIST)}, "
                 f"plus user-allowed: {sorted(allowed_modules)}"
             )
@@ -149,8 +147,8 @@ def _exec_user_module(
 ) -> dict[str, Any]:
     """Compile + exec the user file. Returns its module namespace."""
     tree = ast.parse(source, filename=module_path)
-    if mode == "pure":
-        _validate_pure_ast(tree, allowed_modules)
+    if mode == "safe":
+        _validate_safe_ast(tree, allowed_modules)
         builtins_dict = _build_restricted_builtins(allowed_modules)
     else:
         builtins_dict = _builtins_module.__dict__
@@ -185,11 +183,11 @@ def main() -> int:
         req = _read_request()
         module_path = str(req["module_path"])
         function_name = str(req["function"])
-        mode = str(req.get("mode", "pure"))
+        mode = str(req.get("mode", "safe"))
         artifact = req.get("artifact", {})
         allowed_modules = frozenset(req.get("allowed_modules") or [])
 
-        if mode not in ("pure", "trusted"):
+        if mode not in ("safe", "unsafe"):
             raise ValueError(f"unknown mode: {mode!r}")
 
         with open(module_path, encoding="utf-8") as f:
@@ -210,9 +208,9 @@ def main() -> int:
         _write_response({"ok": True, "result": json.loads(json.dumps(result, default=str))})
         return 0
 
-    except _PureModeViolation as exc:
+    except _SafeModeViolation as exc:
         _write_response({
-            "ok": False, "kind": "PureModeViolation", "error": str(exc),
+            "ok": False, "kind": "SafeModeViolation", "error": str(exc),
         })
         return 2
     except Exception as exc:

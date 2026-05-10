@@ -415,8 +415,8 @@ class PreprocessorExecutor:
             from reyn.permissions.permissions import PythonPermission
             # When no resolver is configured (e.g. unit tests), look up the
             # declared mode from the skill's permissions block so that skills
-            # declaring `mode: trusted` are not silently downgraded to pure.
-            declared_mode = "pure"
+            # declaring `mode: unsafe` are not silently downgraded to safe.
+            declared_mode = "safe"
             for decl in self._skill.permissions.python:
                 if decl.module == step.module and decl.function == step.function:
                     declared_mode = decl.mode

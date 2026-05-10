@@ -55,11 +55,11 @@ def resolve_skill_path(name: str) -> tuple[Path, Path]:
 def is_stdlib_skill(skill_dir: Path) -> bool:
     """Return True if *skill_dir* lives inside the bundled stdlib tree.
 
-    Used by CLI entry points to decide whether to auto-allow trusted Python
+    Used by CLI entry points to decide whether to auto-allow unsafe Python
     preprocessor steps: stdlib skills are shipped by the Reyn team and are
     therefore trusted by construction — the user cannot inject code into them.
     User-provided skills (reyn/local/, reyn/project/) still require the
-    --allow-untrusted-python flag.
+    --allow-unsafe-python flag.
 
     The check is purely path-based (no skill name string), keeping the OS
     skill-agnostic in accordance with P7.

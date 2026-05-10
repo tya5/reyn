@@ -406,42 +406,50 @@ def _load_eval_builder_skill() -> object:
     return load_dsl_skill(skill_md)
 
 
-def test_eval_builder_permissions_python_has_trusted_compute_paths():
-    """Tier 2: eval_builder skill.md declares compute_paths as mode=trusted (B8-NEW-2 fix).
+def test_eval_builder_permissions_python_has_unsafe_compute_paths():
+    """Tier 2: eval_builder skill.md declares compute_paths as mode=unsafe (B8-NEW-2 fix).
 
-    Without this declaration the OS falls back to pure mode, causing
-    PureModeViolation when analyze_skill_resolver.py imports reyn.skill.skill_paths.
+    Without this declaration the OS falls back to safe mode, causing
+    SafeModeViolation when analyze_skill_resolver.py imports reyn.skill.skill_paths.
     Guards that the permissions.python block is present and correct.
+
+    FP-0014: stdlib YAML still says `mode: trusted` (Track B will rename
+    those); PermissionDecl normalises legacy keywords at parse time so the
+    loaded mode reads as the new keyword `unsafe`.
     """
     skill = _load_eval_builder_skill()
 
-    trusted_entries = [
+    unsafe_entries = [
         p for p in skill.permissions.python
         if p.module == "./analyze_skill_resolver.py"
         and p.function == "compute_paths"
-        and p.mode == "trusted"
+        and p.mode == "unsafe"
     ]
-    assert trusted_entries, (
+    assert unsafe_entries, (
         "eval_builder skill.md must declare "
-        "./analyze_skill_resolver.py:compute_paths with mode=trusted in permissions.python"
+        "./analyze_skill_resolver.py:compute_paths with mode=unsafe in permissions.python"
     )
 
 
-def test_eval_builder_permissions_python_inject_resolved_paths_is_pure():
-    """Tier 2: eval_builder skill.md declares inject_resolved_paths as mode=pure.
+def test_eval_builder_permissions_python_inject_resolved_paths_is_safe():
+    """Tier 2: eval_builder skill.md declares inject_resolved_paths as mode=safe.
 
-    The pure-mode helper must remain pure (no reyn imports, no I/O).
-    Guards that the permissions block does not accidentally escalate it to trusted.
+    The safe-mode helper must remain safe (no reyn imports, no I/O).
+    Guards that the permissions block does not accidentally escalate it to unsafe.
+
+    FP-0014: stdlib YAML still says `mode: pure` (Track B will rename those);
+    PermissionDecl normalises legacy keywords at parse time so the loaded
+    mode reads as the new keyword `safe`.
     """
     skill = _load_eval_builder_skill()
 
-    pure_entries = [
+    safe_entries = [
         p for p in skill.permissions.python
         if p.module == "./analyze_skill.py"
         and p.function == "inject_resolved_paths"
-        and p.mode == "pure"
+        and p.mode == "safe"
     ]
-    assert pure_entries, (
+    assert safe_entries, (
         "eval_builder skill.md must declare "
-        "./analyze_skill.py:inject_resolved_paths with mode=pure in permissions.python"
+        "./analyze_skill.py:inject_resolved_paths with mode=safe in permissions.python"
     )

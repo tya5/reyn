@@ -67,11 +67,15 @@ def register(sub) -> None:
                        "Required for meta-apps that invoke sub-processes (e.g. app_improver). "
                        "Off by default for safety."
                    ))
-    p.add_argument("--allow-untrusted-python", dest="allow_untrusted_python",
+    # FP-0014: --allow-untrusted-python renamed → --allow-unsafe-python.
+    # Both flags target the same dest so legacy invocations keep working
+    # during the Track A → B transition. New code should use the new flag.
+    p.add_argument("--allow-unsafe-python", "--allow-untrusted-python",
+                   dest="allow_unsafe_python",
                    action="store_true",
                    help=(
-                       "Enable trusted-mode Python preprocessor steps (no AST sandboxing). "
-                       "Pure-mode python steps run without this flag. Off by default."
+                       "Enable unsafe-mode Python preprocessor steps (no AST sandboxing). "
+                       "Safe-mode python steps run without this flag. Off by default."
                    ))
     p.set_defaults(func=run)
 
@@ -93,15 +97,15 @@ def run(args: argparse.Namespace) -> None:
     shell_allowed = session.shell_allowed_for(args)
     safety = session.safety_for(args)
 
-    trusted_python = bool(getattr(args, "allow_untrusted_python", False))
+    unsafe_python = bool(getattr(args, "allow_unsafe_python", False))
     # Stdlib skills ship with the Reyn team's code and are trusted by
-    # construction — auto-allow their trusted python steps so users don't need
-    # --allow-untrusted-python when running e.g. `reyn run mcp_install`.
-    if not trusted_python and loaded.skill_md is not None:
+    # construction — auto-allow their unsafe python steps so users don't need
+    # --allow-unsafe-python when running e.g. `reyn run mcp_install`.
+    if not unsafe_python and loaded.skill_md is not None:
         from reyn.skill.skill_paths import is_stdlib_skill
-        trusted_python = is_stdlib_skill(loaded.skill_md.parent)
+        unsafe_python = is_stdlib_skill(loaded.skill_md.parent)
     perm_resolver = _build_permission_resolver(
-        session.config, shell_allowed, trusted_python=trusted_python,
+        session.config, shell_allowed, unsafe_python=unsafe_python,
     )
 
     from reyn.agent import Agent
@@ -177,7 +181,7 @@ def _parse_cli_input(raw: str) -> dict:
         return {"type": "user_message", "data": {"text": raw}}
 
 
-def _build_permission_resolver(config, shell_allowed: bool, trusted_python: bool = False):
+def _build_permission_resolver(config, shell_allowed: bool, unsafe_python: bool = False):
     from reyn.config import _find_project_root
     from reyn.permissions.permissions import PermissionResolver
     project_root = _find_project_root(Path.cwd())
@@ -188,7 +192,7 @@ def _build_permission_resolver(config, shell_allowed: bool, trusted_python: bool
         config_permissions=perm_config,
         project_root=project_root,
         interactive=sys.stdin.isatty(),
-        trusted_python_allowed=trusted_python,
+        unsafe_python_allowed=unsafe_python,
     )
 
 

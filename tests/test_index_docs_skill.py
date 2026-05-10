@@ -223,16 +223,21 @@ def test_index_docs_postprocessor_step2_args_from():
 # ---------------------------------------------------------------------------
 
 
-def test_index_docs_permissions_python_trusted_declared():
-    """Tier 2: skill declares python/trusted permissions for all three chunker functions."""
+def test_index_docs_permissions_python_unsafe_declared():
+    """Tier 2: skill declares python/unsafe permissions for all three chunker functions.
+
+    FP-0014: stdlib YAML still says `mode: trusted` (Track B will rename
+    those), but PermissionDecl normalises legacy keywords at parse time
+    so the loaded PythonPermission.mode reads as the new keyword `unsafe`.
+    """
     skill = _load()
     python_perms = skill.permissions.python
     assert len(python_perms) >= 3, f"Expected at least 3 python perms, got {len(python_perms)}"
 
     fn_modes = {p.function: p.mode for p in python_perms}
-    assert fn_modes.get("gather_samples") == "trusted"
-    assert fn_modes.get("cost_preflight") == "trusted"
-    assert fn_modes.get("apply_strategy") == "trusted"
+    assert fn_modes.get("gather_samples") == "unsafe"
+    assert fn_modes.get("cost_preflight") == "unsafe"
+    assert fn_modes.get("apply_strategy") == "unsafe"
 
 
 def test_index_docs_permissions_python_module_is_relative_path():

@@ -37,7 +37,7 @@ models:
 # operator can pre-approve specific paths here.
 # ───────────────────────────────────────────────────────────────────────────
 permissions:
-  python.pure: allow
+  python.safe: allow
   file.read:
     - path: "."
       scope: recursive

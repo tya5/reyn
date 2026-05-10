@@ -216,8 +216,9 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
       2. The declared `module` resolves to an existing file inside the
          skill directory (no absolute paths, no .. escape).
       3. The declared `function` is a top-level def in that file.
-      4. (warning only) For pure-mode steps, run the harness's AST
+      4. (warning only) For safe-mode steps, run the harness's AST
          validator against the file and report violations.
+      5. (FP-0014 hard error) Reject legacy mode keywords `pure` / `trusted`.
     """
     issues: list[LintIssue] = []
     skill_dir = phase_path.parent.parent  # phases/<x>.md → ../
@@ -249,9 +250,22 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
                 f"{label} is not declared in permissions.python — runtime will reject it. "
                 f"Add a matching entry under `permissions.python:` with the same module and function.",
             ))
-            mode = "pure"  # assume pure for the AST check below
+            mode = "safe"  # assume safe for the AST check below
         else:
-            mode = str(perm_index[(module, function)].get("mode", "pure"))
+            raw_mode = str(perm_index[(module, function)].get("mode", "safe"))
+            # Check 5 — FP-0014 hard reject of legacy mode keywords.
+            if raw_mode in ("pure", "trusted"):
+                renamed = "safe" if raw_mode == "pure" else "unsafe"
+                issues.append(LintIssue(
+                    "error", phase_path,
+                    f"{label}: mode {raw_mode!r} was renamed in FP-0014 "
+                    f"(pure → safe, trusted → unsafe). "
+                    f"Update permissions.python to use mode: {renamed!r}.",
+                ))
+                # Continue with normalised mode so check 4 still runs meaningfully.
+                mode = renamed
+            else:
+                mode = raw_mode
 
         # Check 2 — module file path
         resolved = _resolve_python_module(skill_dir, module)
@@ -296,20 +310,20 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
                 f"`def` in {module!r}",
             ))
 
-        # Check 4 — pure-mode AST validation (warning, since reyn.yaml's
+        # Check 4 — safe-mode AST validation (warning, since reyn.yaml's
         # python.allowed_modules can legitimately whitelist additional imports)
-        if mode == "pure":
+        if mode == "safe":
             try:
-                from reyn.kernel._python_harness import _validate_pure_ast
+                from reyn.kernel._python_harness import _validate_safe_ast
             except Exception:
                 # harness isn't importable in this lint context — skip silently
                 continue
             try:
-                _validate_pure_ast(ast.parse(source), frozenset())
+                _validate_safe_ast(ast.parse(source), frozenset())
             except Exception as exc:
                 issues.append(LintIssue(
                     "warning", phase_path,
-                    f"{label}: pure-mode check flagged module {module!r}: {exc}. "
+                    f"{label}: safe-mode check flagged module {module!r}: {exc}. "
                     f"If the module legitimately needs the flagged import, add it to "
                     f"`python.allowed_modules` in reyn.yaml.",
                 ))
