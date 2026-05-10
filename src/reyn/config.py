@@ -855,7 +855,21 @@ def _build_cost_limit(raw: object) -> CostLimitConfig:
         warn_ratio = float(warn_ratio)
     except (TypeError, ValueError):
         warn_ratio = 0.8
-    return CostLimitConfig(hard_limit=hard, warn_ratio=warn_ratio)
+    # FP-0003: opt-in user-approval flow on hard-limit hit.
+    ask_on_exceed = bool(raw.get("ask_on_exceed", False))
+    extension_calls_raw = raw.get("extension_calls", 0)
+    try:
+        extension_calls = int(extension_calls_raw)
+    except (TypeError, ValueError):
+        extension_calls = 0
+    if extension_calls < 0:
+        extension_calls = 0
+    return CostLimitConfig(
+        hard_limit=hard,
+        warn_ratio=warn_ratio,
+        ask_on_exceed=ask_on_exceed,
+        extension_calls=extension_calls,
+    )
 
 
 def _build_cost_config(raw: object) -> CostConfig:

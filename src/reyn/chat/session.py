@@ -46,6 +46,7 @@ from reyn.skill.skill_registry import SkillRegistry
 from reyn.user_intervention import (
     InterventionAnswer,
     InterventionBus,
+    InterventionChoice,
     UserIntervention,
     match_choice,
 )
@@ -1628,6 +1629,56 @@ class ChatSession:
                 intervention_id=iv.id,
             )
 
+    async def _ask_budget_extension(
+        self,
+        *,
+        chain_id: str,
+        skill_name: str,
+        check,  # BudgetCheck
+    ) -> bool:
+        """FP-0003: ask the user to approve extending a hard-limit cap.
+
+        Dispatches a yes/no UserIntervention via the existing
+        InterventionBus. Returns True iff the user picked yes; any other
+        outcome (no, free-text mismatch, cancellation) returns False so
+        the caller falls through to the original refusal path.
+
+        The intervention carries no `run_id` because the spawn has not
+        been registered yet — chain-side bookkeeping (`run_id`) is
+        post-approval. ``skill_name`` is set so /list / TUI can show
+        which skill the user is being asked about.
+        """
+        ctx = check.context or {}
+        used = int(ctx.get("current") or 0)
+        base = int(ctx.get("base_hard") or 0)
+        granted = int(ctx.get("extensions_granted") or 0)
+        extension = int(ctx.get("extension_calls") or 0)
+        prompt = (
+            f"Skill {skill_name!r} has hit the chain hard-limit "
+            f"({used} of {base + granted}). "
+            f"Approve {extension} additional spawn(s) for this chain?"
+        )
+        detail = (
+            f"chain={chain_id} dimension={check.hard_dimension} "
+            f"detail={check.detail}"
+        )
+        iv = UserIntervention(
+            kind="permission.budget_extend",
+            prompt=prompt,
+            detail=detail,
+            choices=[
+                InterventionChoice(id="yes", label="[Y]es", hotkey="y"),
+                InterventionChoice(id="no", label="[N]o", hotkey="n"),
+            ],
+            run_id=None,
+            skill_name=skill_name,
+        )
+        try:
+            answer = await self._dispatch_intervention(iv)
+        except Exception:
+            return False
+        return getattr(answer, "choice_id", None) == "yes"
+
     def _drop_interventions_for_run(self, run_id: str | None) -> None:
         """Cancel any pending interventions tagged with `run_id`.
 
@@ -2554,6 +2605,42 @@ class ChatSession:
             check = self._budget.check_pre_spawn(
                 chain_id=chain_id, skill=skill_name,
             )
+            # FP-0003: opt-in user-approval flow on hard-limit hit.
+            # When the cap is configured with `ask_on_exceed: true` AND
+            # `extension_calls > 0`, dispatch an ask_user prompting the
+            # user to extend the chain's effective cap by N additional
+            # spawns. Approval grants the extension and we re-check;
+            # decline / timeout falls through to the original refusal
+            # path. The flag is opt-in so existing users see no change.
+            if (
+                not check.allowed
+                and check.context.get("ask_on_exceed")
+                and int(check.context.get("extension_calls") or 0) > 0
+            ):
+                approved = await self._ask_budget_extension(
+                    chain_id=chain_id,
+                    skill_name=skill_name,
+                    check=check,
+                )
+                if approved:
+                    extension = int(check.context["extension_calls"])
+                    new_total = self._budget.extend_chain_calls(
+                        chain_id=chain_id,
+                        skill=skill_name,
+                        additional=extension,
+                    )
+                    self._chat_events.emit(
+                        "budget_extended",
+                        dimension=check.hard_dimension,
+                        skill=skill_name,
+                        chain_id=chain_id,
+                        granted=extension,
+                        total_extension=new_total,
+                    )
+                    # Re-check after extension. Should normally allow now.
+                    check = self._budget.check_pre_spawn(
+                        chain_id=chain_id, skill=skill_name,
+                    )
             if not check.allowed:
                 self._chat_events.emit(
                     "budget_exceeded",

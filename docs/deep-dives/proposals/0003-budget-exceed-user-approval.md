@@ -1,8 +1,9 @@
 # FP-0003: budget 超過時のユーザー許諾・再開フロー
 
-**Status**: proposed
+**Status**: done (landed 2026-05-10, commit pending)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Implemented**: 2026-05-10 — `CostLimitConfig.ask_on_exceed` + `extension_calls` fields + `BudgetTracker.extend_chain_calls()` + `ChatSession._ask_budget_extension()` ask_user dispatch + 8 Tier 2 invariants (`tests/test_budget_extend_chain.py`). Backward-compatible: `ask_on_exceed: false` (default) preserves prior hard-refuse behaviour.
 
 ---
 

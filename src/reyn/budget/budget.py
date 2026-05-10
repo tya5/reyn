@@ -48,10 +48,24 @@ class BudgetExceeded(Exception):
 
 @dataclass
 class CostLimitConfig:
-    """A single hybrid-cap dimension. None hard_limit = unlimited."""
+    """A single hybrid-cap dimension. None hard_limit = unlimited.
+
+    FP-0003: ``ask_on_exceed`` opts a dimension into the user-approval
+    flow on hard-limit hit. When True, instead of refusing immediately,
+    the budget gateway prompts the user via ``InterventionBus.ask`` and
+    extends the chain's effective cap by ``extension_calls`` (or
+    ``extension_tokens`` for token-axis dimensions) on approval.
+    Default False preserves the pre-FP-0003 hard-refuse behaviour.
+    """
 
     hard_limit: float | None = None
     warn_ratio: float = 0.8
+    # FP-0003: opt-in user-approval flow on hard-limit hit.
+    ask_on_exceed: bool = False
+    # FP-0003: how much to extend the chain cap by on approval (only
+    # consulted when ``ask_on_exceed`` is True). For per_chain_skill_calls
+    # this is a count; for per_chain_skill_tokens it is a token count.
+    extension_calls: int = 0
 
     @property
     def warn_threshold(self) -> float | None:
@@ -281,6 +295,15 @@ class BudgetTracker:
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
         self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
         self._chain_skill_tokens: dict[tuple[str, str], int] = defaultdict(int)
+        # FP-0003: per-(chain_id, skill) extensions granted via the
+        # ``ask_on_exceed`` user-approval flow. The effective hard limit
+        # for a (chain, skill) pair is ``cap.hard_limit + extensions[key]``.
+        # Tracked separately from ``_chain_skill_calls`` so the counter
+        # itself remains a simple monotonic spawn count, and so the
+        # extension carries clean audit semantics ("user approved +N
+        # spawns at 12:34:56" vs mutating the counter retroactively).
+        self._chain_skill_call_extensions: dict[tuple[str, str], int] = defaultdict(int)
+        self._chain_skill_token_extensions: dict[tuple[str, str], int] = defaultdict(int)
         self._call_window: dict[str, deque[float]] = defaultdict(deque)
         self._warned: set[tuple[str, str]] = set()
         # PR25: persistent daily / monthly counters
@@ -398,22 +421,37 @@ class BudgetTracker:
         return rl_check  # may carry warn dims
 
     def check_pre_spawn(self, *, chain_id: str, skill: str) -> BudgetCheck:
-        """Run before spawning a skill from chat. Refuses on per-chain cap."""
+        """Run before spawning a skill from chat. Refuses on per-chain cap.
+
+        FP-0003: the effective hard limit is the configured ``cap.hard_limit``
+        plus any per-(chain, skill) extensions granted via the
+        ``ask_on_exceed`` user-approval flow (see ``extend_chain_calls``).
+        ``BudgetCheck.context['ask_on_exceed']`` tells the caller whether
+        a refusal is eligible for the user-approval flow.
+        """
         cap = self._config.per_chain_skill_calls
         if not cap.is_active:
             return BudgetCheck(allowed=True)
         used = self._chain_skill_calls[(chain_id, skill)]
-        if used >= cap.hard_limit:
+        extension = self._chain_skill_call_extensions[(chain_id, skill)]
+        effective_hard = int(cap.hard_limit) + extension
+        if used >= effective_hard:
             return BudgetCheck(
                 allowed=False,
                 hard_dimension="per_chain_skill_calls",
                 detail=(
                     f"skill {skill!r} already spawned {used} times in chain "
-                    f"{chain_id} (hard limit {int(cap.hard_limit)})"
+                    f"{chain_id} (effective hard limit {effective_hard}; "
+                    f"base {int(cap.hard_limit)} + extensions {extension})"
                 ),
                 context={
                     "skill": skill, "chain_id": chain_id,
-                    "current": used, "hard": int(cap.hard_limit),
+                    "current": used,
+                    "hard": effective_hard,
+                    "base_hard": int(cap.hard_limit),
+                    "extensions_granted": extension,
+                    "ask_on_exceed": cap.ask_on_exceed,
+                    "extension_calls": int(cap.extension_calls),
                 },
             )
         warn_dims: list[str] = []
@@ -428,9 +466,36 @@ class BudgetTracker:
             warn_dimensions=warn_dims,
             context={
                 "skill": skill, "chain_id": chain_id,
-                "current": used, "hard": int(cap.hard_limit),
+                "current": used, "hard": effective_hard,
+                "base_hard": int(cap.hard_limit),
+                "extensions_granted": extension,
             },
         )
+
+    def extend_chain_calls(
+        self, *, chain_id: str, skill: str, additional: int
+    ) -> int:
+        """Extend the effective hard limit for a (chain, skill) pair.
+
+        FP-0003: invoked after the user approves continuation via
+        ``ask_user`` on a hard-limit hit. The next ``additional`` spawns
+        of ``skill`` in ``chain_id`` will be allowed before the gate
+        refuses again. Returns the new total extension count for audit.
+
+        ``additional`` is clamped to >= 0; passing a negative value is
+        silently treated as 0 (= the typical caller derives ``additional``
+        from ``CostLimitConfig.extension_calls`` so a misconfigured zero
+        extension produces a no-op rather than an exception).
+        """
+        if additional <= 0:
+            return self._chain_skill_call_extensions[(chain_id, skill)]
+        self._chain_skill_call_extensions[(chain_id, skill)] += additional
+        # Reset the warn flag for this dimension so the user gets a
+        # fresh warn around the new effective threshold.
+        self._warned.discard(
+            ("per_chain_skill_calls", f"{chain_id}/{skill}")
+        )
+        return self._chain_skill_call_extensions[(chain_id, skill)]
 
     # ── recording ───────────────────────────────────────────────────────
 
