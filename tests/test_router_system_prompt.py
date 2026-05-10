@@ -58,7 +58,7 @@ class TestEmptyStateRenders:
         assert "Role: chat router for agent chat" in prompt
         # Intent axis always present
         assert "Action" in prompt
-        assert "Recall" in prompt
+        assert "Memory access" in prompt
         # No real category lines — shows (none) placeholders
         assert "(none)" in prompt
 
@@ -148,7 +148,7 @@ class TestMemoryEntriesInlined:
 class TestIntentAxisSectionAlwaysPresent:
     @pytest.mark.parametrize("intent_fragment", [
         "Action — run external work",
-        "Recall —",
+        "Memory access —",
         "Save —",
         "Forget —",
         "Reply —",
@@ -417,7 +417,7 @@ class TestIntentAxisDynamic:
         assert "Action — run external work" in prompt
         assert "skills:  list_skills / describe_skill / invoke_skill" in prompt
         assert "agents:  list_agents / describe_agent / delegate_to_agent" in prompt
-        assert "Recall — read persisted facts" in prompt
+        assert "Memory access — read persisted facts" in prompt
         assert "Save — persist new facts" in prompt
         assert "Forget — delete persisted facts" in prompt
         assert "Reply — answer directly (no tool)" in prompt

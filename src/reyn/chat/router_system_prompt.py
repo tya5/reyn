@@ -190,7 +190,10 @@ def build_system_prompt(
         parts.append(
             "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool"
         )
-    parts.append("- Recall — read persisted facts")
+    # NOTE: renamed from "Recall" to "Memory access" (B17-S5-3 fix) to avoid
+    # vocabulary collision with the `recall` indexed-search tool (ADR-0033).
+    # The word "recall" in user input must map to the `recall` tool, not here.
+    parts.append("- Memory access — read persisted facts (= memory, NOT indexed sources)")
     parts.append("           tools: list_memory / read_memory_body")
     parts.append("- Save — persist new facts")
     if has_file_write:
@@ -280,7 +283,14 @@ def build_system_prompt(
     user_capabilities.append("search the web (DuckDuckGo)")
     if web_fetch_allowed:
         user_capabilities.append("fetch a specific web page")
-    user_capabilities.append("remember and recall facts via your memory")
+    user_capabilities.append("remember and recall facts via your memory (= Memory section)")
+    # Indexed sources: always mention, both with and without available sources.
+    # B17-S1-1 fix: when the user asks about 'data sources', they need to know
+    # indexed sources and memory are DIFFERENT storage layers.
+    if indexed_sources_section is not None:
+        user_capabilities.append(
+            "search indexed document sources via the `recall` tool (= Indexed sources section)"
+        )
     if available_agents:
         user_capabilities.append("delegate to other agents on your team")
     if mcp_servers:
@@ -292,11 +302,19 @@ def build_system_prompt(
         "  Answer in plain user-facing terms — never with the routing labels"
     )
     parts.append(
-        "  (Action / Recall / Save / Forget / Reply). The honest answer is:"
+        "  (Action / Memory access / Save / Forget / Reply). The honest answer is:"
     )
     for cap in user_capabilities:
         parts.append(f"    • I can {cap}.")
     parts.append("  Tailor the wording naturally; don't list every bullet verbatim.")
+    if indexed_sources_section is not None:
+        parts.append(
+            "  IMPORTANT: When listing 'data sources', mention BOTH memory entries"
+        )
+        parts.append(
+            "  AND indexed sources (see Indexed sources section below). They are"
+        )
+        parts.append("  separate storage layers.")
     parts.append("")
 
     parts.append("## Behaviour")
@@ -312,8 +330,68 @@ def build_system_prompt(
             f"  - Always reply in language: {output_language}."
             "  Do NOT switch language even for error messages or clarifying questions."
         )
+    # ── Vocabulary disambiguation rules (B17-S1-1 + B17-S5-3 fix) ──────────
+    # Two collisions fixed here:
+    #   1. "recall" in user input → LLM mapped to "Recall" (memory) intent.
+    #      Fix: renamed intent to "Memory access"; add explicit rule that
+    #      "recall" word → indexed-search tool, not memory.
+    #   2. "data sources" in user input → LLM mapped to memory layers only,
+    #      ignoring the Indexed sources section.
+    #      Fix: explicit rule to list BOTH memory AND indexed sources.
+    # These rules are only relevant when RAG (indexed sources) is wired up.
+    # Without indexed_sources_section, the `recall` tool is not available and
+    # the disambiguation rules would reference a non-existent section.
+    if indexed_sources_section is not None:
+        parts.append(
+            "  - The word 'recall' in user input refers to the `recall` tool"
+        )
+        parts.append(
+            "    (= indexed document search). Do NOT map it to list_memory or"
+        )
+        parts.append(
+            "    read_memory_body. For memory retrieval, the intent label is"
+        )
+        parts.append(
+            "    'Memory access', not 'Recall'."
+        )
+        parts.append(
+            "  - When user asks about 'data sources', 'available information',"
+        )
+        parts.append(
+            "    or 'what can I search', list BOTH memory entries (Memory section)"
+        )
+        parts.append(
+            "    AND indexed sources (Indexed sources section). They are different"
+        )
+        parts.append(
+            "    storage layers. Do NOT report only memory as 'your data sources'."
+        )
+        parts.append(
+            "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
+        )
+        parts.append(
+            "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
+        )
+        parts.append(
+            "    for these queries."
+        )
+        # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
+        # When 0 indexed sources are available, the LLM must actively tell the
+        # user how to add them instead of silently defaulting to memory.
+        parts.append(
+            "  - If 0 indexed sources are available AND the user asks about data"
+        )
+        parts.append(
+            "    sources or what they can do: explicitly tell them to run"
+        )
+        parts.append(
+            "    `reyn run index_docs --source <name> --path <glob> --description <text>`"
+        )
+        parts.append(
+            "    to enable indexed retrieval. Do NOT answer with memory-only."
+        )
     parts.append(
-        "  - First decide intent (Action / Recall / Save / Forget / Reply),"
+        "  - First decide intent (Action / Memory access / Save / Forget / Reply),"
     )
     parts.append("    then pick tools from that group.")
     # Behaviour rules — re-balanced from B5-H1 partial revert of e90c0f2.
@@ -382,7 +460,7 @@ def build_system_prompt(
     )
     parts.append("    why not; never stop silently after investigation.")
     parts.append(
-        "  - For Recall, answer from the Memory section's inlined descriptions;"
+        "  - For Memory access, answer from the Memory section's inlined descriptions;"
     )
     parts.append(
         "    use read_memory_body only when a description is too vague."

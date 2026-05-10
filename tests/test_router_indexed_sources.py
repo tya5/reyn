@@ -212,3 +212,140 @@ class TestDeterministicOrder:
         assert pos_apple < pos_mango < pos_zebra, (
             "Sources should be listed alphabetically after file reload"
         )
+
+
+# ---------------------------------------------------------------------------
+# B17-S5-3 fix: Vocab disambiguation — "Recall" intent rename + Behaviour rules
+# ---------------------------------------------------------------------------
+
+
+class TestVocabDisambiguationB17S53:
+    """Tier 2: B17-S5-3 fix — 'recall' vocabulary collision.
+
+    The intent label was renamed from 'Recall' to 'Memory access' to avoid
+    colliding with the `recall` indexed-search tool (ADR-0033). Three
+    disambiguation Behaviour rules are also pinned here.
+    """
+
+    def test_intent_label_is_memory_access_not_recall(self):
+        """Tier 2: Intent axis uses 'Memory access' not 'Recall' for memory ops.
+
+        B17-S5-3 fix: the word 'Recall' as an intent label caused the LLM to
+        map user phrases like 'recall tool' to list_memory/read_memory_body
+        instead of the indexed-search `recall` tool.
+        """
+        prompt = _minimal_prompt(indexed_sources_section=None)
+        # New label must be present
+        assert "Memory access" in prompt
+        # Old label must NOT be present as an intent label (prevents regression)
+        # Check the specific intent-label form "Recall — read persisted facts"
+        assert "Recall — read persisted facts" not in prompt
+
+    def test_recall_word_disambiguation_rule_present(self):
+        """Tier 2: Behaviour section has explicit rule mapping 'recall' word
+        to the indexed-search tool, NOT to memory retrieval tools.
+
+        B17-S5-3 fix: without this rule, 100% of runs (5/5) mapped 'recall'
+        to list_memory/read_memory_body instead of the `recall` tool.
+        """
+        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
+        # Rule must disambiguate the word "recall"
+        assert "recall" in prompt.lower()
+        # Rule must reference the indexed-search tool path
+        assert "list_memory" in prompt  # must appear as the contrasted alternative
+        # Disambiguation rule must be present in Behaviour section
+        assert "Do NOT map it to list_memory" in prompt
+
+    def test_data_sources_disambiguation_rule_present(self):
+        """Tier 2: Behaviour section has explicit rule that 'data sources'
+        must list BOTH memory entries AND indexed sources.
+
+        B17-S1-1 fix: without this rule, 100% of runs (3/3) answered 'data
+        sources' with only memory layers (shared/agent), ignoring indexed
+        sources entirely.
+        """
+        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
+        assert "data sources" in prompt.lower()
+        # Rule must mention that both layers need to be listed
+        assert "BOTH" in prompt
+        assert "Memory section" in prompt
+        assert "Indexed sources" in prompt
+
+    def test_search_docs_disambiguation_rule_present(self):
+        """Tier 2: Behaviour section has rule directing 'search'/'find in docs'
+        to the `recall` tool, not to list_memory/read_memory_body.
+        """
+        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
+        assert "`recall`" in prompt
+        assert "list_memory / read_memory_body" in prompt
+        # The rule must contrast recall tool vs memory tools for search queries
+        assert "Do NOT use list_memory" in prompt
+
+
+# ---------------------------------------------------------------------------
+# B17-S1-1 fix: Empty-state hint strengthening
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyStateHintStrengthened:
+    """Tier 2: B17-S1-1 fix — stronger empty-state indexed sources guidance.
+
+    When 0 indexed sources are available and the user asks about data sources,
+    the LLM must actively suggest `reyn run index_docs`, not fall back to
+    describing memory as the only data source.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_state_behaviour_rule_present(self, tmp_path):
+        """Tier 2: Behaviour section includes explicit instruction to suggest
+        `reyn run index_docs` when 0 indexed sources and user asks about data
+        sources.
+
+        B17-S1-1 fix: empty-state hint existed in the Indexed sources section
+        but was ignored by the LLM (3/3 runs mapped 'data sources' to memory).
+        The fix adds an explicit Behaviour rule as a stronger forcing signal.
+        """
+        manifest = SourceManifest(tmp_path)
+        section = await manifest.format_for_prompt()
+        prompt = _minimal_prompt(indexed_sources_section=section)
+        # Behaviour rule must reference the index_docs command
+        assert "reyn run index_docs" in prompt
+        # The rule must connect it to the 'data sources' query context
+        assert "data" in prompt.lower()
+        # Must discourage answering with memory-only (check the prohibition phrase)
+        assert "Do NOT answer with memory-only" in prompt
+
+    @pytest.mark.asyncio
+    async def test_empty_state_behaviour_rule_absent_when_no_indexed_sources_section(self, tmp_path):
+        """Tier 2: Empty-state Behaviour rule is NOT emitted when
+        indexed_sources_section=None (backward-compat for non-chat paths).
+        """
+        prompt = _minimal_prompt(indexed_sources_section=None)
+        # The empty-state enforcement rule is only injected when RAG is wired up.
+        # Without indexed_sources_section, this rule must not appear in Behaviour.
+        assert "reyn run index_docs" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_when_asked_what_can_do_mentions_indexed_sources(self, tmp_path):
+        """Tier 2: 'When asked what you can do' section mentions indexed sources
+        when indexed_sources_section is provided.
+
+        B17-S1-1 fix: the section previously mentioned only memory ('remember
+        and recall facts via your memory'), omitting indexed sources entirely,
+        which contributed to the memory-as-data-sources attractor.
+        """
+        manifest = SourceManifest(tmp_path)
+        section = await manifest.format_for_prompt()
+        prompt = _minimal_prompt(indexed_sources_section=section)
+        # The capability list must mention indexed sources / recall tool
+        assert "recall" in prompt.lower()
+        assert "Indexed sources" in prompt
+
+    def test_when_asked_what_can_do_no_indexed_mention_without_section(self):
+        """Tier 2: Without indexed_sources_section, 'When asked what you can do'
+        does NOT mention indexed sources (backward-compat; can't claim a
+        capability that isn't wired up).
+        """
+        prompt = _minimal_prompt(indexed_sources_section=None)
+        # No mention of indexed search tool capability when RAG not wired
+        assert "search indexed document sources" not in prompt
