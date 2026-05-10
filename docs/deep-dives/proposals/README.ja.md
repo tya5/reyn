@@ -79,3 +79,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0011](0011-remove-narrator.md) | `skill_narrator` 廃止 — スキル結果の narrate をルーターに委ねる | proposed | SMALL |
 | [0012](0012-async-skill-execution.md) | スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化 | proposed | LARGE |
 | [0013](0013-agent-authentication.ja.md) | エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー | proposed | LARGE |
+| [0014](0014-sandboxed-execution.ja.md) | サンドボックス実行 — ポリシー/バックエンド抽象化と exec op の非推奨化 | proposed | MEDIUM |
