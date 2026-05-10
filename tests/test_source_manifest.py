@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
+import yaml
 
 from reyn.index.source_manifest import (
     _MANIFESTS,
@@ -273,3 +275,100 @@ async def test_acquire_source_lock_released_after_exit(tmp_path: Path):
         acquired_again = True
 
     assert acquired_again
+
+
+# ── cross-process cache invalidation (mtime poll) ────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_get_all_picks_up_external_writes(tmp_path: Path):
+    """Tier 2: get_all detects sources.yaml changes written by another process."""
+    m = _manifest(tmp_path)
+    await m.upsert(_entry("a", description="A", chunk_count=1))
+    assert "a" in await m.get_all()
+
+    # Simulate an external write (another process rewrote sources.yaml directly)
+    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    payload = yaml.safe_load(yaml_path.read_text()) or {}
+    payload["b"] = {
+        "description": "B",
+        "path": "...",
+        "backend": "sqlite",
+        "chunk_count": 2,
+        "embedding_model": "x",
+    }
+    # Ensure mtime advances (filesystem granularity is typically 1–10 ms)
+    time.sleep(0.05)
+    yaml_path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+
+    # Same in-process manifest should detect the new mtime and reload
+    all_after = await m.get_all()
+    assert "b" in all_after, f"External write not picked up; got {list(all_after.keys())}"
+    assert "a" in all_after
+
+
+@pytest.mark.asyncio
+async def test_format_for_prompt_picks_up_external_writes(tmp_path: Path):
+    """Tier 2: format_for_prompt reflects external sources.yaml changes."""
+    m = _manifest(tmp_path)
+    await m.upsert(_entry("first", description="First", chunk_count=5))
+
+    # Direct external write adds "second"
+    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    payload = yaml.safe_load(yaml_path.read_text()) or {}
+    payload["second"] = {
+        "description": "Second source",
+        "path": "docs/**",
+        "backend": "sqlite",
+        "chunk_count": 20,
+        "embedding_model": "x",
+    }
+    time.sleep(0.05)
+    yaml_path.write_text(yaml.safe_dump(payload, sort_keys=True), encoding="utf-8")
+
+    text = await m.format_for_prompt()
+    assert "**second**" in text, f"External write not reflected in format_for_prompt; got:\n{text}"
+    assert "Second source" in text
+    assert "2 available" in text
+
+
+@pytest.mark.asyncio
+async def test_internal_writes_dont_trigger_spurious_reload(tmp_path: Path):
+    """Tier 2: upsert/remove update _loaded_mtime so next get_all skips reload.
+
+    We verify the mtime bookkeeping is correct by confirming that after our
+    own upsert the manifest's recorded mtime matches the file's actual mtime.
+    This ensures we won't hit an unnecessary disk read on the immediately
+    following get_all call.
+    """
+    m = _manifest(tmp_path)
+    await m.upsert(_entry("x", chunk_count=1))
+
+    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    file_mtime = yaml_path.stat().st_mtime
+
+    # _loaded_mtime must match the file we just wrote
+    assert m._loaded_mtime == file_mtime, (
+        f"_loaded_mtime ({m._loaded_mtime}) != file mtime ({file_mtime}) "
+        "after upsert — own write would trigger spurious reload"
+    )
+
+    # get_all must NOT see a stale cache (i.e. no unnecessary reload)
+    result = await m.get_all()
+    assert "x" in result
+
+
+@pytest.mark.asyncio
+async def test_get_all_handles_file_deleted_externally(tmp_path: Path):
+    """Tier 2: get_all returns empty dict when sources.yaml is removed externally."""
+    m = _manifest(tmp_path)
+    await m.upsert(_entry("z", chunk_count=3))
+    assert "z" in await m.get_all()
+
+    # Another process deletes the file
+    yaml_path = tmp_path / ".reyn" / "index" / "sources.yaml"
+    yaml_path.unlink()
+
+    result = await m.get_all()
+    # Cache should be refreshed to empty (file gone)
+    assert result == {}

@@ -87,18 +87,65 @@ class SourceManifest:
 
     Singleton-per-workspace via ``get_source_manifest(workspace_root)``.
     Atomic file write on update; mem cache invalidated on update.
+
+    Cross-process cache invalidation: ``get_all`` / ``get`` / ``format_for_prompt``
+    check ``sources.yaml`` mtime before returning cached data.  If mtime advanced
+    (another process wrote the file), the cache is reloaded transparently.
+
+    NOTE — race window: the mtime comparison is best-effort.  A write that
+    completes between our ``stat()`` call and the previous ``stat()`` is
+    technically invisible until the next call.  For strict multi-process safety
+    (e.g. indexer + agent writing simultaneously), use ``fcntl``-based file
+    locking (phase 2).  ``acquire_source_lock`` provides write-write advisory
+    locking; the mtime poll handles read-after-external-write.
     """
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = workspace_root
         self._path = workspace_root / ".reyn" / "index" / "sources.yaml"
         self._cache: dict[str, SourceEntry] | None = None
+        self._loaded_mtime: float | None = None
         self._lock = asyncio.Lock()  # async safety for concurrent updates
 
     # ── Private ───────────────────────────────────────────────────────────────
 
+    def _is_cache_stale(self) -> bool:
+        """Return True if sources.yaml has changed since the cache was loaded.
+
+        Best-effort mtime check — see class docstring for race window caveat.
+        """
+        try:
+            current_mtime = self._path.stat().st_mtime
+        except FileNotFoundError:
+            # File was deleted after we cached it → treat non-empty cache as stale.
+            return self._cache is not None and bool(self._cache)
+        return self._loaded_mtime is None or current_mtime > self._loaded_mtime
+
+    async def _reload_from_file(self) -> None:
+        """Read sources.yaml into cache and update _loaded_mtime.
+
+        Caller MUST hold ``self._lock``.
+        """
+        if self._path.exists():
+            raw: dict[str, Any] = yaml.safe_load(
+                self._path.read_text(encoding="utf-8")
+            ) or {}
+            self._cache = {
+                name: SourceEntry.from_dict(name, data)
+                for name, data in raw.items()
+            }
+            self._loaded_mtime = self._path.stat().st_mtime
+        else:
+            self._cache = {}
+            self._loaded_mtime = None
+
     async def _atomic_write(self) -> None:
-        """Write current mem cache to disk atomically (write → fsync → rename)."""
+        """Write current mem cache to disk atomically (write → fsync → rename).
+
+        Caller MUST hold ``self._lock``.  Updates ``_loaded_mtime`` to the
+        newly written file so the next ``get_all`` does not trigger an
+        unnecessary reload.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._path.with_suffix(".yaml.tmp")
         payload = {
@@ -111,29 +158,31 @@ class SourceManifest:
         with open(tmp, "rb+") as f:
             os.fsync(f.fileno())
         tmp.replace(self._path)  # atomic rename on POSIX
+        # Record the mtime of the file we just wrote so subsequent reads
+        # don't trigger a spurious reload caused by our own write.
+        try:
+            self._loaded_mtime = self._path.stat().st_mtime
+        except FileNotFoundError:
+            self._loaded_mtime = None
 
     # ── Public async API ──────────────────────────────────────────────────────
 
     async def load(self) -> dict[str, SourceEntry]:
         """Load from file (or empty dict). Populates mem cache."""
         async with self._lock:
-            if self._path.exists():
-                raw: dict[str, Any] = yaml.safe_load(
-                    self._path.read_text(encoding="utf-8")
-                ) or {}
-                self._cache = {
-                    name: SourceEntry.from_dict(name, data)
-                    for name, data in raw.items()
-                }
-            else:
-                self._cache = {}
-            return dict(self._cache)
+            await self._reload_from_file()
+            return dict(self._cache)  # type: ignore[arg-type]
 
     async def get_all(self) -> dict[str, SourceEntry]:
-        """Return all entries (= mem cache, or load if not yet loaded)."""
-        if self._cache is None:
-            return await self.load()
-        return dict(self._cache)
+        """Return all entries, reloading from file if the cache is stale.
+
+        Staleness is detected via ``sources.yaml`` mtime so that writes from
+        another process are picked up without an explicit ``load()`` call.
+        """
+        async with self._lock:
+            if self._cache is None or self._is_cache_stale():
+                await self._reload_from_file()
+            return dict(self._cache)  # type: ignore[arg-type]
 
     async def get(self, name: str) -> SourceEntry | None:
         """Get a single entry by name."""
@@ -144,17 +193,8 @@ class SourceManifest:
         """Add or update entry. Atomic file write + mem cache update."""
         async with self._lock:
             if self._cache is None:
-                # Load without re-acquiring the lock
-                if self._path.exists():
-                    raw: dict[str, Any] = yaml.safe_load(
-                        self._path.read_text(encoding="utf-8")
-                    ) or {}
-                    self._cache = {
-                        name: SourceEntry.from_dict(name, data)
-                        for name, data in raw.items()
-                    }
-                else:
-                    self._cache = {}
+                await self._reload_from_file()
+            assert self._cache is not None
             self._cache[entry.name] = entry
             await self._atomic_write()
 
@@ -165,15 +205,8 @@ class SourceManifest:
         """
         async with self._lock:
             if self._cache is None:
-                if self._path.exists():
-                    raw: dict[str, Any] = yaml.safe_load(
-                        self._path.read_text(encoding="utf-8")
-                    ) or {}
-                    self._cache = {
-                        n: SourceEntry.from_dict(n, d) for n, d in raw.items()
-                    }
-                else:
-                    self._cache = {}
+                await self._reload_from_file()
+            assert self._cache is not None
             if name not in self._cache:
                 return False
             del self._cache[name]
