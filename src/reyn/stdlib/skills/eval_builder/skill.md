@@ -49,7 +49,7 @@ permissions:
   python:
     - module: ./analyze_skill_resolver.py
       function: compute_paths
-      mode: trusted
+      mode: unsafe
       timeout: 5
     - module: ./analyze_skill.py
       function: inject_resolved_paths

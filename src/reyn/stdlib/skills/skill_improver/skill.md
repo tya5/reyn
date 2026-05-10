@@ -52,7 +52,7 @@ permissions:
   python:
     - module: ./copy_to_work_resolver.py
       function: compute_paths
-      mode: trusted
+      mode: unsafe
       timeout: 5
     - module: ./copy_to_work.py
       function: build_copy_plan

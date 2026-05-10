@@ -183,9 +183,10 @@ def <function_name>(artifact: dict) -> dict:
 
 Stick to the stdlib (math, statistics, json, re, datetime, hashlib,
 collections, etc.) — pure mode rejects other imports. If the source
-absolutely needs a 3rd-party library, declare `mode: trusted` in the
+absolutely needs a 3rd-party library, declare `mode: unsafe` in the
 phase frontmatter and add a note in the `## Source` section that the
 user must `reyn run --allow-untrusted-python` for this skill to work.
+(Note: `unsafe` replaces the old `trusted` keyword as of FP-0014.)
 
 ### `reyn/local/<slug>/artifacts/<art>.yaml` (only if needed)
 

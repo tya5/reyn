@@ -171,7 +171,7 @@ preprocessor:
     module: ./preprocessing.py     # all phases share one .py is fine
     function: compute_stats
     into: data.stats               # appears in artifact at this path
-    mode: pure                     # default; "trusted" only when justified
+    mode: pure                     # default; "unsafe" only when justified
 ```
 
 And add a corresponding entry to the top-level `python_modules` array with
@@ -187,16 +187,18 @@ of functions.
 - One-off transformations only used inside a single phase's prompt — easier to
   let the LLM do it inline
 
-### Pure vs trusted
+### Pure vs unsafe
+
+(Note: `unsafe` replaces the old `trusted` keyword as of FP-0014.)
 
 Default to `mode: pure`. The function then can only import the stdlib
 allowlist (math, statistics, json, re, datetime, hashlib, collections, etc.;
-random and time are allowed). Choose `trusted` only when:
+random and time are allowed). Choose `unsafe` only when:
 - A specific 3rd-party library is essential and not on the user's
   `python.allowed_modules` list
 - File / network I/O is required for the computation
 
-`trusted` mode requires the user to pass `--allow-untrusted-python` at
+`unsafe` mode requires the user to pass `--allow-untrusted-python` at
 runtime — flag this in `notes` if your design uses it, so the user knows.
 
 If you are unsure, leave `preprocessor: []` and let the LLM handle it. The

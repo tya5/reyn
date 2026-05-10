@@ -28,15 +28,15 @@ permissions:
   python:
     - module: ./chunkers.py
       function: gather_samples
-      mode: trusted
+      mode: unsafe
       timeout: 30
     - module: ./chunkers.py
       function: cost_preflight
-      mode: trusted
+      mode: unsafe
       timeout: 10
     - module: ./chunkers.py
       function: apply_strategy
-      mode: trusted
+      mode: unsafe
       timeout: 300
 postprocessor:
   output_schema: index_summary

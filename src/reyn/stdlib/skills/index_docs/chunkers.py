@@ -7,7 +7,7 @@ JSON-serializable value that is placed at ``into`` in the artifact.
 Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
 custom Markdown) replace this module via skill.md ``module:`` override.
 
-All three public functions use ``mode: trusted`` so they can access the
+All three public functions use ``mode: unsafe`` so they can access the
 filesystem. ``pure`` mode does not allow ``open()``.
 """
 from __future__ import annotations

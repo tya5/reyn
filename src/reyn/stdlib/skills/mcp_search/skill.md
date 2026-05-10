@@ -17,7 +17,7 @@ permissions:
   python:
     - module: ./registry_fetch.py
       function: fetch_registry_results
-      mode: trusted
+      mode: unsafe
       timeout: 20
 routing:
   intents: [task]
