@@ -295,6 +295,9 @@ class MCPInstallIROp(BaseModel):
     # ``server_id`` is still required for the audit event; callers should
     # derive it from the specifier or accept an empty string for unnamed sources.
     source: str | None = None                  # --source specifier (skips registry fetch)
+    # Extra args appended to the server's args list after registry/source resolution.
+    # Useful for servers that require runtime flags (e.g. ["--server", "pyright"]).
+    extra_args: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------
