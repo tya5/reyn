@@ -358,6 +358,15 @@ class IndexWriteIROp(BaseModel):
     mode: Literal["append", "replace"] = "append"
     # Optional override; defaults to ChunkMetadata.embedding_model in chunks
     embedding_model: str | None = None
+    # SourceManifest carriers (= populated by the index_docs skill so the
+    # router system prompt's "Indexed sources" section displays the
+    # user-provided semantic description and original glob path, rather
+    # than the placeholder "Index of source '<name>'" / "(unknown)".
+    # B21-S0-1 fix: without these the LLM cannot evaluate which indexed
+    # source to recall against and falls back to file_read with a
+    # hallucinated path.
+    description: str | None = None
+    path: str | None = None
 
 
 class IndexQueryIROp(BaseModel):

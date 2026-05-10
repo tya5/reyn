@@ -98,9 +98,30 @@ async def handle(
     manifest = get_source_manifest(workspace_root)
     stat = await backend.stat(op.source)
 
+    # SourceManifest description / path resolution (B21-S0-1 fix):
+    # - Prefer caller-provided op.description / op.path when present (= the
+    #   index_docs skill's first write of a new source carries these from
+    #   the user's input artifact)
+    # - Fall back to the existing entry's value on subsequent writes (= an
+    #   incremental append should not clobber the original description)
+    # - Only use the placeholder when both caller and existing entry are
+    #   silent. Without this fix the router system prompt's "Indexed
+    #   sources" section displayed only the placeholder, which deprived
+    #   the LLM of any signal to pick recall over file_read.
     existing = await manifest.get(op.source)
-    description = existing.description if existing else f"Index of source '{op.source}'"
-    path = existing.path if existing else "(unknown)"
+    if op.description is not None and op.description != "":
+        description = op.description
+    elif existing is not None:
+        description = existing.description
+    else:
+        description = f"Index of source '{op.source}'"
+
+    if op.path is not None and op.path != "":
+        path = op.path
+    elif existing is not None:
+        path = existing.path
+    else:
+        path = "(unknown)"
 
     entry = SourceEntry(
         name=op.source,

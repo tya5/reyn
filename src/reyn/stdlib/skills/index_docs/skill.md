@@ -69,6 +69,8 @@ postprocessor:
       args_from:
         source: data.source
         mode: data.mode
+        description: data.description
+        path: data.path
 ---
 
 ## Overview
