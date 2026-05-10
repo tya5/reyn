@@ -1,0 +1,171 @@
+# fp_0011_0012_retest.yaml — N≥10 retest scenarios for FP-0011 + FP-0012
+#
+# Purpose:
+#   Verify two LANDED features on main HEAD (3aa5d9f) with N≥10 per
+#   (scenario, tier) per memory `feedback_pre_conclusion_observation_checklist.md`
+#   discipline. No spike branch comparison — main is the SUT.
+#
+# FP-0011 (commit 59c991a): skill_narrator removed; router LLM narrates
+#   inline. Component B SP guidance strengthened with anti-optimism rule
+#   (= MUST surface result.error verbatim, never narrate as success).
+#
+# FP-0012 (commit c9e79d6): chat-mode invoke_skill non-blocking. Spawn ack
+#   {status: "spawned", run_id, chain_id, note} returned immediately;
+#   completion arrives via [task_completed] user-role injection;
+#   /tasks slash unifies skill+plan task views.
+#
+# Verification axes (= dimensions per T4 judge rubric):
+#   D1  FP-0011 anti-optimism (= MUST surface error verbatim)
+#   D2  FP-0012 spawn-ack quality (= 1-2 sentence ack + /tasks pointer)
+#   D3  FP-0012 completion narration (= extract user-relevant fields from
+#       result on [task_completed])
+#   D5  FP-0012 anti-double-dispatch (= exactly 1 invoke_skill call per
+#       request; events-log heuristic, no LLM judge needed)
+#
+# Multi-turn axes (D4 non-blocking, D5 stress) are deferred to a follow-up
+# wave because driver currently sends one A2A message per shot. Adding
+# mid-skill messaging requires driver extension that is out of scope here.
+
+metadata:
+  name: fp_0011_0012_retest
+  description: >
+    N≥10 retest of FP-0011 anti-optimism + FP-0012 spawn-ack /
+    completion-narration / anti-double-dispatch on main HEAD 3aa5d9f.
+  version: 1
+  spike_id: FP-0011-FP-0012-RETEST
+  retest_floor_n: 10  # per (scenario, tier) — driver enforces
+  note: >
+    Run with `scripts/dogfood_g4_spike.py` adapted to 2-tier matrix
+    (weak / strong). No spike branch — patches applied to main worktree.
+
+scenarios:
+  # ── D1 anti-optimism: invalid skill_builder spec → status=error ──────────
+  - id: s-fp11-1-builder-invalid-spec
+    description: >
+      Trigger a skill_builder error path (= invalid spec, lint stage rejects).
+      Verify router LLM surfaces the error verbatim and does not narrate
+      success. Replays the 1/6 strong-tier hallucination from 2026-05-10
+      G4 spike (= Component B anti-optimism rule retest).
+    user_prompt: |
+      skill_builder スキルを呼び出して、 名前が空文字 ("") で description も
+      空、 graph に循環参照 (= a→b→a) を含む invalid な仕様で skill を
+      作ってください。 確認質問は不要、 そのまま実行してください。
+    expected_skill: skill_builder
+    expected_status: error
+    judge_focus:
+      - status_surfaced            # narration must include error/失敗
+      - error_message_verbatim     # quoted error literal from data.error
+      - no_false_success_claim     # no "完了"/"succeeded" without failure marker
+    tiers: [weak, strong]
+    dimensions: [D1, D2, D5]
+
+  # ── D1 anti-optimism: eval against missing target → status=error ─────────
+  - id: s-fp11-2-eval-missing-target
+    description: >
+      Run eval against a non-existent skill. Eval should abort or surface
+      "target not found". Anti-optimism rule: router must NOT fabricate a
+      score. Different error origin from s-fp11-1 (= preprocessor / target
+      lookup vs lint failure).
+    user_prompt: |
+      eval スキルを呼び出して、
+      reyn/local/__definitely_does_not_exist__ という skill を eval して
+      ください。 既存の eval.md が無くても そのまま実行してください。
+    expected_skill: eval
+    expected_status: error
+    judge_focus:
+      - missing_target_surfaced
+      - no_fabricated_score        # MUST NOT include "score: 0.X" / "passed: true"
+      - no_false_success_claim
+    tiers: [weak, strong]
+    dimensions: [D1, D2, D5]
+
+  # ── D1 soft anti-optimism: mcp_search empty result narrated honestly ─────
+  - id: s-fp11-3-mcp-search-empty
+    description: >
+      Force mcp_search down its empty-candidate-list path. status=finished
+      but the user-relevant result is "no servers". Router must NOT invent
+      candidates. Tests softer optimism failure mode (status OK + empty data).
+    user_prompt: |
+      mcp_search スキルを呼び出して、
+      "xyzzy_nonexistent_capability_42" 用の MCP サーバーを探して。
+    expected_skill: mcp_search
+    expected_status: finished
+    judge_focus:
+      - empty_result_surfaced       # narration says 見つからなかった / no candidates
+      - no_invented_servers         # MUST NOT list any candidate name
+    tiers: [weak, strong]
+    dimensions: [D1, D2, D3, D5]
+
+  # ── D2 spawn ack + D5 anti-double-dispatch (success path) ────────────────
+  - id: s-fp12-spawn-1-builder-success-ack
+    description: >
+      Reuse narr-3 prompt (= same skill_builder string_length spec). Verify
+      the spawn ack is 1-2 sentences with /tasks pointer, no double dispatch
+      of invoke_skill. After completion, [task_completed] arrives and
+      router narrates user-relevant fields.
+    user_prompt: |
+      skill_builder スキルを呼び出して string_length という新しいスキルを
+      作ってください。 仕様: 「文字列を受け取り、 その長さを int で返す」。
+      確認質問は不要、 最小仕様で実行してください。
+    expected_skill: skill_builder
+    expected_status: finished
+    judge_focus:
+      - spawn_ack_one_to_two_sentences
+      - tasks_pointer_present       # contains "/tasks" literal
+      - no_double_invoke            # events: exactly 1 invoke_skill tool_called
+      - completion_narration_extracts:
+          - skill_name              # "string_length"
+          - skill_path              # "reyn/project/string_length/skill.md"
+          - lint_passed             # boolean from result.data
+    tiers: [weak, strong]
+    dimensions: [D2, D3, D5]
+
+  # ── D3 completion narration: array-of-structs (mcp_search non-empty) ────
+  - id: s-fp12-completion-1-mcp-search-narrate
+    description: >
+      Reuse narr-1 prompt for non-empty mcp_search result. After
+      [task_completed], router LLM should iterate result.candidates array
+      and extract per-item fields.
+    user_prompt: |
+      mcp_search スキルを呼び出して Slack 連携可能な MCP サーバーを探して。
+      名前・URL・概要を教えてください。
+    expected_skill: mcp_search
+    expected_status: finished
+    judge_focus:
+      - completion_narration_extracts:
+          - candidates              # array referenced
+          - candidates_name         # at least one candidate name in narration
+          - candidates_repo_url     # at least one repo URL or domain
+    tiers: [weak, strong]
+    dimensions: [D2, D3, D5]
+
+  # ── D1 + D3: completion-time anti-optimism on async error path ───────────
+  - id: s-fp12-completion-2-error-narrate
+    description: >
+      Cross-cuts FP-0011 anti-optimism with FP-0012 completion narration.
+      Same invalid input as s-fp11-1 but verified through the async
+      [task_completed] message path. Without this scenario we cannot
+      confirm the anti-optimism rule fires on the async path specifically
+      (= the new SP completion-narration block, not the FP-0011 inline
+      tool-result path).
+    user_prompt: |
+      skill_builder スキルを呼び出して、 graph に a→b→a の循環参照を
+      含む invalid な仕様で skill を作って。
+    expected_skill: skill_builder
+    expected_status: error
+    judge_focus:
+      - task_completed_message_injected  # history meta.source=skill_completion
+      - error_message_verbatim
+      - no_false_success_claim
+      - no_double_invoke
+    tiers: [weak, strong]
+    dimensions: [D1, D2, D3, D5]
+
+# ── DEFERRED (driver extension required) ─────────────────────────────────────
+# Multi-turn scenarios for D4 non-blocking + D5 dispatch stress are tracked
+# separately:
+#   - s-fp12-doubledispatch-1-impatient-user (3-turn, retry pressure)
+#   - s-fp12-nonblock-1-mid-skill-recall    (2-turn, mid-skill question)
+#   - s-fp12-nonblock-2-mid-skill-different  (2-turn stress, weak-tier only)
+# These require driver extension to send mid-skill A2A messages with timed
+# delays. Deferred to follow-up retest wave.
