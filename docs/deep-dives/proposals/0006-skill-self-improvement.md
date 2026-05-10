@@ -119,11 +119,21 @@ prepare → collect_traces → copy_to_work → plan_improvements → apply_impr
 対象スキルの実行履歴を P6 イベントログから収集し、
 改善に役立つ分析サマリーを workspace に保存する。
 
-収集対象:
-- run_skill_started / run_skill_completed（skill_version_hash でフィルタ）
+収集方法（2 択）:
+
+① read_file(events/*.jsonl) による直接読み取り（常に使用可能）
+  - skill_version_hash でフィルタして対象スキルの実行のみ抽出
+  - 直近 trace_lookback_runs 件に限定
+
+② recall op による意味検索（RAG Phase 1 landed — events が index_docs 済みの場合）
+  - query: "スキル X の失敗パターン / フェーズ Y のエラー"
+  - index_query → top-K チャンクを取得
+  - より大量の履歴から関連部分だけを効率的に抽出できる
+
+収集対象イベント:
+- run_skill_started / run_skill_completed
 - skill_node_started / skill_node_completed
 - tool_executed（失敗したオペレーション）
-- 直近 trace_lookback_runs 件に限定
 
 出力: traces_summary.md（成功率・失敗パターン・頻出エラーのサマリー）
 ```
