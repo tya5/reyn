@@ -47,6 +47,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_SKILLS,
     )
     from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
+    from reyn.tools.drop_source import DROP_SOURCE
 
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import DELETE_FILE, FILE_OP, LIST_DIRECTORY, READ_FILE, WRITE_FILE
@@ -61,7 +62,6 @@ def get_default_registry() -> ToolRegistry:
         REMEMBER_AGENT,
         REMEMBER_SHARED,
     )
-    from reyn.tools.drop_source import DROP_SOURCE
     from reyn.tools.plan import PLAN
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
