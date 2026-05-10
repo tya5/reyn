@@ -117,6 +117,41 @@ Key constraints (full rationale in the doc):
 - Each test docstring's first line must declare its Tier:
   `"""Tier 3a: ..."""`.
 
+## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
+
+**Active trigger**: when you are about to write any of the following — **STOP**
+and run the checklist below before continuing:
+
+- 結論 / conclusion / finding / 確定 / decisive
+- パターン / pattern / 一貫して / consistently
+- 100% / 全件 / N/N / 0% / all / every
+- proven / validated / confirmed / 決定的
+- attractor / hallucination / regression (= behavioral classification)
+
+**5-question checklist**:
+
+1. List each specific observation that supports the claim — can you?
+2. Is each observation **primary data** (= events log / metric / direct
+   output) or **inference** from other observations? Inference chains
+   downgrade "verified" to "hypothesised".
+3. Did you actively look for data that **falsifies** the claim?
+4. Is the observation infrastructure (= trace dump / events log /
+   metric) actually capturing what you'd need to support the claim?
+5. If you're about to write "N/N" or "100%", did you directly inspect
+   each of the N items, or did you inspect 1-2 and extrapolate?
+
+**Re-frame instead of overstating**:
+
+- ❌ "X happens 100% in condition Y" (= when only 1-2 of N inspected)
+- ✅ "Hypothesis: X may dominate in Y. Direct verification: 1/N. Remaining
+  N-1 inspection pending."
+
+**Reference**:
+- `feedback_pre_conclusion_observation_checklist.md` (full 5-question detail
+  + failure-mode patterns)
+- `feedback_observe_before_speculate_llm.md` (passive principle this trigger
+  operationalises)
+
 ## Skill resolution order
 
 1. `reyn/project/<name>/skill.md` — checked-in project skills

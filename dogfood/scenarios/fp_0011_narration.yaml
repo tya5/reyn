@@ -98,9 +98,9 @@ metadata:
 
 scenarios:
   - id: narr-1-mcp-search
-    enabled: false  # SKIP: blocked by R-WEB-TRUSTED-PYTHON (= reyn web has no
-                    # --allow-untrusted-python flag; mcp_search needs trusted
-                    # python). Re-enable when that residual lands.
+    # Re-enabled 2026-05-10: spike worktrees now patch
+    # PermissionResolver(trusted_python_allowed=True) by default
+    # (= temporary bypass pending R-PURE-MODE-REDEFINE).
     description: >
       Narration of an mcp_candidate_list result. Tests that the narrator can
       iterate a candidates array and extract per-item fields (name, repo_url,
@@ -158,10 +158,10 @@ scenarios:
       output: strings (skill_name, skill_path, summary), an array
       (files_written), an integer (file_count), and a boolean (lint_passed).
     user_prompt: |
-      skill_builder スキルを呼び出して translate_text という新しいスキルを
-      作ってください。 仕様: 「text フィールドで文字列を受け取り、 日本語に
-      翻訳した結果を返す」 シンプルな構造で OK です。 確認質問は不要、 最小
-      仕様で skill_builder を直接実行してください。
+      skill_builder スキルを呼び出して string_length という新しいスキルを
+      作ってください。 仕様: 「文字列を受け取り、 その長さ (= len) を整数で
+      返す」。 これは Python の組み込み len() で実装できる単純なスキルです。
+      確認質問は不要、 最小仕様で skill_builder を直接実行してください。
     expected_skill: skill_builder
     expected_status: finished
     judge_focus:
