@@ -1,6 +1,6 @@
 ---
 title: Reyn — OSS ローンチ前戦略的優先事項
-last_updated: 2026-05-09
+last_updated: 2026-05-10
 status: stable
 based_on:
   - competitive/langgraph.md
@@ -40,9 +40,9 @@ based_on:
   1. `recall_docs` — RAG（project_pending_recall_docs 計画済み）。既存 file ops と web_fetch を活用して構築可能
   2. `translate` — 多言語テキスト変換（日本企業用途で頻出）
   3. `http_call` — 外部 REST API 呼び出し（web_fetch との棲み分けを明確化）
-  4. `code_exec` — 安全なコード実行環境（DockerSandbox か e2b 統合）
+  4. `code_exec` — **FP-0014 で設計済み**。`sandboxed_exec` op + `SandboxPolicy`/`SandboxBackend` 抽象層として起票。macOS は `sandbox-exec`（Seatbelt）、Linux は Landlock（コントリビュータ向け）。Docker 常駐プロセス不要のインプロセス方式を採用。
   この順で P7 準拠・`skill.md` 追加のみで実装する。
-- **コスト見積**: `translate`/`http_call` は small（1〜2 日）。`recall_docs` は medium（ベクトル DB 設計を含む）。`code_exec` は large（Docker/sandbox セキュリティ設計が必要）。
+- **コスト見積**: `translate`/`http_call` は small（1〜2 日）。`recall_docs` は medium（ベクトル DB 設計を含む）。`code_exec` は FP-0014 設計済みのため medium（実装のみ）。
 - **優先度**: **P1（ローンチ前必須）**
 
 ---
@@ -81,6 +81,23 @@ based_on:
   - A2A（`run_remote_agent` op）は MCP client 完了後に続けて実装
 - **コスト見積**: MCP Client = small〜medium（権限モデルと P5 整合を含む）
 - **優先度**: **P1（ローンチ前必須）** ※ Phase 2 ロードマップと整合
+
+> **Docker MCP エコシステム（2026-05 新情報）**: Docker Desktop 4.42（2026-06）から `docker mcp` サブコマンドが標準搭載。`hub.docker.com/mcp` に 100+ サーバー（`registry.modelcontextprotocol.io` とは別レジストリ）。各サーバーはコンテナとして隔離実行され、`docker mcp gateway` がプロキシとして多重化。Reyn の `mcp_install.py` はすでに `registryType: "docker"` に対応済みだが、Docker MCP カタログ検索と `docker mcp gateway` 連携は未対応。**当面は不要**（Docker 常駐プロセスが必要なため）だが、エコシステムの成長に伴い将来対応が必要になる可能性がある。
+
+---
+
+### ギャップ 3.5: エージェント認証（FP-0013）
+
+> **新規ギャップ（2026-05-10 追加）**
+
+- **問題**: HTTP 型 MCP サーバーへの接続や長時間スキル実行において、認証情報の安全な管理・委任・リフレッシュの仕組みが未整備。MCP エコシステムの拡大（ギャップ 3 参照）に伴い、認証の問題が顕在化しつつある。
+- **具体的なユースケースと必要な機能**:
+  - **MCP HTTP Bearer ヘッダー**: HTTP 型 MCP サーバーへの接続に必要。即効性あり。
+  - **OAuth トークン自動リフレッシュ**: 長時間スキルで必須。FP-0012 非同期実行と連動。
+  - **Device Authorization Grant**: PAT 禁止の企業環境で必要（日本エンタープライズで頻出）。
+  - **子スキルへのスコープ限定認証情報委任**: Confused Deputy 対策。
+- **FP-0013 として起票済み**。優先度: MCP HTTP ヘッダー（SMALL）が最初のアンロッカー。
+- **優先度**: **P1〜P2**（MCP HTTP Bearer は P1 必須、OAuth リフレッシュ・Device Flow は P2）
 
 ---
 
@@ -260,6 +277,16 @@ based_on:
 - [ ] 永続メモリ基盤（Hermes の 3 レイヤーメモリに相当）— セッション横断ユーザーモデリング。workspace を SSoT として拡張する設計なら P5 と整合
 - [ ] スキル自動生成 PoC（GEPA 参考）— 実行トレースから skill.md 候補を生成する研究。本番化は 2027+ 想定だが ADR で方向性を固める
 - [ ] 弱 LLM 信頼度スコアリング（Hermes の fallback provider パターンを Reyn P4 制約と組み合わせたコスト最適化）
+
+---
+
+## 実装確認済み（FP 不要と判明）
+
+> **2026-05-10 セッションで確認**。競合分析または過去のギャップ記述で「未実装」と想定していたが、コード調査の結果すでに実装済みと判明した項目。
+
+- **エージェント単位コスト帰属**: `src/reyn/chat/tui/widgets/right_panel/cost_tab.py` に `by_agent` + `by_agent_skill` 集計が実装済み。競合（LangSmith Enterprise 相当）の機能がローカル完結で提供されていることを訴求ポイントに追加可能。
+- **永続メモリ**: `src/reyn/memory/memory.py` + `src/reyn/chat/tui/widgets/right_panel/memory_tab.py` として実装済み。user / feedback / project / reference の 4 タイプをサポート。P3 チェックリスト「永続メモリ基盤」は設計検討の対象を「セッション横断ユーザーモデリングの高度化」に絞り直す。
+- **マルチセッション文脈継続**: WAL + フェーズ境界復元で解決済み（P5 ワークスペース永続化の設計意図通り）。クラッシュ回復の仕組みがそのままマルチセッション継続にも機能する。
 
 ---
 
