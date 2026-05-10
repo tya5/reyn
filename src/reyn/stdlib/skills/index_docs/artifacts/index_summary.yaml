@@ -1,0 +1,37 @@
+name: index_summary
+description: |
+  Caller-facing summary of a completed index_docs run. Returned by the
+  skill postprocessor after chunk + embed + index_write pipeline completes.
+schema:
+  type: object
+  required: [source, chunk_count, embedded_count, skipped_count, written_count]
+  properties:
+    source:
+      type: string
+      description: Logical source name that was indexed.
+    chunk_count:
+      type: integer
+      minimum: 0
+      description: Total chunks produced by the chunker step.
+    embedded_count:
+      type: integer
+      minimum: 0
+      description: Chunks that were embedded (new or changed).
+    skipped_count:
+      type: integer
+      minimum: 0
+      description: Chunks skipped (content_hash already in output_artifact).
+    written_count:
+      type: integer
+      minimum: 0
+      description: Chunks written to the index backend.
+    written_to_index:
+      type: integer
+      minimum: 0
+      description: Alias for written_count (index_write result).
+    boundary:
+      type: string
+      description: Chunk boundary strategy used (from chunk_strategy).
+    max_chunk_size_tokens:
+      type: integer
+      description: Max chunk size (from chunk_strategy).

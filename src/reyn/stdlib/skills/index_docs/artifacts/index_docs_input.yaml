@@ -1,0 +1,32 @@
+name: index_docs_input
+description: |
+  Input for the index_docs skill. Specifies the logical source name, path glob,
+  human-readable description, and indexing mode (append = incremental dedup,
+  replace = full rebuild).
+schema:
+  type: object
+  required: [source, path, description]
+  properties:
+    source:
+      type: string
+      description: |
+        Logical source name (= sources.yaml entry key). Must be a valid
+        identifier: alphanumeric and underscores only (e.g. "my_project_docs").
+    path:
+      type: string
+      description: |
+        Glob pattern for files to index (e.g. "src/**/*.py", "docs/**/*.md").
+        Resolved relative to the current working directory.
+    description:
+      type: string
+      description: |
+        Caller-provided semantic name for this source, shown to the LLM in
+        the router system prompt (e.g. "Reyn Python framework code").
+    mode:
+      type: string
+      enum: [append, replace]
+      default: append
+      description: |
+        append = skip chunks whose content_hash already exists (incremental
+        dedup, default). replace = drop all existing chunks for this source
+        and rebuild from scratch.

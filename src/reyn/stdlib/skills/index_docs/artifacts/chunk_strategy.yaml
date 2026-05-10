@@ -1,0 +1,67 @@
+name: chunk_strategy
+description: |
+  LLM-decided chunking strategy for the index_docs skill (ADR-0033 §2.1).
+
+  The LLM inspects file samples and decides how to split content into
+  semantically coherent chunks for embedding. This is a skill-level artifact
+  (P7: ChunkStrategy is NOT an OS builtin — the OS does not interpret its fields).
+
+  Passthrough fields (source / path / description / mode) are included so the
+  postprocessor chain can access skill-input data without re-reading the
+  workspace.
+schema:
+  type: object
+  required: [boundary, max_chunk_size_tokens, source, path, description]
+  properties:
+    # ── Strategy fields (LLM decision) ────────────────────────────────────
+    boundary:
+      type: string
+      enum: [heading, blank_line, sentence]
+      description: |
+        Where to split chunks.
+        heading    = Markdown # / ## headings — best for structured docs.
+        blank_line = double-newline paragraph boundaries — best for prose/code.
+        sentence   = end-of-sentence punctuation — best for QA retrieval.
+    max_chunk_size_tokens:
+      type: integer
+      minimum: 100
+      maximum: 4000
+      description: |
+        Upper token limit per chunk. Smaller (200–400) for QA-style retrieval;
+        larger (600–1000) for context-heavy technical documentation.
+    min_chunk_size_tokens:
+      type: integer
+      minimum: 1
+      default: 50
+      description: |
+        Chunks smaller than this are merged with the preceding chunk to avoid
+        tiny fragments that reduce retrieval quality.
+    overlap_ratio:
+      type: number
+      minimum: 0.0
+      maximum: 0.5
+      default: 0.0
+      description: |
+        Fraction of max_chunk_size_tokens to overlap with the adjacent chunk.
+        Code / structured docs: 0.0. Prose: 0.10–0.20.
+    preserve_parent_context:
+      type: boolean
+      default: true
+      description: |
+        When true, save the enclosing heading / class / function name as
+        chunk metadata so callers can cite the source section.
+    # ── Passthrough fields (from skill input) ─────────────────────────────
+    source:
+      type: string
+      description: Logical source name (echoed from skill input for postprocessor).
+    path:
+      type: string
+      description: Glob pattern (echoed from skill input for postprocessor).
+    description:
+      type: string
+      description: Human-readable source name (echoed from skill input).
+    mode:
+      type: string
+      enum: [append, replace]
+      default: append
+      description: Indexing mode (echoed from skill input for index_write op).
