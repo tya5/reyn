@@ -240,12 +240,12 @@ sandbox:
 
 ## Priority ordering
 
-**A → D → B → C → E**
+**A → D → C → B → E**
 
 Component A（Protocol + 新 op）はその他すべての基盤となる。
 Component D（非推奨警告）はコストゼロで A と同時に投入できる。
-Component B（Landlock）は主要な Linux デプロイターゲットをカバーする。
-Component C（Seatbelt）は macOS 開発マシンをカバーする。
+Component C（Seatbelt）は次に投入する — macOS が主要開発環境であるため。
+Component B（Landlock）は Linux デプロイターゲットをカバーする。
 Component E は macOS 26 の提供まで延期。
 
 ---

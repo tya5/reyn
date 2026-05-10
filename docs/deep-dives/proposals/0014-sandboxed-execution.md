@@ -243,12 +243,12 @@ useful for production environments that require enforcement guarantees.
 
 ## Priority ordering
 
-**A → D → B → C → E**
+**A → D → C → B → E**
 
 Component A (protocol + new op) is the foundation everything else builds on. Component D
-(deprecation warning) can land with A at zero cost. Component B (Landlock) covers the primary
-Linux deployment target. Component C (Seatbelt) covers macOS development machines. Component
-E is deferred pending macOS 26 availability.
+(deprecation warning) can land with A at zero cost. Component C (Seatbelt) ships next because
+macOS is the primary development environment. Component B (Landlock) covers Linux deployment
+targets. Component E is deferred pending macOS 26 availability.
 
 ---
 
