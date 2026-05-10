@@ -282,7 +282,7 @@ def run_spike(
         print(f"\n[driver] == branch={branch!r} port={port} ==", flush=True)
 
         try:
-            ensure_worktree(project_root, branch, wt)
+            wt = ensure_worktree(project_root, branch, wt)
         except RuntimeError as exc:
             # Mark all runs blocked
             for cond in branch_conds:
@@ -317,11 +317,16 @@ def run_spike(
                 )
                 sys.exit(0)
 
-            # Inject model override
-            if model_class == "strong":
+            # Inject reyn.local.yaml (api_base + model class). All
+            # conditions need api_base pointing at the LiteLLM proxy
+            # — the committed reyn.yaml on the branch does not carry
+            # this.
+            #
+            # SAFETY: skip injection when wt == project_root (= operator's
+            # main checkout). Their existing reyn.local.yaml is the source
+            # of truth; the driver must not clobber it.
+            if wt.resolve() != project_root.resolve():
                 write_model_override(wt, model_class, STRONG_MODEL_STRING)
-            else:
-                remove_model_override(wt)
 
             # Start server
             print(f"[driver] starting reyn web --port {port} in {wt}", flush=True)
@@ -401,7 +406,9 @@ def run_spike(
             stop_web_server(server)
             time.sleep(1.0)
 
-        remove_model_override(wt)
+        # SAFETY: do not clobber operator's reyn.local.yaml.
+        if wt.resolve() != project_root.resolve():
+            remove_model_override(wt)
 
     return all_records
 

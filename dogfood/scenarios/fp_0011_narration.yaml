@@ -103,7 +103,7 @@ scenarios:
       iterate a candidates array and extract per-item fields (name, repo_url,
       description) rather than collapsing the list to a single string.
     user_prompt: |
-      Slack と連携できる MCP サーバーを探してください。
+      mcp_search スキルで Slack 連携可能な MCP サーバーを探してください。
       見つかったサーバーについて、名前・URL・概要を教えてください。
     expected_skill: mcp_search
     expected_status: finished
@@ -112,6 +112,15 @@ scenarios:
       - candidates[].name
       - candidates[].repo_url
       - candidates[].description
+    notes: >
+      AUDIT FIX (2026-05-10, post smoke test): original prompt
+      "Slack と連携できる MCP サーバーを探して..." was satisfied by web_search
+      in all 3 conditions during the smoke test (= 0/3 invoke_skill calls).
+      The router LLM rationally chose web_search because its description
+      covers "find / explore" semantics and Slack-MCP information IS on the
+      public web. Per the same fix pattern as narr-5, prompt now names
+      "mcp_search スキル" so the SP's ABSOLUTE routing rule fires and
+      web_search is excluded.
 
   - id: narr-2-eval-numeric
     description: >
