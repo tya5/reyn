@@ -93,13 +93,32 @@ pipeline reads them from the finish artifact.
 
 ## Cost gate (UX gap fix B)
 
-If `data.cost.threshold_exceeded` is true, OR if `data.cost.estimated_cost_usd`
-is unexpectedly high for the number of files (e.g. > $1.00 for a small path),
-emit `decision: "abort"` with a clear explanation in `control.reason.summary`.
-The Skill.postprocessor will not run when the LLM aborts — no chunks will be
-embedded or written.
+**Decision rule — STRICT ORDER, do not reverse**:
 
-Otherwise emit `decision: "finish"` with the `chunk_strategy` artifact.
+1. **FIRST**, look at `data.cost.threshold_exceeded`. This is a boolean flag
+   the OS sets after comparing chunk_count to the configured
+   `cost_warn_threshold`. **Treat this flag as authoritative.**
+   - If it is `true` → emit `decision: "abort"` with the chunk count and
+     threshold value in `control.reason.summary`. **Do this regardless of
+     how small `estimated_cost_usd` looks.** The user has explicitly
+     configured this threshold; respect it.
+   - If it is `false` → proceed to step 2.
+
+2. **THEN**, sanity-check `data.cost.estimated_cost_usd`. If it is
+   unexpectedly high for the number of files (e.g. > $1.00 for a small
+   path), also emit `decision: "abort"` with the cost in
+   `control.reason.summary`.
+
+3. Otherwise emit `decision: "finish"` with the `chunk_strategy` artifact.
+
+**Common attractor to avoid (B18-S9-1)**: when the boolean flag says
+`threshold_exceeded: true` but the dollar value is small (e.g. $0.0003),
+do NOT conclude that the cost is "fine" and ignore the flag. The flag
+encodes the user's policy ("warn at N chunks"); the dollar value is just
+an estimate. **Boolean policy flag wins over numeric estimate.**
+
+The Skill.postprocessor will not run when the LLM aborts — no chunks
+will be embedded or written.
 
 ## Constraints
 

@@ -91,6 +91,18 @@ async def handle(
     all_chunks.sort(key=lambda c: c.get("score") or 0.0, reverse=True)
     top_chunks = all_chunks[: op.top_k]
 
+    # ── Strip raw vector field before returning to caller (B18-S5-1) ─────────
+    # ChunkRecord carries a `vector: list[float]` field that backends use for
+    # similarity ranking. Once top-K is selected, the vector is no longer
+    # useful to downstream consumers (the LLM, postprocessors) but is large
+    # (~6KB / 1536-dim float-as-string serialised JSON, ~40KB per call at
+    # top_k=5). Leaving it in the returned envelope quietly inflates router
+    # context on every recall invocation. Strip it here; backends keep the
+    # vector internally for re-ranking but it never crosses the op boundary.
+    stripped_chunks = [
+        {k: v for k, v in c.items() if k != "vector"} for c in top_chunks
+    ]
+
     # Determine overall mode
     n = len(per_source)
     if semantic_count == n:
@@ -100,7 +112,7 @@ async def handle(
     else:
         mode = "mixed"
 
-    return {"chunks": top_chunks, "mode": mode}
+    return {"chunks": stripped_chunks, "mode": mode}
 
 
 register("recall", handle)

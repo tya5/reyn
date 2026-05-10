@@ -375,6 +375,34 @@ def build_system_prompt(
         parts.append(
             "    for these queries."
         )
+        # ── R-RAG-srcread guidance (B18 batch 18 finding) ──────────────────
+        # When the user asks "how is X implemented?" / "explain how X works"
+        # about a topic that an indexed source covers semantically, the LLM
+        # tends to default to file_read / reyn_src_read on README.md instead
+        # of recall — file ops "feel" more direct but they are NOT semantic
+        # search. Force the routing to recall when an indexed source matches
+        # the topic of the question.
+        parts.append(
+            "  - For 'how is X implemented?', 'explain how X works', or"
+        )
+        parts.append(
+            "    'how does X work?' style questions: if an indexed source"
+        )
+        parts.append(
+            "    covers the topic semantically (see Indexed sources section"
+        )
+        parts.append(
+            "    descriptions), prefer the `recall` tool over file_read /"
+        )
+        parts.append(
+            "    reyn_src_read. File ops give you the literal file content;"
+        )
+        parts.append(
+            "    recall gives you the semantically-relevant chunks across"
+        )
+        parts.append(
+            "    the indexed source. For semantic explanations, recall wins."
+        )
         # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
         # When 0 indexed sources are available, the LLM must actively tell the
         # user how to add them instead of silently defaulting to memory.
