@@ -1,6 +1,8 @@
 # FP-0011: Remove `skill_narrator` — Let the Router LLM Narrate Skill Results
 
-**Status**: **spike-validated, land-recommended (= net quality improvement)**
+**Status**: **LANDED 2026-05-10 (= commit `59c991a`, A+B+C+D+E + Component B
+anti-optimism strengthening). Follow-up: N≥10 flash-strong-tier retest to
+confirm the 1/6 hallucination drops to ~0.**
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 **Spike validated**: 2026-05-10 — see `docs/deep-dives/journal/dogfood/2026-05-10-fp-0011-narrator-removal-spike.md`. Three stages of context analysis flipped the spike framing from "regression" to "net quality improvement":
