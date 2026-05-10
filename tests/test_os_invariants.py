@@ -17,6 +17,15 @@ from reyn.kernel.normalizer import (
     ControlIRValidationError,
     normalize,
 )
+from reyn.kernel.runtime import OSRuntime
+from reyn.schemas.models import (
+    ControlDecision,
+    ControlReason,
+    LLMOutput,
+    Phase,
+    Skill,
+    SkillGraph,
+)
 from reyn.workspace.workspace import Workspace
 
 # ── P4: LLM output contract ────────────────────────────────────────────────────
@@ -153,3 +162,72 @@ def test_p6_workspace_delete_emits_event(tmp_path, monkeypatch):
         f"P6 violation: workspace.delete_file did not emit an event. "
         f"New events: {[e.type for e in new_events]}"
     )
+
+
+# ── P4: abort candidate must be offered to LLM (B17-S9-1) ────────────────────
+
+
+def _make_simple_skill() -> Skill:
+    """Minimal single-phase skill used for _build_candidates tests."""
+    main = Phase(
+        name="main", instructions="m",
+        input_schema={"type": "object", "properties": {}},
+        allowed_ops=[],
+    )
+    return Skill(
+        name="simple", entry_phase="main",
+        phases={"main": main},
+        graph=SkillGraph(transitions={}, can_finish_phases=["main"]),
+        final_output_schema={"type": "object", "properties": {}},
+        final_output_name="result",
+    )
+
+
+def test_build_candidates_includes_abort():
+    """Tier 2 (P4/B17-S9-1): _build_candidates always emits an abort candidate.
+
+    Per P4 the LLM can only pick from OS-provided candidates. Without an
+    abort candidate the LLM has no structural path to emit decision=abort,
+    making the cost-preflight gate (ADR-0033) and any other abort-based
+    skill design structurally broken OS-wide.
+    """
+    skill = _make_simple_skill()
+    rt = OSRuntime(skill, model="stub/model")
+
+    candidates = rt._build_candidates("main")
+
+    abort_candidates = [c for c in candidates if c.control_type == "abort"]
+    assert len(abort_candidates) >= 1, (
+        f"_build_candidates did not include an abort candidate. "
+        f"Got control_types: {[c.control_type for c in candidates]}"
+    )
+    abort = abort_candidates[0]
+    assert "reason" in abort.artifact_schema.get("properties", {}), (
+        "abort candidate artifact_schema must include a 'reason' property"
+    )
+
+
+def test_llm_output_with_decision_abort_validates():
+    """Tier 2 (P4/B17-S9-1): LLM output with decision=abort passes normalize().
+
+    Confirms the OS accepts the abort control triple (type=abort,
+    decision=abort, next_phase=null) per the LLM Output Contract in CLAUDE.md.
+    normalize() must return successfully rather than raising NormalizationError
+    or ControlIRValidationError.
+    """
+    raw = {
+        "control": {
+            "type": "abort",
+            "decision": "abort",
+            "next_phase": None,
+            "confidence": 0.9,
+            "reason": {"summary": "cost threshold exceeded"},
+        },
+        "artifact": {"type": "abort_reason", "data": {"reason": "cost threshold exceeded"}},
+        "ops": [],
+    }
+    # normalize must succeed (abort exits early before allowed_next_phases check)
+    result = normalize(raw, allowed_next_phases=["end"])
+    assert result.control.type == "abort"
+    assert result.control.decision == "abort"
+    assert result.control.next_phase is None

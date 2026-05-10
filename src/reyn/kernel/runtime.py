@@ -396,6 +396,27 @@ class OSRuntime:
                     "next_phase MUST be null. decision MUST be 'continue'."
                 ),
             ))
+        candidates.append(CandidateOutput(
+            next_phase="abort",
+            control_type="abort",
+            schema_name="abort_reason",
+            artifact_schema={
+                "type": "object",
+                "properties": {
+                    "reason": {
+                        "type": "string",
+                        "description": "Reason for aborting (= why the skill cannot proceed)",
+                    },
+                },
+                "required": ["reason"],
+            },
+            description=(
+                "Abort the skill — used when external constraints (= cost limit, infeasibility, "
+                "denial) prevent completion. Set control.type='abort', control.decision='abort', "
+                "control.next_phase=null. Put the reason in control.reason.summary and the "
+                "artifact's reason field."
+            ),
+        ))
         return candidates
 
     def _effective_model(self, phase_name: str) -> str:
