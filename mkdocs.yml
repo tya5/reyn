@@ -175,6 +175,7 @@ nav:
       - concepts/async-skill-execution.md
       - concepts/preprocessor.md
       - concepts/postprocessor.md
+      - concepts/python-pure-mode.md
       - concepts/skill-design-patterns.md
       - concepts/skill-resume.md
       - Agent engineering — seven lenses:

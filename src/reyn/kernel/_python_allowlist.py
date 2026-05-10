@@ -12,24 +12,43 @@ child processes.
 from __future__ import annotations
 
 # Stdlib modules considered safe enough for pure-mode preprocessor steps.
-# Curated for "no I/O, no subprocess, no dynamic code execution".
-# random / time are included because they're CPU-only — non-deterministic
-# but not side-effecting from the OS-level perspective. callers who care
-# about determinism should avoid them in their function.
+#
+# Pure mode = "ambient sources only". A python step's output is determined
+# ONLY by its input artifacts plus ambient sources: the wall clock, an
+# entropy stream, and bundled stdlib static data (e.g. the tz database
+# shipped with Python). Filesystem, network, subprocess, and process
+# environment access are syntactically unreachable — the AST validator
+# rejects banned modules / builtins, and the subprocess sandbox provides
+# defence in depth.
+#
+# Author rule of thumb: a module belongs here only if every public call
+# is satisfiable from {inputs, clock, entropy, bundled static data}. Modules
+# that ingress operator state (`os`, `pathlib`, `glob`, `os.environ`),
+# touch the network (`urllib`, `socket`), or spawn processes (`subprocess`)
+# are NOT ambient and stay out. If a step needs a non-ambient capability,
+# use a `run_op` step instead — that's the proper escape hatch with its
+# own permission gate.
+#
+# `random` / `time` / `datetime` / `secrets` / `zoneinfo` are intentionally
+# allowed: they read from ambient sources (clock, entropy, bundled tz data)
+# but never observe or mutate operator-visible state. Callers who need
+# bit-for-bit determinism should still avoid them.
+#
+# Full author guide: docs/concepts/python-pure-mode.md
 PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
-    # numeric
+    # numeric — pure computation
     "math", "statistics", "decimal", "fractions", "cmath", "numbers",
-    # text
+    # text — pure computation
     "string", "re", "textwrap", "unicodedata",
-    # time / date — non-deterministic but no I/O
+    # time / date — ambient clock + bundled tz static data
     "datetime", "calendar", "zoneinfo", "time",
-    # data encoding / hashing
+    # data encoding / hashing — pure computation (secrets reads entropy)
     "json", "base64", "binascii", "hashlib", "hmac", "secrets",
-    # collections / functional
+    # collections / functional — pure computation
     "collections", "itertools", "functools", "operator", "copy",
-    # typing / structure
+    # typing / structure — pure computation
     "enum", "dataclasses", "typing", "abc",
-    # randomness — non-deterministic but no I/O
+    # randomness — ambient entropy
     "random",
 })
 
