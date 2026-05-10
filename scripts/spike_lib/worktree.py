@@ -16,36 +16,49 @@ def worktree_path(branch: str) -> Path:
 
 
 def ensure_worktree(project_root: Path, branch: str, worktree: Path) -> Path:
-    """Create git worktree if it doesn't exist; reuse if it does.
+    """Create git worktree (always isolated under /tmp).
 
-    Returns the path actually used. If the requested ``branch`` is already
-    checked out at ``project_root`` (= the operator is on it right now), we
-    cannot also worktree-add it — git refuses with "already used by worktree".
-    In that case we use the project_root directly. This is the common
-    weak-baseline case where the spike runs from the operator's main
-    checkout.
+    Earlier versions reused project_root when the operator was on the
+    target branch — but that polluted the operator's checkout with
+    spike-* agents and prevented per-condition mcp_server.py patches.
+    Now ALWAYS use a dedicated /tmp worktree; for the conflict case
+    (= operator currently on `branch`) we use ``--detach`` to point
+    at the same commit without taking a branch lock.
     """
-    # Case 1: branch is already checked out at project_root → reuse.
+    if worktree.exists():
+        return worktree
+
+    # Prune stale worktree registrations (= directory was rm'd but git
+    # still has a record). Otherwise `git worktree add` fails with
+    # "missing but already registered".
+    subprocess.run(
+        ["git", "worktree", "prune"],
+        cwd=str(project_root), capture_output=True, text=True,
+    )
+
     head = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],
         cwd=str(project_root), capture_output=True, text=True,
     )
-    if head.returncode == 0 and head.stdout.strip() == branch:
-        print(
-            f"[worktree] reusing project_root {project_root} for branch {branch!r}"
-            f" (already checked out)", flush=True,
-        )
-        return project_root
+    detach = head.returncode == 0 and head.stdout.strip() == branch
 
-    # Case 2: dedicated /tmp worktree — create or reuse.
-    if worktree.exists():
-        return worktree
-    print(f"[worktree] creating {worktree} for branch {branch!r}", flush=True)
+    if detach:
+        # operator is on `branch`; use detached HEAD at the same commit
+        print(
+            f"[worktree] creating {worktree} as detached HEAD at branch "
+            f"{branch!r} (operator's checkout holds the branch)",
+            flush=True,
+        )
+        cmd = ["git", "worktree", "add", "--detach", str(worktree), branch]
+    else:
+        print(
+            f"[worktree] creating {worktree} for branch {branch!r}",
+            flush=True,
+        )
+        cmd = ["git", "worktree", "add", str(worktree), branch]
+
     result = subprocess.run(
-        ["git", "worktree", "add", str(worktree), branch],
-        cwd=str(project_root),
-        capture_output=True,
-        text=True,
+        cmd, cwd=str(project_root), capture_output=True, text=True,
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -53,6 +66,25 @@ def ensure_worktree(project_root: Path, branch: str, worktree: Path) -> Path:
             f"  stdout: {result.stdout.strip()}\n"
             f"  stderr: {result.stderr.strip()}"
         )
+
+    # Patch the worktree's mcp_server.py to use the same 300s A2A timeout
+    # as the spike branch, so weak-baseline doesn't hit the production
+    # 60s default and confound timeout-vs-narrator measurement. This
+    # touches /tmp/<worktree> only — operator's project_root is untouched.
+    mcp_server_py = worktree / "src" / "reyn" / "mcp_server.py"
+    if mcp_server_py.exists():
+        content = mcp_server_py.read_text(encoding="utf-8")
+        if "DEFAULT_SEND_TIMEOUT_SECONDS: float = 60.0" in content:
+            new_content = content.replace(
+                "DEFAULT_SEND_TIMEOUT_SECONDS: float = 60.0",
+                "DEFAULT_SEND_TIMEOUT_SECONDS: float = 300.0  # spike-only patch",
+            )
+            mcp_server_py.write_text(new_content, encoding="utf-8")
+            print(
+                f"[worktree] patched A2A timeout 60s → 300s in {mcp_server_py}",
+                flush=True,
+            )
+
     print(f"[worktree] created {worktree}", flush=True)
     return worktree
 

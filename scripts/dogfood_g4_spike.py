@@ -539,7 +539,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    default=["weak-baseline", "weak-experimental", "strong-experimental"],
                    choices=["weak-baseline", "weak-experimental", "strong-experimental"],
                    help="Conditions to run (default: all 3).")
-    p.add_argument("--http-timeout", type=float, default=120.0, metavar="SEC",
+    p.add_argument("--http-timeout", type=float, default=360.0, metavar="SEC",
                    help="Per-run HTTP timeout in seconds (default: 120).")
     p.add_argument("--llm-call-cap", type=int, default=30, metavar="N",
                    help="Max LLM calls per run before cap_exceeded (default: 30).")
