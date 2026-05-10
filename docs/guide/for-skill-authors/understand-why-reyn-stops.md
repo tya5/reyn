@@ -176,15 +176,18 @@ safety:
 | `interactive` | `reyn chat`, TUI sessions — the user is sitting at the prompt and can decide |
 | `auto_extend` | Trusted long-running tasks where the operator knows up front that N extensions are acceptable |
 
-> **Phase 1 status (FP-0005):** the config surface and
-> `RunResult.partial_data` field are live. The per-site `ask_user`
-> dispatch (= `interactive` / `auto_extend` actually pausing the run on
-> hit) is rolled out incrementally — see the [FP-0005
-> proposal](../../deep-dives/proposals/0005-safety-as-checkpoint.md)
-> for the per-limit migration plan. Until each site lands, configuring
-> `mode: interactive` for that limit falls back to `unattended`
-> (= legacy abort).
->
-> The one exception: `cost.per_chain_skill_calls.ask_on_exceed: true`
-> (FP-0003) already gives you the user-approval flow for the
-> per-(chain, skill) calls cap — see the example in §③ above.
+**Where each mode is wired (FP-0005 Phase 2 — fully landed):**
+
+| Limit | Site | Mode behaviour |
+|---|---|---|
+| `safety.loop.max_phase_visits` | `OSRuntime._enter_phase` | interactive / auto_extend |
+| `safety.timeout.phase_seconds` | `OSRuntime._check_phase_budget` | interactive / auto_extend |
+| `safety.loop.max_act_turns_per_phase` | OSRuntime act-loop | interactive / auto_extend |
+| `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
+| `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
+| `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (re-arm) |
+| `cost.per_chain_skill_calls` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
+
+`safety.timeout.llm_call_seconds` is excluded by design — litellm
+already auto-retries within `safety.timeout.llm_max_retries`, so an
+extra `ask_user` layer would just add latency.

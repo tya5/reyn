@@ -34,7 +34,12 @@ from reyn.chat.services import (
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import EventsConfig, LimitsConfig
+from reyn.config import EventsConfig, LimitsConfig, OnLimitConfig
+from reyn.safety.limit_handler import (
+    LimitDecision,
+    handle_limit_exceeded,
+    reset_run_extensions,
+)
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -480,6 +485,10 @@ class ChatSession:
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
+        # FP-0005: opt-in interactive / auto_extend behaviour on
+        # safety-limit hits (router_cap, max_hop_depth, chain_seconds).
+        # None = legacy unattended (= refuse).
+        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -509,6 +518,15 @@ class ChatSession:
         # budget elapses, the runtime synthesizes an error response upstream
         # so a chain stuck on a non-responsive delegate doesn't hang forever.
         self._chain_timeout_seconds = chain_timeout_seconds
+        # FP-0005: per-session safety-limit checkpoint policy. Default
+        # `unattended` preserves legacy abort-on-hit behaviour for chat-
+        # side limits (router_cap, max_hop_depth, chain_seconds). The
+        # CLI factory passes `interactive` for `reyn chat`.
+        self._on_limit = on_limit or OnLimitConfig()
+        # FP-0005: per-(turn or chain) extension counters granted by
+        # `_handle_limit_checkpoint`. Cleared on turn / chain boundary
+        # by the relevant call sites.
+        self._safety_extensions: dict[str, float] = {}
         # PR15: optional skill allowlist sourced from profile.allowed_skills.
         # None = unrestricted (default, BC). Empty list = router runs but no
         # skill spawn. stdlib router/compactor/narrator are NOT subject to
@@ -1469,12 +1487,89 @@ class ChatSession:
         invocations count against the same budget."""
         self._budget.reset_router_turn_counter()
 
-    def _check_and_increment_router_cap(self, user_text: str) -> None:
+    async def _handle_chat_limit_checkpoint(
+        self,
+        *,
+        kind: str,
+        prompt: str,
+        detail: str,
+        extension_amount: float,
+        run_id: str | None = None,
+    ) -> "LimitDecision":
+        """FP-0005: chat-side wrapper for ``handle_limit_exceeded``.
+
+        Mirrors ``OSRuntime._handle_limit_checkpoint`` but uses the
+        ChatSession's intervention dispatcher (= ``_dispatch_intervention``,
+        which records the WAL ``intervention_dispatched`` event before
+        delivering the prompt) + on_limit + a session-stable run_id
+        (= the agent name when no narrower scope applies, or the
+        current chain_id for chain-scoped checkpoints). Emits a
+        ``safety_limit_checkpoint`` audit event so the decision is
+        visible alongside the existing chat events.
+        """
+        # Adapter that conforms to the InterventionBus Protocol by
+        # delegating to ChatSession's existing intervention dispatcher.
+        # _dispatch_intervention records the intervention_dispatched /
+        # intervention_resolved WAL events automatically, so per-site
+        # callers don't need to.
+        session_dispatch = self._dispatch_intervention
+
+        class _ChatLimitBus:
+            async def request(self, iv):  # type: ignore[no-untyped-def]
+                return await session_dispatch(iv)
+
+        decision = await handle_limit_exceeded(
+            bus=_ChatLimitBus(),
+            on_limit=self._on_limit,
+            kind=kind,
+            run_id=run_id or self.agent_name,
+            prompt=prompt,
+            detail=detail,
+            extension_amount=extension_amount,
+        )
+        if decision.allow_continue:
+            self._safety_extensions[kind] = (
+                self._safety_extensions.get(kind, 0.0) + decision.extension
+            )
+        self._chat_events.emit(
+            "safety_limit_checkpoint",
+            kind=kind,
+            allow_continue=decision.allow_continue,
+            reason=decision.reason,
+            extension=decision.extension,
+        )
+        return decision
+
+    async def _check_and_increment_router_cap(self, user_text: str) -> None:
         """Increment the per-turn router invocation counter and enforce the
         cap. Raises RouterCapExceeded when the counter would exceed the
         configured cap. cap=0 disables the check.
+
+        FP-0005: when ``safety.on_limit.mode`` is ``interactive`` /
+        ``auto_extend`` and the cap is hit, ask the user / auto-extend
+        before re-raising. On approval the cap is extended by the
+        configured amount and the run continues.
         """
-        self._budget.check_and_increment_router_cap(user_text)
+        try:
+            self._budget.check_and_increment_router_cap(user_text)
+        except RouterCapExceeded as exc:
+            decision = await self._handle_chat_limit_checkpoint(
+                kind="router_cap",
+                prompt=(
+                    f"Router hit the per-turn cap of {exc.cap} invocations. "
+                    f"Allow more invocations this turn?"
+                ),
+                detail=(
+                    f"count={exc.count} cap={exc.cap} "
+                    f"last_reason={exc.last_reason}"
+                ),
+                extension_amount=1.0,
+            )
+            if not decision.allow_continue:
+                raise
+            # Approved — extend the cap and increment for THIS attempt.
+            self._budget.extend_router_cap(int(decision.extension))
+            self._budget.check_and_increment_router_cap(user_text)
 
     # ── backward-compat shims for Tier-4 scaffold tests ─────────────────────
     # These proxy the gateway's private counter/reason through the session
@@ -1646,15 +1741,19 @@ class ChatSession:
     ) -> bool:
         """FP-0003: ask the user to approve extending a hard-limit cap.
 
-        Dispatches a yes/no UserIntervention via the existing
-        InterventionBus. Returns True iff the user picked yes; any other
-        outcome (no, free-text mismatch, cancellation) returns False so
-        the caller falls through to the original refusal path.
+        FP-0005: now generalised to call the shared
+        ``handle_limit_exceeded`` helper so all seven safety / budget
+        checkpoints share one implementation. Returns True iff the
+        decision allows continuing (= ``user_approved`` or
+        ``auto_extended``); any other outcome (refused / timeout /
+        bus failure / unattended) returns False so the caller falls
+        through to the original refusal path.
 
-        The intervention carries no `run_id` because the spawn has not
-        been registered yet — chain-side bookkeeping (`run_id`) is
-        post-approval. ``skill_name`` is set so /list / TUI can show
-        which skill the user is being asked about.
+        Note: the per-(chain, skill) extension bookkeeping is owned by
+        ``BudgetTracker.extend_chain_calls`` (= the count counter is
+        the FP-0003 source of truth, not ``self._safety_extensions``).
+        This method only signals approval; the caller applies the
+        extension via the tracker.
         """
         ctx = check.context or {}
         used = int(ctx.get("current") or 0)
@@ -1670,22 +1769,42 @@ class ChatSession:
             f"chain={chain_id} dimension={check.hard_dimension} "
             f"detail={check.detail}"
         )
-        iv = UserIntervention(
-            kind="permission.budget_extend",
+        # FP-0005: per_chain_skill_calls.ask_on_exceed implies
+        # interactive intent regardless of the global on_limit.mode
+        # — the user explicitly opted into prompting via
+        # ``cost.per_chain_skill_calls.ask_on_exceed: true``. Build a
+        # local OnLimitConfig that reflects this so the helper
+        # dispatches the prompt rather than falling through.
+        from reyn.config import OnLimitConfig as _OnLimitConfig
+        local_on_limit = _OnLimitConfig(
+            mode="interactive",
+            ask_timeout_seconds=self._on_limit.ask_timeout_seconds,
+        )
+        # Reuse the chat-side bus adapter from _handle_chat_limit_checkpoint.
+        session_dispatch = self._dispatch_intervention
+
+        class _ChatLimitBus:
+            async def request(self, iv):  # type: ignore[no-untyped-def]
+                return await session_dispatch(iv)
+
+        decision = await handle_limit_exceeded(
+            bus=_ChatLimitBus(),
+            on_limit=local_on_limit,
+            kind=f"per_chain_skill_calls:{chain_id}:{skill_name}",
+            run_id=chain_id,
             prompt=prompt,
             detail=detail,
-            choices=[
-                InterventionChoice(id="yes", label="[Y]es", hotkey="y"),
-                InterventionChoice(id="no", label="[N]o", hotkey="n"),
-            ],
-            run_id=None,
+            extension_amount=float(extension),
             skill_name=skill_name,
         )
-        try:
-            answer = await self._dispatch_intervention(iv)
-        except Exception:
-            return False
-        return getattr(answer, "choice_id", None) == "yes"
+        self._chat_events.emit(
+            "safety_limit_checkpoint",
+            kind="per_chain_skill_calls",
+            allow_continue=decision.allow_continue,
+            reason=decision.reason,
+            extension=decision.extension,
+        )
+        return decision.allow_continue
 
     def _drop_interventions_for_run(self, run_id: str | None) -> None:
         """Cancel any pending interventions tagged with `run_id`.
@@ -1769,24 +1888,46 @@ class ChatSession:
         thread for cross-agent trace; it propagates verbatim to the target's
         inbox payload and is recorded in history meta + events.
         """
-        if depth > self._max_hop_depth:
-            # FP-0004: hint at the config key the operator can raise.
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=(
-                    f"agent message depth {depth} exceeds limit "
-                    f"{self._max_hop_depth}; chain refused. "
-                    f"→ Raise safety.loop.max_agent_hops to allow deeper "
-                    f"delegation chains."
+        # FP-0005: extension granted by safety-limit checkpoint raises
+        # the effective hop cap for this chain.
+        effective_max_hops = int(
+            self._max_hop_depth
+            + self._safety_extensions.get(f"max_agent_hops:{chain_id}", 0.0)
+        )
+        if depth > effective_max_hops:
+            # FP-0005: ask before refusing when on_limit.mode opts in.
+            decision = await self._handle_chat_limit_checkpoint(
+                kind=f"max_agent_hops:{chain_id}",
+                prompt=(
+                    f"Delegation depth {depth} exceeds max_agent_hops "
+                    f"({effective_max_hops}). Allow chain {chain_id} to "
+                    f"continue?"
                 ),
-                meta={"chain_id": chain_id},
-            ))
-            self._chat_events.emit(
-                "agent_message_refused",
-                reason="max_hop_depth",
-                to_agent=to, depth=depth, chain_id=chain_id,
+                detail=f"to={to} depth={depth} cap={effective_max_hops}",
+                extension_amount=1.0,
+                run_id=chain_id,
             )
-            return
+            if not decision.allow_continue:
+                # FP-0004: hint at the config key the operator can raise.
+                await self._put_outbox(OutboxMessage(
+                    kind="error",
+                    text=(
+                        f"agent message depth {depth} exceeds limit "
+                        f"{effective_max_hops}; chain refused. "
+                        f"→ Raise safety.loop.max_agent_hops to allow deeper "
+                        f"delegation chains."
+                    ),
+                    meta={"chain_id": chain_id},
+                ))
+                self._chat_events.emit(
+                    "agent_message_refused",
+                    reason="max_hop_depth",
+                    to_agent=to, depth=depth, chain_id=chain_id,
+                )
+                return
+            # Approved — continue. ``_safety_extensions[max_agent_hops:<chain_id>]``
+            # was bumped by the checkpoint helper so re-entry on the same
+            # chain at this depth would not re-prompt unless depth grows again.
         if to == self.agent_name:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"agent {to!r}: cannot self-message",
@@ -2206,7 +2347,47 @@ class ChatSession:
         records the WAL `chain_timeout_fired` event), emits the
         `chain_timeout` audit event, and synthesises an error response
         upstream so the parent chain doesn't hang.
+
+        FP-0005: when ``safety.on_limit.mode`` opts in (interactive /
+        auto_extend), the watchdog peeks at the pending chain *before*
+        firing and asks whether to re-arm with a fresh deadline.
+        ``unattended`` (= default) preserves the legacy fire-and-error
+        behaviour byte-for-byte.
         """
+        # FP-0005: try to re-arm the watchdog before firing if the
+        # operator opted in. The ChainManager's fire_timeout pop is
+        # destructive, so peek first via the registry's `get` accessor.
+        if self._on_limit.mode != "unattended":
+            pending_peek = self._chains.get(chain_id)
+            if pending_peek is not None:
+                waiting_peek = sorted(pending_peek.waiting_on)
+                decision = await self._handle_chat_limit_checkpoint(
+                    kind=f"chain_seconds:{chain_id}",
+                    prompt=(
+                        f"Chain {chain_id} timed out waiting for "
+                        f"{', '.join(waiting_peek) or 'unknown'} after "
+                        f"{self._chain_timeout_seconds:g}s. Wait longer?"
+                    ),
+                    detail=(
+                        f"chain={chain_id} waiting_on={waiting_peek} "
+                        f"timeout={self._chain_timeout_seconds:g}s"
+                    ),
+                    extension_amount=float(self._chain_timeout_seconds),
+                    run_id=chain_id,
+                )
+                if decision.allow_continue:
+                    # Re-arm the watchdog for another window.
+                    self._chains.arm_timeout(
+                        chain_id, on_fire=self._on_chain_timeout_fire,
+                    )
+                    self._chat_events.emit(
+                        "chain_timeout_extended",
+                        chain_id=chain_id,
+                        waiting_on=waiting_peek,
+                        extension_seconds=decision.extension,
+                        reason=decision.reason,
+                    )
+                    return  # do NOT fire timeout
         pending = await self._chains.fire_timeout(chain_id)
         if pending is None:
             return  # resolved between sleep wake and fire — nothing to do
@@ -3500,7 +3681,8 @@ class ChatSession:
 
         Raises RouterCapExceeded when the per-turn cap is reached.
         """
-        self._check_and_increment_router_cap(user_text)
+        # FP-0005: now async (consults safety.on_limit on hit).
+        await self._check_and_increment_router_cap(user_text)
         from reyn.chat.router_loop import RouterLoop
         loop = RouterLoop(
             host=self._router_host, chain_id=chain_id, max_iterations=5,

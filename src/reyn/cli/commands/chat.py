@@ -199,6 +199,13 @@ def run(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
+            # FP-0005: thread the operator's on_limit choice into the
+            # session so chat-side safety-limit checkpoints (router_cap,
+            # max_hop_depth, chain_seconds) consult it. Default
+            # ``unattended`` preserves legacy abort behaviour; users
+            # opt into ``interactive`` / ``auto_extend`` via
+            # ``safety.on_limit:`` in reyn.yaml.
+            on_limit=session_cfg.config.safety.on_limit,
         )
         s.load_history()
         return s

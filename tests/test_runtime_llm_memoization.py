@@ -344,8 +344,9 @@ def test_op_invocation_id_resets_on_phase_re_entry(tmp_path, monkeypatch):
     async def go():
         await rt._call_llm_and_record("draft", frame, prior_attempts=None)
         await rt._call_llm_and_record("draft", frame, prior_attempts=None)
-        # Simulate phase re-entry (runtime.py calls _enter_phase on each entry)
-        rt._enter_phase("draft", {"type": "input", "data": {}})
+        # Simulate phase re-entry (runtime.py calls _enter_phase on each entry).
+        # FP-0005: _enter_phase is now async (consults safety.on_limit).
+        await rt._enter_phase("draft", {"type": "input", "data": {}})
         await rt._call_llm_and_record("draft", frame, prior_attempts=None)
 
     asyncio.run(go())

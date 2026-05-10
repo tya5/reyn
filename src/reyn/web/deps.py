@@ -193,6 +193,7 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
+                on_limit=config.safety.on_limit,  # FP-0005
             )
             s.load_history()
             return s

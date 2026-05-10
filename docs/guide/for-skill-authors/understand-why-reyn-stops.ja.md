@@ -172,15 +172,18 @@ safety:
 | `interactive` | `reyn chat` / TUI session — ユーザーが目の前にいて判断できる |
 | `auto_extend` | 信頼済みの長時間タスクで「N 回までは自動延長して良い」と分かっているとき |
 
-> **Phase 1 ステータス (FP-0005):** 設定スキーマと `RunResult.partial_data`
-> フィールドは landing 済みです。limit ごとの `ask_user` dispatch (=
-> `interactive` / `auto_extend` が実際に到達時に対話に切り替わる) は段階的
-> rollout で、 詳細は [FP-0005
-> proposal](../../deep-dives/proposals/0005-safety-as-checkpoint.md) の
-> per-limit migration plan を参照してください。各 site の wiring が
-> landing するまでは、 当該 limit に対して `mode: interactive` を設定しても
-> `unattended` (= 旧来の abort) にフォールバックします。
->
-> 唯一の例外: `cost.per_chain_skill_calls.ask_on_exceed: true` (FP-0003)
-> は (chain, skill) ごとの起動回数キャップに対するユーザー承認フローを
-> 既に提供しています — 上記 §③ の例を参照してください。
+**各 limit がどの site で wiring されているか (FP-0005 Phase 2 — landing 完了):**
+
+| Limit | Site | モード挙動 |
+|---|---|---|
+| `safety.loop.max_phase_visits` | `OSRuntime._enter_phase` | interactive / auto_extend |
+| `safety.timeout.phase_seconds` | `OSRuntime._check_phase_budget` | interactive / auto_extend |
+| `safety.loop.max_act_turns_per_phase` | OSRuntime act-loop | interactive / auto_extend |
+| `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
+| `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
+| `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (再 arm) |
+| `cost.per_chain_skill_calls` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
+
+`safety.timeout.llm_call_seconds` は設計上対象外です — litellm が
+`safety.timeout.llm_max_retries` 内で自動再試行するため、 追加の
+`ask_user` 層はレイテンシを増やすだけになります。

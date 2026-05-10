@@ -372,6 +372,7 @@ def run_serve(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
+            on_limit=session_cfg.config.safety.on_limit,  # FP-0005
         )
         s.load_history()
         return s

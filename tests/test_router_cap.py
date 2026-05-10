@@ -75,8 +75,11 @@ def test_router_retry_cap_enforced(tmp_path, monkeypatch):
     session._router_last_reason = "previous_reason"
 
     # The next attempt should overflow immediately via the cap check.
+    # FP-0005: _check_and_increment_router_cap is now async (consults
+    # safety.on_limit on hit). Default mode = unattended preserves the
+    # legacy raise-immediately behaviour.
     with pytest.raises(RouterCapExceeded) as excinfo:
-        session._check_and_increment_router_cap("would_be_4th_call")
+        asyncio.run(session._check_and_increment_router_cap("would_be_4th_call"))
 
     exc = excinfo.value
     assert exc.count == 3
@@ -197,8 +200,9 @@ def test_cap_zero_disables_check(tmp_path, monkeypatch):
     session = _make_session(tmp_path, cap=0)
 
     # With cap=0, _check_and_increment_router_cap returns immediately.
+    # FP-0005: now async; await each call.
     for _ in range(20):
-        session._check_and_increment_router_cap("noop")  # must not raise
+        asyncio.run(session._check_and_increment_router_cap("noop"))  # must not raise
 
     # Counter does not increment when cap is disabled.
     assert session._router_invocations_this_turn == 0

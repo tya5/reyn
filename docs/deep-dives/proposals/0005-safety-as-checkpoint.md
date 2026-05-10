@@ -1,9 +1,10 @@
 # FP-0005: safety limit をチェックポイントとして扱う — Permission モデルとの統合
 
-**Status**: phase-1-landed (= architectural foundation in main; per-site ask wiring is Phase 2 follow-up)
+**Status**: done (= Phase 1 + Phase 2 landed)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
-**Phase 1 implemented**: 2026-05-10 — `OnLimitConfig` (`mode` / `auto_extend_times` / `ask_timeout_seconds`) added to `safety:` section; `RunResult.partial_data` field landed; abort paths in `OSRuntime.run()` populate `partial_data` on `loop_limit_exceeded` / `phase_budget_exceeded` / `budget_exceeded`. **Default mode = `unattended`** preserves legacy abort-immediately behaviour byte-for-byte; opt into `interactive` / `auto_extend` is explicit. 8 Tier 2 invariants in `tests/test_safety_on_limit.py`. Phase 2 wires `_handle_limit_exceeded` (ask_user dispatch + auto-extend bookkeeping) at the 6 sites listed in §"limit ごとの適用可否" — see "Phase 2 follow-up scope" below.
+**Phase 1 implemented**: 2026-05-10 — `OnLimitConfig` (`mode` / `auto_extend_times` / `ask_timeout_seconds`) added to `safety:` section; `RunResult.partial_data` field landed; abort paths in `OSRuntime.run()` populate `partial_data` on `loop_limit_exceeded` / `phase_budget_exceeded` / `budget_exceeded`. **Default mode = `unattended`** preserves legacy abort-immediately behaviour byte-for-byte; opt into `interactive` / `auto_extend` is explicit. 8 Tier 2 invariants in `tests/test_safety_on_limit.py`.
+**Phase 2 implemented**: 2026-05-10 — Shared `handle_limit_exceeded` helper (`src/reyn/safety/limit_handler.py`) + `LimitDecision` dataclass; per-site wiring at all 6 abort paths (B max_phase_visits / F phase_seconds / A max_act_turns in OSRuntime; C router_cap / E max_hop_depth / G chain_seconds in ChatSession); FP-0003's `_ask_budget_extension` (D per_chain_skill_calls) generalised to call the shared helper; CLI factories (chat / web / mcp) thread `config.safety.on_limit` through to ChatSession. 11 helper invariants (`tests/test_safety_limit_handler.py`) + 6 wiring invariants (`tests/test_safety_phase2_wiring.py`). The `_chains.get(chain_id)` peek-before-pop pattern lets the chain_seconds watchdog re-arm on user approval without losing the pending entry.
 
 ---
 

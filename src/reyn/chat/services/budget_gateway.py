@@ -151,6 +151,19 @@ class BudgetGateway:
         """Record the router's last decision reason for cap-exceeded messages."""
         self._router_last_reason = reason
 
+    def extend_router_cap(self, additional: int) -> int:
+        """FP-0005: extend the per-turn router cap by ``additional``.
+
+        Used by the safety-limit checkpoint flow when the user / auto-extend
+        approves a continuation past the original cap. Returns the new
+        effective cap. ``additional <= 0`` is a no-op (mirrors
+        ``BudgetTracker.extend_chain_calls`` / FP-0003 semantics).
+        """
+        if additional <= 0:
+            return self._router_cap
+        self._router_cap += int(additional)
+        return self._router_cap
+
     # ── pre-spawn budget gate ─────────────────────────────────────────────────
 
     def check_pre_spawn(self, *, chain_id: str, skill: str):

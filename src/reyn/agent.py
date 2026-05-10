@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.budget.budget import BudgetTracker
-from reyn.config import LimitsConfig
+from reyn.config import LimitsConfig, OnLimitConfig
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
@@ -49,6 +49,9 @@ class Agent:
         agent_role: str = "",
         caller: str = "direct",
         budget_tracker: BudgetTracker | None = None,
+        # FP-0005: opt-in interactive / auto_extend behaviour on
+        # safety-limit hits. None = legacy unattended (= abort).
+        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -66,6 +69,8 @@ class Agent:
         self._agent_role = agent_role
         self._caller = _validate_caller(caller)
         self._budget_tracker = budget_tracker
+        # FP-0005: on_limit policy for safety-limit checkpoints.
+        self._on_limit = on_limit or OnLimitConfig()
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -133,6 +138,7 @@ class Agent:
             state_log=state_log,
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
+            on_limit=self._on_limit,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

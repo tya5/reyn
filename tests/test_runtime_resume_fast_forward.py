@@ -108,7 +108,8 @@ class _StubRuntime(OSRuntime):
         )
         self.entered_phases: list[_PhaseEntered] = []
 
-    def _enter_phase(self, phase_name: str, artifact: dict) -> None:
+    async def _enter_phase(self, phase_name: str, artifact: dict) -> None:
+        # FP-0005: _enter_phase is now async; subclass must mirror.
         # Capture state BEFORE the parent updates visit_counts so we
         # can verify fast-forward initialization.
         self.entered_phases.append(_PhaseEntered(
@@ -116,7 +117,7 @@ class _StubRuntime(OSRuntime):
             visit_counts_at_entry=dict(self._visit_counts),
             history_at_entry=list(self._history),
         ))
-        super()._enter_phase(phase_name, artifact)
+        await super()._enter_phase(phase_name, artifact)
 
     async def _execute_phase(
         self,

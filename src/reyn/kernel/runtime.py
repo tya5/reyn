@@ -15,7 +15,12 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
-from reyn.config import LimitsConfig
+from reyn.config import LimitsConfig, OnLimitConfig
+from reyn.safety.limit_handler import (
+    LimitDecision,
+    handle_limit_exceeded,
+    reset_run_extensions,
+)
 from reyn.context_builder import build_frame
 from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.events.events import EventLog
@@ -253,6 +258,9 @@ class OSRuntime:
         skill_registry: "SkillRegistry | None" = None,
         resume_plan: Any = None,
         parent_run_id: str | None = None,
+        # FP-0005: opt into interactive / auto_extend behaviour on
+        # safety-limit hits. None = legacy unattended (= abort).
+        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -291,6 +299,11 @@ class OSRuntime:
         self._skill_input: dict | None = None
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
+        # FP-0005: per-run safety-limit checkpoint policy. Tracks
+        # per-(kind) extensions granted by ``_handle_limit_checkpoint``
+        # so the same limit can be re-extended on a subsequent hit.
+        self._on_limit = on_limit or OnLimitConfig()
+        self._safety_extensions: dict[str, float] = {}
         self._state_log = state_log
         self._skill_registry = skill_registry
         # PR-skill-resume D3b-3: optional ResumePlan for forward-replay
@@ -345,17 +358,82 @@ class OSRuntime:
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
-    def _enter_phase(self, phase_name: str, artifact: dict) -> None:
-        max_visits = self._max_phase_visits
-        count = self._visit_counts.get(phase_name, 0)
-        if max_visits and count >= max_visits:
-            self.events.emit("loop_limit_exceeded", phase=phase_name, visit_count=count, max=max_visits)
-            # FP-0004: hint at the config key the operator can raise.
-            raise LoopLimitExceededError(
-                f"Phase '{phase_name}' reached max_phase_visits={max_visits}. "
-                f"→ Raise {LoopLimitExceededError.hint_config_key} to allow "
-                f"more iterations."
+    async def _handle_limit_checkpoint(
+        self,
+        *,
+        kind: str,
+        prompt: str,
+        detail: str,
+        extension_amount: float,
+    ) -> "LimitDecision":
+        """FP-0005: dispatch a safety-limit checkpoint.
+
+        Wraps ``handle_limit_exceeded`` with the runtime's bus / on_limit
+        / run_id pre-bound, and emits a ``safety_limit_checkpoint``
+        audit event so the decision (and reason) is visible in the
+        events log. Each abort-path call site invokes this *before*
+        raising; on ``allow_continue=True`` the site extends its
+        counter and continues, otherwise it falls through to the
+        legacy raise.
+        """
+        decision = await handle_limit_exceeded(
+            bus=self._intervention_bus,
+            on_limit=self._on_limit,
+            kind=kind,
+            run_id=self.run_id or "",
+            prompt=prompt,
+            detail=detail,
+            extension_amount=extension_amount,
+        )
+        if decision.allow_continue:
+            self._safety_extensions[kind] = (
+                self._safety_extensions.get(kind, 0.0) + decision.extension
             )
+        self.events.emit(
+            "safety_limit_checkpoint",
+            kind=kind,
+            allow_continue=decision.allow_continue,
+            reason=decision.reason,
+            extension=decision.extension,
+        )
+        return decision
+
+    async def _enter_phase(self, phase_name: str, artifact: dict) -> None:
+        max_visits = self._max_phase_visits
+        # FP-0005: extensions granted by user approval / auto_extend
+        # raise the effective cap. Tracked per-kind on the runtime so
+        # repeated hits on the same limit can be re-extended.
+        effective_max = (
+            int(max_visits + self._safety_extensions.get("max_phase_visits", 0.0))
+            if max_visits else 0
+        )
+        count = self._visit_counts.get(phase_name, 0)
+        if effective_max and count >= effective_max:
+            # FP-0005: ask before raising. on_limit.mode controls the
+            # behaviour; default 'unattended' preserves legacy abort.
+            decision = await self._handle_limit_checkpoint(
+                kind="max_phase_visits",
+                prompt=(
+                    f"Phase {phase_name!r} hit max_phase_visits "
+                    f"({count}/{effective_max}). Allow more visits?"
+                ),
+                detail=f"phase={phase_name} count={count} cap={effective_max}",
+                extension_amount=float(max_visits or 1),
+            )
+            if not decision.allow_continue:
+                self.events.emit(
+                    "loop_limit_exceeded",
+                    phase=phase_name, visit_count=count, max=effective_max,
+                )
+                # FP-0004: hint at the config key the operator can raise.
+                raise LoopLimitExceededError(
+                    f"Phase '{phase_name}' reached max_phase_visits={effective_max}. "
+                    f"→ Raise {LoopLimitExceededError.hint_config_key} to allow "
+                    f"more iterations."
+                )
+            # Approved — fall through; effective_max has already been
+            # bumped via _safety_extensions and will be picked up on
+            # the next visit.
         self._visit_counts[phase_name] = count + 1
         # Reset wall-clock timer for this visit. Soft budget checks at retry/turn boundaries
         # compare elapsed against limits.phase.max_wall_seconds (0 = unlimited).
@@ -370,18 +448,46 @@ class OSRuntime:
             visit_count=count + 1, input_artifact_type=artifact.get("type"),
         )
 
-    def _check_phase_budget(self, phase_name: str) -> None:
-        """Soft wall-clock check. Raises PhaseBudgetExceededError when over budget."""
+    async def _check_phase_budget(self, phase_name: str) -> None:
+        """Soft wall-clock check. Raises PhaseBudgetExceededError when
+        over budget — unless ``safety.on_limit.mode`` says to ask /
+        auto-extend (FP-0005).
+
+        On approval, the elapsed-time clock is reset so the phase can
+        continue from "now" with a fresh budget. The extension counter
+        is also tracked on the runtime so repeated hits within the same
+        phase can be re-extended.
+        """
         budget = self._max_phase_wall_seconds
         if not budget or self._phase_started_at is None:
             return
         elapsed = time.monotonic() - self._phase_started_at
-        if elapsed > budget:
+        # FP-0005: extensions granted by the helper add to the effective
+        # budget. Each grant is one ``budget`` worth (= "give this
+        # phase another full window").
+        effective_budget = budget + self._safety_extensions.get(
+            "phase_seconds", 0.0,
+        )
+        if elapsed <= effective_budget:
+            return
+        decision = await self._handle_limit_checkpoint(
+            kind="phase_seconds",
+            prompt=(
+                f"Phase {phase_name!r} ran for {elapsed:.1f}s, exceeding "
+                f"the {effective_budget:.1f}s budget. Allow longer?"
+            ),
+            detail=f"phase={phase_name} elapsed={elapsed:.2f} budget={effective_budget:.2f}",
+            extension_amount=float(budget),
+        )
+        if not decision.allow_continue:
             self.events.emit(
                 "phase_budget_exceeded",
-                phase=phase_name, elapsed=elapsed, budget=budget,
+                phase=phase_name, elapsed=elapsed, budget=effective_budget,
             )
-            raise PhaseBudgetExceededError(phase_name, elapsed, budget)
+            raise PhaseBudgetExceededError(phase_name, elapsed, effective_budget)
+        # Approved — reset the wall-clock timer so the next check
+        # measures from "now" against the freshly-extended budget.
+        self._phase_started_at = time.monotonic()
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
         skill = self.skill
@@ -626,7 +732,7 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
         rollback_context: dict | None = None,
     ) -> dict:
-        self._check_phase_budget(phase)
+        await self._check_phase_budget(phase)
         resolved_spec = self._resolver.resolve(self._effective_model(phase))
         resolved_model = resolved_spec.model  # str form for events, budget, pricing
         phase_def = self.skill.phases.get(phase)
@@ -1007,7 +1113,13 @@ class OSRuntime:
                 return raw, prior_attempts
 
             act_turn_count += 1
-            if act_turn_count > max_act_turns:
+            # FP-0005: extensions granted by the safety-limit helper raise
+            # the effective act-turn cap for THIS phase instance.
+            effective_max_act_turns = int(
+                max_act_turns
+                + self._safety_extensions.get(f"max_act_turns:{phase}", 0.0)
+            )
+            if act_turn_count > effective_max_act_turns:
                 if force_decide:
                     # LLM emitted ops despite being told no more are allowed.
                     # Don't execute the ops — feed back an explicit error and retry.
@@ -1016,7 +1128,7 @@ class OSRuntime:
                         "raw": json.dumps(raw, ensure_ascii=False),
                         "error": (
                             f"You emitted act-turn ops but your act budget is exhausted "
-                            f"({max_act_turns}/{max_act_turns} act turns used). "
+                            f"({effective_max_act_turns}/{effective_max_act_turns} act turns used). "
                             "Do NOT include any ops. Produce the final artifact and transition NOW."
                         ),
                     })
@@ -1029,8 +1141,27 @@ class OSRuntime:
                                          attempts=len(prior_attempts), final_error=final_msg)
                         raise ValueError(final_msg)
                     continue
+                # FP-0005: ask before raising. Caller falls through on
+                # refusal; on approval, the per-phase extension counter
+                # is bumped and the loop continues.
+                decision = await self._handle_limit_checkpoint(
+                    kind=f"max_act_turns:{phase}",
+                    prompt=(
+                        f"Phase {phase!r} exceeded max_act_turns "
+                        f"({effective_max_act_turns}). Allow more act turns?"
+                    ),
+                    detail=(
+                        f"phase={phase} act_turn_count={act_turn_count} "
+                        f"cap={effective_max_act_turns}"
+                    ),
+                    extension_amount=float(max_act_turns),
+                )
+                if decision.allow_continue:
+                    # Approved — extension was already recorded on
+                    # _safety_extensions, recompute next iteration.
+                    continue
                 msg = (
-                    f"Phase '{phase}' exceeded max act turns ({max_act_turns}). "
+                    f"Phase '{phase}' exceeded max act turns ({effective_max_act_turns}). "
                     "The LLM kept emitting act turns without making a decide turn."
                 )
                 self.events.emit("phase_failed", phase=phase,
@@ -1358,6 +1489,11 @@ class OSRuntime:
                 self.skill, self.skill.name, self._intervention_bus,
             )
 
+        # FP-0005: reset auto_extend bookkeeping for this run, so the
+        # ``auto_extend_times`` budget is fresh per-run (not per-process).
+        if self.run_id:
+            reset_run_extensions(self.run_id)
+
         current_phase = self.skill.entry_phase
         artifact = initial_input
         # PR33: pin the trusted input for cross-field validation across all
@@ -1496,7 +1632,7 @@ class OSRuntime:
         )
 
         try:
-            self._enter_phase(current_phase, artifact)
+            await self._enter_phase(current_phase, artifact)
             if self._skill_registry:
                 await self._skill_registry.advance_phase(
                     run_id=self.run_id,
@@ -1560,7 +1696,7 @@ class OSRuntime:
                         current_phase, result.control.reason.summary,
                     )
                     artifact_path = None
-                    self._enter_phase(current_phase, artifact)
+                    await self._enter_phase(current_phase, artifact)
                     if self._skill_registry:
                         await self._skill_registry.advance_phase(
                             run_id=self.run_id,
@@ -1636,7 +1772,7 @@ class OSRuntime:
                     self._rollback.record_predecessor(next_node, current_phase)
                     current_phase = next_node
                     artifact = output.artifact
-                self._enter_phase(current_phase, artifact)
+                await self._enter_phase(current_phase, artifact)
                 if self._skill_registry:
                     await self._skill_registry.advance_phase(
                         run_id=self.run_id,
