@@ -285,17 +285,26 @@ def test_index_docs_chunk_strategy_boundary_has_enum():
 
 
 def test_index_docs_postprocessor_output_schema_has_required_fields():
-    """Tier 2: postprocessor output_schema includes chunk_count, source, embedded_count."""
+    """Tier 2: postprocessor output_schema includes source + nested step result groups.
+
+    Schema updated in batch 17 dogfood (commit 0c50a20) to match actual
+    postprocessor step output shape: nested chunk_stats / embed_result /
+    index_result groups under data, not flat chunk_count / embedded_count.
+    """
     skill = _load()
     schema = skill.postprocessor.output_schema
-    # The schema is the wrapped index_summary {type, data} or just the data schema
-    # depending on how the artifact is declared. Look for the data sub-schema.
     if "properties" in schema and "data" in schema.get("properties", {}):
         data_props = schema["properties"]["data"].get("properties", {})
     else:
         data_props = schema.get("properties", {})
 
-    for field in ("source", "chunk_count"):
+    for field in ("source", "chunk_stats", "embed_result", "index_result"):
         assert field in data_props, (
             f"Required field '{field}' missing from postprocessor output schema"
         )
+
+    chunk_stats_props = data_props["chunk_stats"].get("properties", {})
+    assert "chunk_count" in chunk_stats_props, "chunk_stats.chunk_count missing"
+
+    embed_props = data_props["embed_result"].get("properties", {})
+    assert "embedded_count" in embed_props, "embed_result.embedded_count missing"

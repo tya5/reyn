@@ -48,3 +48,5 @@ website/dist/
 # 別リポジトリで管理する本書ドラフト (Zenn Books)
 # reyn の reveal を守るため reyn repo には commit しない
 zenn-book/
+scripts/s5_driver_main.py
+artifacts/

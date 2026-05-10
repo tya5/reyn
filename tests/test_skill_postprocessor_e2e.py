@@ -150,14 +150,22 @@ def test_e2e_postprocessor_python_adds_word_count(tmp_path: Path, monkeypatch: p
         },
         final_output_name="post_draft",
         postprocessor=Postprocessor(
+            # Post-batch-17: output_schema validates full {type, data} envelope.
             output_schema={
                 "type": "object",
                 "properties": {
-                    "title": {"type": "string"},
-                    "body": {"type": "string"},
-                    "word_count": {"type": "integer"},
+                    "type": {"type": "string", "const": "post_draft"},
+                    "data": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "body": {"type": "string"},
+                            "word_count": {"type": "integer"},
+                        },
+                        "required": ["title", "body", "word_count"],
+                    },
                 },
-                "required": ["title", "body", "word_count"],
+                "required": ["type", "data"],
             },
             output_name="post_draft",
             steps=[

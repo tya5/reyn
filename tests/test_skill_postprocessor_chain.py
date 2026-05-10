@@ -122,13 +122,21 @@ def _make_postprocessor_skill() -> Skill:
             ValidateStep(type="validate", schema_={"type": "object"}),
             ValidateStep(type="validate", schema_={"type": "object"}),
         ],
+        # Post-batch-17: output_schema validates the full {type, data} envelope.
         output_schema={
             "type": "object",
             "properties": {
-                "title": {"type": "string"},
-                "body": {"type": "string"},
+                "type": {"type": "string", "const": "post_draft"},
+                "data": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                    "required": ["title", "body"],
+                },
             },
-            "required": ["title", "body"],
+            "required": ["type", "data"],
         },
         output_name="post_draft",
     )
