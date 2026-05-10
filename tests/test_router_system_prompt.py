@@ -631,3 +631,66 @@ class TestPostInvokeSkillNarrationGuidance:
         assert "Do NOT" in prompt and "narrate as success" in prompt
         # The optimism-bias warning is the load-bearing phrase.
         assert "Optimism bias" in prompt
+
+    def test_tasks_pointer_is_must_level(self):
+        """Tier 2: R-SP-TASKS-POINTER-MUST — the `/tasks` pointer is a MUST,
+        not a soft hint.
+
+        2026-05-10 N=10 retest observed only 3/60 (= 5%) compliance with the
+        soft "Mention /tasks if the user wants to inspect progress" wording.
+        The pointer is the user's ONLY affordance to inspect in-flight work,
+        so it must be MUST-level. This test pins the strengthened wording
+        so a future soft-revert doesn't silently reintroduce the gap.
+        """
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("any_skill", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        # The pointer is present.
+        assert "/tasks" in prompt
+        # MUST-level imperative — not "Mention" / "you can mention" / "should".
+        # The literal "MUST include `/tasks`" phrase pins the strengthening.
+        assert "MUST include `/tasks`" in prompt
+        # Non-negotiable framing — closes the "soft hint" escape hatch.
+        assert "non-negotiable" in prompt
+        # The MUST rule must live in the spawn-ack block, not orphaned
+        # elsewhere. The spawn-ack envelope literal is the anchor.
+        spawn_idx = prompt.index('{status: "spawned"')
+        tasks_idx = prompt.index("MUST include `/tasks`")
+        # task_completed is the start of the next sub-block; the MUST rule
+        # must precede it (= still inside the spawn-ack block).
+        completion_idx = prompt.index("[task_completed]")
+        assert spawn_idx < tasks_idx < completion_idx
+
+    def test_anti_fabrication_at_spawn_ack(self):
+        """Tier 2: R-SP-NO-FABRICATE-AT-SPAWN-ACK — explicit rule that the
+        spawn-ack reply must not pre-fill skill output fields.
+
+        2026-05-10 N=10 retest observed 1/10 mcp-search shots fabricating
+        server names + URLs at spawn-ack time, before the skill executed.
+        The spawn-ack envelope structurally cannot contain skill results
+        (status / run_id / chain_id / note only), so any such content is
+        fabrication by construction. This test pins the explicit
+        anti-fabrication rule as a peer to the existing anti-optimism rule
+        (which guards the completion-narration stage).
+        """
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("any_skill", "general")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+        )
+        # Imperative MUST NOT against pre-filling skill output.
+        assert "MUST NOT pre-fill" in prompt
+        # The "skill has not executed" rationale is load-bearing — it makes
+        # the rule structural ("by construction") rather than stylistic.
+        assert "fabrication by construction" in prompt
+        # Must live inside the spawn-ack block, not orphaned.
+        spawn_idx = prompt.index('{status: "spawned"')
+        fabricate_idx = prompt.index("MUST NOT pre-fill")
+        completion_idx = prompt.index("[task_completed]")
+        assert spawn_idx < fabricate_idx < completion_idx

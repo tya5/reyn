@@ -504,6 +504,19 @@ def build_system_prompt(
     # The anti-optimism rule (originally FP-0011 Component B) is preserved on
     # the completion side: errors MUST be surfaced verbatim, never narrated
     # as success.
+    #
+    # 2026-05-11 N=10 retest findings (= R-SP-TASKS-POINTER-MUST +
+    # R-SP-NO-FABRICATE-AT-SPAWN-ACK):
+    #   - Soft "Mention /tasks" wording produced only 3/60 (= 5%) compliance.
+    #     Strengthened to MUST so the LLM cannot omit it from the spawn-ack
+    #     reply — `/tasks` is the user's only affordance to inspect in-flight
+    #     work, so omitting it strands them.
+    #   - 1/10 mcp-search shots fabricated server details (names + URLs) AT
+    #     spawn-ack time, before the skill had executed. Added a peer
+    #     anti-fabrication rule to the existing anti-optimism rule below:
+    #     the spawn-ack carries no skill output, so any field that would come
+    #     from the skill's result is by definition fabricated if the LLM emits
+    #     it now.
     parts.append(
         "  - When invoke_skill returns {status: \"spawned\", chain_id, run_id, note}:"
     )
@@ -514,16 +527,40 @@ def build_system_prompt(
         "    acknowledgment ('Started <skill> — I'll let you know when it finishes.')."
     )
     parts.append(
-        "    Mention /tasks if the user wants to inspect progress. Do NOT call"
+        "    Your reply MUST include `/tasks` as the user's way to check progress —"
     )
     parts.append(
-        "    invoke_skill again for the same request (it's already running)."
+        "    this is non-negotiable, the user has no other way to track in-flight"
     )
     parts.append(
-        "    Do NOT ask follow-up questions about the in-flight task; wait for"
+        "    tasks. Omitting `/tasks` from the spawn-ack reply is a hard failure."
     )
     parts.append(
-        "    the [task_completed] message."
+        "    You MUST NOT pre-fill the user with information the skill is supposed"
+    )
+    parts.append(
+        "    to produce. The spawn-ack envelope carries ONLY {status, run_id,"
+    )
+    parts.append(
+        "    chain_id, note} — no results, no names, no URLs, no scores, no fields"
+    )
+    parts.append(
+        "    from the skill's output schema. Any such content in the spawn-ack"
+    )
+    parts.append(
+        "    reply is fabrication by construction (the skill has not executed)."
+    )
+    parts.append(
+        "    Acknowledge the spawn and point at `/tasks`; nothing more."
+    )
+    parts.append(
+        "    Do NOT call invoke_skill again for the same request (it's already"
+    )
+    parts.append(
+        "    running). Do NOT ask follow-up questions about the in-flight task;"
+    )
+    parts.append(
+        "    wait for the [task_completed] message."
     )
     parts.append(
         "  - When you see a user message starting with [task_completed]: a"
