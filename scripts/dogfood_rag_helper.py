@@ -23,17 +23,24 @@ from typing import Any
 def _deterministic_vector(text: str, dim: int = 1536) -> list[float]:
     """Generate a deterministic 1536-dim vector from text hash.
 
-    Uses SHA-256 of the text repeated to fill 1536 * 4 bytes, interpreted as
-    float32. Vectors are normalized to unit length so cosine similarity is
-    well-defined (though semantically meaningless).
+    Uses SHA-256 expansion to produce *finite* float values in [-1, 1] derived
+    from the byte hash (interpreted as uint16 -> [-1, 1] range). Avoids the
+    NaN-from-random-float32-bit-pattern trap of older versions. Vectors are
+    normalized to unit length so cosine similarity is well-defined.
     """
     h = hashlib.sha256(text.encode("utf-8")).digest()  # 32 bytes
-    needed = dim * 4
+    needed = dim * 2  # 2 bytes per float (uint16 -> normalized)
     chunks = []
     for i in range((needed + 31) // 32):
         chunks.append(hashlib.sha256(h + i.to_bytes(4, "big")).digest())
     blob = b"".join(chunks)[:needed]
-    floats = list(struct.unpack(f"{dim}f", blob))
+    # Each pair of bytes -> uint16 -> map to [-1, 1]
+    floats = []
+    for i in range(0, needed, 2):
+        u16 = (blob[i] << 8) | blob[i + 1]
+        # Map [0, 65535] to [-1, 1]
+        f = (u16 / 32767.5) - 1.0
+        floats.append(f)
     # Normalize
     norm = sum(f * f for f in floats) ** 0.5 or 1.0
     return [f / norm for f in floats]
