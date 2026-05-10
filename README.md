@@ -107,12 +107,22 @@ trade-off is explicit: predictability and auditability over maximum autonomy.
 | **CrewAI** | Role-driven (sequential / hierarchical / Flow event-driven); no OS-level candidate constraint | Flow `@persist` (SQLite); manual resume on crash | Task replay (last run only) | Role-orchestration ergonomics; 30+ built-in tools; RAG and memory out of the box |
 | **AutoGen** | Conversational multi-agent (message bus); LLM selects next speaker freely in SelectorGroupChat | `save_state()` / `load_state()` — application-managed, no built-in auto-checkpoint | OpenTelemetry spans (not replay-capable) | Multi-agent dialog patterns; actor model for distributed agents |
 | **Semantic Kernel** | Function calling loop; LLM selects plugins autonomously; no OS-level candidate constraint | ChatHistory (in-memory); external DB persistence is app-managed | OpenTelemetry spans (not replay-capable) | Azure-native integration; C# / Python / Java parity; MIT OSS |
-| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; per-agent / per-chain / per-model cost caps; MCP server + client |
+| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; per-agent / per-chain / per-model cost caps; MCP server + client; RAG framework foundation (skill.md-driven indexing strategy override) |
 
 **Reyn is more constrained.** If you want maximum LLM autonomy and creative
 agent behavior, LangGraph or AutoGen will feel less restrictive.
 
-**Reyn is smaller.** No vector store, no built-in RAG, no chain abstractions —
+**Reyn ships a RAG framework foundation, not a mature RAG product.** The OS
+provides 5 primitive ops (`embed`, `index_write`, `index_query`, `recall`,
+`index_drop`) plus an extensible `IndexBackend` protocol (SQLite default, plugin
+path for Qdrant / FAISS / Weaviate / Pinecone in phase 2) and the stdlib
+`index_docs` skill. The differentiator is that you write your indexing strategy
+as a `skill.md` (= LLM-driven adaptive chunking + a deterministic postprocessor
+chain), not a Python pipeline. Override the chunker per-source by swapping a
+single python step. See [docs/concepts/rag.md](docs/concepts/rag.md). Maturity
+gaps (rerank / HyDE / advanced retrieval / RAG eval framework) live downstream.
+
+**Reyn is smaller.** No chain abstractions, no rich vector store ecosystem —
 those live downstream (see [care-boundary.md](docs/concepts/care-boundary.md)).
 
 **Reyn is opinionated about state.** The Workspace is the only inter-phase data
@@ -142,8 +152,10 @@ side (`--mode compare`). See [docs/reference/dogfood-tracing.md](docs/reference/
   ecosystem is substantially denser.
 - Your agent is single-shot and stateless — use a plain LLM call; the OS
   overhead is not worth it.
-- You need built-in RAG or vector retrieval — Reyn delegates those to MCP
-  servers or external tools; they are not bundled.
+- You need a mature RAG product with rerank / HyDE / contextual retrieval /
+  RAG eval framework / IDE integration — Reyn ships a foundation
+  (`index_docs` + `recall` + `IndexBackend` plugin path), not the mature
+  ecosystem. LangChain / LlamaIndex have substantially denser RAG tooling.
 - You want a UI or dashboard out of the box — that is downstream territory
   (see [care-boundary.md](docs/concepts/care-boundary.md#downstream-tooling--what-builds-on-reyn)).
 

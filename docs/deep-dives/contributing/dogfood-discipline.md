@@ -256,6 +256,67 @@ The test: **can the component's behavior be described in one or two sentences, w
 
 This principle complements Principle 8 (audit) by providing the trigger signal. Principle 8 tells you how to audit; Principle 9 tells you when to audit.
 
+### Principle 10: Structural pre-check before attractor naming (= batch 17 lift)
+
+**Symptom-class principle.** Before naming a behavioral observation as an "attractor" (= LLM picks the wrong path despite available alternatives), confirm that the intended path is actually present in the LLM's view: the tool is in the catalog, the dispatch route is wired, and the candidate is in `candidate_outputs`. A 0/N invocation rate caused by missing wiring looks identical to an attractor but has a completely different fix path (= structural code change, not prompt fix).
+
+**Operational rule.** Each scenario in the prelude declares its **structural pre-check status** (= ✓ / ⚠️ / ❌) before the behavioral prediction is made. If structural pre-check fails, the scenario records `verdict=blocked` rather than `refuted`; this protects the calibration record from polluting the attractor base rate with structural bug data.
+
+Case study: batch 17 (= ADR-0033 RAG Phase 1 first dogfood) classified S5 0/5 invoke as an attractor, then discovered the underlying issue was 3-layer wiring drift (`ToolRegistry` registered + `build_tools()` not + `_REGISTRY_DISPATCH_TOOLS` not) — three independent boxes that all had to ✓ for "the tool is callable from the chat router". `feedback_observe_before_speculate_llm.md` already counsels building observation infra before speculating; principle 10 is its dual: build a deterministic structural check before observation produces stochastic data you cannot interpret.
+
+### Principle 11: Separate structural and behavioral prediction axes (= batch 18 lift)
+
+**Symptom-class principle.** A scenario's verified-rate prediction is the product of two independent axes, not a single number: (a) **structural axis** = "is the intended path present in the LLM's view?" (= deterministic, binary, pre-checkable), and (b) **behavioral axis** = "given the path is present, will the LLM pick it?" (= stochastic, base-rate-dependent, requires N runs). Conflating them produces optimistic predictions when a structural fix lands ("we fixed the wiring, so verified should jump to 70%+") that the behavioral base rate does not actually support.
+
+**Operational rule.** Prelude predictions for each scenario declare two rows: a structural-axis row (= pre-check status, prediction = ✓/⚠️/❌) and a behavioral-axis row (= attractor base rate from prior batches, prediction = X%). Verified prediction is then `P(structural ✓) × P(behavioral ✓)`. This catches the "structural fix landed → optimistic prediction → calibration miss" trap that recurs after major fix waves.
+
+Case study: batch 18 retest after batch 17's 5-commit fix wave landed all 6 release-blocker structural fixes and predicted 70-75% verified across 4 scenarios. Structural axis was 100% confirmed (= every fix was wired at the intended layer). But verified came in at 25% (= 3/12 primary), because the behavioral axis surfaced new attractors that the structural fix didn't address (= S6 R-RAG-srcread, S9 R-RAG-numerical-vs-flag-bias, S8 verification-path gap from `reyn web` `interactive=False`). The prediction would have been 25-40% if the two axes had been multiplied separately.
+
+### Principle 12: Verdict false-attribution discipline (= batch 18 lift)
+
+**Calibration principle.** "Refuted" is not a catch-all for non-verified runs. False attribution between verdict categories pollutes the calibration record and produces wrong fix-path conclusions. Three distinctions matter:
+
+- **`refuted`** — the LLM had the path available and picked something else (= R-attractor data point; legitimate prompt / schema / model fix candidate)
+- **`inconclusive`** — the LLM picked the intended path correctly but the verification harness couldn't observe completion (= driver / harness / config gap, not LLM behavior)
+- **`blocked`** — the structural pre-check itself failed (= structural bug, predates behavioral measurement)
+
+**Operational rule.** Verdict assignment in the driver is explicit; per-run docs cite the specific evidence (= "tool was invoked but reyn web's `PermissionResolver(interactive=False)` short-circuited the ask cycle, so verification path unreachable" → inconclusive). Cross-batch attractor base rates are computed only from `refuted` runs, never mixing in inconclusive or blocked.
+
+Case study: batch 18 S8 (= drop_source via chat) saw the LLM correctly invoke `drop_source` in 3/3 runs, the permission-denied event fired correctly in 3/3, the wiring worked end-to-end. The problem was that `reyn web` constructs a non-interactive permission resolver, so the intended ask-and-approve cycle short-circuited to deny. Calling this `refuted` would have created phantom evidence for a "drop_source attractor" that does not exist. Marking it `inconclusive` correctly attributes the issue to a UX config gap (= R1 carry-over) instead.
+
+### Principle 13 (candidate): Behavioral attractor class taxonomy
+
+> ⚠️ **Status: partial evidence — Class A confirmed, Class B hypothesis pending, Class C is established prior knowledge.** Case study and scope are recorded here for future replication; do not generalise beyond confirmed evidence.
+
+**Hypothesis.** Behavioral attractors subdivide by what produces the wrong path, and the effective fix layer follows the class:
+
+- **Class A — Cognitive-bias attractor** (✅ valid evidence, batch 19 S9): the LLM has all the input it needs but weighs evidence wrongly (= numeric value over boolean policy flag). Fix layer: **prompt-layer "named anti-attractor callout"** of the form *"Common attractor to avoid: when X, do NOT Y. Z wins over W."* Compliance was ~100% in S9, with smoking-gun evidence (= LLM cited the small numeric value in its reasoning while still emitting the abort decision).
+- **Class B — Affordance-bias attractor** (⚠️ hypothesis pending): when multiple tools / sources can plausibly handle a query, the LLM may default to one and stop. Three batches (= 18, 19, 20) attempted to gather valid evidence; each surfaced a different scenario-design confound. The decisive-judgment scenario specification is now recorded (= prompt must structurally require both sources, e.g. *"Give me (a) the conceptual overview AND (b) the actual class names I'll need to import"*) but the retest itself is post-1.0 fast-follow scope. Until a valid scenario produces the data, Class B remains a hypothesis.
+- **Class C — Protocol-level attractor** (✅ valid evidence, prior G12): LLM API protocol-level quirk (= post-tool empty-stop, format leak, role artifact). Fix layer: **envelope-layer adapter pattern** (see `feedback_envelope_layer_fix.md`).
+
+**Intervention layer ladder** (= cheap → expensive): prompt-layer → schema-layer → envelope-layer → model-layer. Class A fits prompt-layer; Class C fits envelope-layer; Class B (when validated) is hypothesised to require schema-layer or beyond, but this is unverified.
+
+**Why partial evidence matters.** The cost of declaring Class B prematurely is real: batch 19 retrospective initially named the taxonomy as established and proposed schema-layer escalation, then `feedback_pre_retrospective_discipline.md` (= principle batch 19) caught the over-generalisation when re-reading the LLM trace dumps. Recording the hypothesis with explicit evidence-status saves future readers from inheriting a confident-sounding but unsupported claim.
+
+### Principle 14 (candidate): Scenario design audit checklist
+
+> Status: established by batch 20. Four-dimension audit replaces the implicit one-dimension audit that produced three consecutive scenario-design flaws (batches 18-20).
+
+**Operational rule.** Every prelude scenario declares its design audit across four dimensions:
+
+| Dimension | Audit point | Mitigation example |
+|---|---|---|
+| 1. Data semantic match | Does the indexed source / data content cover the prompt's topic at the depth the prompt asks for? | If the prompt asks "how is X implemented?" but the source is concept-only, the data does not match |
+| 2. Tool affordance match | Do related tool descriptions claim the prompt's exact use case? Does that conflict with the expected verdict? | `reyn_src_read` description claims "for any 'how does Reyn X work?' question" — a prompt of that shape will route to it correctly, even if the test expected `recall` |
+| 3. Structural source-count requirement | Does the prompt structurally require the expected number of sources? Or could a single source rationally satisfy it? | "How does X work?" rationally satisfies from concept doc alone; testing multi-source picks requires a prompt that has content unique to each source |
+| 4. Rational alternative paths | What other tools / paths can rationally handle this query? Is the expected path actually the most rational, or are alternatives stronger? | If web_search or file_read can naturally answer, the expected path may not be the LLM's rational choice |
+
+A scenario is approved for execution only when all four dimensions are ✓; ⚠️ on any row triggers redesign before the prelude is committed.
+
+Case study: batch 18 surfaced dimension 1+2 (= S6 prompt "How is recall implemented?" failed both — concept-only data did not match the implementation question, and `reyn_src_read`'s description claimed the exact use case). Batch 19 fix wave addressed only the surface symptom and produced no new evidence. Batch 20 redesigned with synthetic sources to break dimension 2 (= reyn_src_read could not answer the fictional "Quantum Bridge Protocol" prompt) but failed dimension 3 (= "How does X work?" was still a single-source-sufficient query). The fourth dimension (= rational alternative paths) was implicit but uncodified — codifying it here closes the audit checklist.
+
+**Why the checklist is the lift, not the redesigns.** Each individual scenario redesign in the batch-18-to-20 sequence felt locally correct; the systemic flaw was that audit was one-dimensional. Once the four dimensions are explicit in the prelude template, future scenarios catch the gap before they consume a batch budget.
+
 ---
 
 ## 4. Common patterns and anti-patterns
@@ -1027,5 +1088,9 @@ The following retrospectives provide detailed case studies of the principles des
 - **Batch 10** (`docs/deep-dives/journal/dogfood/2026-05-05-batch-10-residual-fix-wave/retrospective.md`): Reproduce-first principle established; resolved-indirectly classification formalized.
 - **Batch 13** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-13-revert-and-real-milestone/retrospective.md`): Documented design audit established; fix classification discipline formalized; simplicity smell test articulated.
 - **Batch 14** (`docs/deep-dives/journal/dogfood/2026-05-06-batch-14-stability-extension/retrospective.md`): Production-grade phase 1 completion; full discipline operational.
+- **Batch 17** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-17-rag-phase-1/retrospective.md`): Structural pre-check necessity (= principle 10); ADR-0033 RAG Phase 1 first dogfood retracted "production grade landed" judgment; 6 release-blocker bugs fixed in 5-commit fix wave.
+- **Batch 18** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-18-rag-fix-retest/retrospective.md`): Headline (S5) full recovery 0/5 → 3/3 + extended N=12 = 83% (= dogfood log's largest per-scenario calibration recovery, Brier 0.575 → 0.067); structural × behavioral prediction-axis separation (= principle 11) and verdict false-attribution discipline (= principle 12) established.
+- **Batch 19 (revised post self-audit)** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/retrospective.md`): Cognitive-bias named anti-attractor callout pattern validated at 100% compliance (= S9 Class A). Initially also claimed affordance-bias attractor (= Class B) established; user-prompted self-audit found the S6 evidence was confounded by a scenario design flaw (= prompt naturally matched `reyn_src_read`'s claimed use case). Class B was downgraded to hypothesis; pre-retrospective discipline established (= read LLM trace + tool description + scenario design premise BEFORE writing the retrospective).
+- **Batch 20** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-20-rag-multi-source-retest/retrospective.md`): S6 redesigned with synthetic sources to remove `reyn_src_read` affordance conflict; main agent self-executed pre-retrospective discipline and caught a second scenario-design confound (= prompt structurally satisfied by single source) BEFORE writing the retrospective. Affordance-bias hypothesis remains pending; the four-dimension scenario design audit checklist (= principle 14) was lifted as the systemic fix that closes the batch-18-to-20 sequence of one-dimensional audits.
 
 For the full batch index and operational log, see `docs/deep-dives/journal/dogfood/README.md`.

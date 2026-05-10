@@ -6,7 +6,11 @@ audience: [human, agent]
 
 # RAG（Retrieval-Augmented Generation）
 
-reyn には RAG インフラが組み込まれています。任意のドキュメントコーパスを index し、クエリ時に LLM が関連する chunk を取得できます。コーパス全体をコンテキストウィンドウに展開する必要はありません。
+reyn は RAG **framework foundation** を提供します — 5 つの primitive op、 拡張可能な `IndexBackend` protocol、 `EmbeddingProvider` protocol、 stdlib `index_docs` skill。 任意のドキュメントコーパスを index し、 クエリ時に LLM が関連する chunk を取得できます。コーパス全体をコンテキストウィンドウに展開する必要はありません。
+
+**差別化: skill-driven indexing.** LangChain や LlamaIndex は Python pipeline を提供しますが、 reyn は `skill.md` を提供します。 postprocessor chain の python step 1 つを差し替えるだけで chunker を per-source で override 可能。 Phase 1 では LLM が chunking 戦略を選びますが、 trainging memory からの open-ended な選択ではなく、 戦略 skill で defined された closed candidate set から選びます。
+
+**Phase 1 scope (= 1.0 release)** で出荷されるのは framework foundation、 SQLite default backend (≤100K chunks、 sub-second query)、 LiteLLM embedding passthrough、 stdlib `index_docs` skill。 vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone)、 advanced retrieval (rerank / HyDE / contextual retrieval)、 RAG eval framework、 IDE integration は post-1.0 (= phase 2) territory ([care-boundary.md](care-boundary.md) 参照)。 これらの mature ecosystem が今すぐ必要なら、 LangChain / LlamaIndex の方が fit します。
 
 **TL;DR:** `reyn run index_docs` で一度 index する。LLM は必要に応じて組み込みの `recall` ツールを自動的に呼び出す。chunking 戦略は source ごとに `skill.md` 1 ファイルで上書きできる。
 

@@ -6,7 +6,11 @@ audience: [human, agent]
 
 # RAG (Retrieval-Augmented Generation)
 
-reyn ships a RAG infrastructure that lets you index any document corpus and have the LLM retrieve relevant chunks at query time — without ever overloading the context window with the full corpus.
+reyn ships a RAG **framework foundation** — five primitive ops, an extensible `IndexBackend` protocol, an `EmbeddingProvider` protocol, and the stdlib `index_docs` skill — that lets you index any document corpus and have the LLM retrieve relevant chunks at query time, without ever overloading the context window with the full corpus.
+
+**The differentiation: skill-driven indexing.** LangChain and LlamaIndex give you a Python pipeline; reyn gives you a `skill.md`. Override the chunker per-source by swapping a single python step in the postprocessor chain. The Phase 1 LLM still picks the chunking strategy, but it picks from a closed candidate set defined in your strategy skill — not from open-ended training memory.
+
+**Phase 1 scope (= 1.0 release).** The framework foundation, the SQLite default backend (≤100K chunks, sub-second query), the LiteLLM embedding passthrough, and the stdlib `index_docs` skill ship in 1.0. Vector store plugin variety (Qdrant / FAISS / Weaviate / Pinecone), advanced retrieval (rerank / HyDE / contextual retrieval), RAG eval frameworks, and IDE integration are post-1.0 (= phase 2) territory — see [care-boundary.md](care-boundary.md). If you need that ecosystem today, LangChain / LlamaIndex are the better fit.
 
 **TL;DR:** Index once with `reyn run index_docs`. The LLM calls the built-in `recall` tool automatically when it needs information. Override the chunking strategy per-source with a single `skill.md` file.
 
