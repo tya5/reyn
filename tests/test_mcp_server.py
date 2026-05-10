@@ -369,6 +369,141 @@ def test_send_to_agent_waits_for_plan_terminal_text(tmp_path, monkeypatch):
     assert result["partial"] is False  # idle by completion
 
 
+def test_send_to_agent_drains_skill_completed_inbox(tmp_path, monkeypatch):
+    """Tier 2: R-A2A-COMPLETION-DRAIN regression net — FP-0012's
+    non-blocking ``invoke_skill`` returns spawn-ack immediately; the
+    completion narration is driven by a ``skill_completed`` inbox
+    kind that ``session.run()`` consumes. The A2A / MCP bypass path
+    does not run ``session.run()`` (asyncio-starvation under stdio),
+    so without an explicit drain, completion narration never fires
+    for A2A-driven agents.
+
+    Fix: ``send_to_agent_impl`` awaits ``running_skills`` after
+    ``_handle_user_message`` returns, then calls
+    ``ChatSession.drain_skill_completed_inbox`` to dispatch any queued
+    ``skill_completed`` items inline. This test pins the contract by:
+
+    1. Faking ``_handle_user_message`` to spawn a background "skill"
+       that enqueues ``skill_completed`` (via the production-shaped
+       ``_enqueue_skill_completed`` helper).
+    2. Faking ``_handle_skill_completed`` to append a sentinel agent
+       reply to history (= proves the drain reached the handler).
+    3. Asserting the sentinel appears in the A2A reply text.
+    """
+    monkeypatch.chdir(tmp_path)
+    registry = _build_registry(tmp_path, [("default", "")])
+
+    sentinel = "SKILL_COMPLETION_NARRATION_MARKER"
+
+    async def _fake_handle_user_message(self, message, *, chain_id):
+        from reyn.chat.session import ChatMessage
+        self._append_history(ChatMessage(
+            role="user", text=message, ts="2026-05-11T00:00:00",
+            meta={"chain_id": chain_id},
+        ))
+
+        async def _skill_task() -> None:
+            await asyncio.sleep(0.05)
+            await self._enqueue_skill_completed(
+                run_id="fake_run_0001",
+                skill="fake_skill",
+                status="finished",
+                chain_id=chain_id,
+                data={"hello": "world"},
+            )
+
+        task = asyncio.create_task(_skill_task())
+        self.running_skills["fake_run_0001"] = task
+
+    async def _fake_handle_skill_completed(self, payload):
+        from reyn.chat.session import ChatMessage
+        self._append_history(ChatMessage(
+            role="agent",
+            text=f"{sentinel}: {payload.get('skill')} {payload.get('status')}",
+            ts="2026-05-11T00:00:01",
+            meta={
+                "chain_id": payload.get("chain_id"),
+                "source": "skill_completion_narration",
+            },
+        ))
+
+    monkeypatch.setattr(
+        ChatSession, "_handle_user_message", _fake_handle_user_message,
+    )
+    monkeypatch.setattr(
+        ChatSession, "_handle_skill_completed", _fake_handle_skill_completed,
+    )
+
+    async def go():
+        return await send_to_agent_impl(
+            registry, agent_name="default",
+            message="kick off the skill",
+            timeout=5.0,
+        )
+
+    result = asyncio.run(go())
+    assert result["agent"] == "default"
+    assert sentinel in result["reply"], (
+        f"Completion narration must appear in A2A reply; got: {result['reply']!r}"
+    )
+    assert result["partial"] is False  # drain completed within budget
+
+
+def test_drain_skill_completed_inbox_preserves_other_kinds(tmp_path):
+    """Tier 2: ``drain_skill_completed_inbox`` only consumes
+    ``skill_completed`` kinds; any other inbox kinds remain queued
+    (FIFO) so the next consumer / call can still pick them up.
+    """
+    monkeypatch_chdir = tmp_path  # noqa: F841 — keep tmp scope explicit
+    registry = _build_registry(tmp_path, [("default", "")])
+    session = registry.get_or_load("default")
+
+    async def go():
+        # Manually enqueue: skill_completed + agent_request + skill_completed.
+        await session._put_inbox("skill_completed", {
+            "run_id": "r1", "skill": "s1", "status": "finished",
+            "chain_id": "c1", "data": {},
+        })
+        await session._put_inbox("agent_request", {
+            "from_agent": "peer", "text": "hi",
+        })
+        await session._put_inbox("skill_completed", {
+            "run_id": "r2", "skill": "s2", "status": "error",
+            "chain_id": "c2", "data": {"error": "bad"},
+        })
+
+        # Replace _handle_skill_completed with a counter so the test
+        # doesn't pull in the real router stack.
+        dispatched: list[dict] = []
+
+        async def _record(self, payload):
+            dispatched.append(payload)
+
+        from reyn.chat.session import ChatSession as _CS
+        original = _CS._handle_skill_completed
+        _CS._handle_skill_completed = _record  # type: ignore[assignment]
+        try:
+            import time as _time
+            ok = await session.drain_skill_completed_inbox(
+                deadline_monotonic=_time.monotonic() + 5.0,
+            )
+        finally:
+            _CS._handle_skill_completed = original  # type: ignore[assignment]
+
+        return ok, dispatched
+
+    drained_ok, dispatched = asyncio.run(go())
+    assert drained_ok is True
+    # Both skill_completed entries dispatched; agent_request preserved.
+    assert len(dispatched) == 2
+    assert [d["run_id"] for d in dispatched] == ["r1", "r2"]
+    # agent_request must remain in the queue for the next consumer.
+    assert session.inbox.qsize() == 1
+    leftover_kind, leftover_payload = session.inbox.get_nowait()
+    assert leftover_kind == "agent_request"
+    assert leftover_payload.get("from_agent") == "peer"
+
+
 def test_build_server_exposes_two_tools(tmp_path):
     """Tier 2: build_server registers exactly the two documented tools
     (list_agents, send_to_agent). Acts as a P7 detection net — adding a

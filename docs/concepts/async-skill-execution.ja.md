@@ -109,6 +109,39 @@ Router system prompt の narration ルール:
 観測されました。 MUST-surface rule は FP-0011 Component B の強化と同時に
 land し、 この flash tier optimism bias に対応します。
 
+## A2A / MCP bypass path
+
+`reyn mcp serve` と FastAPI A2A endpoint (`reyn web`) は両方とも
+`mcp_server.send_to_agent_impl` 経由で agent に到達し、
+`ChatSession._handle_user_message` を **inline** で駆動します
+(= `session.run()` を通らない)。 MCP SDK の stdio transport 下で
+`asyncio.create_task` で spawn した `session.run()` coroutine は
+request handler が await している間 starved になり、 内部の LLM
+call が進まず handler が empty timeout します。 そのため bypass は
+全てを SDK が scheduling している単一 event loop task 上に保ちます。
+
+trade-off: bypass path には `skill_completed` inbox kind (= FP-0012
+で導入) を consume するものが居ません。 明示 drain なしだと
+非 blocking `invoke_skill` は spawn ack しか返さず、 A2A 駆動の
+agent では完了 narration が fire しません。
+
+`send_to_agent_impl` は `_handle_user_message` 完了後に残 timeout
+予算内で 3 step でこの gap を埋めます:
+
+1. `await asyncio.gather(*running_plans)` — plan-mode async task
+   (= ADR-0023 §2.1.1) が完了し、 terminal text を history に append。
+2. `await asyncio.gather(*running_skills)` — spawn 済 skill が
+   terminal status に到達し、 `_enqueue_skill_completed` 経由で
+   `skill_completed` を enqueue。
+3. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
+   `skill_completed` item を非 blocking で pop、 WAL consume entry
+   を記録、 各々を `_handle_skill_completed` (= router LLM を回して
+   narration 生成) に dispatch。 `skill_completed` 以外の kind は
+   FIFO で re-queue され、 次の consumer に渡る。
+
+deadline が drain 中に fire したら `partial=True` で返り、 残 item は
+次 call の pickup を待って inbox に残ります。
+
 ## Plan-mode は blocking のまま
 
 Plan-mode RouterLoop は `run_skill_fn` のみ bind し (= 旧 blocking path)、

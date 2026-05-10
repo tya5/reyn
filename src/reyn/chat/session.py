@@ -2250,6 +2250,79 @@ class ChatSession:
             ))
             return
 
+    async def drain_skill_completed_inbox(
+        self, *, deadline_monotonic: float,
+    ) -> bool:
+        """FP-0012 / R-A2A-COMPLETION-DRAIN: dispatch queued
+        ``skill_completed`` inbox kinds inline up to a deadline.
+
+        ``session.run()`` is the normal consumer of the inbox, but the
+        A2A / MCP bypass path (= ``mcp_server.send_to_agent_impl``)
+        drives ``_handle_user_message`` directly without ever starting
+        ``session.run()`` (asyncio-starvation under the stdio transport).
+        Without this drain, a non-blocking ``invoke_skill`` that spawns
+        a skill in the background never gets its completion narration
+        produced under A2A — the caller only sees the spawn ack.
+
+        Behaviour:
+
+        - Pops every queued inbox item non-blockingly.
+        - For ``skill_completed`` kinds, records the WAL consume entry
+          (mirrors what ``_consume_inbox`` would do) and dispatches to
+          ``_handle_skill_completed`` within the remaining deadline
+          budget so the router LLM produces the narration.
+        - Other kinds are preserved (re-queued in original order) so
+          the next consumer / call can pick them up.
+
+        Returns ``True`` if the drain completed before the deadline,
+        ``False`` if the deadline fired mid-drain (= partial reply).
+        """
+        import time as _time
+
+        deferred: list[tuple[str, dict]] = []
+        drained_ok = True
+        while True:
+            try:
+                item = self.inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            kind, payload = item
+            if kind != "skill_completed":
+                deferred.append(item)
+                continue
+            # Mirror the journal-consume bookkeeping that
+            # ``_consume_inbox`` performs so the WAL record matches.
+            msg_id = (
+                payload.get("_msg_id") if isinstance(payload, dict) else None
+            )
+            try:
+                await self._journal.consume_inbox(msg_id=msg_id)
+            except Exception as exc:  # noqa: BLE001 — best effort, drain proceeds
+                logger.warning(
+                    "drain_skill_completed_inbox: WAL consume failed "
+                    "msg_id=%s: %s",
+                    msg_id, exc,
+                )
+            remaining = max(0.1, deadline_monotonic - _time.monotonic())
+            try:
+                await asyncio.wait_for(
+                    self._handle_skill_completed(payload),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                drained_ok = False
+                break
+            except Exception as exc:  # noqa: BLE001 — log + continue
+                logger.warning(
+                    "drain_skill_completed_inbox: handler failed "
+                    "run_id=%s skill=%s: %s",
+                    payload.get("run_id"), payload.get("skill"), exc,
+                )
+        # Restore non-skill_completed kinds (FIFO order preserved).
+        for item in deferred:
+            self.inbox.put_nowait(item)
+        return drained_ok
+
     async def _resolve_pending_chain(
         self, pending: "_PendingChain", *, from_agent: str, last_response: str = "",
     ) -> None:

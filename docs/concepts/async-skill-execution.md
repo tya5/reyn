@@ -114,6 +114,43 @@ narrating success even when status was `error` and a `data.error`
 field was populated. The MUST-surface rule landed alongside FP-0011
 Component B's strengthening to address that flash-tier optimism bias.
 
+## A2A / MCP bypass path
+
+`reyn mcp serve` and the FastAPI A2A endpoint (`reyn web`) both reach
+the agent through `mcp_server.send_to_agent_impl`, which drives
+`ChatSession._handle_user_message` **inline** rather than going
+through `session.run()`. Under the MCP SDK's stdio transport an
+`asyncio.create_task`-spawned `session.run()` coroutine is starved
+while the request handler awaits — the LLM call never makes
+progress and the handler times out empty. So the bypass keeps
+everything on the single event-loop task the SDK is scheduling.
+
+The trade-off: nothing on the bypass path consumes the
+`skill_completed` inbox kind that FP-0012 introduced. Without
+explicit draining, a non-blocking `invoke_skill` returns only the
+spawn ack — the completion narration never fires for A2A-driven
+agents.
+
+`send_to_agent_impl` closes that gap in three steps after
+`_handle_user_message` returns, all within the remaining timeout
+budget:
+
+1. `await asyncio.gather(*running_plans)` — plan-mode async tasks
+   (= ADR-0023 §2.1.1) finish and append their terminal text to
+   history.
+2. `await asyncio.gather(*running_skills)` — spawned skills run to
+   terminal status and enqueue `skill_completed` via
+   `_enqueue_skill_completed`.
+3. `session.drain_skill_completed_inbox(deadline_monotonic=...)` —
+   pops `skill_completed` items non-blockingly, records the WAL
+   consume entry, and dispatches each one to
+   `_handle_skill_completed` (which runs the router LLM for
+   narration). Non-`skill_completed` kinds are re-queued FIFO so the
+   next consumer sees them.
+
+If the deadline fires mid-drain, `partial=True` is returned and the
+remaining items stay on the inbox for the next call to pick up.
+
 ## Plan-mode keeps blocking semantics
 
 Plan-mode RouterLoops bind only `run_skill_fn` (= the legacy blocking

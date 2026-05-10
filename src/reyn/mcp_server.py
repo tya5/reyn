@@ -221,6 +221,39 @@ async def send_to_agent_impl(
             except asyncio.TimeoutError:
                 idle = False
 
+        # FP-0012 / R-A2A-COMPLETION-DRAIN: ``invoke_skill`` in chat mode
+        # is now non-blocking (spawn-ack returns immediately; completion
+        # arrives via the ``skill_completed`` inbox kind). The A2A /
+        # MCP bypass path does not run ``session.run()`` so the inbox
+        # is never consumed normally. Await running_skills here, then
+        # drain ``skill_completed`` kinds inline so the router LLM
+        # narrates completion before we harvest the reply.
+        skill_tasks = list(getattr(session, "running_skills", {}).values())
+        active_skills = [t for t in skill_tasks if not t.done()]
+        if active_skills:
+            elapsed = _time.monotonic() - start
+            remaining = max(0.1, timeout - elapsed)
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*active_skills, return_exceptions=True),
+                    timeout=remaining,
+                )
+            except asyncio.TimeoutError:
+                idle = False
+
+        deadline_monotonic = start + timeout
+        try:
+            drained_ok = await session.drain_skill_completed_inbox(
+                deadline_monotonic=deadline_monotonic,
+            )
+        except Exception as exc:  # noqa: BLE001 — log + treat as partial
+            logger.warning(
+                "send_to_agent_impl: skill_completed drain failed: %s", exc,
+            )
+            drained_ok = False
+        if not drained_ok:
+            idle = False
+
         new_replies = _new_agent_history_entries(
             session, baseline, chain_id=chain_id,
         )
