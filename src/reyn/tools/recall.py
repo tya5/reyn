@@ -18,10 +18,21 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
+# B22 schema-layer fix: strengthen affordance signal with concrete use-case
+# enumeration so natural concept questions ("what is X?", "explain X")
+# route here when an indexed source covers the topic — without coupling
+# the description to specific source names (= per A4 constraint, the SP
+# carries the source list, this description must be source-agnostic).
 _RECALL_DESCRIPTION = (
-    "Search indexed sources by natural-language query. Returns top-K relevant "
-    "chunks with text + metadata. Pick sources from the 'Indexed sources' "
-    "section in the system prompt."
+    "Search indexed sources by natural-language query. Returns top-K "
+    "relevant chunks with text + metadata. Use this when the user's "
+    "question is about a topic an indexed source covers — including "
+    "'what is X?', 'explain X', 'how does X work?' style questions. "
+    "Pick sources from the 'Indexed sources' section in the system "
+    "prompt; each source's description tells you what topics it covers. "
+    "Prefer this over `reyn_src_read` / file_read when an indexed source "
+    "description matches the question's topic — semantic search across "
+    "indexed chunks is more reliable than guessing a file path."
 )
 
 _RECALL_PARAMETERS: dict[str, Any] = {

@@ -36,16 +36,28 @@ _REYN_SRC_LIST_PARAMETERS: dict[str, Any] = {
     "required": ["path"],
 }
 
-# Description must be byte-identical to the current router_tools.py
-# ToolSpec.description for reyn_src_read (lines 798-805). Copied verbatim.
+# Description (= B22 schema-layer fix for affordance-bias attractor
+# observed in batch 21). The previous text claimed "Use this for any
+# 'how does Reyn / how does Reyn's X work?' question" which crowded out
+# `recall` even when an indexed source covered the topic. The 4-part
+# template (= what it does / when to use / when NOT to use / cross-
+# reference) is per industry research (= Anthropic + OpenAI + LangChain
+# + practitioner blogs).
+#
+# Constraints preserved (per A3 history audit):
+#  - C1: file-read vs semantic-search distinction must be explicit
+#  - C2: README curated navigation entry point retained as fallback
+#  - web_search avoidance retained (= original HN first-touch motivation)
 _REYN_SRC_READ_DESCRIPTION = (
-    "Read a text file from Reyn's own repository. Path is "
-    "repo-root-relative (= same paths the user sees on "
-    "GitHub). Start with reyn_src_read(\"README.md\") for "
-    "an overview and a curated index of deep-dive paths. "
-    "Use this for any \"how does Reyn / how does Reyn's X "
-    "work?\" question — Reyn's source is the authoritative "
-    "answer, not web search."
+    "Read a text file from Reyn's own repository by an exact "
+    "repo-root-relative path. Use for: (a) reading a specific file the "
+    "user named (e.g. README.md, src/reyn/chat/...), or (b) navigating "
+    "Reyn's source / docs when NO indexed source covers the topic. "
+    "If an indexed source description mentions concepts / design / "
+    "docs / Reyn, use `recall` instead — guessing a file path is "
+    "unreliable; semantic search over indexed chunks is not. Fallback "
+    "entry point: reyn_src_read(\"README.md\") for the overview + "
+    "curated map of deep-dive paths."
 )
 
 # Parameters JSON schema must be byte-identical to the current

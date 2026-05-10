@@ -61,20 +61,32 @@ def test_reyn_src_list_router_render_exact_parameters():
 # ── 2. REYN_SRC_READ render_for_router byte-identity ────────────────────────
 
 def test_reyn_src_read_router_render_exact_description():
-    """Tier 2: REYN_SRC_READ description is byte-identical to the legacy ToolSpec
-    description in router_tools.py. Any whitespace or punctuation diff is a stop
-    signal that would drift LLMReplay fixtures."""
+    """Tier 2: REYN_SRC_READ description is byte-identical to the canonical text.
+
+    Originally pinned the legacy text against ADR-0026 migration drift.
+    Updated in B22 (= 2026-05-10 schema-layer fix for affordance-bias
+    attractor observed in batch 21). The previous claim "Use this for
+    any 'how does Reyn / how does Reyn's X work?' question" pulled the
+    LLM to file_read with hallucinated paths even when an indexed
+    source covered the topic. New text follows the practitioner 4-part
+    template (= what / when / when NOT / cross-reference to recall),
+    preserves the README curated-navigation fallback (= constraint C2
+    from the description history audit), and preserves the no-web-
+    search directive (= original HN first-touch motivation).
+    """
     rendered = REYN_SRC_READ.render_for_router()
-    legacy_description = (
-        "Read a text file from Reyn's own repository. Path is "
-        "repo-root-relative (= same paths the user sees on "
-        "GitHub). Start with reyn_src_read(\"README.md\") for "
-        "an overview and a curated index of deep-dive paths. "
-        "Use this for any \"how does Reyn / how does Reyn's X "
-        "work?\" question — Reyn's source is the authoritative "
-        "answer, not web search."
+    canonical_description = (
+        "Read a text file from Reyn's own repository by an exact "
+        "repo-root-relative path. Use for: (a) reading a specific file the "
+        "user named (e.g. README.md, src/reyn/chat/...), or (b) navigating "
+        "Reyn's source / docs when NO indexed source covers the topic. "
+        "If an indexed source description mentions concepts / design / "
+        "docs / Reyn, use `recall` instead — guessing a file path is "
+        "unreliable; semantic search over indexed chunks is not. Fallback "
+        "entry point: reyn_src_read(\"README.md\") for the overview + "
+        "curated map of deep-dive paths."
     )
-    assert rendered["function"]["description"] == legacy_description
+    assert rendered["function"]["description"] == canonical_description
 
 
 def test_reyn_src_read_router_render_exact_parameters():
