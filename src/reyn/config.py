@@ -132,6 +132,50 @@ class TimeoutConfig:
     chain_seconds: float = 60.0
 
 
+ON_LIMIT_MODES = ("interactive", "unattended", "auto_extend")
+
+
+@dataclass
+class OnLimitConfig:
+    """`safety.on_limit:` — what happens when a loop / timeout limit is hit
+    (FP-0005).
+
+    Reyn supports three behaviours when a safety limit fires:
+
+    - ``interactive``: pause the run, prompt the user via ``ask_user``
+      for permission to continue. On approval the limit is extended by
+      one increment; on refusal (or ask timeout) the run aborts with
+      ``RunResult.partial_data`` populated. This is the default for
+      ``reyn chat`` — the user is sitting at a TUI and can answer.
+
+    - ``unattended``: abort immediately (legacy behaviour). This is the
+      default for ``reyn run`` and CI invocations — there is no user to
+      ask, so silent escalation is the safer choice.
+
+    - ``auto_extend``: auto-extend the limit ``auto_extend_times`` times
+      without prompting, then fall through to ``unattended`` behaviour
+      once the auto-extend budget is spent. Useful for trusted long-
+      running tasks where the operator knows up front that ``N``
+      extensions are acceptable.
+
+    The mode applies to the user-facing limits listed in FP-0005 §
+    "limit ごとの適用可否" (max_act_turns, max_phase_visits, router_cap,
+    per_chain_skill_calls, max_hop_depth, phase_seconds, chain_seconds).
+    LLM call timeouts already retry via litellm and are not part of this
+    pipeline.
+
+    ``ask_timeout_seconds`` bounds how long ``interactive`` mode waits
+    for a user response. If the prompt is not answered within the
+    window, the request is treated as a refusal (= abort with
+    partial_data). Defaults to 60s — long enough for a human reply,
+    short enough to avoid a hung delegate / chat session.
+    """
+
+    mode: Literal["interactive", "unattended", "auto_extend"] = "unattended"
+    auto_extend_times: int = 1
+    ask_timeout_seconds: float = 60.0
+
+
 @dataclass
 class SafetyConfig:
     """`safety:` — unified, user-facing namespace for stop conditions.
@@ -145,6 +189,11 @@ class SafetyConfig:
     See ``docs/guide/for-skill-authors/understand-why-reyn-stops.md`` for
     the operator's mental model.
 
+    ``on_limit`` (FP-0005) controls what happens when a loop / timeout
+    limit fires: prompt the user (interactive), abort silently
+    (unattended, legacy default), or auto-extend N times then abort
+    (auto_extend).
+
     Backward compatibility (FP-0004): the loader reads both this
     ``safety:`` section and the legacy ``limits:`` / ``multi_agent:`` /
     ``cost.router_invocations_per_turn`` / ``cost.per_chain_skill_calls``
@@ -155,6 +204,7 @@ class SafetyConfig:
 
     loop: LoopConfig = field(default_factory=LoopConfig)
     timeout: TimeoutConfig = field(default_factory=TimeoutConfig)
+    on_limit: OnLimitConfig = field(default_factory=OnLimitConfig)
 
 
 @dataclass
@@ -1057,6 +1107,9 @@ def _build_safety_config(raw: object) -> SafetyConfig:
     timeout_raw = raw.get("timeout") or {}
     if not isinstance(timeout_raw, dict):
         timeout_raw = {}
+    on_limit_raw = raw.get("on_limit") or {}
+    if not isinstance(on_limit_raw, dict):
+        on_limit_raw = {}
 
     loop_defaults = LoopConfig()
     timeout_defaults = TimeoutConfig()
@@ -1103,7 +1156,39 @@ def _build_safety_config(raw: object) -> SafetyConfig:
             "chain_seconds", timeout_defaults.chain_seconds,
         )),
     )
-    return SafetyConfig(loop=loop, timeout=timeout)
+    on_limit_defaults = OnLimitConfig()
+    mode_raw = str(on_limit_raw.get("mode", on_limit_defaults.mode))
+    if mode_raw not in ON_LIMIT_MODES:
+        import logging
+        logging.getLogger(__name__).warning(
+            "safety.on_limit.mode=%r is not one of %s; using %r",
+            mode_raw, ON_LIMIT_MODES, on_limit_defaults.mode,
+        )
+        mode_raw = on_limit_defaults.mode
+    auto_extend_times_raw = on_limit_raw.get(
+        "auto_extend_times", on_limit_defaults.auto_extend_times,
+    )
+    try:
+        auto_extend_times = int(auto_extend_times_raw)
+        if auto_extend_times < 0:
+            auto_extend_times = on_limit_defaults.auto_extend_times
+    except (TypeError, ValueError):
+        auto_extend_times = on_limit_defaults.auto_extend_times
+    ask_timeout_seconds_raw = on_limit_raw.get(
+        "ask_timeout_seconds", on_limit_defaults.ask_timeout_seconds,
+    )
+    try:
+        ask_timeout_seconds = float(ask_timeout_seconds_raw)
+        if ask_timeout_seconds < 0:
+            ask_timeout_seconds = on_limit_defaults.ask_timeout_seconds
+    except (TypeError, ValueError):
+        ask_timeout_seconds = on_limit_defaults.ask_timeout_seconds
+    on_limit = OnLimitConfig(
+        mode=mode_raw,  # type: ignore[arg-type]
+        auto_extend_times=auto_extend_times,
+        ask_timeout_seconds=ask_timeout_seconds,
+    )
+    return SafetyConfig(loop=loop, timeout=timeout, on_limit=on_limit)
 
 
 def _has_loop_key(safety_raw: object, key: str) -> bool:

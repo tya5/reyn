@@ -143,3 +143,44 @@ cost:
 新旧キーの両方が設定されているときは**新キーが優先**されます。旧キーは将来の
 メジャーバージョンで削除予定です。今のうちに移行しておけば設定が
 forward-compatible になります。
+
+---
+
+## limit 到達時の挙動 (`safety.on_limit`)
+
+既定の挙動: limit 到達は実行を abort します。Reyn は `RunResult` を返し、
+`status` を `loop_limit_exceeded` / `phase_budget_exceeded` /
+`budget_exceeded` のいずれかに設定し、`partial_data` には最後に完了した
+フェーズの artifact (= *「今ここまでの成果物」*) を入れます。
+
+挙動は `safety.on_limit.mode` で変更できます:
+
+```yaml
+# reyn.local.yaml
+safety:
+  on_limit:
+    mode: unattended       # 既定 — 到達時に abort (旧来の挙動)
+    # mode: interactive    # ask_user で user に確認、 承認時に limit 延長して継続
+    # mode: auto_extend    # N 回まで自動延長、 それ以降は abort
+    auto_extend_times: 1   # auto_extend 時のみ参照
+    ask_timeout_seconds: 60  # interactive 時のみ参照
+```
+
+| モード | 用途 |
+|---|---|
+| `unattended` (既定) | `reyn run` / CI / スクリプト実行 — 確認できる人がいない、 fail fast 推奨 |
+| `interactive` | `reyn chat` / TUI session — ユーザーが目の前にいて判断できる |
+| `auto_extend` | 信頼済みの長時間タスクで「N 回までは自動延長して良い」と分かっているとき |
+
+> **Phase 1 ステータス (FP-0005):** 設定スキーマと `RunResult.partial_data`
+> フィールドは landing 済みです。limit ごとの `ask_user` dispatch (=
+> `interactive` / `auto_extend` が実際に到達時に対話に切り替わる) は段階的
+> rollout で、 詳細は [FP-0005
+> proposal](../../deep-dives/proposals/0005-safety-as-checkpoint.md) の
+> per-limit migration plan を参照してください。各 site の wiring が
+> landing するまでは、 当該 limit に対して `mode: interactive` を設定しても
+> `unattended` (= 旧来の abort) にフォールバックします。
+>
+> 唯一の例外: `cost.per_chain_skill_calls.ask_on_exceed: true` (FP-0003)
+> は (chain, skill) ごとの起動回数キャップに対するユーザー承認フローを
+> 既に提供しています — 上記 §③ の例を参照してください。

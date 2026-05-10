@@ -1,8 +1,9 @@
 # FP-0005: safety limit をチェックポイントとして扱う — Permission モデルとの統合
 
-**Status**: proposed
+**Status**: phase-1-landed (= architectural foundation in main; per-site ask wiring is Phase 2 follow-up)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Phase 1 implemented**: 2026-05-10 — `OnLimitConfig` (`mode` / `auto_extend_times` / `ask_timeout_seconds`) added to `safety:` section; `RunResult.partial_data` field landed; abort paths in `OSRuntime.run()` populate `partial_data` on `loop_limit_exceeded` / `phase_budget_exceeded` / `budget_exceeded`. **Default mode = `unattended`** preserves legacy abort-immediately behaviour byte-for-byte; opt into `interactive` / `auto_extend` is explicit. 8 Tier 2 invariants in `tests/test_safety_on_limit.py`. Phase 2 wires `_handle_limit_exceeded` (ask_user dispatch + auto-extend bookkeeping) at the 6 sites listed in §"limit ごとの適用可否" — see "Phase 2 follow-up scope" below.
 
 ---
 
@@ -164,6 +165,52 @@ class RunResult:
 
 ボトルネックは **Step A の WAL 確定保証**（現状の abort パスが多様）と
 **テスト**（limit 挙動の contract が増える）。
+
+---
+
+## Phase 2 follow-up scope
+
+Phase 1 (= landed 2026-05-10) shipped the user-facing config surface
+(`safety.on_limit.mode` + `auto_extend_times` + `ask_timeout_seconds`)
+and the `RunResult.partial_data` field. Phase 2 wires the
+`_handle_limit_exceeded` helper (= WAL-flush + mode dispatch +
+`ask_user` integration) at the per-site abort paths.
+
+Per-site work breakdown (= 6 sites × ~½ day each):
+
+- **B (max_phase_visits)** — `OSRuntime._enter_phase` raise site
+  (`src/reyn/kernel/runtime.py`). Inject `intervention_bus.ask` before
+  the raise; on approval, increment `max_visits` budget for this run
+  and continue.
+- **F (phase_seconds)** — `OSRuntime._check_phase_budget` raise site
+  (same file). On approval, extend `_phase_started_at` so the elapsed
+  check restarts.
+- **A (max_act_turns)** — `skill_node_runner` act-loop boundary
+  (`src/reyn/skill/skill_node_runner.py`). On approval, extend the
+  per-phase act budget for the current phase only.
+- **C (router_cap)** — `BudgetGateway.check_and_increment_router_cap`
+  (`src/reyn/chat/services/budget_gateway.py`). On approval, increment
+  the per-turn cap by 1.
+- **E (max_hop_depth)** — `ChatSession._send_to_agent` refusal site
+  (`src/reyn/chat/session.py`). On approval, allow the next hop
+  through and increment a per-chain hop budget.
+- **G (chain_seconds)** — `ChainManager` watchdog fire path
+  (`src/reyn/chat/services/chain_manager.py` + `session._on_chain_timeout_fire`).
+  On approval, re-arm the watchdog with a fresh deadline.
+
+D (per_chain_skill_calls) is already covered by FP-0003's
+`ask_on_exceed`; Phase 2 should generalise FP-0003's
+`_ask_budget_extension` into the shared `_handle_limit_exceeded`
+helper so all 7 paths share one implementation.
+
+H (llm_call_seconds) does not need ask_user — litellm already
+auto-retries within `llm_max_retries`.
+
+Trigger: enterprise / power-user demand for "limit ≠ silent abort"
+UX. Ship gating: at least 2 of the 6 sites should land together
+(= proof that the helper generalises across both OS-side and chat-side
+raise sites). 1 day for the helper + 2 sites; ~3 days for all 6 sites
++ end-to-end Tier 3 LLMReplay coverage.
 
 ---
 

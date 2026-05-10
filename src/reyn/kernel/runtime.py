@@ -79,12 +79,23 @@ class WorkflowAbortedError(Exception):
 
 @dataclass
 class RunResult:
-    """Typed return value of OSRuntime.run() and Agent.run()."""
+    """Typed return value of OSRuntime.run() and Agent.run().
+
+    FP-0005: ``partial_data`` carries the last completed phase's
+    artifact (= "what we have so far") when a safety limit aborts the
+    run mid-flight. ``data`` is populated only on a clean ``finished``
+    status; ``partial_data`` is populated on any non-``finished``
+    status where a phase had completed before the abort. Callers
+    rendering a stop reason (TUI / `/list` / chat reply) should fall
+    back to ``partial_data`` when ``ok`` is False.
+    """
     data: dict[str, Any]
     status: Literal["finished", "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded"]
     token_usage: TokenUsage | None = None
     cost_usd: float | None = None
     error: str | None = None
+    # FP-0005: last completed phase artifact preserved on abort.
+    partial_data: dict[str, Any] | None = None
 
     @property
     def ok(self) -> bool:
@@ -1634,6 +1645,9 @@ class OSRuntime:
                     )
 
         except LoopLimitExceededError as exc:
+            # FP-0005: surface the last completed artifact via partial_data
+            # so callers can render "here's what we have so far" UX. data
+            # is also populated for backward compat with legacy callers.
             final_output = self._fallback_final_output()
             self.events.emit(
                 "workflow_terminated",
@@ -1641,9 +1655,16 @@ class OSRuntime:
                 total_phase_count=sum(self._visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
-            return RunResult(data=final_output, status="loop_limit_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
+            return RunResult(
+                data=final_output,
+                status="loop_limit_exceeded",
+                token_usage=self._token_usage,
+                cost_usd=self._total_cost_usd or None,
+                partial_data=final_output or None,
+            )
 
         except PhaseBudgetExceededError as exc:
+            # FP-0005: same partial_data treatment as LoopLimitExceededError.
             final_output = self._fallback_final_output()
             self.events.emit(
                 "workflow_terminated",
@@ -1651,11 +1672,19 @@ class OSRuntime:
                 total_phase_count=sum(self._visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
-            return RunResult(data=final_output, status="phase_budget_exceeded", token_usage=self._token_usage, cost_usd=self._total_cost_usd or None)
+            return RunResult(
+                data=final_output,
+                status="phase_budget_exceeded",
+                token_usage=self._token_usage,
+                cost_usd=self._total_cost_usd or None,
+                partial_data=final_output or None,
+            )
 
         except BudgetExceeded as exc:
             # PR22: hard budget cap hit — surface the user-facing message
             # via the result's `error` (let the caller route to outbox).
+            # FP-0005: also expose partial_data for parity with the loop /
+            # phase-budget paths.
             final_output = self._fallback_final_output()
             self.events.emit(
                 "workflow_terminated",
@@ -1669,6 +1698,7 @@ class OSRuntime:
                 token_usage=self._token_usage,
                 cost_usd=self._total_cost_usd or None,
                 error=str(exc),
+                partial_data=final_output or None,
             )
 
         except WorkflowAbortedError as exc:

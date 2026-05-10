@@ -147,3 +147,44 @@ follows:
 When both new and old keys are set, **the new key wins**. The old keys
 will be removed in a future major version; migrating now keeps
 configurations forward-compatible.
+
+---
+
+## What happens on a limit hit (`safety.on_limit`)
+
+By default, a limit hit aborts the run. Reyn returns a `RunResult` with
+`status` set to one of `loop_limit_exceeded` / `phase_budget_exceeded` /
+`budget_exceeded`, and `partial_data` populated with the last completed
+phase artifact — *"here's what we have so far"*.
+
+You can change this with `safety.on_limit.mode`:
+
+```yaml
+# reyn.local.yaml
+safety:
+  on_limit:
+    mode: unattended       # default — abort on hit (legacy behaviour)
+    # mode: interactive    # prompt the user via ask_user; on approval extend the limit
+    # mode: auto_extend    # auto-extend N times, then abort
+    auto_extend_times: 1   # only consulted when mode == auto_extend
+    ask_timeout_seconds: 60  # only consulted when mode == interactive
+```
+
+| Mode | Use case |
+|---|---|
+| `unattended` (default) | `reyn run`, CI, scripted invocations — no human to ask, fail fast |
+| `interactive` | `reyn chat`, TUI sessions — the user is sitting at the prompt and can decide |
+| `auto_extend` | Trusted long-running tasks where the operator knows up front that N extensions are acceptable |
+
+> **Phase 1 status (FP-0005):** the config surface and
+> `RunResult.partial_data` field are live. The per-site `ask_user`
+> dispatch (= `interactive` / `auto_extend` actually pausing the run on
+> hit) is rolled out incrementally — see the [FP-0005
+> proposal](../../deep-dives/proposals/0005-safety-as-checkpoint.md)
+> for the per-limit migration plan. Until each site lands, configuring
+> `mode: interactive` for that limit falls back to `unattended`
+> (= legacy abort).
+>
+> The one exception: `cost.per_chain_skill_calls.ask_on_exceed: true`
+> (FP-0003) already gives you the user-approval flow for the
+> per-(chain, skill) calls cap — see the example in §③ above.
