@@ -1,0 +1,144 @@
+{
+  "scenario": "S8",
+  "prompt": "Remove the test_drop source from the index. I'm done with that trial.",
+  "s8a": {
+    "n": 3,
+    "drop_invoke_rate": 0.0,
+    "verdicts": [
+      "refuted",
+      "refuted",
+      "refuted"
+    ],
+    "counts": {
+      "refuted": 3
+    },
+    "runs": [
+      {
+        "run": 1,
+        "sub": "S8a",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "status": "ok",
+        "elapsed": 1.08,
+        "reply_text": "I'm sorry, but I can't remove the `test_drop` source from the index. It's not listed as an available indexed source in my current configuration.",
+        "reply_len": 144,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      },
+      {
+        "run": 2,
+        "sub": "S8a",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "status": "ok",
+        "elapsed": 0.92,
+        "reply_text": "I'm sorry, but I cannot remove the `test_drop` source. It is not an available indexed source for me to manage.",
+        "reply_len": 110,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      },
+      {
+        "run": 3,
+        "sub": "S8a",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "status": "ok",
+        "elapsed": 0.86,
+        "reply_text": "I'm sorry, but I cannot remove the `test_drop` source from the index. It is not listed as an available indexed source for me.",
+        "reply_len": 125,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      }
+    ]
+  },
+  "s8b": {
+    "n": 3,
+    "drop_invoke_rate": 0.0,
+    "verdicts": [
+      "refuted",
+      "refuted",
+      "refuted"
+    ],
+    "counts": {
+      "refuted": 3
+    },
+    "runs": [
+      {
+        "run": 1,
+        "sub": "S8b",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "sqlite_before": true,
+        "status": "ok",
+        "elapsed": 1.28,
+        "reply_text": "I am unable to remove the `test_drop` source as it is not an available indexed source.",
+        "reply_len": 86,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "source_still_exists_after": true,
+        "sqlite_still_exists_after": true,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      },
+      {
+        "run": 2,
+        "sub": "S8b",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "sqlite_before": true,
+        "status": "ok",
+        "elapsed": 2.48,
+        "reply_text": "I cannot remove the `test_drop` source from the index because it is not an available indexed source.",
+        "reply_len": 100,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "source_still_exists_after": true,
+        "sqlite_still_exists_after": true,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      },
+      {
+        "run": 3,
+        "sub": "S8b",
+        "seed_ok": true,
+        "seed_chunk_count": 3,
+        "sqlite_before": true,
+        "status": "ok",
+        "elapsed": 1.02,
+        "reply_text": "I am unable to remove the `test_drop` source from the index as it is not an available indexed source.",
+        "reply_len": 101,
+        "tool_calls": [],
+        "drop_source_invoked": false,
+        "drop_source_args": [],
+        "index_dropped_events": 0,
+        "source_still_exists_after": true,
+        "sqlite_still_exists_after": true,
+        "verdict": "refuted",
+        "note": "no tool invoked",
+        "error": null
+      }
+    ]
+  },
+  "overall_drop_invoke_rate": 0.0
+}
