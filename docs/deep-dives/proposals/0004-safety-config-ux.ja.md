@@ -1,8 +1,9 @@
 # FP-0004: safety 設定 UX 改善 — 概念レイヤーとの整合
 
-**Status**: proposed
+**Status**: done (landed 2026-05-10、 commit `414f87a`)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Implemented**: 2026-05-10 — `SafetyConfig` + `LoopConfig` + `TimeoutConfig` データクラス (`src/reyn/config.py`) + `hint_config_key` を `LoopLimitExceededError` / `PhaseBudgetExceededError` / `RouterCapExceeded` に追加 + chain-timeout / max-hop-depth エラーメッセージのヒント + `docs/guide/for-skill-authors/understand-why-reyn-stops.md` (en+ja) + 11 Tier 2 invariants (`tests/test_safety_config.py`)。 当初は legacy `limits:` / `multi_agent:` / `cost.router_invocations_per_turn` / `cost.per_chain_skill_calls.hard_limit` キーを back-fill する deprecation reader 込みで landing したが、 `0b464ab` で legacy 互換層を撤去し `safety:` を single source of truth に確定 (= 移行パスなし、 `0.x` ユーザの `reyn.yaml` は手動 migration 必須)。
 
 ---
 

@@ -1,8 +1,9 @@
 # FP-0003: budget 超過時のユーザー許諾・再開フロー
 
-**Status**: proposed
+**Status**: done (landed 2026-05-10、 commit `2ec46c0`)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Implemented**: 2026-05-10 — `CostLimitConfig.ask_on_exceed` + `extension_calls` フィールド + `BudgetTracker.extend_chain_calls()` + `ChatSession._ask_budget_extension()` ask_user dispatch + 8 Tier 2 invariants (`tests/test_budget_extend_chain.py`)。 後続: FP-0005 Phase 2 で shared `handle_limit_exceeded` helper に統合 (`dad53f4`)、 `cost.per_chain_skill_calls` キー自体は legacy 撤去 (`0b464ab`) で `safety.loop.skill_calls_per_chain` に移動。
 
 ---
 

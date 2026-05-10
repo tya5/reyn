@@ -1,8 +1,10 @@
 # FP-0005: safety limit をチェックポイントとして扱う — Permission モデルとの統合
 
-**Status**: proposed
+**Status**: done (= Phase 1 + Phase 2 landed 2026-05-10)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+**Phase 1 implemented**: 2026-05-10 (commit `8715a0b`) — `OnLimitConfig` (`mode` / `auto_extend_times` / `ask_timeout_seconds`) を `safety:` セクションに追加; `RunResult.partial_data` フィールド追加; `OSRuntime.run()` の abort パスが `loop_limit_exceeded` / `phase_budget_exceeded` / `budget_exceeded` で `partial_data` を populate。 **既定 mode = `unattended`** で legacy abort 即座挙動を byte-for-byte 維持; `interactive` / `auto_extend` は明示 opt-in。 8 Tier 2 invariants (`tests/test_safety_on_limit.py`)。
+**Phase 2 implemented**: 2026-05-10 (commit `dad53f4`) — Shared `handle_limit_exceeded` helper (`src/reyn/safety/limit_handler.py`) + `LimitDecision` データクラス; 6 abort path 全 site の wiring (B max_phase_visits / F phase_seconds / A max_act_turns を OSRuntime; C router_cap / E max_hop_depth / G chain_seconds を ChatSession); FP-0003 の `_ask_budget_extension` (D per_chain_skill_calls) を shared helper 経由に generalize; CLI factories (chat / web / mcp) が `config.safety.on_limit` を ChatSession に thread。 11 helper invariants (`tests/test_safety_limit_handler.py`) + 6 wiring invariants (`tests/test_safety_phase2_wiring.py`)。 `_chains.get(chain_id)` peek-before-pop パターンで chain_seconds watchdog がユーザ承認時に pending entry を失わずに re-arm。
 
 ---
 
