@@ -78,3 +78,4 @@ Links to related ADRs, PRs, and docs.
 | [0010](0010-rag-routing.md) | RAG routing — semantic pre-filter for skill catalog + routing history | proposed | MEDIUM |
 | [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | proposed | SMALL |
 | [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | proposed | LARGE |
+| [0013](0013-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | proposed | LARGE |
