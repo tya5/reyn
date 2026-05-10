@@ -100,14 +100,18 @@ the LLM has decided the chunking strategy.
 ## Input
 
 ```
+reyn run index_docs '{"source": "my_docs", "path": "docs/**/*.md", "description": "My project documentation"}'
+```
+
+Or with the explicit `type` / `data` envelope (= `reyn run` accepts both
+shapes; the bare-data form is auto-wrapped):
+
+```
 reyn run index_docs '{"type": "index_docs_input", "data": {"source": "my_docs", "path": "docs/**/*.md", "description": "My project documentation"}}'
 ```
 
-Or via the CLI wrapper (when implemented):
-
-```
-reyn source index --source my_docs --path "docs/**/*.md" --description "My project documentation"
-```
+A future `reyn source index --source ... --path ... --description ...`
+flag-form CLI wrapper is tracked as carry-over but not implemented in 1.0.
 
 ## Output
 

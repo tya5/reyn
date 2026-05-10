@@ -17,13 +17,15 @@ reyn ships a RAG **framework foundation** — five primitive ops, an extensible 
 ## Quick start
 
 ```bash
-# 1. Index your docs
-reyn run index_docs --source my_docs --path "docs/**/*.md" --description "Project documentation"
+# 1. Index your docs (= the index_docs skill takes a JSON artifact as input)
+reyn run index_docs '{"source": "my_docs", "path": "docs/**/*.md", "description": "Project documentation"}'
 
 # 2. Start chatting — the LLM will recall chunks when needed
 reyn chat
 > Summarise the authentication design from the docs
 ```
+
+Verified end-to-end with real `gemini-embedding-001` via the LiteLLM proxy: 21 EN concept docs → 418 chunks indexed (~$0.001), and natural concept queries ("What is X in Reyn?", "Explain Reyn's permission model") returned the indexed semantic answers in 3/3 chat runs (= batch 22, 2026-05-10). See `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`.
 
 Behind the scenes the LLM calls `recall` and retrieves the top matching chunks:
 
@@ -34,7 +36,7 @@ LLM internally calls: recall(query="authentication design", sources=["my_docs"],
 You can also index user notes or any file glob:
 
 ```bash
-reyn run index_docs --source memory --path ".reyn/memory/*.md" --description "User notes and session memos"
+reyn run index_docs '{"source": "memory", "path": ".reyn/memory/*.md", "description": "User notes and session memos"}'
 ```
 
 ## What is a "source"

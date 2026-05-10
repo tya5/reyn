@@ -16,6 +16,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **B22 RAG affordance-bias schema-layer fix — 0/3 → 3/3 first-attempt 100% recovery**
+  (= 2026-05-10, commit `9fdecd1`). 5 parallel sonnet context-analysis agents
+  (= info-gathering only; no edits) traced the batch 21 attractor to its true
+  driver: a SP-level rule ("When the user asks how Reyn works… call
+  `reyn_src_read('README.md')` first"), not the tool description as initially
+  assumed. Multi-layer reinforcement fix landed in 1 commit:
+  - `src/reyn/chat/router_system_prompt.py` — "Explaining Reyn" rule rewritten
+    as conditional on the Indexed sources section (= when an indexed source's
+    description mentions concepts / design / docs / architecture / Reyn,
+    route to `recall` first; only fall back to `reyn_src_read("README.md")`
+    when no indexed source covers Reyn).
+  - `src/reyn/tools/reyn_src.py` `_REYN_SRC_READ_DESCRIPTION` — practitioner
+    4-part template (= what / when / when NOT / cross-reference): removed the
+    broad "Use this for any 'how does X work?' question" claim, added
+    explicit (a) read-named-file / (b) navigate-when-no-indexed-source
+    enumeration, retained the README curated-navigation entry point as
+    fallback (= preserves the original HN first-touch motivation).
+  - `src/reyn/tools/recall.py` `_RECALL_DESCRIPTION` — strengthened with
+    concrete use-case enumeration ("what is X?" / "explain X" /
+    "how does X work?") and cross-reference to `reyn_src_read`, kept
+    source-agnostic (= the SP carries the source list; description must
+    not couple to specific source names).
+  - `tests/test_reyn_src_unified.py` byte-identity test pinned to the new
+    canonical text with batch 22 rationale.
+  Real e2e retest (= same 21 `docs/concepts/*.md` → 418 chunks via
+  `gemini-embedding-001`, same N=3 prompts as batch 21): all 3 invoked
+  `recall(sources=['reyn_concepts'])` and produced 895-1611 char meaningful
+  semantic answers. Class B (= affordance-bias attractor) hypothesis status
+  upgraded from "partial validation pending" to **decisive validation**;
+  schema-layer multi-layer reinforcement (SP rule + 4-part description)
+  established as the first-line fix template for Class B. New principle 16
+  candidate (= pre-fix multi-agent context analysis) added to dogfood
+  discipline — batch 22's first-attempt 100% recovery vs batches 18-20's
+  4 prompt-tweak failures shows the pattern's cost-effectiveness.
+- **B21 real e2e dogfood + description/path propagation fix**
+  (= 2026-05-10, commit `bca1947`). Main agent direct e2e dogfood (= no
+  sub-agent dispatch): real `reyn run index_docs` against 21 EN concept
+  docs via `gemini-embedding-001` (real, not Fake), N=3 chat queries with
+  natural concept questions. Surfaced two issues that synthetic-content
+  batches 17-20 could not catch:
+  - **B21-S0-1 [HIGH]** description/path propagation bug (FIXED). The
+    `IndexWriteIROp` schema had no `description` / `path` fields, so the
+    `index_docs` skill's postprocessor could not pass them through, and
+    `index_write.py` fell back to "Index of source '<name>'" placeholder
+    plus "(unknown)" path. Fix: add optional fields to schema, handler
+    resolves with caller-priority (op > existing > placeholder), skill's
+    `args_from` propagates `data.description` / `data.path`. Was deferred
+    as MED in batch 17 (B17-S3-2); reclassified HIGH because it degrades
+    routing accuracy — LLM cannot evaluate what an indexed source contains
+    when it sees only the placeholder.
+  - **B21-S0-2 [HIGH, then fixed in B22]** affordance-bias attractor
+    valid evidence. After B21-S0-1 fix, N=3 retest still showed 0/3
+    recall invocations; LLM picked `reyn_src_read` with hallucinated paths
+    (e.g. `docs/en/concepts/care-boundary.md` which does not exist; the
+    actual path is `docs/concepts/...`). First valid evidence for the
+    affordance-bias / Class B hypothesis from batch 19 — confounds in
+    batches 18-20 (scenario flaw, prompt concept-leaning) eliminated by
+    real content + real embedding + informative SP description + natural
+    concept queries. Fixed in B22 (above).
+  Also lifted new candidate principle 15 (= prompt class taxonomy) to
+  discipline — batch 18 S5's 83% verified rate is now understood as
+  P-explicit class (= prompts containing search hints like "Search the
+  docs"); P-natural class (= "What is X?") has its own base rate and
+  needs its own measurement.
 - **ADR-0033 RAG-extensible OS Phase 1 — Accepted** (= 2026-05-10): 5 op kinds (`embed`, `index_write`, `index_query`, `recall`, `index_drop`) + `ChunkMetadata` Pydantic schema (P7-compatible: `source_type` is OS-uninterpreted) + `IndexBackend` Protocol with `register_backend()` plugin path (Qdrant / FAISS / Weaviate / Pinecone in phase 2) + `SqliteIndexBackend` default impl (numpy cosine, `.reyn/index/<source>/index.db`) + `EmbeddingProvider` Protocol + `LiteLLMEmbeddingProvider` passthrough + tiktoken-based `cost_estimator` + `SourceManifest` singleton (= file SSoT `.reyn/index/sources.yaml` + per-process mem cache + atomic write + advisory lock) + `index_docs` stdlib skill (= 1 Phase LLM strategy + Skill.postprocessor chain) + `chunkers.py` (= heading / blank_line / sentence boundaries) + `chunk_strategy.yaml` schema + `recall` + `drop_source` ToolDefinitions (gates router/phase = allow) + `reyn source {list, rm, describe}` CLI subcommands + router system prompt 「Indexed sources」 section + 5 UX gap fixes (= empty state hint / cost preflight ask_user gate / progress feedback outbox / concurrent advisory lock / DB corruption recovery hint) + `docs/concepts/rag.{md,ja.md}` + `docs/reference/cli/source.{md,ja.md}` + `reyn.yaml` `embedding:` section (= `default_class` + `classes:` map mirroring `models:` + `batch_size` / `max_concurrent_batches` / `max_retries` / `tokenizer` / `cost_warn_threshold` defaults). Narrative: "framework foundation, not mature RAG product" — differentiation is `skill.md`-driven indexing strategy override (= LangChain / LlamaIndex are Python pipeline; Reyn is skill DSL). Phase 1 invariant: **the LLM never sees the full chunk list** (= samples + top-K only, attractor surface is structurally zero). Memory-layer migration is Phase 1.5 (= 1.1 release scope, 1.0 keeps memory inline unchanged).
 - Batch 17/18/19/20 RAG dogfood progression with 5-commit fix wave: build_tools wiring (`0014310`) + abort CandidateOutput in `_build_candidates` (`a4c1b47`) + router prompt vocab disambiguation (`2d3e531`) + `SourceManifest` mtime-poll cross-process cache invalidation (`d670839`) + `permissions.index_drop` declaration in router op context (`fa05e8c`). `LiteLLMEmbeddingProvider` accepts `EmbeddingConfig` dataclass + tolerates dict-shape provider response (`9681096`). `phases/strategy.md` cost gate strict ordered rule + named anti-attractor callout (`ef70aef`). 4 router replay fixtures re-recorded after system prompt changes (`c41fd82`).
 - **`recall` macro op vector field strip** (`ef70aef` follow-up): ChunkRecord `vector` field is stripped from the recall envelope before returning to the LLM. Vectors are needed by the backend for similarity ranking but useless to LLM / postprocessor consumers; at top_k=5 / 1536-dim they were silently inflating router context by ~40KB per call. Backends keep the vector internally; it never crosses the op boundary now.

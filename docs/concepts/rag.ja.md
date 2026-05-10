@@ -18,7 +18,7 @@ reyn は RAG **framework foundation** を提供します — 5 つの primitive 
 
 ```bash
 # 1. ドキュメントを index する
-reyn run index_docs --source my_docs --path "docs/**/*.md" --description "プロジェクトドキュメント"
+reyn run index_docs '{"source": "my_docs", "path": "docs/**/*.md", "description": "プロジェクトドキュメント"}'
 
 # 2. チャットを開始する — LLM は必要に応じて chunk を recall する
 reyn chat
@@ -34,7 +34,7 @@ LLM internally calls: recall(query="認証設計", sources=["my_docs"], top_k=5)
 ユーザーノートや任意のファイル glob を index することもできます：
 
 ```bash
-reyn run index_docs --source memory --path ".reyn/memory/*.md" --description "ユーザーメモとセッション記録"
+reyn run index_docs '{"source": "memory", "path": ".reyn/memory/*.md", "description": "ユーザーメモとセッション記録"}'
 ```
 
 ## source とは何か

@@ -317,6 +317,57 @@ Case study: batch 18 surfaced dimension 1+2 (= S6 prompt "How is recall implemen
 
 **Why the checklist is the lift, not the redesigns.** Each individual scenario redesign in the batch-18-to-20 sequence felt locally correct; the systemic flaw was that audit was one-dimensional. Once the four dimensions are explicit in the prelude template, future scenarios catch the gap before they consume a batch budget.
 
+### Principle 15 (candidate): Prompt class taxonomy
+
+> Status: established by batch 21 (= real e2e dogfood). The 83% verified rate
+> in batch 18 S5 was driven by an explicit-search hint in the prompt; the
+> same scenario with a natural concept query produced 0%. Dogfood scenarios
+> must declare their prompt class so prediction base rates are calibrated
+> per class.
+
+**Operational rule.** Each scenario in the prelude classifies its prompt as one of:
+
+- **Class P-explicit** — the prompt contains an explicit search / lookup / find verb (= "Search the docs", "look up X", "find the X for me"). The user's intent is tool-level: they want retrieval, not narrative answer. The router system prompt's "When user says 'search' / 'find in docs' / 'lookup', use recall" rule fires.
+- **Class P-natural** — the prompt is a natural question without tool-level verbs (= "What is X?", "Explain X", "How does X work?"). The user's intent is content-level: they want an answer, not a tool invocation. Tool routing has to be inferred from context (= tool descriptions + SP rules + indexed source descriptions).
+
+The two classes have **different base rates for any given attractor**. Batch 18 S5 P-explicit hit 83% verified; batch 21's same scenario P-natural hit 0% before the schema-layer fix. Predictions written without classifying the prompt anchor on whichever rate the dogfooder happens to remember and produce systematic miscalibration.
+
+Case study: batch 18 S5's verified rate was treated as the headline metric for "RAG is working" until batch 21 (= real e2e against `docs/concepts/*.md`) showed natural concept queries returned 0/3 with hallucinated paths. The 83% number was real, but it described P-explicit class; the gap to real-world UX was the absence of P-natural class measurement.
+
+**Implication for prelude predictions.** Prediction rows split by class when both could apply:
+- Structural axis: same for both classes (= principle 11)
+- Behavioral axis P-explicit: prior batches' explicit-search base rate
+- Behavioral axis P-natural: prior batches' natural-question base rate (= often much lower until schema-layer fixes land)
+
+### Principle 16 (candidate): Pre-fix multi-agent context analysis
+
+> Status: established by batch 22 (= affordance-bias schema-layer fix). Lifts
+> the pre-retrospective discipline (= principle batch 19) one phase earlier:
+> before designing a fix, dispatch parallel info-gathering agents so the fix
+> design starts from evidence, not speculation.
+
+**Operational rule.** When designing a fix for a behavioral attractor (= principle 13 Class A / B / C), dispatch parallel sonnet agents in **info-gathering only mode** (= no edits, read-only) before writing any code. A typical fan-out is 5 agents covering:
+
+1. **Trace deep-dive** — read all trace dumps for the attractor, plus a comparison batch where the same surface verified, identify the smallest LLM-input-level structural difference.
+2. **Industry research** — how do mainstream agent frameworks (= OpenAI, Anthropic, LangChain, MCP, practitioner blogs) describe the same affordance conflict? Are there documented patterns?
+3. **Description / rule history audit** — git blame the existing description / SP rule, find the commit and motivation, list the use cases the original wording protects.
+4. **Constraint audit** (= reverse direction) — what existing surfaces (empty-state, vocab, required fields, B17 disambiguations) must any fix preserve?
+5. **Design space mapping** — enumerate ALL the levers (tool description, SP rule, parameter schema, tool ordering, conditional suppression, category field, strict mode, empty-state suppression) and rank them by effort × evidence × risk.
+
+The main agent then synthesizes the 5 reports and lands a multi-layer fix in **one commit**, instead of iterating on prompt-tweak speculation.
+
+Case study: batch 22 (= affordance-bias schema-layer fix). Batches 18-20 spent 4 attempts iterating on prompt rewrites and synthetic-content scenario redesigns, all 0/3 verified. Batch 22 ran 5 parallel context-analysis agents, discovered the true driver was a SP-level rule (not the tool description as initially assumed), and landed a multi-layer fix (SP rule + 2 tool description rewrites per practitioner 4-part template) in one commit. Same scenario, same prompts, same N=3: 0/3 → 3/3 verified, first attempt. The cost of the extra synthesis stage (= ~10 min wall-clock for parallel info-gathering + ~5 min synthesis) is recovered many times over compared to the 4 hours spent on prompt-tweak iteration.
+
+**When to use vs skip.** Use this pattern when:
+- the issue is behavioral attractor (= LLM picks the wrong path despite available alternatives)
+- prior batches show the same attractor recurring across scenarios (= base rate ≥ 1)
+- the root cause is unclear (= "is it the SP rule, the tool description, or the parameter schema?")
+- the fix is potentially production-grade (= 1.0 release blocker, user-impact high)
+
+Skip for: simple structural / wiring / null-safety bugs where the trace already shows the root cause, isolated bug fixes (= single file, single line), or speculative hypothesis tests with no valid evidence.
+
+This principle pairs with principle 11 (= predict before observing) and principle batch 19 (= pre-retrospective discipline) to form a three-stage agent-self-discipline ladder: predict (prelude) → audit before retrospective (= batch 19) → audit before fix (= batch 22).
+
 ---
 
 ## 4. Common patterns and anti-patterns
@@ -1092,5 +1143,7 @@ The following retrospectives provide detailed case studies of the principles des
 - **Batch 18** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-18-rag-fix-retest/retrospective.md`): Headline (S5) full recovery 0/5 → 3/3 + extended N=12 = 83% (= dogfood log's largest per-scenario calibration recovery, Brier 0.575 → 0.067); structural × behavioral prediction-axis separation (= principle 11) and verdict false-attribution discipline (= principle 12) established.
 - **Batch 19 (revised post self-audit)** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/retrospective.md`): Cognitive-bias named anti-attractor callout pattern validated at 100% compliance (= S9 Class A). Initially also claimed affordance-bias attractor (= Class B) established; user-prompted self-audit found the S6 evidence was confounded by a scenario design flaw (= prompt naturally matched `reyn_src_read`'s claimed use case). Class B was downgraded to hypothesis; pre-retrospective discipline established (= read LLM trace + tool description + scenario design premise BEFORE writing the retrospective).
 - **Batch 20** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-20-rag-multi-source-retest/retrospective.md`): S6 redesigned with synthetic sources to remove `reyn_src_read` affordance conflict; main agent self-executed pre-retrospective discipline and caught a second scenario-design confound (= prompt structurally satisfied by single source) BEFORE writing the retrospective. Affordance-bias hypothesis remains pending; the four-dimension scenario design audit checklist (= principle 14) was lifted as the systemic fix that closes the batch-18-to-20 sequence of one-dimensional audits.
+- **Batch 21** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-21-rag-real-e2e/retrospective.md`): real e2e dogfood (= 21 EN concept docs → 418 chunks via real `gemini-embedding-001`, natural concept queries instead of explicit-search prompts). First instance of: (a) main agent direct execution (= no sub-agent dispatch) of the full prelude / index / chat / audit / fix / retrospective pipeline, (b) the description/path propagation bug B21-S0-1 surfaced + fixed in-flight, (c) valid evidence for affordance-bias attractor (= 0/3 verified after the description fix landed). Lifted prompt class taxonomy (= principle 15) — batch 18 S5's 83% verified rate was P-explicit class; the 0% on natural P-natural queries was the gap the prior synthetic dogfood batches couldn't see.
+- **Batch 22** (`docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/retrospective.md`): schema-layer fix for the affordance-bias attractor surfaced in batch 21. **First instance of pre-fix multi-agent context analysis (= principle 16)** — 5 parallel sonnet info-gathering agents (= trace deep-dive + industry research + description history audit + constraint audit + design space mapping) traced the true driver to a SP-level rule, not the tool description as initially assumed. Multi-layer reinforcement fix (= SP rule + 2 tool descriptions per practitioner 4-part template) landed in one commit; same N=3 retest flipped 0/3 → 3/3 verified, first attempt. Class B (= affordance-bias) hypothesis status upgraded from "partial validation" to **decisive validation**, and the schema-layer multi-layer reinforcement pattern is now the established Class B fix template.
 
 For the full batch index and operational log, see `docs/deep-dives/journal/dogfood/README.md`.

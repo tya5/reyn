@@ -119,8 +119,12 @@ path for Qdrant / FAISS / Weaviate / Pinecone in phase 2) and the stdlib
 `index_docs` skill. The differentiator is that you write your indexing strategy
 as a `skill.md` (= LLM-driven adaptive chunking + a deterministic postprocessor
 chain), not a Python pipeline. Override the chunker per-source by swapping a
-single python step. See [docs/concepts/rag.md](docs/concepts/rag.md). Maturity
-gaps (rerank / HyDE / advanced retrieval / RAG eval framework) live downstream.
+single python step. End-to-end smoke (= `reyn run index_docs` against
+`docs/concepts/*.md` → 418 chunks via real `gemini-embedding-001` →
+`reyn chat` with natural concept queries) returns the indexed semantic
+answers in 3/3 runs. See [docs/concepts/rag.md](docs/concepts/rag.md).
+Maturity gaps (rerank / HyDE / advanced retrieval / RAG eval framework) live
+downstream.
 
 **Reyn is smaller.** No chain abstractions, no rich vector store ecosystem —
 those live downstream (see [care-boundary.md](docs/concepts/care-boundary.md)).
