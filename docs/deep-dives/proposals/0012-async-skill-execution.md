@@ -11,9 +11,14 @@
 Skills, agent delegations, and plans are all designed for long-running execution (minutes to
 hours), yet `invoke_skill` currently blocks the session's message loop via
 `await _run_skill_awaitable()`. Every user message typed during skill execution queues in the
-inbox and goes unprocessed until the skill finishes. Change `invoke_skill` to fire-and-forget
-(async dispatch), return a spawned status immediately to the router LLM, and re-enter the
-router with the result when the task completes — without narrator.
+inbox and goes unprocessed until the skill finishes.
+
+Change `invoke_skill` so its `_handle` spawns the task and returns
+`{"status": "spawned", "run_id": ..., "chain_id": ...}` immediately (non-blocking, no
+`dispatch_kind` change needed). The router LLM sees this tool result inline and acknowledges
+to the user. When the task completes, a `user`-role message carrying the `chain_id` and
+result is injected into the existing conversation thread — preserving full context so the
+router LLM can correlate the completion with the original invocation and narrate accurately.
 
 ---
 
@@ -57,9 +62,9 @@ uses `dispatch_kind="async"`. Plans already use `create_task`. This FP focuses o
 
 ## Proposed design
 
-### Phase 1 — invoke_skill becomes async dispatch
+### Phase 1 — invoke_skill becomes non-blocking (spawn-and-return)
 
-**`invoke_skill` tool returns immediately after spawning:**
+**`_handle` spawns the task and returns immediately — no `dispatch_kind` change:**
 
 ```python
 # _handle in invoke_skill.py — after validation
@@ -71,31 +76,49 @@ session.running_skills[run_id] = task
 return {
     "status": "spawned",
     "run_id": run_id,
+    "chain_id": chain_id,   # ← router LLM will use this to correlate completion
     "note": "Running in the background. I will notify you when it completes.",
 }
 ```
 
-`invoke_skill` is registered with `dispatch_kind="async"`, so the router loop exits
-immediately (same branch as `delegate_to_agent`). The router LLM never sees the tool result
-inline — instead it sees the exit and generates a user-facing acknowledgment:
+`dispatch_kind` remains `"sync"`. The router loop receives the tool result inline and
+calls the router LLM one final time. The LLM sees `{status: "spawned", chain_id: "abc123"}`
+and generates a user-facing acknowledgment:
 
 ```
 Router → user:
-  "Starting skill_builder. I'll let you know when it's done.
+  "Starting skill_builder (chain_id: abc123). I'll let you know when it's done.
    You can check progress with /skill list."
 ```
 
-The session loop is now free to process the next inbox message immediately.
+The background task is already running; the session loop is free to process the next inbox
+message immediately after the router responds.
 
 **Router system prompt addition:**
 
 ```
-- After invoke_skill spawns a task: tell the user what you started and that
-  you will notify them on completion. Mention /skill list for progress.
-  Do NOT ask follow-up questions until the task finishes.
+- When invoke_skill returns {status: "spawned", chain_id: ...}: tell the user what you
+  started and that you will notify them on completion. Include the chain_id so they can
+  reference it with /tasks status. Do NOT ask follow-up questions until the task finishes.
 ```
 
-### Phase 2 — Completion re-entry into router (no narrator)
+### Phase 2 — Completion re-entry via user message injection (no narrator)
+
+#### Why tool_result cannot be used for async completion
+
+LLM APIs (both OpenAI Chat Completions and Anthropic Messages API) enforce a strict
+constraint: a `tool_result` / `role: "tool"` message must be preceded by an `assistant`
+message containing the matching `tool_use` / `tool_calls` block. Injecting a `tool_result`
+without a prior correlated `tool_use` returns a 400 error. By the time the async task
+completes, the conversation has moved on; the original `tool_use` for `invoke_skill` already
+has its `tool_result` (the `{"status": "spawned"}` response). There is no open `tool_use`
+to correlate a second result with.
+
+This is why no major multi-agent framework delivers truly async completion back to the LLM
+as a tool_result — they either block until completion or start a fresh, context-free LLM
+turn.
+
+#### The correct approach: user message injection with chain_id
 
 When `_run_one_skill` completes, instead of calling `_invoke_narrator`, enqueue a
 `"skill_completed"` message into the session inbox:
@@ -118,28 +141,29 @@ elif kind == "skill_completed":
     await self._handle_skill_completed(payload)
 ```
 
-`_handle_skill_completed` runs a single router LLM turn with the result injected as context:
+`_handle_skill_completed` injects a `user`-role message into the **existing conversation
+thread** and runs one router LLM turn:
 
-```
-[system addendum]:
-  An async task you started has completed.
-  skill: skill_builder
-  status: finished
-  result: {"skill_name": "my_skill", "path": "reyn/project/my_skill/skill.md"}
-
-  Summarize what completed for the user in 1–2 sentences.
-  Status guidance (same as FP-0011 Component B).
+```python
+# Injected into session message history (role="user")
+"[task_completed] chain_id=abc123\n"
+"skill: skill_builder  status: finished\n"
+"result: {\"skill_name\": \"my_skill\", \"path\": \"reyn/project/my_skill/skill.md\"}\n\n"
+"Please summarize what completed for the user in 1–2 sentences."
 ```
 
-Router LLM generates the narration → pushed to user outbox. This replaces narrator entirely
-(subsumes FP-0011's completion narration path).
+Router LLM generates the narration → pushed to user outbox.
 
-**Why router re-entry, not narrator?**
+**Why user message injection, not system addendum in a fresh LLM call?**
 
-Consistent with FP-0011: the router LLM already narrates every other tool result inline
-(recall, list_skills, etc.). Skill completion is structurally identical — a tool result
-that needs natural language narration. Having one narration path (router LLM) is cleaner
-than two (router for sync tools + narrator for skills).
+Injecting into the existing thread means the router LLM has full conversation context:
+it can see the original `invoke_skill` call, the `{status: "spawned", chain_id: "abc123"}`
+tool result, any exchanges with the user in between, and now the completion — all in one
+coherent thread. The `chain_id` ties the completion notification back to the specific
+invocation. A fresh, context-free LLM call loses all of this and produces lower-quality
+narration. This approach is also the only one that correctly handles multiple concurrent
+skills: each completion message carries its own `chain_id`, and the LLM can distinguish
+which task finished.
 
 ### Phase 3 — Slash command enhancements
 
@@ -170,8 +194,10 @@ No new session state is required.
 
 ```
 User: "skill_builder を動かして"
-  └─ RouterLoop: invoke_skill(name="skill_builder") → spawns task, returns immediately
-  └─ Router LLM → user: "skill_builder を起動しました。/tasks で進捗を確認できます。"
+  └─ RouterLoop: invoke_skill(name="skill_builder")
+       └─ _handle: create_task(...) → returns {status:"spawned", chain_id:"abc123"} immediately
+       └─ Router LLM sees tool_result inline, generates acknowledgment
+  └─ Router LLM → user: "skill_builder を起動しました (chain_id: abc123)。/tasks で進捗を確認できます。"
   └─ Session loop: free — processes next user message immediately
 
 User: "ちなみに recall の設定どうなってた？"
@@ -179,8 +205,13 @@ User: "ちなみに recall の設定どうなってた？"
   └─ User sees answer — skill is still running in background
 
 [2 minutes later] skill_builder completes
-  └─ inbox: ("skill_completed", {skill: "skill_builder", status: "finished", data: {...}})
-  └─ _handle_skill_completed → router LLM turn with result context
+  └─ inbox: ("skill_completed", {skill:"skill_builder", chain_id:"abc123", status:"finished", data:{...}})
+  └─ _handle_skill_completed:
+       └─ injects user message into conversation thread:
+            "[task_completed] chain_id=abc123 / skill: skill_builder / status: finished
+             result: {skill_name: my_skill, path: reyn/project/my_skill/skill.md}
+             Please summarize for the user in 1–2 sentences."
+       └─ runs one router LLM turn (LLM has full thread context including original spawn)
   └─ Router LLM → user: "skill_builder が完了しました。reyn/project/my_skill/ に作成されました。"
 ```
 
@@ -188,23 +219,29 @@ User: "ちなみに recall の設定どうなってた？"
 
 ## Proposed implementation
 
-### Component A — `invoke_skill` async dispatch (MEDIUM)
+### Component A — `invoke_skill` non-blocking spawn (MEDIUM)
 
-- Change `INVOKE_SKILL` to `dispatch_kind="async"`
-- `_handle` spawns `create_task` and returns `{"status": "spawned", "run_id": ..., "note": ...}`
-- Remove `_run_skill_awaitable` (or keep as internal utility for narrator removal)
-- Wire `_run_one_skill` to enqueue `"skill_completed"` into inbox on completion
+- `_handle` spawns `create_task` and returns **immediately** with
+  `{"status": "spawned", "run_id": ..., "chain_id": ..., "note": ...}`
+- **No `dispatch_kind` change** — remains `"sync"` so the router LLM receives the
+  tool result inline and generates an acknowledgment in the same turn
+- Remove `_run_skill_awaitable` (or keep as internal utility)
+- Wire `_run_one_skill` completion to enqueue `"skill_completed"` into inbox
 
 ### Component B — `session.run()` loop handles `"skill_completed"` (SMALL)
 
 - Add `elif kind == "skill_completed"` branch
-- `_handle_skill_completed` builds a compact router context and runs one router LLM turn
-- Router generates narration → outbox
+- `_handle_skill_completed` injects a `user`-role message carrying `chain_id` +
+  result into the **existing** conversation thread, then runs one router LLM turn
+- Router sees full thread context (original spawn + intermediate exchanges +
+  completion); generates narration → outbox
 
 ### Component C — Router system prompt updates (SMALL)
 
-- Post-`invoke_skill` acknowledgment guidance (Phase 1)
-- Post-completion narration guidance (Phase 2, same as FP-0011 Component B)
+- Post-`invoke_skill` spawn guidance: acknowledge what started, include chain_id,
+  mention `/tasks status` for progress (Phase 1)
+- Post-completion narration guidance: when seeing `[task_completed]` user message,
+  narrate in 1–2 sentences with status-aware wording (Phase 2)
 
 ### Component D — `/tasks` slash command (SMALL)
 
@@ -242,7 +279,7 @@ cleanup. FP-0012 Components A–E deliver the full async execution model.
 ## Dependencies
 
 - `asyncio.create_task` + `running_skills` dict — already present in session.py
-- `dispatch_kind="async"` pattern — already used by `delegate_to_agent`
+- `chain_id` — already present in session.py (`running_skills_chain`)
 - P6 event log — used by `/tasks status` (no new events needed beyond existing ones)
 - FP-0011 — partial overlap; see relationship table above
 
