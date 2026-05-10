@@ -60,8 +60,7 @@ def _build_registry(tmp_path: Path, agents: list[tuple[str, str]]) -> AgentRegis
     def factory(profile: AgentProfile) -> ChatSession:
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
-        cost = CostConfig(router_invocations_per_turn=3)
-        bt = BudgetTracker(cost)
+        bt = BudgetTracker(CostConfig())
         return ChatSession(
             agent_name=profile.name,
             agent_role=profile.role,

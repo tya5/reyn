@@ -17,9 +17,7 @@ key to allow more" hint embedded in the error message. This page maps
 the failure modes to the knobs.
 
 > **TL;DR:** the unified namespace is `safety.*` for loop / timeout
-> conditions, and `cost.*` for financial caps. Old config keys
-> (`limits.*`, `multi_agent.*`) still work as fallback, but new configs
-> should use `safety.*`.
+> conditions, and `cost.*` for financial caps.
 
 ---
 
@@ -37,7 +35,7 @@ investigate when it should not.
 | Act turns per phase | LLM ↔ op volleys inside one phase visit | 10 | `safety.loop.max_act_turns_per_phase` (skill / phase frontmatter wins) |
 | Router calls per turn | Chat router invoked too many times per user turn | 3 | `safety.loop.max_router_calls_per_turn` (0 = unlimited) |
 | Agent delegation depth | `user → A → B → C` chain too deep | 3 | `safety.loop.max_agent_hops` |
-| Skill spawns per chain | Same skill spawned too many times in one chain | unlimited | `safety.loop.max_skill_calls_per_chain` |
+| Skill spawns per chain | Same skill spawned too many times in one chain | unlimited | `safety.loop.skill_calls_per_chain.hard_limit` |
 
 ### Example error
 
@@ -102,7 +100,7 @@ trigger an investigation or an explicit user approval.
 |---|---|---|
 | Per-agent tokens | One agent hit its token cap | `cost.per_agent_tokens.hard_limit` |
 | Per-agent USD | One agent hit its USD cap | `cost.per_agent_cost_usd.hard_limit` |
-| Per-(chain, skill) calls | Same skill spawned too many times in one chain | `cost.per_chain_skill_calls.hard_limit` (also `safety.loop.max_skill_calls_per_chain`) |
+| Per-(chain, skill) calls | Same skill spawned too many times in one chain | `safety.loop.skill_calls_per_chain.hard_limit` (also `cost.per_chain_skill_calls.hard_limit`) |
 | Per-(chain, skill) tokens | Same skill consumed too many tokens in one chain | `cost.per_chain_skill_tokens.hard_limit` |
 | Daily quota | All work today exceeded `daily_tokens` / `daily_cost_usd` | `cost.daily_tokens.hard_limit`, `cost.daily_cost_usd.hard_limit` |
 | Monthly quota | This month exceeded `monthly_tokens` / `monthly_cost_usd` | `cost.monthly_tokens.hard_limit`, `cost.monthly_cost_usd.hard_limit` |
@@ -125,28 +123,6 @@ cost:
 When the cap is hit, Reyn asks: *"Skill `X` has reached its cap of 5
 spawns. Allow 3 more?"* — the user can approve repeatedly; each
 approval extends the cap further.
-
----
-
-## Migrating from old config keys
-
-Old keys still work; they map onto the unified `safety:` namespace as
-follows:
-
-| Old key | New key |
-|---|---|
-| `limits.phase.max_visits` | `safety.loop.max_phase_visits` |
-| `limits.phase.max_wall_seconds` | `safety.timeout.phase_seconds` |
-| `limits.llm.timeout` | `safety.timeout.llm_call_seconds` |
-| `limits.llm.max_retries` | `safety.timeout.llm_max_retries` |
-| `multi_agent.max_hop_depth` | `safety.loop.max_agent_hops` |
-| `multi_agent.chain_timeout_seconds` | `safety.timeout.chain_seconds` |
-| `cost.router_invocations_per_turn` | `safety.loop.max_router_calls_per_turn` |
-| `cost.per_chain_skill_calls.hard_limit` | `safety.loop.max_skill_calls_per_chain` (also kept under `cost.*` for ask_on_exceed) |
-
-When both new and old keys are set, **the new key wins**. The old keys
-will be removed in a future major version; migrating now keeps
-configurations forward-compatible.
 
 ---
 
@@ -186,7 +162,7 @@ safety:
 | `safety.loop.max_router_calls_per_turn` | `ChatSession._check_and_increment_router_cap` | interactive / auto_extend |
 | `safety.loop.max_agent_hops` | `ChatSession._send_to_agent` | interactive / auto_extend |
 | `safety.timeout.chain_seconds` | chain timeout watchdog | interactive / auto_extend (re-arm) |
-| `cost.per_chain_skill_calls` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
+| `safety.loop.skill_calls_per_chain` | spawn budget gate | interactive (= FP-0003 `ask_on_exceed`) |
 
 `safety.timeout.llm_call_seconds` is excluded by design — litellm
 already auto-retries within `safety.timeout.llm_max_retries`, so an

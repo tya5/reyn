@@ -27,7 +27,7 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from reyn.llm.pricing import TokenUsage, estimate_cost
 
@@ -80,19 +80,18 @@ class CostLimitConfig:
 
 @dataclass
 class CostConfig:
-    """`cost:` — budget caps and rate limits (PR22 + PR25)."""
+    """`cost:` — financial budget caps and rate limits (PR22 + PR25).
+
+    Contains only financial knobs (per-agent token/USD, daily/monthly quota,
+    rate limits). Loop-detection caps (router_invocations_per_turn,
+    per_chain_skill_calls, per_chain_skill_tokens) moved to
+    ``SafetyConfig.loop`` in the FP-0004/0005 refactor.
+    """
 
     per_agent_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     per_agent_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
-    per_chain_skill_calls: CostLimitConfig = field(default_factory=CostLimitConfig)
-    per_chain_skill_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     rate_limit_per_minute: dict[str, int] = field(default_factory=dict)
     rate_limit_warn_ratio: float = 0.8
-    # Hard cap on consecutive skill_router invocations within a single user
-    # turn (or top-level agent_request). Prevents runaway re-routing loops
-    # such as the S4 dogfood incident (16 invocations / 245k prompt tokens
-    # for one paste). 0 disables the cap (not recommended).
-    router_invocations_per_turn: int = 3
     # PR25: persistent daily / monthly quota (reset automatically at period boundary)
     daily_tokens: CostLimitConfig = field(default_factory=CostLimitConfig)
     daily_cost_usd: CostLimitConfig = field(default_factory=CostLimitConfig)
@@ -287,10 +286,30 @@ class BudgetTracker:
     Counters live in memory and reset on process restart. `:budget reset`
     clears them mid-process. The tracker is single-thread / asyncio-safe
     by virtue of running in a single event loop (no internal locking).
+
+    ``safety`` carries loop-detection caps that belong to ``SafetyConfig``
+    (skill_calls_per_chain, skill_tokens_per_chain). Pass ``None`` for
+    unlimited (= no chain-skill caps enforced).
     """
 
-    def __init__(self, config: CostConfig) -> None:
+    def __init__(self, config: CostConfig, safety: "Any | None" = None) -> None:
         self._config = config
+        # Pull chain-skill caps out of SafetyConfig.loop if provided.
+        # SafetyConfig is imported lazily to avoid a circular import at
+        # module load time (budget.py ← config.py ← budget.py).
+        if safety is not None:
+            loop = getattr(safety, "loop", None)
+            self._skill_calls_cap: CostLimitConfig = (
+                getattr(loop, "skill_calls_per_chain", CostLimitConfig())
+                if loop is not None else CostLimitConfig()
+            )
+            self._skill_tokens_cap: CostLimitConfig = (
+                getattr(loop, "skill_tokens_per_chain", CostLimitConfig())
+                if loop is not None else CostLimitConfig()
+            )
+        else:
+            self._skill_calls_cap = CostLimitConfig()
+            self._skill_tokens_cap = CostLimitConfig()
         self._agent_tokens: dict[str, int] = defaultdict(int)
         self._agent_cost_usd: dict[str, float] = defaultdict(float)
         self._chain_skill_calls: dict[tuple[str, str], int] = defaultdict(int)
@@ -429,7 +448,7 @@ class BudgetTracker:
         ``BudgetCheck.context['ask_on_exceed']`` tells the caller whether
         a refusal is eligible for the user-approval flow.
         """
-        cap = self._config.per_chain_skill_calls
+        cap = self._skill_calls_cap
         if not cap.is_active:
             return BudgetCheck(allowed=True)
         used = self._chain_skill_calls[(chain_id, skill)]
@@ -457,9 +476,9 @@ class BudgetTracker:
         warn_dims: list[str] = []
         threshold = cap.warn_threshold
         if threshold is not None and used + 1 >= threshold:
-            key = ("per_chain_skill_calls", f"{chain_id}/{skill}")
-            if key not in self._warned:
-                self._warned.add(key)
+            wkey = ("per_chain_skill_calls", f"{chain_id}/{skill}")
+            if wkey not in self._warned:
+                self._warned.add(wkey)
                 warn_dims.append("per_chain_skill_calls")
         return BudgetCheck(
             allowed=True,
@@ -541,7 +560,7 @@ class BudgetTracker:
         if chain_id is not None and skill is not None:
             new_tok = self._chain_skill_tokens[(chain_id, skill)] + usage.total_tokens
             self._chain_skill_tokens[(chain_id, skill)] = new_tok
-            cap = self._config.per_chain_skill_tokens
+            cap = self._skill_tokens_cap
             if cap.is_active and cap.warn_threshold is not None:
                 if new_tok >= cap.warn_threshold:
                     key = f"{chain_id}/{skill}"
@@ -749,6 +768,8 @@ class BudgetTracker:
                 for m, q in self._call_window.items()
             },
             "config": self._config,
+            # Chain-skill cap from SafetyConfig (for :budget display)
+            "skill_calls_cap": self._skill_calls_cap,
             # PR25: persistent daily / monthly counters
             "daily_tokens": self._daily_tokens,
             "daily_cost_usd": round(self._daily_cost_usd, 6),
@@ -1168,10 +1189,10 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
 
     if snapshot["chain_skill_calls"]:
         lines.append("  Per-chain skill calls:")
-        cap = cfg.per_chain_skill_calls
+        skill_calls_cap = snapshot.get("skill_calls_cap") or CostLimitConfig()
         for key, used in sorted(snapshot["chain_skill_calls"].items()):
-            if cap.is_active:
-                lines.append(f"    {key}:  {used} / {int(cap.hard_limit)}")
+            if skill_calls_cap.is_active:
+                lines.append(f"    {key}:  {used} / {int(skill_calls_cap.hard_limit)}")
             else:
                 lines.append(f"    {key}:  {used}")
         lines.append("")

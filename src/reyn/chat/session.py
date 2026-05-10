@@ -34,7 +34,7 @@ from reyn.chat.services import (
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import EventsConfig, LimitsConfig, OnLimitConfig
+from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig
 from reyn.safety.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -469,7 +469,7 @@ class ChatSession:
         model: str = "standard",
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        limits: LimitsConfig | None = None,
+        safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
         output_language: str | None = None,
         prompt_cache_enabled: bool = True,
@@ -477,18 +477,12 @@ class ChatSession:
         agent_role: str = "",
         compaction_config: "CompactionConfig | None" = None,
         registry: "AgentRegistry | None" = None,
-        max_hop_depth: int = 3,
-        chain_timeout_seconds: float = 60.0,
         allowed_skills: list[str] | None = None,
         allowed_mcp: list[str] | None = None,
         events_config: EventsConfig | None = None,
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
-        # FP-0005: opt-in interactive / auto_extend behaviour on
-        # safety-limit hits (router_cap, max_hop_depth, chain_seconds).
-        # None = legacy unattended (= refuse).
-        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -501,7 +495,8 @@ class ChatSession:
         self.model = model
         self._resolver = resolver or ModelResolver({})
         self._perm = permission_resolver
-        self._limits = limits or LimitsConfig()
+        _safety = safety or SafetyConfig()
+        self._safety = _safety
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -513,16 +508,13 @@ class ChatSession:
         self._registry = registry
         # PR11: max delegation hop depth (LangGraph-style). 0 = user input,
         # each `_send_to_agent` increments. Refuse send when depth > limit.
-        self._max_hop_depth = max_hop_depth
+        self._max_hop_depth = _safety.loop.max_agent_hops
         # PR18: per-chain wall-clock budget. Non-positive disables. When the
         # budget elapses, the runtime synthesizes an error response upstream
         # so a chain stuck on a non-responsive delegate doesn't hang forever.
-        self._chain_timeout_seconds = chain_timeout_seconds
-        # FP-0005: per-session safety-limit checkpoint policy. Default
-        # `unattended` preserves legacy abort-on-hit behaviour for chat-
-        # side limits (router_cap, max_hop_depth, chain_seconds). The
-        # CLI factory passes `interactive` for `reyn chat`.
-        self._on_limit = on_limit or OnLimitConfig()
+        self._chain_timeout_seconds = _safety.timeout.chain_seconds
+        # FP-0005: per-session safety-limit checkpoint policy.
+        self._on_limit = _safety.on_limit
         # FP-0005: per-(turn or chain) extension counters granted by
         # `_handle_limit_checkpoint`. Cleared on turn / chain boundary
         # by the relevant call sites.
@@ -589,12 +581,8 @@ class ChatSession:
         # receive the tracker by value can continue to do so unchanged.
         self._budget_tracker = budget_tracker
 
-        # Per-turn router cap: read from tracker config when present.
-        _router_cap: int = (
-            int(getattr(budget_tracker.config, "router_invocations_per_turn", 3))
-            if budget_tracker is not None
-            else 3
-        )
+        # Per-turn router cap: read from safety config.
+        _router_cap: int = _safety.loop.max_router_calls_per_turn
 
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
@@ -1235,7 +1223,7 @@ class ChatSession:
             model=self.model,
             resolver=self._resolver,
             permission_resolver=self._perm,
-            limits=self._limits,
+            safety=self._safety,
             mcp_servers=mcp_servers,
             intervention_bus=intervention_bus,
             subscribers=subscribers,

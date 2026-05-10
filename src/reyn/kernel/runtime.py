@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
-from reyn.config import LimitsConfig, OnLimitConfig
+from reyn.config import OnLimitConfig, SafetyConfig
 from reyn.safety.limit_handler import (
     LimitDecision,
     handle_limit_exceeded,
@@ -244,7 +244,7 @@ class OSRuntime:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        limits: LimitsConfig | None = None,
+        safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
@@ -258,9 +258,6 @@ class OSRuntime:
         skill_registry: "SkillRegistry | None" = None,
         resume_plan: Any = None,
         parent_run_id: str | None = None,
-        # FP-0005: opt into interactive / auto_extend behaviour on
-        # safety-limit hits. None = legacy unattended (= abort).
-        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -277,11 +274,13 @@ class OSRuntime:
             permission_resolver=permission_resolver,
             skill_name=skill.name,
         )
-        self._limits = limits or LimitsConfig()
-        self._max_phase_visits = self._limits.phase.max_visits  # 0 = unlimited
-        self._max_phase_wall_seconds = self._limits.phase.max_wall_seconds  # 0 = unlimited
-        self._llm_timeout = self._limits.llm.timeout
-        self._llm_max_retries = self._limits.llm.max_retries
+        # Populate internal limit attributes from SafetyConfig.
+        _safety = safety or SafetyConfig()
+        self._safety = _safety
+        self._max_phase_visits = _safety.loop.max_phase_visits   # 0 = unlimited
+        self._max_phase_wall_seconds = _safety.timeout.phase_seconds  # 0 = unlimited
+        self._llm_timeout = _safety.timeout.llm_call_seconds
+        self._llm_max_retries = _safety.timeout.llm_max_retries
         self._prompt_cache_enabled = prompt_cache_enabled
         # Public attributes — readable by tests / introspection. Treated as
         # immutable post-construction.
@@ -302,7 +301,7 @@ class OSRuntime:
         # FP-0005: per-run safety-limit checkpoint policy. Tracks
         # per-(kind) extensions granted by ``_handle_limit_checkpoint``
         # so the same limit can be re-extended on a subsequent hit.
-        self._on_limit = on_limit or OnLimitConfig()
+        self._on_limit = _safety.on_limit
         self._safety_extensions: dict[str, float] = {}
         self._state_log = state_log
         self._skill_registry = skill_registry
@@ -1300,7 +1299,7 @@ class OSRuntime:
             subscribers=self.events.subscribers,
             resolver=self._resolver,
             events=self.events,
-            limits=self._limits,
+            safety=self._safety,
         )
         self._token_usage += usage
         return adapted

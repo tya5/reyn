@@ -21,14 +21,15 @@ from reyn.budget.budget import (
     CostConfig,
     CostLimitConfig,
 )
+from reyn.config import LoopConfig, SafetyConfig
 
 
 def _make_tracker(
     *, hard: int, ask_on_exceed: bool = False, extension_calls: int = 0
 ) -> BudgetTracker:
-    return BudgetTracker(
-        CostConfig(
-            per_chain_skill_calls=CostLimitConfig(
+    safety = SafetyConfig(
+        loop=LoopConfig(
+            skill_calls_per_chain=CostLimitConfig(
                 hard_limit=float(hard),
                 warn_ratio=0.8,
                 ask_on_exceed=ask_on_exceed,
@@ -36,6 +37,7 @@ def _make_tracker(
             ),
         ),
     )
+    return BudgetTracker(CostConfig(), safety=safety)
 
 
 # ─── 1. Default (ask_on_exceed=False) preserves prior behaviour ──────────

@@ -39,6 +39,7 @@ import pytest
 from reyn.chat.profile import AgentProfile
 from reyn.chat.registry import AgentRegistry
 from reyn.chat.session import ChatSession
+from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.events.state_log import StateLog
 from reyn.kernel.normalizer import NormalizationResult
 from reyn.kernel.postprocessor_executor import _compute_step_hash
@@ -371,7 +372,7 @@ def test_postprocessor_mid_run_chain_timeout_fires(
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",
             # Very short timeout so the watchdog fires quickly in the test
-            chain_timeout_seconds=0.05,
+            safety=SafetyConfig(timeout=TimeoutConfig(chain_seconds=0.05)),
         )
 
     registry = AgentRegistry(

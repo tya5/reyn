@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 from reyn.budget.budget import BudgetTracker
-from reyn.config import LimitsConfig, OnLimitConfig
+from reyn.config import OnLimitConfig, SafetyConfig
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
@@ -41,7 +41,7 @@ class Agent:
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,
-        limits: LimitsConfig | None = None,
+        safety: "SafetyConfig | None" = None,
         mcp_servers: dict | None = None,
         python_allowed_modules: list[str] | None = None,
         prompt_cache_enabled: bool = True,
@@ -49,9 +49,6 @@ class Agent:
         agent_role: str = "",
         caller: str = "direct",
         budget_tracker: BudgetTracker | None = None,
-        # FP-0005: opt-in interactive / auto_extend behaviour on
-        # safety-limit hits. None = legacy unattended (= abort).
-        on_limit: "OnLimitConfig | None" = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -59,7 +56,7 @@ class Agent:
         self._subscribers = list(subscribers or [])
         self._intervention_bus = intervention_bus
         self._shell_allowed = shell_allowed
-        self._limits = limits or LimitsConfig()
+        self._safety = safety or SafetyConfig()
         self._resolver = resolver or ModelResolver({})
         self._permission_resolver = permission_resolver
         self._mcp_servers = mcp_servers
@@ -69,8 +66,6 @@ class Agent:
         self._agent_role = agent_role
         self._caller = _validate_caller(caller)
         self._budget_tracker = budget_tracker
-        # FP-0005: on_limit policy for safety-limit checkpoints.
-        self._on_limit = on_limit or OnLimitConfig()
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -124,7 +119,7 @@ class Agent:
             shell_allowed=self._shell_allowed,
             resolver=self._resolver,
             permission_resolver=self._permission_resolver,
-            limits=self._limits,
+            safety=self._safety,
             mcp_servers=self._mcp_servers,
             python_allowed_modules=self._python_allowed_modules,
             prompt_cache_enabled=self._prompt_cache_enabled,
@@ -138,7 +133,6 @@ class Agent:
             state_log=state_log,
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
-            on_limit=self._on_limit,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

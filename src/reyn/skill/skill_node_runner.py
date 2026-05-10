@@ -110,7 +110,7 @@ async def execute_skill_node(
         strict=strict,
         subscribers=subscribers,
         resolver=resolver,
-        limits=limits,
+        safety=limits,
     )
     run_result = await sub_runtime.run(input_artifact, output_language=output_language)
     token_usage = sub_runtime._token_usage
@@ -122,8 +122,13 @@ async def execute_skill_node(
         final_output_keys=list(run_result.data.keys()),
     )
 
-    llm_timeout = float(getattr(getattr(limits, "llm", None), "timeout", 60.0)) if limits else 60.0
-    llm_max_retries = int(getattr(getattr(limits, "llm", None), "max_retries", 3)) if limits else 3
+    # Extract LLM timeout/retries from SafetyConfig if provided.
+    if limits is not None:
+        llm_timeout = float(getattr(getattr(limits, "timeout", None), "llm_call_seconds", 60.0))
+        llm_max_retries = int(getattr(getattr(limits, "timeout", None), "llm_max_retries", 3))
+    else:
+        llm_timeout = 60.0
+        llm_max_retries = 3
     adapted, adapt_usage = await _adapt_artifact(
         run_result.data, sub_skill.final_output_name,
         target_schema, target_type, node_id, output_language,

@@ -33,6 +33,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from reyn.chat.session import ChatSession
+from reyn.config import SafetyConfig, TimeoutConfig
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
@@ -128,10 +129,11 @@ def _make_session(
     registry: _FakeRegistry | None = None,
 ) -> ChatSession:
     """Build a ChatSession with WAL + per-test snapshot path via public kwargs."""
+    safety = SafetyConfig(timeout=TimeoutConfig(chain_seconds=chain_timeout_seconds))
     return ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
-        chain_timeout_seconds=chain_timeout_seconds,
+        safety=safety,
         registry=registry,
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )

@@ -93,7 +93,7 @@ def _get_budget_tracker():
         from reyn.budget.budget import BudgetTracker
         config = _load_config()
         root = _get_project_root()
-        tracker = BudgetTracker(config.cost)
+        tracker = BudgetTracker(config.cost, safety=config.safety)
         tracker.hydrate(root / ".reyn" / "state" / "budget_ledger.jsonl")
         # R-D8: restore in-memory counters (per-agent / per-chain-skill)
         # for cap enforcement across crash.
@@ -167,8 +167,6 @@ def _get_registry():
         model = config.model
         output_language = config.output_language
 
-        limits = config.limits
-
         # registry is referenced inside the factory closure — defined below.
         registry_ref: list = []
 
@@ -179,7 +177,7 @@ def _get_registry():
                 model=model,
                 resolver=resolver,
                 permission_resolver=perm_resolver,
-                limits=limits,
+                safety=config.safety,
                 mcp_servers=config.mcp,
                 output_language=output_language,
                 prompt_cache_enabled=config.prompt_cache_enabled,
@@ -187,13 +185,10 @@ def _get_registry():
                 agent_role=profile.role,
                 compaction_config=config.chat.compaction,
                 registry=registry,
-                max_hop_depth=config.multi_agent.max_hop_depth,
-                chain_timeout_seconds=config.multi_agent.chain_timeout_seconds,
                 allowed_skills=profile.allowed_skills,
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
-                on_limit=config.safety.on_limit,  # FP-0005
             )
             s.load_history()
             return s

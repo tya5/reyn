@@ -46,12 +46,13 @@ def _make_session(
     output_language=None tests the unset-user behavior (= no language
     directive in router prompt; fallback messages use English).
     """
-    cost = CostConfig(router_invocations_per_turn=cap)
-    bt = BudgetTracker(cost)
+    from reyn.config import LoopConfig, SafetyConfig
+    safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
     return ChatSession(
         agent_name="test_agent",
         output_language=output_language,
-        budget_tracker=bt,
+        budget_tracker=BudgetTracker(CostConfig()),
+        safety=safety,
     )
 
 

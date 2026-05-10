@@ -41,7 +41,7 @@ def _make_session(
     tail_size: int = 12,
 ) -> ChatSession:
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
-    bt = BudgetTracker(CostConfig(router_invocations_per_turn=3))
+    bt = BudgetTracker(CostConfig())
     cfg = CompactionConfig(
         trigger_total_tokens=100_000,  # never trigger compaction in unit tests
         head_size=head_size,

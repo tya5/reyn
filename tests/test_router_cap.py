@@ -28,6 +28,7 @@ import pytest
 
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatSession, RouterCapExceeded
+from reyn.config import LoopConfig, SafetyConfig
 
 
 def _run(coro):
@@ -43,11 +44,11 @@ def _make_session(
     events dirs are created under `.reyn/` relative to the chdir caller.
     The caller is responsible for chdir-ing into `tmp_path`.
     """
-    cost = CostConfig(router_invocations_per_turn=cap)
-    bt = BudgetTracker(cost)
+    safety = SafetyConfig(loop=LoopConfig(max_router_calls_per_turn=cap))
     return ChatSession(
         agent_name="test_agent",
-        budget_tracker=bt,
+        budget_tracker=BudgetTracker(CostConfig()),
+        safety=safety,
     )
 
 

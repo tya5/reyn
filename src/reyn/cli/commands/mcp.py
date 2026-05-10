@@ -292,7 +292,7 @@ def run_serve(args: argparse.Namespace) -> None:
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
-    limits = session_cfg.limits_for(args)
+    safety = session_cfg.safety_for(args)
 
     if args.project:
         project_root = Path(args.project).resolve()
@@ -333,7 +333,7 @@ def run_serve(args: argparse.Namespace) -> None:
     os.chdir(project_root)
 
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
-    budget_tracker = BudgetTracker(session_cfg.config.cost)
+    budget_tracker = BudgetTracker(session_cfg.config.cost, safety=safety)
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
     budget_state_path = project_root / ".reyn" / "state" / "budget_state.json"
     budget_tracker.load_state(budget_state_path)
@@ -357,7 +357,7 @@ def run_serve(args: argparse.Namespace) -> None:
             model=model,
             resolver=session_cfg.resolver,
             permission_resolver=perm_resolver,
-            limits=limits,
+            safety=safety,
             mcp_servers=session_cfg.config.mcp,
             output_language=output_language,
             prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
@@ -365,14 +365,11 @@ def run_serve(args: argparse.Namespace) -> None:
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             registry=registry,
-            max_hop_depth=session_cfg.config.multi_agent.max_hop_depth,
-            chain_timeout_seconds=session_cfg.config.multi_agent.chain_timeout_seconds,
             allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            on_limit=session_cfg.config.safety.on_limit,  # FP-0005
         )
         s.load_history()
         return s
@@ -605,8 +602,6 @@ def run_install(args: argparse.Namespace) -> None:
     if config.api_base:
         os.environ.setdefault("LITELLM_API_BASE", config.api_base)
     resolver = ModelResolver(config.models)
-    limits = config.limits  # LimitsConfig passed directly to Agent
-
     logger = make_logger()
     agent = Agent(
         model=config.model,
@@ -616,7 +611,7 @@ def run_install(args: argparse.Namespace) -> None:
         shell_allowed=False,
         resolver=resolver,
         permission_resolver=perm_resolver,
-        limits=limits,
+        safety=config.safety,
         mcp_servers=config.mcp,
         python_allowed_modules=list(config.python.allowed_modules),
         prompt_cache_enabled=config.prompt_cache_enabled,

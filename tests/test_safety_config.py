@@ -2,14 +2,9 @@
 
 Pins the contract that:
   1. ``safety.loop.*`` and ``safety.timeout.*`` populate the user-facing
-     ``ReynConfig.safety`` dataclass and ALSO back-fill the legacy
-     ``limits`` / ``multi_agent`` / ``cost.*`` dataclasses so existing
-     reference sites keep working.
-  2. When both new (``safety.*``) and legacy (``limits.*`` / ``multi_agent.*`` /
-     ``cost.router_invocations_per_turn`` / ``cost.per_chain_skill_calls.hard_limit``)
-     keys are set, the new key wins.
-  3. When only the legacy keys are set, the loader yields byte-identical
-     dataclasses to pre-FP-0004 behaviour.
+     ``ReynConfig.safety`` dataclass correctly.
+  2. Defaults (absent ``safety:`` section) yield ``SafetyConfig()``.
+  3. ``safety.loop.skill_calls_per_chain`` has ``CostLimitConfig`` shape.
   4. The ``hint_config_key`` attribute on each safety-related exception
      names the new key the operator should adjust.
 """
@@ -60,45 +55,33 @@ def test_default_safety_config_matches_dataclass_defaults(
     assert cfg.safety.timeout == TimeoutConfig()
 
 
-# ─── 2. New safety: keys populate SafetyConfig + back-fill legacy ──────
+# ─── 2. New safety: keys populate SafetyConfig ──────────────────────────
 
 
-def test_safety_loop_keys_populate_and_backfill(
+def test_safety_loop_keys_populate(
     isolated_project: Path,
 ) -> None:
-    """Tier 2: ``safety.loop.*`` flows into ``SafetyConfig.loop`` AND
-    back-fills the legacy dataclasses (``limits.phase.max_visits``,
-    ``multi_agent.max_hop_depth``, ``cost.router_invocations_per_turn``,
-    ``cost.per_chain_skill_calls.hard_limit``).
-    """
+    """Tier 2: ``safety.loop.*`` flows into ``SafetyConfig.loop``."""
     _write_yaml(isolated_project / "reyn.yaml", """
 safety:
   loop:
     max_phase_visits: 50
     max_router_calls_per_turn: 7
     max_agent_hops: 5
-    max_skill_calls_per_chain: 12
+    skill_calls_per_chain:
+      hard_limit: 12
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
-    # New surface
     assert cfg.safety.loop.max_phase_visits == 50
     assert cfg.safety.loop.max_router_calls_per_turn == 7
     assert cfg.safety.loop.max_agent_hops == 5
-    assert cfg.safety.loop.max_skill_calls_per_chain == 12
-    # Legacy back-fill
-    assert cfg.limits.phase.max_visits == 50
-    assert cfg.cost.router_invocations_per_turn == 7
-    assert cfg.multi_agent.max_hop_depth == 5
-    assert cfg.cost.per_chain_skill_calls.hard_limit == 12.0
+    assert cfg.safety.loop.skill_calls_per_chain.hard_limit == 12.0
 
 
-def test_safety_timeout_keys_populate_and_backfill(
+def test_safety_timeout_keys_populate(
     isolated_project: Path,
 ) -> None:
-    """Tier 2: ``safety.timeout.*`` populates ``SafetyConfig.timeout``
-    and back-fills ``limits.llm.*`` / ``limits.phase.max_wall_seconds``
-    / ``multi_agent.chain_timeout_seconds``.
-    """
+    """Tier 2: ``safety.timeout.*`` populates ``SafetyConfig.timeout``."""
     _write_yaml(isolated_project / "reyn.yaml", """
 safety:
   timeout:
@@ -108,145 +91,55 @@ safety:
     chain_seconds: 300.0
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
-    # New surface
     assert cfg.safety.timeout.llm_call_seconds == 120.0
     assert cfg.safety.timeout.llm_max_retries == 5
     assert cfg.safety.timeout.phase_seconds == 600.0
     assert cfg.safety.timeout.chain_seconds == 300.0
-    # Legacy back-fill
-    assert cfg.limits.llm.timeout == 120.0
-    assert cfg.limits.llm.max_retries == 5
-    assert cfg.limits.phase.max_wall_seconds == 600.0
-    assert cfg.multi_agent.chain_timeout_seconds == 300.0
 
 
-# ─── 3. Legacy-only configs unchanged ─────────────────────────────────
+# ─── 3. ``skill_calls_per_chain`` semantics ────────────────────────
 
 
-def test_legacy_only_config_unchanged(isolated_project: Path) -> None:
-    """Tier 2: when no ``safety:`` is written, legacy keys are honoured
-    exactly as they were pre-FP-0004 — back-compat invariant.
-    """
-    _write_yaml(isolated_project / "reyn.yaml", """
-limits:
-  phase:
-    max_visits: 33
-    max_wall_seconds: 90.0
-  llm:
-    timeout: 45.0
-    max_retries: 2
-multi_agent:
-  max_hop_depth: 4
-  chain_timeout_seconds: 90.0
-cost:
-  router_invocations_per_turn: 6
-  per_chain_skill_calls:
-    hard_limit: 15
-""".lstrip())
-    cfg = load_config(cwd=isolated_project)
-    assert cfg.limits.phase.max_visits == 33
-    assert cfg.limits.phase.max_wall_seconds == 90.0
-    assert cfg.limits.llm.timeout == 45.0
-    assert cfg.limits.llm.max_retries == 2
-    assert cfg.multi_agent.max_hop_depth == 4
-    assert cfg.multi_agent.chain_timeout_seconds == 90.0
-    assert cfg.cost.router_invocations_per_turn == 6
-    assert cfg.cost.per_chain_skill_calls.hard_limit == 15.0
-    # ``safety`` stays at its dataclass defaults — it does NOT get
-    # back-populated from legacy keys (= legacy paths stay legacy).
-    assert cfg.safety == SafetyConfig()
-
-
-# ─── 4. Conflict resolution: new wins ─────────────────────────────────
-
-
-def test_safety_overrides_legacy_when_both_set(isolated_project: Path) -> None:
-    """Tier 2: when both ``safety.loop.max_phase_visits`` and
-    ``limits.phase.max_visits`` are set, the new key wins.
-    """
-    _write_yaml(isolated_project / "reyn.yaml", """
-limits:
-  phase:
-    max_visits: 10        # legacy
-safety:
-  loop:
-    max_phase_visits: 99  # new — should win
-""".lstrip())
-    cfg = load_config(cwd=isolated_project)
-    assert cfg.limits.phase.max_visits == 99
-    assert cfg.safety.loop.max_phase_visits == 99
-
-
-def test_partial_safety_does_not_drop_legacy(isolated_project: Path) -> None:
-    """Tier 2: writing ``safety.loop.max_phase_visits`` alone must not
-    overwrite legacy keys for OTHER axes (e.g. llm timeout). The
-    deprecation reader checks per-axis presence, not per-section.
-    """
-    _write_yaml(isolated_project / "reyn.yaml", """
-limits:
-  llm:
-    timeout: 45.0     # legacy, should stay
-safety:
-  loop:
-    max_phase_visits: 77
-""".lstrip())
-    cfg = load_config(cwd=isolated_project)
-    assert cfg.limits.phase.max_visits == 77      # new
-    assert cfg.limits.llm.timeout == 45.0         # untouched legacy
-
-
-# ─── 5. ``max_skill_calls_per_chain`` semantics ────────────────────────
-
-
-def test_max_skill_calls_per_chain_default_is_unlimited(
+def test_skill_calls_per_chain_default_is_unlimited(
     isolated_project: Path,
 ) -> None:
-    """Tier 2: omitting ``max_skill_calls_per_chain`` (or setting it to
-    null) yields ``None`` (= unlimited) and DOES NOT override an
-    existing ``cost.per_chain_skill_calls.hard_limit``.
+    """Tier 2: omitting ``skill_calls_per_chain`` yields a ``CostLimitConfig``
+    with ``hard_limit=None`` (= unlimited).
     """
     _write_yaml(isolated_project / "reyn.yaml", """
-cost:
-  per_chain_skill_calls:
-    hard_limit: 5
 safety:
   loop:
-    max_phase_visits: 25  # touch a different field; do not set max_skill_calls_per_chain
+    max_phase_visits: 25
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
-    assert cfg.safety.loop.max_skill_calls_per_chain is None
-    # Because the new key was NOT explicitly set, the legacy hard_limit stays.
-    assert cfg.cost.per_chain_skill_calls.hard_limit == 5.0
+    assert cfg.safety.loop.skill_calls_per_chain.hard_limit is None
 
 
-def test_max_skill_calls_preserves_other_cost_limit_fields(
+def test_skill_calls_per_chain_preserves_other_fields(
     isolated_project: Path,
 ) -> None:
-    """Tier 2: when ``safety.loop.max_skill_calls_per_chain`` overrides
-    ``cost.per_chain_skill_calls.hard_limit``, the other fields
-    (``ask_on_exceed`` / ``extension_calls`` / ``warn_ratio``) are
-    preserved.
+    """Tier 2: ``safety.loop.skill_calls_per_chain`` carries all
+    ``CostLimitConfig`` sub-fields (warn_ratio, ask_on_exceed,
+    extension_calls).
     """
     _write_yaml(isolated_project / "reyn.yaml", """
-cost:
-  per_chain_skill_calls:
-    hard_limit: 3
-    warn_ratio: 0.5
-    ask_on_exceed: true
-    extension_calls: 7
 safety:
   loop:
-    max_skill_calls_per_chain: 20
+    skill_calls_per_chain:
+      hard_limit: 20
+      warn_ratio: 0.5
+      ask_on_exceed: true
+      extension_calls: 7
 """.lstrip())
     cfg = load_config(cwd=isolated_project)
-    cap = cfg.cost.per_chain_skill_calls
+    cap = cfg.safety.loop.skill_calls_per_chain
     assert cap.hard_limit == 20.0
     assert cap.warn_ratio == 0.5
     assert cap.ask_on_exceed is True
     assert cap.extension_calls == 7
 
 
-# ─── 6. Exception hint_config_key surfaces correctly ──────────────────
+# ─── 4. Exception hint_config_key surfaces correctly ──────────────────
 
 
 def test_loop_limit_exception_carries_hint_key() -> None:

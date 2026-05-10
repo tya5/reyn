@@ -24,7 +24,7 @@ import pytest
 
 from reyn.budget.budget import BudgetTracker, CostConfig
 from reyn.chat.session import ChatSession, RouterCapExceeded
-from reyn.config import OnLimitConfig
+from reyn.config import LoopConfig, OnLimitConfig, SafetyConfig
 from reyn.kernel.runtime import LoopLimitExceededError, OSRuntime
 from reyn.safety.limit_handler import reset_run_extensions
 from reyn.schemas.models import Phase, Skill, SkillGraph
@@ -81,7 +81,7 @@ async def test_os_max_phase_visits_auto_extend_grants_then_aborts() -> None:
     reset_run_extensions("run-fp5-B-auto")
     rt = OSRuntime(
         _one_phase_skill(), model="stub/model", run_id="run-fp5-B-auto",
-        on_limit=OnLimitConfig(mode="auto_extend", auto_extend_times=1),
+        safety=SafetyConfig(on_limit=OnLimitConfig(mode="auto_extend", auto_extend_times=1)),
     )
     rt._max_phase_visits = 1
 
@@ -100,12 +100,14 @@ async def test_os_max_phase_visits_auto_extend_grants_then_aborts() -> None:
 
 
 def _make_session(*, cap: int, on_limit: OnLimitConfig) -> ChatSession:
-    cost = CostConfig(router_invocations_per_turn=cap)
-    bt = BudgetTracker(cost)
+    safety = SafetyConfig(
+        loop=LoopConfig(max_router_calls_per_turn=cap),
+        on_limit=on_limit,
+    )
     return ChatSession(
         agent_name="test_agent",
-        budget_tracker=bt,
-        on_limit=on_limit,
+        budget_tracker=BudgetTracker(CostConfig()),
+        safety=safety,
     )
 
 
@@ -157,22 +159,21 @@ def test_router_cap_auto_extend_grants_then_aborts(
 
 
 def test_chatsession_default_on_limit_is_unattended() -> None:
-    """Tier 2: a ChatSession without an explicit ``on_limit`` argument
-    defaults to ``unattended`` (= preserves legacy behaviour for any
-    caller that hasn't yet been updated to thread the config through).
+    """Tier 2: a ChatSession without an explicit ``safety`` argument
+    defaults to ``unattended`` on_limit (= preserves legacy behaviour).
     """
     s = ChatSession(agent_name="t")
     assert s._on_limit.mode == "unattended"
 
 
 def test_chatsession_threads_on_limit_through_constructor() -> None:
-    """Tier 2: an explicit ``on_limit`` argument is honoured. This is
-    the path used by the CLI factory (``cli/commands/chat.py``,
-    ``web/deps.py``, ``cli/commands/mcp.py``) which passes
-    ``config.safety.on_limit`` from the loaded ReynConfig.
+    """Tier 2: an explicit ``on_limit`` threaded through ``safety`` is
+    honoured. This is the path used by the CLI factory
+    (``cli/commands/chat.py``, ``web/deps.py``, ``cli/commands/mcp.py``)
+    which passes ``config.safety`` from the loaded ReynConfig.
     """
     on_limit = OnLimitConfig(mode="interactive", auto_extend_times=5)
-    s = ChatSession(agent_name="t", on_limit=on_limit)
+    s = ChatSession(agent_name="t", safety=SafetyConfig(on_limit=on_limit))
     assert s._on_limit is on_limit
     assert s._on_limit.mode == "interactive"
     assert s._on_limit.auto_extend_times == 5

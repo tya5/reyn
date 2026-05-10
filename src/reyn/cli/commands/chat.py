@@ -137,7 +137,7 @@ def run(args: argparse.Namespace) -> None:
     session_cfg = Session.from_args(args)
     model, _ = session_cfg.model_for(args)
     output_language = session_cfg.output_language_for(args)
-    limits = session_cfg.limits_for(args)
+    safety = session_cfg.safety_for(args)
 
     project_root = _find_project_root(Path.cwd()) or Path.cwd()
 
@@ -155,7 +155,7 @@ def run(args: argparse.Namespace) -> None:
     state_log = StateLog(project_root / ".reyn" / "state" / "wal.jsonl")
     # PR22: process-shared budget tracker. Defaults to all unlimited unless
     # `cost:` is configured.
-    budget_tracker = BudgetTracker(session_cfg.config.cost)
+    budget_tracker = BudgetTracker(session_cfg.config.cost, safety=safety)
     # PR25: hydrate daily / monthly counters from the persistent ledger.
     budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
     # R-D8: restore in-memory counters (per-agent / per-chain-skill) from
@@ -184,7 +184,7 @@ def run(args: argparse.Namespace) -> None:
             model=model,
             resolver=session_cfg.resolver,
             permission_resolver=perm_resolver,
-            limits=limits,
+            safety=safety,
             mcp_servers=session_cfg.config.mcp,
             output_language=output_language,
             prompt_cache_enabled=session_cfg.config.prompt_cache_enabled,
@@ -192,20 +192,11 @@ def run(args: argparse.Namespace) -> None:
             agent_role=profile.role,
             compaction_config=session_cfg.config.chat.compaction,
             registry=registry,  # back-reference for :agents / :attach + PR11 messaging
-            max_hop_depth=session_cfg.config.multi_agent.max_hop_depth,
-            chain_timeout_seconds=session_cfg.config.multi_agent.chain_timeout_seconds,
             allowed_skills=profile.allowed_skills,
             allowed_mcp=profile.allowed_mcp,
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
-            # FP-0005: thread the operator's on_limit choice into the
-            # session so chat-side safety-limit checkpoints (router_cap,
-            # max_hop_depth, chain_seconds) consult it. Default
-            # ``unattended`` preserves legacy abort behaviour; users
-            # opt into ``interactive`` / ``auto_extend`` via
-            # ``safety.on_limit:`` in reyn.yaml.
-            on_limit=session_cfg.config.safety.on_limit,
         )
         s.load_history()
         return s

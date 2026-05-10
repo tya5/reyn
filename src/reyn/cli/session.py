@@ -11,7 +11,7 @@ import argparse
 import os
 from dataclasses import dataclass
 
-from reyn.config import LimitsConfig, LLMLimitsConfig, PhaseLimitsConfig, ReynConfig, load_config
+from reyn.config import ReynConfig, SafetyConfig, load_config
 from reyn.llm.model_resolver import ModelResolver
 
 
@@ -48,23 +48,40 @@ class Session:
             return cli.strip()
         return self.config.output_language
 
-    def limits_for(self, args: argparse.Namespace) -> LimitsConfig:
-        """Resolve effective LimitsConfig with CLI flags layered over config."""
-        base = self.config.limits
+    def safety_for(self, args: argparse.Namespace) -> SafetyConfig:
+        """Resolve effective SafetyConfig with CLI flags layered over config.
+
+        CLI flags (--max-phase-visits, --phase-budget, --llm-timeout,
+        --llm-max-retries) override the corresponding safety.loop / safety.timeout
+        fields while preserving everything else from the loaded config.
+        """
+        from reyn.config import LoopConfig, TimeoutConfig
+        base = self.config.safety
         max_visits = getattr(args, "max_phase_visits", None)
         phase_budget = getattr(args, "phase_budget", None)
         llm_timeout = getattr(args, "llm_timeout", None)
         llm_max_retries = getattr(args, "llm_max_retries", None)
-        return LimitsConfig(
-            llm=LLMLimitsConfig(
-                timeout=llm_timeout if llm_timeout is not None else base.llm.timeout,
-                max_retries=llm_max_retries if llm_max_retries is not None else base.llm.max_retries,
-            ),
-            phase=PhaseLimitsConfig(
-                max_visits=max_visits if max_visits is not None else base.phase.max_visits,
-                max_wall_seconds=phase_budget if phase_budget is not None else base.phase.max_wall_seconds,
-            ),
-        )
+
+        # Only rebuild if at least one CLI override was provided.
+        if any(v is not None for v in [max_visits, phase_budget, llm_timeout, llm_max_retries]):
+            from dataclasses import replace
+            loop = replace(
+                base.loop,
+                max_phase_visits=max_visits if max_visits is not None else base.loop.max_phase_visits,
+            )
+            timeout = replace(
+                base.timeout,
+                llm_call_seconds=llm_timeout if llm_timeout is not None else base.timeout.llm_call_seconds,
+                llm_max_retries=llm_max_retries if llm_max_retries is not None else base.timeout.llm_max_retries,
+                phase_seconds=phase_budget if phase_budget is not None else base.timeout.phase_seconds,
+            )
+            return SafetyConfig(loop=loop, timeout=timeout, on_limit=base.on_limit)
+        return base
+
+    # Keep limits_for as an alias that returns the safety config for backward
+    # compat within this module (callers that were already updated use safety_for).
+    def limits_for(self, args: argparse.Namespace) -> SafetyConfig:
+        return self.safety_for(args)
 
     def shell_allowed_for(self, args: argparse.Namespace) -> bool:
         return bool(getattr(args, "allow_shell", False)) or self.config.shell_allowed

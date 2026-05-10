@@ -91,7 +91,7 @@ def run(args: argparse.Namespace) -> None:
     # (= no silent "ja" default) — the project targets a global audience.
     output_language = session.output_language_for(args)
     shell_allowed = session.shell_allowed_for(args)
-    limits = session.limits_for(args)
+    safety = session.safety_for(args)
 
     trusted_python = bool(getattr(args, "allow_untrusted_python", False))
     # Stdlib skills ship with the Reyn team's code and are trusted by
@@ -118,7 +118,7 @@ def run(args: argparse.Namespace) -> None:
         shell_allowed=shell_allowed,
         resolver=session.resolver,
         permission_resolver=perm_resolver,
-        limits=limits,
+        safety=safety,
         mcp_servers=session.config.mcp,
         python_allowed_modules=list(session.config.python.allowed_modules),
         prompt_cache_enabled=session.config.prompt_cache_enabled,
