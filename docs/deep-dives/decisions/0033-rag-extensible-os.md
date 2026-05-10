@@ -1,7 +1,8 @@
 # ADR-0033: RAG-extensible OS — `embed` / `index_*` / `recall` ops + `index_docs` stdlib + `IndexBackend` protocol
 
-**Status**: Proposed (2026-05-10)
+**Status**: Accepted (2026-05-10) — Phase 1 implementation landed
 **Track**: Architecture — RAG infrastructure (= 1.0 release narrative core)
+**Implementation commits**: `d2db332` (foundational) → `1e6f153` (Wave 2b CLI/Tools); 12 commits total, 2073 → 2204 passed (+131 net new tests). Full chain: schemas + registry → IndexBackend (sqlite) + EmbeddingProvider (LiteLLM) + SourceManifest + embedding config → 5 op handlers + permission gate → router Indexed sources section + empty state hint → index_docs stdlib skill + chunkers + cost preflight → recall/drop_source ToolDefinition + reyn source CLI → user-facing docs (concepts/rag + reference/cli/source).
 
 ---
 

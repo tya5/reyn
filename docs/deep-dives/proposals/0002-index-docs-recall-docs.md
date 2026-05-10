@@ -1,9 +1,10 @@
 # FP-0002: index_docs / recall_docs — 統合ドキュメント検索スキル
 
-**Status**: in-progress (= ADR-0033 Proposed、 implementation wave 開始 2026-05-10)
+**Status**: done (= ADR-0033 Accepted、 Phase 1 landed 2026-05-10、 commit `1e6f153`)
 **Proposed**: 2026-05-09
+**Landed**: 2026-05-10 (= 12 commits、 d2db332..1e6f153)
 **Author**: Research session (eager-shaw-389d9d)
-**ADR**: [0033](../decisions/0033-rag-extensible-os.md) (= confirmed design pin)
+**ADR**: [0033](../decisions/0033-rag-extensible-os.md) (= confirmed design + landed implementation)
 
 ---
 
