@@ -98,6 +98,9 @@ metadata:
 
 scenarios:
   - id: narr-1-mcp-search
+    enabled: false  # SKIP: blocked by R-WEB-TRUSTED-PYTHON (= reyn web has no
+                    # --allow-untrusted-python flag; mcp_search needs trusted
+                    # python). Re-enable when that residual lands.
     description: >
       Narration of an mcp_candidate_list result. Tests that the narrator can
       iterate a candidates array and extract per-item fields (name, repo_url,
@@ -123,6 +126,9 @@ scenarios:
       web_search is excluded.
 
   - id: narr-2-eval-numeric
+    enabled: false  # SKIP for smoke: requires PREREQ-1 (= direct_llm eval
+                    # pre-built via `reyn run eval_builder`). Re-enable after
+                    # PREREQ-1 complete.
     description: >
       Narration of an eval_result. Tests extraction of numeric and boolean
       fields (overall_score, passed_criteria, total_criteria, passed) together
@@ -171,6 +177,9 @@ scenarios:
       run; the narrator should report lint_issues in that case.
 
   - id: narr-4-skill-improver
+    enabled: false  # SKIP: blocked by R-WEB-TRUSTED-PYTHON (= skill_improver's
+                    # copy_to_work preprocessor needs trusted python; same flag
+                    # gap as narr-1). Re-enable when R-WEB-TRUSTED-PYTHON lands.
     description: >
       Narration of an improvement_result. Tests the richest output shape in
       the spike: score_history (float array), termination_reason (enum),
@@ -200,6 +209,9 @@ scenarios:
       score_threshold_met; either is a valid finished run for narration.
 
   - id: narr-5-read-local-files
+    enabled: false  # SKIP for smoke: requires PREREQ-2 (= filesystem MCP
+                    # server configured in reyn.yaml). Re-enable after
+                    # PREREQ-2 complete.
     description: >
       Narration of a file_content_response. Tests extraction of a long-form
       prose field (response) alongside a string array (files_read). Narrating

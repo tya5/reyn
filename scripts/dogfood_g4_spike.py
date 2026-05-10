@@ -125,7 +125,15 @@ def _load_scenarios(path: Path) -> list[dict]:
             if field not in s:
                 print(f"[error] scenario[{i}] missing required field {field!r}", file=sys.stderr)
                 sys.exit(1)
-    return scenarios
+    # Filter out disabled scenarios (= enabled: false). Keep their order.
+    enabled_scenarios = [s for s in scenarios if s.get("enabled", True)]
+    skipped = [s["id"] for s in scenarios if not s.get("enabled", True)]
+    if skipped:
+        print(f"[driver] skipping disabled scenarios: {skipped}", flush=True)
+    if not enabled_scenarios:
+        print("[error] all scenarios disabled — nothing to run", file=sys.stderr)
+        sys.exit(1)
+    return enabled_scenarios
 
 
 # ── One-shot runner ───────────────────────────────────────────────────────────

@@ -77,6 +77,18 @@ def write_model_override(worktree: Path, model_class: str, strong_model: str) ->
         f"  light:    openai/gemini-2.5-flash-lite\n"
         f"  standard: openai/gemini-2.5-flash-lite\n"
         f"  strong:   {strong_model}\n"
+        f"\n"
+        f"# Pre-approved permissions for spike scenarios. The spike runs in a\n"
+        f"# disposable /tmp worktree against narration-quality test scenarios;\n"
+        f"# blanket grants are acceptable here. python.trusted is intentionally\n"
+        f"# NOT granted because (G13) reyn web does not honour it from config —\n"
+        f"# scenarios that need trusted python (= narr-1 mcp_search, narr-4\n"
+        f"# skill_improver) must be skipped via 'enabled: false' until\n"
+        f"# R-WEB-TRUSTED-PYTHON adds the CLI flag.\n"
+        f"permissions:\n"
+        f"  python.pure: allow\n"
+        f"  file.read: allow\n"
+        f"  file.write: allow\n"
     )
     local_yaml.write_text(content, encoding="utf-8")
 
