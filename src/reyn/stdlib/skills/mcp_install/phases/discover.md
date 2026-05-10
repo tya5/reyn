@@ -67,6 +67,12 @@ Once server_id and scope are determined, emit a single `mcp_install` op:
 {"kind": "mcp_install", "server_id": "<server_id>", "scope": "<scope>"}
 ```
 
+If `data.extra_args` is present and non-empty, include it in the op:
+
+```json
+{"kind": "mcp_install", "server_id": "<server_id>", "scope": "<scope>", "extra_args": ["--server", "pyright"]}
+```
+
 Wait for the op result in the next act turn. Then finish with the `mcp_install_result`
 artifact using the data from the op result:
 - If op status is `"ok"`: set status="installed", include server_name and installed_path.

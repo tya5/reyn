@@ -202,6 +202,17 @@ def register(sub) -> None:
         help="Pre-supply environment variable (may be repeated)",
     )
     install.add_argument(
+        "--args",
+        dest="extra_args",
+        default=None,
+        metavar="ARGS",
+        help=(
+            "Extra arguments appended to the server command after install "
+            "(shell-quoted string). "
+            "Example: --args \"--server pyright --language python\""
+        ),
+    )
+    install.add_argument(
         "--non-interactive",
         dest="non_interactive",
         action="store_true",
@@ -485,7 +496,12 @@ def run_install(args: argparse.Namespace) -> None:
     ``--env KEY=VALUE`` pairs are forwarded to the skill as pre-supplied
     environment overrides so the credential-prompt flow is skipped for those
     keys.
+
+    ``--args ARGS`` is a shell-quoted string of extra arguments appended to
+    the server's args list after installation (e.g. ``--args "--server pyright"``).
     """
+    import shlex
+
     server_id_raw: str | None = getattr(args, "server_id", None)
     source_raw: str | None = getattr(args, "source", None)
 
@@ -510,6 +526,9 @@ def run_install(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     source: str | None = source_raw.strip() if has_source else None
+
+    extra_args_raw: str | None = getattr(args, "extra_args", None)
+    extra_args: list[str] | None = shlex.split(extra_args_raw) if extra_args_raw else None
 
     scope = getattr(args, "scope", "local")
     if scope not in _VALID_SCOPES:
@@ -539,6 +558,7 @@ def run_install(args: argparse.Namespace) -> None:
             scope=scope,
             pre_env=pre_env,
             non_interactive=non_interactive,
+            extra_args=extra_args,
         )
         return
 
@@ -583,6 +603,7 @@ def run_install(args: argparse.Namespace) -> None:
             "scope": scope,
             "env_overrides": pre_env,
             "non_interactive": non_interactive,
+            "extra_args": extra_args,
         },
     }
 
@@ -648,6 +669,7 @@ def _run_install_from_source(
     scope: str,
     pre_env: dict[str, str],
     non_interactive: bool,
+    extra_args: list[str] | None = None,
 ) -> None:
     """Install an MCP server directly from a ``--source`` specifier.
 
@@ -703,6 +725,7 @@ def _run_install_from_source(
         scope=scope,  # type: ignore[arg-type]
         env_overrides=pre_env or None,
         source=source,
+        extra_args=extra_args or None,
     )
 
     print(f"Installing MCP server from source: {source}")

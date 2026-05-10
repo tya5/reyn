@@ -279,6 +279,11 @@ async def handle(
         if secret_keys_set:
             server_entry["env"] = {k: f"${{{k}}}" for k in secret_keys_set}
 
+    # Append user-supplied extra args (e.g. ["--server", "pyright"])
+    if op.extra_args:
+        existing_args = server_entry.get("args", [])
+        server_entry["args"] = list(existing_args) + list(op.extra_args)
+
     # Merge into existing config
     if "mcp" not in existing or not isinstance(existing.get("mcp"), dict):
         existing["mcp"] = {}
