@@ -1,4 +1,4 @@
-# FP-0001: A2A task lifecycle — ask_user / push notification 対応
+# FP-0001: A2A task lifecycle — ask_user / push notification support
 
 **Status**: proposed
 **Proposed**: 2026-05-09
@@ -8,75 +8,74 @@
 
 ## Summary
 
-現在の A2A 実装は `message/send`（同期）のみで、スキル実行中に `ask_user` が発生すると
-タイムアウト応答しか返せない。`RunRegistry` を中心とする task lifecycle を実装することで、
-`ask_user` の中断・再開、push notification、SSE ストリーミングを一括対応できる。
+The current A2A implementation supports only `message/send` (synchronous). When `ask_user` fires during skill execution, the only possible response is a timeout. By implementing a task lifecycle centered on `RunRegistry`, we can handle `ask_user` pause/resume, push notifications, and SSE streaming in a single unified solution.
 
 ---
 
 ## Motivation
 
-### 現状の制約
+### Current constraints
 
 ```
-Client ──POST /a2a/{name}──▶ message/send 開始
-                              skill 実行中...
-                              ask_user 発火 ← ここで止まる
-◀── timeout / partial ──────  answer を注入する経路がない
+Client ──POST /a2a/{name}──▶ message/send starts
+                              skill running...
+                              ask_user fires ← execution stops here
+◀── timeout / partial ──────  no path to inject an answer
 ```
 
-- `ask_user` を含む skill が A2A 経由では実質使えない
-- クライアントが進捗を知る手段がない（ポーリング不可）
-- Agent Card に `streaming: false`, `pushNotifications: false` と宣言しており、
-  競合（Hermes Agent の Checkpoints v2 等）に対して機能差が明確
+- Skills containing `ask_user` are effectively unusable via A2A
+- Clients have no way to learn about progress (no polling possible)
+- The Agent Card declares `streaming: false`, `pushNotifications: false`,
+  creating a clear capability gap compared to competitors
+  (e.g., Hermes Agent's Checkpoints v2)
 
-### ACP との関係
+### Relationship with ACP
 
-ACP（IBM BeeAI）は A2A の傘下に統合済み（2026-05 時点）。
-ACP の `await_resume` モデルは本提案の `ask_user` 対応と完全に対応する。
-本実装を行えば A2A と ACP の両プロトコルを同一基盤で賄える。
+ACP (IBM BeeAI) has been integrated under the A2A umbrella (as of 2026-05).
+ACP's `await_resume` model maps directly to the `ask_user` support proposed here.
+Implementing this would allow both the A2A and ACP protocols to be served from the same foundation.
 
 ---
 
 ## Proposed implementation
 
-### 中心: RunRegistry
+### Core: RunRegistry
 
 ```python
-# src/reyn/web/run_registry.py（新規）
+# src/reyn/web/run_registry.py (new)
 {
   run_id: {
-    "task":        asyncio.Task,          # バックグラウンドで走る skill
+    "task":        asyncio.Task,          # skill running in background
     "status":      "running" | "input-required" | "completed" | "failed",
-    "question":    str | None,            # ask_user の質問文
-    "intervention": UserIntervention | None,  # answer 待ち Future
+    "question":    str | None,            # question text from ask_user
+    "intervention": UserIntervention | None,  # Future awaiting answer
     "result":      str | None,
-    "webhook_url": str | None,            # push notification 宛先
+    "webhook_url": str | None,            # push notification destination
   }
 }
 ```
 
-### フロー（ask_user）
+### Flow (ask_user)
 
 ```
-1. POST /a2a/{name}  →  run_id 発行、asyncio.create_task() で skill 起動
-2. ask_user 発火     →  status = "input-required", question を RunRegistry に格納
+1. POST /a2a/{name}  →  issue run_id, start skill via asyncio.create_task()
+2. ask_user fires    →  status = "input-required", store question in RunRegistry
 3. GET tasks/{run_id} → {status: "input-required", question: "..."}
 4. POST /a2a/{name} {task_id, answer}  →  InterventionBus.answer(text)
-5. skill 再開 → status = "completed", result 格納
+5. skill resumes → status = "completed", result stored
 ```
 
-### 追加エンドポイント
+### Additional endpoints
 
-| エンドポイント | 用途 |
+| Endpoint | Purpose |
 |---|---|
-| `GET /a2a/tasks/{run_id}` | task ステータス・質問文のポーリング |
-| `GET /a2a/tasks/{run_id}/events` | SSE ストリーム（EventLog を run_id フィルタ） |
-| `POST /a2a/tasks/{run_id}/cancel` | task キャンセル |
+| `GET /a2a/tasks/{run_id}` | Poll task status and question text |
+| `GET /a2a/tasks/{run_id}/events` | SSE stream (EventLog filtered by run_id) |
+| `POST /a2a/tasks/{run_id}/cancel` | Cancel a task |
 
-`message/send` は `task_id` パラメータを追加し、既存タスクへの answer 注入と新規タスク開始を兼務。
+`message/send` gains a `task_id` parameter to serve both as a new task initiator and as an answer injector for existing tasks.
 
-### push notification
+### Push notification
 
 ```python
 async def _notify(run_id: str, status: str, payload: dict):
@@ -87,17 +86,17 @@ async def _notify(run_id: str, status: str, payload: dict):
             await c.post(url, json={"run_id": run_id, "status": status, **payload})
 ```
 
-トリガーポイント: skill 開始 / ask_user 発火 / skill 完了 / エラー の 4 箇所のみ。
+Trigger points: skill start / ask_user fires / skill completes / error — exactly 4 locations.
 
-### Agent Card の更新
+### Agent Card update
 
-実装完了後に以下を `true` に更新:
+After implementation, update the following to `true`:
 
 ```python
 "capabilities": {
-    "streaming": True,           # SSE 対応
-    "pushNotifications": True,   # webhook 対応
-    "stateTransitionHistory": False,  # 引き続き未対応
+    "streaming": True,           # SSE support
+    "pushNotifications": True,   # webhook support
+    "stateTransitionHistory": False,  # still not supported
 }
 ```
 
@@ -105,36 +104,36 @@ async def _notify(run_id: str, status: str, payload: dict):
 
 ## Dependencies
 
-- `src/reyn/web/routers/a2a.py`（既存 — 変更対象）
-- `src/reyn/user_intervention.py` / `InterventionBus`（既存 — ブリッジを追加）
-- `httpx`（FastAPI プロジェクトに既存の可能性が高い。なければ追加）
+- `src/reyn/web/routers/a2a.py` (existing — target for modification)
+- `src/reyn/user_intervention.py` / `InterventionBus` (existing — add bridge)
+- `httpx` (likely already in the FastAPI project; add if not present)
 
-前提 PR: なし（独立して実装可能）
+Prerequisite PRs: none (can be implemented independently)
 
 ---
 
 ## Cost estimate
 
-**合計: MEDIUM**
+**Total: MEDIUM**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| `RunRegistry` 実装 | SMALL | in-memory dict + asyncio.Task 管理 |
-| `message/send` をバックグラウンド化 | SMALL | `create_task` に切り替えるだけ |
-| `tasks/get` エンドポイント | SMALL | Registry 読み取りのみ |
-| `InterventionBus` ブリッジ | MEDIUM | ask_user 発火時に Registry を更新するフック |
-| Push notification | SMALL | httpx.post 1 箇所 |
+| `RunRegistry` implementation | SMALL | in-memory dict + asyncio.Task management |
+| Make `message/send` background | SMALL | switch to `create_task` only |
+| `tasks/get` endpoint | SMALL | read-only Registry access |
+| `InterventionBus` bridge | MEDIUM | hook to update Registry when ask_user fires |
+| Push notification | SMALL | one httpx.post call |
 | SSE streaming | SMALL | FastAPI StreamingResponse + EventLog.subscribe |
 | `tasks/cancel` | SMALL | asyncio.Task.cancel() |
-| Agent Card 更新 | SMALL | capabilities フラグ変更 |
+| Agent Card update | SMALL | change capabilities flags |
 
-ボトルネックは **InterventionBus ブリッジのみ**。それ以外は全て SMALL で連鎖する。
+The only bottleneck is the **InterventionBus bridge**. Everything else chains as SMALL.
 
 ---
 
 ## Related
 
-- `src/reyn/web/routers/a2a.py` — 既存 A2A 実装（MVP コメント参照）
-- `src/reyn/user_intervention.py` — InterventionBus の実装
-- `docs/concepts/a2a.md` — A2A 概念ドキュメント
+- `src/reyn/web/routers/a2a.py` — existing A2A implementation (see MVP comments)
+- `src/reyn/user_intervention.py` — InterventionBus implementation
+- `docs/concepts/a2a.md` — A2A concept documentation
 - ACP OpenAPI spec: https://github.com/i-am-bee/acp/blob/main/docs/spec/openapi.yaml

@@ -1,0 +1,78 @@
+# Feature Proposals
+
+機能実装の提案をまとめるディレクトリ。
+
+ADR（`decisions/`）は「なぜその設計を選んだか」の記録。
+このディレクトリは「何を実装すべきか」の提案。
+
+---
+
+## ファイル命名規則
+
+```
+NNNN-<kebab-case-title>.md
+```
+
+例: `0001-a2a-task-lifecycle.md`
+
+---
+
+## ステータス
+
+| 値 | 意味 |
+|---|---|
+| `proposed` | 提案済み、未着手 |
+| `accepted` | 実装決定 |
+| `in-progress` | 実装中（PR 番号を記載） |
+| `done` | 実装完了（commit/PR を記載） |
+| `deferred` | 保留（理由を記載） |
+| `rejected` | 却下（理由を記載） |
+
+---
+
+## フォーマット
+
+各提案ファイルには以下のセクションを含める：
+
+```markdown
+# FP-NNNN: タイトル
+
+**Status**: proposed
+**Proposed**: YYYY-MM-DD
+**Author**: (セッション名 or 担当者)
+
+## Summary
+1 段落で何を・なぜ実装するか。
+
+## Motivation
+ユースケース・背景・競合との比較など。
+
+## Proposed implementation
+実装方針の概要（詳細設計は ADR に委譲）。
+
+## Dependencies
+前提となる実装・PR。
+
+## Cost estimate
+SMALL / MEDIUM / LARGE（根拠付き）。
+
+## Related
+関連 ADR・PR・docs へのリンク。
+```
+
+---
+
+## Index
+
+| # | タイトル | Status | コスト |
+|---|---|---|---|
+| [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification 対応 | proposed | MEDIUM |
+| [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — 統合ドキュメント検索スキル | done (ADR-0033 Accepted、 1e6f153) | LARGE |
+| [0003](0003-budget-exceed-user-approval.md) | budget 超過時のユーザー許諾・再開フロー | proposed | SMALL |
+| [0004](0004-safety-config-ux.md) | safety 設定 UX 改善 — 概念レイヤーとの整合 | proposed | MEDIUM |
+| [0005](0005-safety-as-checkpoint.md) | safety limit をチェックポイントとして扱う — Permission モデルとの統合 | proposed | LARGE |
+| [0006](0006-skill-self-improvement.md) | スキル自己改善 — 実行トレース駆動 + バージョン管理 + ロールバック | proposed | MEDIUM |
+| [0007](0007-evaluation-infrastructure.md) | Agent 評価インフラ — P6 トレース export + スキル回帰評価 | proposed | LARGE |
+| [0008](0008-swe-bench-integration.md) | SWE-bench 参加インフラ — stdlib スキル + バッチ実行 | proposed | LARGE |
+| [0009](0009-operational-intelligence.md) | Operational Intelligence — イベントログの RAG インデックス化 | proposed | MEDIUM |
+| [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |

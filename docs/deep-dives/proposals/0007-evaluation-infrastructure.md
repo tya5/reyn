@@ -1,4 +1,4 @@
-# FP-0007: Agent 評価インフラ — P6 トレース export + スキル回帰評価
+# FP-0007: Agent Evaluation Infrastructure — P6 Trace Export + Skill Regression Evaluation
 
 **Status**: proposed
 **Proposed**: 2026-05-10
@@ -8,54 +8,55 @@
 
 ## Summary
 
-Reyn は P6 イベントログを既に持っており、評価インフラとして活用できる構造が整っている。
-本 FP では以下の 4 つを追加する:
-(A) P6 イベントの外部評価ツール export adapter（Langfuse / OTLP / IETF Agent Audit Trail）、
-(B) `reyn eval` コマンドによるゴールデンデータセット実行と CI ゲート、
-(C) FP-0006 の `skill_version_hash` を使ったバージョン間回帰比較、
-(D) フェーズから使える `judge_output` op（LLM スコアラー）。
+Reyn already has a P6 event log, and the structure is in place to use it as an evaluation
+infrastructure. This FP adds the following four components:
+(A) An export adapter for P6 events to external evaluation tools (Langfuse / OTLP / IETF Agent Audit Trail),
+(B) A `reyn eval` command for running golden datasets against skills and CI gating,
+(C) Version-to-version regression comparison using FP-0006's `skill_version_hash`,
+(D) A `judge_output` op (LLM scorer) callable from any phase.
 
 ---
 
 ## Motivation
 
-### 業界の評価インフラ動向（2026-05 調査）
+### Industry Evaluation Infrastructure Trends (2026-05 survey)
 
-アカデミック領域では SWE-bench Verified（コーディング）と METR Time Horizon（安全性）が最多引用だが、
-どちらも「本番挙動を反映しない」という構造的批判を受けている。
-UC Berkeley（2026-04）は主要ベンチマーク 8 本で報酬ハッキングが可能であることを実証し、
-Goodhart's Law（「測定指標になった途端に指標でなくなる」）の実例として広く引用されている。
+In academic circles, SWE-bench Verified (coding) and METR Time Horizon (safety) are the most
+cited benchmarks, but both face a structural criticism of "not reflecting real production behavior."
+UC Berkeley (2026-04) demonstrated that reward hacking is possible across 8 major benchmarks,
+and the work is widely cited as a concrete instance of Goodhart's Law ("when a measure becomes
+a target, it ceases to be a good measure").
 
-エンタープライズ実態:
-- **Braintrust**: CI/CD ゲート（PR ごとにスコア低下で merge ブロック）がデファクト
-- **Langfuse**: OSS・自己ホスト可能 → 日本エンタープライズ（データ主権要件）で有力
-- **IETF Agent Audit Trail**: `identity / timing / routing / parameters` の構造化ログ標準が策定中
+Enterprise landscape:
+- **Braintrust**: CI/CD gates (blocking merges on score regression per PR) are the de facto standard
+- **Langfuse**: OSS, self-hostable → a strong choice for Japanese enterprises (data sovereignty requirements)
+- **IETF Agent Audit Trail**: A structured log standard covering `identity / timing / routing / parameters` is under development
 
-### P6 イベントログが評価インフラの基盤になれる
+### P6 Event Log as an Evaluation Infrastructure Foundation
 
-Goodhart 問題への根本回答のひとつは「**どのバージョンで出したスコアか**のトレーサビリティ」。
-FP-0006 で追加する `skill_version_hash` と P6 の append-only ログを組み合わせると、
-「スキル v1 の 50 回実行 vs v2 の 50 回実行」の自動比較が追加実行ゼロで実現できる。
+One fundamental answer to the Goodhart problem is **traceability of which version produced a given score**.
+Combining FP-0006's `skill_version_hash` with P6's append-only log enables automatic comparison of
+"50 runs with skill v1 vs. 50 runs with skill v2" — with zero additional executions.
 
-IETF Agent Audit Trail ドラフト（draft-sharif-agent-audit-trail）の必須フィールドは
-Reyn の P6 イベント型で自然に表現できる:
+The required fields in the IETF Agent Audit Trail draft (draft-sharif-agent-audit-trail) map
+naturally onto Reyn's P6 event types:
 
-| IETF フィールド | P6 イベント対応 |
+| IETF field | P6 event mapping |
 |---|---|
 | identity | chain_id / skill_name |
-| timing | timestamp（全イベント共通）|
-| routing | run_skill_started の state_dir |
-| parameters | tool_executed の op + args |
+| timing | timestamp (common to all events) |
+| routing | run_skill_started's state_dir |
+| parameters | tool_executed's op + args |
 
 ---
 
 ## Proposed implementation
 
-### Component A — P6 イベント export adapter（MEDIUM）
+### Component A — P6 Event Export Adapter (MEDIUM)
 
-P6 イベントを外部評価ツールに送出するアダプタ。
-P7 遵守のため、アダプタはスキル非依存の汎用 event schema を出力する
-（アダプタは `type / timestamp / data` を読むだけで、スキル固有フィールド名を知らない）。
+An adapter that forwards P6 events to external evaluation tools.
+To comply with P7, the adapter outputs a generic skill-agnostic event schema
+(the adapter only reads `type / timestamp / data` and has no knowledge of skill-specific field names).
 
 ```python
 # src/reyn/eval/export.py
@@ -63,13 +64,13 @@ P7 遵守のため、アダプタはスキル非依存の汎用 event schema を
 class TraceExporter(Protocol):
     async def export(self, events: list[Event]) -> None: ...
 
-class LangfuseExporter(TraceExporter): ...   # 自己ホスト可、日本エンタープライズ向け
-class OTLPExporter(TraceExporter): ...       # OpenTelemetry 標準
-class IETFAuditExporter(TraceExporter): ...  # IETF Agent Audit Trail draft 準拠
-class FileExporter(TraceExporter): ...       # .reyn/traces/ へのローカル出力（デフォルト）
+class LangfuseExporter(TraceExporter): ...   # Self-hostable, for Japanese enterprises
+class OTLPExporter(TraceExporter): ...       # OpenTelemetry standard
+class IETFAuditExporter(TraceExporter): ...  # Compliant with IETF Agent Audit Trail draft
+class FileExporter(TraceExporter): ...       # Local output to .reyn/traces/ (default)
 ```
 
-設定:
+Configuration:
 
 ```yaml
 # reyn.yaml
@@ -78,151 +79,150 @@ eval:
     - type: langfuse
       public_key: ${LANGFUSE_PUBLIC_KEY}
       secret_key: ${LANGFUSE_SECRET_KEY}
-      host: https://your-langfuse.example.com   # 自己ホスト URL
+      host: https://your-langfuse.example.com   # Self-hosted URL
     - type: otlp
       endpoint: http://localhost:4317
-    - type: file                                 # デフォルト（設定なしでも有効）
+    - type: file                                 # Default (active even without config)
       path: .reyn/traces/
 ```
 
-export のタイミング: スキル実行完了後に非同期で送出（実行パスに影響しない）。
-失敗時はログに警告を出すのみ（P6 本体の書き込みは独立）。
+Export timing: sent asynchronously after skill execution completes (no impact on the execution path).
+On failure, a warning is logged only (P6 core writes are independent).
 
-### Component B — `reyn eval` コマンド（MEDIUM）
+### Component B — `reyn eval` Command (MEDIUM)
 
-ゴールデンデータセットに対してスキルを実行し pass/fail とスコアを記録する
-CI ゲート機構。
+A CI gate mechanism that runs a skill against a golden dataset and records pass/fail and scores.
 
 ```
 reyn eval run <skill_name> --dataset eval/golden.jsonl [--threshold 0.8]
-reyn eval compare <skill_name> --from v1 --to v2        # バージョン間回帰比較
-reyn eval report <skill_name>                            # 過去の eval 結果サマリー
+reyn eval compare <skill_name> --from v1 --to v2        # Version-to-version regression comparison
+reyn eval report <skill_name>                            # Summary of past eval results
 ```
 
-**golden dataset フォーマット** (JSONL):
+**Golden dataset format** (JSONL):
 
 ```jsonl
 {"input": {"query": "..."}, "expected": {"summary": "..."}, "tags": ["smoke"]}
 {"input": {"query": "..."}, "expected": {"summary": "..."}, "tags": ["regression"]}
 ```
 
-**`reyn eval run` の動作**:
+**`reyn eval run` behavior**:
 
-1. 各テストケースに対してスキルを実行（workspace は隔離）
-2. `final_output` を `expected` と比較
-   - `mode: exact` — JSON 完全一致
-   - `mode: judge` — `judge_output` op（Component D）でスコア算出
-3. 結果を `.reyn/eval-results/<skill>/<timestamp>.jsonl` に保存
-4. 結果に `skill_version_hash` を記録（FP-0006 との接続）
-5. pass rate が `--threshold` 未満なら **exit code 1** → CI gate として使用可能
+1. Run the skill for each test case (workspace is isolated)
+2. Compare `final_output` against `expected`
+   - `mode: exact` — exact JSON match
+   - `mode: judge` — score computed by the `judge_output` op (Component D)
+3. Save results to `.reyn/eval-results/<skill>/<timestamp>.jsonl`
+4. Record `skill_version_hash` in results (connection to FP-0006)
+5. If pass rate is below `--threshold`, **exit code 1** → usable as a CI gate
 
-**CI での使用例**:
+**CI usage example**:
 
 ```yaml
 # .github/workflows/eval.yml
 - run: reyn eval run my_skill --dataset eval/golden.jsonl --threshold 0.8
 ```
 
-### Component C — スキルバージョン回帰比較（SMALL）
+### Component C — Skill Version Regression Comparison (SMALL)
 
-FP-0006 の `skill_version_hash` を使って、
-改善前後のスキルを同一データセットで比較する。
-**追加の実行は不要** — P6 ログの集計のみで実現。
+Using FP-0006's `skill_version_hash`, compare a skill before and after changes against
+the same dataset.
+**No additional executions required** — achieved by aggregating P6 logs only.
 
 ```
 reyn eval compare my_skill --from v1 --to v2
 
-  v1 (sha:abc123):  72% pass  (36/50)  2026-05-01 〜 2026-05-05
-  v2 (sha:def456):  88% pass  (44/50)  2026-05-05 〜       ← current
-  差分: +16pp  /  regression: なし
+  v1 (sha:abc123):  72% pass  (36/50)  2026-05-01 ~ 2026-05-05
+  v2 (sha:def456):  88% pass  (44/50)  2026-05-05 ~       ← current
+  diff: +16pp  /  regression: none
 ```
 
-`reyn eval compare` は以下を参照:
-- `.reyn/skill-versions/<name>/current` — カレントバージョン
-- P6 `run_skill_started` イベントの `skill_version_hash` — 各バージョンの実行履歴
-- `.reyn/eval-results/<skill>/` — 明示的な eval 実行の結果
+`reyn eval compare` references:
+- `.reyn/skill-versions/<name>/current` — current version
+- P6 `run_skill_started` event's `skill_version_hash` — execution history per version
+- `.reyn/eval-results/<skill>/` — results from explicit eval runs
 
-### Component D — `judge_output` op（SMALL）
+### Component D — `judge_output` Op (SMALL)
 
-スキルの任意フェーズから使える LLM スコアラー op。
-`run_and_eval` フェーズの eval ループとも、`reyn eval run` の比較エンジンとしても使用する。
+An LLM scorer op callable from any phase in a skill.
+Used both in the eval loop of a `run_and_eval` phase and as the comparison engine for `reyn eval run`.
 
-**Control IR フォーマット**:
+**Control IR format**:
 
 ```json
 {
   "op": "judge_output",
   "target": "artifact.data.summary",
-  "rubric": "以下の基準で 0.0〜1.0 でスコアリングしてください: ...",
+  "rubric": "Score on a scale from 0.0 to 1.0 according to the following criteria: ...",
   "threshold": 0.8,
   "on_fail": "transition"
 }
 ```
 
-P7 遵守: rubric の内容は呼び出し側スキルが渡す。
-OS 側の `judge_output` 実装は `target` パスの値と `rubric` 文字列を受け取るだけで、
-スキル固有の評価基準を知らない。
+P7 compliance: the rubric content is supplied by the calling skill.
+The OS-side `judge_output` implementation only receives the value at the `target` path and the
+`rubric` string — it has no knowledge of skill-specific evaluation criteria.
 
-`on_fail` の値は OS レベルの語彙のみ:
-- `"transition"` — LLM が次フェーズを選択
-- `"abort"` — スキル実行を abort
-- `"continue"` — スコアに関わらず続行（スコアを workspace に記録するのみ）
+`on_fail` values are OS-level vocabulary only:
+- `"transition"` — LLM selects the next phase
+- `"abort"` — abort skill execution
+- `"continue"` — continue regardless of score (score is recorded in the workspace only)
 
-結果は P6 に `tool_executed` (op=judge_output, score=0.72, passed=false) として記録される。
+Results are recorded in P6 as `tool_executed` (op=judge_output, score=0.72, passed=false).
 
-**CLAUDE.md の NEVER rule 遵守**:
-`control-ir.md` と `OP_KIND_MODEL_MAP` は同一 PR で更新する（必須）。
+**CLAUDE.md NEVER rule compliance**:
+`control-ir.md` and `OP_KIND_MODEL_MAP` must be updated in the same PR (mandatory).
 
 ---
 
-## Hermes / Braintrust との比較
+## Comparison with Hermes / Braintrust
 
-| 機能 | Braintrust | Hermes (未出荷) | Reyn（本 FP 後）|
+| Feature | Braintrust | Hermes (unshipped) | Reyn (after this FP) |
 |---|---|---|---|
 | CI/CD eval gate | ✓ | — | ✓ (`reyn eval run`) |
-| バージョン回帰比較 | ✓ | — | ✓ (FP-0006 + Component C) |
-| 外部 export | Braintrust SaaS のみ | — | ✓ Langfuse / OTLP / IETF |
-| 自己ホスト対応 | ✗ | — | ✓ (Langfuse セルフホスト) |
-| IETF 準拠 | — | — | ✓ (Component A) |
-| P7 遵守 | 該当なし | 該当なし | ✓ (OS はスキル固有知識なし) |
+| Version regression comparison | ✓ | — | ✓ (FP-0006 + Component C) |
+| External export | Braintrust SaaS only | — | ✓ Langfuse / OTLP / IETF |
+| Self-host support | ✗ | — | ✓ (Langfuse self-hosted) |
+| IETF compliance | — | — | ✓ (Component A) |
+| P7 compliance | N/A | N/A | ✓ (OS has no skill-specific knowledge) |
 
 ---
 
 ## Dependencies
 
-- `src/reyn/events/events.py` — export の読み取り元（変更なし）
-- `src/reyn/op_runtime/registry.py` — `judge_output` を `OP_KIND_MODEL_MAP` に追加
-- `docs/reference/runtime/control-ir.md` — `judge_output` セクション追加（registry と同一 PR 必須）
-- FP-0006（skill_version_hash）— Component C の前提。A / B / D は独立実装可能
+- `src/reyn/events/events.py` — source of events for export (no changes)
+- `src/reyn/op_runtime/registry.py` — add `judge_output` to `OP_KIND_MODEL_MAP`
+- `docs/reference/runtime/control-ir.md` — add `judge_output` section (must be same PR as registry)
+- FP-0006 (skill_version_hash) — prerequisite for Component C. A / B / D can be implemented independently
 
-前提 PR: なし（Component A / B / D は FP-0006 より先に実装可能）。
-Component C のみ FP-0006 の `skill_version_hash` が前提。
+No prerequisite PRs: Components A / B / D can be implemented before FP-0006.
+Only Component C requires FP-0006's `skill_version_hash`.
 
 ---
 
 ## Cost estimate
 
-**合計: LARGE**
+**Total: LARGE**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| Component A: export adapter (Langfuse / OTLP / IETF / File) | MEDIUM | OTLP は well-spec'd。Langfuse は REST API が公開されている |
-| Component B: `reyn eval run` + golden dataset runner | MEDIUM | workspace 隔離 + pass/fail 判定 + JSONL 出力 |
-| Component C: バージョン回帰比較 | SMALL | P6 ログ集計のみ、新実行なし |
-| Component D: `judge_output` op + registry + control-ir.md | SMALL | op 実装 + doc 更新 |
-| テスト（Tier 1 / Tier 2） | SMALL | Component A の export contract + Component D の op contract |
+| Component A: export adapter (Langfuse / OTLP / IETF / File) | MEDIUM | OTLP is well-spec'd; Langfuse has a public REST API |
+| Component B: `reyn eval run` + golden dataset runner | MEDIUM | workspace isolation + pass/fail judgment + JSONL output |
+| Component C: version regression comparison | SMALL | P6 log aggregation only, no new executions |
+| Component D: `judge_output` op + registry + control-ir.md | SMALL | op implementation + doc update |
+| Tests (Tier 1 / Tier 2) | SMALL | Component A export contract + Component D op contract |
 
-ボトルネックは **Component B の workspace 隔離**（eval 実行が本番 workspace を汚染しない保証）
-と **Component A の IETF フォーマット精度**（ドラフト仕様が変化している可能性）。
+Bottlenecks are **Component B's workspace isolation** (ensuring eval runs do not contaminate the
+production workspace) and **Component A's IETF format accuracy** (the draft spec may still be evolving).
 
 ---
 
 ## Related
 
-- `src/reyn/events/events.py` — P6 イベント基盤
+- `src/reyn/events/events.py` — P6 event foundation
 - `src/reyn/op_runtime/registry.py` — OP_KIND_MODEL_MAP
-- `docs/reference/runtime/control-ir.md` — op catalog（judge_output 追加対象）
-- FP-0006 (`0006-skill-self-improvement.md`) — skill_version_hash（Component C の前提）
-- `docs/deep-dives/research/landscape/hn-practitioner-voice-2026.md` — HN の観測性批判
+- `docs/reference/runtime/control-ir.md` — op catalog (target for judge_output addition)
+- FP-0006 (`0006-skill-self-improvement.md`) — skill_version_hash (prerequisite for Component C)
+- `docs/deep-dives/research/landscape/hn-practitioner-voice-2026.md` — HN observability criticism
 - [IETF Agent Audit Trail draft](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/)
-- [Langfuse OSS](https://langfuse.com/) — 自己ホスト対応評価プラットフォーム
+- [Langfuse OSS](https://langfuse.com/) — self-hostable evaluation platform

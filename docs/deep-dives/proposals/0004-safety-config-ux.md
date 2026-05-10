@@ -1,4 +1,4 @@
-# FP-0004: safety 設定 UX 改善 — 概念レイヤーとの整合
+# FP-0004: Safety Configuration UX Improvement — Alignment with the Conceptual Layer
 
 **Status**: done (landed 2026-05-10)
 **Proposed**: 2026-05-10
@@ -9,18 +9,15 @@
 
 ## Summary
 
-現在のループ対策・タイムアウト設定は `limits:` / `cost:` / `multi_agent:` の
-3 セクションに分散しており、利用者が「なぜ止まったか」「何を変えれば再開できるか」を
-理解しにくい。ユーザーの認知モデル（止まる理由は ループ / タイムアウト / 予算超過 の 3 種類）
-に合わせて `safety:` セクションへ統合し、エラーメッセージとドキュメントも揃える。
+The current loop-detection and timeout settings are scattered across three sections — `limits:`, `cost:`, and `multi_agent:` — making it difficult for users to understand why execution stopped and what to change to resume it. This proposal consolidates them into a unified `safety:` section that matches the user's mental model (stop reasons fall into three categories: loop / timeout / budget exceeded) and aligns error messages and documentation accordingly.
 
 ---
 
 ## Motivation
 
-### 現状の問題
+### Current problems
 
-**設定キーが 3 名前空間に分散:**
+**Configuration keys spread across 3 namespaces:**
 
 ```yaml
 limits:
@@ -28,143 +25,139 @@ limits:
   llm:    timeout / max_retries
 cost:
   router_invocations_per_turn
-  per_chain_skill_calls          # ← 役割は「ループ検知」だが cost: に置かれている
+  per_chain_skill_calls          # ← semantically a "loop guard" but placed under cost:
 multi_agent:
   max_hop_depth / chain_timeout_seconds
-# + skill.md frontmatter の max_act_turns
+# + max_act_turns in phase frontmatter
 ```
 
-**エラーメッセージに設定キーが含まれない:**
+**Error messages do not include configuration keys:**
 
 ```
 [loop_limit_exceeded]
-→ どのキーを変えれば続くのかユーザーには分からない
+→ Users have no way of knowing which key to change to continue
 ```
 
-**「止まる理由」の概念モデルがドキュメントにない:**
+**No conceptual model for "why does Reyn stop" in the documentation:**
 
-10 機構が個別に説明されており、利用者がメンタルモデルを構築できない。
+10 mechanisms are each described individually, making it impossible for users to build a mental model.
 
 ---
 
 ## Proposed implementation
 
-### Step 1 — エラーメッセージに設定キーを含める（SMALL）
+### Step 1 — Include configuration keys in error messages (SMALL)
 
 ```
-[ループ検知] phase 'revise' が 25 回の上限に達しました。
-→ 続けるには safety.loop.max_phase_visits を引き上げてください。
+[Loop guard] Phase 'revise' has reached its limit of 25 visits.
+→ To continue, raise safety.loop.max_phase_visits.
 
-[タイムアウト] LLM 呼び出しが 60 秒を超えました。
-→ safety.timeout.llm_call_seconds を引き上げるか、モデルを変更してください。
+[Timeout] LLM call exceeded 60 seconds.
+→ Raise safety.timeout.llm_call_seconds or switch to a different model.
 
-[ループ検知] router がこのターンに 3 回起動されました。
-→ safety.loop.max_router_calls_per_turn を引き上げてください（0 = 無制限）。
+[Loop guard] The router was invoked 3 times in this turn.
+→ Raise safety.loop.max_router_calls_per_turn (0 = unlimited).
 ```
 
-各 raise / return 箇所で `hint_config_key` を付与するだけ。既存の挙動は変わらない。
+This is a simple change — attach `hint_config_key` at each raise / return site. Existing behavior is unchanged.
 
-### Step 2 — `safety:` セクションへ統合（MEDIUM）
+### Step 2 — Consolidate into a `safety:` section (MEDIUM)
 
-概念レイヤーに対応した新設定スキーマ:
+New configuration schema aligned with the conceptual layer:
 
 ```yaml
 safety:
 
-  # ① ループ検知 — 同じことを繰り返しているとき
+  # ① Loop detection — when the same thing is happening repeatedly
   loop:
-    max_act_turns_per_phase: 10    # フェーズ内（LLM と op のやりとり）
-    max_phase_visits: 25           # フェーズ間（遷移の繰り返し）
-    max_router_calls_per_turn: 3   # スキル起動（同一ターン内）
-    max_agent_hops: 3              # 委譲連鎖（A→B→C の深さ）
-    max_skill_calls_per_chain: 5   # スキル起動（チェーン全体）
+    max_act_turns_per_phase: 10    # within a phase (LLM ↔ op exchanges)
+    max_phase_visits: 25           # across phases (repeated transitions)
+    max_router_calls_per_turn: 3   # skill invocations (within a single turn)
+    max_agent_hops: 3              # delegation chain depth (A→B→C)
+    max_skill_calls_per_chain: 5   # skill invocations (across the full chain)
 
-  # ② タイムアウト — 時間がかかりすぎているとき
+  # ② Timeout — when something is taking too long
   timeout:
-    llm_call_seconds: 60           # LLM API 1 回の呼び出し
-    llm_max_retries: 3             # LLM 一時エラーのリトライ上限
-    phase_seconds: 0               # フェーズ全体（0 = 無制限）
-    chain_seconds: 60              # マルチエージェント chain
+    llm_call_seconds: 60           # a single LLM API call
+    llm_max_retries: 3             # retry limit for transient LLM errors
+    phase_seconds: 0               # entire phase (0 = unlimited)
+    chain_seconds: 60              # multi-agent chain
 
-# ③ 予算超過 — cost: セクションのまま維持
-# （トークン / USD / 日次 / 月次 は財務的な設定として分離を保つ）
+# ③ Budget exceeded — remains under cost: section
+# (token / USD / daily / monthly are financial settings and should stay separate)
 cost:
   per_agent_tokens: ...
   daily_cost_usd: ...
   ...
 ```
 
-**移行方針（後方互換）:**
+**Migration strategy (backward compatible):**
 
-- 旧キー（`limits.phase.max_visits` 等）は deprecated として読み取りを継続
-- 新キーが存在する場合は新キーを優先
-- 次のメジャーバージョンで旧キーを削除
+- Old keys (e.g. `limits.phase.max_visits`) are deprecated but continue to be read
+- New keys take precedence when both are present
+- Old keys will be removed in the next major version
 
-**`per_chain_skill_calls` の移動:**
+**Moving `per_chain_skill_calls`:**
 
-現在 `cost:` セクションにある `per_chain_skill_calls` は役割が「ループ検知（回数制限）」であるため
-`safety.loop.max_skill_calls_per_chain` として移動。財務的な意味を持たないため `cost:` への残留は誤誘導。
+`per_chain_skill_calls` currently sits under `cost:` but its role is loop detection (a count limit), not financial tracking. It will be moved to `safety.loop.max_skill_calls_per_chain`. Leaving it under `cost:` is misleading since it carries no monetary meaning.
 
-**`max_act_turns` の扱い:**
+**Handling `max_act_turns`:**
 
-現在はフェーズ frontmatter に `max_act_turns: 10` と書く。
-グローバルデフォルトを `safety.loop.max_act_turns_per_phase` として追加し、
-フェーズ frontmatter でのオーバーライドは引き続き可能。
+Currently written as `max_act_turns: 10` in phase frontmatter. A global default will be added as `safety.loop.max_act_turns_per_phase`, while per-phase overrides in frontmatter remain supported.
 
-### Step 3 — 概念ドキュメント作成（SMALL）
+### Step 3 — Create a conceptual document (SMALL)
 
-`docs/guide/for-skill-authors/` または `docs/guide/for-reyn-developers/` に
-`understand-why-reyn-stops.md` を追加:
+Add `understand-why-reyn-stops.md` under `docs/guide/for-skill-authors/` or `docs/guide/for-reyn-developers/`:
 
 ```
-# なぜ Reyn は止まるか
+# Why Reyn Stops
 
-止まる理由は 3 種類:
-  ① ループ検知 → safety.loop.*
-  ② タイムアウト → safety.timeout.*
-  ③ 予算超過 → cost.*
+There are 3 reasons Reyn stops:
+  ① Loop detection  → safety.loop.*
+  ② Timeout         → safety.timeout.*
+  ③ Budget exceeded → cost.*
 
-各カテゴリごとに:
-  - 何が起きているか（例）
-  - 該当するエラーメッセージ
-  - 変更すべき設定キー
-  - 推奨値と注意点
+For each category:
+  - What is happening (with examples)
+  - The corresponding error message
+  - Which configuration key to change
+  - Recommended values and caveats
 ```
 
 ---
 
 ## Dependencies
 
-- `src/reyn/config.py` — `SafetyConfig` + `LoopConfig` + `TimeoutConfig` データクラス追加
-- `src/reyn/kernel/runtime.py` — エラーメッセージに `hint_config_key` 付与
-- `src/reyn/chat/session.py` — router cap / chain エラーのメッセージ改善
-- `src/reyn/chat/services/chain_manager.py` — chain timeout エラーメッセージ改善
-- `src/reyn/chat/services/budget_gateway.py` — `per_chain_skill_calls` を新キーに移行
-- `docs/reference/config/reyn-yaml.md` — 設定リファレンス更新
+- `src/reyn/config.py` — Add `SafetyConfig`, `LoopConfig`, and `TimeoutConfig` dataclasses
+- `src/reyn/kernel/runtime.py` — Attach `hint_config_key` to error messages
+- `src/reyn/chat/session.py` — Improve router cap / chain error messages
+- `src/reyn/chat/services/chain_manager.py` — Improve chain timeout error messages
+- `src/reyn/chat/services/budget_gateway.py` — Migrate `per_chain_skill_calls` to the new key
+- `docs/reference/config/reyn-yaml.md` — Update configuration reference
 
-前提 PR: なし（独立して実装可能。Step 1 → 2 → 3 の順に独立してリリース可能）
+Prerequisite PRs: none (can be implemented independently; Steps 1 → 2 → 3 can each be released independently)
 
 ---
 
 ## Cost estimate
 
-**合計: MEDIUM**
+**Total: MEDIUM**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| Step 1: エラーメッセージ改善 | SMALL | 各 raise 箇所に文字列追加のみ |
-| Step 2: `SafetyConfig` データクラス定義 | SMALL | config.py に型追加 |
-| Step 2: 旧キー → 新キー の移行レイヤー | SMALL | deprecated 読み取りロジック |
-| Step 2: 各設定の参照箇所を新キーに変更 | MEDIUM | runtime / session / chain_manager 等 複数ファイル |
-| Step 3: 概念ドキュメント | SMALL | 新規 .md 1 ファイル |
+| Step 1: error message improvements | SMALL | String addition at each raise site only |
+| Step 2: `SafetyConfig` dataclass definition | SMALL | Add types to config.py |
+| Step 2: old-key → new-key migration layer | SMALL | Deprecated-read logic |
+| Step 2: update all references to use new keys | MEDIUM | runtime / session / chain_manager etc., multiple files |
+| Step 3: conceptual document | SMALL | One new .md file |
 
-ボトルネックは **Step 2 の参照箇所変更**（複数モジュールに散在）。
+The bottleneck is **Step 2 reference migration** (scattered across multiple modules).
 
 ---
 
 ## Related
 
-- `src/reyn/config.py` — 現行の `CostConfig` / `LimitsConfig` / `MultiAgentConfig`
+- `src/reyn/config.py` — Current `CostConfig` / `LimitsConfig` / `MultiAgentConfig`
 - `src/reyn/kernel/runtime.py` — `LoopLimitExceededError`, `PhaseBudgetExceededError`
 - `src/reyn/chat/services/budget_gateway.py` — `RouterCapExceeded`
-- FP-0003 (`0003-budget-exceed-user-approval.md`) — budget 超過時の ask_user 連携（`safety.loop.max_skill_calls_per_chain` も対象になる）
+- FP-0003 (`0003-budget-exceed-user-approval.md`) — ask_user integration on budget exceeded (`safety.loop.max_skill_calls_per_chain` is also in scope)

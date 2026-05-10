@@ -1,8 +1,8 @@
-# FP-0002: index_docs / recall_docs — 統合ドキュメント検索スキル
+# FP-0002: index_docs / recall_docs — unified document retrieval skill
 
-**Status**: done (= ADR-0033 Accepted、 Phase 1 landed 2026-05-10、 commit `1e6f153`)
+**Status**: done (= ADR-0033 Accepted, Phase 1 landed 2026-05-10, commit `1e6f153`)
 **Proposed**: 2026-05-09
-**Landed**: 2026-05-10 (= 12 commits、 d2db332..1e6f153)
+**Landed**: 2026-05-10 (= 12 commits, d2db332..1e6f153)
 **Author**: Research session (eager-shaw-389d9d)
 **ADR**: [0033](../decisions/0033-rag-extensible-os.md) (= confirmed design + landed implementation)
 
@@ -10,121 +10,121 @@
 
 ## Summary
 
-現在の memory 検索はキーワードマッチ + 全件 system prompt インライン展開に留まる。
-`index_docs`（チャンク分割 + embedding）と `recall_docs`（catalog filter + semantic top-K）を
-stdlib スキルとして実装することで、memory・src・任意ファイルを横断する統合セマンティック検索を実現する。
-`recall_memory` の概念は `recall_docs(sources=[{type: "memory"}])` に吸収される。
+Current memory retrieval is limited to keyword matching plus full inline expansion of all entries into the system prompt.
+By implementing `index_docs` (chunk splitting + embedding) and `recall_docs` (catalog filter + semantic top-K) as stdlib skills,
+we achieve unified semantic search across memory, src, and arbitrary files.
+The `recall_memory` concept is absorbed into `recall_docs(sources=[{type: "memory"}])`.
 
 ---
 
 ## Motivation
 
-### 現状の制約
+### Current constraints
 
 ```
-memory 検索 → keyword substring matching (find_one)
-             → 全エントリを system prompt にインライン展開
-             → セマンティック検索なし / サイズ上限なし
+memory retrieval → keyword substring matching (find_one)
+                 → all entries inlined into system prompt
+                 → no semantic search / no size cap
 ```
 
-- 言い換え・同義語を完全に見落とす
-- セッションが長くなるほど system prompt が肥大化
-- docs / src に対する検索手段が存在しない（`recall_docs` は未実装）
-- RAG の中核である indexing をコード変更なしにカスタマイズできない
+- Paraphrases and synonyms are completely missed
+- System prompt grows as sessions get longer
+- No search mechanism exists for docs / src (`recall_docs` not yet implemented)
+- The indexing pipeline — the hardest part of RAG — cannot be customized without code changes
 
-### 設計の核心
+### Core design insight
 
-> RAG で最も難しい indexing 部分を自然言語（skill.md）で記述・override できるのが差別化ポイント。
+> The differentiator is being able to describe and override the hardest part of RAG — the indexing pipeline — in natural language (skill.md).
 
-LangChain / LlamaIndex はインデックスパイプラインを Python コードで書く。
-Reyn では `index_docs` skill の Phase instructions + preprocessor で記述し、
-プロジェクト固有のドキュメント構造には skill override だけで対応できる。
+LangChain / LlamaIndex require the index pipeline to be written in Python code.
+In Reyn, it is described through `index_docs` skill Phase instructions + preprocessors,
+and project-specific document structures can be handled with skill overrides alone.
 
 ---
 
 ## Proposed implementation
 
-### 全体構造
+### Overall structure
 
 ```
 index_docs  (stdlib skill)
-  Phase 1 — strategy   : LLM がサンプルを見てチャンク戦略を決定
-  Phase 2 — apply      : Python preprocessor が全ファイルに戦略を適用
-                         → embed op でベクトル化 → .reyn/index/ に保存
+  Phase 1 — strategy   : LLM inspects samples and decides chunking strategy
+  Phase 2 — apply      : Python preprocessor applies strategy to all files
+                         → embed op for vectorization → save to .reyn/index/
 
 recall_docs (stdlib skill)
-  Phase 1 — retrieve   : Python preprocessor が catalog filter → semantic top-K
-  フォールバック       : インデックスなし時は catalog + サイズ上限で直接渡す
+  Phase 1 — retrieve   : Python preprocessor does catalog filter → semantic top-K
+  Fallback             : when no index, use catalog + size cap and pass directly
 ```
 
-### ソース種別
+### Source types
 
-`sources` は required（暗黙デフォルトなし）。
+`sources` is required (no implicit default).
 
-| type | パス | チャンク単位 |
+| type | Path | Chunk unit |
 |---|---|---|
-| `memory` | `.reyn/memory/*.md` | 1エントリ = 1チャンク |
-| `src` | `src/**/*.py` 等 | 関数・クラス境界（skill で記述）|
-| `files` | 任意パス | Markdown 構造分割（skill で記述）|
+| `memory` | `.reyn/memory/*.md` | 1 entry = 1 chunk |
+| `src` | `src/**/*.py` etc. | function / class boundaries (described in skill) |
+| `files` | arbitrary path | Markdown structural split (described in skill) |
 
-**ドキュメント種別ごとの特化実装は skill author が override スキルで行う**:
+**Specialization per document type is done by skill authors via override skills**:
 
 ```
-stdlib/index_docs        ← 汎用フレームワーク (stdlib)
-project/index_src        ← Python コード特化 (skill author 作)
-project/index_design     ← 独自フォーマット特化 (skill author 作)
+stdlib/index_docs        ← generic framework (stdlib)
+project/index_src        ← Python code specialization (skill author)
+project/index_design     ← custom format specialization (skill author)
 ```
 
-### context 上限対策
+### Context limit mitigation
 
-ソース全体を1 completion に流すことはしない。
+We never stream all sources into a single completion.
 
-- **`iterate` op**: ファイルリストを取得し、1ファイル = 1 completion でチャンク判断
-- **決定論的分割原則**: LLM は戦略を1回決定、適用は Python preprocessor が担当
+- **`iterate` op**: fetch file list, one file = one completion for chunk decisions
+- **Determinism principle**: LLM decides strategy once; application is handled by the Python preprocessor
 
 ```
 Phase 1 (LLM, 1 completion)
-  入力: ファイルリスト + サンプル数件
-  出力: ChunkStrategy artifact（boundary_rules, overlap_ratio 等）
+  input: file list + sample files
+  output: ChunkStrategy artifact (boundary_rules, overlap_ratio, etc.)
 
 Phase 2 (preprocessor + iterate)
-  入力: ChunkStrategy
-  処理: 全ファイルに適用 → embed op → .reyn/index/ に保存
+  input: ChunkStrategy
+  process: apply to all files → embed op → save to .reyn/index/
 ```
 
-### インデックス保存と P5 / P6
+### Index storage and P5 / P6
 
-| 保存先 | 内容 |
+| Storage location | Contents |
 |---|---|
-| `.reyn/index/<source_hash>/` | チャンクベクトル + ChunkMetadata（ファイル保存）|
-| WAL | `embed` op 完了 + `content_hash` + `embedding_model` のみ記録 |
+| `.reyn/index/<source_hash>/` | chunk vectors + ChunkMetadata (file storage) |
+| WAL | only `embed` op completion + `content_hash` + `embedding_model` recorded |
 
-ベクトルデータ（数十MB 規模）は WAL（JSONL）に格納しない。
-クラッシュリカバリは `content_hash` + `embedding_model` で差分スキップ。
+Vector data (tens of MB scale) is not stored in the WAL (JSONL).
+Crash recovery uses `content_hash` + `embedding_model` to skip unchanged chunks.
 
-インデックス無効化の2条件:
-- `content_hash` 変化 → コンテンツ変更 → 再 embed
-- `embedding_model` 変化 → ベクトル空間非互換 → 再 embed
+Two conditions that invalidate the index:
+- `content_hash` changes → content modified → re-embed
+- `embedding_model` changes → vector space incompatible → re-embed
 
-### OS 追加: `ChunkMetadata` モデル
+### OS addition: `ChunkMetadata` model
 
 ```python
-# schemas/models.py に追加
+# added to schemas/models.py
 class ChunkMetadata(BaseModel):
-    source_path: str          # ファイルパス or memory slug
-    source_type: str          # skill が付与するラベル（OS は値を解釈しない）
-    content_hash: str         # 変更検知・再インデックス判断
-    embedding_model: str      # ベクトル空間の互換性管理
-    chunk_index: int          # source 内位置
-    size_tokens: int          # コンテキスト予算管理
-    parent_context: str | None = None  # heading / class / 関数名（引用用）
-    extra: dict = {}          # skill が自由に追加するドメイン固有フィールド
+    source_path: str          # file path or memory slug
+    source_type: str          # label assigned by skill (OS does not interpret the value)
+    content_hash: str         # change detection / re-indexing decision
+    embedding_model: str      # vector space compatibility management
+    chunk_index: int          # position within source
+    size_tokens: int          # context budget management
+    parent_context: str | None = None  # heading / class / function name (for citation)
+    extra: dict = {}          # domain-specific fields the skill may freely add
 ```
 
-OS は `source_type` の値を解釈・分岐しない（P7 準拠）。
-カタログフィルタは `recall_docs` スキル側のコードが担う。
+The OS does not interpret or branch on `source_type` values (P7 compliant).
+Catalog filtering is handled by code on the `recall_docs` skill side.
 
-### OS 追加: `embed` op
+### OS addition: `embed` op
 
 ```python
 # schemas/models.py
@@ -134,7 +134,7 @@ class EmbedIROp(BaseModel):
     model: str = "text-embedding-3-small"
 
 # op_runtime/registry.py
-OP_PURITY["embed"] = OpPurity.external  # WAL キャッシュ対象
+OP_PURITY["embed"] = OpPurity.external  # subject to WAL caching
 
 # op_runtime/embed.py
 async def handle(op: EmbedIROp, ctx: OpContext, ...) -> dict:
@@ -142,56 +142,56 @@ async def handle(op: EmbedIROp, ctx: OpContext, ...) -> dict:
     return {"kind": "embed", "vectors": vectors}
 ```
 
-### recall_docs のフォールバック
+### recall_docs fallback
 
 ```
-インデックスあり → catalog filter (ChunkMetadata) → semantic top-K
-インデックスなし → catalog enumerate → token 上限でフィルタ → LLM へ直接渡す
+index present → catalog filter (ChunkMetadata) → semantic top-K
+no index      → catalog enumerate → filter by token limit → pass directly to LLM
 ```
 
 ---
 
-## 未解決の設計判断
+## Open design decisions
 
-| 項目 | 状況 |
+| Item | Status |
 |---|---|
-| `recall_memory` → `recall_docs` 移行時の `router_system_prompt.py` の扱い | 未定 |
+| Handling of `router_system_prompt.py` during `recall_memory` → `recall_docs` migration | TBD |
 
 ---
 
 ## Dependencies
 
-- `src/reyn/schemas/models.py` — `ChunkMetadata` + `EmbedIROp` 追加
-- `src/reyn/op_runtime/embed.py` — embed op ハンドラ（新規）
-- `src/reyn/op_runtime/registry.py` — `embed` を `OP_KIND_MODEL_MAP` / `OP_PURITY` に追加
-- `src/reyn/memory/memory.py` — `recall_docs` 移行後に `find_one()` が legacy 化
-- `embedding` ライブラリ（`openai` 等）— 未追加なら新規依存
+- `src/reyn/schemas/models.py` — add `ChunkMetadata` + `EmbedIROp`
+- `src/reyn/op_runtime/embed.py` — embed op handler (new)
+- `src/reyn/op_runtime/registry.py` — add `embed` to `OP_KIND_MODEL_MAP` / `OP_PURITY`
+- `src/reyn/memory/memory.py` — `find_one()` becomes legacy after `recall_docs` migration
+- `embedding` library (e.g., `openai`) — new dependency if not already present
 
-前提 PR: なし（独立して実装可能）
+Prerequisite PRs: none (can be implemented independently)
 
 ---
 
 ## Cost estimate
 
-**合計: LARGE**
+**Total: LARGE**
 
-| タスク | コスト | 備考 |
+| Task | Cost | Notes |
 |---|---|---|
-| `embed` op 実装 | SMALL | 3 タッチポイント + embedding client |
-| `ChunkMetadata` モデル | SMALL | Pydantic モデル追加のみ |
-| `.reyn/index/` ストレージ設計 | MEDIUM | ファイル構造 + 差分検知ロジック |
-| `index_docs` stdlib スキル | MEDIUM | Phase 1 (strategy) + Phase 2 (iterate + apply) |
-| `recall_docs` stdlib スキル | MEDIUM | catalog filter + semantic search + フォールバック |
-| `recall_memory` 置き換え | MEDIUM | router との結合が深いため別議論 |
+| `embed` op implementation | SMALL | 3 touch points + embedding client |
+| `ChunkMetadata` model | SMALL | add Pydantic model only |
+| `.reyn/index/` storage design | MEDIUM | file structure + diff detection logic |
+| `index_docs` stdlib skill | MEDIUM | Phase 1 (strategy) + Phase 2 (iterate + apply) |
+| `recall_docs` stdlib skill | MEDIUM | catalog filter + semantic search + fallback |
+| `recall_memory` replacement | MEDIUM | deep router coupling requires separate discussion |
 
-ボトルネックは **ストレージ設計** と **router 移行**。embed op 自体は SMALL。
+Bottlenecks are **storage design** and **router migration**. The embed op itself is SMALL.
 
 ---
 
 ## Related
 
-- `src/reyn/memory/memory.py` — 現行 keyword-only 実装
-- `src/reyn/web/routers/a2a.py` — memory 注入の現行フロー参照
-- `docs/deep-dives/research/landscape/reyn-strategic-priorities.md` — recall_docs ギャップ記載
-- CoALA (arXiv:2309.02427) — Episodic / Semantic / Procedural 分類
-- Anthropic Contextual Retrieval (2024) — チャンクへのコンテキスト付加手法
+- `src/reyn/memory/memory.py` — current keyword-only implementation
+- `src/reyn/web/routers/a2a.py` — reference for the current memory injection flow
+- `docs/deep-dives/research/landscape/reyn-strategic-priorities.md` — recall_docs gap noted
+- CoALA (arXiv:2309.02427) — Episodic / Semantic / Procedural classification
+- Anthropic Contextual Retrieval (2024) — technique for adding context to chunks
