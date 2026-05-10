@@ -80,3 +80,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0012](0012-async-skill-execution.md) | スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化 | proposed | LARGE |
 | [0013](0013-agent-authentication.ja.md) | エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー | proposed | LARGE |
 | [0014](0014-sandboxed-execution.ja.md) | サンドボックス実行 — ポリシー/バックエンド抽象化と exec op の非推奨化 | proposed | MEDIUM |
+| [0015](0015-event-store-backend.ja.md) | Event Store バックエンド抽象化 — JSONL / SQLite / DuckDB（優先度: LOW） | proposed | MEDIUM |

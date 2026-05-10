@@ -80,3 +80,4 @@ Links to related ADRs, PRs, and docs.
 | [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | proposed | LARGE |
 | [0013](0013-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | proposed | LARGE |
 | [0014](0014-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | proposed | MEDIUM |
+| [0015](0015-event-store-backend.md) | Event Store backend abstraction — JSONL / SQLite / DuckDB (priority: LOW) | proposed | MEDIUM |
