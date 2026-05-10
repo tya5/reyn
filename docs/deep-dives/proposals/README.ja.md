@@ -77,3 +77,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0009](0009-operational-intelligence.md) | Operational Intelligence — イベントログの RAG インデックス化 | proposed | MEDIUM |
 | [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |
 | [0011](0011-remove-narrator.md) | `skill_narrator` 廃止 — スキル結果の narrate をルーターに委ねる | proposed | SMALL |
+| [0012](0012-async-skill-execution.md) | スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化 | proposed | LARGE |
