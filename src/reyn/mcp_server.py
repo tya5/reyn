@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 # Default time the server blocks waiting for the agent to finish a turn
 # before returning whatever partial output has accumulated.
-DEFAULT_SEND_TIMEOUT_SECONDS: float = 60.0
+DEFAULT_SEND_TIMEOUT_SECONDS: float = 300.0  # spike-only: bumped from 60 for long skill runs
 
 # Polling interval while waiting for the agent's run loop to drain its
 # inbox + finish any spawned skills. Small enough that latency feels
