@@ -95,10 +95,17 @@ def available_kinds() -> list[str]:
 
 # Eagerly import handler modules so they self-register.
 from . import ask_user as _ask_user  # noqa: F401, E402
+
+# ADR-0033: RAG-extensible OS — embed / index_* / recall ops
+from . import embed as _embed  # noqa: F401, E402
 from . import file as _file  # noqa: F401, E402
+from . import index_drop as _index_drop  # noqa: F401, E402
+from . import index_query as _index_query  # noqa: F401, E402
+from . import index_write as _index_write  # noqa: F401, E402
 from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
+from . import recall as _recall  # noqa: F401, E402
 from . import run_skill as _run_skill  # noqa: F401, E402
 from . import shell as _shell  # noqa: F401, E402
 from . import web as _web  # noqa: F401, E402

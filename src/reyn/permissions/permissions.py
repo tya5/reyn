@@ -132,6 +132,9 @@ class PermissionDecl:
     # ADR-0029: install-time gating. False = skill/agent did not declare install
     # intent; require_mcp_install() will reject immediately without prompting.
     mcp_install: bool = False
+    # ADR-0033: index_drop gating. False = skill/agent did not declare drop
+    # intent; require_index_drop() will reject immediately without prompting.
+    index_drop: bool = False
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -187,6 +190,7 @@ class PermissionDecl:
             file_write=cls._parse_path_list(d.get("file.write")),
             python=cls._parse_python_list(d.get("python")),
             mcp_install=bool(d.get("mcp_install", False)),
+            index_drop=bool(d.get("index_drop", False)),
         )
 
 
@@ -701,6 +705,50 @@ class PermissionResolver:
         if not await self._approve(approval_key, f"install MCP server: {server_id!r}", bus):
             raise PermissionError(
                 f"MCP server install of {server_id!r} denied by user."
+            )
+
+    async def require_index_drop(
+        self, decl: PermissionDecl, source: str, bus: InterventionBus,
+    ) -> None:
+        """Gate index source drop (ADR-0033, mirrors require_mcp_install).
+
+        Three-step resolution:
+        1. Skill/agent must declare `index_drop: true` in its permissions block.
+           If not declared, raise immediately — the skill has no drop intent.
+        2. Config (any scope tier) may hard-allow or hard-deny.
+        3. Interactive prompt (or auto-approve via REYN_INDEX_DROP_AUTO_APPROVE).
+           Approval key `index_drop:<source>` is persisted to approvals.yaml.
+        """
+        import os
+
+        # Step 1 — decl guard
+        if not decl.index_drop:
+            raise PermissionError(
+                f"Index drop of '{source}' not declared in skill permissions. "
+                f"Add `permissions:\\n  index_drop: true` to the skill.md frontmatter."
+            )
+
+        # Step 2 — config deny/allow
+        if self._is_config_denied("index_drop"):
+            raise PermissionError(
+                f"Index drop of '{source}' denied by config "
+                f"(permissions.index_drop: deny)."
+            )
+        if self._is_config_approved("index_drop"):
+            return
+
+        # Step 3 — CI escape hatch or interactive prompt
+        approval_key = f"index_drop:{source}"
+
+        if os.environ.get("REYN_INDEX_DROP_AUTO_APPROVE") == "1":
+            self._persist(approval_key, True)
+            return
+
+        if not await self._approve(
+            approval_key, f"drop index source: {source!r}", bus
+        ):
+            raise PermissionError(
+                f"Index drop of '{source}' denied by user."
             )
 
     async def require_python(
