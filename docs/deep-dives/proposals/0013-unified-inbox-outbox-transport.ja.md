@@ -1,12 +1,51 @@
 # FP-0013: 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消
 
-**Status**: **proposed**
+**Status**: **accepted** (= ADR-A starvation feasibility green-light、 2026-05-11)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 設計議論 (FP-0012 R-A2A-COMPLETION-DRAIN retest 後)
 **Trigger**: FP-0012 retest F1 finding (= A2A endpoint が `session.run()` を bypass する
 ため `skill_completed` inbox kind が A2A 駆動 agent では永久に fire しない問題)。 短期
 patch (= commit `b3252be`、 `drain_skill_completed_inbox`) で immediate gap は塞いだが、
 本提案が扱う **architectural skew** は残置している。
+
+## Feasibility verification (2026-05-11)
+
+5 track 並列調査で open question ADR-A を closure:
+
+- **Track 1 (archaeology)**: bypass は commit `a5678c1` (2026-05-07) で empirically
+  観測。 A2A はその ~45 分後に bypass を uncritically 継承 — uvicorn / pure asyncio
+  surface のため、 元々問題なかった可能性。
+- **Track 2 (mechanics)**: root cause は anyio task-group の structured-concurrency
+  cancellation cascade + buffer-0 memory-stream rendezvous で、 generic asyncio
+  unfairness ではない。 pumping は 2 task → 1 task に集約、 failure mode を
+  mechanical に排除。
+- **Track 3 (industry)**: request-handler pumping は industry standard (= LangGraph
+  `astream` / Strawberry GraphQL subscription が direct precedent)。
+- **Track 4 (baseline repro)**: 段階的に近い 3 harness (asyncio / anyio / 実
+  `mcp.server.Server` + in-memory JSON-RPC) を構築。 3 全 pass、 starvation は
+  **再現せず**。 subprocess + 実 stdio byte transport は未着手 — residual
+  verification に deferred。
+- **Track 5 (pumping prototype)**: `ChatSession.run_one_iteration` +
+  `send_to_agent_impl_pumping` を実装。 4/4 spike test pass、 334 regression test
+  green、 bypass より ~100ms 遅い。
+
+Synthesis: `docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/synthesis.md`。
+
+**Resolution**: green-light proceed。 Cost estimate 精緻化 — core decomposition は
+SMALL-MEDIUM (~25+80 行); LARGE 見積もりは verification + soak が dominate する。
+**bypass 削除 commit の precondition** として 3 件 residual verification 必要
+(= 本提案 accept の前提ではない):
+
+1. subprocess + 実 stdio probe (`scripts/mcp_probe.py` を pumping path 側で実行)。
+2. anyio CancelledError soak (mid-call disconnect)。
+3. `_receive_loop` heartbeat instrumentation 越し >5s LLM call。
+
+**Naming refinement 採用**: pump primitive 名を
+`session.run_until_reply(reply_to: TransportRef) -> OutboxMessage` に
+(Track 3 提案、 LangGraph `astream` の `__anext__` mirror)。
+
+**Migration ordering refinement**: A2A migration が先 (= Track 1 で bypass 不要と
+判明); MCP は subprocess soak 後に follow。
 
 ---
 

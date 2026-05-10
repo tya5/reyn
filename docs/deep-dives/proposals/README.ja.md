@@ -78,4 +78,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |
 | [0011](0011-remove-narrator.md) | `skill_narrator` 廃止 — スキル結果の narrate をルーターに委ねる | proposed | SMALL |
 | [0012](0012-async-skill-execution.md) | スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化 | done (LANDED 2026-05-10, commit `c9e79d6`) | LARGE |
-| [0013](0013-unified-inbox-outbox-transport.ja.md) | 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消 | proposed | LARGE |
+| [0013](0013-unified-inbox-outbox-transport.ja.md) | 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消 | accepted (ADR-A green-light 2026-05-11) | LARGE |

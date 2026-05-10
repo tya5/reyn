@@ -1,12 +1,52 @@
 # FP-0013: Unified Inbox/Outbox Transport Abstraction — Collapse CUI vs MCP/A2A Skew
 
-**Status**: **proposed**
+**Status**: **accepted** (= ADR-A starvation feasibility green-light, 2026-05-11)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 design discussion (post FP-0012 R-A2A-COMPLETION-DRAIN retest)
 **Trigger**: FP-0012 retest F1 finding (= A2A endpoint bypasses `session.run()` so the
 `skill_completed` inbox kind never fires for A2A-driven agents). The tactical patch
 (commit `b3252be`, `drain_skill_completed_inbox`) closes the immediate gap but
 preserves the underlying architectural skew this proposal addresses.
+
+## Feasibility verification (2026-05-11)
+
+5-track parallel investigation closed open question ADR-A:
+
+- **Track 1 (archaeology)**: Bypass was empirically observed in commit `a5678c1`
+  (2026-05-07). A2A inherited it uncritically (~45 min later) — uvicorn / pure
+  asyncio surface, never had the original problem.
+- **Track 2 (mechanics)**: Root cause was anyio task-group structured-concurrency
+  cancellation cascade + buffer-0 memory-stream rendezvous, NOT generic asyncio
+  unfairness. Pumping collapses 2 tasks → 1 task; mechanically eliminates the
+  failure mode.
+- **Track 3 (industry)**: Request-handler pumping is industry-standard
+  (LangGraph `astream`, Strawberry GraphQL subscriptions are direct precedents).
+- **Track 4 (baseline repro)**: Built 3 progressively-closer harnesses
+  (asyncio / anyio / real `mcp.server.Server` over in-memory JSON-RPC). All 3
+  passed; starvation did NOT reproduce. Subprocess + real stdio byte transport
+  not exercised — deferred to residual verification.
+- **Track 5 (pumping prototype)**: Implemented `ChatSession.run_one_iteration` +
+  `send_to_agent_impl_pumping`. 4/4 spike tests pass, 334 regression tests green,
+  ~100ms slower than bypass.
+
+Synthesis: `docs/deep-dives/journal/feature-verify/2026-05-11-adr-a-starvation-feasibility/synthesis.md`.
+
+**Resolution**: green-light proceed. Cost estimate refined — the core
+decomposition is SMALL-MEDIUM (~25+80 lines); the LARGE estimate now reflects
+verification + soak rather than the code change. **3 residual verifications**
+required as preconditions for the bypass-deletion commit (not for accepting
+the proposal):
+
+1. Subprocess + real stdio probe (`scripts/mcp_probe.py` against pumping path).
+2. anyio CancelledError soak (mid-call disconnect).
+3. `_receive_loop` heartbeat instrumentation during >5s LLM call.
+
+**Naming refinement adopted**: pump primitive renamed
+`session.run_until_reply(reply_to: TransportRef) -> OutboxMessage` (Track 3 suggestion,
+mirrors LangGraph `astream`'s `__anext__`).
+
+**Migration ordering refinement**: A2A migration moves first (= never needed
+the bypass per Track 1); MCP follows after subprocess soak.
 
 ---
 
