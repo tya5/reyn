@@ -53,7 +53,7 @@ permissions:
       timeout: 5
     - module: ./analyze_skill.py
       function: inject_resolved_paths
-      mode: pure
+      mode: safe
       timeout: 5
 ---
 

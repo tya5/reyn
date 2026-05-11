@@ -21,7 +21,7 @@ permissions:
   python:
     - module: ./postprocessor.py
       function: compute_covers_through_seq
-      mode: pure
+      mode: safe
       timeout: 5
 postprocessor:
   output_schema: chat_summary

@@ -16,7 +16,7 @@ permissions:
   python:
     - module: ./postprocessor.py
       function: compute_eval_score
-      mode: pure
+      mode: safe
       timeout: 5
 postprocessor:
   output_name: eval_result

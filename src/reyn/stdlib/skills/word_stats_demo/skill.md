@@ -19,7 +19,7 @@ permissions:
   python:
     - module: ./stats.py
       function: compute_text_stats
-      mode: pure
+      mode: safe
       timeout: 5
 ---
 

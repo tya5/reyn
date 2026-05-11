@@ -56,19 +56,19 @@ permissions:
       timeout: 5
     - module: ./copy_to_work.py
       function: build_copy_plan
-      mode: pure
+      mode: safe
       timeout: 5
     - module: ./copy_to_work.py
       function: build_write_ops
-      mode: pure
+      mode: safe
       timeout: 5
     - module: ./copy_to_work.py
       function: validate_copy
-      mode: pure
+      mode: safe
       timeout: 5
     - module: ./copy_to_work.py
       function: inject_resolved_paths
-      mode: pure
+      mode: safe
       timeout: 5
 ---
 
