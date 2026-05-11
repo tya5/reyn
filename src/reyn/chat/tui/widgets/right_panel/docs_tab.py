@@ -19,7 +19,10 @@ def build_docs_index(
     """
     if project_root is None:
         return {}, []
+    # Try docs/en/ first (i18n layout), then fall back to docs/ directly.
     docs_root = project_root / "docs" / "en"
+    if not docs_root.is_dir():
+        docs_root = project_root / "docs"
     if not docs_root.is_dir():
         return {}, []
 
@@ -54,7 +57,10 @@ def render_docs(
     """Render the docs index with the file at ``docs_cursor`` highlighted."""
     if project_root is None:
         return "[#555555]  (no project root)[/]"
+    # Mirror the fallback logic in build_docs_index.
     docs_root = project_root / "docs" / "en"
+    if not docs_root.is_dir():
+        docs_root = project_root / "docs"
     if not docs_root.is_dir():
         return "[#555555]  (docs/ not found)[/]"
 

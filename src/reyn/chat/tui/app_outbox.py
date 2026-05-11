@@ -61,6 +61,7 @@ class OutboxRouter:
             "__stream_chunk__":         self._on_stream_chunk,
             "__stream_end__":           self._on_stream_end,
             "intervention":             self._on_intervention,
+            "intervention_resolved":    self._on_intervention_resolved,
             "status":                   self._on_status,
             "trace":                    self._on_trace,
             # NOTE: "skill_done" outbox kind was removed in FP-0011.
@@ -274,6 +275,25 @@ class OutboxRouter:
         if raw_choices:
             choices = [(c["label"], c["id"]) for c in raw_choices]
         self._app._mount_intervention(conv, msg.text, iv_id, choices)
+
+    def _on_intervention_resolved(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`intervention_resolved` — remove the inline widget when the user
+        answered via text input (not a chip button click).
+
+        The chip-button path calls ``InterventionWidget._submit`` which already
+        calls ``self.remove()``.  The text-input path (Enter in the InputBar)
+        routes through session._deliver_answer_to without touching the widget,
+        so we need this outbox message to clean up the orphaned widget.
+        """
+        iv_id = msg.meta.get("iv_id", "")
+        widget_id = f"iv_{iv_id[:8]}"
+        try:
+            widget = self._app.query_one(f"#{widget_id}")
+            widget.remove()
+        except Exception:
+            pass
 
     def _on_status(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

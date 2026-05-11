@@ -9,23 +9,29 @@ preprocessor:
   - type: python
     module: ./stats.py
     function: compute_text_stats
-    into: data.stats
+    into: data
     output_schema:
       type: object
       properties:
-        char_count:        {type: integer, minimum: 0}
-        word_count:        {type: integer, minimum: 0}
-        line_count:        {type: integer, minimum: 0}
-        longest_line_chars: {type: integer, minimum: 0}
-        estimated_tokens:  {type: integer, minimum: 1}
-      required: [char_count, word_count, line_count, longest_line_chars, estimated_tokens]
+        text:
+          type: string
+        stats:
+          type: object
+          properties:
+            char_count:        {type: integer, minimum: 0}
+            word_count:        {type: integer, minimum: 0}
+            line_count:        {type: integer, minimum: 0}
+            longest_line_chars: {type: integer, minimum: 0}
+            estimated_tokens:  {type: integer, minimum: 1}
+          required: [char_count, word_count, line_count, longest_line_chars, estimated_tokens]
+      required: [text, stats]
 ---
 
 Write a short commentary on the user's text.
 
 ## Inputs
 
-`input_artifact.data.text` — the original user message.
+`input_artifact.data.text` — the original user message (always a string after preprocessing).
 
 `input_artifact.data.stats` — precomputed deterministic statistics:
 
