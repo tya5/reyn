@@ -8,7 +8,7 @@ Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
 custom Markdown) replace this module via skill.md ``module:`` override.
 
 All three public functions use ``mode: unsafe`` so they can access the
-filesystem. ``pure`` mode does not allow ``open()``.
+filesystem. ``safe`` mode does not allow ``open()``.
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ import re
 import sys
 from pathlib import Path
 from typing import Iterator
+
+import reyn.api.unsafe.file as _unsafe_file
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Phase 1 preprocessor steps
@@ -55,7 +57,7 @@ def gather_samples(artifact: dict) -> dict:
     path = str(data.get("path") or "")
     sample_size: int = int(data.get("sample_size") or 5)
 
-    files = _glob_files(path)
+    files = _api_glob_files(path)
     if not files:
         return {
             "samples": [],
@@ -75,7 +77,7 @@ def gather_samples(artifact: dict) -> dict:
         ext = Path(f).suffix
         by_ext.setdefault(ext, []).append(f)
         try:
-            total_bytes += Path(f).stat().st_size
+            total_bytes += _unsafe_file.stat(f)["size"]
         except OSError:
             pass
 
@@ -92,7 +94,7 @@ def gather_samples(artifact: dict) -> dict:
     samples = []
     for f in picks:
         try:
-            text = Path(f).read_text(encoding="utf-8", errors="replace")
+            text = _unsafe_file.read(f)
         except OSError:
             continue
         excerpt = text[:1500]
@@ -151,7 +153,7 @@ def cost_preflight(artifact: dict) -> dict:
             "threshold_exceeded": False,
         }
 
-    files = _glob_files(path)
+    files = _api_glob_files(path)
     n_files = len(files)
 
     # Rough estimate: avg tokens per sample → chunks per file
@@ -406,11 +408,26 @@ def _split_sentence(
 
 
 def _glob_files(path: str) -> list[str]:
-    """Expand a glob pattern; return sorted list of file paths."""
+    """Expand a glob pattern; return sorted list of file paths.
+
+    Used by apply_strategy (= postprocessor, mode: unsafe, Class A deferred).
+    """
     if not path:
         return []
     matches = _glob_mod.glob(path, recursive=True)
     return sorted(m for m in matches if os.path.isfile(m))
+
+
+def _api_glob_files(path: str) -> list[str]:
+    """Expand a glob pattern via reyn.api.unsafe.file; return sorted file paths.
+
+    Used by gather_samples and cost_preflight (= preprocessor steps, Class B
+    refactored). Delegates to reyn.api.unsafe.file.glob then filters to files.
+    """
+    if not path:
+        return []
+    matches = _unsafe_file.glob(path)
+    return [m for m in matches if os.path.isfile(m)]
 
 
 def _approx_tokens(text: str) -> int:

@@ -4,16 +4,19 @@ topic: architecture
 audience: [human, agent]
 ---
 
-# Python `pure` mode — "ambient sources only"
+# Python `safe` mode — "ambient sources only"
 
-A python step in `mode: pure` is a sandboxed Python function call used by the
+A python step in `mode: safe` is a sandboxed Python function call used by the
 [preprocessor](preprocessor.md) and [postprocessor](postprocessor.md).
 This page documents the property authors can rely on when deciding whether
-to put a step in `pure` mode, and which stdlib modules are safe to import.
+to put a step in `safe` mode, and which stdlib modules are safe to import.
+
+> **Rename note**: `safe` was previously called `pure` (renamed in FP-0014).
+> The companion mode `unsafe` was previously called `trusted`.
 
 ## The single property
 
-> **`mode: pure`**: A python step's output is determined ONLY by its input
+> **`mode: safe`**: A python step's output is determined ONLY by its input
 > artifacts plus **ambient sources** — the wall clock, an entropy stream,
 > and bundled stdlib static data. Filesystem, network, process, and
 > environment access are syntactically unreachable.
@@ -34,7 +37,7 @@ environment variables, the network — it is not.
 | **Entropy** | OS-provided randomness | `random`, `secrets` |
 | **Bundled static data** | Files shipped with the Python install | `zoneinfo` (tz database) |
 
-Everything else is **non-ambient** and stays out of `pure` mode:
+Everything else is **non-ambient** and stays out of `safe` mode:
 
 | Non-ambient class | Why it is excluded | Typical modules |
 |-------------------|--------------------|-----------------|
@@ -89,7 +92,7 @@ A project may extend it via `permissions.python.allowed_modules` in
 `reyn.yaml`; the same "ambient sources only" property is the bar for any
 extension.
 
-## How to extend — when `pure` is not enough
+## How to extend — when `safe` is not enough
 
 If your step needs a capability that is not ambient — reading a file the
 operator chose, calling an HTTP service, spawning a process, or reaching
@@ -104,7 +107,7 @@ Instead, use `type: run_op` in the preprocessor / postprocessor chain.
 - it leaves an event log entry per call, so the audit story for
   non-ambient access stays intact ([P6](principles.md#p6-events-are-the-audit-truth)).
 
-In short: **`pure` python is for deterministic-ish computation over inputs +
+In short: **`safe` python is for deterministic-ish computation over inputs +
 ambient sources. Everything else is a `run_op`.**
 
 ## See also

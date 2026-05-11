@@ -35,7 +35,7 @@ follow-up に deferred)
   (warn) が未活性化。
 - `run_op` kind 統合 (= `file_*` → 単一 `file` op) 未着手。
 - Parser dual-accept normaliser 残存 (= stdlib refactor 着地後に削除)。
-- Concept doc `python-pure-mode.{md,ja.md}` の `python-safe-mode.*` rename 未着手。
+- ~~Concept doc `python-pure-mode.{md,ja.md}` の `python-safe-mode.*` rename 未着手。~~ **完了** — FP-0014 cleanup Track 1 follow-up commit で rename + content sweep 済み。
 - ADR-G Phase 2 (= `reyn.safe.*` 成長 + stdlib allowlist 縮小) + Phase 3
   (= allowlist = `reyn.safe.*` only) は incremental post-wave。
 
@@ -483,8 +483,9 @@ Sonnet 並列化可能: rename + docs sweep + linter rules + stdlib refactor は
   が reuse する permission 宣言単位。
 - **PR37 unified dispatch (commit `d06cb94`)** — API package が call する
   dispatch + permission + event インフラ。
-- **`docs/concepts/python-pure-mode.{md,ja.md}`** — commit 中に
-  `python-safe-mode.{md,ja.md}` に rename、 内容に API package section 追加。
+- **`docs/concepts/python-safe-mode.{md,ja.md}`** — FP-0014 cleanup Track 1
+  follow-up で `python-pure-mode.{md,ja.md}` から rename 済み。 内容に API
+  package section 追加予定。
 - **Rust `unsafe { ... }` 慣例** — rename の意味論 inspiration。 「author が
   compiler が check できない invariants の責任を取る」 mental model がそのまま
   transfer する。

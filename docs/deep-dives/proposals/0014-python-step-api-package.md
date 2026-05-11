@@ -37,8 +37,9 @@ deferred to follow-up)
   `unsafe-without-justification` (warn) not yet activated.
 - `run_op` kind consolidation (`file_*` → single `file` op) deferred.
 - Parser dual-accept normaliser kept (= remove once stdlib refactor lands).
-- Concept docs `python-pure-mode.{md,ja.md}` not yet renamed to
-  `python-safe-mode.{md,ja.md}`.
+- ~~Concept docs `python-pure-mode.{md,ja.md}` not yet renamed to
+  `python-safe-mode.{md,ja.md}`.~~ **Done** — renamed + content-swept in
+  FP-0014 cleanup Track 1 follow-up commit.
 - ADR-G Phase 2 (= grow `reyn.safe.*` + shrink stdlib allowlist) +
   Phase 3 (= allowlist = `reyn.safe.*` only) are incremental post-wave.
 
@@ -533,9 +534,9 @@ refactor are largely independent. Stdlib refactor is the critical path
   permission declaration unit this proposal reuses.
 - **PR37 unified dispatch (commit `d06cb94`)** — dispatch + permission
   + event infrastructure the API packages call through.
-- **`docs/concepts/python-pure-mode.{md,ja.md}`** — will rename to
-  `python-safe-mode.{md,ja.md}` during the commit; content evolves
-  to add the API package section.
+- **`docs/concepts/python-safe-mode.{md,ja.md}`** — renamed from
+  `python-pure-mode.{md,ja.md}` in FP-0014 cleanup Track 1 follow-up;
+  content evolves to add the API package section.
 - **Rust `unsafe { ... }` convention** — semantic inspiration for the
   rename. The mental model "author asserts responsibility for invariants
   the compiler can't check" transfers exactly.
