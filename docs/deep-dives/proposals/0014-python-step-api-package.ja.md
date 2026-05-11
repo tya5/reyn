@@ -31,10 +31,10 @@ follow-up に deferred)
 - stdlib `mode: unsafe` skill の `reyn.api.unsafe.*` 経由 refactor 未着手
   (= Class A `index_docs/apply_strategy` の real I/O は inline のまま、
   Class B 6 件 / Class C 4 純関数も未対応)。
-- linter rule `unsafe-in-stdlib` (hard error) + `unsafe-without-justification`
-  (warn) が未活性化。
+- linter rule `unsafe-in-stdlib` (hard error) 未活性化。
+  ~~`unsafe-without-justification` (warn) 未活性化。~~ commit `c68b88c` で活性化済み。
 - `run_op` kind 統合 (= `file_*` → 単一 `file` op) 未着手。
-- Parser dual-accept normaliser 残存 (= stdlib refactor 着地後に削除)。
+- ~~Parser dual-accept normaliser 残存 (= stdlib refactor 着地後に削除)。~~ refactor(fp-0014) cleanup commit で削除済み。
 - ~~Concept doc `python-pure-mode.{md,ja.md}` の `python-safe-mode.*` rename 未着手。~~ **完了** — FP-0014 cleanup Track 1 follow-up commit で rename + content sweep 済み。
 - ADR-G Phase 2 (= `reyn.safe.*` 成長 + stdlib allowlist 縮小) + Phase 3
   (= allowlist = `reyn.safe.*` only) は incremental post-wave。

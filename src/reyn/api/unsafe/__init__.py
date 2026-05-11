@@ -4,7 +4,7 @@ These run INSIDE the python step's subprocess and call stdlib I/O
 directly. Permission for filesystem / network / process access was
 granted at parent level when the step's `mode: unsafe` was approved
 at startup. Individual calls are NOT audited per-invocation
-(= step-level audit only — same granularity as today's `mode: trusted`
+(= step-level audit only — same granularity as today's `mode: unsafe`
 direct `open()`). For finer audit see FP-0015 (deferred).
 """
 

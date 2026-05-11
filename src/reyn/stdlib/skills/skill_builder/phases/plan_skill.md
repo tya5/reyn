@@ -171,7 +171,7 @@ preprocessor:
     module: ./preprocessing.py     # all phases share one .py is fine
     function: compute_stats
     into: data.stats               # appears in artifact at this path
-    mode: pure                     # default; "unsafe" only when justified
+    mode: safe                     # default; "unsafe" only when justified
 ```
 
 And add a corresponding entry to the top-level `python_modules` array with
@@ -191,7 +191,7 @@ of functions.
 
 (Note: `unsafe` replaces the old `trusted` keyword as of FP-0014.)
 
-Default to `mode: pure`. The function then can only import the stdlib
+Default to `mode: safe`. The function then can only import the stdlib
 allowlist (math, statistics, json, re, datetime, hashlib, collections, etc.;
 random and time are allowed). Choose `unsafe` only when:
 - A specific 3rd-party library is essential and not on the user's

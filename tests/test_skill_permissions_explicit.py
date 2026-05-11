@@ -97,7 +97,7 @@ def test_explicit_skill_permissions_python_used_directly() -> None:
         ["a"],
         skill_permissions={
             "python": [
-                {"module": "m", "function": "f_skill", "mode": "pure", "timeout": 10}
+                {"module": "m", "function": "f_skill", "mode": "safe", "timeout": 10}
             ]
         },
     )

@@ -73,7 +73,7 @@ In those cases, plan two changes together:
    that does the deterministic computation.
 2. `update` the relevant phase's frontmatter to add a `preprocessor` block
    with a `type: python` step plus a matching `permissions.python` entry.
-   Default `mode: pure`. Include the `output_schema` so the LLM sees the
+   Default `mode: safe`. Include the `output_schema` so the LLM sees the
    typed enriched artifact.
 
 A typical skill_improver plan that adds one Python step is **2–3 changes**:

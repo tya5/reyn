@@ -252,20 +252,7 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
             ))
             mode = "safe"  # assume safe for the AST check below
         else:
-            raw_mode = str(perm_index[(module, function)].get("mode", "safe"))
-            # Check 5 — FP-0014 hard reject of legacy mode keywords.
-            if raw_mode in ("pure", "trusted"):
-                renamed = "safe" if raw_mode == "pure" else "unsafe"
-                issues.append(LintIssue(
-                    "error", phase_path,
-                    f"{label}: mode {raw_mode!r} was renamed in FP-0014 "
-                    f"(pure → safe, trusted → unsafe). "
-                    f"Update permissions.python to use mode: {renamed!r}.",
-                ))
-                # Continue with normalised mode so check 4 still runs meaningfully.
-                mode = renamed
-            else:
-                mode = raw_mode
+            mode = str(perm_index[(module, function)].get("mode", "safe"))
 
         # Check 2 — module file path
         resolved = _resolve_python_module(skill_dir, module)

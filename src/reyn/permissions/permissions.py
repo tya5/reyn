@@ -114,14 +114,6 @@ class PythonPermission:
     mode: str = "safe"   # "safe" | "unsafe"
     timeout: int = 30
 
-    def __post_init__(self) -> None:
-        # FP-0014: normalise legacy keywords (`pure` / `trusted`) to the
-        # new pair (`safe` / `unsafe`). Direct construction with legacy
-        # keywords keeps working during the Track A → B transition.
-        if self.mode == "pure":
-            self.mode = "safe"
-        elif self.mode == "trusted":
-            self.mode = "unsafe"
 
 
 @dataclass
@@ -182,13 +174,6 @@ class PermissionDecl:
             if not module or not function:
                 continue
             mode = str(item.get("mode", "safe"))
-            # FP-0014: pure → safe, trusted → unsafe. Legacy keywords accepted
-            # transitionally (stdlib YAML lags Track A); normalised here and
-            # rejected by the linter. Drop the legacy branch after Track B.
-            if mode == "pure":
-                mode = "safe"
-            elif mode == "trusted":
-                mode = "unsafe"
             if mode not in ("safe", "unsafe"):
                 raise ValueError(
                     f"permissions.python: mode must be 'safe' or 'unsafe', got {mode!r}"

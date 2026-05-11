@@ -134,7 +134,7 @@ def test_e2e_postprocessor_python_adds_word_count(tmp_path: Path, monkeypatch: p
     # Skill: LLM contract = {title, body}
     #        Postprocessor output_schema = {title, body, word_count}
     phase = _post_phase()
-    python_perm = PythonPermission(module="./helpers.py", function="count_words", mode="pure")
+    python_perm = PythonPermission(module="./helpers.py", function="count_words", mode="safe")
     skill = Skill(
         name="post_writer",
         entry_phase="write",

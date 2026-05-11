@@ -165,7 +165,7 @@ permissions:
   python:
     - module: ./preprocessing.py
       function: <function_name>
-      mode: pure
+      mode: safe
 ---
 ```
 

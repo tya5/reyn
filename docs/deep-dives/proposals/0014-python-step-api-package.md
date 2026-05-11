@@ -33,10 +33,10 @@ deferred to follow-up)
   `reyn.api.unsafe.*` packages (= Class A `index_docs/apply_strategy`
   real I/O still inline; Class B 6 cases still inline Python; Class C
   4 pure-functions could be flipped to `safe`).
-- Linter rules `unsafe-in-stdlib` (hard error) and
-  `unsafe-without-justification` (warn) not yet activated.
+- Linter rules `unsafe-in-stdlib` (hard error) not yet activated.
+  ~~`unsafe-without-justification` (warn) not yet activated.~~ Activated in commit `c68b88c`.
 - `run_op` kind consolidation (`file_*` → single `file` op) deferred.
-- Parser dual-accept normaliser kept (= remove once stdlib refactor lands).
+- ~~Parser dual-accept normaliser kept (= remove once stdlib refactor lands).~~ Removed in refactor(fp-0014) cleanup commit.
 - ~~Concept docs `python-pure-mode.{md,ja.md}` not yet renamed to
   `python-safe-mode.{md,ja.md}`.~~ **Done** — renamed + content-swept in
   FP-0014 cleanup Track 1 follow-up commit.

@@ -127,7 +127,7 @@ the plan, including the explicit empty list `[]` for pure decision phases.
 Omit `preprocessor` and `permissions` blocks entirely when the phase has no
 preprocessor steps. When present, **each preprocessor python step MUST have a
 matching permissions.python entry** (same module + function); without it the
-runtime will raise PermissionError on first call. Default `mode: pure` and
+runtime will raise PermissionError on first call. Default `mode: safe` and
 `timeout: 30` if the plan didn't specify them.
 
 For review phases: instructions MUST contain both:
