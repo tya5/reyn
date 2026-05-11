@@ -10,11 +10,12 @@ import shutil
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Literal
-
-import numpy as np
+from typing import TYPE_CHECKING, Iterable, Literal
 
 from reyn.index.backend import ChunkRecord, DropResult, StatResult, WriteResult
+
+if TYPE_CHECKING:
+    import numpy as np  # pragma: no cover
 
 # Fields from ChunkMetadata that may appear in SQL filter expressions.
 # Restricting to these prevents arbitrary SQL column injection.
@@ -65,11 +66,15 @@ def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
-def _vec_to_blob(vector: list[float] | np.ndarray) -> bytes:
+def _vec_to_blob(vector: list[float]) -> bytes:
+    import numpy as np  # noqa: PLC0415
+
     return np.asarray(vector, dtype=np.float32).tobytes()
 
 
-def _blob_to_vec(blob: bytes) -> np.ndarray:
+def _blob_to_vec(blob: bytes) -> "np.ndarray":
+    import numpy as np  # noqa: PLC0415
+
     return np.frombuffer(blob, dtype=np.float32)
 
 
@@ -215,6 +220,8 @@ class SqliteIndexBackend:
 
         if not rows:
             return []
+
+        import numpy as np  # noqa: PLC0415
 
         texts = [r[0] for r in rows]
         vectors = np.stack([_blob_to_vec(r[1]) for r in rows])  # (N, D)
