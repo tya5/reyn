@@ -331,6 +331,77 @@ def _lint_python_preprocessor(phase_path: Path, fm: dict) -> list[LintIssue]:
     return issues
 
 
+# ── unsafe-without-justification (FP-0014 Component F warn rule) ──────────────
+
+# Canonical stdlib prefix.  Skills under this path are skipped because stdlib
+# intentionally uses unsafe mode and will be covered by the future hard-error
+# rule ``unsafe-in-stdlib`` once the stdlib refactor is complete.
+_STDLIB_SKILLS_PREFIX = "src/reyn/stdlib/"
+
+
+def _is_stdlib_skill(path: Path) -> bool:
+    """Return True if *path* is inside the stdlib skills tree.
+
+    Comparison is done on the resolved POSIX path as a simple string-contains
+    check so it works regardless of where the project is checked out.
+    """
+    posix = path.resolve().as_posix()
+    # Accept either the normalised prefix or an absolute path that contains it.
+    return "/src/reyn/stdlib/" in posix
+
+
+def _lint_unsafe_without_justification(skill_path: Path, permissions: dict) -> list[LintIssue]:
+    """Warn when a user skill's python permission entry uses mode: unsafe
+    without an ``unsafe_reason`` annotation.
+
+    Rule: ``unsafe-without-justification``
+    Severity: warning (never hard-error — stdlib refactor not yet complete)
+
+    Annotation form: add ``unsafe_reason: "<reason>"`` to the same
+    permissions.python entry that declares ``mode: unsafe``.  Example::
+
+        permissions:
+          python:
+            - module: ./my_helper.py
+              function: run
+              mode: unsafe
+              unsafe_reason: "Needs network access to call external API"
+
+    The field is a YAML scalar so it is grep-able (``grep unsafe_reason``)
+    and schema-checkable, unlike a free-form comment.
+
+    Stdlib skills (``src/reyn/stdlib/``) are excluded — they use unsafe mode
+    legitimately and will be covered by the separate ``unsafe-in-stdlib`` hard
+    error rule once the stdlib refactor lands.
+    """
+    if _is_stdlib_skill(skill_path):
+        return []
+
+    issues: list[LintIssue] = []
+    perm_python = permissions.get("python") or []
+    if not isinstance(perm_python, list):
+        return issues
+
+    for i, entry in enumerate(perm_python):
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("mode", "safe")) != "unsafe":
+            continue
+        reason = entry.get("unsafe_reason")
+        if not reason or not str(reason).strip():
+            module = entry.get("module", f"<entry {i}>")
+            function = entry.get("function", "")
+            label = f"{module}:{function}" if function else module
+            issues.append(LintIssue(
+                "warning", skill_path,
+                f"permissions.python[{i}] ({label}) uses mode: unsafe without an "
+                f"unsafe_reason annotation. Add `unsafe_reason: \"<reason>\"` to "
+                f"document why unsafe is required. "
+                f"(rule: unsafe-without-justification, FP-0014 Component F)",
+            ))
+    return issues
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 def _find_cycle(edges: list[tuple[str, str]]) -> list[str] | None:
@@ -432,6 +503,9 @@ def lint_skill(path: Path, known_artifacts: set[str]) -> list[LintIssue]:
             f"Graph contains a cycle: {cycle_str}. "
             "Use control.type='rollback' for revision loops instead of back-edges.",
         ))
+
+    # unsafe-without-justification (FP-0014 Component F)
+    issues.extend(_lint_unsafe_without_justification(path, app_def.permissions))
 
     return issues
 
