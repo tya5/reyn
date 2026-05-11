@@ -46,6 +46,20 @@ class ChatEventForwarder:
         suffix = f"  (confidence={conf})" if conf is not None else ""
         self._enqueue(f"{phase} → {nxt}{suffix}")
 
+    # ── Workflow terminal events (FP-0011 / FP-0012) ─────────────────────
+    # FP-0011 removed skill_narrator and the `skill_done` outbox kind that
+    # the TUI used to stop SkillActivityRow spinners. We bridge the gap
+    # here: workflow_finished / workflow_aborted fire at the OS level and
+    # propagate to all EventLog subscribers (including this forwarder).
+    # The TUI detects the "skill done: …" prefix in its trace handler to
+    # call finish_skill_row without changing the outbox contract.
+
+    def on_workflow_finished(self, data: dict) -> None:
+        self._enqueue("skill done: finished")
+
+    def on_workflow_aborted(self, data: dict) -> None:
+        self._enqueue("skill done: aborted")
+
     def _enqueue(self, text: str) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.
         meta: dict = {"skill_name": self.skill_name}

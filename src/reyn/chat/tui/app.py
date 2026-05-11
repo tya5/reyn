@@ -339,6 +339,7 @@ class ReynTUIApp(App):
           - "phase started: <phase_name>" → start row (if missing) + set_phase
           - "<phase> → <next> ..."         → ignored (phase-completed details
             are visible in the right panel events tab)
+          - "skill done: <status>"         → finish row (FP-0011/FP-0012)
         """
         run_id = msg.meta.get("run_id", "")
         skill_name = msg.meta.get("skill_name", "") or ""
@@ -353,6 +354,15 @@ class ReynTUIApp(App):
             existing = self._skill_exec.get(run_id) or {}
             visit = int(existing.get("phase_visits", 0)) + 1
             conv.update_skill_phase(run_id, phase, visit=visit)
+            self._last_focal_tab = "agents"
+        elif text.startswith("skill done: "):
+            # FP-0011: skill_narrator removed → skill_done outbox kind gone.
+            # ChatEventForwarder now forwards workflow_finished / workflow_aborted
+            # as "skill done: <status>" so the row can stop spinning here.
+            status = text[len("skill done: "):].strip()
+            conv.finish_skill_row(run_id, success=(status == "finished"), reason="")
+            self._skill_exec.pop(run_id, None)
+            self._push_exec_state()
             self._last_focal_tab = "agents"
 
     def _maybe_render_cost_suffix(self, conv: ConversationView) -> None:

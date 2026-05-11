@@ -29,8 +29,10 @@ _EVENT_COLORS: dict[str, str] = {
     "act_executed":                "#cc88ff",
     "skill_run_spawned":           "#88aaff",
     "skill_run_completed":         "#88aaff",
+    "skill_completion_injected":   "#88aaff",   # FP-0012: router narration trigger
     "workflow_started":            "#88aaff",
     "workflow_finished":           "#88aaff",
+    "workflow_aborted":            "#ff6644",
     "agent_message_sent":          "#aaaaaa",
     "agent_request_received":      "#aaaaaa",
     "agent_response_received":     "#aaaaaa",
@@ -51,6 +53,10 @@ _EVENT_COLORS: dict[str, str] = {
     "web_fetch_completed":         "#888888",
     "web_search_started":          "#888888",
     "web_search_completed":        "#888888",
+    # Sandboxed execution (FP-0017) — same dim grey as shell ops; they're
+    # the same concept at a lower privilege level.
+    "sandboxed_exec_started":      "#888888",
+    "sandboxed_exec_completed":    "#888888",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
     # Plan-mode (ADR-0022 / 0023 / 0024 / 0025) — orange family so a plan's
@@ -111,7 +117,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     })),
     ("skill", frozenset({
         "skill_run_spawned", "skill_run_completed",
-        "workflow_started", "workflow_finished",
+        "skill_completion_injected",
+        "workflow_started", "workflow_finished", "workflow_aborted",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
     # Plan-mode group — every forensic plan_* event the runtime emits to the
@@ -127,7 +134,7 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "router_retry_exhausted", "tool_failed", "mcp_failed",
         "plan_step_failed", "plan_step_memo_failed", "plan_run_interrupted",
         "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded",
-        "recall_embed_failed", "postprocessor_step_failed",
+        "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
     })),
     ("user", frozenset({
         "user_message_received",
@@ -197,6 +204,11 @@ def _event_hint(ev: dict) -> str:
         return d.get("skill", "")
     if t == "skill_run_completed":
         return f"{d.get('skill', '')} [{d.get('status', '')}]"
+    if t == "skill_completion_injected":
+        run_id = str(d.get("run_id", ""))[:8]
+        return f"{d.get('skill', '')} [{run_id}] status={d.get('status', '')}"
+    if t == "workflow_aborted":
+        return str(d.get("reason", ""))[:40]
     if t == "agent_message_sent":
         return f"{d.get('from_agent', '')} → {d.get('to_agent', '')}"
     if t in ("agent_request_received", "agent_response_received"):
@@ -208,6 +220,14 @@ def _event_hint(ev: dict) -> str:
         return str(d.get("question", ""))[:40]
     if t == "user_intervention_received":
         return str(d.get("answer", ""))[:40]
+    if t in ("sandboxed_exec_started", "sandboxed_exec_completed"):
+        argv = d.get("argv") or []
+        cmd = " ".join(str(a) for a in argv[:3])
+        suffix = "…" if len(argv) > 3 else ""
+        backend = d.get("backend", "")
+        rc = d.get("returncode")
+        rc_part = f" rc={rc}" if rc is not None else ""
+        return f"[{backend}] {cmd}{suffix}{rc_part}"
     if t == "web_fetch_started":
         return str(d.get("url", ""))[:45]
     if t == "web_fetch_completed":
