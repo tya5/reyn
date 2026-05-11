@@ -18,11 +18,26 @@ Resolution strategy:
      If exactly one result: use it as server_id (source="direct").
      If multiple results: return candidates (source="search").
      If zero results: source="not_found".
+
+I/O route: ``reyn.api.unsafe.http.get`` (= urllib, no extra deps).
+JSON parse: ``reyn.api.safe.json.loads_strict``.
+Caching: ``reyn.registry.cache`` (file-based TTL cache, 24 h).
 """
 from __future__ import annotations
 
-import asyncio
+import os
 import re
+import urllib.parse
+
+from reyn.api.safe.json import loads_strict
+from reyn.api.unsafe.http import get as http_get
+
+
+def _base_url() -> str:
+    return os.environ.get(
+        "REYN_MCP_REGISTRY_URL",
+        "https://registry.modelcontextprotocol.io",
+    ).rstrip("/")
 
 
 def _looks_like_server_id(text: str) -> bool:
@@ -44,20 +59,39 @@ def _extract_keyword(text: str) -> str:
     return token.lower()
 
 
-async def _direct_lookup(server_id: str) -> dict:
-    """Attempt to look up a specific server_id; return registry dict."""
-    from reyn.registry.client import RegistryClient, RegistryError
+def _http_get_json(url: str) -> dict:
+    """GET *url*, parse body as JSON. Raises RuntimeError on non-2xx or parse error."""
+    resp = http_get(url, headers={"User-Agent": "reyn/1.0"})
+    if resp["status"] >= 400:
+        raise RuntimeError(f"Registry returned HTTP {resp['status']} for {url}")
+    return loads_strict(resp["body"])
 
-    try:
-        async with RegistryClient() as client:
-            server = await client.get_server(server_id)
+
+def _direct_lookup(server_id: str) -> dict:
+    """Attempt to look up a specific server_id; return registry result dict."""
+    import reyn.registry.cache as cache
+
+    cache_key = f"server:{server_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
         return {
             "server_id": server_id,
             "candidates": [],
             "source": "direct",
             "query": server_id,
         }
-    except RegistryError:
+
+    url = f"{_base_url()}/v0.1/servers/{urllib.parse.quote(server_id, safe='')}/versions/latest"
+    try:
+        data = _http_get_json(url)
+        cache.set(cache_key, data)
+        return {
+            "server_id": server_id,
+            "candidates": [],
+            "source": "direct",
+            "query": server_id,
+        }
+    except RuntimeError:
         return {
             "server_id": "",
             "candidates": [],
@@ -73,57 +107,69 @@ async def _direct_lookup(server_id: str) -> dict:
         }
 
 
-async def _search_lookup(query: str) -> dict:
+def _search_lookup(query: str) -> dict:
     """Search the registry and return candidates."""
-    from reyn.registry.client import RegistryClient, RegistryError
+    import reyn.registry.cache as cache
+    from reyn.registry.client import _dedup_by_latest
+    from reyn.registry.models import server_info_from_raw
 
-    try:
-        async with RegistryClient() as client:
-            results = await client.search(query, limit=10)
-        if not results:
+    limit = 10
+    cache_key = f"search:{query}:{limit}"
+    cached = cache.get(cache_key)
+
+    if cached is not None:
+        data = cached
+    else:
+        qs = urllib.parse.urlencode({"search": query, "limit": str(limit)})
+        url = f"{_base_url()}/v0.1/servers?{qs}"
+        try:
+            data = _http_get_json(url)
+            cache.set(cache_key, data)
+        except Exception:
             return {
                 "server_id": "",
                 "candidates": [],
-                "source": "not_found",
+                "source": "error",
                 "query": query,
             }
-        candidates = [
-            {
-                "name": r.name,
-                "description": r.description,
-                "repo_url": r.repository_url,
-            }
-            for r in results
-            if r.name
-        ]
-        # If exactly one result, treat as direct match.
-        if len(candidates) == 1:
-            return {
-                "server_id": candidates[0]["name"],
-                "candidates": candidates,
-                "source": "direct",
-                "query": query,
-            }
+
+    raw_entries = data.get("servers", [])
+    deduped = _dedup_by_latest(raw_entries)
+    candidates = []
+    for entry in deduped:
+        info = server_info_from_raw(entry)
+        if info.name:
+            candidates.append(
+                {
+                    "name": info.name,
+                    "description": info.description,
+                    "repo_url": info.repository_url,
+                }
+            )
+
+    if not candidates:
         return {
             "server_id": "",
+            "candidates": [],
+            "source": "not_found",
+            "query": query,
+        }
+
+    # If exactly one result, treat as direct match.
+    if len(candidates) == 1:
+        return {
+            "server_id": candidates[0]["name"],
             "candidates": candidates,
-            "source": "search",
+            "source": "direct",
             "query": query,
         }
-    except RegistryError:
-        return {
-            "server_id": "",
-            "candidates": [],
-            "source": "error",
-            "query": query,
-        }
-    except Exception:
-        return {
-            "server_id": "",
-            "candidates": [],
-            "source": "error",
-            "query": query,
-        }
+
+    return {
+        "server_id": "",
+        "candidates": candidates,
+        "source": "search",
+        "query": query,
+    }
 
 
 def fetch_server_for_install(artifact: dict) -> dict:
@@ -144,7 +190,7 @@ def fetch_server_for_install(artifact: dict) -> dict:
         }
 
     if _looks_like_server_id(text):
-        return asyncio.run(_direct_lookup(text))
+        return _direct_lookup(text)
 
     query = _extract_keyword(text)
     if not query:
@@ -155,4 +201,4 @@ def fetch_server_for_install(artifact: dict) -> dict:
             "query": "",
         }
 
-    return asyncio.run(_search_lookup(query))
+    return _search_lookup(query)

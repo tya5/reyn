@@ -61,30 +61,42 @@ _EMPTY_SEARCH_RESPONSE = {
 
 
 def _patch_registry_get_versions(server_response: dict, status: int = 200):
-    """Patch RegistryClient._get for get_server (versions/latest endpoint)."""
+    """Patch ``http_get`` in mcp_install.registry_fetch for versions/latest endpoint."""
+    import json as _json
 
-    async def _fake_get(self, path: str, params=None):
+    def _fake_get(url, *, headers=None, timeout=30):
         if status >= 400:
-            from reyn.registry.client import RegistryError
-            raise RegistryError(f"HTTP {status}")
-        if "/versions/latest" in path:
-            return {"server": server_response}
+            return {"status": status, "body": f"HTTP {status}", "headers": {}}
+        if "/versions/latest" in url:
+            return {
+                "status": 200,
+                "body": _json.dumps({"server": server_response}),
+                "headers": {},
+            }
         # search endpoint
-        return _FILESYSTEM_SEARCH_RESPONSE
+        return {
+            "status": 200,
+            "body": _json.dumps(_FILESYSTEM_SEARCH_RESPONSE),
+            "headers": {},
+        }
 
-    return mock.patch("reyn.registry.client.RegistryClient._get", _fake_get)
+    return mock.patch(
+        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
+    )
 
 
 def _patch_registry_search(response_data: dict, status: int = 200):
-    """Patch RegistryClient._get for search endpoint."""
+    """Patch ``http_get`` in mcp_install.registry_fetch for search endpoint."""
+    import json as _json
 
-    async def _fake_get(self, path: str, params=None):
+    def _fake_get(url, *, headers=None, timeout=30):
         if status >= 400:
-            from reyn.registry.client import RegistryError
-            raise RegistryError(f"HTTP {status}")
-        return response_data
+            return {"status": status, "body": f"HTTP {status}", "headers": {}}
+        return {"status": 200, "body": _json.dumps(response_data), "headers": {}}
 
-    return mock.patch("reyn.registry.client.RegistryClient._get", _fake_get)
+    return mock.patch(
+        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
+    )
 
 
 def _run(coro):
@@ -265,14 +277,16 @@ def test_fetch_server_empty_text_source_error():
 
     call_count = 0
 
-    async def _fake_get(self, path, params=None):
+    def _fake_get(url, *, headers=None, timeout=30):
         nonlocal call_count
         call_count += 1
-        return {}
+        return {"status": 200, "body": "{}", "headers": {}}
 
     artifact = {"data": {"text": ""}}
 
-    with mock.patch("reyn.registry.client.RegistryClient._get", _fake_get):
+    with mock.patch(
+        "reyn.stdlib.skills.mcp_install.registry_fetch.http_get", _fake_get
+    ):
         result = fetch_server_for_install(artifact)
 
     assert result["source"] == "error"

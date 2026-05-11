@@ -1,10 +1,10 @@
 """Tier 2: mcp_search registry_fetch preprocessor invariants.
 
-Tests the deterministic preprocessor function ``fetch_registry_results``
-that replaces the old web_fetch GitHub HTML scraping approach.
+Tests the deterministic preprocessor function ``fetch_registry_results``.
 
-No LLM calls, no mocks of collaborators. Uses httpx.MockTransport to
-exercise the real RegistryClient + cache code path.
+No LLM calls. Uses unittest.mock to patch ``reyn.api.unsafe.http.get``
+(the I/O route used by the refactored preprocessor) and exercises the real
+cache + dedup code path.
 
 Invariants:
   - Keyword extraction from mixed-language text is deterministic.
@@ -18,7 +18,6 @@ import json
 from pathlib import Path
 from unittest import mock
 
-import httpx
 import pytest
 
 import reyn.registry.cache as cache_mod
@@ -102,16 +101,13 @@ def test_extract_keyword_purely_japanese():
 
 
 def _make_http_patcher(response_body: dict, status: int = 200):
-    """Patch RegistryClient._get to return a fixed response without HTTP."""
-    import asyncio
+    """Patch ``reyn.api.unsafe.http.get`` to return a fixed response envelope."""
+    body_str = json.dumps(response_body)
 
-    async def _fake_get(self, path: str, params=None):
-        if status >= 400:
-            from reyn.registry import RegistryError
-            raise RegistryError(f"HTTP {status}")
-        return response_body
+    def _fake_get(url, *, headers=None, timeout=30):
+        return {"status": status, "body": body_str, "headers": {}}
 
-    return mock.patch("reyn.registry.client.RegistryClient._get", _fake_get)
+    return mock.patch("reyn.stdlib.skills.mcp_search.registry_fetch.http_get", _fake_get)
 
 
 def test_fetch_registry_happy_path(tmp_path):
@@ -196,13 +192,13 @@ def test_fetch_registry_empty_text(tmp_path):
     artifact = {"data": {"text": ""}}
     call_count = 0
 
-    async def _fake_get(self, path, params=None):
+    def _fake_get(url, *, headers=None, timeout=30):
         nonlocal call_count
         call_count += 1
-        return {"servers": []}
+        return {"status": 200, "body": '{"servers": []}', "headers": {}}
 
     with mock.patch.object(cache_mod, "_cache_dir", return_value=tmp_path):
-        with mock.patch("reyn.registry.client.RegistryClient._get", _fake_get):
+        with mock.patch("reyn.stdlib.skills.mcp_search.registry_fetch.http_get", _fake_get):
             result = fetch_registry_results(artifact)
 
     assert result["candidates"] == []
