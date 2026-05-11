@@ -11,7 +11,6 @@ from reyn.api.safe import schema as safe_schema
 from reyn.api.safe import text as safe_text
 from reyn.api.safe import time as safe_time
 
-
 # -- hash --------------------------------------------------------------
 
 

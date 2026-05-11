@@ -8,6 +8,6 @@ at startup. Individual calls are NOT audited per-invocation
 direct `open()`). For finer audit see FP-0015 (deferred).
 """
 
-from . import file, http, shell, workspace, env
+from . import env, file, http, shell, workspace
 
 __all__ = ["file", "http", "shell", "workspace", "env"]

@@ -1,8 +1,46 @@
 # FP-0014: Python step 用 API package + mode 改名 (pure→safe, trusted→unsafe)
 
-**Status**: **proposed**
+**Status**: **partial-landed 2026-05-11** (= 5 track 並列 wave で Component
+A-F + ADR-G Phase 1 着地、 stdlib I/O の `reyn.api.unsafe.*` 移行は
+follow-up に deferred)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 設計議論 (R-PURE-MODE-REDEFINE Step 1 後)
+
+## Landing notes (2026-05-11)
+
+5 track 並列 sonnet wave で core scope を 1 push で着地:
+
+- **Track A (commit `5b435e1`)** — schema rename + permissions rename +
+  CLI flag `--allow-unsafe-python` + harness wire format +
+  `_validate_safe_ast` + **escape-pattern detection 削除** (= ADR-G
+  Phase 1 完了) + linter `legacy-mode-keyword` hard reject +
+  `module_is_allowed` が `reyn.safe.*` allow / `reyn.unsafe.*` reject。
+  Track B 完了まで stdlib YAML が壊れないよう parser dual-accept
+  normaliser を一時追加 (= follow-up で削除予定)。
+- **Track B (commit `b405975`)** — 7 stdlib skill の `mode: trusted` →
+  `mode: unsafe` 機械的 rename + author guidance text 更新。
+- **Track C (commit `527e11f`)** — `src/reyn/api/safe/` (= hash /
+  schema / text / json / time / random で 11 関数) +
+  `src/reyn/api/unsafe/` (= file / http / shell / workspace / env で
+  13 関数)。 全 Scope A (= subprocess-local stdlib wrapper、 step-level
+  audit、 per-call audit は FP-0015 に reserve)。 Tier 2 test 22 件。
+
+**Test 結果**: 2266 → 2316 passed (= +50 net new)、 2 xfailed 不変。
+
+**Deferred (= follow-up scope)**:
+- stdlib `mode: unsafe` skill の `reyn.api.unsafe.*` 経由 refactor 未着手
+  (= Class A `index_docs/apply_strategy` の real I/O は inline のまま、
+  Class B 6 件 / Class C 4 純関数も未対応)。
+- linter rule `unsafe-in-stdlib` (hard error) + `unsafe-without-justification`
+  (warn) が未活性化。
+- `run_op` kind 統合 (= `file_*` → 単一 `file` op) 未着手。
+- Parser dual-accept normaliser 残存 (= stdlib refactor 着地後に削除)。
+- Concept doc `python-pure-mode.{md,ja.md}` の `python-safe-mode.*` rename 未着手。
+- ADR-G Phase 2 (= `reyn.safe.*` 成長 + stdlib allowlist 縮小) + Phase 3
+  (= allowlist = `reyn.safe.*` only) は incremental post-wave。
+
+---
+
 **Trigger**: Step 1 (commit `18f4aaa`) で pure mode を 「ambient sources only」
 として formalize したが、 3 つの構造的問題が未解消: (a) stdlib 内に
 `mode: trusted` 宣言が 7 skill 残存、 仕様と乖離; (b) `trusted` という名前は

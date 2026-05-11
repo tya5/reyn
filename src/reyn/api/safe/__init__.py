@@ -5,6 +5,6 @@ by inputs + clock + entropy + bundled static data. The AST
 validator allows ``import reyn.api.safe.*`` from safe mode.
 """
 
-from . import hash, schema, text, json, time, random
+from . import hash, json, random, schema, text, time
 
 __all__ = ["hash", "schema", "text", "json", "time", "random"]

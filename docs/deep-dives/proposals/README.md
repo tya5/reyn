@@ -79,8 +79,8 @@ Links to related ADRs, PRs, and docs.
 | [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | proposed | SMALL |
 | [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | done (LANDED 2026-05-10, commit `c9e79d6`) | LARGE |
 | [0013](0013-unified-inbox-outbox-transport.md) | Unified inbox/outbox transport abstraction — collapse CUI vs MCP/A2A skew | accepted (ADR-A green-light 2026-05-11) | LARGE |
-| [0014](0014-python-step-api-package.md) | Python step API package + rename modes (pure→safe, trusted→unsafe) | proposed | MEDIUM |
+| [0014](0014-python-step-api-package.md) | Python step API package + rename modes (pure→safe, trusted→unsafe) | partial-landed 2026-05-11 (A–F + ADR-G Phase 1; commits `5b435e1`/`b405975`/`527e11f`) | MEDIUM |
 | [0015](0015-fine-grained-python-step-audit.md) | Fine-grained per-call Python step audit (bidirectional RPC) | deferred (= awaiting enterprise audit requirement) | MEDIUM |
-| [0016](0016-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | proposed | LARGE |
-| [0017](0017-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | proposed | MEDIUM |
+| [0016](0016-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | Component A landed 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
+| [0017](0017-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | Components A+D landed 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.md) | Event Store backend abstraction — JSONL / SQLite / DuckDB (priority: LOW) | proposed | MEDIUM |

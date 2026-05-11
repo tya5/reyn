@@ -1,8 +1,49 @@
 # FP-0014: Python Step API Package + Rename Modes (pure→safe, trusted→unsafe)
 
-**Status**: **proposed**
+**Status**: **partial-landed 2026-05-11** (= 5-track parallel wave landed
+Components A–F + ADR-G Phase 1; stdlib I/O migration to `reyn.api.unsafe.*`
+deferred to follow-up)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 design discussion (post R-PURE-MODE-REDEFINE Step 1)
+
+## Landing notes (2026-05-11)
+
+5-track parallel sonnet wave landed the core scope in one push:
+
+- **Track A (commit `5b435e1`)** — schema rename + permissions rename +
+  CLI flag `--allow-unsafe-python` + harness wire format +
+  `_validate_safe_ast` + **DROPPED escape-pattern detection** (= ADR-G
+  Phase 1 complete) + linter `legacy-mode-keyword` hard reject +
+  `module_is_allowed` accepts `reyn.safe.*` / rejects `reyn.unsafe.*`.
+  Parser-level dual-accept normaliser added so stdlib YAML kept loading
+  during Track B refactor; can be removed when stdlib follow-up lands.
+- **Track B (commit `b405975`)** — 7 stdlib skills `mode: trusted` →
+  `mode: unsafe` mechanical rename + author guidance text updates.
+- **Track C (commit `527e11f`)** — `src/reyn/api/safe/` (= 11 functions
+  across hash / schema / text / json / time / random) +
+  `src/reyn/api/unsafe/` (= 13 functions across file / http / shell /
+  workspace / env). Scope A throughout (= subprocess-local stdlib
+  wrappers; step-level audit; FP-0015 reserves per-call audit). 22 Tier 2
+  tests.
+
+**Test outcome**: 2266 → 2316 passed (= +50 net new), 2 xfailed unchanged.
+
+**Deferred (= follow-up scope)**:
+- Stdlib `mode: unsafe` skills not yet refactored to use
+  `reyn.api.unsafe.*` packages (= Class A `index_docs/apply_strategy`
+  real I/O still inline; Class B 6 cases still inline Python; Class C
+  4 pure-functions could be flipped to `safe`).
+- Linter rules `unsafe-in-stdlib` (hard error) and
+  `unsafe-without-justification` (warn) not yet activated.
+- `run_op` kind consolidation (`file_*` → single `file` op) deferred.
+- Parser dual-accept normaliser kept (= remove once stdlib refactor lands).
+- Concept docs `python-pure-mode.{md,ja.md}` not yet renamed to
+  `python-safe-mode.{md,ja.md}`.
+- ADR-G Phase 2 (= grow `reyn.safe.*` + shrink stdlib allowlist) +
+  Phase 3 (= allowlist = `reyn.safe.*` only) are incremental post-wave.
+
+---
+
 **Trigger**: Step 1 (commit `18f4aaa`) formalized pure mode as "ambient
 sources only" but left three structural problems unresolved: (a) stdlib
 still declares `mode: trusted` in 7 skills, contradicting the spec; (b)

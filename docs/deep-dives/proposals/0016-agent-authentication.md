@@ -1,8 +1,29 @@
 # FP-0016: Agent Authentication — OAuth Delegation, Token Lifecycle, and MCP Auth Headers
 
-**Status**: proposed
+**Status**: **Component A landed 2026-05-11** (commit `ec94a06`); Components
+B / C / D / E remain proposed
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+## Landing notes (2026-05-11)
+
+**Component A — `mcp.servers.<name>.headers` field** landed in commit
+`ec94a06`. HTTP-type MCP server config now accepts `headers: dict[str, str]`
+that get passed to the HTTP transport at connection time. Values support
+`${VAR}` env interpolation (= ADR-0030 universal secret infra). Tier 2
+tests cover load with env interpolation, optional/back-compat, header
+propagation to the HTTP transport, and default empty when omitted.
+
+Bearer / API-key auth for hosted MCP servers (GitHub MCP, Atlassian MCP,
+internal enterprise MCPs) is unblocked.
+
+**Components B–E remain proposed**:
+- **B**: `OAuthToken` type in secret store + auto-refresh (MEDIUM)
+- **C**: `reyn auth login <service>` CLI (Device Authorization Grant,
+  RFC 8628) (MEDIUM)
+- **D**: Scope-limited credential delegation to child skills (= Confused
+  Deputy mitigation) (LARGE)
+- **E**: `agent_id` propagation in P6 events (METI/SOC2 audit trail) (SMALL)
 
 ---
 

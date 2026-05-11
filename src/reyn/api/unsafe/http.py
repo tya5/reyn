@@ -17,7 +17,8 @@ from __future__ import annotations
 import json as _json
 from typing import Any
 from urllib.error import HTTPError as _HTTPError
-from urllib.request import Request as _Request, urlopen as _urlopen
+from urllib.request import Request as _Request
+from urllib.request import urlopen as _urlopen
 
 
 def _response_dict(resp: Any) -> dict:

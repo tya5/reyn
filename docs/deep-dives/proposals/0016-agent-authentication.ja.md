@@ -1,8 +1,28 @@
 # FP-0016: エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー
 
-**Status**: proposed
+**Status**: **Component A 着地 2026-05-11** (commit `ec94a06`); Component
+B / C / D / E は proposed のまま
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+## Landing notes (2026-05-11)
+
+**Component A — `mcp.servers.<name>.headers` field** が commit `ec94a06`
+で着地。 HTTP-type MCP server config が `headers: dict[str, str]` を accept
+するようになり、 接続時に HTTP transport へ pass される。 値は `${VAR}` env
+interpolation 対応 (= ADR-0030 universal secret infra)。 Tier 2 test 4 件
+(env interpolation / optional / 伝播 / default empty)。
+
+Hosted MCP server (= GitHub MCP / Atlassian MCP / 社内 enterprise MCP) の
+Bearer / API-key 認証が unblock。
+
+**Component B–E は proposed のまま**:
+- **B**: secret store の `OAuthToken` 型 + auto-refresh (MEDIUM)
+- **C**: `reyn auth login <service>` CLI (= Device Authorization Grant、
+  RFC 8628) (MEDIUM)
+- **D**: 子スキルへの scope 限定 credential 委任 (= Confused Deputy
+  対策) (LARGE)
+- **E**: `agent_id` を P6 イベントに伝播 (= METI/SOC2 監査証跡) (SMALL)
 
 ---
 

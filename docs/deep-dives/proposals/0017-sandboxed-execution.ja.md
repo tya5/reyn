@@ -1,8 +1,41 @@
 # FP-0017: サンドボックス実行 — ポリシー/バックエンド抽象化と exec Op の非推奨化
 
-**Status**: proposed
+**Status**: **Component A + D 着地 2026-05-11** (commit `ddf2d05`);
+Component B / C / E は proposed のまま
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+## Landing notes (2026-05-11)
+
+**Component A — `SandboxPolicy` + `SandboxBackend` Protocol +
+`sandboxed_exec` op + `NoopBackend`** が commit `ddf2d05` で着地:
+
+- `src/reyn/sandbox/` package: `SandboxPolicy` dataclass (= network /
+  read_paths / write_paths / allow_subprocess / env_passthrough /
+  timeout_seconds)、 `SandboxBackend` Protocol、 `SandboxResult`
+  dataclass、 `NoopBackend` (= default、 enforcement なし、 初回 WARN
+  one-shot)、 `get_default_backend()` factory。
+- `src/reyn/op_runtime/sandboxed_exec.py` op handler が
+  `sandboxed_exec_started` / `sandboxed_exec_completed` event を emit。
+- `SandboxedExecIROp` schema entry + `OP_KIND_MODEL_MAP` 登録
+  (= `OpPurity.external`)。
+- `docs/reference/runtime/control-ir.md` を CLAUDE.md sync rule に従い更新。
+- Tier 2 test 13 件。
+
+**Component D — `shell` op の非推奨化** (= FP doc は `exec` op と命名
+していたが、 codebase に該当 op は存在せず — `shell` op が同じ "raw
+subprocess、 isolation なし" semantics の analogue。 命名のミスマッチが
+判明、 `shell` op に対して非推奨化を適用): module docstring に notice、
+初回呼び出し時に skill 単位で 1 回 `DeprecationWarning`、 「Deprecated
+by FP-0017. Will be removed in 1.0 release. Use sandboxed_exec instead.」
+コメント追加。 op は引き続き動作、 test regression ゼロ。
+
+**Component B / C / E は proposed のまま**:
+- **C**: `SeatbeltBackend` (macOS `sandbox-exec`) + `NoopBackend` 強化
+  (SMALL)
+- **B**: `LandlockBackend` (Linux 5.13+、 seccomp 重ね) — contributor-friendly
+  track、 Linux 開発環境必要 (MEDIUM)
+- **E**: `AppleContainerBackend` (macOS 26+) — deferred (LARGE)
 
 ---
 

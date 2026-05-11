@@ -1,8 +1,42 @@
 # FP-0017: Sandboxed Execution — Policy/Backend Abstraction and exec Op Deprecation
 
-**Status**: proposed
+**Status**: **Components A + D landed 2026-05-11** (commit `ddf2d05`);
+Components B / C / E remain proposed
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+## Landing notes (2026-05-11)
+
+**Component A — `SandboxPolicy` + `SandboxBackend` Protocol + `sandboxed_exec`
+op + `NoopBackend`** landed in commit `ddf2d05`:
+
+- `src/reyn/sandbox/` package: `SandboxPolicy` dataclass (= network,
+  read_paths, write_paths, allow_subprocess, env_passthrough, timeout_seconds),
+  `SandboxBackend` Protocol, `SandboxResult` dataclass, `NoopBackend`
+  (= default, no enforcement, one-shot WARN), `get_default_backend()`
+  factory.
+- `src/reyn/op_runtime/sandboxed_exec.py` op handler emitting
+  `sandboxed_exec_started` / `sandboxed_exec_completed` events.
+- `SandboxedExecIROp` schema entry + `OP_KIND_MODEL_MAP` registration
+  with `OpPurity.external`.
+- `docs/reference/runtime/control-ir.md` updated per CLAUDE.md sync rule.
+- 13 Tier 2 tests.
+
+**Component D — `shell` op deprecation** (= the actual analogue of the
+proposal's `exec` op; the FP doc named `exec` but no such op exists in
+the codebase — `shell` op is the closest match with the same "raw
+subprocess, no isolation" semantics). The deprecation landed alongside
+A: module docstring notice, one-time `DeprecationWarning` per skill on
+first invocation, code comment "Deprecated by FP-0017. Will be removed
+in 1.0 release. Use sandboxed_exec instead." Op remains functional;
+zero test regressions.
+
+**Components B / C / E remain proposed**:
+- **C**: `SeatbeltBackend` (macOS `sandbox-exec`) + better `NoopBackend`
+  alias (SMALL)
+- **B**: `LandlockBackend` (Linux 5.13+, seccomp 重ね) — contributor-
+  friendly track, needs Linux dev env (MEDIUM)
+- **E**: `AppleContainerBackend` (macOS 26+) — deferred (LARGE)
 
 ---
 
