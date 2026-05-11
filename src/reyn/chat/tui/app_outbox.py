@@ -63,7 +63,10 @@ class OutboxRouter:
             "intervention":             self._on_intervention,
             "status":                   self._on_status,
             "trace":                    self._on_trace,
-            "skill_done":               self._on_skill_done,
+            # NOTE: "skill_done" outbox kind was removed in FP-0011.
+            # Skill completion is now signalled via "skill done: <status>"
+            # trace text from ChatEventForwarder (workflow_finished /
+            # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
         }
 
@@ -288,23 +291,6 @@ class OutboxRouter:
         app._handle_trace_for_skill_row(conv, msg)
         app._update_skill_exec(msg)
         app._push_exec_state()
-
-    def _on_skill_done(
-        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
-    ) -> None:
-        """`skill_done` — finish the skill activity row + remember focal tab."""
-        app = self._app
-        run_id = msg.meta.get("run_id", "")
-        if run_id:
-            conv.finish_skill_row(
-                run_id,
-                success=True,
-                reason=msg.meta.get("summary", "") or "",
-            )
-            app._skill_exec.pop(run_id, None)
-            app._push_exec_state()
-            app._last_focal_tab = "agents"
-        app._maybe_refresh_status(header)
 
     def _on_error(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

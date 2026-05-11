@@ -24,11 +24,15 @@ _EVENT_COLORS: dict[str, str] = {
     "tool_returned":               "#cc88ff",
     "mcp_called":                  "#cc88ff",
     "mcp_completed":               "#cc88ff",
+    "mcp_failed":                  "#ff6644",
+    "mcp_server_installed":        "#cc88ff",
     "act_executed":                "#cc88ff",
     "skill_run_spawned":           "#88aaff",
     "skill_run_completed":         "#88aaff",
+    "skill_completion_injected":   "#88aaff",   # FP-0012: router narration trigger
     "workflow_started":            "#88aaff",
     "workflow_finished":           "#88aaff",
+    "workflow_aborted":            "#ff6644",
     "agent_message_sent":          "#aaaaaa",
     "agent_request_received":      "#aaaaaa",
     "agent_response_received":     "#aaaaaa",
@@ -39,12 +43,20 @@ _EVENT_COLORS: dict[str, str] = {
     "user_intervention_received":  "#ffcc88",
     "preprocessor_step_started":   "#555555",
     "preprocessor_step_completed": "#555555",
+    "postprocessor_step_started":   "#555555",
+    "postprocessor_step_completed": "#555555",
+    "postprocessor_step_failed":    "#ff6644",
+    "postprocessor_step_memoized":  "#cc8855",
     "python_step_started":         "#555555",
     "python_step_completed":       "#555555",
     "web_fetch_started":           "#888888",
     "web_fetch_completed":         "#888888",
     "web_search_started":          "#888888",
     "web_search_completed":        "#888888",
+    # Sandboxed execution (FP-0017) — same dim grey as shell ops; they're
+    # the same concept at a lower privilege level.
+    "sandboxed_exec_started":      "#888888",
+    "sandboxed_exec_completed":    "#888888",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
     # Plan-mode (ADR-0022 / 0023 / 0024 / 0025) — orange family so a plan's
@@ -58,6 +70,22 @@ _EVENT_COLORS: dict[str, str] = {
     "plan_step_memo_failed":       "#cc8855",
     "plan_aggregated":             "#ff9944",
     "plan_run_interrupted":        "#ff4444",
+    # RAG (ADR-0033) — yellow-blue family. embed_progress is high-volume / chatty
+    # so dim it. recall_embed_failed and index_dropped surface state changes.
+    "recall_embed_failed":         "#ff6644",
+    "embed_progress":              "#666666",
+    "index_dropped":               "#88aaff",
+    # Safety / budget (FP-0003 / FP-0004 / FP-0005) — yellow for warnings,
+    # red for hard stops, green for user-granted extensions, grey for resets.
+    "safety_limit_checkpoint":     "#ffcc88",
+    "loop_limit_exceeded":         "#ff4444",
+    "phase_budget_exceeded":       "#ff4444",
+    "chain_timeout":               "#ff9944",
+    "chain_timeout_extended":      "#88ddaa",
+    "budget_warn":                 "#ffcc66",
+    "budget_exceeded":             "#ff4444",
+    "budget_extended":             "#88ddaa",
+    "budget_reset":                "#555555",
 }
 _DEFAULT_EVENT_COLOR = "#666666"
 
@@ -71,11 +99,26 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     ("llm",   frozenset({"llm_called", "llm_response_received"})),
     ("tool",  frozenset({
         "tool_called", "tool_returned", "tool_failed",
-        "mcp_called", "mcp_completed", "act_executed",
+        "mcp_called", "mcp_completed", "mcp_failed",
+        "mcp_server_installed", "act_executed",
+    })),
+    # RAG (ADR-0033) — embed / recall / index lifecycle. Separate group so a
+    # noisy embed_progress stream can be filtered in/out independently.
+    ("rag", frozenset({
+        "recall_embed_failed", "embed_progress", "index_dropped",
+    })),
+    # Safety / budget (FP-0003 / FP-0004 / FP-0005). Limit checkpoints, loop
+    # caps, chain timeouts, budget warns / extensions / resets — every event
+    # the operator needs to debug "why did it stop / extend / warn".
+    ("safety", frozenset({
+        "safety_limit_checkpoint", "loop_limit_exceeded",
+        "phase_budget_exceeded", "chain_timeout", "chain_timeout_extended",
+        "budget_warn", "budget_exceeded", "budget_extended", "budget_reset",
     })),
     ("skill", frozenset({
         "skill_run_spawned", "skill_run_completed",
-        "workflow_started", "workflow_finished",
+        "skill_completion_injected",
+        "workflow_started", "workflow_finished", "workflow_aborted",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
     # Plan-mode group — every forensic plan_* event the runtime emits to the
@@ -88,8 +131,10 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     })),
     ("error", frozenset({
         "validation_error", "phase_retry", "permission_denied",
-        "router_retry_exhausted", "tool_failed",
+        "router_retry_exhausted", "tool_failed", "mcp_failed",
         "plan_step_failed", "plan_step_memo_failed", "plan_run_interrupted",
+        "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded",
+        "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
     })),
     ("user", frozenset({
         "user_message_received",
@@ -142,6 +187,13 @@ def _event_hint(ev: dict) -> str:
     if t in ("mcp_called", "mcp_completed"):
         suffix = " ✗" if d.get("is_error") else ""
         return f"{d.get('server', '')}.{d.get('tool', '')}{suffix}"
+    if t == "mcp_failed":
+        err = str(d.get("error", ""))[:25]
+        return f"{d.get('server', '')}.{d.get('tool', '')}: {err}"
+    if t == "mcp_server_installed":
+        scope = d.get("scope", "")
+        scope_part = f" ({scope})" if scope else ""
+        return f"{d.get('server_id', '')}{scope_part}"
     if t == "workflow_started":
         run_id = str(d.get("run_id", ""))[:8]
         return f"{d.get('skill', '')} [{run_id}]"
@@ -152,6 +204,11 @@ def _event_hint(ev: dict) -> str:
         return d.get("skill", "")
     if t == "skill_run_completed":
         return f"{d.get('skill', '')} [{d.get('status', '')}]"
+    if t == "skill_completion_injected":
+        run_id = str(d.get("run_id", ""))[:8]
+        return f"{d.get('skill', '')} [{run_id}] status={d.get('status', '')}"
+    if t == "workflow_aborted":
+        return str(d.get("reason", ""))[:40]
     if t == "agent_message_sent":
         return f"{d.get('from_agent', '')} → {d.get('to_agent', '')}"
     if t in ("agent_request_received", "agent_response_received"):
@@ -163,6 +220,14 @@ def _event_hint(ev: dict) -> str:
         return str(d.get("question", ""))[:40]
     if t == "user_intervention_received":
         return str(d.get("answer", ""))[:40]
+    if t in ("sandboxed_exec_started", "sandboxed_exec_completed"):
+        argv = d.get("argv") or []
+        cmd = " ".join(str(a) for a in argv[:3])
+        suffix = "…" if len(argv) > 3 else ""
+        backend = d.get("backend", "")
+        rc = d.get("returncode")
+        rc_part = f" rc={rc}" if rc is not None else ""
+        return f"[{backend}] {cmd}{suffix}{rc_part}"
     if t == "web_fetch_started":
         return str(d.get("url", ""))[:45]
     if t == "web_fetch_completed":
@@ -216,6 +281,57 @@ def _event_hint(ev: dict) -> str:
         plan_id = str(d.get("plan_id", ""))[:8]
         exc_type = d.get("exc_type", "")
         return f"[{plan_id}] interrupted ({exc_type})"
+    # RAG (ADR-0033)
+    if t == "recall_embed_failed":
+        q = str(d.get("query", ""))[:30]
+        err = str(d.get("error", ""))[:20]
+        return f"{q!r}: {err}"
+    if t == "embed_progress":
+        emb = d.get("embedded", 0)
+        skp = d.get("skipped", 0)
+        tot = d.get("total", 0)
+        pct = d.get("pct", 0)
+        return f"{emb}+{skp}/{tot} ({pct}%)"
+    if t == "index_dropped":
+        n = d.get("chunks_dropped", 0)
+        return f"{d.get('source', '')} · {n} chunks"
+    # Safety / budget (FP-0003 / FP-0004 / FP-0005)
+    if t == "safety_limit_checkpoint":
+        cont = "→ continue" if d.get("allow_continue") else "✗ stop"
+        ext = d.get("extension")
+        ext_part = f" (+{ext})" if ext else ""
+        return f"{d.get('kind', '')}: {cont}{ext_part}"
+    if t == "loop_limit_exceeded":
+        return f"{d.get('phase', '')}: {d.get('visit_count', '?')}/{d.get('max', '?')}"
+    if t == "phase_budget_exceeded":
+        return f"{d.get('phase', '')}: {str(d.get('reason', ''))[:30]}"
+    if t == "chain_timeout":
+        wait = str(d.get("waiting_on", ""))[:25]
+        return f"{wait} ({d.get('timeout_seconds', '?')}s)"
+    if t == "chain_timeout_extended":
+        wait = str(d.get("waiting_on", ""))[:25]
+        return f"{wait} +{d.get('extension_seconds', '?')}s"
+    if t in ("budget_warn", "budget_exceeded"):
+        dim = d.get("dimension", "")
+        skill = d.get("skill", "")
+        skill_part = f" @ {skill}" if skill else ""
+        return f"{dim}{skill_part}"
+    if t == "budget_extended":
+        dim = d.get("hard_dimension") or d.get("dimension", "")
+        granted = d.get("granted", "?")
+        return f"{dim} +{granted}"
+    if t == "budget_reset":
+        return ""
+    # Postprocessor (parallel to preprocessor)
+    if t in ("postprocessor_step_started", "postprocessor_step_completed"):
+        return f"[{d.get('step_index', '?')}] {d.get('step_type', '')}"
+    if t == "postprocessor_step_failed":
+        return (
+            f"[{d.get('step_index', '?')}] {d.get('step_type', '')}: "
+            f"{str(d.get('error', ''))[:25]}"
+        )
+    if t == "postprocessor_step_memoized":
+        return f"[{d.get('step_index', '?')}] {d.get('step_type', '')} · replay"
     return ""
 
 
