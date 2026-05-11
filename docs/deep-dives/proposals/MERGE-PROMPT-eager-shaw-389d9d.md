@@ -2,7 +2,7 @@
 
 **Branch**: `claude/eager-shaw-389d9d`
 **Rebased onto**: main `ba4c5fe`
-**Commits ahead of main**: 10（コード変更 1 件 + docs 9 件）
+**Commits ahead of main**: 11（コード変更 1 件 + docs 10 件）
 
 ---
 
@@ -124,6 +124,28 @@ OpenBSD `pledge`/`unveil` + systemd declarative policy と同じ思想。
 
 ---
 
+### (new) — FP-0017: OSRuntime レイヤ分解
+
+`runtime.py`（1,882 行）を垂直レイヤに分解する設計提案。
+AI コーディングエージェントのコンテキストウィンドウ最適化が主目的（合計行数増加は許容）。
+
+**4 コンポーネント（A→B→C→D）**:
+
+| コンポーネント | 対象 | コスト |
+|---|---|---|
+| A | `RunState`（ミュータブル実行状態の dataclass） | SMALL |
+| B | `LLMCallRecorder`（LLM 呼び出し + WAL + バジェット） | SMALL |
+| C | `PhaseExecutor`（act/decide ループ） | SMALL |
+| D | `RunOrchestrator`（フェーズ順序 + ライフサイクル） | MEDIUM |
+
+**行数変化**: 1,882 行 → 5 ファイル合計 ~1,620 行（最大ファイル ~500 行）
+
+**新規ファイル**:
+- `docs/deep-dives/proposals/0017-runtime-layer-decomposition.md`
+- `docs/deep-dives/proposals/0017-runtime-layer-decomposition.ja.md`
+
+---
+
 ### (new) — FP-0016: ChatSession 責務分離
 
 `session.py`（3,689 行）から 5 つのサービスを 3 ウェーブで抽出する設計提案。
@@ -207,3 +229,4 @@ class EventStoreBackend(Protocol):
 
 **アーキテクチャ整備（Wave 1 のみ SMALL）**:
 6. FP-0016 Wave 1 — CompactionController + SkillRunner 抽出（FP-0012 の前提）
+7. FP-0017 Component A — RunState 抽出（LLMCallRecorder の前提、独立して SMALL）
