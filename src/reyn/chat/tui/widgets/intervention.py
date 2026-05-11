@@ -69,6 +69,12 @@ class InterventionWidget(Widget):
         color: #ffffff;
         height: 1;
     }
+    InterventionWidget Label.iv-hint {
+        color: #555555;
+        padding-top: 1;
+        height: auto;
+        width: 1fr;
+    }
     """
 
     class Answered(Message):
@@ -102,6 +108,10 @@ class InterventionWidget(Widget):
                     yield Button(label, id=f"chip_{choice_id}", variant="default")
                 # "free response" chip always at end
                 yield Button("free response…", id="chip__free", variant="default")
+            yield Label(
+                "↓ type a free answer in the chat input below, or click a button",
+                classes="iv-hint",
+            )
         else:
             yield Input(placeholder="type your answer…", id="iv_input")
 

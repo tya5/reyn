@@ -65,7 +65,15 @@ def _set_at_path(obj: dict, path: str, value: Any) -> None:
     for part in parts[:-1]:
         if part not in cur:
             cur[part] = {}
-        cur = cur[part]
+        next_val = cur[part]
+        if not isinstance(next_val, dict):
+            raise PreprocessorError(
+                f"into: path '{path}': segment '{part}' is "
+                f"{type(next_val).__name__!r}, not a dict — "
+                f"if your python step returns the full payload, "
+                f"use 'into: data' instead of a sub-path like 'into: {path}'"
+            )
+        cur = next_val
     cur[parts[-1]] = value
 
 

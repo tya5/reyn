@@ -155,6 +155,8 @@ class ConversationView(Widget):
         self._last_reply_full: str | None = None
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
+        # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
+        self._error_boxes: list[ErrorBox] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -453,11 +455,26 @@ class ConversationView(Widget):
             skill_name=skill_name,
         )
         self.mount(box)
+        self._error_boxes.append(box)
         try:
             box.scroll_visible()
         except Exception:
             pass
         return box
+
+    def has_error_boxes(self) -> bool:
+        """Return True if any undismissed ErrorBox remains."""
+        return bool(self._error_boxes)
+
+    def dismiss_last_error(self) -> None:
+        """Remove the most recently mounted ErrorBox (idempotent if already removed)."""
+        while self._error_boxes:
+            box = self._error_boxes.pop()
+            try:
+                box.remove()
+                return
+            except Exception:
+                continue  # already removed, try next
 
     # ── intervention mounting ─────────────────────────────────────────────────
 

@@ -361,6 +361,19 @@ class ReynTUIApp(App):
             # as "skill done: <status>" so the row can stop spinning here.
             status = text[len("skill done: "):].strip()
             conv.finish_skill_row(run_id, success=(status == "finished"), reason="")
+            # Issue 2 — dim completion line in conversation log
+            _existing = self._skill_exec.get(run_id) or {}
+            _elapsed = _now_monotonic() - _existing.get("start_time", _now_monotonic())
+            _sname = _existing.get("skill_name") or skill_name or run_id
+            from rich.text import Text as _RichText
+            _note = _RichText()
+            _icon = "✓" if status == "finished" else "✗"
+            _color = "#447744" if status == "finished" else "#884444"
+            _note.append(
+                f"{_icon} {_sname}: {status} ({_elapsed:.0f}s)",
+                style=f"dim {_color}",
+            )
+            conv._write_log(_note)
             self._skill_exec.pop(run_id, None)
             self._push_exec_state()
             self._last_focal_tab = "agents"
@@ -1038,16 +1051,23 @@ class ReynTUIApp(App):
         )
 
     def action_voice_cancel(self) -> None:
-        """Esc — discard the current recording without transcribing.
+        """Esc — cancel voice recording, or dismiss the last ErrorBox.
 
-        Gated so it doesn't shadow the InputBar's own Esc handler when
-        nothing is being recorded.
+        Priority:
+          1. If recording → cancel recording.
+          2. Else if ErrorBoxes visible → dismiss the topmost one.
+        Gated by check_action so this never fires when neither condition holds.
         """
-        if self._voice_input is None or not self._voice_input.is_recording:
+        if self._voice_input is not None and self._voice_input.is_recording:
+            self._voice_input.cancel()
+            self._voice_set_input_locked(False)
+            self._voice_status("✗ recording cancelled", style="dim #555555")
             return
-        self._voice_input.cancel()
-        self._voice_set_input_locked(False)
-        self._voice_status("✗ recording cancelled", style="dim #555555")
+        try:
+            conv = self.query_one("#conversation", ConversationView)
+            conv.dismiss_last_error()
+        except Exception:
+            pass
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
@@ -1069,9 +1089,14 @@ class ReynTUIApp(App):
             except Exception:
                 return False
         if action == "voice_cancel":
-            # Only intercept Esc while we're actually recording — otherwise
-            # the InputBar / SlashPicker / preview pane should keep using it.
-            return self._voice_input is not None and self._voice_input.is_recording
+            # Intercept Esc while recording, OR when ErrorBoxes need dismissal.
+            if self._voice_input is not None and self._voice_input.is_recording:
+                return True
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                return conv.has_error_boxes()
+            except Exception:
+                return False
         if action == "voice_stop_and_submit":
             # Same gate as voice_cancel: Enter only behaves as "stop+send"
             # while recording. Outside of recording it falls through to
