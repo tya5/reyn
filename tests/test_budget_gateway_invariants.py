@@ -20,7 +20,6 @@ from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

@@ -38,7 +38,6 @@ from reyn.cli.commands.mcp import (
 )
 from reyn.secrets.store import load_secrets, save_secret
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

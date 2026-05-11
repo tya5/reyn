@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.shell import SHELL, _SHELL_DESCRIPTION, _SHELL_PARAMETERS
 from reyn.tools.registry import ToolRegistry
-
+from reyn.tools.shell import _SHELL_DESCRIPTION, _SHELL_PARAMETERS, SHELL
 
 # ── 1. Gate invariants — the security boundary ───────────────────────────────
 

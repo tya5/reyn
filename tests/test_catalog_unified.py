@@ -26,22 +26,21 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.registry import ToolRegistry
 from reyn.tools.catalog import (
-    LIST_SKILLS,
-    DESCRIBE_SKILL,
-    LIST_AGENTS,
-    DESCRIBE_AGENT,
-    _LIST_SKILLS_DESCRIPTION,
-    _LIST_SKILLS_PARAMETERS,
+    _DESCRIBE_AGENT_DESCRIPTION,
+    _DESCRIBE_AGENT_PARAMETERS,
     _DESCRIBE_SKILL_DESCRIPTION,
     _DESCRIBE_SKILL_PARAMETERS,
     _LIST_AGENTS_DESCRIPTION,
     _LIST_AGENTS_PARAMETERS,
-    _DESCRIBE_AGENT_DESCRIPTION,
-    _DESCRIBE_AGENT_PARAMETERS,
+    _LIST_SKILLS_DESCRIPTION,
+    _LIST_SKILLS_PARAMETERS,
+    DESCRIBE_AGENT,
+    DESCRIBE_SKILL,
+    LIST_AGENTS,
+    LIST_SKILLS,
 )
-
+from reyn.tools.registry import ToolRegistry
 
 # ── Shared fixture ────────────────────────────────────────────────────────────
 

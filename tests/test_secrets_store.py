@@ -24,7 +24,6 @@ from reyn.secrets.store import (
     save_secret,
 )
 
-
 # ── save + load ───────────────────────────────────────────────────────────────
 
 def test_save_creates_file_and_sets_600(tmp_path):

@@ -21,7 +21,6 @@ import pytest
 
 from reyn.registry.source_resolver import SourceResolution, resolve
 
-
 # ===========================================================================
 # Part 1: source_resolver unit tests
 # ===========================================================================

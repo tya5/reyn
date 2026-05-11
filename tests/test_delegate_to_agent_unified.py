@@ -28,13 +28,12 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.registry import ToolRegistry
 from reyn.tools.delegate_to_agent import (
-    DELEGATE_TO_AGENT,
     _DELEGATE_TO_AGENT_DESCRIPTION,
     _DELEGATE_TO_AGENT_PARAMETERS,
+    DELEGATE_TO_AGENT,
 )
-
+from reyn.tools.registry import ToolRegistry
 
 # ── 1. render_for_router byte-identity gate ───────────────────────────────────
 

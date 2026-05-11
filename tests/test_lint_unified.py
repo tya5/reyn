@@ -11,9 +11,8 @@ instances. No private state assertions.
 """
 from __future__ import annotations
 
+from reyn.tools.lint import _LINT_DESCRIPTION, _LINT_PARAMETERS, LINT
 from reyn.tools.registry import ToolRegistry
-from reyn.tools.lint import LINT, _LINT_DESCRIPTION, _LINT_PARAMETERS
-
 
 # ── 1. render_for_router shape gate ───────────────────────────────────────────
 

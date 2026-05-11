@@ -16,14 +16,13 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools.memory import (
+    FORGET_MEMORY,
     LIST_MEMORY,
     READ_MEMORY_BODY,
-    REMEMBER_SHARED,
     REMEMBER_AGENT,
-    FORGET_MEMORY,
+    REMEMBER_SHARED,
 )
 from reyn.tools.types import ToolDefinition, ToolGates
-
 
 # ── 1. All 5 are ToolDefinition instances ────────────────────────────────────────
 

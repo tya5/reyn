@@ -29,11 +29,10 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools.invoke_skill import (
-    INVOKE_SKILL,
     _INVOKE_SKILL_DESCRIPTION,
     _INVOKE_SKILL_PARAMETERS,
+    INVOKE_SKILL,
 )
-
 
 # ── 1. Canonical name (ADR-0026 Open Q #6) ───────────────────────────────────
 

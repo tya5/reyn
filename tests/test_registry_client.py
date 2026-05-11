@@ -29,7 +29,6 @@ import reyn.registry.cache as cache_mod
 from reyn.registry import RegistryClient, RegistryError
 from reyn.registry.models import ServerInfo, ServerJson
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — recorded response bodies
 # ---------------------------------------------------------------------------

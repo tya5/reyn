@@ -16,7 +16,6 @@ from reyn.chat.services import MemoryService, RouterHostAdapter
 from reyn.events.events import EventLog
 from reyn.llm.model_resolver import ModelResolver
 
-
 # ---------------------------------------------------------------------------
 # Minimal stubs and helpers
 # ---------------------------------------------------------------------------

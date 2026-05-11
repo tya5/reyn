@@ -21,7 +21,6 @@ import pytest
 
 from reyn.secrets.loader import load_secrets_to_environ
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _write_secrets(path: Path, content: str) -> None:

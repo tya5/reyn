@@ -20,7 +20,6 @@ import pytest
 
 from reyn.secrets.interpolation import expand_env
 
-
 # ── simple string ────────────────────────────────────────────────────────────
 
 def test_expand_known_var(monkeypatch):

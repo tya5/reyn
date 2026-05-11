@@ -16,18 +16,17 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools.mcp import (
-    CALL_MCP_TOOL,
-    LIST_MCP_SERVERS,
-    LIST_MCP_TOOLS,
     _CALL_MCP_TOOL_DESCRIPTION,
     _CALL_MCP_TOOL_PARAMETERS,
     _LIST_MCP_SERVERS_DESCRIPTION,
     _LIST_MCP_SERVERS_PARAMETERS,
     _LIST_MCP_TOOLS_DESCRIPTION,
     _LIST_MCP_TOOLS_PARAMETERS,
+    CALL_MCP_TOOL,
+    LIST_MCP_SERVERS,
+    LIST_MCP_TOOLS,
 )
 from reyn.tools.registry import ToolRegistry
-
 
 # ── 1. CALL_MCP_TOOL — byte-identity gate ─────────────────────────────────────
 

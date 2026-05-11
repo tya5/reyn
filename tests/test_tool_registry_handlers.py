@@ -12,11 +12,10 @@ from __future__ import annotations
 
 import pytest
 
-from reyn.tools.catalog import LIST_SKILLS, DESCRIBE_SKILL, LIST_AGENTS, DESCRIBE_AGENT
+from reyn.tools.catalog import DESCRIBE_AGENT, DESCRIBE_SKILL, LIST_AGENTS, LIST_SKILLS
 from reyn.tools.delegate_to_agent import DELEGATE_TO_AGENT
 from reyn.tools.plan import PLAN
 from reyn.tools.types import RouterCallerState, ToolContext
-
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 

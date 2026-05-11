@@ -9,18 +9,18 @@ names, for_router, for_phase, len, __contains__).
 from __future__ import annotations
 
 import dataclasses
+
 import pytest
 
 from reyn.tools import (
+    PhaseCallerState,
+    RouterCallerState,
+    ToolContext,
     ToolDefinition,
     ToolGates,
-    ToolContext,
-    RouterCallerState,
-    PhaseCallerState,
     ToolRegistry,
 )
-from reyn.tools.dispatch import invoke_tool, ToolNotFound
-
+from reyn.tools.dispatch import ToolNotFound, invoke_tool
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 

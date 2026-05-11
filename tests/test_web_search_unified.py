@@ -15,8 +15,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools import get_default_registry
-from reyn.tools.web_search import WEB_SEARCH, _WEB_SEARCH_DESCRIPTION, _WEB_SEARCH_PARAMETERS
-
+from reyn.tools.web_search import _WEB_SEARCH_DESCRIPTION, _WEB_SEARCH_PARAMETERS, WEB_SEARCH
 
 # ── 1. render_for_router byte-identity gate ───────────────────────────────────
 

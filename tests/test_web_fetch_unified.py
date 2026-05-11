@@ -15,8 +15,7 @@ from __future__ import annotations
 import pytest
 
 from reyn.tools import get_default_registry
-from reyn.tools.web_fetch import WEB_FETCH, _WEB_FETCH_DESCRIPTION, _WEB_FETCH_PARAMETERS
-
+from reyn.tools.web_fetch import _WEB_FETCH_DESCRIPTION, _WEB_FETCH_PARAMETERS, WEB_FETCH
 
 # ── 1. render_for_router byte-identity gate ───────────────────────────────────
 

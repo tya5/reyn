@@ -28,7 +28,6 @@ from reyn.cli.commands.secret import (
 )
 from reyn.secrets.store import load_secrets, save_secret
 
-
 # ── helper ────────────────────────────────────────────────────────────────────
 
 def _make_parser() -> argparse.ArgumentParser:

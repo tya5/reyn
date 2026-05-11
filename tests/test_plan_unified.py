@@ -23,9 +23,8 @@ from __future__ import annotations
 
 import pytest
 
+from reyn.tools.plan import _PLAN_DESCRIPTION, _PLAN_PARAMETERS, PLAN
 from reyn.tools.registry import ToolRegistry
-from reyn.tools.plan import PLAN, _PLAN_DESCRIPTION, _PLAN_PARAMETERS
-
 
 # ── 1. render_for_router byte-identity gate ───────────────────────────────────
 
