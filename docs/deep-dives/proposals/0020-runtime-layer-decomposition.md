@@ -1,4 +1,4 @@
-# FP-0017: OSRuntime Layer Decomposition — Splitting runtime.py into Vertical Layers
+# FP-0020: OSRuntime Layer Decomposition — Splitting runtime.py into Vertical Layers
 
 **Status**: proposed
 **Proposed**: 2026-05-11
@@ -34,7 +34,7 @@ the lines any single agent must hold in context.
 
 ### Vertical complexity vs horizontal mixing
 
-`session.py` (FP-0016) had five unrelated concerns at the same level.
+`session.py` (FP-0019) had five unrelated concerns at the same level.
 `runtime.py` has one concern — executing a skill — expressed at five depth levels:
 
 ```
@@ -276,8 +276,10 @@ Each wave can land as a standalone PR with no visible behavior change.
 - **Component B**: requires A (`RunState`).
 - **Component C**: requires A + B.
 - **Component D**: requires A + B + C.
-- **FP-0016** (`session.py` refactor): independent. Can proceed in parallel.
-- **FP-0012** (async execution): benefits from B+C being stable units, but is not blocked.
+- **FP-0019** (`session.py` refactor): independent. Can proceed in parallel.
+- **FP-0012** (async execution): LANDED (commit `c9e79d6`). Components B+C expose the
+  internal LLM-call and phase boundary as stable units, which the async task infrastructure
+  can now target cleanly.
 
 ---
 
@@ -303,5 +305,8 @@ Component A alone is SMALL and can land first as the enabling foundation.
 - `src/reyn/kernel/llm_call_recorder.py` — new (Component B)
 - `src/reyn/kernel/phase_executor.py` — new (Component C)
 - `src/reyn/kernel/run_orchestrator.py` — new (Component D)
-- FP-0016 (`0016-chat-session-refactor.md`) — parallel God-file reduction for `session.py`
+- FP-0019 (`0019-chat-session-refactor.md`) — parallel God-file reduction for `session.py`
 - ADR-0029 (Permission model) — `PhaseExecutor` passes permission declarations to `ControlIRExecutor`
+- FP-0017 (`0017-sandboxed-execution.md`) — Component D landed (commit `ddf2d05`): `exec.py`
+  now carries a `DeprecationWarning`; `PhaseExecutor` should use `sandboxed_exec` instead of
+  the deprecated `exec` op when the extraction lands

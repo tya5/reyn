@@ -1,4 +1,4 @@
-# FP-0016: ChatSession Responsibility Separation — Extracting Services from session.py
+# FP-0019: ChatSession Responsibility Separation — Extracting Services from session.py
 
 **Status**: proposed
 **Proposed**: 2026-05-11
@@ -8,13 +8,13 @@
 
 ## Summary
 
-`src/reyn/chat/session.py` has grown to 3,689 lines with five distinct responsibilities
+`src/reyn/chat/session.py` has grown to 3,836 lines with five distinct responsibilities
 mixed inside `ChatSession`: skill execution management, A2A agent protocol, intervention
 routing, compaction, and auto-resume. Six service classes totaling 2,122 lines have already
 been extracted into `src/reyn/chat/services/`, but the remaining logic in `session.py` is
-still too dense to safely modify for features like FP-0012 (async execution). This proposal
-completes the extraction in three waves, reducing `session.py` to a ~600-line thin
-dispatcher that delegates entirely to extracted services.
+still too dense to safely modify. This proposal completes the extraction in three waves,
+reducing `session.py` to a ~600-line thin dispatcher that delegates entirely to extracted
+services.
 
 ---
 
@@ -24,7 +24,7 @@ dispatcher that delegates entirely to extracted services.
 
 ```
 src/reyn/chat/
-├── session.py              3,689 lines   ← target of this FP
+├── session.py              3,836 lines   ← target of this FP
 └── services/
     ├── budget_gateway.py     347 lines   ┐
     ├── chain_manager.py      412 lines   │
@@ -48,16 +48,17 @@ Five cohesive clusters are still embedded in `ChatSession`:
 
 ### Why this matters now
 
-- **FP-0012 (async execution)** needs to launch and monitor skill tasks without touching the
-  monolithic `ChatSession`. `SkillRunner` must be an independent unit before async execution
-  can be cleanly implemented.
+- **FP-0012 (async execution)** has LANDED (commit `c9e79d6`). Wave 1's `SkillRunner`
+  extraction aligns the landed async execution model with `session.py` — the async task
+  infrastructure now exists in the OS, but `session.py` is still the monolithic owner of
+  the skill task dict. Extracting `SkillRunner` makes the boundary explicit.
 - **FP-0011 (remove narrator)** requires changes in the routing path currently buried inside
   `_dispatch_routing_decision_for_user`. Extracting `SkillRunner` first de-risks this change.
 - **Testability**: the current `session.py` cannot be meaningfully unit-tested because all
   five responsibilities share `self`. Post-extraction each service can be tested in isolation
   against its narrow API.
 - **Onboarding**: contributors who want to fix an A2A protocol bug must currently read
-  3,689 lines. Post-extraction the A2A surface is a self-contained ~350-line file.
+  3,836 lines. Post-extraction the A2A surface is a self-contained ~350-line file.
 
 ### Design constraints
 
@@ -74,7 +75,7 @@ Five cohesive clusters are still embedded in `ChatSession`:
 
 ## Proposed implementation
 
-### Wave 1 — SMALL × 2 (lowest risk, enables FP-0011 and FP-0012 design)
+### Wave 1 — SMALL × 2 (lowest risk, enables FP-0011; aligns session.py with landed FP-0012)
 
 **CompactionController** (`services/compaction_controller.py`)
 
@@ -129,6 +130,11 @@ class A2AHandler:
 
 The A2A protocol is entirely self-contained (send/receive/chain resolution). The only
 coupling to `ChatSession` is the `chain_manager` dependency (already extracted).
+
+**Note**: FP-0013 (unified-inbox-outbox-transport, ACCEPTED) restructures the transport
+layer that A2A send/receive sits on. `A2AHandler` extraction should land in the same PR
+as FP-0013's implementation, or immediately after — implementing this extraction before
+FP-0013 lands will cause the A2A interface to require adjustment again.
 
 **InterventionHandler** (`services/intervention_handler.py`)
 
@@ -200,9 +206,10 @@ in `session.py` itself.
 
 **Wave 1 → Wave 2 → Wave 3**
 
-Wave 1 (CompactionController + SkillRunner) is the minimum viable extraction: it unblocks
-FP-0012 design and reduces the blast radius for any session.py change. Wave 2 depends on
-Wave 1's `SkillRunner` being stable. Wave 3 is coupled to FP-0011 and can wait.
+Wave 1 (CompactionController + SkillRunner) is the minimum viable extraction: it aligns
+`session.py` with the landed FP-0012 async OS and reduces the blast radius for any
+session.py change. Wave 2 depends on Wave 1's `SkillRunner` being stable, and should
+coordinate with FP-0013. Wave 3 is coupled to FP-0011 and can wait.
 
 ---
 
@@ -210,9 +217,11 @@ Wave 1's `SkillRunner` being stable. Wave 3 is coupled to FP-0011 and can wait.
 
 - **Wave 1**: No external FP dependencies. Can start immediately.
 - **Wave 2**: Requires Wave 1 complete (InterventionHandler depends on SkillRunner).
+  `A2AHandler` extraction should coordinate with FP-0013 (unified-inbox-outbox-transport,
+  ACCEPTED) — the transport layer restructure overlaps with the A2A send/receive interface.
 - **Wave 3**: Requires Wave 1 complete + FP-0011 landing recommended (narrator path removal).
-- **FP-0012** (async skill execution): benefits from Wave 1 completion. Can share the same
-  PR if timing aligns.
+- **FP-0012** (async skill execution): LANDED (commit `c9e79d6`). Wave 1 makes the
+  `session.py` side consistent with the landed async OS primitives.
 
 ---
 
@@ -236,14 +245,15 @@ MEDIUM total.
 ## Alignment with Reyn principles
 
 This FP is purely structural — no principle violations are introduced or resolved. The
-motivation is maintainability and enabling FP-0012 (P3 / P6 clean execution model for async
-skills).
+motivation is maintainability and aligning `session.py` with the landed FP-0012 async
+execution model (P3 / P6 clean execution).
 
 ---
 
 ## Related
 
-- `src/reyn/chat/session.py` — extraction source (3,689 lines)
+- `src/reyn/chat/session.py` — extraction source (3,836 lines)
 - `src/reyn/chat/services/` — existing extracted services (6 files, 2,122 lines)
 - FP-0011 (`0011-remove-narrator.md`) — Wave 3 coupling (narrator path in AutoResumeHandler)
-- FP-0012 (`0012-async-skill-execution.md`) — primary beneficiary of Wave 1 (SkillRunner)
+- FP-0012 (`0012-async-skill-execution.md`) — LANDED commit `c9e79d6`; Wave 1 aligns session.py with the async OS
+- FP-0013 (`0013-unified-inbox-outbox-transport.md`) — ACCEPTED; Wave 2 A2AHandler extraction should coordinate with this
