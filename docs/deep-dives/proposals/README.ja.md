@@ -84,3 +84,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0016](0016-agent-authentication.ja.md) | エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー | Component A 着地 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.ja.md) | サンドボックス実行 — ポリシー/バックエンド抽象化と exec op の非推奨化 | Component A+D 着地 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.ja.md) | Event Store バックエンド抽象化 — JSONL / SQLite / DuckDB（優先度: LOW） | proposed | MEDIUM |
+| [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | proposed | MEDIUM |
