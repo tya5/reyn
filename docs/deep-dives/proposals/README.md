@@ -88,3 +88,5 @@ Links to related ADRs, PRs, and docs.
 | [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | proposed | MEDIUM |
 | [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | proposed | SMALL |
 | [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | proposed | SMALL |
+| [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | proposed | SMALL |
+| [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |

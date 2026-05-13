@@ -88,3 +88,5 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | proposed | MEDIUM |
 | [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | proposed | SMALL |
 | [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | proposed | SMALL |
+| [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | proposed | SMALL |
+| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | proposed | MEDIUM |

@@ -1,14 +1,16 @@
 # Merge prompt — branch `claude/eager-shaw-389d9d`
 
 **Branch**: `claude/eager-shaw-389d9d`
-**Rebased onto**: main `19b628e`
-**Commits ahead of main**: 6（docs のみ）
+**Rebased onto**: main `19b628e` → current main `1dac280`
+**Commits ahead of main**: 3（docs のみ、FP-0022/0023/0024）
+
+> ⚠️ main 進捗: FP-0021 実装着地（`a03bcfc`）、FP-0019 Wave 1 着地（`6620505`）、FP-0020 Component A 着地（`1dac280`）。これらの実装 PR はすでに main に取り込み済み。本ブランチは残る docs（FP-0022/0023/0024）のみ未マージ。
 
 ---
 
 ## このブランチでやったこと
 
-God-file 削減 FP 起票 + イベントログ監査 + パーミッション設計調査セッション。コード変更なし。
+God-file 削減 FP 起票 + イベントログ監査 + パーミッション設計調査 + Router SP 最適化調査セッション。コード変更なし（docs のみ）。
 
 ---
 
@@ -126,6 +128,43 @@ RunOrchestrator (L1) → PhaseExecutor (L2) → LLMCallRecorder (L3) + RunState 
 
 ---
 
+---
+
+### d19dc62 — FP-0023: Router SP 速攻改善 + FP-0024: セマンティックツール選択
+
+Router システムプロンプト最適化の 2 本立て。
+
+#### FP-0023（SMALL）— `router_system_prompt.py` への 5 つのピンポイント修正
+
+| 変更 | 内容 | 効果 |
+|---|---|---|
+| 1 | セクション並び替え（静的 → 動的） | キャッシュカバレッジ ~20% → ~60% |
+| 2 | 意図軸の重複統合 | ルーティングラベル漏れリスク解消 |
+| 3 | spawn-ack MUST を優先順位付きで整理 | `/tasks` 準拠率改善 |
+| 4 | `delegate_to_agent` Behaviour ルール追加 | ツールスキーマだけからの推測を解消 |
+| 5 | JA recall/memory 例文追加 | JA での `recall` vs `list_memory` ミスルーティング解消 |
+
+**対象ファイル**: `src/reyn/chat/router_system_prompt.py` のみ。
+
+#### FP-0024（MEDIUM）— セマンティックツール選択（4 コンポーネント）
+
+| Component | 内容 | コスト |
+|---|---|---|
+| A | BM25 スキル事前絞り込み（`invoke_skill.name` enum を O(N)→O(K=5)） | SMALL |
+| B | `search_hints` frontmatter + `reyn skill enrich` CLI（Tool2Vec 手法） | SMALL |
+| C | Embedding バックエンド + ハイブリッド（BM25+embedding RRF fusion） | MEDIUM |
+| D | Anthropic `tool_search_tool` + MCP deferred loading（30+ MCP ツール時） | SMALL |
+
+依存関係: A/B/D は独立リリース可能。C は A に依存（BM25 バックエンド置き換え）。
+
+**新規ファイル**:
+- `docs/deep-dives/proposals/0023-router-sp-quick-wins.md`
+- `docs/deep-dives/proposals/0023-router-sp-quick-wins.ja.md`
+- `docs/deep-dives/proposals/0024-router-sp-semantic-tool-selection.md`
+- `docs/deep-dives/proposals/0024-router-sp-semantic-tool-selection.ja.md`
+
+---
+
 ## 調査で判明した「FP 不要」事項（再掲）
 
 | 候補 | 判定 | 根拠 |
@@ -150,23 +189,28 @@ RunOrchestrator (L1) → PhaseExecutor (L2) → LLMCallRecorder (L3) + RunState 
 
 ## マージ後のアクション候補
 
+> ✅ **main 着地済み**: FP-0021 実装、FP-0019 Wave 1、FP-0020 Component A。以下は未着地のもの。
+
 **即効性あり（SMALL コスト）**:
-1. **FP-0021** — `emit()` に `run_id`/`skill` を追加 + `permission_granted` 新設（6 ファイル、kwarg 追加のみ）
-2. **FP-0022** — `web_fetch` を handler-level `_approve()` に移行 + `web_search` に deny check 追加（4 ファイル）
-3. FP-0019 Wave 1 — CompactionController + SkillRunner 抽出（session.py を非同期 OS と整合）
-4. FP-0020 Component A — RunState 抽出（LLMCallRecorder の前提、独立して SMALL）
+1. **FP-0022** — `web_fetch` を handler-level `_approve()` に移行 + `web_search` に deny check 追加（4 ファイル）
+2. **FP-0023** — `router_system_prompt.py` 5 変更（セクション並び替え・意図軸統合・spawn-ack 優先順位・delegate ルール・JA 例文）
+3. **FP-0024 Component A** — BM25 事前絞り込み + `SkillSearchIndex`（スキル 20+ 時に有効、依存なし）
+4. **FP-0024 Component B** — `search_hints` frontmatter + `reyn skill enrich` CLI（A/C を強化）
+5. **FP-0024 Component D** — Anthropic `tool_search_tool` MCP 統合（MCP 30+ 時、独立リリース可）
+6. FP-0019 Wave 1 残余 — SkillRunner 抽出（CompactionController は着地済み）
+7. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
 
 **中期（MEDIUM コスト）**:
-4. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
-5. FP-0020 Component C — PhaseExecutor 抽出（A + B 完了後）
-6. FP-0013 実装 → FP-0019 Wave 2（A2AHandler 抽出は FP-0013 と連携）
+8. **FP-0024 Component C** — Embedding バックエンド + ハイブリッド + `.reyn/skill-index/` ライフサイクル（A + B 完了後）
+9. FP-0020 Component C — PhaseExecutor 抽出（A + B 完了後）
+10. FP-0013 実装 → FP-0019 Wave 2（A2AHandler 抽出は FP-0013 と連携）
 
 **大規模（LARGE）**:
-7. FP-0020 Component D — RunOrchestrator 抽出（runtime.py ~400 行化の最終段階）
-8. FP-0019 Wave 2 — A2AHandler + InterventionHandler（FP-0013 着地後）
+11. FP-0020 Component D — RunOrchestrator 抽出（runtime.py ~400 行化の最終段階）
+12. FP-0019 Wave 2 — A2AHandler + InterventionHandler（FP-0013 着地後）
 
 **FP-0013 着地後（ACCEPTED）**:
-9. FP-0019 Wave 2 — A2AHandler 抽出を FP-0013 実装と同一 PR で
+13. FP-0019 Wave 2 — A2AHandler 抽出を FP-0013 実装と同一 PR で
 
 **延期**:
 - FP-0019 Wave 3（FP-0011 着地待ち）
