@@ -5,16 +5,17 @@ the LLM from constructing filesystem paths. The OS must resolve all paths via
 resolve_skill_path; the LLM emits only a short skill name.
 
 Invariants tested:
-  - compute_paths resolves stdlib skill names to the correct stdlib path
-  - compute_paths resolves local skill names to the correct local path
-  - compute_paths accepts both eval_builder_request and user_message artifacts
+  - extract_skill_name + resolve_paths resolves stdlib skill names to the correct stdlib path
+  - extract_skill_name + resolve_paths resolves local skill names to the correct local path
+  - extract_skill_name accepts both eval_builder_request and user_message artifacts
   - user_message regex extraction handles "skill named <name>" form
   - user_message with unrecognisable text raises ValueError (hard reject)
   - eval_output_path redirects stdlib skills to reyn/local/<name>/eval.md
   - eval_output_path for reyn/local/ skills stays alongside skill.md
   - inject_resolved_paths mirrors _prep into _resolved for LLM use
-  - eval_builder skill.md declares compute_paths as trusted python step (B8-NEW-2)
-  - eval_builder permissions.python contains a trusted entry for analyze_skill_resolver
+  - eval_builder skill.md declares resolve_paths as unsafe python step (R-PURE-MODE-REDEFINE Class B)
+  - eval_builder skill.md declares extract_skill_name as safe python step
+  - eval_builder permissions.python contains an unsafe entry for analyze_skill_resolver
 
 Testing policy (docs/deep-dives/contributing/testing.ja.md):
   - No mocks (real instances only)
@@ -29,8 +30,31 @@ import pytest
 
 from reyn.compiler.loader import load_dsl_skill
 from reyn.skill.skill_paths import resolve_skill_path
-from reyn.stdlib.skills.eval_builder.analyze_skill import inject_resolved_paths
-from reyn.stdlib.skills.eval_builder.analyze_skill_resolver import compute_paths
+from reyn.stdlib.skills.eval_builder.analyze_skill import (
+    extract_skill_name,
+    inject_resolved_paths,
+)
+from reyn.stdlib.skills.eval_builder.analyze_skill_resolver import resolve_paths
+
+
+def _compute_paths(artifact: dict) -> dict:
+    """Test helper: chain extract_skill_name → resolve_paths, mimicking the preprocessor.
+
+    Simulates the two-step preprocessor chain introduced by R-PURE-MODE-REDEFINE
+    Class B. Tests that previously called compute_paths directly now call this
+    helper to exercise the same end-to-end path resolution behaviour.
+    """
+    name_result = extract_skill_name(artifact)
+    # Build the enriched artifact as the preprocessor engine would after step 1.
+    enriched = dict(artifact)
+    enriched.setdefault("data", {})
+    enriched["data"] = dict(enriched["data"])
+    enriched["data"]["_name"] = name_result
+    return resolve_paths(enriched)
+
+
+# Keep the old alias so the per-test call sites below stay unchanged.
+compute_paths = _compute_paths
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -406,28 +430,48 @@ def _load_eval_builder_skill() -> object:
     return load_dsl_skill(skill_md)
 
 
-def test_eval_builder_permissions_python_has_unsafe_compute_paths():
-    """Tier 2: eval_builder skill.md declares compute_paths as mode=unsafe (B8-NEW-2 fix).
+def test_eval_builder_permissions_python_has_unsafe_resolve_paths():
+    """Tier 2: eval_builder skill.md declares resolve_paths as mode=unsafe.
 
-    Without this declaration the OS falls back to safe mode, causing
-    SafeModeViolation when analyze_skill_resolver.py imports reyn.skill.skill_paths.
+    resolve_paths is the only unsafe step — it calls resolve_skill_path
+    which performs Path.exists() filesystem checks. All dict/regex logic
+    was moved to the preceding safe extract_skill_name step as part of the
+    R-PURE-MODE-REDEFINE Class B refactor (formerly compute_paths).
+
     Guards that the permissions.python block is present and correct.
-
-    FP-0014: stdlib YAML still says `mode: trusted` (Track B will rename
-    those); PermissionDecl normalises legacy keywords at parse time so the
-    loaded mode reads as the new keyword `unsafe`.
     """
     skill = _load_eval_builder_skill()
 
     unsafe_entries = [
         p for p in skill.permissions.python
         if p.module == "./analyze_skill_resolver.py"
-        and p.function == "compute_paths"
+        and p.function == "resolve_paths"
         and p.mode == "unsafe"
     ]
     assert unsafe_entries, (
         "eval_builder skill.md must declare "
-        "./analyze_skill_resolver.py:compute_paths with mode=unsafe in permissions.python"
+        "./analyze_skill_resolver.py:resolve_paths with mode=unsafe in permissions.python"
+    )
+
+
+def test_eval_builder_permissions_python_extract_skill_name_is_safe():
+    """Tier 2: eval_builder skill.md declares extract_skill_name as mode=safe.
+
+    extract_skill_name is pure dict + regex — no I/O, no reyn imports.
+    Guards that the R-PURE-MODE-REDEFINE Class B refactor correctly declares
+    the new safe step.
+    """
+    skill = _load_eval_builder_skill()
+
+    safe_entries = [
+        p for p in skill.permissions.python
+        if p.module == "./analyze_skill.py"
+        and p.function == "extract_skill_name"
+        and p.mode == "safe"
+    ]
+    assert safe_entries, (
+        "eval_builder skill.md must declare "
+        "./analyze_skill.py:extract_skill_name with mode=safe in permissions.python"
     )
 
 

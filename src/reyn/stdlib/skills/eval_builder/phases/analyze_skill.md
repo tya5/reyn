@@ -6,21 +6,33 @@ role: eval_designer
 max_act_turns: 7
 allowed_ops: [file]
 preprocessor:
-  # Step 1: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
-  # target_skill is a short skill name extracted from the input artifact.
-  # For eval_builder_request: data.target_skill directly.
-  # For user_message: regex extraction from data.text.
-  # Runs in trusted mode (analyze_skill_resolver.py) because resolve_skill_path does
-  # filesystem existence checks. Pure-mode functions live in analyze_skill.py.
+  # Step 1: extract target skill name from the input artifact (pure dict/regex — safe mode).
+  # Handles all three artifact shapes: top-level target_skill, wrapped data.target_skill,
+  # and user_message free-form text via regex. No filesystem access.
+  - type: python
+    module: ./analyze_skill.py
+    function: extract_skill_name
+    into: data._name
+    output_schema:
+      type: object
+      properties:
+        target_skill: {type: string}
+      required: [target_skill]
+
+  # Step 2: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
+  # Reads data._name.target_skill (set by step 1) and calls resolve_skill_path which
+  # does filesystem existence checks. Runs in unsafe mode because resolve_skill_path
+  # imports reyn.skill.skill_paths (a reyn module) and performs Path.exists() I/O.
+  # All dict/regex logic was moved to step 1 (safe mode) in R-PURE-MODE-REDEFINE Class B.
   - type: python
     module: ./analyze_skill_resolver.py
-    function: compute_paths
+    function: resolve_paths
     into: data._prep
     output_schema:
       type: object
       properties:
         skill_dir:          {type: string}
-        skill_root:           {type: string}
+        skill_root:         {type: string}
         target_skill:       {type: string}
         skill_dsl_path:     {type: string}
         phases_glob:        {type: string}
@@ -30,7 +42,7 @@ preprocessor:
       required: [skill_dir, skill_root, target_skill, skill_dsl_path, phases_glob,
                  artifacts_glob, existing_eval_path, eval_output_path]
 
-  # Step 2: inject resolved paths from data._prep into data._resolved for LLM use
+  # Step 3: inject resolved paths from data._prep into data._resolved for LLM use
   - type: python
     module: ./analyze_skill.py
     function: inject_resolved_paths
@@ -39,7 +51,7 @@ preprocessor:
       type: object
       properties:
         skill_dir:          {type: string}
-        skill_root:           {type: string}
+        skill_root:         {type: string}
         target_skill:       {type: string}
         skill_dsl_path:     {type: string}
         phases_glob:        {type: string}

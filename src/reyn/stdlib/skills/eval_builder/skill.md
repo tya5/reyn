@@ -47,8 +47,12 @@ permissions:
     - path: reyn/project
       scope: recursive
   python:
+    - module: ./analyze_skill.py
+      function: extract_skill_name
+      mode: safe
+      timeout: 5
     - module: ./analyze_skill_resolver.py
-      function: compute_paths
+      function: resolve_paths
       mode: unsafe
       timeout: 5
     - module: ./analyze_skill.py
