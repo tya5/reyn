@@ -14,6 +14,31 @@ to put a step in `safe` mode, and which stdlib modules are safe to import.
 > **Rename note**: `safe` was previously called `pure` (renamed in FP-0014).
 > The companion mode `unsafe` was previously called `trusted`.
 
+## Formal property: ambient sources only
+
+A `mode: safe` python step's output is determined entirely by:
+
+1. The input artifact (= explicit `args_from` dependencies)
+2. **Ambient sources**, defined as:
+   - **Clock**: `time`, `datetime.now()` — system wall clock + monotonic time
+   - **Entropy**: `random`, `secrets` — `/dev/urandom`-backed PRNG / CSPRNG
+   - **Bundled static data**: `zoneinfo` — IANA TZ database shipped with Python
+
+Filesystem, network, subprocess, and environment access are syntactically
+unreachable from a `mode: safe` step. The allowlist enforces this at
+import time.
+
+## Why "ambient" instead of "pure"
+
+A literal "pure function" interpretation would exclude `time.time()` and
+`random.random()` because both depend on hidden global state. But excluding
+them would force every `mode: safe` step to receive clock/entropy as an
+explicit input artifact — impractical, and not what authors expect.
+
+The "ambient sources" framing acknowledges that some non-determinism is
+acceptable as long as the source is well-defined and the value is not
+under operator/attacker control.
+
 ## The single property
 
 > **`mode: safe`**: A python step's output is determined ONLY by its input
@@ -70,6 +95,18 @@ The shared property: each of these is satisfiable from
 *{inputs, clock, entropy, bundled static data}* alone. None of them lets
 the step learn anything about the operator's filesystem, network, or
 environment that the step did not already receive as input.
+
+## Reading the allowlist
+
+Each entry in [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
+carries a short inline comment explaining why it satisfies the contract.
+The categories are:
+
+- `# ambient: ...` — falls under the formal property above (clock / entropy /
+  bundled static data)
+- `# restricted to ...` — admits the module but only pure operations
+  (e.g. `pathlib.PurePath`, not `Path.read_text()`)
+- `# pure` — no ambient access at all (e.g. `math`, `re`)
 
 ## Currently-allowed stdlib modules
 

@@ -11,45 +11,69 @@ child processes.
 """
 from __future__ import annotations
 
-# Stdlib modules considered safe enough for safe-mode preprocessor steps.
+# mode: safe — output is determined by input artifact + ambient sources only.
+# Ambient sources = clock (time, datetime), entropy (random, secrets), and
+# bundled static data (zoneinfo). Filesystem, network, subprocess, and
+# environment access are syntactically unreachable.
 #
-# Safe mode = "ambient sources only". A python step's output is determined
-# ONLY by its input artifacts plus ambient sources: the wall clock, an
-# entropy stream, and bundled stdlib static data (e.g. the tz database
-# shipped with Python). Filesystem, network, subprocess, and process
-# environment access are syntactically unreachable — the AST validator
-# rejects banned modules / builtins, and the subprocess sandbox provides
-# defence in depth.
+# Each allowlisted entry below has been audited against this contract.
 #
-# Author rule of thumb: a module belongs here only if every public call
-# is satisfiable from {inputs, clock, entropy, bundled static data}. Modules
-# that ingress operator state (`os`, `pathlib`, `glob`, `os.environ`),
-# touch the network (`urllib`, `socket`), or spawn processes (`subprocess`)
-# are NOT ambient and stay out. If a step needs a non-ambient capability,
-# use a `run_op` step instead — that's the proper escape hatch with its
-# own permission gate.
+# Categories used in inline comments:
+#   # pure        — no ambient access at all; output is a pure function of inputs
+#   # ambient: …  — reads an ambient source (clock / entropy / bundled static data)
+#                   but never observes or mutates operator-visible state
+#   # restricted  — admitted module but only a subset of operations is safe
+#                   (e.g. pure path manipulation only, not filesystem reads)
 #
-# `random` / `time` / `datetime` / `secrets` / `zoneinfo` are intentionally
-# allowed: they read from ambient sources (clock, entropy, bundled tz data)
-# but never observe or mutate operator-visible state. Callers who need
-# bit-for-bit determinism should still avoid them.
+# If a step needs a non-ambient capability (operator files, network, env vars,
+# process spawning), use a `run_op` step — that is the proper escape hatch with
+# its own permission gate and event log entry.
 #
 # Full author guide: docs/concepts/python-safe-mode.md
 PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
-    # numeric — deterministic computation
-    "math", "statistics", "decimal", "fractions", "cmath", "numbers",
-    # text — deterministic computation
-    "string", "re", "textwrap", "unicodedata",
-    # time / date — ambient clock + bundled tz static data
-    "datetime", "calendar", "zoneinfo", "time",
-    # data encoding / hashing — deterministic computation (secrets reads entropy)
-    "json", "base64", "binascii", "hashlib", "hmac", "secrets",
-    # collections / functional — deterministic computation
-    "collections", "itertools", "functools", "operator", "copy",
-    # typing / structure — deterministic computation
-    "enum", "dataclasses", "typing", "abc",
-    # randomness — ambient entropy
-    "random",
+    # --- pure: numeric computation ---
+    "math",        # pure: standard math functions over numeric inputs
+    "cmath",       # pure: complex-number math
+    "statistics",  # pure: descriptive statistics over sequences
+    "decimal",     # pure: arbitrary-precision decimal arithmetic
+    "fractions",   # pure: rational number arithmetic
+    "numbers",     # pure: numeric abstract base classes (ABC only)
+
+    # --- pure: text processing ---
+    "string",      # pure: string constants and Template formatting
+    "re",          # pure: regular-expression matching
+    "textwrap",    # pure: text wrapping and indentation
+    "unicodedata", # pure: Unicode character property lookup (bundled table)
+
+    # --- ambient: clock + bundled tz static data ---
+    "time",        # ambient: system wall clock + monotonic clock (clock I/O)
+    "datetime",    # ambient: system clock via datetime.now(); also pure date arithmetic
+    "calendar",    # pure: calendar computations (no clock call at import time)
+    "zoneinfo",    # ambient: bundled IANA TZ database shipped with Python (static files)
+
+    # --- pure: data encoding and hashing ---
+    "json",        # pure: JSON serialisation / deserialisation
+    "base64",      # pure: base-64 / base-32 / base-16 codec
+    "binascii",    # pure: binary-to-ASCII conversions
+    "hashlib",     # pure: cryptographic hash functions (computation over inputs)
+    "hmac",        # pure: keyed-hash message authentication (computation over inputs)
+
+    # --- ambient: entropy ---
+    "secrets",     # ambient: /dev/urandom-backed CSPRNG (entropy I/O)
+    "random",      # ambient: /dev/urandom-seeded PRNG (entropy I/O)
+
+    # --- pure: collections and functional programming ---
+    "collections", # pure: specialised container types (deque, Counter, etc.)
+    "itertools",   # pure: iterator combinators
+    "functools",   # pure: higher-order functions and decorators
+    "operator",    # pure: operators as functions
+    "copy",        # pure: shallow and deep copy of objects
+
+    # --- pure: typing and data structures ---
+    "enum",        # pure: enumeration classes
+    "dataclasses", # pure: data class decorator and helpers
+    "typing",      # pure: type annotation support
+    "abc",         # pure: abstract base class infrastructure
 })
 
 
