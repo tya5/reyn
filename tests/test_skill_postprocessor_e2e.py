@@ -32,7 +32,7 @@ from typing import Any
 
 import pytest
 
-import reyn.kernel.runtime as runtime_mod
+import reyn.kernel.llm_call_recorder as runtime_mod
 from reyn.kernel.postprocessor_executor import PostprocessorError
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.llm import LLMCallResult

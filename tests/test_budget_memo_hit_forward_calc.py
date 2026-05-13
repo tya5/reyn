@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-import reyn.kernel.runtime as runtime_mod
+import reyn.kernel.llm_call_recorder as runtime_mod
 from reyn.budget.budget import BudgetTracker, CostConfig, CostLimitConfig
 from reyn.dispatch.dispatcher import _compute_llm_args_hash
 from reyn.events.state_log import StateLog

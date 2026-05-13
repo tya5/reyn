@@ -33,7 +33,7 @@ import asyncio
 
 import pytest
 
-import reyn.kernel.runtime as runtime_mod
+import reyn.kernel.llm_call_recorder as runtime_mod
 from reyn.events.event_schema import EVENT_AUDIT_REQUIREMENTS
 from reyn.events.events import EventLog
 from reyn.llm.llm import LLMCallResult

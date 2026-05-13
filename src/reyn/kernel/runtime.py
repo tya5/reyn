@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 
 import pydantic
 
-from reyn.budget.budget import BudgetExceeded, format_refusal_message
+from reyn.budget.budget import BudgetExceeded
 from reyn.kernel.rollback_state import (
     RollbackState,  # noqa: F401 – re-exported for existing callers
 )
@@ -18,11 +18,11 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
-from reyn.config import OnLimitConfig, SafetyConfig
+from reyn.config import SafetyConfig
 from reyn.context_builder import build_frame
-from reyn.dispatch.dispatcher import _compute_llm_args_hash, _lookup_memoized_step
 from reyn.events.events import EventLog
 from reyn.kernel.control_ir_executor import ControlIRExecutor
+from reyn.kernel.llm_call_recorder import LLMCallRecorder
 from reyn.kernel.normalizer import (
     ControlIRValidationError,
     NormalizationError,
@@ -32,10 +32,8 @@ from reyn.kernel.normalizer import (
 from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
 from reyn.kernel.validation import ValidationError, validate_output
-from reyn.llm.llm import call_llm
-from reyn.llm.llm import proxy_kwargs as _proxy_kwargs
 from reyn.llm.model_resolver import ModelResolver
-from reyn.llm.pricing import TokenUsage, estimate_cost
+from reyn.llm.pricing import TokenUsage
 from reyn.permissions.permissions import PermissionResolver
 from reyn.safety.limit_handler import (
     LimitDecision,
@@ -247,6 +245,27 @@ class OSRuntime:
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()
+        # FP-0020 Component B: LLM call / WAL recording / budget logic extracted to
+        # LLMCallRecorder. OSRuntime._call_llm_and_record becomes a thin shim.
+        self._llm_caller = LLMCallRecorder(
+            resolver=self._resolver,
+            state_log=state_log,
+            run_id=run_id,
+            skill_registry=skill_registry,
+            budget_tracker=budget_tracker,
+            caller=caller,
+            chain_id=chain_id,
+            skill_name=skill_name or skill.name,
+            prompt_cache_enabled=prompt_cache_enabled,
+            events=self.events,
+            skill=skill,
+            model=model,
+            llm_timeout=_safety.timeout.llm_call_seconds,
+            llm_max_retries=_safety.timeout.llm_max_retries,
+            project_context=project_context,
+            agent_role=agent_role,
+            resume_plan=resume_plan,
+        )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────
     # Tests and subclasses that accessed the old private fields directly
@@ -632,332 +651,31 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
         rollback_context: dict | None = None,
     ) -> dict:
+        """Shim: phase-budget check then delegate to LLMCallRecorder.
+
+        FP-0020 Component B: the 7 LLM/WAL/budget methods formerly on
+        OSRuntime now live in LLMCallRecorder. This thin wrapper preserves
+        the call signature so existing callers and tests are unaffected.
+        ``_check_phase_budget`` stays here (Component C will move it to
+        PhaseExecutor).
+        """
         await self._check_phase_budget(phase)
-        resolved_spec = self._resolver.resolve(self._effective_model(phase))
-        resolved_model = resolved_spec.model  # str form for events, budget, pricing
-        phase_def = self.skill.phases.get(phase)
-
-        # R-D2: per-phase LLM op_invocation_id + memoization. The counter is
-        # per-phase-visit (reset in begin_phase()) so resume reproduces the
-        # original call sequence deterministically.
-        op_invocation_id = self._state.next_llm_invocation_id(phase)
-
-        # Compute args_hash regardless of resume_plan presence — when state_log
-        # is configured, every call writes a step_completed so a future resume
-        # can hit. The hash is also the memo key on resume.
-        args_hash = _compute_llm_args_hash(
-            model=resolved_model,
-            frame=frame.model_dump(mode="json"),
-            prior_attempts=prior_attempts,
-            rollback_context=rollback_context,
-            system_inputs={
-                "skill_name": self.skill.name,
-                "skill_description": self.skill.description,
-                "phase_role": phase_def.role if phase_def else None,
-                "project_context": self._project_context,
-                "agent_role": self._agent_role,
-            },
+        return await self._llm_caller.call(
+            phase, frame, prior_attempts, rollback_context, self._state,
         )
 
-        # Memo lookup (resume only). On hit, return the recorded LLM result
-        # without invoking call_llm — saves cost + preserves determinism.
-        if self._resume_plan is not None:
-            memo = _lookup_memoized_step(
-                self._resume_plan, op_invocation_id, phase, args_hash,
-            )
-            if memo is not None:
-                memoized = self._extract_memoized_llm_result(
-                    memo, phase=phase, op_invocation_id=op_invocation_id,
-                )
-                if memoized is not None:
-                    # R-D8 L3: forward-calc the budget. Memo hit means the
-                    # LLM was NOT actually called (cost = $0), but for cap
-                    # enforcement to track total intended spend across crash
-                    # boundaries, we still credit the recorded usage to the
-                    # tracker. No pre-check (memo hits don't refuse — they
-                    # already happened in the original run).
-                    self._credit_budget_from_memo(
-                        memo,
-                        resolved_model=resolved_model,
-                        phase=phase,
-                        op_invocation_id=op_invocation_id,
-                    )
-                    self.events.emit(
-                        "step_memoized",
-                        run_id=self.run_id,
-                        phase=phase,
-                        op_invocation_id=op_invocation_id,
-                        op_kind="llm",
-                        args_hash=args_hash,
-                    )
-                    return memoized
-                # else: corrupt memo result → fall through to fresh call
+    # ── Backward-compat shims for private LLMCallRecorder methods ─────────────
+    # Tests and other callers that invoke _wal_step_completed_for_llm or
+    # _extract_memoized_llm_result directly on OSRuntime continue to work.
+    # Remove in a subsequent cleanup PR.
 
-        # Normal call path
-        self._check_budget_pre_llm(resolved_model)
-        self.events.emit("llm_called", run_id=self.run_id, skill=self.skill.name, phase=phase, model=resolved_model)
-        llm_result = await call_llm(
-            resolved_spec, frame,
-            prior_attempts=prior_attempts or None,
-            rollback_context=rollback_context,
-            timeout=self._llm_timeout,
-            max_retries=self._llm_max_retries,
-            prompt_cache_enabled=self._prompt_cache_enabled,
-            skill_name=self.skill.name,
-            skill_description=self.skill.description,
-            phase_role=phase_def.role if phase_def else None,
-            project_context=self._project_context,
-            agent_role=self._agent_role,
-            trace_caller=f"phase:{phase}",
+    async def _wal_step_completed_for_llm(self, **kwargs) -> None:
+        await self._llm_caller._wal_step_completed_for_llm(**kwargs)
+
+    def _extract_memoized_llm_result(self, memo, *, phase, op_invocation_id):
+        return self._llm_caller._extract_memoized_llm_result(
+            memo, phase=phase, op_invocation_id=op_invocation_id,
         )
-        raw = llm_result.data
-        cost_usd: float | None = None
-        pricing_snapshot: dict | None = None
-        if llm_result.usage:
-            # Strip provider prefix (e.g. "openai/gemini-2.5-flash-lite" ->
-            # "gemini-2.5-flash-lite") so litellm.model_cost lookup succeeds.
-            _pricing_model = (
-                resolved_model.split("/", 1)[1]
-                if "/" in resolved_model and _proxy_kwargs()
-                else resolved_model
-            )
-            cost_usd, pricing_snapshot = estimate_cost(_pricing_model, llm_result.usage)
-            self._state.add_usage(llm_result.usage, cost_usd)
-            self._record_budget_post_llm(resolved_model, llm_result.usage)
-        self.events.emit(
-            "llm_response_received",
-            run_id=self.run_id,
-            skill=self.skill.name,
-            phase=phase,
-            response_type=raw.get("type"),
-            raw=raw,
-            prompt_tokens=llm_result.usage.prompt_tokens if llm_result.usage else None,
-            completion_tokens=llm_result.usage.completion_tokens if llm_result.usage else None,
-            cost_usd=cost_usd,
-            pricing_snapshot=pricing_snapshot,
-        )
-
-        # R-D2: emit step_completed so a future resume can memo-hit. Defensive
-        # try/except — never fail the dispatch on a WAL emit failure (parallel
-        # to dispatch_tool's _wal_step_completed pattern).
-        # R-D8 L2: record usage so future resume's memo hit can re-credit budget.
-        await self._wal_step_completed_for_llm(
-            phase=phase,
-            op_invocation_id=op_invocation_id,
-            args_hash=args_hash,
-            result=raw,
-            usage=llm_result.usage.to_dict() if llm_result.usage else None,
-        )
-
-        return raw
-
-    def _credit_budget_from_memo(
-        self,
-        memo: object,
-        *,
-        resolved_model: str,
-        phase: str,
-        op_invocation_id: str,
-    ) -> None:
-        """R-D8 L3: re-credit the budget tracker from a memoized LLM step.
-
-        On memo hit the LLM was not actually called, but cap enforcement
-        across crash needs the tracker to reflect what the original run
-        spent.
-
-        **Suppressed when the BudgetTracker has loaded its persisted state**
-        (R-D8 L4 + L5): the loaded state already includes every committed
-        step's usage, so re-crediting here would double-count. In
-        production both paths run (state load + forward calc); the flag
-        check resolves the overlap in favor of the persisted state.
-
-        ``memo.usage`` (a dict from TokenUsage.to_dict) provides the
-        recorded counts when forward calc is taken. None usage
-        (pre-R-D8 step) → log + skip (graceful undercount, no error).
-        """
-        if self._budget_tracker is None:
-            return
-        # Skip when persisted state is the source of truth
-        if getattr(self._budget_tracker, "_state_loaded", False):
-            return
-        usage_dict = getattr(memo, "usage", None)
-        if not usage_dict:
-            import logging
-            logging.getLogger(__name__).debug(
-                "memo hit (run=%s phase=%s id=%s) has no usage data; "
-                "skipping budget credit (pre-R-D8 step or LLM returned "
-                "no usage)",
-                self.run_id, phase, op_invocation_id,
-            )
-            return
-        usage = TokenUsage.from_dict(usage_dict)
-        # Update local accumulators (mirror the fresh-call path)
-        _pricing_model_memo = (
-            resolved_model.split("/", 1)[1]
-            if "/" in resolved_model and _proxy_kwargs()
-            else resolved_model
-        )
-        cost_usd, _ = estimate_cost(_pricing_model_memo, usage)
-        self._state.add_usage(usage, cost_usd)
-        # Credit the shared BudgetTracker
-        self._record_budget_post_llm(resolved_model, usage)
-
-    def _extract_memoized_llm_result(
-        self,
-        memo: object,
-        *,
-        phase: str,
-        op_invocation_id: str,
-    ) -> dict | None:
-        """Return the recorded LLM response dict, or None on schema mismatch.
-
-        Schema versioning gate: a CommittedStep.result that's not a dict is
-        treated as corrupt (e.g. version skew where the format changed). We
-        log a warning and let the caller fall through to a fresh call_llm.
-
-        R-D10: when the recorded result is a ``{"_ref": "<file>"}``
-        placeholder, transparently resolve it by reading the file under
-        ``<agent_state_dir>/skills/<run_id>_llm_results/``. A missing
-        or malformed ref returns None, which triggers fall-through to
-        a fresh LLM call (= memo unavailable, retry).
-        """
-        result = getattr(memo, "result", None)
-        if not isinstance(result, dict):
-            import logging
-            logging.getLogger(__name__).warning(
-                "LLM memo result is not a dict (run=%s phase=%s id=%s); "
-                "falling through to fresh call",
-                self.run_id, phase, op_invocation_id,
-            )
-            return None
-        # R-D10: resolve ref placeholders to their full payload.
-        if (self._skill_registry is not None and self.run_id is not None
-                and list(result.keys()) == ["_ref"]):
-            from reyn.skill import llm_result_ref
-            resolved = llm_result_ref.resolve(
-                agent_state_dir=self._skill_registry.state_dir,
-                run_id=self.run_id,
-                value=result,
-            )
-            if resolved is None:
-                # ref file missing / malformed → treat as memo miss
-                return None
-            if not isinstance(resolved, dict):
-                import logging
-                logging.getLogger(__name__).warning(
-                    "LLM memo ref resolved to non-dict (run=%s phase=%s id=%s)",
-                    self.run_id, phase, op_invocation_id,
-                )
-                return None
-            return resolved
-        return result
-
-    async def _wal_step_completed_for_llm(
-        self,
-        *,
-        phase: str,
-        op_invocation_id: str,
-        args_hash: str,
-        result: dict,
-        usage: dict | None = None,
-    ) -> None:
-        """Append step_completed for an LLM call. Defensive: log + swallow.
-
-        ``usage`` (R-D8 L2) records the TokenUsage so a future resume's
-        memo hit can re-credit the budget tracker via record_llm. None
-        when the LLM call returned no usage info (rare; most providers
-        always include tokens).
-
-        R-D10: large results (> 32 KB serialized) are off-loaded to
-        ``<agent_state_dir>/skills/<run_id>_llm_results/<args_hash>.json``
-        and the WAL stores ``{"_ref": "<args_hash>.json"}``. Memo
-        lookup transparently resolves the ref. Avoids MB-class inline
-        payloads from accumulating in the WAL between phase truncations.
-        """
-        if self._state_log is None or self.run_id is None:
-            return
-        # R-D10: maybe off-load large result to a workspace ref file.
-        wal_result = result
-        if self._skill_registry is not None:
-            from reyn.skill import llm_result_ref
-            wal_result = llm_result_ref.write_if_large(
-                agent_state_dir=self._skill_registry.state_dir,
-                run_id=self.run_id,
-                args_hash=args_hash,
-                result=result,
-            )
-        try:
-            await self._state_log.append(
-                "step_completed",
-                run_id=self.run_id,
-                phase=phase,
-                op_invocation_id=op_invocation_id,
-                op_kind="llm",
-                args_hash=args_hash,
-                result=wal_result,
-                usage=usage,
-            )
-        except Exception as e:  # noqa: BLE001 — never fail the dispatch
-            import logging
-            logging.getLogger(__name__).warning(
-                "WAL step_completed (llm) emission failed (run=%s phase=%s id=%s): %s",
-                self.run_id, phase, op_invocation_id, e,
-            )
-
-    # ── Budget hooks (PR22) ─────────────────────────────────────────────
-
-    def _budget_agent_name(self) -> str | None:
-        """Extract the agent name from caller (`agents/<name>` → `<name>`).
-
-        Returns None when caller is `direct` (no agent context, per-agent
-        budget noop). The chain_id key is unchanged either way.
-        """
-        if self._caller and self._caller.startswith("agents/"):
-            return self._caller.split("/", 1)[1]
-        return None
-
-    def _check_budget_pre_llm(self, model: str) -> None:
-        if self._budget_tracker is None:
-            return
-        agent = self._budget_agent_name()
-        check = self._budget_tracker.check_pre_llm(model=model, agent=agent)
-        if not check.allowed:
-            self.events.emit(
-                "budget_exceeded",
-                dimension=check.hard_dimension,
-                detail=check.detail,
-                agent=agent,
-                chain_id=self._chain_id,
-            )
-            raise BudgetExceeded(
-                check.hard_dimension or "budget",
-                format_refusal_message(check, agent=agent),
-            )
-        for dim in check.warn_dimensions:
-            self.events.emit(
-                "budget_warn",
-                dimension=dim,
-                agent=agent,
-                chain_id=self._chain_id,
-                **check.context,
-            )
-
-    def _record_budget_post_llm(self, model: str, usage: TokenUsage) -> None:
-        if self._budget_tracker is None:
-            return
-        agent = self._budget_agent_name()
-        check = self._budget_tracker.record_llm(
-            model=model, agent=agent, usage=usage,
-            chain_id=self._chain_id, skill=self._budget_skill_name,
-        )
-        for dim in check.warn_dimensions:
-            self.events.emit(
-                "budget_warn",
-                dimension=dim,
-                agent=agent,
-                chain_id=self._chain_id,
-                **check.context,
-            )
 
     async def _run_act_loop(
         self,

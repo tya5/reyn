@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 
-import reyn.kernel.runtime as runtime_mod
+import reyn.kernel.llm_call_recorder as runtime_mod
 from reyn.config import SkillResumeConfig
 from reyn.events.state_log import StateLog
 from reyn.kernel.runtime import OSRuntime

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 
-import reyn.kernel.runtime as runtime_mod
+import reyn.kernel.llm_call_recorder as runtime_mod
 from reyn.dispatch.dispatcher import _compute_llm_args_hash
 from reyn.events.state_log import StateLog
 from reyn.kernel.runtime import OSRuntime
