@@ -1,6 +1,6 @@
 # FP-0022: Permission Tier Model — Formalizing the Two-Axis Framework
 
-**Status**: **done** — LANDED 2026-05-14 (commit `61dc193`): `require_web_fetch()` + handler-level 4-layer approval + `web_search` config-deny path + tier model docs (en+ja)
+**Status**: proposed
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 
