@@ -2,15 +2,15 @@
 
 **Branch**: `claude/eager-shaw-389d9d`
 **Rebased onto**: main `19b628e` → current main `1dac280`
-**Commits ahead of main**: 3（docs のみ、FP-0022/0023/0024）
+**Commits ahead of main**: 3（docs のみ、FP-0022/0023/0024/0025）
 
-> ⚠️ main 進捗: FP-0021 実装着地（`a03bcfc`）、FP-0019 Wave 1 着地（`6620505`）、FP-0020 Component A 着地（`1dac280`）。これらの実装 PR はすでに main に取り込み済み。本ブランチは残る docs（FP-0022/0023/0024）のみ未マージ。
+> ⚠️ main 進捗: FP-0021 実装着地（`a03bcfc`）、FP-0019 Wave 1 着地（`6620505`）、FP-0020 Component A 着地（`1dac280`）。これらの実装 PR はすでに main に取り込み済み。本ブランチは残る docs（FP-0022/0023/0024/0025）のみ未マージ。
 
 ---
 
 ## このブランチでやったこと
 
-God-file 削減 FP 起票 + イベントログ監査 + パーミッション設計調査 + Router SP 最適化調査セッション。コード変更なし（docs のみ）。
+God-file 削減 FP 起票 + イベントログ監査 + パーミッション設計調査 + Router SP 最適化調査 + Planner 設計調査セッション。コード変更なし（docs のみ）。
 
 ---
 
@@ -165,6 +165,31 @@ Router システムプロンプト最適化の 2 本立て。
 
 ---
 
+### (d19dc62 に同梱) — FP-0025: Planner Router Narration + Plan Step SP 修正
+
+plan 完了時の narration を FP-0012（skill narration）と完全に同形にする提案。
+
+**現在の非対称性**:
+- スキル完了 → `_enqueue_skill_completed` → `_handle_skill_completed` → Router LLM が narrate
+- プラン完了 → terminal ステップが直接 `_put_outbox` → Router を経由しない
+
+**4 コンポーネント（全て SMALL）**:
+
+| Component | 内容 |
+|---|---|
+| A | `output_language` を `build_plan_step_system_prompt()` に引き渡す |
+| B | step id（`s1`, `s2`）をプロンプトから除去 → `## Your task` に変更 |
+| C | `_enqueue_plan_completed` + `_handle_plan_completed` 追加（skill と対称）; `spawn_plan_task` 変更; plan description 更新 |
+| D | Router SP Behaviour に plan 使用基準ルール追加 |
+
+Component C 実装後、各プランステップは focused 情報収集に専念し synthesis は Router LLM が担う。`_PLAN_MAX_STEPS` の 7 ステップが全て情報収集に使える。
+
+**新規ファイル**:
+- `docs/deep-dives/proposals/0025-planner-narration-and-sp-fixes.md`
+- `docs/deep-dives/proposals/0025-planner-narration-and-sp-fixes.ja.md`
+
+---
+
 ## 調査で判明した「FP 不要」事項（再掲）
 
 | 候補 | 判定 | 根拠 |
@@ -194,11 +219,12 @@ Router システムプロンプト最適化の 2 本立て。
 **即効性あり（SMALL コスト）**:
 1. **FP-0022** — `web_fetch` を handler-level `_approve()` に移行 + `web_search` に deny check 追加（4 ファイル）
 2. **FP-0023** — `router_system_prompt.py` 5 変更（セクション並び替え・意図軸統合・spawn-ack 優先順位・delegate ルール・JA 例文）
-3. **FP-0024 Component A** — BM25 事前絞り込み + `SkillSearchIndex`（スキル 20+ 時に有効、依存なし）
-4. **FP-0024 Component B** — `search_hints` frontmatter + `reyn skill enrich` CLI（A/C を強化）
-5. **FP-0024 Component D** — Anthropic `tool_search_tool` MCP 統合（MCP 30+ 時、独立リリース可）
-6. FP-0019 Wave 1 残余 — SkillRunner 抽出（CompactionController は着地済み）
-7. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
+3. **FP-0025** — Planner Router narration（`_handle_plan_completed` 追加、5 ファイル）+ plan step SP 修正
+4. **FP-0024 Component A** — BM25 事前絞り込み + `SkillSearchIndex`（スキル 20+ 時に有効、依存なし）
+5. **FP-0024 Component B** — `search_hints` frontmatter + `reyn skill enrich` CLI（A/C を強化）
+6. **FP-0024 Component D** — Anthropic `tool_search_tool` MCP 統合（MCP 30+ 時、独立リリース可）
+7. FP-0019 Wave 1 残余 — SkillRunner 抽出（CompactionController は着地済み）
+8. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
 
 **中期（MEDIUM コスト）**:
 8. **FP-0024 Component C** — Embedding バックエンド + ハイブリッド + `.reyn/skill-index/` ライフサイクル（A + B 完了後）

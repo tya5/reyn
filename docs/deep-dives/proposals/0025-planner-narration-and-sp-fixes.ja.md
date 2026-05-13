@@ -1,6 +1,6 @@
 # FP-0025: Planner — Router Narration + Plan Step SP 修正
 
-**Status**: **done** — 全 4 component LANDED 2026-05-14: A+B (planner.py output_language forward + step id leak fix, `6da92fe`), D (Plan decomposition Behaviour rule, `45512ba`), C (router narration for plan completion, `635ce55`)。 FP-0025 完結 — plan-mode router narration が FP-0012 skill narration pattern と同形に。
+**Status**: proposed
 **Proposed**: 2026-05-14
 **Author**: Research session (eager-shaw-389d9d)
 

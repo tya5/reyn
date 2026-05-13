@@ -90,3 +90,4 @@ Links to related ADRs, PRs, and docs.
 | [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | proposed | SMALL |
 | [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | proposed | SMALL |
 | [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |
+| [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
