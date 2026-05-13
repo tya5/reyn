@@ -26,13 +26,6 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
             "for chat) when constructing the Agent."
         )
 
-    ctx.events.emit(
-        "user_intervention_requested",
-        phase=ctx.current_phase,
-        question=op.question,
-        suggestions=op.suggestions or [],
-    )
-
     iv = UserIntervention(
         kind="ask_user",
         prompt=op.question,
@@ -40,12 +33,30 @@ async def handle(op: AskUserIROp, ctx: OpContext, caller: Literal["preprocessor"
         skill_name=ctx.skill_name or None,
         run_id=None,  # set by chat session if it tracks runs; CLI ignores
     )
+
+    ctx.events.emit(
+        "user_intervention_requested",
+        run_id=ctx.run_id,
+        skill=ctx.skill_name,
+        phase=ctx.current_phase,
+        question=op.question,
+        intervention_id=iv.id,
+        suggestions=op.suggestions or [],
+    )
+
     answer = await ctx.intervention_bus.request(iv)
     text = answer.text or ""
     if not text and not op.required:
         text = ""
 
-    ctx.events.emit("user_intervention_received", phase=ctx.current_phase, answer=text)
+    ctx.events.emit(
+        "user_intervention_received",
+        run_id=ctx.run_id,
+        skill=ctx.skill_name,
+        phase=ctx.current_phase,
+        answer=text,
+        intervention_id=iv.id,
+    )
     return {"kind": "ask_user", "question": op.question, "answer": text, "status": "ok"}
 
 
