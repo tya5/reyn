@@ -2,13 +2,13 @@
 
 **Branch**: `claude/eager-shaw-389d9d`
 **Rebased onto**: main `19b628e`
-**Commits ahead of main**: 2（docs のみ）
+**Commits ahead of main**: 3（docs のみ）
 
 ---
 
 ## このブランチでやったこと
 
-God-file 削減 FP 起票セッション。コード変更なし。
+God-file 削減 FP 起票 + イベントログ監査調査セッション。コード変更なし。
 
 ---
 
@@ -71,6 +71,34 @@ RunOrchestrator (L1) → PhaseExecutor (L2) → LLMCallRecorder (L3) + RunState 
 
 ---
 
+### 227d76f — FP-0021: イベントログ監査完全性
+
+`workflow_started` だけが `run_id` と `skill` を持ち、同一 run の 6 イベントタイプが欠落している問題を追跡する設計提案。`permission_granted` イベントが存在しない問題（deny のみ記録）も含む。
+
+**ギャップ一覧**:
+
+| イベント | 不足フィールド |
+|---|---|
+| `workflow_finished` | `run_id`, `skill` |
+| `llm_called` | `run_id`, `skill` |
+| `llm_response_received` | `run_id`, `skill` |
+| `permission_denied` | `run_id`, `skill`, `phase` |
+| `user_intervention_requested` | `run_id`, `skill` |
+| `user_intervention_received` | `run_id`, `skill`、リクエストとの相関 id |
+| `permission_granted` | 存在しない（新設） |
+
+**実装コスト**: SMALL — すべて `emit()` への kwarg 追加のみ。WAL・復元ロジック変更なし。
+
+**背景**: WAL（復元用）と events（監査用）は独立したチャネルであり、
+監査フィールドの追加は復元インフラに影響しない。`docs/concepts/events.md` の
+`kind` → `type` 誤記も同コミットで修正済み。
+
+**新規ファイル**:
+- `docs/deep-dives/proposals/0021-event-log-audit-completeness.md`
+- `docs/deep-dives/proposals/0021-event-log-audit-completeness.ja.md`
+
+---
+
 ## 調査で判明した「FP 不要」事項（再掲）
 
 | 候補 | 判定 | 根拠 |
@@ -80,25 +108,35 @@ RunOrchestrator (L1) → PhaseExecutor (L2) → LLMCallRecorder (L3) + RunState 
 | マルチセッション文脈継続 | 設計で解決済み | WAL + フェーズ境界復元（P5 の意図通り） |
 | Docker MCP ゲートウェイ | 当面不要 | 常駐デーモン必要、Reyn の設計方針と相容れず |
 
+## 調査で判明したアーキテクチャ知見（実装判断に有用）
+
+| 知見 | 詳細 |
+|---|---|
+| WAL と events は独立チャネル | WAL = 復元専用（state_log.jsonl）。events = 監査・観測専用（events/*.jsonl）。重複する論理事象は異なるフィールド名で別記録 |
+| EventLog が event bus | 同期ファンアウト。4 サブスクライバ（EventStore / ConsoleLogger / ChatEventForwarder / テストフック）。サブスキルへカスケード |
+| WAL の EventLog subscriber 化は非自明 | seq 返却・async/sync 不整合・スコープ差異の 3 障壁あり |
+| events/*.jsonl は recovery に使われない | クラッシュ復元は WAL + snapshot.json のみ。P6 の「events derive state recovery」は WAL を指す |
+
 ---
 
 ## マージ後のアクション候補
 
 **即効性あり（SMALL コスト）**:
-1. FP-0019 Wave 1 — CompactionController + SkillRunner 抽出（session.py を非同期 OS と整合）
-2. FP-0020 Component A — RunState 抽出（LLMCallRecorder の前提、独立して SMALL）
+1. **FP-0021** — `emit()` に `run_id`/`skill` を追加 + `permission_granted` 新設（6 ファイル、kwarg 追加のみ）
+2. FP-0019 Wave 1 — CompactionController + SkillRunner 抽出（session.py を非同期 OS と整合）
+3. FP-0020 Component A — RunState 抽出（LLMCallRecorder の前提、独立して SMALL）
 
 **中期（MEDIUM コスト）**:
-3. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
-4. FP-0020 Component C — PhaseExecutor 抽出（A + B 完了後）
-5. FP-0013 実装 → FP-0019 Wave 2（A2AHandler 抽出は FP-0013 と連携）
+4. FP-0020 Component B — LLMCallRecorder 抽出（WAL + バジェットを独立テスト可能ユニットに）
+5. FP-0020 Component C — PhaseExecutor 抽出（A + B 完了後）
+6. FP-0013 実装 → FP-0019 Wave 2（A2AHandler 抽出は FP-0013 と連携）
 
 **大規模（LARGE）**:
-6. FP-0020 Component D — RunOrchestrator 抽出（runtime.py ~400 行化の最終段階）
-7. FP-0019 Wave 2 — A2AHandler + InterventionHandler（FP-0013 着地後）
+7. FP-0020 Component D — RunOrchestrator 抽出（runtime.py ~400 行化の最終段階）
+8. FP-0019 Wave 2 — A2AHandler + InterventionHandler（FP-0013 着地後）
 
 **FP-0013 着地後（ACCEPTED）**:
-8. FP-0019 Wave 2 — A2AHandler 抽出を FP-0013 実装と同一 PR で
+9. FP-0019 Wave 2 — A2AHandler 抽出を FP-0013 実装と同一 PR で
 
 **延期**:
 - FP-0019 Wave 3（FP-0011 着地待ち）
