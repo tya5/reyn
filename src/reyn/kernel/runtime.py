@@ -797,7 +797,7 @@ class OSRuntime:
 
         # Normal call path
         self._check_budget_pre_llm(resolved_model)
-        self.events.emit("llm_called", phase=phase, model=resolved_model)
+        self.events.emit("llm_called", run_id=self.run_id, skill=self.skill.name, phase=phase, model=resolved_model)
         llm_result = await call_llm(
             resolved_spec, frame,
             prior_attempts=prior_attempts or None,
@@ -830,6 +830,8 @@ class OSRuntime:
             self._record_budget_post_llm(resolved_model, llm_result.usage)
         self.events.emit(
             "llm_response_received",
+            run_id=self.run_id,
+            skill=self.skill.name,
             phase=phase,
             response_type=raw.get("type"),
             raw=raw,
@@ -1409,6 +1411,8 @@ class OSRuntime:
 
         self.events.emit(
             "workflow_finished",
+            run_id=self.run_id,
+            skill=self.skill.name,
             phase=phase,
             reason=reason,
             confidence=confidence,
