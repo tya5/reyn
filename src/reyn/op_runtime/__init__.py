@@ -65,10 +65,28 @@ async def execute_op(
         }
 
     try:
-        return await handler(op, ctx, caller)
+        result = await handler(op, ctx, caller)
+        path = getattr(op, "path", None)
+        ctx.events.emit(
+            "permission_granted",
+            run_id=ctx.run_id,
+            skill=ctx.skill_name,
+            phase=ctx.current_phase,
+            kind=op.kind,
+            path=path,
+        )
+        return result
     except PermissionError as exc:
         path = getattr(op, "path", None)
-        ctx.events.emit("permission_denied", kind=op.kind, path=path, reason=str(exc))
+        ctx.events.emit(
+            "permission_denied",
+            run_id=ctx.run_id,
+            skill=ctx.skill_name,
+            phase=ctx.current_phase,
+            kind=op.kind,
+            path=path,
+            reason=str(exc),
+        )
         return {"kind": op.kind, "status": "denied", "error": str(exc)}
     except OpSkipped as exc:
         ctx.events.emit("control_ir_skipped", kind=op.kind, reason=exc.reason)
