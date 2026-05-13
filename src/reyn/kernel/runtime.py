@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Literal
@@ -9,6 +8,10 @@ from typing import TYPE_CHECKING, Any, Callable, Literal
 import pydantic
 
 from reyn.budget.budget import BudgetExceeded, format_refusal_message
+from reyn.kernel.rollback_state import (
+    RollbackState,  # noqa: F401 – re-exported for existing callers
+)
+from reyn.kernel.run_state import RunState
 from reyn.schemas.models import ActOutput, CandidateOutput, ContextFrame, LLMOutput, Skill
 
 if TYPE_CHECKING:
@@ -122,102 +125,8 @@ def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
     return {"type": t, "data": data}
 
 
-@dataclass
-class RollbackState:
-    """All rollback-specific bookkeeping for a single OSRuntime run.
-
-    OSRuntime owns the run, this owns the rollback machinery — kept here so
-    the four-or-five fields that exist purely to support rollback don't
-    pollute OSRuntime's instance namespace.
-
-    Field semantics:
-      phase_inputs[phase]  — the artifact the phase was entered with
-                             (used to restore on rollback into that phase)
-      phase_outputs[phase] — the artifact the phase last produced
-                             (used as `rejected_artifact` for the next iteration)
-      phase_prev[phase]    — the phase that was the predecessor when this phase
-                             was last entered (used to walk back on rollback)
-      pending_ctx          — single-shot rollback_ctx for the next _execute_phase
-      no_progress_check    — single-shot sentinel: if the rolled-back-into phase
-                             re-produces the rejected output, abort
-    """
-    phase_inputs: dict[str, dict] = field(default_factory=dict)
-    phase_outputs: dict[str, dict] = field(default_factory=dict)
-    phase_prev: dict[str, str | None] = field(default_factory=dict)
-    pending_ctx: dict | None = None
-    no_progress_check: dict | None = None
-
-    # ── recording (called by OSRuntime as it advances) ──
-
-    def record_input(self, phase: str, artifact: dict) -> None:
-        self.phase_inputs[phase] = artifact
-
-    def record_output(self, phase: str, artifact: dict) -> None:
-        self.phase_outputs[phase] = artifact
-
-    def record_predecessor(self, phase: str, prev: str | None) -> None:
-        self.phase_prev[phase] = prev
-
-    # ── reading (used to restore on rollback) ──
-
-    def get_input(self, phase: str) -> dict:
-        return self.phase_inputs[phase]
-
-    def get_predecessor(self, phase: str) -> str | None:
-        return self.phase_prev.get(phase)
-
-    # ── rollback transition ──
-
-    def begin_rollback(self, from_phase: str, to_phase: str, reason: str) -> dict:
-        """Set up state for the upcoming re-run of `to_phase`.
-
-        Captures the rollback context (rejected output + reason + caller phase)
-        and arms the no-progress sentinel. Returns the rollback context for
-        callers that want to log or inspect it; OSRuntime normally consumes it
-        via `take_pending_ctx()` on the next iteration.
-        """
-        rejected = self.phase_outputs.get(to_phase, {})
-        ctx = {
-            "rejected_artifact": rejected,
-            "reason": reason,
-            "rollback_from": from_phase,
-        }
-        self.pending_ctx = ctx
-        self.no_progress_check = {
-            "phase": to_phase,
-            "prev_output_data": rejected.get("data"),
-            "rollback_from": from_phase,
-        }
-        return ctx
-
-    def take_pending_ctx(self) -> dict | None:
-        """One-shot read+clear of the rollback context."""
-        ctx = self.pending_ctx
-        self.pending_ctx = None
-        return ctx
-
-    def consume_no_progress(self, phase: str, output_data: Any) -> str | None:
-        """Check & clear the no-progress sentinel for `phase`.
-
-        If `phase` is the one we just rolled into and `output_data` matches the
-        previously-rejected output, returns the original rollback_from (the
-        caller should abort with a no-progress error).
-
-        If `phase` doesn't match the sentinel, leaves it alone — a different
-        phase may yet visit this check. If `phase` matches but the output
-        differs, clears the sentinel (rollback succeeded; the check has
-        served its purpose).
-        """
-        if self.no_progress_check is None:
-            return None
-        if self.no_progress_check["phase"] != phase:
-            return None
-        if output_data == self.no_progress_check["prev_output_data"]:
-            rollback_from = self.no_progress_check.get("rollback_from", "?")
-            self.no_progress_check = None
-            return rollback_from
-        self.no_progress_check = None
-        return None
+# RollbackState moved to reyn.kernel.rollback_state (FP-0020 Component A).
+# The name is re-exported at the top of this module for backward compatibility.
 
 
 def _validate_artifact_structure(artifact: dict, context: str) -> None:
@@ -289,20 +198,10 @@ class OSRuntime:
         # Private aliases retained so existing internal call sites stay stable.
         self._project_context = project_context
         self._agent_role = agent_role
-        self._phase_started_at: float | None = None
-        # PR33: trusted source for cross-field validation. Set in run() to
-        # the initial input artifact and never overwritten — phases that
-        # are LLM-authored cannot tamper with this. Validators reference it
-        # via x-reyn-members-of: skill_input.data.X paths to enforce that
-        # an LLM-emitted field's value is in a list it cannot fabricate.
-        self._skill_input: dict | None = None
         self._perm = permission_resolver
         self._intervention_bus = intervention_bus
-        # FP-0005: per-run safety-limit checkpoint policy. Tracks
-        # per-(kind) extensions granted by ``_handle_limit_checkpoint``
-        # so the same limit can be re-extended on a subsequent hit.
+        # FP-0005: per-run safety-limit checkpoint policy.
         self._on_limit = _safety.on_limit
-        self._safety_extensions: dict[str, float] = {}
         self._state_log = state_log
         self._skill_registry = skill_registry
         # PR-skill-resume D3b-3: optional ResumePlan for forward-replay
@@ -346,16 +245,29 @@ class OSRuntime:
             caller=caller,
             run_id=run_id,
         )
-        self._history: list[str] = []
-        self._visit_counts: dict[str, int] = {}
-        self._token_usage: TokenUsage = TokenUsage()
-        self._total_cost_usd: float = 0.0
-        self._prev_phase: str | None = None          # phase that transitioned to current
-        self._rollback = RollbackState()
-        # R-D2: per-phase counter for LLM op_invocation_id. Each `_call_llm_and_record`
-        # uses the current value as `{phase}.llm.{idx}` then increments. Resets on
-        # `_enter_phase` so resume reproduces the original sequence.
-        self._llm_call_idx_in_phase: int = 0
+        # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
+        self._state = RunState()
+
+    # ── Backward-compat properties (FP-0020 Component A) ───────────────────
+    # Tests and subclasses that accessed the old private fields directly
+    # can continue to do so via these thin pass-through properties.
+    # Remove in a subsequent cleanup PR once callers migrate to _state.*
+
+    @property
+    def _visit_counts(self) -> dict[str, int]:
+        return self._state.visit_counts
+
+    @_visit_counts.setter
+    def _visit_counts(self, value: dict[str, int]) -> None:
+        self._state.visit_counts = value
+
+    @property
+    def _history(self) -> list[str]:
+        return self._state.history
+
+    @_history.setter
+    def _history(self, value: list[str]) -> None:
+        self._state.history = value
 
     # ── Phase setup ────────────────────────────────────────────────────────────
 
@@ -387,9 +299,7 @@ class OSRuntime:
             extension_amount=extension_amount,
         )
         if decision.allow_continue:
-            self._safety_extensions[kind] = (
-                self._safety_extensions.get(kind, 0.0) + decision.extension
-            )
+            self._state.grant_extension(kind, decision.extension)
         self.events.emit(
             "safety_limit_checkpoint",
             kind=kind,
@@ -404,11 +314,8 @@ class OSRuntime:
         # FP-0005: extensions granted by user approval / auto_extend
         # raise the effective cap. Tracked per-kind on the runtime so
         # repeated hits on the same limit can be re-extended.
-        effective_max = (
-            int(max_visits + self._safety_extensions.get("max_phase_visits", 0.0))
-            if max_visits else 0
-        )
-        count = self._visit_counts.get(phase_name, 0)
+        effective_max = self._state.effective_visit_cap(max_visits)
+        count = self._state.visit_counts.get(phase_name, 0)
         if effective_max and count >= effective_max:
             # FP-0005: ask before raising. on_limit.mode controls the
             # behaviour; default 'unattended' preserves legacy abort.
@@ -435,18 +342,12 @@ class OSRuntime:
             # Approved — fall through; effective_max has already been
             # bumped via _safety_extensions and will be picked up on
             # the next visit.
-        self._visit_counts[phase_name] = count + 1
-        # Reset wall-clock timer for this visit. Soft budget checks at retry/turn boundaries
-        # compare elapsed against limits.phase.max_wall_seconds (0 = unlimited).
-        self._phase_started_at = time.monotonic()
-        # R-D2: reset the per-phase LLM invocation counter. Resume relies on
-        # this resetting deterministically — the in-flight phase is re-entered
-        # from the start, so its first LLM call must look up `{phase}.llm.0`
-        # (matching what the original run recorded).
-        self._llm_call_idx_in_phase = 0
+        # begin_phase() increments visit_counts, resets phase_started_at and
+        # llm_call_idx_in_phase — mirrors the three-statement block at original L438/441/446.
+        new_count = self._state.begin_phase(phase_name)
         self.events.emit(
             "phase_started", phase=phase_name,
-            visit_count=count + 1, input_artifact_type=artifact.get("type"),
+            visit_count=new_count, input_artifact_type=artifact.get("type"),
         )
 
     async def _check_phase_budget(self, phase_name: str) -> None:
@@ -460,15 +361,13 @@ class OSRuntime:
         phase can be re-extended.
         """
         budget = self._max_phase_wall_seconds
-        if not budget or self._phase_started_at is None:
+        if not budget or self._state.phase_started_at is None:
             return
-        elapsed = time.monotonic() - self._phase_started_at
+        elapsed = self._state.elapsed_phase_seconds()
         # FP-0005: extensions granted by the helper add to the effective
         # budget. Each grant is one ``budget`` worth (= "give this
         # phase another full window").
-        effective_budget = budget + self._safety_extensions.get(
-            "phase_seconds", 0.0,
-        )
+        effective_budget = self._state.effective_phase_budget(budget)
         if elapsed <= effective_budget:
             return
         decision = await self._handle_limit_checkpoint(
@@ -488,7 +387,7 @@ class OSRuntime:
             raise PhaseBudgetExceededError(phase_name, elapsed, effective_budget)
         # Approved — reset the wall-clock timer so the next check
         # measures from "now" against the freshly-extended budget.
-        self._phase_started_at = time.monotonic()
+        self._state.reset_phase_clock()
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
         skill = self.skill
@@ -522,14 +421,14 @@ class OSRuntime:
                 artifact_schema=skill.final_output_schema,
                 description=skill.final_output_description,
             ))
-        if self._prev_phase is not None:
+        if self._state.prev_phase is not None:
             candidates.append(CandidateOutput(
                 next_phase="rollback",
                 control_type="rollback",
                 schema_name="rollback",
                 artifact_schema={},
                 description=(
-                    f"Reject the output from '{self._prev_phase}' and send it back for revision. "
+                    f"Reject the output from '{self._state.prev_phase}' and send it back for revision. "
                     "Use when the current phase determines the preceding phase produced invalid output. "
                     "Put the rejection reason in control.reason.summary. "
                     "next_phase MUST be null. decision MUST be 'continue'."
@@ -587,8 +486,8 @@ class OSRuntime:
             artifact=artifact,
             candidates=candidates,
             output_language=output_language,
-            history=self._history,
-            visit_counts=self._visit_counts,
+            history=self._state.history,
+            visit_counts=self._state.visit_counts,
             finish_criteria=self.skill.finish_criteria,
             max_phase_visits=self._max_phase_visits or None,
             available_ops=effective_ops,
@@ -677,12 +576,12 @@ class OSRuntime:
         # P7-clean: the OS supplies the generic context dict; only the
         # skill's schema names specific keys.
         validation_context: dict | None = None
-        if input_artifact is not None or self._skill_input is not None:
+        if input_artifact is not None or self._state.skill_input is not None:
             validation_context = {}
             if input_artifact is not None:
                 validation_context["input"] = input_artifact
-            if self._skill_input is not None:
-                validation_context["skill_input"] = self._skill_input
+            if self._state.skill_input is not None:
+                validation_context["skill_input"] = self._state.skill_input
         norm_data, corrections, errors = validate_artifact_data(
             normalized,
             matched_candidate.artifact_schema,
@@ -739,10 +638,9 @@ class OSRuntime:
         phase_def = self.skill.phases.get(phase)
 
         # R-D2: per-phase LLM op_invocation_id + memoization. The counter is
-        # per-phase-visit (reset in `_enter_phase`) so resume reproduces the
+        # per-phase-visit (reset in begin_phase()) so resume reproduces the
         # original call sequence deterministically.
-        op_invocation_id = f"{phase}.llm.{self._llm_call_idx_in_phase}"
-        self._llm_call_idx_in_phase += 1
+        op_invocation_id = self._state.next_llm_invocation_id(phase)
 
         # Compute args_hash regardless of resume_plan presence — when state_log
         # is configured, every call writes a step_completed so a future resume
@@ -816,7 +714,6 @@ class OSRuntime:
         cost_usd: float | None = None
         pricing_snapshot: dict | None = None
         if llm_result.usage:
-            self._token_usage += llm_result.usage
             # Strip provider prefix (e.g. "openai/gemini-2.5-flash-lite" ->
             # "gemini-2.5-flash-lite") so litellm.model_cost lookup succeeds.
             _pricing_model = (
@@ -825,8 +722,7 @@ class OSRuntime:
                 else resolved_model
             )
             cost_usd, pricing_snapshot = estimate_cost(_pricing_model, llm_result.usage)
-            if cost_usd is not None:
-                self._total_cost_usd += cost_usd
+            self._state.add_usage(llm_result.usage, cost_usd)
             self._record_budget_post_llm(resolved_model, llm_result.usage)
         self.events.emit(
             "llm_response_received",
@@ -896,15 +792,13 @@ class OSRuntime:
             return
         usage = TokenUsage.from_dict(usage_dict)
         # Update local accumulators (mirror the fresh-call path)
-        self._token_usage += usage
         _pricing_model_memo = (
             resolved_model.split("/", 1)[1]
             if "/" in resolved_model and _proxy_kwargs()
             else resolved_model
         )
         cost_usd, _ = estimate_cost(_pricing_model_memo, usage)
-        if cost_usd is not None:
-            self._total_cost_usd += cost_usd
+        self._state.add_usage(usage, cost_usd)
         # Credit the shared BudgetTracker
         self._record_budget_post_llm(resolved_model, usage)
 
@@ -1118,10 +1012,7 @@ class OSRuntime:
             act_turn_count += 1
             # FP-0005: extensions granted by the safety-limit helper raise
             # the effective act-turn cap for THIS phase instance.
-            effective_max_act_turns = int(
-                max_act_turns
-                + self._safety_extensions.get(f"max_act_turns:{phase}", 0.0)
-            )
+            effective_max_act_turns = self._state.effective_act_turn_cap(phase, max_act_turns)
             if act_turn_count > effective_max_act_turns:
                 if force_decide:
                     # LLM emitted ops despite being told no more are allowed.
@@ -1305,7 +1196,7 @@ class OSRuntime:
             events=self.events,
             safety=self._safety,
         )
-        self._token_usage += usage
+        self._state.add_usage(usage, None)
         return adapted
 
     # ── Rollback dispatch ──────────────────────────────────────────────────────
@@ -1319,7 +1210,7 @@ class OSRuntime:
         Raises WorkflowAbortedError if there is no previous phase to roll
         back to (e.g. the very first phase emitted rollback).
         """
-        target = self._prev_phase
+        target = self._state.prev_phase
         if target is None:
             raise WorkflowAbortedError(
                 f"Phase '{current_phase}' emitted rollback but there is no previous phase."
@@ -1330,9 +1221,9 @@ class OSRuntime:
             rollback_to=target,
             reason=reason_summary,
         )
-        self._rollback.begin_rollback(current_phase, target, reason_summary)
-        self._history.append(f"{current_phase} → rollback → {target}")
-        return target, self._rollback.get_input(target), self._rollback.get_predecessor(target)
+        self._state.rollback.begin_rollback(current_phase, target, reason_summary)
+        self._state.history.append(f"{current_phase} → rollback → {target}")
+        return target, self._state.rollback.get_input(target), self._state.rollback.get_predecessor(target)
 
     # ── Workflow termination ──────────────────────────────────────────────────
 
@@ -1406,7 +1297,7 @@ class OSRuntime:
             post_artifact, post_usage = await post_executor.run(
                 finish_artifact, output_language, resume_plan=resume_plan,
             )
-            self._token_usage += post_usage
+            self._state.add_usage(post_usage, None)
             data = post_artifact.get("data", {})
 
         self.events.emit(
@@ -1416,13 +1307,13 @@ class OSRuntime:
             phase=phase,
             reason=reason,
             confidence=confidence,
-            total_phase_count=sum(self._visit_counts.values()),
+            total_phase_count=sum(self._state.visit_counts.values()),
             final_output_keys=list(data.keys()),
         )
         return RunResult(
             data=data, status="finished",
-            token_usage=self._token_usage,
-            cost_usd=self._total_cost_usd or None,
+            token_usage=self._state.token_usage,
+            cost_usd=self._state.total_cost_usd or None,
         )
 
     # ── Skill-node dispatch (transition to a sub-skill node) ───────────────────
@@ -1450,7 +1341,7 @@ class OSRuntime:
                 output_language,
             )
             data = adapted.get("data", {})
-            self._history.append(f"{current_phase} → {node_id} → END")
+            self._state.history.append(f"{current_phase} → {node_id} → END")
             return await self._finish_workflow(
                 phase=node_id,
                 data=data,
@@ -1466,7 +1357,7 @@ class OSRuntime:
             next_phase_obj.input_schema, next_phase_obj.input_schema_name,
             output_language,
         )
-        self._history.append(f"{current_phase} → {node_id} → {next_after}")
+        self._state.history.append(f"{current_phase} → {node_id} → {next_after}")
         return next_after, adapted
 
     # ── Main loop ──────────────────────────────────────────────────────────────
@@ -1504,7 +1395,7 @@ class OSRuntime:
         # PR33: pin the trusted input for cross-field validation across all
         # phases. Schemas downstream can reference fields here that no LLM
         # phase can tamper with.
-        self._skill_input = initial_input
+        self._state.skill_input = initial_input
 
         self.events.emit(
             "workflow_started",
@@ -1526,17 +1417,10 @@ class OSRuntime:
         if self._resume_plan is not None:
             if self._resume_plan.current_phase:
                 current_phase = self._resume_plan.current_phase
-            self._visit_counts = dict(self._resume_plan.visit_counts)
-            self._history = list(self._resume_plan.phases_visited)
-            # R-D2: pre-decrement visit_count for the resumed phase so that
-            # the upcoming `_enter_phase` increment lands on the SAME count
-            # the original run had at the time the LLM was called. Without
-            # this, the in-flight phase's first LLM call sees visit_count =
-            # recorded + 1, the args_hash differs from what was recorded,
-            # and memo lookup misses every time (silent cost duplication).
-            if current_phase in self._visit_counts and \
-                    self._visit_counts[current_phase] > 0:
-                self._visit_counts[current_phase] -= 1
+            # R-D2: restore visit_counts / history and pre-decrement current phase
+            # so the upcoming begin_phase() increment lands on the SAME count the
+            # original run had (memo correctness). See RunState.restore_from_resume.
+            self._state.restore_from_resume(self._resume_plan, current_phase)
             # Restore the last completed phase's artifact as the input
             # to current_phase. Falls back to initial_input when the
             # plan has no recorded artifact path (e.g. the entry phase
@@ -1560,7 +1444,7 @@ class OSRuntime:
                 "skill_resumed",
                 run_id=self.run_id,
                 resume_phase=current_phase,
-                visit_counts=dict(self._visit_counts),
+                visit_counts=dict(self._state.visit_counts),
             )
 
         if self._skill_registry:
@@ -1646,13 +1530,13 @@ class OSRuntime:
                 )
 
             while True:
-                rollback_context = self._rollback.take_pending_ctx()
+                rollback_context = self._state.rollback.take_pending_ctx()
 
                 # Store the pre-preprocessor artifact for rollback.
                 # On rollback, the preprocessor re-runs deterministically from this snapshot —
                 # semantically correct, but costly for heavy chains (iterate × run_app).
                 # If eval rollback causes N-item re-evaluation, revisit caching here (Phase 5+).
-                self._rollback.record_input(current_phase, artifact)
+                self._state.rollback.record_input(current_phase, artifact)
 
                 candidates = self._build_candidates(current_phase)
 
@@ -1662,13 +1546,13 @@ class OSRuntime:
                     enriched_artifact, pre_usage = await self._preprocessor.run(
                         phase_def, artifact, output_language
                     )
-                    self._token_usage += pre_usage
+                    self._state.add_usage(pre_usage, None)
                     # Update artifact_path to the enriched file so maybe_ref_artifact
                     # references the correct (post-preprocessor) artifact when it is large.
                     artifact_path = self.workspace.store_artifact(
                         current_phase + "_preprocessed", enriched_artifact,
                         skill_name=self.skill.name,
-                        visit=self._visit_counts.get(current_phase, 1),
+                        visit=self._state.visit_counts.get(current_phase, 1),
                     )
                 else:
                     enriched_artifact = artifact
@@ -1697,7 +1581,7 @@ class OSRuntime:
 
                 # Handle rollback before storing artifact or emitting phase_completed
                 if result.control.type == "rollback":
-                    current_phase, artifact, self._prev_phase = self._handle_rollback(
+                    current_phase, artifact, self._state.prev_phase = self._handle_rollback(
                         current_phase, result.control.reason.summary,
                     )
                     artifact_path = None
@@ -1712,7 +1596,7 @@ class OSRuntime:
 
                 # No-progress detection: if this phase was just re-run after a rollback
                 # and produced an output structurally identical to the rejected one, abort.
-                rollback_from = self._rollback.consume_no_progress(
+                rollback_from = self._state.rollback.consume_no_progress(
                     current_phase, output.artifact.get("data"),
                 )
                 if rollback_from is not None:
@@ -1727,12 +1611,12 @@ class OSRuntime:
                         f"to any change — aborting to prevent a wasteful loop."
                     )
 
-                self._rollback.record_output(current_phase, output.artifact)
+                self._state.rollback.record_output(current_phase, output.artifact)
 
                 artifact_path = self.workspace.store_artifact(
                     current_phase, output.artifact,
                     skill_name=self.skill.name,
-                    visit=self._visit_counts.get(current_phase, 1),
+                    visit=self._state.visit_counts.get(current_phase, 1),
                 )
 
                 self.events.emit(
@@ -1749,7 +1633,7 @@ class OSRuntime:
 
                 if output.next_phase == "end":
                     data = output.artifact.get("data", {})
-                    self._history.append(f"{current_phase} → END")
+                    self._state.history.append(f"{current_phase} → END")
                     return await self._finish_workflow(
                         phase=current_phase,
                         data=data,
@@ -1767,14 +1651,14 @@ class OSRuntime:
                     if isinstance(outcome, RunResult):
                         return outcome
                     next_after, adapted = outcome
-                    self._prev_phase = current_phase
-                    self._rollback.record_predecessor(next_after, current_phase)
+                    self._state.prev_phase = current_phase
+                    self._state.rollback.record_predecessor(next_after, current_phase)
                     current_phase = next_after
                     artifact = adapted
                 else:
-                    self._history.append(f"{current_phase} → {next_node}")
-                    self._prev_phase = current_phase
-                    self._rollback.record_predecessor(next_node, current_phase)
+                    self._state.history.append(f"{current_phase} → {next_node}")
+                    self._state.prev_phase = current_phase
+                    self._state.rollback.record_predecessor(next_node, current_phase)
                     current_phase = next_node
                     artifact = output.artifact
                 await self._enter_phase(current_phase, artifact)
@@ -1793,14 +1677,14 @@ class OSRuntime:
             self.events.emit(
                 "workflow_terminated",
                 reason=str(exc),
-                total_phase_count=sum(self._visit_counts.values()),
+                total_phase_count=sum(self._state.visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
             return RunResult(
                 data=final_output,
                 status="loop_limit_exceeded",
-                token_usage=self._token_usage,
-                cost_usd=self._total_cost_usd or None,
+                token_usage=self._state.token_usage,
+                cost_usd=self._state.total_cost_usd or None,
                 partial_data=final_output or None,
             )
 
@@ -1810,14 +1694,14 @@ class OSRuntime:
             self.events.emit(
                 "workflow_terminated",
                 reason=str(exc),
-                total_phase_count=sum(self._visit_counts.values()),
+                total_phase_count=sum(self._state.visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
             return RunResult(
                 data=final_output,
                 status="phase_budget_exceeded",
-                token_usage=self._token_usage,
-                cost_usd=self._total_cost_usd or None,
+                token_usage=self._state.token_usage,
+                cost_usd=self._state.total_cost_usd or None,
                 partial_data=final_output or None,
             )
 
@@ -1830,14 +1714,14 @@ class OSRuntime:
             self.events.emit(
                 "workflow_terminated",
                 reason=f"budget_exceeded: {exc.dimension}",
-                total_phase_count=sum(self._visit_counts.values()),
+                total_phase_count=sum(self._state.visit_counts.values()),
                 final_output_keys=list(final_output.keys()),
             )
             return RunResult(
                 data=final_output,
                 status="budget_exceeded",
-                token_usage=self._token_usage,
-                cost_usd=self._total_cost_usd or None,
+                token_usage=self._state.token_usage,
+                cost_usd=self._state.total_cost_usd or None,
                 error=str(exc),
                 partial_data=final_output or None,
             )
@@ -1846,7 +1730,7 @@ class OSRuntime:
             self.events.emit(
                 "workflow_aborted",
                 reason=str(exc),
-                total_phase_count=sum(self._visit_counts.values()),
+                total_phase_count=sum(self._state.visit_counts.values()),
             )
             raise
 
