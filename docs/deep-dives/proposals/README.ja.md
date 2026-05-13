@@ -86,3 +86,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0018](0018-event-store-backend.ja.md) | Event Store バックエンド抽象化 — JSONL / SQLite / DuckDB（優先度: LOW） | proposed | MEDIUM |
 | [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | proposed | MEDIUM |
+| [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | proposed | SMALL |
