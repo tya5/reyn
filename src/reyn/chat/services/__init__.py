@@ -5,6 +5,7 @@ from reyn.chat.services.compaction_controller import CompactionController
 from reyn.chat.services.intervention_registry import InterventionRegistry
 from reyn.chat.services.memory_service import MemoryService
 from reyn.chat.services.router_host_adapter import RouterHostAdapter
+from reyn.chat.services.skill_runner import SkillRunner
 from reyn.chat.services.snapshot_journal import SnapshotJournal
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "InterventionRegistry",
     "MemoryService",
     "RouterHostAdapter",
+    "SkillRunner",
     "SnapshotJournal",
     "_PendingChain",
 ]

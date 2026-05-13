@@ -33,6 +33,7 @@ from reyn.chat.services import (
     SnapshotJournal,
 )
 from reyn.chat.services.chain_manager import _PendingChain
+from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
 from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig
@@ -637,16 +638,10 @@ class ChatSession:
             file_regenerate_index=self._file_regenerate_index,
         )
 
-        self.running_skills: dict[str, asyncio.Task] = {}
-        # Per-run wall-clock start (monotonic) for `:list` elapsed-seconds display.
-        self.running_skills_started_at: dict[str, float] = {}
-        # R-D14: per-run chain_id tracking. When a skill_run was spawned to
-        # process an agent_request (or any chain-tagged invocation), the
-        # chain_id is recorded here so /skill discard can notify the
-        # upstream waiting agent without having to wait for chain_timeout.
-        # ``None`` value means the run is not chain-tagged (e.g. user-
-        # initiated invocations that don't participate in a chain).
-        self.running_skills_chain: dict[str, str | None] = {}
+        # FP-0019 Wave 1b: running_skills dicts now owned by SkillRunner.
+        # Session exposes forwarding properties for slash commands that
+        # access them directly (slash/skill.py, slash/tasks.py).
+        # SkillRunner is constructed below after _interventions is ready.
 
         # ADR-0023 Phase 2 step 7d: per-plan resume task tracking.
         # Populated by ``_spawn_resumed_plan`` after restart cleanup;
@@ -665,6 +660,28 @@ class ChatSession:
         )
         self._interventions = InterventionRegistry(
             on_announce=self._announce_intervention,
+        )
+
+        # FP-0019 Wave 1b: SkillRunner — skill task lifecycle service.
+        # Owns running_skills / running_skills_started_at / running_skills_chain.
+        # Constructed after _interventions (needed for drop_interventions_for_run
+        # callback) and before RouterHostAdapter (which receives spawn_for_router).
+        self._skill_runner = SkillRunner(
+            event_log=self._chat_events,
+            agent_name=self.agent_name,
+            output_language=self.output_language,
+            mcp_servers=self._mcp_servers,
+            allowed_skills=self._allowed_skills,
+            budget=self._budget,
+            state_log=self._state_log,
+            build_agent_fn=self._build_agent_for_skill_runner,
+            put_outbox=self._put_outbox,
+            enqueue_skill_completed=self._enqueue_skill_completed,
+            accumulate=self._accumulate,
+            drop_interventions_for_run=self._drop_interventions_for_run,
+            get_skill_registry=self._get_skill_registry,
+            ask_budget_extension=self._ask_budget_extension,
+            outbox=self.outbox,
         )
 
         # F2: Delegation tracking for RouterLoop runs. Set to a list before
@@ -709,7 +726,7 @@ class ChatSession:
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
             run_skill_awaitable=self._run_skill_awaitable,
-            spawn_skill=self._spawn_skill_for_router,
+            spawn_skill=self._skill_runner.spawn_for_router,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
@@ -726,7 +743,7 @@ class ChatSession:
             config=self._compaction,
             history_access=lambda: self.history,
             latest_summary=self._latest_summary,
-            run_compaction_skill=self._run_stdlib_skill,
+            run_compaction_skill=self._skill_runner.run_stdlib,
             history_appender=self._append_history,
             make_summary_message=lambda rendered, structured, covers: ChatMessage(
                 role="summary",
@@ -749,6 +766,43 @@ class ChatSession:
     @property
     def total_cost_usd(self) -> float:
         return self._budget.total_cost_usd
+
+    # ── SkillRunner forwarding (FP-0019 Wave 1b) ────────────────────────────────
+    # slash/skill.py and slash/tasks.py access these dicts directly via session.
+    # Forward to SkillRunner so external callers see the same live dict.
+
+    @property
+    def running_skills(self) -> dict:
+        """Forwarding property → SkillRunner.running_skills."""
+        return self._skill_runner.running_skills
+
+    @property
+    def running_skills_started_at(self) -> dict:
+        """Forwarding property → SkillRunner.running_skills_started_at."""
+        return self._skill_runner.running_skills_started_at
+
+    @property
+    def running_skills_chain(self) -> dict:
+        """Forwarding property → SkillRunner.running_skills_chain."""
+        return self._skill_runner.running_skills_chain
+
+    def _build_agent_for_skill_runner(
+        self,
+        run_id: str | None,
+        skill_name: str | None,
+        *,
+        subscribers: list | None = None,
+    ) -> "Agent":
+        """Build an Agent wired with a per-spawn ChatInterventionBus.
+
+        Supplied as ``build_agent_fn`` to SkillRunner so SkillRunner
+        never imports ChatInterventionBus or holds a session reference.
+        """
+        return self._build_agent(
+            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
+            mcp_servers=self._mcp_servers,
+            subscribers=subscribers,
+        )
 
     # ── persistence ─────────────────────────────────────────────────────────────
 
@@ -947,10 +1001,8 @@ class ChatSession:
         compaction task (if any) so the summary entry gets persisted before
         the process exits.
         """
-        for task in self.running_skills.values():
-            task.cancel()
-        if self.running_skills:
-            await asyncio.gather(*self.running_skills.values(), return_exceptions=True)
+        # FP-0019 Wave 1b: delegated to SkillRunner.
+        await self._skill_runner.cancel_all()
 
         # PR18: cancel any pending chain-timeout watchdogs so they don't keep
         # the loop alive past shutdown. Late-firing timers swallow their work
@@ -1279,34 +1331,17 @@ class ChatSession:
         mcp_servers: dict | None = None,
         forward_events: bool = False,
     ):
-        """Load a stdlib skill, build an Agent under workspace/<state_subdir>, run it.
+        """Thin delegation to SkillRunner.run_stdlib (FP-0019 Wave 1b).
 
-        When `forward_events` is True, phase_started/phase_completed events
-        from this run are surfaced as `trace` messages on the chat outbox so
-        the user sees progress between LLM hops. Off by default to keep
-        memory/admin runs silent unless the caller opts in.
-
+        Kept for callers that still reference this name directly.
         Returns the RunResult. Callers handle exceptions.
         """
-        skill = self._load_stdlib_skill(skill_name)
-        subscribers = None
-        if forward_events:
-            from reyn.chat.forwarder import ChatEventForwarder
-            subscribers = [ChatEventForwarder(skill_name, self.outbox)]
-        # Inline stdlib runs (router/compactor) aren't tracked in running_skills,
-        # so run_id is None — _drop_interventions_for_run won't fire on them
-        # (they complete on their own, no cancellation path).
-        agent = self._build_agent(
-            intervention_bus=ChatInterventionBus(self, run_id=None, skill_name=skill_name),
+        return await self._skill_runner.run_stdlib(
+            skill_name, input_artifact,
+            state_subdir=state_subdir,
             mcp_servers=mcp_servers,
-            subscribers=subscribers,
+            forward_events=forward_events,
         )
-        result = await agent.run(
-            skill, input_artifact,
-            output_language=self.output_language,
-        )
-        self._accumulate(result)
-        return result
 
     # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────
     # Business logic lives in CompactionController.  Session keeps only the
@@ -2739,307 +2774,19 @@ class ChatSession:
             return
         await self._put_outbox(OutboxMessage(kind="status", text=text))
 
-    # ── skill spawn ─────────────────────────────────────────────────────────────
+    # ── skill spawn (FP-0019 Wave 1b) ───────────────────────────────────────────
+    # Business logic lives in SkillRunner. Session keeps thin delegating
+    # methods for backward compat with any remaining internal callers.
 
     async def _spawn_skill_for_router(
         self, spec: dict, *, chain_id: str
     ) -> dict:
-        """FP-0012 non-blocking router-side spawn entry point.
-
-        Wrapper over ``_spawn_skill`` that returns the spawn-ack dict
-        the LLM consumes via ``invoke_skill``'s tool_result. The actual
-        skill task is created by ``_spawn_skill`` (which already does
-        ``asyncio.create_task`` + populates ``running_skills`` /
-        ``running_skills_started_at`` / ``running_skills_chain``); we
-        capture the run_id assigned during spawn by snapshotting the
-        ``running_skills`` dict before / after the call.
-
-        Refusals (= allowlist deny / budget hard-cap) are surfaced as
-        ``{"status": "error", "data": {"error": ...}}`` so the router
-        LLM narrates them per the SP's anti-optimism rule (FP-0011
-        Component B). The ack shape is contract-stable:
-
-            {"status": "spawned", "run_id": "...",
-             "chain_id": "...",   "note": "..."}
-        """
-        before = set(self.running_skills.keys())
-        await self._spawn_skill(spec, chain_id=chain_id)
-        after = set(self.running_skills.keys())
-        new_run_ids = after - before
-        if not new_run_ids:
-            # _spawn_skill returned without creating a task (= refused
-            # by allowlist / budget gate / invalid spec). The session
-            # already surfaced an error outbox message; mirror it as
-            # tool_result so the router LLM narrates the refusal text.
-            return {
-                "status": "error",
-                "data": {
-                    "error": (
-                        f"skill {spec.get('skill')!r} could not be spawned "
-                        f"(see prior outbox message for the specific reason)"
-                    ),
-                    "skill": spec.get("skill"),
-                },
-            }
-        # In the rare case multiple tasks landed concurrently, pick the
-        # one matching the requested skill name.
-        run_id = next(iter(new_run_ids))
-        for rid in new_run_ids:
-            if rid.split("_", 2)[1:2] == [str(spec.get("skill"))]:
-                run_id = rid
-                break
-        return {
-            "status": "spawned",
-            "run_id": run_id,
-            "chain_id": chain_id,
-            "skill": spec.get("skill"),
-            "note": (
-                "Running in the background. "
-                "I will notify you when it completes. "
-                "Use /tasks to check progress."
-            ),
-        }
+        """Thin delegation to SkillRunner.spawn_for_router (FP-0019 Wave 1b)."""
+        return await self._skill_runner.spawn_for_router(spec, chain_id=chain_id)
 
     async def _spawn_skill(self, spec: dict, *, chain_id: str | None = None) -> None:
-        skill_name = spec.get("skill")
-        input_artifact = spec.get("input")
-        if not skill_name or not isinstance(input_artifact, dict):
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"invalid skill spec: {spec}",
-            ))
-            return
-        # PR15: defense-in-depth allowlist check. The router-side filter
-        # already hides blocked skills from the LLM, so reaching this branch
-        # implies hallucination or a stale routing_decision. Refuse + audit.
-        if (
-            self._allowed_skills is not None
-            and skill_name not in self._allowed_skills
-        ):
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=(
-                    f"skill {skill_name!r} is not in allowed_skills for agent "
-                    f"{self.agent_name!r}; refused"
-                ),
-            ))
-            self._chat_events.emit(
-                "skill_spawn_refused",
-                reason="allowlist", skill=skill_name, agent=self.agent_name,
-            )
-            return
-
-        # PR22: per-chain per-skill cap check. Refuse spawn if hard limit
-        # reached. Warn dimensions are emitted via events + outbox status.
-        if chain_id is not None:
-            check = self._budget.check_pre_spawn(
-                chain_id=chain_id, skill=skill_name,
-            )
-            # FP-0003: opt-in user-approval flow on hard-limit hit.
-            # When the cap is configured with `ask_on_exceed: true` AND
-            # `extension_calls > 0`, dispatch an ask_user prompting the
-            # user to extend the chain's effective cap by N additional
-            # spawns. Approval grants the extension and we re-check;
-            # decline / timeout falls through to the original refusal
-            # path. The flag is opt-in so existing users see no change.
-            if (
-                not check.allowed
-                and check.context.get("ask_on_exceed")
-                and int(check.context.get("extension_calls") or 0) > 0
-            ):
-                approved = await self._ask_budget_extension(
-                    chain_id=chain_id,
-                    skill_name=skill_name,
-                    check=check,
-                )
-                if approved:
-                    extension = int(check.context["extension_calls"])
-                    new_total = self._budget.extend_chain_calls(
-                        chain_id=chain_id,
-                        skill=skill_name,
-                        additional=extension,
-                    )
-                    self._chat_events.emit(
-                        "budget_extended",
-                        dimension=check.hard_dimension,
-                        skill=skill_name,
-                        chain_id=chain_id,
-                        granted=extension,
-                        total_extension=new_total,
-                    )
-                    # Re-check after extension. Should normally allow now.
-                    check = self._budget.check_pre_spawn(
-                        chain_id=chain_id, skill=skill_name,
-                    )
-            if not check.allowed:
-                self._chat_events.emit(
-                    "budget_exceeded",
-                    dimension=check.hard_dimension,
-                    detail=check.detail,
-                    skill=skill_name,
-                    chain_id=chain_id,
-                )
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=format_refusal_message(check),
-                    meta={"chain_id": chain_id, "skill": skill_name},
-                ))
-                return
-            for dim in check.warn_dimensions:
-                self._chat_events.emit(
-                    "budget_warn",
-                    dimension=dim, chain_id=chain_id, skill=skill_name,
-                    **check.context,
-                )
-                await self._put_outbox(OutboxMessage(
-                    kind="status",
-                    text=format_warn_message(dim, check.context),
-                    meta={"chain_id": chain_id, "skill": skill_name},
-                ))
-            self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
-
-        run_id = (
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
-        )
-        self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
-        # Track elapsed time for `:list` and provenance for outbox messages
-        self.running_skills_started_at[run_id] = time.monotonic()
-        # R-D14: stash chain_id so /skill discard can notify the upstream
-        # waiting agent (chain_id is None for user-initiated invocations
-        # that don't participate in a chain).
-        self.running_skills_chain[run_id] = chain_id
-        await self._put_outbox(OutboxMessage(
-            kind="status", text="starting…",
-            meta=_run_meta(run_id, skill_name),
-        ))
-
-        task = asyncio.create_task(
-            self._run_one_skill(run_id, skill_name, input_artifact, chain_id=chain_id)
-        )
-        self.running_skills[run_id] = task
-
-        def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
-            self.running_skills.pop(rid, None)
-            self.running_skills_started_at.pop(rid, None)
-            self.running_skills_chain.pop(rid, None)
-            self._drop_interventions_for_run(rid)
-
-        task.add_done_callback(_cleanup)
-
-    async def _run_one_skill(
-        self,
-        run_id: str,
-        skill_name: str,
-        input_artifact: dict,
-        *,
-        chain_id: str | None = None,
-    ) -> None:
-        meta = _run_meta(run_id, skill_name)
-        try:
-            skill_dir, skill_root = resolve_skill_path(skill_name)
-        except SkillNotFoundError:
-            # P6 audit completeness: skill_run_spawned was emitted earlier; emit
-            # skill_run_failed for the error path so events log captures every
-            # state transition (dogfood S13b).
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"skill not found: {skill_name}",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"skill not found: {skill_name}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": f"skill not found: {skill_name}"},
-            )
-            return
-        try:
-            skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
-        except Exception as exc:
-            # P6 audit completeness: pair with skill_run_spawned above.
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"failed to load: {exc}",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"failed to load {skill_name}: {exc}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": f"failed to load {skill_name}: {exc}"},
-            )
-            return
-
-        from reyn.chat.forwarder import ChatEventForwarder
-        agent = self._build_agent(
-            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
-            mcp_servers=self._mcp_servers,
-            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
-        )
-        try:
-            result = await agent.run(
-                skill, input_artifact,
-                output_language=self.output_language,
-                chain_id=chain_id,
-                skill_registry=self._get_skill_registry(),
-                state_log=self._state_log,
-            )
-        except asyncio.CancelledError:
-            await self._put_outbox(OutboxMessage(
-                kind="status", text="cancelled", meta=meta,
-            ))
-            # FP-0012: do NOT enqueue skill_completed for cancellation — the
-            # cancelling code path (e.g. /skill discard, shutdown drain)
-            # owns the user-facing notification + cross-agent chain notify
-            # via R-D14. Re-raise so asyncio task done-callback propagates.
-            raise
-        except Exception as exc:
-            self._chat_events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"failed: {exc}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": str(exc)},
-            )
-            return
-
-        # PR22: surface budget_exceeded result as a user-facing error.
-        if result.status == "budget_exceeded":
-            self._chat_events.emit(
-                "skill_run_failed",
-                run_id=run_id, skill=skill_name,
-                error="budget_exceeded",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=result.error or "budget exceeded",
-                meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="budget_exceeded",
-                data={"error": result.error or "budget exceeded"},
-            )
-            return
-
-        self._accumulate(result)
-        self._chat_events.emit(
-            "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
-        )
-
-        # FP-0012: enqueue completion message into inbox so the chat router
-        # picks it up on the next ``run()`` iteration. The handler injects
-        # a user-role message into the existing conversation thread and
-        # runs one router LLM turn for narration (= replaces the synchronous
-        # tool_result narration of FP-0011). The router LLM has full thread
-        # context (= original spawn ack + intermediate exchanges + completion)
-        # so it can correlate via ``chain_id`` and narrate accurately.
-        await self._enqueue_skill_completed(
-            run_id=run_id, skill=skill_name, chain_id=chain_id,
-            status=result.status or "finished",
-            data=result.data or {},
-        )
+        """Thin delegation to SkillRunner.spawn (FP-0019 Wave 1b)."""
+        await self._skill_runner.spawn(spec, chain_id=chain_id)
 
     async def _enqueue_skill_completed(
         self,

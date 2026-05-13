@@ -1301,18 +1301,20 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     """
     monkeypatch.chdir(tmp_path)
 
-    import reyn.chat.session as session_mod
+    import reyn.chat.services.skill_runner as skill_runner_mod
     from reyn.kernel.runtime import RunResult
 
     dummy_skill_dir = tmp_path / "dummy_skill"
     dummy_skill_dir.mkdir()
 
+    # FP-0019 Wave 1b: _run_one_skill now lives in SkillRunner, so patch
+    # resolve_skill_path / load_dsl_skill in the skill_runner module.
     monkeypatch.setattr(
-        session_mod, "resolve_skill_path",
+        skill_runner_mod, "resolve_skill_path",
         lambda name: (dummy_skill_dir, tmp_path),
     )
     monkeypatch.setattr(
-        session_mod, "load_dsl_skill",
+        skill_runner_mod, "load_dsl_skill",
         lambda path, *, skill_root: object(),
     )
 
@@ -1323,7 +1325,8 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
         data={"path": "reyn/project/foo/skill.md"},
         status="finished",
     )
-    session._build_agent = lambda **kw: _FakeAgent(fake_result)
+    # Patch build_agent_fn on SkillRunner (FP-0019 Wave 1b).
+    session._skill_runner._build_agent_fn = lambda run_id, skill_name, **kw: _FakeAgent(fake_result)
 
     run_id = "20260510T100000Z_direct_llm_aaaa"
     session.running_skills_started_at[run_id] = 0.0
@@ -1333,7 +1336,7 @@ async def test_skill_completed_inbox_enqueued_on_finish(tmp_path, monkeypatch):
     while not session.inbox.empty():
         session.inbox.get_nowait()
 
-    await session._run_one_skill(
+    await session._skill_runner._run_one_skill(
         run_id, "direct_llm",
         {"type": "llm_request", "data": {}},
         chain_id="chain-fp0012-002",
