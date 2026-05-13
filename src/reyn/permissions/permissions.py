@@ -826,3 +826,27 @@ class PermissionResolver:
             )
         if not await self._approve(f"tool.{tool}", f"tool: {tool!r}", bus):
             raise PermissionError(f"tool {tool!r} access denied")
+
+    async def require_web_fetch(self, url: str, bus: InterventionBus) -> None:
+        """Tier 1 gate for web_fetch — no declaration required, full 4-layer approval.
+
+        FP-0022: web_fetch was previously gated only by catalog-level config
+        (web.fetch: allow); without that, the LLM never saw the tool. Now uses
+        the standard _approve() flow (config / approvals.yaml / session / interactive).
+
+        Resolution order:
+          Layer 1a: ``web.fetch: deny`` in reyn.yaml → immediate PermissionError.
+          Layer 1b: ``web.fetch: allow`` in reyn.yaml → pre-approved, no prompt.
+          Layer 2:  approvals.yaml persistent decision.
+          Layer 3:  in-memory session decision.
+          Layer 4:  interactive prompt (YES/NO/ALWAYS/NEVER).
+
+        ``web.fetch: allow`` existing config entries continue to work unchanged —
+        _is_config_approved() handles them at Layer 1b.
+        """
+        if self._is_config_denied("web.fetch"):
+            raise PermissionError(
+                "web fetch denied by config (web.fetch: deny)"
+            )
+        if not await self._approve("web.fetch", f"web fetch: {url}", bus):
+            raise PermissionError("web fetch denied")

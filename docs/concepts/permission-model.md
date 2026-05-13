@@ -147,6 +147,55 @@ Every successful install emits a `mcp_server_installed` event with `server_id` a
 grep '"mcp_server_installed"' .reyn/events.jsonl
 ```
 
+## Permission Tier Model (FP-0022)
+
+Reyn permissions operate on two axes:
+
+**Axis 1 — Usage Declaration** (skill.md frontmatter `permissions:` block):
+The skill author declares what ops the skill intends to use. An undeclared
+op raises `PermissionError` immediately (analogous to Android `SecurityException`
+when calling an API not in the manifest).
+
+**Axis 2 — Authorization** (operator / user grants access):
+Four resolution layers in `PermissionResolver._approve()`:
+
+| Layer | Source | Persistence |
+|---|---|---|
+| 1 | `reyn.yaml` `permissions.<key>` | Static config |
+| 2 | `.reyn/approvals.yaml` | Cross-session |
+| 3 | In-memory session decision | Session only |
+| 4 | Interactive prompt | → Layer 2 or 3 |
+
+### Op tier classification
+
+| Tier | Example ops | Declaration | Default | Config restriction |
+|---|---|---|---|---|
+| 0 | `run_skill`, `ask_user` | not required | unconditional pass | not possible |
+| 1 | `web_search`, `web_fetch` | not required | allow | `deny` blocks |
+| 2 | `mcp` | required | ask (4-layer) | `allow` pre-approves |
+| 3 | `shell`, `file` (outside zone) | required | ask (4-layer) | `allow` pre-approves |
+
+Tier 0 is "unconditional pass", not "default allow" — there is no config key
+that could block these ops without breaking skill execution semantics.
+
+### web_fetch behavior (FP-0022)
+
+Before FP-0022: Required `web.fetch: allow` in config; otherwise the tool was
+hidden from the router catalog (silently unavailable). Users who asked the agent
+to look something up received a refusal with no prompt — a confusing UX.
+
+After FP-0022: Default-allow with 4-layer approval. The tool is always in the
+router catalog. First use triggers an interactive prompt (YES/NO/ALWAYS/NEVER).
+`web.fetch: allow` pre-approves (existing behavior preserved). `web.fetch: deny`
+blocks immediately.
+
+### web_search config restriction (FP-0022)
+
+`web_search` now respects `web.search: deny` in `reyn.yaml`
+(raises `PermissionError` immediately). Default is allow — web search is
+read-only with no side effects, so operator `deny` is the only sensible
+restriction path. No interactive prompt is needed.
+
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step in `mode: trusted` runs as the same user; reyn doesn't sandbox the kernel.

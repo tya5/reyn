@@ -417,9 +417,10 @@ class _PlanStepHost:
         return []
 
     def get_web_fetch_allowed(self) -> bool:
-        if _WEB_FETCH_TOOL_NAME in self._tool_set:
-            return self._parent.get_web_fetch_allowed()
-        return False
+        # FP-0022: web_fetch is always allowed at the catalog level; authorization
+        # is enforced at the handler level. Return True when the step's tool_set
+        # includes web_fetch, matching the parent's always-True behavior.
+        return _WEB_FETCH_TOOL_NAME in self._tool_set
 
     def get_project_context(self) -> str:
         # Project context narrowed out by default — plan steps work from

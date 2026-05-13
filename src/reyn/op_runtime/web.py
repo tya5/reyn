@@ -40,6 +40,14 @@ class _TextExtractor(html.parser.HTMLParser):
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     import httpx
 
+    # FP-0022: Tier 1 handler-level gate — 4-layer approval (config / approvals.yaml
+    # / session / interactive). Replaces the catalog-level `web.fetch: allow` gate.
+    # `web.fetch: allow` existing config entries continue to pre-approve via Layer 1.
+    if ctx.permission_resolver is not None:
+        if ctx.intervention_bus is None:
+            raise RuntimeError("web_fetch op requires intervention_bus on OpContext")
+        await ctx.permission_resolver.require_web_fetch(op.url, ctx.intervention_bus)
+
     ctx.events.emit("web_fetch_started", url=op.url)
     try:
         async with httpx.AsyncClient(
@@ -88,6 +96,11 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
 
 async def handle_web_search(op: WebSearchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     from reyn.search_backends import get_backend
+
+    # FP-0022: Tier 1 config deny path. web_search is read-only (no side effects),
+    # so operator `deny` is the only sensible restriction — no interactive prompt needed.
+    if ctx.permission_resolver is not None and ctx.permission_resolver._is_config_denied("web.search"):
+        raise PermissionError("web search denied by config (web.search: deny)")
 
     ctx.events.emit("web_search_started", query=op.query, backend=op.backend)
     try:

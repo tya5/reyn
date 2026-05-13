@@ -6,11 +6,15 @@ Verifies that WEB_FETCH ToolDefinition:
 - Has the correct gates, purity, and category.
 - Is findable via get_default_registry().
 - Registers without error and is the single registry entry for web_fetch.
+- FP-0022: require_web_fetch() 4-layer approval gate behavior.
 
 No mocks of collaborators. All tests use real ToolDefinition / ToolRegistry
 instances. No private state assertions.
 """
 from __future__ import annotations
+
+import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -137,15 +141,13 @@ def test_build_tools_includes_web_fetch_via_registry():
     registry. The rendered dict must match the legacy ToolSpec.to_openai_dict()
     output (byte-identity gate for LLMReplay fixtures).
 
-    NOTE: This test will pass only after central integration lands
-    (web_fetch_allowed flag wired to registry). It serves as a forward
-    contract for the central integration PR."""
+    FP-0022: web_fetch is now always in the catalog; the web_fetch_allowed
+    parameter is kept for backward compat but is a no-op."""
     from reyn.chat.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],
         available_agents=[],
-        web_fetch_allowed=True,
     )
 
     # Find web_fetch in the returned tools list
@@ -169,18 +171,17 @@ def test_build_tools_includes_web_fetch_via_registry():
 
 
 def test_build_tools_web_fetch_not_duplicated():
-    """Tier 2: web_fetch appears at most once in build_tools() output.
+    """Tier 2: web_fetch appears exactly once in build_tools() output.
     Guards against both the registry path and a residual ToolSpec literal
-    being included simultaneously."""
+    being included simultaneously. FP-0022: web_fetch is always in catalog."""
     from reyn.chat.router_tools import build_tools
 
     tools = build_tools(
         available_skills=[],
         available_agents=[],
-        web_fetch_allowed=True,
     )
     wf_tools = [t for t in tools if t.get("function", {}).get("name") == "web_fetch"]
-    assert len(wf_tools) <= 1
+    assert len(wf_tools) == 1
 
 
 # ── 6. Drift detection — description module constant matches render ────────────
@@ -200,3 +201,64 @@ def test_web_fetch_parameters_constant_matches_render():
     rendered = WEB_FETCH.render_for_router()
     assert rendered["function"]["parameters"] == _WEB_FETCH_PARAMETERS
     assert dict(WEB_FETCH.parameters) == _WEB_FETCH_PARAMETERS
+
+
+# ── 7. FP-0022: Permission tier gate invariants ───────────────────────────────
+
+class _AutoApproveInterventionBus:
+    """Minimal real InterventionBus stub that auto-approves every request.
+
+    Returns choice_id='always' so approvals are persisted to the temp
+    approvals.yaml and the second call skips the prompt path entirely.
+    """
+    async def request(self, iv):
+        from reyn.user_intervention import InterventionAnswer
+        return InterventionAnswer(choice_id="always")
+
+
+class _DenyAllInterventionBus:
+    """Minimal real InterventionBus stub that fails the test if called.
+
+    When the config denies access, require_web_fetch must raise without
+    reaching the prompt. If request() is called, the implementation has a bug.
+    """
+    async def request(self, iv):
+        raise AssertionError(
+            f"InterventionBus.request called unexpectedly: {iv}"
+        )
+
+
+def test_require_web_fetch_config_allow_pre_approves(tmp_path: Path) -> None:
+    """Tier 2: web.fetch: allow in config pre-approves without prompting.
+
+    FP-0022 backward compat: existing `web.fetch: allow` users must not see
+    any interactive prompt — the config grant short-circuits at Layer 1.
+    """
+    from reyn.permissions.permissions import PermissionResolver
+
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "allow"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+    # DenyAllInterventionBus: if a prompt fires, the test fails.
+    bus = _DenyAllInterventionBus()
+    # Must not raise and must not reach the bus.
+    asyncio.run(resolver.require_web_fetch("https://example.com", bus))
+
+
+def test_require_web_fetch_config_deny_raises_immediately(tmp_path: Path) -> None:
+    """Tier 2: web.fetch: deny blocks with PermissionError before any prompt.
+
+    FP-0022: deny config must raise immediately, not reach the interactive bus.
+    """
+    from reyn.permissions.permissions import PermissionResolver
+
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "deny"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+    bus = _DenyAllInterventionBus()  # must not be called
+    with pytest.raises(PermissionError, match="web fetch denied by config"):
+        asyncio.run(resolver.require_web_fetch("https://example.com", bus))

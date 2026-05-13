@@ -128,6 +128,53 @@ permissions:
 grep '"mcp_server_installed"' .reyn/events.jsonl
 ```
 
+## パーミッション Tier モデル (FP-0022)
+
+Reyn のパーミッションは 2 つの軸で機能します：
+
+**軸 1 — 使用宣言** (skill.md frontmatter の `permissions:` ブロック):
+Skill の作者が使用する op を宣言します。宣言されていない op は即座に `PermissionError`
+を発生させます（Android のマニフェストに登録されていない API を呼び出した場合の
+`SecurityException` に相当）。
+
+**軸 2 — 認可** (オペレーター / ユーザーによるアクセス付与):
+`PermissionResolver._approve()` の 4 層解決：
+
+| レイヤー | 提供元 | 永続性 |
+|---|---|---|
+| 1 | `reyn.yaml` `permissions.<key>` | 静的設定 |
+| 2 | `.reyn/approvals.yaml` | セッション横断 |
+| 3 | インメモリセッション決定 | セッションのみ |
+| 4 | インタラクティブプロンプト | → レイヤー 2 または 3 |
+
+### Op Tier 分類
+
+| Tier | 代表的な op | 宣言 | デフォルト | 設定制限 |
+|---|---|---|---|---|
+| 0 | `run_skill`, `ask_user` | 不要 | 無条件パス | 不可 |
+| 1 | `web_search`, `web_fetch` | 不要 | allow | `deny` でブロック |
+| 2 | `mcp` | 必須 | ask (4 層) | `allow` で事前承認 |
+| 3 | `shell`, `file` (ゾーン外) | 必須 | ask (4 層) | `allow` で事前承認 |
+
+Tier 0 は「デフォルト allow」ではなく「無条件パス」です。これらの op をブロックする
+設定キーは存在しません（存在するとスキルの実行セマンティクスが破壊されます）。
+
+### web_fetch の動作変更 (FP-0022)
+
+FP-0022 以前: `reyn.yaml` に `web.fetch: allow` が必要でした。未設定の場合、
+ツールはルーターのカタログから非表示になりました（サイレントに利用不可）。
+ユーザーが何かを調べるよう依頼しても、プロンプトなしで拒否される混乱した UX でした。
+
+FP-0022 以降: 4 層承認によるデフォルト allow。ツールは常にルーターカタログに含まれます。
+初回使用時にインタラクティブプロンプトが発火します（YES/NO/ALWAYS/NEVER）。
+`web.fetch: allow` は事前承認します（既存の動作を保持）。`web.fetch: deny` は即座にブロックします。
+
+### web_search の設定制限 (FP-0022)
+
+`web_search` は `reyn.yaml` の `web.search: deny` を尊重するようになりました
+（即座に `PermissionError`）。デフォルトは allow です。web 検索は読み取り専用で
+副作用がないため、オペレーターの `deny` のみが合理的な制限パスです。インタラクティブプロンプトは不要です。
+
 ## パーミッションシステムではないもの
 
 - **Linux ケイパビリティサンドボックスではありません。** `mode: trusted` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。

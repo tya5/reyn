@@ -24,7 +24,7 @@ def build_system_prompt(
     memory_index: dict,
     file_permissions: dict | None = None,
     mcp_servers: list[dict] | None = None,
-    web_fetch_allowed: bool = False,
+    web_fetch_allowed: bool = True,  # FP-0022: always-on; parameter kept for backward compat
     output_language: str | None = None,
     project_context: str = "",
     indexed_sources_section: str | None = None,
@@ -185,17 +185,11 @@ def build_system_prompt(
     parts.append(
         "           reyn:    reyn_src_list / reyn_src_read"
     )
-    # Web search is always exposed (low-risk, public queries). Web fetch
-    # requires operator opt-in (`web.fetch: allow`) and is included only
-    # when permitted.
-    if web_fetch_allowed:
-        parts.append(
-            "           web:     web_search / web_fetch"
-        )
-    else:
-        parts.append(
-            "           web:     web_search"
-        )
+    # FP-0022: web_fetch is now always in the catalog; approval via 4-layer
+    # PermissionResolver at handler level. web_search is Tier 1 read-only.
+    parts.append(
+        "           web:     web_search / web_fetch"
+    )
     if has_mcp:
         parts.append(
             "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool"
@@ -291,8 +285,8 @@ def build_system_prompt(
         "read Reyn's own source and docs to explain how Reyn works"
     )
     user_capabilities.append("search the web (DuckDuckGo)")
-    if web_fetch_allowed:
-        user_capabilities.append("fetch a specific web page")
+    # FP-0022: web_fetch is always available (Tier 1, handler-level approval).
+    user_capabilities.append("fetch a specific web page")
     user_capabilities.append("remember and recall facts via your memory (= Memory section)")
     # Indexed sources: always mention, both with and without available sources.
     # B17-S1-1 fix: when the user asks about 'data sources', they need to know

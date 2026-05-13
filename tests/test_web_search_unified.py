@@ -6,11 +6,15 @@ Verifies that WEB_SEARCH ToolDefinition:
 - Has the correct gates, purity, and category.
 - Is findable via get_default_registry().
 - Registers without error and is the single registry entry for web_search.
+- FP-0022: web.search: deny config path raises PermissionError.
 
 No mocks of collaborators. All tests use real ToolDefinition / ToolRegistry
 instances. No private state assertions.
 """
 from __future__ import annotations
+
+import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -199,3 +203,63 @@ def test_web_search_parameters_constant_matches_render():
     rendered = WEB_SEARCH.render_for_router()
     assert rendered["function"]["parameters"] == _WEB_SEARCH_PARAMETERS
     assert dict(WEB_SEARCH.parameters) == _WEB_SEARCH_PARAMETERS
+
+
+# ── 7. FP-0022: web.search: deny config path ──────────────────────────────────
+
+def _make_op_context(config_permissions: dict, tmp_path: Path):
+    """Build a real OpContext with PermissionResolver wired in for test use."""
+    from reyn.events.events import EventLog
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl, PermissionResolver
+    from reyn.workspace.workspace import Workspace
+
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions=config_permissions,
+        project_root=tmp_path,
+        interactive=False,  # no prompts — config is the only gate
+    )
+    workspace = Workspace(events=events, permission_resolver=resolver, skill_name="test")
+    return OpContext(
+        workspace=workspace,
+        events=events,
+        permission_decl=PermissionDecl(),
+        permission_resolver=resolver,
+        skill_name="test",
+    )
+
+
+def test_web_search_config_deny_raises_permission_error(tmp_path: Path) -> None:
+    """Tier 2: web.search: deny in config blocks handle_web_search() immediately.
+
+    FP-0022: Tier 1 config deny path for web_search. No interactive prompt
+    is issued — operator deny is the only sensible restriction for a
+    read-only op with no side effects.
+    """
+    from reyn.op_runtime.web import handle_web_search
+    from reyn.schemas.models import WebSearchIROp
+
+    ctx = _make_op_context({"web.search": "deny"}, tmp_path)
+    op = WebSearchIROp(kind="web_search", query="test", max_results=5, backend="duckduckgo")
+    with pytest.raises(PermissionError, match="web search denied by config"):
+        asyncio.run(handle_web_search(op, ctx, caller="control_ir"))
+
+
+def test_web_search_no_deny_config_does_not_raise(tmp_path: Path) -> None:
+    """Tier 2: absent web.search config does not block handle_web_search.
+
+    Default Tier 1 behavior: web_search is allowed unless explicitly denied.
+    This test uses a non-existent backend to avoid real network calls; the
+    backend error occurs AFTER the permission check passes.
+    """
+    from reyn.op_runtime.web import handle_web_search
+    from reyn.schemas.models import WebSearchIROp
+
+    ctx = _make_op_context({}, tmp_path)  # no web.search config → allow
+    op = WebSearchIROp(kind="web_search", query="test", max_results=5, backend="duckduckgo")
+    # Backend will fail (no real network), but the PermissionError must NOT fire.
+    result = asyncio.run(handle_web_search(op, ctx, caller="control_ir"))
+    # Permission passed — result is either ok or an error from the backend.
+    assert result.get("kind") == "web_search"
+    assert "status" in result

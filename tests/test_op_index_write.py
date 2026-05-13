@@ -66,12 +66,12 @@ def _write_jsonl(path: Path, chunks: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_inline_write_roundtrip(tmp_path: Path) -> None:
+async def test_inline_write_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: Form A inline chunks write to backend and return written count."""
     monkeypatch_cwd = tmp_path
     import os
     orig = os.getcwd()
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
     try:
         ctx = _make_ctx(tmp_path)
         chunks = [
@@ -100,10 +100,10 @@ async def test_inline_write_roundtrip(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_artifact_form_write(tmp_path: Path) -> None:
+async def test_artifact_form_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: Form B artifact reference reads JSONL and writes to backend."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     chunks = [
@@ -127,10 +127,10 @@ async def test_artifact_form_write(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_dedup_by_content_hash(tmp_path: Path) -> None:
+async def test_dedup_by_content_hash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: writing the same content_hash twice skips the second insert."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     chunk = _inline_chunk("duplicate", [1.0, 0.0], "dup-hash")
@@ -150,10 +150,10 @@ async def test_dedup_by_content_hash(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_replace_mode_clears_existing(tmp_path: Path) -> None:
+async def test_replace_mode_clears_existing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: mode='replace' removes old chunks before writing new ones."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     chunk_a = _inline_chunk("old content", [1.0, 0.0, 0.0], "hash-old")
@@ -183,10 +183,10 @@ async def test_replace_mode_clears_existing(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_artifact_returns_error(tmp_path: Path) -> None:
+async def test_missing_artifact_returns_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: Form B with non-existent input_artifact returns error status."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     op = IndexWriteIROp(

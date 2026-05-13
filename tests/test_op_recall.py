@@ -89,7 +89,7 @@ async def test_recall_happy_path_returns_chunks(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "src1", [
         _chunk("relevant result", [1.0, 0.0, 0.0], "r1"),
@@ -120,7 +120,7 @@ async def test_recall_empty_sources_returns_fallback(tmp_path: Path, monkeypatch
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     op = RecallIROp(
@@ -145,7 +145,7 @@ async def test_recall_merges_multiple_sources(tmp_path: Path, monkeypatch: pytes
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "src1", [_chunk("from source 1", [1.0, 0.0, 0.0], "s1c1")])
     await _seed(tmp_path, "src2", [_chunk("from source 2", [1.0, 0.0, 0.0], "s2c1")])
@@ -174,7 +174,7 @@ async def test_recall_top_k_limits_merged_results(tmp_path: Path, monkeypatch: p
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     chunks1 = [_chunk(f"a{i}", [1.0, 0.0, 0.0], f"a{i}") for i in range(5)]
     chunks2 = [_chunk(f"b{i}", [1.0, 0.0, 0.0], f"b{i}") for i in range(5)]
@@ -203,7 +203,7 @@ async def test_recall_mode_all_semantic(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setattr(_embed_mod, "get_provider", lambda *a, **kw: fake)
 
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     await _seed(tmp_path, "s1", [_chunk("chunk", [1.0, 0.0, 0.0], "c1")])
 

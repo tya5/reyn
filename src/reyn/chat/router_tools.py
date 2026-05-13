@@ -159,7 +159,7 @@ def build_tools(
     *,
     file_permissions: dict | None = None,  # {"read": [paths], "write": [paths]}
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
-    web_fetch_allowed: bool = False,        # operator opt-in (data-exfiltration risk)
+    web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -198,6 +198,10 @@ def build_tools(
         Optional list of MCP server dicts (each with ``name`` and
         ``description``). None or [] → MCP tools omitted. Otherwise all 3
         MCP tools (D1–D3) are included.
+    web_fetch_allowed:
+        Kept for backward compatibility. FP-0022: web_fetch is now always
+        included in the catalog; approval is handled at the handler level
+        via the 4-layer PermissionResolver._approve() flow.
     """
     # RETRO-H1+H2 fix: dynamic enum injection for invoke_skill.name and
     # delegate_to_agent.to closes the schema-level hallucination gap (P4
@@ -448,18 +452,21 @@ def build_tools(
             parameters=_ws_rendered["function"]["parameters"],
         ))
 
-    # ── E2: web_fetch (operator opt-in via web.fetch: allow) ──────────────────
+    # ── E2: web_fetch (FP-0022: always in catalog; approval at handler level) ────
     # ADR-0026 M3 Wave 1: rendered from unified ToolDefinition.
-    if web_fetch_allowed:
-        _wf = _registry.lookup("web_fetch")
-        if _wf is not None and _wf.gates.router == "allow":
-            _wf_rendered = _wf.render_for_router()
-            specs.append(ToolSpec(
-                name=_wf_rendered["function"]["name"],
-                description=_wf_rendered["function"]["description"],
-                parameters=_wf_rendered["function"]["parameters"],
-                dispatch_kind=_wf.dispatch_kind,
-            ))
+    # FP-0022: removed catalog-level gate (was `if web_fetch_allowed`). The
+    # `web_fetch_allowed` parameter is kept for backward compat but ignored.
+    # Authorization is now enforced by handle_web_fetch() via the standard
+    # 4-layer PermissionResolver._approve() flow.
+    _wf = _registry.lookup("web_fetch")
+    if _wf is not None and _wf.gates.router == "allow":
+        _wf_rendered = _wf.render_for_router()
+        specs.append(ToolSpec(
+            name=_wf_rendered["function"]["name"],
+            description=_wf_rendered["function"]["description"],
+            parameters=_wf_rendered["function"]["parameters"],
+            dispatch_kind=_wf.dispatch_kind,
+        ))
 
     # ── G. Plan tool (always present) ────────────────────────────────────────
     #

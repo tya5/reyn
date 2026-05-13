@@ -35,6 +35,9 @@ EXPECTED_TOOL_NAMES = [
     "forget_memory",
     # web_search is always exposed (E1) — read-only public search.
     "web_search",
+    # web_fetch is always exposed (E2) — FP-0022: catalog-level gate removed;
+    # authorization now at handler level via PermissionResolver._approve().
+    "web_fetch",
     # plan (G1) — always exposed; LLM opts in for complex queries.
     "plan",
     # reyn_src_* are always exposed (F1, F2) — they read Reyn's own
@@ -90,15 +93,16 @@ MCP_TOOL_NAMES = {"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"}
 SAMPLE_MCP_SERVERS = [{"name": "fs", "description": "Filesystem MCP server"}]
 
 
-def test_build_tools_returns_17_tools_when_no_extras():
-    """No file / MCP / web_fetch extras: 11 baseline + web_search (E1,
-    always on) + reyn_src_list + reyn_src_read (F1/F2, always on) +
-    plan (G1, always on) + recall + drop_source (H1/H2, always on).
-    All file-class tools and MCP / web_fetch remain gated, so 17 total
-    at the unconfigured baseline (B17-S6-1 / B17-S8-2 fix adds H1+H2).
+def test_build_tools_returns_18_tools_when_no_extras():
+    """No file / MCP extras: 11 baseline + web_search (E1, always on)
+    + web_fetch (E2, FP-0022: always on, handler-level approval)
+    + reyn_src_list + reyn_src_read (F1/F2, always on)
+    + plan (G1, always on) + recall + drop_source (H1/H2, always on).
+    All file-class tools and MCP remain gated, so 18 total
+    at the unconfigured baseline (FP-0022 adds web_fetch to baseline).
     """
     tools = build_tools(SAMPLE_SKILLS, SAMPLE_AGENTS)
-    assert len(tools) == 17, f"Expected 17 tools, got {len(tools)}"
+    assert len(tools) == 18, f"Expected 18 tools, got {len(tools)}"
 
 
 def test_tool_order_is_deterministic():
@@ -263,10 +267,12 @@ def test_mcp_tools_present_when_servers_configured():
 
 
 def test_total_tool_count_with_full_permissions():
-    """Full file + MCP + web permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 + 3 MCP D1-D3 + 2 reyn_src F1-F2 + 1 plan G1
-    + 2 RAG H1-H2 (recall + drop_source) = 25 tools total
-    (B17-S6-1 / B17-S8-2 fix adds H1+H2)."""
+    """Full file + MCP permissions → 11 baseline + 4 file C1-C4
+    + 2 web E1+E2 (both always on since FP-0022) + 3 MCP D1-D3
+    + 2 reyn_src F1-F2 + 1 plan G1
+    + 2 RAG H1-H2 (recall + drop_source) = 25 tools total.
+    web_fetch_allowed param is kept for backward compat but now a no-op.
+    """
     tools = build_tools(
         SAMPLE_SKILLS,
         SAMPLE_AGENTS,

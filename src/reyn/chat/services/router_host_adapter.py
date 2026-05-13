@@ -233,19 +233,15 @@ class RouterHostAdapter:
         return self._get_mcp_servers_for_router()
 
     def get_web_fetch_allowed(self) -> bool:
-        """True iff ``web.fetch: allow`` is in the operator's permissions config.
+        """Always returns True — FP-0022: web_fetch is now always in the catalog.
 
-        Gates the web_fetch tool — arbitrary URL fetches are a
-        data-exfiltration vector (router_tools.py:E2).
+        The catalog-level gate has been removed; authorization is enforced at the
+        handler level via PermissionResolver.require_web_fetch() (4-layer approval:
+        config / approvals.yaml / session / interactive).
+
+        Method kept for backward compatibility with RouterLoopHost protocol.
         """
-        if self._perm is None:
-            return False
-        config = self._perm._config or {}
-        web_block = config.get("web") if isinstance(config.get("web"), dict) else {}
-        return (
-            config.get("web.fetch") == "allow"
-            or (web_block.get("fetch") == "allow")
-        )
+        return True
 
     def get_project_context(self) -> str:
         """Project context text (REYN.md / ``project_context_path``).
@@ -274,7 +270,8 @@ class RouterHostAdapter:
     async def web_fetch(self, *, url: str, max_length: int) -> dict:
         """Dispatch the OS-native web/fetch op from the router.
 
-        Gated by ``get_web_fetch_allowed()`` at catalog-build time.
+        FP-0022: authorization is now enforced at the handler level via
+        PermissionResolver.require_web_fetch() inside handle_web_fetch().
         """
         from reyn.op_runtime.web import handle_web_fetch
         from reyn.schemas.models import WebFetchIROp

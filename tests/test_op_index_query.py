@@ -66,10 +66,10 @@ async def _seed_source(workspace_root: Path, source: str, chunks: list[ChunkReco
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_semantic_query_returns_chunks(tmp_path: Path) -> None:
+async def test_semantic_query_returns_chunks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query with a vector returns top-K chunks in semantic mode."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     await _seed_source(tmp_path, "src1", [
         _make_chunk("hello", [1.0, 0.0, 0.0], "h1"),
@@ -93,10 +93,10 @@ async def test_semantic_query_returns_chunks(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_query_empty_source_returns_fallback(tmp_path: Path) -> None:
+async def test_query_empty_source_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: querying a source with no chunks returns mode='fallback'."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     ctx = _make_ctx(tmp_path)
     op = IndexQueryIROp(
@@ -114,10 +114,10 @@ async def test_query_empty_source_returns_fallback(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_null_query_vector_returns_fallback(tmp_path: Path) -> None:
+async def test_null_query_vector_returns_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: query_vector=None triggers fallback enumerate path (phase 1 = empty)."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     await _seed_source(tmp_path, "src1", [
         _make_chunk("some content", [1.0, 0.0], "hx"),
@@ -138,10 +138,10 @@ async def test_null_query_vector_returns_fallback(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_top_k_limits_results(tmp_path: Path) -> None:
+async def test_top_k_limits_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: top_k parameter limits number of returned chunks."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     chunks = [
         _make_chunk(f"chunk {i}", [float(i), 0.0, 0.0], f"h{i}")
@@ -164,10 +164,10 @@ async def test_top_k_limits_results(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_filters_narrow_results(tmp_path: Path) -> None:
+async def test_filters_narrow_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Tier 2: filters narrow results to chunks matching the filter field."""
     import os
-    os.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
 
     # Two chunks with different source_type
     backend = SqliteIndexBackend(workspace_root=tmp_path)
