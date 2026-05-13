@@ -45,6 +45,27 @@ run_id    — 実行の uuid
 
 安定した形状により、コンシューマーごとのカスタムパーサーなしにログをマシン読み取り可能にします。
 
+### 監査フィールド付き event (FP-0021)
+
+FP-0021 が着地しました。8 種類の event に対して、`data` dict に特定の監査フィールドが
+必須となりました。権威ある registry は `src/reyn/events/event_schema.py`
+（`EVENT_AUDIT_REQUIREMENTS`）にあります。Tier 2 不変条件テスト
+（`tests/test_event_audit_invariants.py`）が CI の各実行で各 event 種に宣言済みの
+フィールドが含まれていることを検証します。
+
+| Event 種                        | 必須フィールド                          |
+|---------------------------------|-----------------------------------------|
+| `workflow_started`              | `run_id`、`skill`                       |
+| `workflow_finished`             | `run_id`、`skill`                       |
+| `llm_called`                    | `run_id`、`skill`                       |
+| `llm_response_received`         | `run_id`、`skill`                       |
+| `permission_granted`            | `run_id`、`skill`、`phase`              |
+| `permission_denied`             | `run_id`、`skill`、`phase`              |
+| `user_intervention_requested`   | `run_id`、`skill`、`intervention_id`   |
+| `user_intervention_received`    | `run_id`、`skill`、`intervention_id`   |
+
+enforcement はテスト時のみ（`emit()` ランタイムではなし）で、本番オーバーヘッドをゼロに保ちます。
+
 ## event ではないもの
 
 - **アプリケーションログではありません。** Skill の作成者は自由形式の event を発行すべきではありません。セットは OS が定義します。

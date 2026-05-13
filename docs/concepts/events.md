@@ -51,7 +51,29 @@ phase     — current phase at emission time
 
 Note: `run_id` and `skill` are present on lifecycle events (`workflow_started`,
 `workflow_finished`, `llm_called`, etc.) but absent from some events emitted outside
-a run context (e.g. `chat_started`). FP-0021 tracks the remaining gaps.
+a run context (e.g. `chat_started`).
+
+### Events with audit fields (FP-0021)
+
+FP-0021 has landed.  Eight event kinds are now required to carry specific
+audit fields in their `data` dict.  The authoritative registry lives in
+`src/reyn/events/event_schema.py` (`EVENT_AUDIT_REQUIREMENTS`).  A Tier 2
+invariant test (`tests/test_event_audit_invariants.py`) verifies that each
+event kind carries its declared fields on every CI run.
+
+| Event kind                      | Required fields                         |
+|---------------------------------|-----------------------------------------|
+| `workflow_started`              | `run_id`, `skill`                       |
+| `workflow_finished`             | `run_id`, `skill`                       |
+| `llm_called`                    | `run_id`, `skill`                       |
+| `llm_response_received`         | `run_id`, `skill`                       |
+| `permission_granted`            | `run_id`, `skill`, `phase`              |
+| `permission_denied`             | `run_id`, `skill`, `phase`              |
+| `user_intervention_requested`   | `run_id`, `skill`, `intervention_id`   |
+| `user_intervention_received`    | `run_id`, `skill`, `intervention_id`   |
+
+Enforcement is test-time only (not at `emit()` runtime) to keep
+production overhead zero.
 
 Stable shape makes the log machine-readable without a custom parser per consumer.
 
