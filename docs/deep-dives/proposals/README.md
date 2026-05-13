@@ -87,3 +87,4 @@ Links to related ADRs, PRs, and docs.
 | [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | partially-landed Wave 1 (Compaction+SkillRunner, 2026-05-13/14, `6620505`/`9ae66fa`); Waves 2/3 proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
 | [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |
+| [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | proposed | SMALL |

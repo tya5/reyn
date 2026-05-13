@@ -87,3 +87,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | partially-landed Wave 1 (Compaction+SkillRunner, 2026-05-13/14, `6620505`/`9ae66fa`); Wave 2/3 proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
 | [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |
+| [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | proposed | SMALL |
