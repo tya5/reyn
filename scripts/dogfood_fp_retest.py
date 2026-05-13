@@ -44,19 +44,30 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 
 from spike_lib.events import (  # noqa: E402
-    count_flash_requests, count_llm_calls, extract_final_output,
-    read_events_since, save_run_events,
+    count_flash_requests,
+    count_llm_calls,
+    extract_final_output,
+    read_events_since,
+    save_run_events,
 )
 from spike_lib.http import build_message_send, extract_reply, post_json  # noqa: E402
 from spike_lib.state import (  # noqa: E402
-    RPD_ESTIMATED_PER_RUN, RPD_HARD_CAP,
-    append_run, load_completed_runs, load_rpd_state, save_rpd_state,
+    RPD_ESTIMATED_PER_RUN,
+    RPD_HARD_CAP,
+    append_run,
+    load_completed_runs,
+    load_rpd_state,
+    save_rpd_state,
 )
 from spike_lib.worktree import (  # noqa: E402
-    ensure_worktree, remove_model_override, start_web_server,
-    stop_web_server, wait_for_server, worktree_path, write_model_override,
+    ensure_worktree,
+    remove_model_override,
+    start_web_server,
+    stop_web_server,
+    wait_for_server,
+    worktree_path,
+    write_model_override,
 )
-
 
 # ── Constants ────────────────────────────────────────────────────────────────
 

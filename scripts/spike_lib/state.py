@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
 # ── RPD state ────────────────────────────────────────────────────────────────
 
 RPD_HARD_CAP = 8_000        # flash requests/day ceiling

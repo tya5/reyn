@@ -78,8 +78,8 @@ def _check1_proxy_reachability() -> None:
     """
     label = "Check 1 — strong-tier proxy reachable (pong)"
     try:
-        import urllib.request
         import urllib.error
+        import urllib.request
 
         api_key = os.environ.get("OPENAI_API_KEY", "dummy")
         # Do NOT pass thinkingConfig — it causes 400 on this proxy setup.
@@ -491,11 +491,11 @@ def main() -> None:
 
     print()
     if overall == "PASS":
-        print(_green(f"Status: PASS — all checks passed. Ready to run spike."))
+        print(_green("Status: PASS — all checks passed. Ready to run spike."))
     elif overall == "WARN":
-        print(_yellow(f"Status: WARN — fix issue(s) above before running spike, then re-run preflight."))
+        print(_yellow("Status: WARN — fix issue(s) above before running spike, then re-run preflight."))
     else:
-        print(_red(f"Status: FAIL — spike blocked. Fix failure(s) above first."))
+        print(_red("Status: FAIL — spike blocked. Fix failure(s) above first."))
     print()
 
     sys.exit(0 if overall in ("PASS", "WARN") else 1)

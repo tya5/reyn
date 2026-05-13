@@ -432,7 +432,7 @@ def run_spike(
 
                     # Per-run RPD check
                     if is_flash and rpd.get("total_flash_requests", 0) + RPD_ESTIMATED_PER_RUN > RPD_HARD_CAP:
-                        print(f"\n[RPD] Budget reached mid-matrix. Stopping.", flush=True)
+                        print("\n[RPD] Budget reached mid-matrix. Stopping.", flush=True)
                         stop_web_server(server)
                         sys.exit(0)
 

@@ -271,7 +271,7 @@ def clean_agent_state(agent_dir: Path) -> None:
     h = agent_dir / "history.jsonl"
     if h.exists():
         h.unlink()
-    print(f"  [clean] agent state cleaned for fresh run")
+    print("  [clean] agent state cleaned for fresh run")
 
 
 def run_chat_session(agent_dir: Path, run_id: int, prompt: str) -> dict:
@@ -493,7 +493,7 @@ def main():
         recall_total = sum(1 for r in runs if r["recall_invoked"])
         memory_used_total = sum(1 for r in runs if r["reply_references_memory"])
 
-        print(f"\n=== RESULTS ===")
+        print("\n=== RESULTS ===")
         print(f"verdict: {verdict}")
         print(f"reason: {reason}")
         print(f"recall invoked: {recall_total}/{len(runs)}")

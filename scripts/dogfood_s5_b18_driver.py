@@ -33,9 +33,9 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 sys.path.insert(0, str(WORKTREE / "src"))
 
 from dogfood_rag_helper import (
+    make_chunks_for_seed,
     register_fake_embedding_provider,
     write_index_directly,
-    make_chunks_for_seed,
 )
 
 SEED_TEXTS = [

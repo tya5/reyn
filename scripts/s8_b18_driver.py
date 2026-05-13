@@ -35,9 +35,9 @@ sys.path.insert(0, str(MAIN_SANDBOX / "src"))
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 from dogfood_rag_helper import (  # noqa: E402
+    make_chunks_for_seed,
     register_fake_embedding_provider,
     write_index_directly,
-    make_chunks_for_seed,
 )
 
 WEB_URL = "http://localhost:8080"
@@ -464,7 +464,7 @@ async def main():
         run_result = await run_one(i, workspace, n)
         runs.append(run_result)
         if i < n:
-            print(f"\n[pause 3s between runs]", flush=True)
+            print("\n[pause 3s between runs]", flush=True)
             time.sleep(3.0)
 
     verdicts = [r["verdict"] for r in runs]

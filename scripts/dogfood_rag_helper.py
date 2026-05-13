@@ -103,7 +103,7 @@ def write_dogfood_reyn_yaml(workspace: Path, embedding_provider: str = "fake") -
     but the config's `embedding.provider` key (if used) directs the op handler to it.
     Also forces small `cost_warn_threshold` for S9.
     """
-    yaml_content = f"""# Dogfood batch 17 — fake embedding provider
+    yaml_content = """# Dogfood batch 17 — fake embedding provider
 model: standard
 models:
   light: openai/gemini-2.5-flash-lite
@@ -144,8 +144,9 @@ async def write_index_directly(
     full skill (= LLM cost + non-determinism). Returns chunk count written.
     """
     from datetime import datetime, timezone
+
     from reyn.index import SqliteIndexBackend
-    from reyn.index.source_manifest import get_source_manifest, SourceEntry
+    from reyn.index.source_manifest import SourceEntry, get_source_manifest
 
     backend = SqliteIndexBackend(workspace)
     write_result = await backend.write(source, iter(chunks_data), mode="replace")
