@@ -1,6 +1,6 @@
 # FP-0021: イベントログ監査完全性 — 欠落している run_id とアクターコンテキストの追加
 
-**Status**: proposed
+**Status**: **done** — LANDED 2026-05-13、 6-commit chain `c6f4218`..`a03bcfc`: OpContext.run_id field + 7 events `run_id`/`skill` 追加 + 新 `permission_granted` event + `intervention_id` 相関 + EVENT_AUDIT_REQUIREMENTS registry + Tier 2 invariant test
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 

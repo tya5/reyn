@@ -1,6 +1,7 @@
 # FP-0011: `skill_narrator` 廃止 — スキル結果の narrate をルーターに委ねる
 
-**Status**: proposed
+**Status**: **LANDED 2026-05-10** (= commit `59c991a`、 A+B+C+D+E + Component B
+anti-optimism 強化)。 Follow-up: N≥10 flash-strong-tier retest で 1/6 hallucination が ~0 まで下がるか確認。
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 

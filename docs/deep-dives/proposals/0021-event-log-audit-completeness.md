@@ -1,6 +1,6 @@
 # FP-0021: Event Log Audit Completeness — Adding run_id and actor context to missing events
 
-**Status**: proposed
+**Status**: **done** — LANDED 2026-05-13 via 6-commit chain `c6f4218`..`a03bcfc`: OpContext.run_id field + 7 events `run_id`/`skill` enrichment + new `permission_granted` event + `intervention_id` correlation + EVENT_AUDIT_REQUIREMENTS registry + Tier 2 invariant test
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 

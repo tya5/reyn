@@ -68,22 +68,22 @@ Links to related ADRs, PRs, and docs.
 |---|---|---|---|
 | [0001](0001-a2a-task-lifecycle.md) | A2A task lifecycle — ask_user / push notification support | proposed | MEDIUM |
 | [0002](0002-index-docs-recall-docs.md) | index_docs / recall_docs — unified document retrieval skill | done (ADR-0033 Accepted, 1e6f153) | LARGE |
-| [0003](0003-budget-exceed-user-approval.md) | User approval and resume flow on budget exceed | proposed | SMALL |
-| [0004](0004-safety-config-ux.md) | safety config UX improvements — alignment with conceptual layer | proposed | MEDIUM |
-| [0005](0005-safety-as-checkpoint.md) | Treat safety limits as checkpoints — integration with Permission model | proposed | LARGE |
+| [0003](0003-budget-exceed-user-approval.md) | User approval and resume flow on budget exceed | done (landed 2026-05-10, commit `2ec46c0`) | SMALL |
+| [0004](0004-safety-config-ux.md) | safety config UX improvements — alignment with conceptual layer | done (landed 2026-05-10) | MEDIUM |
+| [0005](0005-safety-as-checkpoint.md) | Treat safety limits as checkpoints — integration with Permission model | done (Phase 1+2 landed) | LARGE |
 | [0006](0006-skill-self-improvement.md) | Skill self-improvement — execution-trace-driven + versioning + rollback | proposed | MEDIUM |
 | [0007](0007-evaluation-infrastructure.md) | Agent evaluation infrastructure — P6 trace export + skill regression evaluation | proposed | LARGE |
 | [0008](0008-swe-bench-integration.md) | SWE-bench participation infrastructure — stdlib skill + batch execution | proposed | LARGE |
 | [0009](0009-operational-intelligence.md) | Operational Intelligence — RAG indexing of event logs | proposed | MEDIUM |
 | [0010](0010-rag-routing.md) | RAG routing — semantic pre-filter for skill catalog + routing history | proposed | MEDIUM |
-| [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | proposed | SMALL |
+| [0011](0011-remove-narrator.md) | Remove `skill_narrator` — let the router LLM narrate skill results | done (LANDED 2026-05-10, commit `59c991a`) | SMALL |
 | [0012](0012-async-skill-execution.md) | Async skill/agent/plan execution — non-blocking long-running tasks | done (LANDED 2026-05-10, commit `c9e79d6`) | LARGE |
 | [0013](0013-unified-inbox-outbox-transport.md) | Unified inbox/outbox transport abstraction — collapse CUI vs MCP/A2A skew | accepted (ADR-A green-light 2026-05-11) | LARGE |
-| [0014](0014-python-step-api-package.md) | Python step API package + rename modes (pure→safe, trusted→unsafe) | partial-landed 2026-05-11 (A–F + ADR-G Phase 1; commits `5b435e1`/`b405975`/`527e11f`) | MEDIUM |
+| [0014](0014-python-step-api-package.md) | Python step API package + rename modes (pure→safe, trusted→unsafe) | partial-landed 2026-05-11/13 (A–F + ADR-G Phase 1 + Class B partial; commits `5b435e1`/`b405975`/`527e11f`/`c4b281a`) | MEDIUM |
 | [0015](0015-fine-grained-python-step-audit.md) | Fine-grained per-call Python step audit (bidirectional RPC) | deferred (= awaiting enterprise audit requirement) | MEDIUM |
 | [0016](0016-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | Component A landed 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | Components A+D landed 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.md) | Event Store backend abstraction — JSONL / SQLite / DuckDB (priority: LOW) | proposed | MEDIUM |
-| [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | proposed | MEDIUM |
-| [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | proposed | MEDIUM |
-| [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | proposed | SMALL |
+| [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | partially-landed Wave 1 (Compaction+SkillRunner, 2026-05-13/14, `6620505`/`9ae66fa`); Waves 2/3 proposed | MEDIUM |
+| [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
+| [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |

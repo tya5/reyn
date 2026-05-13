@@ -1,6 +1,6 @@
 # FP-0020: OSRuntime Layer Decomposition — Splitting runtime.py into Vertical Layers
 
-**Status**: partially-landed — Components A/B/C complete (RunState + LLMCallRecorder + PhaseExecutor extracted, 2026-05-13/14); Component D (RunOrchestrator) remains proposed
+**Status**: **done** — All 4 components LANDED 2026-05-13/14: RunState (`1dac280`) + LLMCallRecorder (`5628993`) + PhaseExecutor (`7e51216`) + RunOrchestrator (`929d81f`). runtime.py 1882 → 507 LoC (-73%); 6 new kernel modules: run_state / rollback_state / runtime_types / llm_call_recorder / phase_executor / run_orchestrator
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
