@@ -2,7 +2,7 @@
 
 **Branch**: `claude/eager-shaw-389d9d`
 **Rebased onto**: main `19b628e`
-**Commits ahead of main**: 3（docs のみ）
+**Commits ahead of main**: 5（docs のみ）
 
 ---
 
