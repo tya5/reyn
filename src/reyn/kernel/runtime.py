@@ -330,6 +330,7 @@ class OSRuntime:
             state_log=state_log,
             skill_run_id=run_id,
             resume_plan=resume_plan,
+            run_id=run_id,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
@@ -343,6 +344,7 @@ class OSRuntime:
             intervention_bus=intervention_bus,
             python_allowed_modules=python_allowed_modules,
             caller=caller,
+            run_id=run_id,
         )
         self._history: list[str] = []
         self._visit_counts: dict[str, int] = {}

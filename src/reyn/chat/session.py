@@ -3317,6 +3317,7 @@ class ChatSession:
             permission_resolver=self._perm,
             skill_name="chat_router",
             mcp_servers=self._mcp_servers_flat(),
+            run_id=None,  # FP-0021: chat router is outside run scope
         )
 
     async def _file_op(self, op_dict: dict) -> dict:

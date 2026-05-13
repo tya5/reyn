@@ -84,6 +84,7 @@ class ControlIRExecutor:
         state_log: Any = None,
         skill_run_id: str | None = None,
         resume_plan: Any = None,
+        run_id: str | None = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -97,6 +98,9 @@ class ControlIRExecutor:
         self._mcp_clients: dict = {}  # cached across ops
         self._caller = caller
         self._chain_id = chain_id
+        # FP-0021: run_id of the currently-executing OSRuntime run.
+        # Propagated into OpContext so event helpers can stamp run scope.
+        self._run_id = run_id
         # PR-skill-resume part A: WAL plumbing for step-event emission.
         # When ``state_log`` and ``skill_run_id`` are wired, ``execute()``
         # threads them into DispatchContext so dispatch_tool emits
@@ -251,6 +255,9 @@ class ControlIRExecutor:
             # ``run_skill`` invocations can stamp ``parent_run_id`` on
             # the child skill's snapshot.
             parent_skill_run_id=self._skill_run_id,
+            # FP-0021: thread the OSRuntime run_id into every OpContext
+            # so event emit helpers can stamp the correct run scope.
+            run_id=self._run_id,
         )
 
     async def teardown_mcp_clients(self) -> None:

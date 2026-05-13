@@ -106,6 +106,7 @@ class PreprocessorExecutor:
         python_runner: PythonRunner | None = None,
         python_allowed_modules: list[str] | None = None,
         caller: str = "direct",
+        run_id: str | None = None,
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -119,6 +120,9 @@ class PreprocessorExecutor:
         self._python_runner = python_runner or PythonRunner()
         self._python_allowed_modules = list(python_allowed_modules or [])
         self._caller = caller
+        # FP-0021: run_id of the currently-executing OSRuntime run.
+        # Propagated into OpContext so event emit helpers can stamp run scope.
+        self._run_id = run_id
 
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
@@ -145,6 +149,9 @@ class PreprocessorExecutor:
             intervention_bus=None,  # ask_user is forbidden in preprocessor
             current_phase=phase.name,
             caller=self._caller,
+            # FP-0021: thread the OSRuntime run_id into every OpContext
+            # so event emit helpers can stamp the correct run scope.
+            run_id=self._run_id,
         )
 
     async def run(

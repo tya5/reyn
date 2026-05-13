@@ -72,3 +72,10 @@ class OpContext:
     # "no parent visible" (e.g. preprocessor-spawned sub-skills, or
     # OSRuntime invocations that don't track a run_id).
     parent_skill_run_id: str | None = None
+
+    # FP-0021: the run_id of the currently-executing OSRuntime run.
+    # Threaded from OSRuntime → ControlIRExecutor / PreprocessorExecutor →
+    # OpContext so event emit helpers can stamp every event with the correct
+    # run scope. None when the OpContext is created outside a run scope
+    # (e.g. chat router, CLI commands).
+    run_id: str | None = None
