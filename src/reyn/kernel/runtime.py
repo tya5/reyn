@@ -29,14 +29,22 @@ from reyn.kernel.normalizer import (
     NormalizationResult,
     normalize,
 )
+from reyn.kernel.phase_executor import PhaseExecutor
 from reyn.kernel.postprocessor_executor import PostprocessorExecutor
 from reyn.kernel.preprocessor_executor import PreprocessorExecutor
+from reyn.kernel.runtime_types import (
+    LoopLimitExceededError,
+    PhaseBudgetExceededError,
+    RunResult,
+    WorkflowAbortedError,
+    _normalize_artifact,
+    _validate_artifact_structure,
+)
 from reyn.kernel.validation import ValidationError, validate_output
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.permissions.permissions import PermissionResolver
 from reyn.safety.limit_handler import (
-    LimitDecision,
     handle_limit_exceeded,
     reset_run_extensions,
 )
@@ -45,98 +53,12 @@ from reyn.user_intervention import InterventionBus
 from reyn.workspace.artifact_validator import validate_artifact_data
 from reyn.workspace.workspace import Workspace
 
-
-class LoopLimitExceededError(Exception):
-    """Raised when a phase is entered more than ``safety.loop.max_phase_visits``
-    times in one skill run.
-
-    FP-0004: ``hint_config_key`` carries the user-facing config key the
-    operator should raise to allow the run to continue. Callers building
-    user-visible messages should append ``f"→ Raise {exc.hint_config_key}
-    to allow more iterations."``.
-    """
-
-    hint_config_key: str = "safety.loop.max_phase_visits"
-
-
-class PhaseBudgetExceededError(Exception):
-    """Raised when a phase exceeds its wall-clock budget
-    (``safety.timeout.phase_seconds`` / legacy ``limits.phase.max_wall_seconds``).
-
-    ``hint_config_key`` (FP-0004) names the config knob the operator
-    should adjust to allow longer phase wall-clock budgets.
-    """
-
-    hint_config_key: str = "safety.timeout.phase_seconds"
-
-    def __init__(self, phase: str, elapsed: float, budget: float) -> None:
-        super().__init__(
-            f"Phase '{phase}' exceeded wall-clock budget: {elapsed:.2f}s > {budget:.3g}s. "
-            f"→ Raise {PhaseBudgetExceededError.hint_config_key} to allow longer phase runs."
-        )
-        self.phase = phase
-        self.elapsed = elapsed
-        self.budget = budget
-
-
-class WorkflowAbortedError(Exception):
-    pass
-
-
-@dataclass
-class RunResult:
-    """Typed return value of OSRuntime.run() and Agent.run().
-
-    FP-0005: ``partial_data`` carries the last completed phase's
-    artifact (= "what we have so far") when a safety limit aborts the
-    run mid-flight. ``data`` is populated only on a clean ``finished``
-    status; ``partial_data`` is populated on any non-``finished``
-    status where a phase had completed before the abort. Callers
-    rendering a stop reason (TUI / `/list` / chat reply) should fall
-    back to ``partial_data`` when ``ok`` is False.
-    """
-    data: dict[str, Any]
-    status: Literal["finished", "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded"]
-    token_usage: TokenUsage | None = None
-    cost_usd: float | None = None
-    error: str | None = None
-    # FP-0005: last completed phase artifact preserved on abort.
-    partial_data: dict[str, Any] | None = None
-
-    @property
-    def ok(self) -> bool:
-        return self.status == "finished"
-
-
-def _normalize_artifact(artifact: dict, expected_type: str | None) -> dict:
-    _META = frozenset({
-        "type", "next_phase", "status", "ops",
-        "reason", "confidence", "final_output", "control",
-    })
-    if isinstance(artifact.get("data"), dict):
-        cleaned_data = {k: v for k, v in artifact["data"].items() if k != "type"}
-        return {**artifact, "data": cleaned_data}
-    t = artifact.get("type")
-    if t is None and expected_type and "|" not in expected_type:
-        t = expected_type
-    data = {k: v for k, v in artifact.items() if k not in _META}
-    return {"type": t, "data": data}
-
-
+# LoopLimitExceededError / PhaseBudgetExceededError / WorkflowAbortedError /
+# RunResult / _normalize_artifact / _validate_artifact_structure moved to
+# reyn.kernel.runtime_types (FP-0020 Component C follow-up — break circular
+# imports between runtime.py and phase_executor.py). Re-exported above via
+# `from reyn.kernel.runtime_types import (...)` for backward compatibility.
 # RollbackState moved to reyn.kernel.rollback_state (FP-0020 Component A).
-# The name is re-exported at the top of this module for backward compatibility.
-
-
-def _validate_artifact_structure(artifact: dict, context: str) -> None:
-    if "type" not in artifact:
-        raise ValueError(f"[{context}] artifact is missing 'type' field")
-    if "data" not in artifact:
-        raise ValueError(f"[{context}] artifact is missing 'data' field")
-    if not isinstance(artifact["data"], dict):
-        raise ValueError(
-            f"[{context}] artifact['data'] must be a dict, "
-            f"got {type(artifact['data']).__name__}"
-        )
 
 
 class OSRuntime:
@@ -266,6 +188,20 @@ class OSRuntime:
             agent_role=agent_role,
             resume_plan=resume_plan,
         )
+        # FP-0020 Component C: act/decide loops + phase-budget check extracted to
+        # PhaseExecutor. build_frame is passed as a callable to avoid pulling the
+        # full OSRuntime dependency tree into phase_executor.py.
+        self._phase_executor = PhaseExecutor(
+            llm_caller=self._llm_caller,
+            control_ir_executor=self.control_ir_executor,
+            events=self.events,
+            skill=skill,
+            safety=_safety,
+            intervention_bus=intervention_bus,
+            run_id=run_id,
+            strict=strict,
+            build_frame_fn=self.build_frame,
+        )
 
     # ── Backward-compat properties (FP-0020 Component A) ───────────────────
     # Tests and subclasses that accessed the old private fields directly
@@ -368,45 +304,6 @@ class OSRuntime:
             "phase_started", phase=phase_name,
             visit_count=new_count, input_artifact_type=artifact.get("type"),
         )
-
-    async def _check_phase_budget(self, phase_name: str) -> None:
-        """Soft wall-clock check. Raises PhaseBudgetExceededError when
-        over budget — unless ``safety.on_limit.mode`` says to ask /
-        auto-extend (FP-0005).
-
-        On approval, the elapsed-time clock is reset so the phase can
-        continue from "now" with a fresh budget. The extension counter
-        is also tracked on the runtime so repeated hits within the same
-        phase can be re-extended.
-        """
-        budget = self._max_phase_wall_seconds
-        if not budget or self._state.phase_started_at is None:
-            return
-        elapsed = self._state.elapsed_phase_seconds()
-        # FP-0005: extensions granted by the helper add to the effective
-        # budget. Each grant is one ``budget`` worth (= "give this
-        # phase another full window").
-        effective_budget = self._state.effective_phase_budget(budget)
-        if elapsed <= effective_budget:
-            return
-        decision = await self._handle_limit_checkpoint(
-            kind="phase_seconds",
-            prompt=(
-                f"Phase {phase_name!r} ran for {elapsed:.1f}s, exceeding "
-                f"the {effective_budget:.1f}s budget. Allow longer?"
-            ),
-            detail=f"phase={phase_name} elapsed={elapsed:.2f} budget={effective_budget:.2f}",
-            extension_amount=float(budget),
-        )
-        if not decision.allow_continue:
-            self.events.emit(
-                "phase_budget_exceeded",
-                phase=phase_name, elapsed=elapsed, budget=effective_budget,
-            )
-            raise PhaseBudgetExceededError(phase_name, elapsed, effective_budget)
-        # Approved — reset the wall-clock timer so the next check
-        # measures from "now" against the freshly-extended budget.
-        self._state.reset_phase_clock()
 
     def _build_candidates(self, current_phase: str) -> list[CandidateOutput]:
         skill = self.skill
@@ -651,15 +548,14 @@ class OSRuntime:
         prior_attempts: list[dict[str, str]] | None,
         rollback_context: dict | None = None,
     ) -> dict:
-        """Shim: phase-budget check then delegate to LLMCallRecorder.
+        """Shim: delegate to LLMCallRecorder.
 
         FP-0020 Component B: the 7 LLM/WAL/budget methods formerly on
         OSRuntime now live in LLMCallRecorder. This thin wrapper preserves
         the call signature so existing callers and tests are unaffected.
-        ``_check_phase_budget`` stays here (Component C will move it to
-        PhaseExecutor).
+        FP-0020 Component C: ``_check_phase_budget`` moved to PhaseExecutor;
+        callers going via self._execute_phase no longer need it here.
         """
-        await self._check_phase_budget(phase)
         return await self._llm_caller.call(
             phase, frame, prior_attempts, rollback_context, self._state,
         )
