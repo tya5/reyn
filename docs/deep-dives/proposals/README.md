@@ -84,3 +84,6 @@ Links to related ADRs, PRs, and docs.
 | [0016](0016-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | Component A landed 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | Components A+D landed 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.md) | Event Store backend abstraction — JSONL / SQLite / DuckDB (priority: LOW) | proposed | MEDIUM |
+| [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | proposed | MEDIUM |
+| [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | proposed | MEDIUM |
+| [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | proposed | SMALL |

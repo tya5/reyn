@@ -36,12 +36,22 @@ The full taxonomy lives in the [events reference](../reference/runtime/events.md
 Every event has a stable envelope:
 
 ```
-ts        — ISO-8601 timestamp
-kind      — event kind (see reference)
-phase     — current phase at emission time
-run_id    — uuid for the run
-... payload fields specific to the kind
+type      — event type (see reference)
+timestamp — ISO-8601 timestamp
+data      — flat dict of payload fields specific to the type
 ```
+
+Key fields present in most events (in `data`):
+
+```
+run_id    — uuid for the run (always present for skill-execution events)
+skill     — skill name (always present for skill-execution events)
+phase     — current phase at emission time
+```
+
+Note: `run_id` and `skill` are present on lifecycle events (`workflow_started`,
+`workflow_finished`, `llm_called`, etc.) but absent from some events emitted outside
+a run context (e.g. `chat_started`). FP-0021 tracks the remaining gaps.
 
 Stable shape makes the log machine-readable without a custom parser per consumer.
 
