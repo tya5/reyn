@@ -1,6 +1,6 @@
 # FP-0022: パーミッション Tier モデル正式化 — 2 軸フレームワークの明文化
 
-**Status**: proposed
+**Status**: **done** — LANDED 2026-05-14 (commit `61dc193`): `require_web_fetch()` + handler-level 4-layer 承認 + `web_search` config-deny path + tier model docs (en+ja)
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 
