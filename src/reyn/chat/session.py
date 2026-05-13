@@ -26,6 +26,7 @@ from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
     BudgetGateway,
     ChainManager,
+    CompactionController,
     InterventionRegistry,
     MemoryService,
     RouterHostAdapter,
@@ -586,8 +587,6 @@ class ChatSession:
         from reyn.config import CompactionConfig
         self._compaction = compaction_config or CompactionConfig()
         self._next_seq = 1
-        self._compacting = False
-        self._compaction_task: asyncio.Task | None = None
 
         # `agents/<name>/` is state-only as of PR20: profile / history /
         # memory / .input_history. Audit log lives under `events/`.
@@ -717,6 +716,25 @@ class ChatSession:
             spawn_plan_task=self.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
+        )
+
+        # FP-0019 Wave 1: background head/body/tail compaction service.
+        # Owns the asyncio.Task lifecycle; session delegates via spawn_maybe()
+        # and cancel().  All callbacks resolve against self at call time.
+        self._compaction_controller = CompactionController(
+            event_log=self._chat_events,
+            config=self._compaction,
+            history_access=lambda: self.history,
+            latest_summary=self._latest_summary,
+            run_compaction_skill=self._run_stdlib_skill,
+            history_appender=self._append_history,
+            make_summary_message=lambda rendered, structured, covers: ChatMessage(
+                role="summary",
+                text=rendered,
+                ts=_now_iso(),
+                meta={"structured": structured, "covers_through_seq": covers},
+            ),
+            render_summary=_render_summary_for_storage,
         )
 
     # ── cost accumulation ───────────────────────────────────────────────────────
@@ -940,12 +958,8 @@ class ChatSession:
         # PR-refactor-session-1 wave 2: cancellation delegated to ChainManager.
         await self._chains.shutdown()
 
-        if self._compaction_task is not None and not self._compaction_task.done():
-            try:
-                await self._compaction_task
-            except Exception as exc:
-                logger.warning("compaction task failed during shutdown: %s", exc)
-                self._chat_events.emit("compaction_failed", error=str(exc), phase="shutdown")
+        # FP-0019 Wave 1: delegated to CompactionController.
+        await self._compaction_controller.cancel()
 
     async def _handle_user_message(self, text: str, *, chain_id: str) -> None:
         # Slash commands (`/list`, `/cancel <id>`, `/answer <id> <text>`) take
@@ -1000,13 +1014,10 @@ class ChatSession:
             ))
             return
 
-        # Fire-and-forget compaction check after the user has the reply.
-        # Reuses self._compacting as a single-flight lock; no await here so
-        # the user's next prompt isn't blocked. _drain_on_shutdown awaits any
-        # in-flight compaction task so a quick /quit after a heavy turn does
-        # not lose the summary.
-        if self._compaction_task is None or self._compaction_task.done():
-            self._compaction_task = asyncio.create_task(self._maybe_compact())
+        # FP-0019 Wave 1: fire-and-forget compaction check after the user has
+        # the reply.  CompactionController owns the single-flight lock and the
+        # background asyncio.Task.  _drain_on_shutdown awaits it via cancel().
+        self._compaction_controller.spawn_maybe()
 
     # ── skill invocation helpers ────────────────────────────────────────────────
 
@@ -1297,147 +1308,16 @@ class ChatSession:
         self._accumulate(result)
         return result
 
-    # ── compaction (Head/Body/Tail) ─────────────────────────────────────────────
-
-    @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        """Cheap chars/4 token estimate. Same heuristic used by other Reyn paths."""
-        return max(1, len(text or "") // 4)
+    # ── compaction helpers (FP-0019 Wave 1) ────────────────────────────────────
+    # Business logic lives in CompactionController.  Session keeps only the
+    # helpers that are still needed as injected callbacks.
 
     def _latest_summary(self) -> ChatMessage | None:
+        """Return the most recent summary message, or None."""
         for m in reversed(self.history):
             if m.role == "summary":
                 return m
         return None
-
-    async def _maybe_compact(self) -> None:
-        """Fold the uncovered middle into a structured summary when token-heavy.
-
-        Trigger: estimated tokens of user/agent turns whose seq is BOTH
-          - > head_size (those are HEAD, never compacted)
-          - > latest_summary.covers_through_seq (already covered)
-          - <= max_seq - tail_size (TAIL is preserved as raw)
-        exceeds compaction.trigger_total_tokens and contains at least
-        `min_compact_batch` turns.
-        """
-        if self._compacting:
-            self._chat_events.emit("compaction_check", outcome="already_running")
-            return
-        cfg = self._compaction
-        turns = [m for m in self.history if m.role in ("user", "agent")]
-        if len(turns) <= cfg.head_size + cfg.tail_size:
-            self._chat_events.emit(
-                "compaction_check", outcome="too_few_turns",
-                turns=len(turns), head=cfg.head_size, tail=cfg.tail_size,
-            )
-            return
-
-        latest = self._latest_summary()
-        prev_cover = (latest.meta or {}).get("covers_through_seq", 0) if latest else 0
-        cover_floor = max(prev_cover, cfg.head_size)
-
-        max_seq = max((t.seq for t in turns), default=0)
-        tail_threshold = max_seq - cfg.tail_size
-        candidates = [t for t in turns if cover_floor < t.seq <= tail_threshold]
-        if len(candidates) < cfg.min_compact_batch:
-            self._chat_events.emit(
-                "compaction_check", outcome="below_min_batch",
-                candidate_count=len(candidates), min_batch=cfg.min_compact_batch,
-            )
-            return
-
-        total_tokens = sum(self._estimate_tokens(t.text) for t in candidates)
-        if total_tokens < cfg.trigger_total_tokens:
-            self._chat_events.emit(
-                "compaction_check", outcome="below_threshold",
-                total_tokens=total_tokens, threshold=cfg.trigger_total_tokens,
-                candidate_count=len(candidates),
-            )
-            return
-        self._chat_events.emit(
-            "compaction_check", outcome="triggering",
-            total_tokens=total_tokens, candidate_count=len(candidates),
-        )
-
-        self._compacting = True
-        try:
-            await self._run_compaction(candidates, latest)
-        except Exception as exc:
-            self._chat_events.emit("compaction_failed", error=str(exc))
-        finally:
-            self._compacting = False
-
-    async def _run_compaction(
-        self,
-        candidates: list[ChatMessage],
-        previous_summary: ChatMessage | None,
-    ) -> None:
-        """Invoke chat_compactor and persist the resulting summary entry."""
-        cfg = self._compaction
-        prev_structured: dict | None = None
-        if previous_summary is not None:
-            meta = previous_summary.meta or {}
-            structured = meta.get("structured")
-            if isinstance(structured, dict):
-                prev_structured = structured
-                # carry forward the prior covers_through_seq for continuity
-                if "covers_through_seq" not in prev_structured:
-                    prev_structured = {
-                        **prev_structured,
-                        "covers_through_seq": meta.get("covers_through_seq", 0),
-                    }
-
-        input_artifact = {
-            "type": "history_chunk_to_compact",
-            "data": {
-                "previous_summary": prev_structured,
-                "new_turns": [
-                    {"role": t.role, "text": t.text, "seq": t.seq} for t in candidates
-                ],
-                "section_token_caps": {
-                    "topic_arc": cfg.section_token_caps.topic_arc,
-                    "decisions": cfg.section_token_caps.decisions,
-                    "pending": cfg.section_token_caps.pending,
-                    "session_user_facts": cfg.section_token_caps.session_user_facts,
-                    "artifacts_referenced": cfg.section_token_caps.artifacts_referenced,
-                },
-            },
-        }
-
-        self._chat_events.emit(
-            "compaction_started",
-            new_turn_count=len(candidates),
-            covers_through_seq=candidates[-1].seq,
-            had_previous=previous_summary is not None,
-        )
-        result = await self._run_stdlib_skill(
-            "chat_compactor", input_artifact, state_subdir="compaction",
-        )
-        if not result.ok:
-            self._chat_events.emit(
-                "compaction_aborted", reason=f"compactor result status={result.status}",
-            )
-            return
-
-        structured = dict(result.data or {})
-        covers = int(structured.get("covers_through_seq") or candidates[-1].seq)
-        # Render once for the persisted text field; the slicer can re-render
-        # from `structured` if the stored text drifts from formatting changes.
-        rendered = _render_summary_for_storage(structured)
-
-        summary_msg = ChatMessage(
-            role="summary",
-            text=rendered,
-            ts=_now_iso(),
-            meta={"structured": structured, "covers_through_seq": covers},
-        )
-        self._append_history(summary_msg)
-        self._chat_events.emit(
-            "compaction_completed",
-            covers_through_seq=covers,
-            section_lengths={k: len(v) if isinstance(v, list) else len(str(v))
-                             for k, v in structured.items() if k != "covers_through_seq"},
-        )
 
     # ── router ──────────────────────────────────────────────────────────────────
 
