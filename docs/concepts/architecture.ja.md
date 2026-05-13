@@ -165,6 +165,33 @@ Reyn はこのループを名目上ではなく **構造的に** 実装してい
 
 LangGraph・AutoGen・Semantic Kernel といった他の agent フレームワークに慣れている読者にとって、この対応は直接的な置き換えマッピングを提供します。それらのシステムがループをプログラム可能な surface として公開しているのに対し、Reyn はそれを検証済みの runtime contract としてエンコードします。LLM の役割はどのシステムでも同じ (次のステップを決定すること) ですが、ループの境界がコードによって強制されるか、慣習に委ねられるかが異なります。
 
+## カーネルランタイムレイヤー（FP-0020）
+
+`OSRuntime` は 4 つの垂直レイヤーを束ねる薄い配線レイヤーとして実装されており、
+各レイヤーがスキル実行の 1 つの深さを担当する：
+
+| レイヤー | モジュール | 責務 |
+|---|---|---|
+| 1（上位） | `run_orchestrator.py` *（予定、Component D）* | フェーズ順序 + 遷移 + ロールバック + ライフサイクル |
+| 2 | `phase_executor.py` | 1 フェーズの act/decide ループ + リトライ |
+| 3 | `llm_call_recorder.py` | LLM 呼び出し 1 回 + WAL 記録 + バジェット強制 |
+| state | `run_state.py` | レイヤー 1-3 を横断するミュータブルな run スコープ状態 |
+| types | `runtime_types.py` | 例外型 + ヘルパー（リーフ、カーネル依存なし） |
+
+`OSRuntime.__init__` がこれらのレイヤー（state → recorder → executor →
+orchestrator）を配線し、`OSRuntime.run()` がオーケストレーターに委譲する。
+
+ChatSession も同様に `chat/services/` 配下のサービスに分解されている
+（FP-0019 — 部分着地）：
+
+- `compaction_controller.py`（FP-0019 Wave 1a、着地済み）
+- `skill_runner.py`（FP-0019 Wave 1b、着地済み）
+- `budget_gateway.py`、`chain_manager.py`、`intervention_registry.py`、
+  `memory_service.py`、`router_host_adapter.py`、`snapshot_journal.py`
+  （FP-0019 以前の抽出）
+- `a2a_handler.py`、`intervention_handler.py`、`auto_resume_handler.py`
+  *（予定、FP-0019 Wave 2/3）*
+
 ## 参考
 
 - [principles.md](principles.md) — 8 つの制約

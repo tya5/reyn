@@ -219,6 +219,33 @@ runtime contract. The LLM's role is the same in all cases (deciding the next
 step); what differs is whether the loop boundary is enforced by code or by
 convention.
 
+## Kernel runtime layers (FP-0020)
+
+`OSRuntime` is implemented as a thin wiring layer over four vertical
+layers, each owning one depth-level of skill execution:
+
+| Layer | Module | Responsibility |
+|---|---|---|
+| 1 (top) | `run_orchestrator.py` *(planned, Component D)* | Phase sequence + transitions + rollback + lifecycle |
+| 2 | `phase_executor.py` | Act/decide loop for one phase + retry |
+| 3 | `llm_call_recorder.py` | One LLM call + WAL recording + budget enforcement |
+| state | `run_state.py` | Mutable run-scope state threaded through layers 1-3 |
+| types | `runtime_types.py` | Exception types + helpers (leaf, no kernel deps) |
+
+`OSRuntime.__init__` wires these layers (state → recorder → executor →
+orchestrator) and `OSRuntime.run()` delegates to the orchestrator.
+
+ChatSession is similarly decomposed into services under `chat/services/`
+(FP-0019 — partial landing):
+
+- `compaction_controller.py` (FP-0019 Wave 1a, landed)
+- `skill_runner.py` (FP-0019 Wave 1b, landed)
+- `budget_gateway.py`, `chain_manager.py`, `intervention_registry.py`,
+  `memory_service.py`, `router_host_adapter.py`, `snapshot_journal.py`
+  (pre-FP-0019 extractions)
+- `a2a_handler.py`, `intervention_handler.py`, `auto_resume_handler.py`
+  *(planned, FP-0019 Wave 2/3)*
+
 ## See also
 
 - [principles.md](principles.md) — the eight constraints

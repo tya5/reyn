@@ -1,6 +1,6 @@
 # FP-0020: OSRuntime Layer Decomposition — Splitting runtime.py into Vertical Layers
 
-**Status**: proposed
+**Status**: partially-landed — Components A/B/C complete (RunState + LLMCallRecorder + PhaseExecutor extracted, 2026-05-13/14); Component D (RunOrchestrator) remains proposed
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -58,6 +58,8 @@ via `self._rollback`. This proposal follows the same pattern for the remaining c
 
 ### Component A — `RunState` (SMALL) — foundation
 
+**LANDED** (commit `1dac280`): src/reyn/kernel/run_state.py + src/reyn/kernel/rollback_state.py
+
 New file: `src/reyn/kernel/run_state.py`
 
 `RunState` is a pure dataclass (no events, no I/O) holding all mutable state for one
@@ -108,6 +110,8 @@ Target: `src/reyn/kernel/run_state.py` — ~100 lines
 
 ### Component B — `LLMCallRecorder` (SMALL) — Layer 3
 
+**LANDED** (commit `5628993`): src/reyn/kernel/llm_call_recorder.py
+
 New file: `src/reyn/kernel/llm_call_recorder.py`
 
 Owns: one LLM call from budget pre-check through WAL recording.
@@ -141,6 +145,8 @@ level rather than inside `_call_llm_and_record` itself. Observable behavior is i
 Target: `src/reyn/kernel/llm_call_recorder.py` — ~350 lines
 
 ### Component C — `PhaseExecutor` (SMALL) — Layer 2
+
+**LANDED** (commit `7e51216`): src/reyn/kernel/phase_executor.py + src/reyn/kernel/runtime_types.py (= leaf module for circular import avoidance)
 
 New file: `src/reyn/kernel/phase_executor.py`
 
@@ -236,21 +242,28 @@ Target: `src/reyn/kernel/runtime.py` — ~400 lines
 ## Line count summary
 
 ```
-Before
+Before (original proposal baseline)
   runtime.py             1,882 lines
 
-After
-  runtime.py              ~400 lines   (wiring + build_frame + types)
-  run_state.py            ~100 lines   (new)
-  llm_call_recorder.py    ~350 lines   (new)
-  phase_executor.py       ~270 lines   (new)
-  run_orchestrator.py     ~500 lines   (new)
+After Components A/B/C (current — Component D still proposed)
+  runtime.py             1,386 lines   (wiring + build_frame + types; ~1,490 projected after Component D)
+  run_state.py             166 lines   (new — Component A, measured)
+  rollback_state.py        111 lines   (new — Component A, derived entry not in original design)
+  llm_call_recorder.py     415 lines   (new — Component B, measured)
+  phase_executor.py        500 lines   (new — Component C, measured)
+  runtime_types.py         105 lines   (new — Component C, leaf module for circular import avoidance)
   ──────────────────────────────────
-  Total                  ~1,620 lines
+  Subtotal (A/B/C landed) 2,683 lines across 6 files
+
+After Component D (projected)
+  runtime.py              ~400 lines   (projected)
+  run_orchestrator.py     ~500 lines   (projected, new — Component D)
+  ──────────────────────────────────
+  Total (projected)      ~1,697 lines
 ```
 
-Net: **▲ −262 lines** overall (duplication in safety_extension patterns eliminated by
-`RunState` methods). File count +4. No file exceeds 500 lines.
+Net after A/B/C: **runtime.py reduced by 496 lines** (1,882 → 1,386). Component D will
+reduce it a further ~986 lines (to ~400) by extracting the orchestrator body.
 
 **Goal**: minimize lines-per-file for AI coding agent context windows, not minimize total
 lines. A +10% total increase that halves max-file size is a net win.

@@ -1,6 +1,6 @@
 # FP-0019: ChatSession 責務分離 — session.py からのサービス抽出
 
-**Status**: proposed
+**Status**: partially-landed — Wave 1 complete (CompactionController + SkillRunner extracted, 2026-05-13/14)
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -80,6 +80,8 @@ src/reyn/chat/
 
 **CompactionController** (`services/compaction_controller.py`)
 
+**LANDED** (commit `6620505`): src/reyn/chat/services/compaction_controller.py
+
 抽出対象: `_maybe_compact`、`_run_compaction`、`_compaction_task`
 
 ```python
@@ -94,6 +96,8 @@ class CompactionController:
 なくなる。
 
 **SkillRunner** (`services/skill_runner.py`)
+
+**LANDED** (commit `9ae66fa`): src/reyn/chat/services/skill_runner.py
 
 抽出対象: `running_skills` dict、`_run_stdlib_skill`、`_dispatch_routing_decision_for_user`
 
@@ -179,6 +183,9 @@ class AutoResumeHandler:
 
 ### Wave 3 完了後の目標状態
 
+**現在地**: Wave 1 完了（2026-05-13/14）。Wave 2（A2AHandler + InterventionHandler）と
+Wave 3（AutoResumeHandler）は依然 proposed。
+
 ```
 src/reyn/chat/
 ├── session.py              ~600 行   （メッセージループ + 依存関係の配線のみ）
@@ -189,11 +196,11 @@ src/reyn/chat/
     ├── memory_service.py
     ├── router_host_adapter.py
     ├── snapshot_journal.py
-    ├── compaction_controller.py   ← Wave 1
-    ├── skill_runner.py            ← Wave 1
-    ├── a2a_handler.py             ← Wave 2
-    ├── intervention_handler.py    ← Wave 2
-    └── auto_resume_handler.py     ← Wave 3
+    ├── compaction_controller.py   ← Wave 1（LANDED commit 6620505）
+    ├── skill_runner.py            ← Wave 1（LANDED commit 9ae66fa）
+    ├── a2a_handler.py             ← Wave 2（proposed）
+    ├── intervention_handler.py    ← Wave 2（proposed）
+    └── auto_resume_handler.py     ← Wave 3（proposed）
 ```
 
 `session.py` は薄い配線レイヤーになる: `__init__` で全サービスを初期化し、

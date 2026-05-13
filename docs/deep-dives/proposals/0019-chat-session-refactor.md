@@ -1,6 +1,6 @@
 # FP-0019: ChatSession Responsibility Separation — Extracting Services from session.py
 
-**Status**: proposed
+**Status**: partially-landed — Wave 1 complete (CompactionController + SkillRunner extracted, 2026-05-13/14)
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -79,6 +79,8 @@ Five cohesive clusters are still embedded in `ChatSession`:
 
 **CompactionController** (`services/compaction_controller.py`)
 
+**LANDED** (commit `6620505`): src/reyn/chat/services/compaction_controller.py
+
 Extracts: `_maybe_compact`, `_run_compaction`, `_compaction_task`
 
 ```python
@@ -93,6 +95,8 @@ extraction removes the only background `asyncio.Task` that `ChatSession` current
 directly.
 
 **SkillRunner** (`services/skill_runner.py`)
+
+**LANDED** (commit `9ae66fa`): src/reyn/chat/services/skill_runner.py
 
 Extracts: `running_skills` dict, `_run_stdlib_skill`, `_dispatch_routing_decision_for_user`
 
@@ -179,6 +183,9 @@ Target files:
 
 ### Post-Wave 3 target state
 
+**Current position**: Wave 1 complete (2026-05-13/14). Wave 2 (A2AHandler + InterventionHandler)
+and Wave 3 (AutoResumeHandler) remain proposed.
+
 ```
 src/reyn/chat/
 ├── session.py              ~600 lines   (message loop + dependency wiring only)
@@ -189,11 +196,11 @@ src/reyn/chat/
     ├── memory_service.py
     ├── router_host_adapter.py
     ├── snapshot_journal.py
-    ├── compaction_controller.py   ← Wave 1
-    ├── skill_runner.py            ← Wave 1
-    ├── a2a_handler.py             ← Wave 2
-    ├── intervention_handler.py    ← Wave 2
-    └── auto_resume_handler.py     ← Wave 3
+    ├── compaction_controller.py   ← Wave 1 (LANDED commit 6620505)
+    ├── skill_runner.py            ← Wave 1 (LANDED commit 9ae66fa)
+    ├── a2a_handler.py             ← Wave 2 (proposed)
+    ├── intervention_handler.py    ← Wave 2 (proposed)
+    └── auto_resume_handler.py     ← Wave 3 (proposed)
 ```
 
 `session.py` becomes a thin wiring layer: it instantiates all services in `__init__`, and

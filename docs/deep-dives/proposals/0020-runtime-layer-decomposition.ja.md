@@ -1,6 +1,6 @@
 # FP-0020: OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する
 
-**Status**: proposed
+**Status**: partially-landed — Components A/B/C complete (RunState + LLMCallRecorder + PhaseExecutor extracted, 2026-05-13/14); Component D (RunOrchestrator) remains proposed
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -57,6 +57,8 @@ run()                           フェーズを順番にオーケストレート
 
 ### Component A — `RunState`（SMALL）— 基盤
 
+**LANDED** (commit `1dac280`): src/reyn/kernel/run_state.py + src/reyn/kernel/rollback_state.py
+
 新規ファイル: `src/reyn/kernel/run_state.py`
 
 `RunState` は純粋な dataclass（イベントなし・I/O なし）で、1 回の `run()` 実行に
@@ -107,6 +109,8 @@ WAL メモ lookup が正しく機能する。
 
 ### Component B — `LLMCallRecorder`（SMALL）— Layer 3
 
+**LANDED** (commit `5628993`): src/reyn/kernel/llm_call_recorder.py
+
 新規ファイル: `src/reyn/kernel/llm_call_recorder.py`
 
 担当: バジェット事前チェックから WAL 記録までの LLM 呼び出し 1 回。
@@ -140,6 +144,8 @@ PhaseExecutor レベルで行われるが、観測可能な動作は同一。
 目標: `src/reyn/kernel/llm_call_recorder.py` — ~350 行
 
 ### Component C — `PhaseExecutor`（SMALL）— Layer 2
+
+**LANDED** (commit `7e51216`): src/reyn/kernel/phase_executor.py + src/reyn/kernel/runtime_types.py（= 循環インポート回避のリーフモジュール）
 
 新規ファイル: `src/reyn/kernel/phase_executor.py`
 
@@ -229,21 +235,28 @@ class OSRuntime:
 ## 行数サマリ
 
 ```
-分離前
+分離前（提案時のベースライン）
   runtime.py            1,882 行
 
-分離後
-  runtime.py             ~400 行   （配線 + build_frame + 型定義）
-  run_state.py           ~100 行   （新規）
-  llm_call_recorder.py   ~350 行   （新規）
-  phase_executor.py      ~270 行   （新規）
-  run_orchestrator.py    ~500 行   （新規）
+Component A/B/C 着地後（現在 — Component D は proposed）
+  runtime.py            1,386 行   （配線 + build_frame + 型定義; Component D 後の予測 ~1,490 行）
+  run_state.py            166 行   （新規 — Component A、実測）
+  rollback_state.py       111 行   （新規 — Component A、設計時の想定外の派生 entry）
+  llm_call_recorder.py    415 行   （新規 — Component B、実測）
+  phase_executor.py       500 行   （新規 — Component C、実測）
+  runtime_types.py        105 行   （新規 — Component C、循環インポート回避のリーフモジュール）
   ──────────────────────────────
-  合計                  ~1,620 行
+  A/B/C 着地小計        2,683 行（6 ファイル）
+
+Component D 着地後（予測）
+  runtime.py             ~400 行   （予測）
+  run_orchestrator.py    ~500 行   （予測、新規 — Component D）
+  ──────────────────────────────
+  合計（予測）          ~1,697 行
 ```
 
-合計 **▲ −262 行**（`RunState` メソッドへの重複パターン統合による）。
-ファイル数 +4。最大ファイルは 500 行以下。
+A/B/C 着地後の現状: **runtime.py は 496 行削減**（1,882 → 1,386 行）。
+Component D 着地で さらに ~986 行削減し ~400 行に到達する見込み。
 
 **ゴールは 1 ファイルあたりの行数最小化であり、合計行数の最小化ではない。**
 最大ファイルサイズが半減するなら合計 +10% は許容コスト。
