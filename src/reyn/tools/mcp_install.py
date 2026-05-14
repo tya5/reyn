@@ -23,7 +23,11 @@ _MCP_INSTALL_DESCRIPTION = (
     "Install an MCP server from the registry. "
     "Fetches server.json, gates via permission resolver, "
     "prompts for secrets, and writes the server entry to the "
-    "appropriate scope config file (local / project / user)."
+    "appropriate scope config file (local / project / user). "
+    "Tier 3 op (declared + approved): when adding 'mcp_install' to phase.allowed_ops, "
+    "skill.permissions.mcp_install must also be set to true "
+    "(OS rejects at runtime with PermissionError if undeclared, "
+    "even when phase allows)."
 )
 
 _MCP_INSTALL_PARAMETERS: dict[str, Any] = {

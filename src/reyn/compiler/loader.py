@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from reyn.schemas.models import Skill
@@ -6,6 +7,8 @@ from .expander import expand_phase, expand_skill
 from .ir import ArtifactDef, PhaseDef
 from .parser import parse_artifact, parse_phase, parse_skill
 from .preprocessor_typing import PreprocessorTypeError, infer_llm_visible_schema
+
+_logger = logging.getLogger(__name__)
 
 
 def _not_found_error(name: str, search_dirs: list[Path], kind: str, ext: str = ".md") -> ValueError:
@@ -220,4 +223,38 @@ def load_dsl_skill(
     # Record where on disk this skill lives so runtime components (e.g. python
     # preprocessor steps) can resolve relative module paths against it.
     skill.skill_dir = str(skill_dir.resolve())
+
+    # FP-0026: op/permission cross-layer consistency warning (load-time).
+    # This check runs after the full skill is assembled so phase.allowed_ops
+    # and skill.permissions are both available.  It is warning-only — existing
+    # skills that have inconsistencies continue to load; the mismatch will
+    # surface as a PermissionError at the first runtime call to the op.
+    _warn_op_permission_inconsistency(skill)
+
     return skill
+
+
+def _warn_op_permission_inconsistency(skill: Skill) -> None:
+    """Emit logger.warning for any op/permission cross-layer inconsistency.
+
+    Tier 2-3 ops (shell / mcp / mcp_install / index_drop) require an explicit
+    permission declaration in ``skill.permissions``.  A phase that lists one of
+    these in ``allowed_ops`` but lacks the matching declaration will raise
+    ``PermissionError`` at the first runtime call.
+
+    This function is warning-only; it never raises.  Existing skills continue
+    to load regardless of inconsistency state.
+    """
+    from reyn.skill.validator import validate_skill_object
+    result = validate_skill_object(skill)
+    for issue in result.errors:
+        _logger.warning(
+            "Skill '%s' phase '%s' uses op '%s' but skill.permissions.%s is "
+            "undeclared. Runtime call will fail with PermissionError. %s",
+            skill.name,
+            issue.phase,
+            issue.op_kind,
+            issue.op_kind,
+            # Extract the fix hint from the message (everything after ". Runtime...")
+            issue.message.split("Runtime call will fail with PermissionError. ", 1)[-1],
+        )

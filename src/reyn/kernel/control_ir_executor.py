@@ -164,7 +164,11 @@ class ControlIRExecutor:
                     "cmd: the shell command string. "
                     "timeout: max seconds to wait (default 120). "
                     "Runs in the project root directory. "
-                    "Use for running sub-processes such as 'reyn run ...'."
+                    "Use for running sub-processes such as 'reyn run ...'. "
+                    "Tier 3 op (declared + approved): when adding 'shell' to phase.allowed_ops, "
+                    "skill.permissions.shell must also be set to true "
+                    "(OS rejects at runtime with PermissionError if undeclared, "
+                    "even when phase allows)."
                 ),
                 example={"kind": "shell", "cmd": "reyn run my_skill 'hello'", "timeout": 120},
             )] if self._shell_allowed else []),
@@ -176,7 +180,10 @@ class ControlIRExecutor:
                     "tool: the tool name exposed by that server. "
                     "args: arguments dict to pass to the tool. "
                     "Returns: content (text), raw (full MCP result). "
-                    "Phase must declare permissions.mcp: [server_name] to use this op."
+                    "Tier 2 op (declared + approved): when adding 'mcp' to phase.allowed_ops, "
+                    "skill.permissions.mcp must also list the server name "
+                    "(OS rejects at runtime with PermissionError if undeclared, "
+                    "even when phase allows)."
                 ),
                 example={"kind": "mcp", "server": "my_tool", "tool": "search", "args": {"query": "hello"}},
             )] if self._mcp_servers else []),
