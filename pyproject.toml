@@ -81,6 +81,7 @@ release = [
 ]
 sandbox-linux = [
     "landlock>=1.0",
+    "pyseccomp>=0.1",
 ]
 voice = [
     "sounddevice>=0.4.6",
