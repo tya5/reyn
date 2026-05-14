@@ -31,6 +31,25 @@ from reyn.chat.router_tools import build_tools
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 
+
+@pytest.fixture(autouse=True)
+def _clean_cwd_for_replay_tests(tmp_path, monkeypatch):
+    """Pin cwd to a clean tmp_path for every test in this file.
+
+    The router system prompt reads `.reyn/index/sources.yaml` from
+    `Path.cwd()` via `get_source_manifest(Path.cwd()).format_for_prompt()`.
+    If local cwd has a `.reyn/index/` directory (e.g. dogfood state), the
+    prompt embeds the listed sources and the args_hash differs from CI
+    (which runs in a clean repo checkout). That breaks LLMReplay fixture
+    lookup: fixtures recorded locally with sources don't match the
+    args_hash CI computes against an empty manifest.
+
+    By forcing every replay test to run in a fresh tmp_path (no .reyn/
+    directory), both local and CI compute the same "0 sources" empty
+    state prompt — args_hash deterministic across environments.
+    """
+    monkeypatch.chdir(tmp_path)
+
 # ---------------------------------------------------------------------------
 # Minimal events stub
 # ---------------------------------------------------------------------------
