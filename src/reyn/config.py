@@ -462,6 +462,55 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
 
 
 @dataclass
+class SkillSearchConfig:
+    """`skill_search:` — BM25 skill pre-filter settings (FP-0024 Component A).
+
+    When the catalogue exceeds ``threshold`` skills, the router narrows
+    ``invoke_skill.name`` enum to the top-``top_k`` BM25 keyword matches
+    before building the tools list.  Falls through to full enum on 0 BM25
+    results (= no skill made invisible).
+
+    Fields:
+        threshold:  Catalogue size at which BM25 activates. Default 20.
+                    Set 0 to always pre-filter; set a high number to disable.
+        top_k:      Number of skills returned by BM25. Default 5.
+        backend:    ``'bm25'`` (default). ``'embedding'`` / ``'hybrid'``
+                    reserved for Component C/D.
+    """
+
+    threshold: int = 20
+    top_k: int = 5
+    backend: str = "bm25"
+
+
+def _build_skill_search_config(raw: object) -> "SkillSearchConfig":
+    """Parse the ``skill_search:`` section. Empty / missing returns defaults."""
+    defaults = SkillSearchConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    threshold_raw = raw.get("threshold", defaults.threshold)
+    top_k_raw = raw.get("top_k", defaults.top_k)
+    backend_raw = raw.get("backend", defaults.backend)
+    try:
+        threshold = int(threshold_raw)
+        if threshold < 0:
+            threshold = 0
+    except (TypeError, ValueError):
+        threshold = defaults.threshold
+    try:
+        top_k = int(top_k_raw)
+        if top_k < 1:
+            top_k = 1
+    except (TypeError, ValueError):
+        top_k = defaults.top_k
+    return SkillSearchConfig(
+        threshold=threshold,
+        top_k=int(top_k),
+        backend=str(backend_raw),
+    )
+
+
+@dataclass
 class WebFetchConfig:
     """`web.fetch:` — SSL verification settings for web_fetch and MCP registry.
 
@@ -627,6 +676,11 @@ class ReynConfig:
     # Configurable via ``mcp.search_threshold:`` in reyn.yaml.
     # Spring AI experiment: 63–64% token reduction at 40+ MCP tools.
     mcp_search_threshold: int = 30
+    # FP-0024 Component A — BM25 skill pre-filter settings.
+    # Below threshold: full enum. Above threshold: BM25 top-K filter.
+    # Default 20 — current stdlib (~30-50 skills) stays at full enum unless
+    # the operator explicitly lowers the threshold.
+    skill_search: SkillSearchConfig = field(default_factory=SkillSearchConfig)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
     # Chat-session settings (compaction, etc.)
@@ -926,6 +980,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,
         web=_build_web_config(merged.get("web")),
+        skill_search=_build_skill_search_config(merged.get("skill_search")),
     )
 
 

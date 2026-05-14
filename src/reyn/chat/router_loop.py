@@ -19,6 +19,7 @@ from reyn.chat.router_tools import (
     build_tools,
     get_dispatch_kind,
 )
+from reyn.chat.services.skill_search import BM25Backend
 from reyn.chat.session import _TOOL_FAILED_FALLBACK_MSG
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.index.source_manifest import get_source_manifest
@@ -26,7 +27,7 @@ from reyn.llm.llm import call_llm_tools
 from reyn.llm.pricing import TokenUsage
 
 if TYPE_CHECKING:
-    pass
+    from reyn.config import SkillSearchConfig
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,7 @@ class RouterLoop:
         system_prompt_override: str | None = None,
         exclude_tools: set[str] | None = None,
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
+        skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
     ):
         self.host = host
         self.chain_id = chain_id
@@ -353,6 +355,8 @@ class RouterLoop:
         # mid-step sub-loop replays its earlier LLM turns from snapshot
         # rather than re-paying. ``None`` = normal execution (no memo).
         self._memo_provider = memo_provider
+        # FP-0024-A: BM25 skill pre-filter config. None = use OS defaults.
+        self._skill_search_config = skill_search_config
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -370,8 +374,14 @@ class RouterLoop:
         """
         self._total_usage = TokenUsage()
         host = self.host
+        all_skills = host.list_available_skills()
+        # FP-0024 Component A — BM25 skill pre-filter.
+        # Narrow available_skills to top-K BM25 keyword matches when the
+        # catalogue exceeds the threshold. Falls through to full enum on
+        # 0 BM25 results so no skill can become invisible (Fallback safety).
+        skills_for_tools = self._apply_skill_search(all_skills, user_text)
         tools = build_tools(
-            host.list_available_skills(),
+            skills_for_tools,
             host.list_available_agents(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
@@ -970,6 +980,54 @@ class RouterLoop:
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.
         return {"error": f"unhandled tool: {name}"}
+
+    # -----------------------------------------------------------------------
+    # FP-0024-A: BM25 pre-filter
+    # -----------------------------------------------------------------------
+
+    def _apply_skill_search(
+        self, all_skills: list[dict], query: str
+    ) -> list[dict]:
+        """Return the skills list to pass to build_tools.
+
+        When the catalogue exceeds ``skill_search_config.threshold``, run
+        BM25 keyword search against name + description and keep only the
+        top-K candidates.  Emits a ``skill_search_invoked`` event (P6 audit)
+        on every BM25 dispatch.
+
+        Fallback safety: if BM25 returns 0 results (no keyword overlap),
+        return the full catalogue unchanged so no skill becomes invisible.
+
+        Below threshold: returns all_skills unchanged (no BM25, no event).
+        """
+        from reyn.config import SkillSearchConfig  # local import to break circular
+
+        cfg: SkillSearchConfig = (
+            self._skill_search_config
+            if self._skill_search_config is not None
+            else SkillSearchConfig()
+        )
+
+        if len(all_skills) <= cfg.threshold:
+            return all_skills
+
+        backend = BM25Backend(all_skills)
+        candidates = backend.search(query, top_k=cfg.top_k)
+
+        # P6: emit audit event for every BM25 dispatch.
+        self.host.events.emit(
+            "skill_search_invoked",
+            query=query,
+            candidates_count=len(candidates),
+            top_k=cfg.top_k,
+        )
+
+        if not candidates:
+            # 0 results → full enum fall-through (no skill invisibility).
+            return all_skills
+
+        candidate_names = {c.name for c in candidates}
+        return [s for s in all_skills if s.get("name") in candidate_names]
 
     # -----------------------------------------------------------------------
     # Discovery helpers (pure, no async host calls)
