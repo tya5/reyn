@@ -92,7 +92,12 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | proposed | MEDIUM |
 | [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | proposed | SMALL |
 | [0026](0026-op-permission-cross-layer-coherence.ja.md) | Op/Permission クロスレイヤー整合性 — `reyn skill validate` + allowed_ops からの permission 要求自動導出 | proposed | SMALL |
-| [0027](0027-plan-step-failure-transparency.ja.md) | プランステップ失敗の透明性向上 — `step_failures` を router 合成まで転送 | proposed | SMALL |
-| [0028](0028-plan-progress-ux.ja.md) | プラン進捗 UX — ステータスメッセージに step.id でなくステップ説明を表示 | proposed | SMALL |
-| [0029](0029-plan-step-iteration-budget.ja.md) | プランステップのイテレーション予算 — `_PLAN_STEP_MAX_ITERATIONS` を 3 から 5 に引き上げ | proposed | SMALL |
-| [0030](0030-plan-step-result-quality.ja.md) | プランステップ結果品質 — よりリッチな出力ガイダンス（コードスニペット、~800 文字ソフト上限） | proposed | SMALL |
+
+> **FP-0027 以降は GitHub Issues で管理。** [#28](https://github.com/tya5/reyn/issues/28)〜[#31](https://github.com/tya5/reyn/issues/31) 以降を参照。
+
+| # | Issue | タイトル | Status | コスト |
+|---|---|---|---|---|
+| 0027 | [#28](https://github.com/tya5/reyn/issues/28) | プランステップ失敗の透明性向上 | proposed | SMALL |
+| 0028 | [#29](https://github.com/tya5/reyn/issues/29) | プラン進捗 UX | proposed | SMALL |
+| 0029 | [#30](https://github.com/tya5/reyn/issues/30) | プランステップのイテレーション予算 | proposed | SMALL |
+| 0030 | [#31](https://github.com/tya5/reyn/issues/31) | プランステップ結果品質 | proposed | SMALL |
