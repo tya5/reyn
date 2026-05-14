@@ -19,6 +19,7 @@ import pytest
 from reyn.stdlib.skills.ops_report.aggregate import (
     aggregate_from_raw_events,
     aggregate_from_recall_chunks,
+    collect_aggregate,
 )
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
@@ -346,3 +347,89 @@ def test_aggregate_collects_error_samples(tmp_path: Path) -> None:
     assert "FileNotFoundError" in all_samples or "PermissionError" in all_samples, (
         f"Expected error messages in errors_sample; got: {result['errors_sample']}"
     )
+
+
+# ── collect_aggregate (= preprocessor entry point, R-1 fix) ──────────────────
+
+
+def test_collect_aggregate_prefers_recall_when_chunks_present() -> None:
+    """Tier 2: collect_aggregate uses recall chunks when non-empty (preferred path)."""
+    # Chunk shape matches aggregate_from_recall_chunks expectation: metadata.extra.*
+    chunks = [
+        {
+            "content": "skill: my_skill\nstatus: success",
+            "metadata": {
+                "extra": {"skill": "my_skill", "status": "success", "duration_seconds": 12, "errors": []}
+            },
+        },
+        {
+            "content": "skill: my_skill\nstatus: failed",
+            "metadata": {
+                "extra": {"skill": "my_skill", "status": "failed", "duration_seconds": 8, "errors": ["err"]}
+            },
+        },
+    ]
+    artifact = {
+        "data": {
+            "recall_result": {"chunks": chunks, "mode": "semantic"},
+            "period_days": 7,
+            "skills": None,
+        }
+    }
+    result = collect_aggregate(artifact)
+    assert result["total_runs"] == 2
+    # Recall-path observable: by_skill populated from chunks
+    assert "my_skill" in result["by_skill"]
+
+
+def test_collect_aggregate_falls_back_to_raw_events_when_recall_empty(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tier 2: collect_aggregate walks .reyn/events when recall returned no chunks."""
+    events_dir = tmp_path / ".reyn" / "events" / "agents" / "default" / "skill_runs"
+    events_dir.mkdir(parents=True)
+    log = events_dir / "2026-05-15.jsonl"
+    _write_events(log, skill="my_skill", run_id="r1", status="success")
+
+    # collect_aggregate uses the relative path ".reyn/events" → chdir into tmp_path.
+    monkeypatch.chdir(tmp_path)
+
+    artifact = {
+        "data": {
+            "recall_result": {"chunks": [], "mode": "fallback"},
+            "period_days": 7,
+            "skills": None,
+        }
+    }
+    result = collect_aggregate(artifact)
+    assert result["total_runs"] == 1
+
+
+def test_collect_aggregate_handles_missing_recall_result(tmp_path: Path, monkeypatch) -> None:
+    """Tier 2: collect_aggregate handles `recall_result=None` (= on_error: skip path)."""
+    events_dir = tmp_path / ".reyn" / "events" / "agents" / "default" / "skill_runs"
+    events_dir.mkdir(parents=True)
+    log = events_dir / "2026-05-15.jsonl"
+    _write_events(log, skill="my_skill", run_id="r1", status="success")
+    monkeypatch.chdir(tmp_path)
+
+    artifact = {"data": {"recall_result": None, "period_days": 7, "skills": None}}
+    result = collect_aggregate(artifact)
+    assert result["total_runs"] == 1
+
+
+def test_collect_aggregate_default_period_days_when_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tier 2: collect_aggregate defaults period_days=7 if input artifact omits it.
+
+    Isolate via monkeypatch.chdir(tmp_path) — without it the relative
+    `.reyn/events` resolves to the project dir and picks up real events.
+    """
+    monkeypatch.chdir(tmp_path)
+    artifact = {"data": {"recall_result": {"chunks": []}}}
+    # No events dir under tmp_path → empty result, but no crash.
+    result = collect_aggregate(artifact)
+    assert result["total_runs"] == 0
+    # period reported in human-readable form should reflect default 7
+    assert "7" in result.get("period", "") or result.get("period_days") == 7

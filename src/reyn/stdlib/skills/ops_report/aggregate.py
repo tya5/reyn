@@ -1,10 +1,11 @@
 """aggregate.py — pure-function aggregations for ops_report (FP-0009 Component D).
 
-Two public functions:
+Public functions:
+  collect_aggregate(artifact)                              → dict   (preprocessor entry point)
   aggregate_from_raw_events(events_root, period_days, skills) → dict
-  aggregate_from_recall_chunks(chunks) → dict
+  aggregate_from_recall_chunks(chunks)                     → dict
 
-Both return the same output shape (aggregate stats dict). No LLM calls,
+All three return the same aggregate-stats output shape. No LLM calls,
 no side effects, fully testable at Tier 2.
 
 P7 note: this module is skill-local and may freely reference event-domain
@@ -29,6 +30,44 @@ _ERROR_EXCERPT_MAX = 200
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+
+def collect_aggregate(artifact: dict) -> dict:
+    """Preprocessor python step entry point: prefer recall, fall back to raw events.
+
+    Receives the workspace artifact carrying:
+      - ``data.recall_result``: output of the prior ``recall`` op
+        (``{"chunks": [...], "mode": ...}``) or ``None`` if the op failed
+        (``on_error: skip``) or was never run.
+      - input fields from ``ops_report_input`` (``period_days``, ``skills``).
+
+    Decision logic:
+      - if recall produced ≥1 chunk → ``aggregate_from_recall_chunks``
+        (= preferred path: events index queried semantically, no full
+         linear scan)
+      - else → ``aggregate_from_raw_events`` (= fallback: walk
+        ``.reyn/events/*.jsonl`` directly; index not built or empty)
+
+    Returns the aggregate stats dict, written by the OS to ``data.aggregate``
+    (the step's ``into:`` target).
+    """
+    data = artifact.get("data") or {}
+    recall_result = data.get("recall_result") or {}
+    chunks: list[dict] = list(recall_result.get("chunks") or []) if isinstance(recall_result, dict) else []
+
+    if chunks:
+        return aggregate_from_recall_chunks(chunks)
+
+    # Fallback: walk raw events log.
+    period_days = int(data.get("period_days") or 7)
+    skills_raw = data.get("skills")
+    skills: list[str] | None = list(skills_raw) if isinstance(skills_raw, list) else None
+    # `.reyn/events/` is the conventional path under the project workspace.
+    return aggregate_from_raw_events(
+        events_root=".reyn/events",
+        period_days=period_days,
+        skills=skills,
+    )
 
 
 def aggregate_from_raw_events(

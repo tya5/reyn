@@ -8,40 +8,45 @@ description: |
   timestamp written to .reyn/index/events_cursor.
 schema:
   type: object
-  required: [indexed_runs, skipped_runs, filtered_runs, new_cursor, sources_updated]
+  required: [cursor_result]
   properties:
-    indexed_runs:
-      type: integer
-      minimum: 0
-      description: Number of complete runs indexed in this invocation.
-    skipped_runs:
-      type: integer
-      minimum: 0
-      description: |
-        Incomplete runs skipped (run_skill_started seen but no completion
-        event yet). These will be picked up on the next index pass.
-    filtered_runs:
-      type: integer
-      minimum: 0
-      description: |
-        Runs excluded by the since/skill_filter criteria (older than since,
-        or not in the skill_filter list).
-    new_cursor:
-      type: string
-      description: |
-        ISO-8601 timestamp written to .reyn/index/events_cursor after this
-        run. Equals the maximum completed_at of all indexed runs, or the
-        previous cursor value if no new runs were indexed.
-    sources_updated:
-      type: array
-      items:
-        type: string
-      description: |
-        Logical source names updated in the index backend. Always ["events"]
-        in Phase 1.
+    cursor_result:
+      type: object
+      description: Cursor advance result — primary caller-facing summary fields.
+      required: [indexed_runs, skipped_runs, filtered_runs, new_cursor, sources_updated]
+      properties:
+        indexed_runs:
+          type: integer
+          minimum: 0
+          description: Number of complete runs indexed in this invocation.
+        skipped_runs:
+          type: integer
+          minimum: 0
+          description: |
+            Incomplete runs skipped (run_skill_started seen but no completion
+            event yet). These will be picked up on the next index pass.
+        filtered_runs:
+          type: integer
+          minimum: 0
+          description: |
+            Runs excluded by the since/skill_filter criteria (older than since,
+            or not in the skill_filter list).
+        new_cursor:
+          type: string
+          description: |
+            ISO-8601 timestamp written to .reyn/index/events_cursor after this
+            run. Equals the maximum completed_at of all indexed runs, or the
+            previous cursor value if no new runs were indexed.
+        sources_updated:
+          type: array
+          items:
+            type: string
+          description: |
+            Logical source names updated in the index backend. Always ["events"]
+            in Phase 1.
     chunk_stats:
       type: object
-      description: Result of the build_chunks python step.
+      description: Result of the collect_chunks python step.
       properties:
         chunk_count:
           type: integer

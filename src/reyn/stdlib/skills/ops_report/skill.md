@@ -36,6 +36,10 @@ permissions:
       - ".reyn/index/"
   python:
     - module: ./aggregate.py
+      function: collect_aggregate
+      mode: safe
+      timeout: 30
+    - module: ./aggregate.py
       function: aggregate_from_raw_events
       mode: safe
       timeout: 30
@@ -60,7 +64,7 @@ phases:
         # Step 2: aggregate — uses recall if non-empty, falls back to raw events
         - type: python
           module: ./aggregate.py
-          function: _collect_aggregate
+          function: collect_aggregate
           into: data.aggregate
           mode: safe
           timeout: 30
@@ -121,7 +125,7 @@ reyn run ops_report '{"period_days": 30, "skills": ["swe_bench", "eval"]}'
    `aggregate_from_raw_events(".reyn/events", period_days, skills)` を実行
 3. raw events も見つからない場合は `total_runs=0` の空集計を返す
 
-フォールバックの判定ロジックは `aggregate.py` の `_collect_aggregate` で
+フォールバックの判定ロジックは `aggregate.py` の `collect_aggregate` で
 実装されますが、skill preprocessor はシンプルに recall → python step の
 2 ステップ構成にして、python step 内でフォールバックを行います。
 

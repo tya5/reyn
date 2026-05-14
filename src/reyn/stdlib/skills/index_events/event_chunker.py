@@ -357,14 +357,14 @@ def _process_run(
     # Derive status
     status = "success"
     if failed_event is not None:
-        status_raw = _get_field(completed_event, "status") or ""
-        status = "failed" if "fail" in status_raw.lower() else "failed"
+        # An explicit run_skill_failed event was emitted → status is definitively failed.
+        status = "failed"
     else:
-        status_raw = _get_field(completed_event, "status") or "success"
-        if "fail" in status_raw.lower() or "abort" in status_raw.lower():
-            status = "failed"
-        elif "abort" in status_raw.lower():
+        status_raw = (_get_field(completed_event, "status") or "success").lower()
+        if "abort" in status_raw:
             status = "aborted"
+        elif "fail" in status_raw:
+            status = "failed"
 
     # Duration
     duration_seconds: int | None = None
