@@ -40,16 +40,41 @@ permissions:
       mode: unsafe
       timeout: 10
     - module: ./chunkers.py
+      function: extract_and_split
+      mode: safe
+      timeout: 30
+    - module: ./chunkers.py
+      function: write_chunks_with_lock
+      mode: unsafe
+      unsafe_reason: "minimal filesystem I/O + advisory lock for concurrent indexing"
+      timeout: 300
+    - module: ./chunkers.py
       function: apply_strategy
       mode: unsafe
+      unsafe_reason: "deprecated monolithic step kept for project override compatibility"
       timeout: 300
 postprocessor:
   output_schema: index_summary
   steps:
+    # Step 1: safe — glob enum (path list only, no file content read)
     - type: python
       module: ./chunkers.py
-      function: apply_strategy
+      function: extract_and_split
+      into: data.chunk_list
+      mode: safe
+      output_schema:
+        type: array
+        items:
+          type: object
+          required: [source_path]
+          properties:
+            source_path: {type: string}
+    # Step 2: unsafe (minimal) — lock + file content read + .jsonl write
+    - type: python
+      module: ./chunkers.py
+      function: write_chunks_with_lock
       into: data.chunk_stats
+      mode: unsafe
       output_schema:
         type: object
         required: [chunk_count, source_lock_acquired]

@@ -169,48 +169,63 @@ def test_index_docs_postprocessor_output_name():
     assert skill.postprocessor.output_name == "index_summary"
 
 
-def test_index_docs_postprocessor_three_steps():
-    """Tier 2: postprocessor has exactly 3 steps: python → run_op → run_op."""
+def test_index_docs_postprocessor_four_steps():
+    """Tier 2: postprocessor has exactly 4 steps: python → python → run_op → run_op.
+
+    R-PURE-MODE-REDEFINE Class A split: apply_strategy was split into
+    extract_and_split (safe, step 0) + write_chunks_with_lock (unsafe, step 1).
+    Steps 2 and 3 are the existing embed and index_write run_ops.
+    """
     skill = _load()
     steps = skill.postprocessor.steps
-    assert len(steps) == 3
+    assert len(steps) == 4
     assert steps[0].type == "python"
-    assert steps[1].type == "run_op"
+    assert steps[1].type == "python"
     assert steps[2].type == "run_op"
+    assert steps[3].type == "run_op"
 
 
-def test_index_docs_postprocessor_step0_is_apply_strategy():
-    """Tier 2: postprocessor step[0] calls apply_strategy with trusted mode."""
+def test_index_docs_postprocessor_step0_is_extract_and_split():
+    """Tier 2: postprocessor step[0] calls extract_and_split (safe, glob enum)."""
     skill = _load()
     step = skill.postprocessor.steps[0]
     assert isinstance(step, PythonStep)
-    assert step.function == "apply_strategy"
+    assert step.function == "extract_and_split"
+    assert step.into == "data.chunk_list"
+
+
+def test_index_docs_postprocessor_step1_is_write_chunks_with_lock():
+    """Tier 2: postprocessor step[1] calls write_chunks_with_lock (unsafe, minimal I/O)."""
+    skill = _load()
+    step = skill.postprocessor.steps[1]
+    assert isinstance(step, PythonStep)
+    assert step.function == "write_chunks_with_lock"
     assert step.into == "data.chunk_stats"
 
 
-def test_index_docs_postprocessor_step1_is_embed_op():
-    """Tier 2: postprocessor step[1] is a run_op wrapping an embed op."""
+def test_index_docs_postprocessor_step2_is_embed_op():
+    """Tier 2: postprocessor step[2] is a run_op wrapping an embed op."""
     skill = _load()
-    step = skill.postprocessor.steps[1]
+    step = skill.postprocessor.steps[2]
     assert isinstance(step, RunOpStep)
     assert step.op.kind == "embed"
     assert step.op.input_artifact == "artifacts/chunks.jsonl"
     assert step.op.output_artifact == "artifacts/chunks_with_vectors.jsonl"
 
 
-def test_index_docs_postprocessor_step2_is_index_write_op():
-    """Tier 2: postprocessor step[2] is a run_op wrapping an index_write op."""
+def test_index_docs_postprocessor_step3_is_index_write_op():
+    """Tier 2: postprocessor step[3] is a run_op wrapping an index_write op."""
     skill = _load()
-    step = skill.postprocessor.steps[2]
+    step = skill.postprocessor.steps[3]
     assert isinstance(step, RunOpStep)
     assert step.op.kind == "index_write"
     assert step.op.input_artifact == "artifacts/chunks_with_vectors.jsonl"
 
 
-def test_index_docs_postprocessor_step2_args_from():
+def test_index_docs_postprocessor_step3_args_from():
     """Tier 2: index_write run_op uses args_from to inject source + mode from artifact."""
     skill = _load()
-    step = skill.postprocessor.steps[2]
+    step = skill.postprocessor.steps[3]
     assert isinstance(step, RunOpStep)
     assert "source" in step.args_from
     assert "mode" in step.args_from
@@ -224,19 +239,21 @@ def test_index_docs_postprocessor_step2_args_from():
 
 
 def test_index_docs_permissions_python_unsafe_declared():
-    """Tier 2: skill declares python/unsafe permissions for all three chunker functions.
+    """Tier 2: skill declares python permissions for all chunker functions.
 
-    FP-0014: stdlib YAML still says `mode: trusted` (Track B will rename
-    those), but PermissionDecl normalises legacy keywords at parse time
-    so the loaded PythonPermission.mode reads as the new keyword `unsafe`.
+    R-PURE-MODE-REDEFINE Class A: extract_and_split is safe (glob enum only),
+    write_chunks_with_lock is unsafe (lock + content read + jsonl write).
+    apply_strategy remains unsafe (deprecated monolithic step, compat kept).
     """
     skill = _load()
     python_perms = skill.permissions.python
-    assert len(python_perms) >= 3, f"Expected at least 3 python perms, got {len(python_perms)}"
+    assert len(python_perms) >= 5, f"Expected at least 5 python perms, got {len(python_perms)}"
 
     fn_modes = {p.function: p.mode for p in python_perms}
     assert fn_modes.get("gather_samples") == "unsafe"
     assert fn_modes.get("cost_preflight") == "unsafe"
+    assert fn_modes.get("extract_and_split") == "safe"
+    assert fn_modes.get("write_chunks_with_lock") == "unsafe"
     assert fn_modes.get("apply_strategy") == "unsafe"
 
 

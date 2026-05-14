@@ -7,8 +7,14 @@ JSON-serializable value that is placed at ``into`` in the artifact.
 Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
 custom Markdown) replace this module via skill.md ``module:`` override.
 
-All three public functions use ``mode: unsafe`` so they can access the
-filesystem. ``safe`` mode does not allow ``open()``.
+R-PURE-MODE-REDEFINE Class A split (postprocessor steps):
+  ``extract_and_split`` (mode: safe) — glob enum + pure chunking, no file
+    content read; safe step.
+  ``write_chunks_with_lock`` (mode: unsafe, minimal) — irreducible minimum:
+    source file content read, advisory lock acquire/release, .jsonl write.
+
+The two preprocessor helpers (``gather_samples``, ``cost_preflight``) remain
+mode: unsafe because they call ``reyn.api.unsafe.file``.
 """
 from __future__ import annotations
 
@@ -182,10 +188,113 @@ def cost_preflight(artifact: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Postprocessor python step
+# Postprocessor python steps (R-PURE-MODE-REDEFINE Class A split)
 # ─────────────────────────────────────────────────────────────────────────────
 
 _CHUNKS_JSONL_PATH = "artifacts/chunks.jsonl"
+
+
+def extract_and_split(artifact: dict) -> list:
+    """Postprocessor python step (mode: safe): glob enum — enumerates source files.
+
+    Receives the LLM's finish artifact (= chunk_strategy). Enumerates files
+    matching the path glob and returns an ordered list of source file paths.
+    Does NOT read file content — content read is deferred to the unsafe step
+    ``write_chunks_with_lock``.
+
+    Glob ownership rationale (R-PURE-MODE audit): ``_glob_files`` exposes
+    filesystem path state (list of paths) but not file content. This is the
+    same pattern as ``gather_samples`` which calls ``_api_glob_files`` as a
+    preprocessor step. Contract-compliant for mode: safe.
+
+    Returns a list of source-file path dicts placed at ``data.chunk_list``:
+        [{"source_path": str}, ...]
+    """
+    data = artifact.get("data") or {}
+    path = str(data.get("path") or "")
+
+    file_paths = _glob_files(path)
+    return [{"source_path": fp} for fp in file_paths]
+
+
+def write_chunks_with_lock(artifact: dict) -> dict:
+    """Postprocessor python step (mode: unsafe, minimal): lock + content read + jsonl write.
+
+    Receives the artifact after ``extract_and_split`` has placed the ordered
+    file list at ``data.chunk_list``. Acquires the source-level advisory lock,
+    reads each source file's content, splits into chunks per LLM strategy,
+    writes ``artifacts/chunks.jsonl``, then releases the lock.
+
+    This is the irreducible minimum unsafe step:
+      - ``Path.read_text`` (file content read — cannot be done in safe mode)
+      - ``.lock`` JSON write + PID alive check (advisory lock, concurrent safety)
+      - ``.jsonl`` write (workspace artifact output)
+
+    Returns a summary dict placed at ``data.chunk_stats``:
+        {
+            "chunk_count":          int,
+            "source_lock_acquired": bool,
+            "chunks_path":          str,
+        }
+    """
+    import time as _time
+
+    data = artifact.get("data") or {}
+    strategy = {
+        "boundary": data.get("boundary", "blank_line"),
+        "max_chunk_size_tokens": int(data.get("max_chunk_size_tokens") or 600),
+        "min_chunk_size_tokens": int(data.get("min_chunk_size_tokens") or 50),
+        "overlap_ratio": float(data.get("overlap_ratio") or 0.0),
+        "preserve_parent_context": bool(data.get("preserve_parent_context", True)),
+    }
+    source = str(data.get("source") or "unknown")
+    # chunk_list from extract_and_split: [{"source_path": str}, ...]
+    chunk_list = data.get("chunk_list") or []
+    file_paths: list[str] = []
+    seen: set[str] = set()
+    for entry in chunk_list:
+        fp = str(entry.get("source_path", ""))
+        if fp and fp not in seen:
+            file_paths.append(fp)
+            seen.add(fp)
+
+    # ── Concurrent lock (UX gap fix D) ───────────────────────────────────────
+    lock_path = Path(".reyn") / "index" / source / ".lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_acquired = False
+
+    if lock_path.exists():
+        try:
+            lock_data = json.loads(lock_path.read_text(encoding="utf-8"))
+            holder_pid = int(lock_data.get("pid", 0))
+            if holder_pid and _pid_alive(holder_pid):
+                raise RuntimeError(
+                    f"Source '{source}' is currently being indexed by PID"
+                    f" {holder_pid}. Wait for completion or kill the holder."
+                )
+        except (json.JSONDecodeError, ValueError):
+            pass  # Corrupted lock — take over
+
+    lock_path.write_text(
+        json.dumps({"pid": os.getpid(), "ts": _time.time()}),
+        encoding="utf-8",
+    )
+    lock_acquired = True
+
+    try:
+        chunk_count = _write_chunks_jsonl_from_paths(file_paths, strategy)
+    finally:
+        # Release lock on completion or error
+        try:
+            lock_path.unlink()
+        except FileNotFoundError:
+            pass
+
+    return {
+        "chunk_count": chunk_count,
+        "source_lock_acquired": lock_acquired,
+        "chunks_path": _CHUNKS_JSONL_PATH,
+    }
 
 
 def apply_strategy(artifact: dict) -> dict:
@@ -197,6 +306,14 @@ def apply_strategy(artifact: dict) -> dict:
     Acquires the source-level advisory lock before processing (UX gap fix D).
     Writes chunks to ``artifacts/chunks.jsonl`` in the workspace.
 
+    .. deprecated::
+        R-PURE-MODE-REDEFINE Class A replaced this monolithic step with the
+        two-step chain ``extract_and_split`` (safe) → ``write_chunks_with_lock``
+        (unsafe, minimal). This function is kept for override compatibility:
+        project skills that override ``apply_strategy`` via ``extends:
+        stdlib/index_docs`` continue to work unchanged. New skills should
+        prefer the two-step chain in skill.md.
+
     Returns a summary dict placed at ``data.chunk_stats``:
         {
             "chunk_count":          int,
@@ -204,8 +321,8 @@ def apply_strategy(artifact: dict) -> dict:
             "chunks_path":          str,
         }
     """
-    # ── Trusted-mode note ─────────────────────────────────────────────────────
-    # This step runs with mode=trusted so it can access the filesystem.
+    # ── Unsafe-mode note ──────────────────────────────────────────────────────
+    # This step runs with mode=unsafe so it can access the filesystem.
     # It writes chunks.jsonl relative to the working directory (which the OS
     # sets to the workspace base_dir before invoking the python step).
 
@@ -262,12 +379,16 @@ def apply_strategy(artifact: dict) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# JSONL writer (called by apply_strategy)
+# JSONL writers (called by postprocessor steps)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _write_chunks_jsonl(path: str, strategy: dict) -> int:
-    """Chunk files and write to artifacts/chunks.jsonl. Returns chunk count."""
+def _write_chunks_jsonl_from_paths(file_paths: list[str], strategy: dict) -> int:
+    """Chunk an ordered list of file paths and write to artifacts/chunks.jsonl.
+
+    Called by ``write_chunks_with_lock`` (mode: unsafe). Reads file content,
+    splits per strategy, writes JSONL. Returns chunk count.
+    """
     boundary = strategy["boundary"]
     max_size = strategy["max_chunk_size_tokens"]
     min_size = strategy.get("min_chunk_size_tokens", 50)
@@ -279,7 +400,7 @@ def _write_chunks_jsonl(path: str, strategy: dict) -> int:
 
     chunk_idx = 0
     with open(output_path, "w", encoding="utf-8") as f:
-        for file_path in _glob_files(path):
+        for file_path in file_paths:
             try:
                 text = Path(file_path).read_text(encoding="utf-8", errors="replace")
             except OSError:
@@ -303,6 +424,16 @@ def _write_chunks_jsonl(path: str, strategy: dict) -> int:
                 chunk_idx += 1
 
     return chunk_idx
+
+
+def _write_chunks_jsonl(path: str, strategy: dict) -> int:
+    """Chunk files matched by glob and write to artifacts/chunks.jsonl.
+
+    Called by ``apply_strategy`` (deprecated monolithic step, mode: unsafe).
+    Returns chunk count.
+    """
+    file_paths = _glob_files(path)
+    return _write_chunks_jsonl_from_paths(file_paths, strategy)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
