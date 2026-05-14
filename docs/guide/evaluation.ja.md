@@ -267,7 +267,7 @@ reyn run my_skill '{"query": "テスト"}'
 
 ```yaml
 permissions:
-  python.pure: allow
+  python.safe: allow
   file.write: allow
 ```
 
@@ -276,8 +276,8 @@ permissions:
 ```yaml
 # reyn.local.yaml（gitignored — ローカル CI や dogfood 自動化向け）
 permissions:
-  python.pure: allow
-  python.trusted: allow
+  python.safe: allow
+  python.unsafe: allow
 ```
 
 完全な 3 層事前承認モデルについては [コンセプト: パーミッションモデル](../concepts/permission-model.md) を参照してください。

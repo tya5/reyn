@@ -103,6 +103,75 @@ The WAL truncation floor includes every active plan's
 `last_step_applied_seq`, so step events the resume analyzer needs
 aren't dropped while a plan is still running.
 
+## Step execution behavior
+
+### Plan summary before execution
+
+Before the first step runs, Reyn emits a status message listing all
+planned steps so the user sees the full shape upfront:
+
+```
+以下の計画で実行します:
+1. <step 1 description>
+2. <step 2 description>
+…
+```
+
+### Step progress status
+
+Each step emits a progress status:
+
+```
+plan step {n}/{total}: <step description>
+```
+
+The description is taken from the step's `description` field (truncated
+to 60 characters) rather than the internal step ID, so the status is
+human-readable.
+
+### Automatic retry on transient failure
+
+When a step fails, Reyn automatically retries up to `retry_limit`
+times (default 3) before escalating. Each retry emits a status
+message:
+
+```
+リトライ {attempt}/{retry_limit}: <step description>
+```
+
+When the retry budget is exhausted, Reyn invokes the
+`handle_limit_exceeded` intervention — the user sees a prompt asking
+whether to extend the retry budget. On approval the budget is extended
+by the base limit and execution continues; on refusal the step is
+recorded as failed.
+
+### Failed steps and plan continuation
+
+A step failure does **not** abort the whole plan. Reyn records the
+failure in `step_failures`, emits a `plan_step_failed` event, notifies
+the user:
+
+```
+plan step {n}/{total}: <description> → 失敗 (<error summary>)
+```
+
+…and continues with remaining steps. Steps that declare a dependency
+on a failed step receive a synthetic result noting the failure
+(`"(FAILED: ...)"`) so dependent steps can handle it gracefully.
+
+### Step execution config
+
+```yaml
+# reyn.yaml
+plan:
+  step_max_iterations: 5   # max RouterLoop iterations per step (default: 5)
+  retry_limit: 3           # max auto-retries per step on transient failure (default: 3)
+```
+
+`step_max_iterations` caps how many LLM sub-loop turns a single step
+may consume. `retry_limit` is a cost protection upper bound (analogous
+to token budget limits).
+
 ## Resume policy
 
 `reyn.yaml` configures coordinator behavior:
@@ -182,3 +251,5 @@ shape and falls back to discard.
 - [events](events.md) — `plan_*` and `plan_step_*` audit trail
 - ADR-0022 (Phase 1 fail-safe), ADR-0023 (Phase 2 forward replay +
   Phase 2.1 async dispatch)
+- FP-0028 (step progress UX), FP-0029 (step iteration budget),
+  FP-0030 (step result quality), FP-0031 (retry + user confirmation)

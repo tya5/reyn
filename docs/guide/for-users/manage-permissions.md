@@ -35,7 +35,7 @@ permissions:
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
       timeout: 30
 ---
 ```
@@ -66,8 +66,8 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    pure: allow
-    trusted: allow      # also requires --allow-untrusted-python at runtime
+    safe: allow
+    unsafe: allow      # also requires --allow-untrusted-python at runtime
 ```
 
 `allow` removes the prompt entirely. `ask` (default) prompts. `deny` rejects.

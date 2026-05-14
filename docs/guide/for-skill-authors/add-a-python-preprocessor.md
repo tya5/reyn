@@ -19,10 +19,10 @@ applies_to: [phases/*.md, reyn.yaml]
 
 | Mode | Sandboxing | Use for |
 |------|------------|---------|
-| `pure` | AST-validated, restricted builtins, allowlisted imports, subprocess | Standard math/stats/regex work |
-| `trusted` | None — full Python | File I/O, custom packages, anything `pure` blocks |
+| `safe` | AST-validated, restricted builtins, allowlisted imports, subprocess | Standard math/stats/regex work |
+| `unsafe` | None — full Python | File I/O, custom packages, anything `safe` blocks |
 
-Default to `pure`. Reach for `trusted` only when `pure` blocks something you actually need.
+Default to `safe`. Reach for `unsafe` only when `safe` blocks something you actually need.
 
 ## Step 1 — write the function
 
@@ -49,7 +49,7 @@ preprocessor:
   - python:
       module: stats
       function: compute
-      mode: pure
+      mode: safe
       output_schema:
         type: object
         required: [word_count]
@@ -73,7 +73,7 @@ permissions:
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
       timeout: 30
 ```
 
@@ -81,26 +81,26 @@ The `module`/`function` must match the preprocessor step.
 
 ## Step 4 — approve at startup
 
-`pure` mode steps still need approval the first time:
+`safe` mode steps still need approval the first time:
 
 ```yaml
 # reyn.yaml — pre-approve project-wide
 permissions:
   python:
-    pure: allow
+    safe: allow
 ```
 
-For `trusted`:
+For `unsafe`:
 
 ```yaml
 permissions:
   python:
-    trusted: allow
+    unsafe: allow
 ```
 
 …and run with `--allow-untrusted-python`.
 
-## What `pure` mode disallows
+## What `safe` mode disallows
 
 - `open`, `eval`, `exec`, `__import__`, `compile`, `globals`, `locals`
 - `subprocess` and other risky modules

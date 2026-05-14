@@ -19,10 +19,10 @@ applies_to: [phases/*.md, reyn.yaml]
 
 | モード | サンドボックス | 用途 |
 |------|------------|---------|
-| `pure` | AST 検証、制限された builtins、allowlist インポート、subprocess | 標準的な数学/統計/正規表現処理 |
-| `trusted` | なし — 完全な Python | ファイル I/O、カスタムパッケージ、`pure` でブロックされるもの |
+| `safe` | AST 検証、制限された builtins、allowlist インポート、subprocess | 標準的な数学/統計/正規表現処理 |
+| `unsafe` | なし — 完全な Python | ファイル I/O、カスタムパッケージ、`safe` でブロックされるもの |
 
-デフォルトは `pure` です。`pure` で本当に必要なものがブロックされる場合にのみ `trusted` を使用してください。
+デフォルトは `safe` です。`safe` で本当に必要なものがブロックされる場合にのみ `unsafe` を使用してください。
 
 ## ステップ 1 — 関数を書く
 
@@ -49,7 +49,7 @@ preprocessor:
   - python:
       module: stats
       function: compute
-      mode: pure
+      mode: safe
       output_schema:
         type: object
         required: [word_count]
@@ -72,7 +72,7 @@ permissions:
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
       timeout: 30
 ```
 
@@ -80,26 +80,26 @@ permissions:
 
 ## ステップ 4 — 起動時に承認する
 
-`pure` モードのステップも初回は承認が必要です:
+`safe` モードのステップも初回は承認が必要です:
 
 ```yaml
 # reyn.yaml — プロジェクト全体で事前承認
 permissions:
   python:
-    pure: allow
+    safe: allow
 ```
 
-`trusted` の場合:
+`unsafe` の場合:
 
 ```yaml
 permissions:
   python:
-    trusted: allow
+    unsafe: allow
 ```
 
 …そして `--allow-untrusted-python` オプションで実行します。
 
-## `pure` モードで禁止されること
+## `safe` モードで禁止されること
 
 - `open`、`eval`、`exec`、`__import__`、`compile`、`globals`、`locals`
 - `subprocess` やその他の危険なモジュール

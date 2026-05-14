@@ -53,8 +53,8 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    pure: allow
-    trusted: allow
+    safe: allow
+    unsafe: allow
 ```
 
 控えめに使いましょう。`allow` はプロンプトを完全に削除します。
@@ -224,7 +224,7 @@ web:
 
 ## パーミッションシステムではないもの
 
-- **Linux ケイパビリティサンドボックスではありません。** `mode: trusted` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。
+- **Linux ケイパビリティサンドボックスではありません。** `mode: unsafe` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。
 - **シークレットの保管庫ではありません。** 認証情報を approvals.yaml に入れたり、パーミッションで環境変数を隠そうとしないでください。認証情報には [コンセプト: シークレット管理](secret-handling.md) を使用してください。
 - **ユーザーに対する保護ではありません。** `reyn.yaml` で `permissions: shell: allow` とした場合、シェルを承認したことになります。このシステムは意図せずケイパビリティが増大することを防ぐものであり、ユーザーの意図を防ぐものではありません。
 

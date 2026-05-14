@@ -267,7 +267,7 @@ reyn run my_skill '{"query": "test"}'
 
 ```yaml
 permissions:
-  python.pure: allow
+  python.safe: allow
   file.write: allow
 ```
 
@@ -276,8 +276,8 @@ permissions:
 ```yaml
 # reyn.local.yaml (gitignored — for local CI or dogfood automation)
 permissions:
-  python.pure: allow
-  python.trusted: allow
+  python.safe: allow
+  python.unsafe: allow
 ```
 
 See [Concepts: permission model](../concepts/permission-model.md) for the full three-layer pre-approval model.

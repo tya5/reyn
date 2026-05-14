@@ -95,6 +95,71 @@ WAL truncation floor は全 active plan の `last_step_applied_seq` を
 含むので、 plan 進行中に resume analyzer が必要とする step event が
 誤 truncate されない。
 
+## Step 実行動作
+
+### 実行前の計画サマリー
+
+最初の step が始まる前に、Reyn は全 step を列挙したステータスメッセージを
+emit して、ユーザーが全体像を把握できるようにする:
+
+```
+以下の計画で実行します:
+1. <step 1 の説明>
+2. <step 2 の説明>
+…
+```
+
+### Step 進捗ステータス
+
+各 step は進捗ステータスを emit する:
+
+```
+plan step {n}/{total}: <step の説明>
+```
+
+説明は step の `description` フィールドから取得（60 文字に短縮）するため、
+内部の step ID ではなく人間が読める形式になる。
+
+### 一時的な失敗時の自動リトライ
+
+step が失敗した場合、Reyn は `retry_limit`（デフォルト 3）回まで
+自動的にリトライしてからユーザーにエスカレーションする。
+各リトライにはステータスメッセージを emit する:
+
+```
+リトライ {attempt}/{retry_limit}: <step の説明>
+```
+
+リトライ予算が尽きると、Reyn は `handle_limit_exceeded` intervention を
+起動し、ユーザーにリトライ予算の延長を確認する。承認された場合は
+予算をベースリミット分延長して実行継続、拒否された場合は step を
+失敗として記録する。
+
+### Step 失敗とプラン継続
+
+step の失敗はプラン全体を **abort しない**。Reyn は失敗を `step_failures`
+に記録し、`plan_step_failed` イベントを emit し、ユーザーに通知する:
+
+```
+plan step {n}/{total}: <説明> → 失敗 (<エラー概要>)
+```
+
+その後、残りの step の実行を継続する。失敗した step に依存を宣言している
+step には失敗を示す合成結果（`"(FAILED: ...)"`）が渡され、
+依存 step がグレースフルに処理できる。
+
+### Step 実行 config
+
+```yaml
+# reyn.yaml
+plan:
+  step_max_iterations: 5   # step あたりの最大 RouterLoop イテレーション数（デフォルト: 5）
+  retry_limit: 3           # 一時的な失敗時の最大自動リトライ回数（デフォルト: 3）
+```
+
+`step_max_iterations` は 1 step が消費できる LLM sub-loop ターン数の上限。
+`retry_limit` はコスト保護の上限値（token budget limit と同様の位置づけ）。
+
 ## Resume policy
 
 `reyn.yaml` で coordinator の挙動を設定:
@@ -167,3 +232,5 @@ coordinator は plan 形状を復元できず discard へ fallback。
 - [events](events.md) — `plan_*` / `plan_step_*` audit trail
 - ADR-0022 (Phase 1 fail-safe)、 ADR-0023 (Phase 2 forward replay +
   Phase 2.1 async dispatch)
+- FP-0028 (step 進捗 UX)、 FP-0029 (step イテレーション予算)、
+  FP-0030 (step 結果品質)、 FP-0031 (リトライ + ユーザー確認)

@@ -34,10 +34,10 @@ Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tm
 
 `python` preprocessor steps run in one of two modes:
 
-- **`pure`** — AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
-- **`trusted`** — no AST checks, full Python. Requires both `--allow-untrusted-python` at runtime AND a `python.trusted: allow` permission grant. Used only when `pure` blocks something genuinely needed.
+- **`safe`** — AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
+- **`unsafe`** — no AST checks, full Python. Requires both `--allow-untrusted-python` at runtime AND a `python.unsafe: allow` permission grant. Used only when `safe` blocks something genuinely needed.
 
-Skill authors are nudged toward `pure`; reaching for `trusted` is a deliberate choice that the linter can flag.
+Skill authors are nudged toward `safe`; reaching for `unsafe` is a deliberate choice that the linter can flag.
 
 ### Non-interactive approval (eval, CI)
 
@@ -47,7 +47,7 @@ Skill authors are nudged toward `pure`; reaching for `trusted` is a deliberate c
 
 **Prompt injection is not specifically defended.** If untrusted text reaches the LLM (a fetched web page, a user-supplied file), the LLM may follow embedded instructions. reyn's permission system bounds the *capabilities* a compromised LLM can reach (it cannot write outside approved paths, cannot run shell without `--allow-shell`, etc.) but does not pre-screen LLM input for injection. Defenses for that layer (input filtering, dual-LLM patterns, output gating) belong in the skill design, not the OS.
 
-**`mode: trusted` is OS-level trust, not OS-level sandbox.** A trusted Python step runs as the same user with the same filesystem access; it is not kernel-sandboxed. The system trusts that the user authorized the specific (module, function) pair. This is the right boundary for a developer tool — but it means trusted steps deserve code review the way a Makefile target does.
+**`mode: unsafe` is OS-level trust, not OS-level sandbox.** An unsafe Python step runs as the same user with the same filesystem access; it is not kernel-sandboxed. The system trusts that the user authorized the specific (module, function) pair. This is the right boundary for a developer tool — but it means unsafe steps deserve code review the way a Makefile target does.
 
 ## See also
 
