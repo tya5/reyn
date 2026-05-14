@@ -461,6 +461,64 @@ def _build_embedding_config(raw: object) -> EmbeddingConfig:
     )
 
 
+@dataclass
+class WebFetchConfig:
+    """`web.fetch:` — SSL verification settings for web_fetch and MCP registry.
+
+    Priority order (highest to lowest):
+      1. ``ca_bundle`` set → use that file path as the CA bundle (``verify=<path>``).
+         Satisfies corporate MITM proxy / custom PKI use cases.
+      2. ``verify_ssl: false`` → disable SSL verification entirely (``verify=False``).
+         Use only in controlled environments where certificate validation is
+         intentionally bypassed.
+      3. ``verify_ssl: true`` → force SSL verification regardless of env vars.
+      4. Both unset (``None``) → fall through to ``SSL_VERIFY`` env var →
+         ``litellm.ssl_verify`` → ``SSL_CERT_FILE`` → ``True`` (default).
+
+    Fields:
+        verify_ssl:
+            ``True`` forces verification. ``False`` disables it. ``None``
+            (default) delegates to the env-var / litellm fallback chain.
+        ca_bundle:
+            Absolute path (or path relative to cwd) of a CA bundle PEM file.
+            When set, takes priority over ``verify_ssl`` and env vars.
+    """
+    verify_ssl: bool | None = None
+    ca_bundle: str | None = None
+
+
+@dataclass
+class WebConfig:
+    """`web:` — web operation settings.
+
+    Aggregates ``web.fetch`` sub-section. Extend here when ``web.search``
+    gets its own knobs.
+    """
+    fetch: WebFetchConfig = field(default_factory=WebFetchConfig)
+
+
+def _build_web_fetch_config(raw: object) -> WebFetchConfig:
+    """Parse the ``web.fetch:`` sub-section."""
+    if not isinstance(raw, dict):
+        return WebFetchConfig()
+    ca_bundle_raw = raw.get("ca_bundle")
+    ca_bundle = str(ca_bundle_raw) if ca_bundle_raw is not None else None
+    verify_ssl_raw = raw.get("verify_ssl")
+    if verify_ssl_raw is None:
+        verify_ssl: bool | None = None
+    else:
+        verify_ssl = bool(verify_ssl_raw)
+    return WebFetchConfig(verify_ssl=verify_ssl, ca_bundle=ca_bundle)
+
+
+def _build_web_config(raw: object) -> WebConfig:
+    """Parse the ``web:`` section. Empty / missing returns full defaults."""
+    if not isinstance(raw, dict):
+        return WebConfig()
+    fetch_raw = raw.get("fetch")
+    return WebConfig(fetch=_build_web_fetch_config(fetch_raw))
+
+
 SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
 
 
@@ -601,6 +659,10 @@ class ReynConfig:
     # multi_agent: / cost.router_invocations_per_turn keys that were
     # removed in this refactor. safety: is the single source of truth.
     safety: SafetyConfig = field(default_factory=SafetyConfig)
+    # FP-0022 follow-up: declarative SSL config for web_fetch + MCP registry.
+    # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
+    # litellm.ssl_verify → SSL_CERT_FILE → True (default).
+    web: WebConfig = field(default_factory=WebConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -836,6 +898,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         voice=_build_voice_config(merged.get("voice")),
         embedding=_build_embedding_config(merged.get("embedding")),
         safety=safety,
+        web=_build_web_config(merged.get("web")),
     )
 
 

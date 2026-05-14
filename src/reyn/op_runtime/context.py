@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from reyn.config import WebConfig
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
@@ -79,3 +80,8 @@ class OpContext:
     # run scope. None when the OpContext is created outside a run scope
     # (e.g. chat router, CLI commands).
     run_id: str | None = None
+
+    # FP-0022 follow-up: declarative SSL config for web_fetch and MCP registry.
+    # Defaults to WebConfig() (= no override, falls through to env-var chain).
+    # Callers that have a ReynConfig available should pass config.web here.
+    web_config: "WebConfig | None" = None

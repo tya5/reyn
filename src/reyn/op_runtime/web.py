@@ -37,9 +37,32 @@ class _TextExtractor(html.parser.HTMLParser):
         return "\n".join(self._parts)
 
 
+def _resolve_ssl_verify(ctx: OpContext) -> bool | str:
+    """Resolve the SSL verify value for httpx from config + env fallback.
+
+    Priority (highest → lowest):
+      1. ``web.fetch.ca_bundle`` set in config → returns the CA bundle path (str).
+      2. ``web.fetch.verify_ssl`` set to False → returns False (disable SSL check).
+      3. ``web.fetch.verify_ssl`` set to True  → returns True (force SSL check).
+      4. Both unset (None) → falls through to litellm.get_ssl_verify()
+         (= SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE → True).
+    """
+    from litellm.llms.custom_httpx.http_handler import get_ssl_verify
+
+    cfg = ctx.web_config.fetch if ctx.web_config is not None else None
+    if cfg is not None:
+        if cfg.ca_bundle:
+            return cfg.ca_bundle  # custom CA bundle path (corporate PKI)
+        if cfg.verify_ssl is False:
+            return False
+        if cfg.verify_ssl is True:
+            return True
+        # cfg.verify_ssl is None → fall through to env-var chain
+    return get_ssl_verify()
+
+
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     import httpx
-    from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
     # FP-0022: Tier 1 handler-level gate — 4-layer approval (config / approvals.yaml
     # / session / interactive). Replaces the catalog-level `web.fetch: allow` gate.
@@ -51,14 +74,13 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
 
     ctx.events.emit("web_fetch_started", url=op.url)
     try:
-        # SSL verification — defer to litellm's get_ssl_verify() so SSL_VERIFY
-        # / SSL_CERT_FILE env vars work consistently with LLM calls.
-        # Priority: SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE (if True).
+        # SSL verification — priority: reyn.yaml web.fetch config → env-var chain.
+        # See _resolve_ssl_verify() docstring for the full priority order.
         async with httpx.AsyncClient(
             timeout=op.timeout,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
-            verify=get_ssl_verify(),
+            verify=_resolve_ssl_verify(ctx),
         ) as client:
             response = await client.get(op.url)
     except httpx.TimeoutException:

@@ -196,6 +196,38 @@ blocks immediately.
 read-only with no side effects, so operator `deny` is the only sensible
 restriction path. No interactive prompt is needed.
 
+### SSL configuration for web_fetch and MCP registry (FP-0022 follow-up)
+
+`reyn.yaml` supports declarative SSL settings for `web_fetch` and MCP registry
+requests. This solves the corporate MITM proxy / custom PKI use case at config
+level without requiring ad-hoc env-var configuration.
+
+```yaml
+web:
+  fetch:
+    verify_ssl: false          # bool — disable SSL verification entirely
+    ca_bundle: /path/to/ca.pem # str  — custom CA bundle file path
+```
+
+Both fields are optional. Priority order (highest to lowest):
+
+| Priority | Source | Effect |
+|---|---|---|
+| 1 | `web.fetch.ca_bundle` set | Pass the path to httpx `verify=<path>` (custom CA) |
+| 2 | `web.fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) |
+| 3 | `web.fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
+| 4 | Neither set (default) | `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
+
+`ca_bundle` takes precedence over `verify_ssl` when both are set. The existing
+`SSL_VERIFY` / `SSL_CERT_FILE` env-var behavior is unchanged when neither field
+is configured — there is no regression for environments that already use env vars.
+
+**Common use cases:**
+
+- **Corporate MITM proxy with internal CA**: set `ca_bundle: /etc/ssl/certs/corp-ca.pem`
+- **Internal dev environment with self-signed certs**: set `verify_ssl: false`
+- **Enforce verification regardless of env vars**: set `verify_ssl: true`
+
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step in `mode: trusted` runs as the same user; reyn doesn't sandbox the kernel.

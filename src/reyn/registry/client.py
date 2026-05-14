@@ -106,22 +106,37 @@ class RegistryClient:
         async with RegistryClient() as client:
             results = await client.search("slack")
             server  = await client.get_server("ai.smithery/smithery-ai-slack")
+
+    SSL verification priority (matches ``web.fetch`` in ``reyn.yaml``):
+      1. ``verify`` constructor arg set to a path string → use as CA bundle.
+      2. ``verify`` set to ``False`` → disable SSL check.
+      3. ``verify`` set to ``True``  → force SSL check.
+      4. ``verify`` is ``None`` (default) → fall through to litellm.get_ssl_verify()
+         (``SSL_VERIFY`` env → ``litellm.ssl_verify`` → ``SSL_CERT_FILE`` → ``True``).
+
+    Callers that have a ``ReynConfig`` available should pass the resolved
+    value from ``_resolve_ssl_verify_from_config(config.web.fetch)``
+    (see ``reyn.op_runtime.web``).  The default ``None`` preserves the
+    existing env-var behaviour so all current callers remain unaffected.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, verify: bool | str | None = None) -> None:
         self._client = None  # httpx.AsyncClient — lazy init
+        self._verify = verify  # None = use litellm env-var fallback
 
     async def __aenter__(self) -> "RegistryClient":
         import httpx
         from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
-        # SSL verification — defer to litellm's get_ssl_verify() for consistency
-        # with LLM calls (SSL_VERIFY / SSL_CERT_FILE env vars).
+        # Resolve the verify value: explicit arg takes priority; None falls
+        # through to the litellm env-var chain (same as web_fetch handler).
+        verify = self._verify if self._verify is not None else get_ssl_verify()
+        # SSL verification — priority: constructor arg → litellm env-var chain.
         self._client = httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
-            verify=get_ssl_verify(),
+            verify=verify,
         )
         return self
 
