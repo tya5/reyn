@@ -1,10 +1,18 @@
-"""ErrorBox — tall red-bordered error display widget.
+"""ErrorLine — collapsible single-line error widget.
 
-Replaces single-line '✗ error_text' log lines with a visually prominent
-bordered box that includes the error message, optional details, and a hint
-directing the user to the right panel's events tab.
+Replaces the old tall-bordered ErrorBox with a compact, click-to-expand line.
 
-Design: bright-red border, dim-coral hint text, display-only (no interaction).
+Default (collapsed):
+    ✗ [skill#run_id]: error message  ▶
+
+After click (expanded):
+    ✗ [skill#run_id]: error message  ▼
+      detail line 1
+      detail line 2
+      … N more  [B→events]
+
+Press Esc to dismiss (handled by ConversationView / app.py via the
+`_error_boxes` list — same API as before).
 """
 from __future__ import annotations
 
@@ -12,16 +20,16 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, Static
 
-from reyn.chat.tui._palette import _CORAL  # noqa: F401  (used for hint text)
-
 
 class ErrorBox(Widget):
-    """Inline error display box with red border.
+    """Collapsible single-line error indicator.
+
+    Collapsed by default; click anywhere to expand/collapse.
 
     Args:
         message:       The primary error message to display.
         details:       Optional multi-line detail text (e.g. traceback).
-                       First 3 lines are shown; remaining lines are summarised.
+                       First 5 lines shown; remaining lines are summarised.
         run_id_short:  Short run ID suffix shown in the header prefix.
         skill_name:    Skill name shown in the header prefix.
         id:            Optional Textual widget ID.
@@ -29,35 +37,41 @@ class ErrorBox(Widget):
 
     DEFAULT_CSS = """
     ErrorBox {
-        border: solid #cc4444;
-        padding: 1 2;
         height: auto;
-        margin: 1 0;
+        margin: 0;
+        padding: 0;
     }
+    /* Header line — always visible */
     ErrorBox Label.eb-header {
-        text-style: bold;
-        color: #cc4444;
-        height: auto;
+        color: #cc5555;
+        height: 1;
         width: 1fr;
-        padding-bottom: 1;
+        padding: 0 1;
     }
-    ErrorBox Label.eb-message {
-        color: #ff8866;
-        height: auto;
-        width: 1fr;
-        padding-bottom: 1;
+    ErrorBox:hover Label.eb-header {
+        color: #ff7777;
     }
+    /* Detail block — hidden until expanded */
     ErrorBox Static.eb-details {
-        color: #888888;
+        display: none;
+        color: #777777;
         height: auto;
         width: 1fr;
+        padding: 0 2;
     }
     ErrorBox Label.eb-hint {
-        color: #888888;
-        height: auto;
+        display: none;
+        color: #555555;
+        height: 1;
         width: 1fr;
-        text-align: right;
-        padding-top: 1;
+        padding: 0 2;
+    }
+    /* Expanded state — reveal details */
+    ErrorBox.-expanded Static.eb-details {
+        display: block;
+    }
+    ErrorBox.-expanded Label.eb-hint {
+        display: block;
     }
     """
 
@@ -75,30 +89,51 @@ class ErrorBox(Widget):
         self._details = details
         self._run_id_short = run_id_short
         self._skill_name = skill_name
+        self._expanded = False
 
-    def _build_header(self) -> str:
-        """Build header label text with optional [skill#run_id] prefix."""
-        prefix = ""
+    # ── header text helpers ───────────────────────────────────────────────────
+
+    def _prefix(self) -> str:
         if self._skill_name and self._run_id_short:
-            prefix = f"[{self._skill_name}#{self._run_id_short}]  "
-        elif self._skill_name:
-            prefix = f"[{self._skill_name}]  "
-        elif self._run_id_short:
-            prefix = f"[#{self._run_id_short}]  "
-        return f"{prefix}✗ ERROR"
+            return f"[{self._skill_name}#{self._run_id_short}]"
+        if self._skill_name:
+            return f"[{self._skill_name}]"
+        if self._run_id_short:
+            return f"[#{self._run_id_short}]"
+        return ""
+
+    def _header_text(self) -> str:
+        prefix = self._prefix()
+        arrow = "▼" if self._expanded else "▶"
+        msg = self._message[:72] + "…" if len(self._message) > 72 else self._message
+        if prefix:
+            return f"✗ {prefix}: {msg}  {arrow}"
+        return f"✗ {msg}  {arrow}"
+
+    # ── compose ───────────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield Label(self._build_header(), classes="eb-header")
-        yield Label(self._message, classes="eb-message")
+        yield Label(self._header_text(), classes="eb-header")
 
         if self._details:
             lines = self._details.splitlines()
-            visible = lines[:3]
-            overflow = len(lines) - 3
-
+            visible = lines[:5]
+            overflow = len(lines) - 5
             detail_text = "\n".join(visible)
             if overflow > 0:
                 detail_text += f"\n… {overflow} more"
-
             yield Static(detail_text, classes="eb-details")
-            yield Label("[B→events]", classes="eb-hint")
+            yield Label("[B→events] for full trace", classes="eb-hint")
+
+    # ── interaction ───────────────────────────────────────────────────────────
+
+    def on_click(self) -> None:
+        """Toggle expanded/collapsed state."""
+        self._expanded = not self._expanded
+        self.toggle_class("-expanded")
+        # Update the header arrow indicator
+        try:
+            header = self.query_one(".eb-header", Label)
+            header.update(self._header_text())
+        except Exception:
+            pass

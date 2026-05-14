@@ -13,7 +13,7 @@ Message-kind routing:
                 consecutive turns are within _GROUP_WINDOW_S) followed
                 by FoldableMarkdown so long replies can be folded.
   status      → routed to StickyStatus (sticky 1-line, never logged).
-  error       → mounted as an ErrorBox widget (tall red border).
+  error       → mounted as an ErrorBox widget (collapsible 1-line).
   intervention→ InterventionWidget (mount_intervention).
   trace       → suppressed in the conv pane; the App's outbox loop drives
                 a SkillActivityRow instead. Right panel events tab still
