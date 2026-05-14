@@ -84,11 +84,18 @@ def test_noop_backend_satisfies_protocol():
     assert backend.name == "noop"
 
 
-def test_get_default_backend_returns_noop():
-    """Tier 2: get_default_backend() returns NoopBackend today (FP-0017 wave 1)."""
+def test_get_default_backend_returns_protocol_conformant_backend():
+    """Tier 2: get_default_backend() returns a Protocol-conformant available backend.
+
+    Since FP-0017 Components B+C landed, the default factory is platform-aware
+    (= Seatbelt on Darwin, Landlock on Linux 5.13+, Noop fallback elsewhere or
+    when the platform backend reports unavailable). This test pins only the
+    invariants the factory contract guarantees, not the specific backend name.
+    """
     backend = get_default_backend()
-    assert backend.name == "noop"
+    assert isinstance(backend, SandboxBackend)
     assert backend.available() is True
+    assert backend.name in {"noop", "seatbelt", "landlock"}
 
 
 @pytest.mark.asyncio
@@ -155,18 +162,25 @@ def _make_ctx() -> tuple[OpContext, EventLog]:
 
 @pytest.mark.asyncio
 async def test_dispatch_emits_started_and_completed():
-    """Tier 2: sandboxed_exec dispatch through execute_op emits both P6 events."""
+    """Tier 2: sandboxed_exec dispatch through execute_op emits both P6 events.
+
+    Backend-agnostic: the factory picks per-platform (Noop / Seatbelt / Landlock);
+    we assert the dispatch contract holds (status / events / stdout) and that
+    the recorded backend name matches whatever the factory returned.
+    """
     ctx, events = _make_ctx()
+    # /bin/echo for portability — Seatbelt's deny-default profile doesn't
+    # implicitly resolve bare names from PATH on first exec.
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
-        argv=["echo", "hello"],
+        argv=["/bin/echo", "hello"],
         env_passthrough=["PATH"],
         timeout_seconds=10,
     )
     result = await execute_op(op, ctx, caller="control_ir")
     assert result["status"] == "ok"
     assert result["kind"] == "sandboxed_exec"
-    assert result["backend"] == "noop"
+    assert result["backend"] in {"noop", "seatbelt", "landlock"}
     assert result["returncode"] == 0
     assert "hello" in result["stdout"]
 
@@ -181,7 +195,7 @@ async def test_dispatch_timeout_status():
     ctx, _events = _make_ctx()
     op = SandboxedExecIROp(
         kind="sandboxed_exec",
-        argv=["sleep", "5"],
+        argv=["/bin/sleep", "5"],
         env_passthrough=["PATH"],
         timeout_seconds=1,
     )

@@ -5,10 +5,12 @@ Sandbox Policy Language (SBPL) profile to restrict filesystem access, network
 access, and subprocess spawning for a child process.
 
 **Deprecation notice**: `sandbox-exec` and the SBPL runtime are deprecated
-upstream by Apple and are scheduled for removal in macOS 26. On macOS 26+,
-`SeatbeltBackend.available()` returns False. The planned successor is
-`AppleContainerBackend` (FP-0017 Component E, deferred until macOS 26 ships
-stable container APIs).
+upstream by Apple. As of macOS 26.3 the binary is still shipped at
+`/usr/bin/sandbox-exec` and functional; `available()` keys off binary
+presence rather than macOS major version, so if a future macOS truly
+removes the binary the backend will naturally report unavailable and the
+factory will fall through to `AppleContainerBackend` (FP-0017 Component E,
+deferred until macOS ships stable container APIs).
 
 References:
 - FP-0017 Component C: docs/deep-dives/proposals/0017-sandboxed-execution.ja.md
@@ -39,6 +41,10 @@ _ALWAYS_READ_SUBPATHS: tuple[str, ...] = (
     "/usr/bin",
     "/bin",
     "/usr/share",
+    # dyld cache lives under /private/var/db/dyld on modern macOS; without
+    # read access the dynamic linker can't map shared cache and binaries
+    # abort at libc init.
+    "/private/var/db/dyld",
 )
 
 
@@ -64,7 +70,14 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         "(version 1)",
         "(deny default)",
         "",
-        "; — system libraries (required for dylib loading) —",
+        "; — base BSD syscall baseline (Apple-provided, /usr/share/sandbox) —",
+        "; bsd.sb supplies mach-lookup, sysctl-read, signal, ipc-posix-shm,",
+        "; iokit-open subset, etc. — the minimum required to actually run a",
+        "; binary under (deny default). Without it, even /bin/echo aborts at",
+        "; libc init (SIGABRT) on macOS 26+.",
+        '(import "bsd.sb")',
+        "",
+        "; — system libraries (dyld cache + framework load paths) —",
     ]
 
     # Always-allowed read paths for dylib / process bootstrap.
@@ -72,6 +85,15 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         f"(subpath {_sbpl_quote(p)})" for p in _ALWAYS_READ_SUBPATHS
     )
     lines.append(f"(allow file-read* {system_subpaths})")
+
+    # Always-allowed process-exec: without this, sandbox-exec cannot even
+    # execvp() the target binary under (deny default) (macOS 26+ is strict).
+    # The filesystem restrictions above still bound what the exec'd process
+    # can read/write/network; we just don't gate the exec syscall itself.
+    # process-fork is similarly needed by virtually every interpreter / runtime
+    # bootstrap (e.g. CRT init); policy.allow_subprocess remains advisory.
+    lines.append("(allow process-exec*)")
+    lines.append("(allow process-fork)")
 
     # User-declared read paths.
     if policy.read_paths:
@@ -96,11 +118,11 @@ def _build_sbpl_profile(policy: SandboxPolicy) -> str:
         lines.append("; — network —")
         lines.append("(allow network*)")
 
-    # Subprocess / fork.
-    if policy.allow_subprocess:
-        lines.append("")
-        lines.append("; — subprocess —")
-        lines.append("(allow process-fork)")
+    # Note: process-fork is allowed unconditionally above. policy.allow_subprocess
+    # is currently advisory under Seatbelt — distinguishing "the invoked binary
+    # may fork (interpreter bootstrap)" from "and may spawn arbitrary children"
+    # requires per-pid rules SBPL doesn't cleanly express. Recorded in P6
+    # events for audit.
 
     return "\n".join(lines) + "\n"
 
@@ -116,7 +138,14 @@ class SeatbeltBackend:
     Availability:
     - Requires macOS (Darwin).
     - Requires ``sandbox-exec`` on PATH.
-    - Returns False on macOS 26+ (Apple has removed sandbox-exec).
+
+    Note: the FP-0017 doc anticipated Apple removing sandbox-exec in macOS 26
+    in favor of Apple Containers. As of macOS 26.3, sandbox-exec is still
+    shipped at /usr/bin/sandbox-exec (deprecated upstream but functional),
+    so we trust the presence of the binary rather than gating on macOS
+    major version. If a future macOS truly removes the binary, ``shutil.which``
+    will return None and ``available()`` will naturally fall back to False
+    (then AppleContainerBackend / FP-0017 Component E takes over).
     """
 
     name: str = "seatbelt"
@@ -127,15 +156,6 @@ class SeatbeltBackend:
             return False
         if shutil.which("sandbox-exec") is None:
             return False
-        # sandbox-exec is removed in macOS 26+.
-        try:
-            ver_str = platform.mac_ver()[0]  # e.g. "14.5.0"
-            major = int(ver_str.split(".")[0])
-            if major >= 26:
-                return False
-        except (ValueError, IndexError):
-            # Version parsing failed — assume current macOS; return True.
-            pass
         return True
 
     async def run(
