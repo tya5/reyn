@@ -28,6 +28,7 @@ from reyn.chat.services import (
     BudgetGateway,
     ChainManager,
     CompactionController,
+    InterventionHandler,
     InterventionRegistry,
     MemoryService,
     RouterHostAdapter,
@@ -56,7 +57,6 @@ from reyn.user_intervention import (
     InterventionBus,
     InterventionChoice,
     UserIntervention,
-    match_choice,
 )
 
 ROUTER_SKILL_NAME = "skill_router"
@@ -663,6 +663,19 @@ class ChatSession:
             on_announce=self._announce_intervention,
         )
 
+        # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
+        # Extracted from ChatSession.  Session keeps thin wrappers on
+        # _dispatch_intervention / _maybe_answer_oldest_intervention /
+        # _announce_intervention / _deliver_answer_to so the existing test
+        # surface (and ChatInterventionBus) remain stable.
+        self._intervention_handler = InterventionHandler(
+            intervention_registry=self._interventions,
+            journal=self._journal,
+            event_log=self._chat_events,
+            put_outbox=self._put_outbox,
+            append_history=self._append_history_for_handler,
+        )
+
         # FP-0019 Wave 1b: SkillRunner — skill task lifecycle service.
         # Owns running_skills / running_skills_started_at / running_skills_chain.
         # Constructed after _interventions (needed for drop_interventions_for_run
@@ -830,6 +843,18 @@ class ChatSession:
         with self.history_path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(asdict(msg), ensure_ascii=False) + "\n")
 
+    def _append_history_for_handler(
+        self, role: str, text: str, ts: str, meta: dict,
+    ) -> None:
+        """Adapter callback injected into InterventionHandler.
+
+        InterventionHandler needs to append a user history entry when an
+        intervention is answered.  This adapter bridges the handler's
+        ``(role, text, ts, meta)`` signature to ChatSession._append_history
+        (which takes a ChatMessage).
+        """
+        self._append_history(ChatMessage(role=role, text=text, ts=ts, meta=meta))
+
     def load_history(self) -> None:
         if not self.history_path.exists():
             return
@@ -978,33 +1003,53 @@ class ChatSession:
 
     # ── main loop ───────────────────────────────────────────────────────────────
 
+    async def run_one_iteration(self) -> bool:
+        """Process exactly one inbox kind.  Returns False on shutdown, True otherwise.
+
+        Same handler dispatch as run(); the only difference is no while-loop.
+        Callers decide when to pump again — long-lived sessions loop forever
+        (CUI), request-driven sessions pump until idle (MCP / A2A via
+        MessageBus).
+
+        FP-0013 Component B: this is the pumping primitive.  MessageBus.request
+        drives this from the MCP / A2A request-handler task so the LLM call
+        executes on the same task that holds the event loop, sidestepping the
+        anyio stdio-starvation failure mode documented in FP-0013 §ADR-A.
+
+        Does NOT emit chat_started / chat_stopped events — those are emitted by
+        run() which owns the session lifetime.  Does NOT call _drain_on_shutdown;
+        that is also run()'s responsibility on loop exit.
+        """
+        kind, payload = await self._consume_inbox()
+        if kind == "shutdown":
+            return False
+        if kind == "user":
+            await self._handle_user_message(
+                payload.get("text", ""),
+                chain_id=payload.get("chain_id") or _new_chain_id(),
+            )
+        elif kind == "agent_request":
+            await self._handle_agent_request(payload)
+        elif kind == "agent_response":
+            await self._handle_agent_response(payload)
+        elif kind == "skill_completed":
+            # FP-0012: a background-spawned skill finished. Inject a
+            # user-role completion message into the existing thread
+            # and run one router LLM turn for narration.
+            await self._handle_skill_completed(payload)
+        elif kind == "plan_completed":
+            # FP-0025 C: a background plan finished. Inject a
+            # user-role message with step_results and run one
+            # router LLM turn for synthesis narration.
+            await self._handle_plan_completed(payload)
+        return True
+
     async def run(self) -> None:
         self._chat_events.emit("chat_started", agent_name=self.agent_name, model=self.model)
 
         try:
-            while True:
-                kind, payload = await self._consume_inbox()
-                if kind == "shutdown":
-                    break
-                if kind == "user":
-                    await self._handle_user_message(
-                        payload.get("text", ""),
-                        chain_id=payload.get("chain_id") or _new_chain_id(),
-                    )
-                elif kind == "agent_request":
-                    await self._handle_agent_request(payload)
-                elif kind == "agent_response":
-                    await self._handle_agent_response(payload)
-                elif kind == "skill_completed":
-                    # FP-0012: a background-spawned skill finished. Inject a
-                    # user-role completion message into the existing thread
-                    # and run one router LLM turn for narration.
-                    await self._handle_skill_completed(payload)
-                elif kind == "plan_completed":
-                    # FP-0025 C: a background plan finished. Inject a
-                    # user-role message with step_results and run one
-                    # router LLM turn for synthesis narration.
-                    await self._handle_plan_completed(payload)
+            while await self.run_one_iteration():
+                pass
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
@@ -1489,128 +1534,31 @@ class ChatSession:
     def _router_last_reason(self, value: str) -> None:
         self._budget._router_last_reason = value
 
-    # ── intervention routing ─────────────────────────────────────────────────────
+    # ── intervention routing (thin wrappers → InterventionHandler) ──────────────
+    # Business logic lives in InterventionHandler (FP-0019 Wave 2 part 1).
+    # These thin wrappers preserve the session-level surface used by
+    # ChatInterventionBus, slash commands, and existing Tier 2 tests.
 
     async def _maybe_answer_oldest_intervention(self, text: str) -> bool:
-        """If any intervention is pending, deliver `text` to the oldest and
-        return True. Stale heads are evicted by the registry on `head()`."""
-        head = self._interventions.head()
-        if head is None:
-            return False
-        return await self._deliver_answer_to(head, text)
+        """Thin wrapper → InterventionHandler.maybe_answer."""
+        return await self._intervention_handler.maybe_answer(text)
 
     async def _deliver_answer_to(self, iv: UserIntervention, text: str) -> bool:
-        """Resolve `iv` with `text`, append a user-history entry, emit the
-        `user_answered_intervention` event.
-
-        Wraps `InterventionRegistry.deliver_answer` with the session-level
-        side effects (history + audit event + unknown-choice hint). Returns
-        True when the user input was consumed (answer set OR unrecognized
-        choice hint emitted, both of which suppress a fresh router turn).
-        """
-        if iv.future.done():
-            return False
-        resolved = await self._interventions.deliver_answer(iv, text)
-        if not resolved and iv.choices:
-            # No-match path: surface hint, but consume the input so the
-            # router doesn't run on a stray hotkey-attempt.
-            hint = " / ".join(c.label for c in iv.choices)
-            await self._put_outbox(OutboxMessage(
-                kind="status",
-                text=f"unknown choice; expected one of: {hint}",
-                meta=_iv_meta(iv),
-            ))
-            return True
-        if not resolved:
-            return False
-        # Successfully resolved: append history + emit audit event.
-        choice = match_choice(text, iv.choices) if iv.choices else None
-        self._append_history(ChatMessage(
-            role="user", text=text, ts=_now_iso(),
-            meta={
-                "answered_skill": iv.skill_name or "",
-                "answered_run_id": iv.run_id or "",
-                "intervention_id": iv.id,
-                "intervention_kind": iv.kind,
-            },
-        ))
-        self._chat_events.emit(
-            "user_answered_intervention",
-            intervention_id=iv.id,
-            kind=iv.kind,
-            run_id=iv.run_id,
-            skill=iv.skill_name,
-            choice_id=choice.id if choice else None,
-            answer_text=text if not iv.choices else "",
-        )
-        # Signal the TUI to remove the intervention widget (handles the case
-        # where the user answered via text input rather than clicking a chip
-        # button — the chip path calls InterventionWidget._submit which calls
-        # self.remove() itself; the text-input path skips that code path).
-        await self._put_outbox(OutboxMessage(
-            kind="intervention_resolved",
-            text="",
-            meta={"iv_id": iv.id, "run_id": iv.run_id or ""},
-        ))
-        return True
+        """Thin wrapper → InterventionHandler.deliver_answer_to."""
+        return await self._intervention_handler.deliver_answer_to(iv, text)
 
     async def _announce_intervention(self, iv: UserIntervention) -> None:
-        """Format and publish an intervention to the outbox for the renderer.
-
-        Skill / run_id provenance lives in `meta` — the renderer prepends a
-        `[skill#abcd]` tag, so we don't repeat it in `text`.
-        """
-        lines: list[str] = []
-        if iv.kind == "ask_user":
-            lines.append(f"Question: {iv.prompt}")
-        else:
-            lines.append(iv.prompt)
-        if iv.detail:
-            lines.append(f"  {iv.detail}")
-        if iv.suggestions:
-            lines.append(f"  options: {' / '.join(iv.suggestions)}")
-        if iv.choices:
-            labels = " / ".join(c.label for c in iv.choices)
-            lines.append(f"  {labels}")
-        await self._put_outbox(OutboxMessage(
-            kind="intervention",
-            text="\n".join(lines),
-            meta=_iv_meta(iv),
-        ))
+        """Thin wrapper → InterventionHandler.announce."""
+        await self._intervention_handler.announce(iv)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
-        """Register an intervention via the registry. Emits a "queued" status
-        when the registry already has pending entries — the registry itself
-        only auto-announces the head intervention.
+        """Thin wrapper → InterventionHandler.dispatch.
 
-        Wraps `InterventionRegistry.dispatch` with the session-level
-        "awaiting answer (N queued)" UX hint and the WAL persistence step
-        (PR-intervention-link L3) so a crash mid-await leaves the dispatch
-        on disk for resume to re-enqueue.
+        ChatInterventionBus, _handle_chat_limit_checkpoint, and
+        _ask_budget_extension all call this method directly; keeping it
+        as a session-level entry keeps those call sites stable.
         """
-        # Persist BEFORE awaiting so a crash mid-await leaves the WAL
-        # with the dispatch event. UserIntervention.to_dict excludes the
-        # volatile future field.
-        await self._journal.record_intervention_dispatched(
-            intervention_id=iv.id, iv_dict=iv.to_dict(),
-        )
-        # Pre-emit the queued-status hint when this iv won't be the head.
-        if not self._interventions.is_empty():
-            queued = self._interventions.queued_count()
-            await self._put_outbox(OutboxMessage(
-                kind="status",
-                text=f"awaiting answer ({queued} queued)",
-                meta=_iv_meta(iv),
-            ))
-        try:
-            return await self._interventions.dispatch(iv)
-        finally:
-            # Resolve event covers all exit paths (answered, cancelled,
-            # task abort). Idempotent in the journal so duplicate cleanup
-            # via _drop_interventions_for_run is safe.
-            await self._journal.record_intervention_resolved(
-                intervention_id=iv.id,
-            )
+        return await self._intervention_handler.dispatch(iv)
 
     async def _ask_budget_extension(
         self,
