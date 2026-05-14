@@ -66,11 +66,11 @@ def _is_workflow_abort(exc_type: type | None) -> bool:
 
 
 # Each step's narrow LLM call gets at most this many iterations before
-# the OS gives up on it and records a step failure. Smaller than the
-# top-level router loop's default (= 5) because plan steps are scoped:
-# tool_call → narrate is the natural shape, two iterations covers it
-# with a budget buffer.
-_PLAN_STEP_MAX_ITERATIONS = 3
+# the OS gives up on it and records a step failure. Raised from 3 to 5
+# in FP-0029: tool_call → result → follow-up tool → narrate is a
+# realistic 3-turn shape; 5 gives comfortable headroom without runaway
+# risk. Overridable via ``reyn.yaml plan.step_max_iterations``.
+_PLAN_STEP_MAX_ITERATIONS = 5
 
 # Plan-tool argument bounds. Pinned in the JSON schema (= router_tools)
 # AND re-validated here so a malformed plan from the LLM is rejected
@@ -641,6 +641,7 @@ async def execute_plan(
     router_model: str = "light",
     plan_id: str | None = None,
     resume_plan: Any = None,
+    step_max_iterations: int | None = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -791,7 +792,7 @@ async def execute_plan(
             sub_loop = RouterLoop(
                 host=narrow_host,
                 chain_id=chain_id,
-                max_iterations=_PLAN_STEP_MAX_ITERATIONS,
+                max_iterations=step_max_iterations or _PLAN_STEP_MAX_ITERATIONS,
                 router_model=router_model,
                 budget=budget,
                 system_prompt_override=sys_prompt,

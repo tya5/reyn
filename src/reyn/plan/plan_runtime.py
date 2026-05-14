@@ -56,6 +56,7 @@ class PlanRuntime:
         budget: Any = None,
         router_model: str = "light",
         resume_plan: PlanResumePlan | None = None,
+        step_max_iterations: int | None = None,
     ) -> None:
         self._plan = plan
         self._host = host
@@ -64,6 +65,7 @@ class PlanRuntime:
         self._budget = budget
         self._router_model = router_model
         self._resume_plan = resume_plan
+        self._step_max_iterations = step_max_iterations
 
     @property
     def plan(self) -> Plan:
@@ -96,6 +98,7 @@ class PlanRuntime:
             router_model=self._router_model,
             plan_id=self._plan_id,
             resume_plan=self._resume_plan,
+            step_max_iterations=self._step_max_iterations,
         )
 
 

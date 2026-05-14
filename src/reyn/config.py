@@ -572,6 +572,17 @@ SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
 
 
 @dataclass
+class PlanConfig:
+    """`plan:` — plan-mode execution tuning.
+
+    ``step_max_iterations``: maximum RouterLoop iterations per plan step
+    before the OS records a step failure.  Default 5 (FP-0029).  Raise
+    when steps regularly run long tool chains; lower for tighter budgets.
+    """
+    step_max_iterations: int = 5
+
+
+@dataclass
 class SkillResumeConfig:
     """`skill_resume:` — policy for handling ambiguous steps on resume.
 
@@ -724,6 +735,8 @@ class ReynConfig:
     # Priority: web.fetch.ca_bundle → web.fetch.verify_ssl → SSL_VERIFY env →
     # litellm.ssl_verify → SSL_CERT_FILE → True (default).
     web: WebConfig = field(default_factory=WebConfig)
+    # FP-0029: plan-mode execution tuning (step iteration budget, etc.)
+    plan: PlanConfig = field(default_factory=PlanConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -981,6 +994,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         safety=safety,
         web=_build_web_config(merged.get("web")),
         skill_search=_build_skill_search_config(merged.get("skill_search")),
+        plan=_build_plan_config(merged.get("plan")),
     )
 
 
@@ -1048,6 +1062,21 @@ def _build_skill_resume_config(raw: object) -> SkillResumeConfig:
                 continue
             per_skill[str(k)] = v_str
     return SkillResumeConfig(default=default, per_skill=per_skill)
+
+
+def _build_plan_config(raw: object) -> PlanConfig:
+    """Parse ``plan:`` block; unknown keys are ignored (forward-compat)."""
+    defaults = PlanConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    step_max_raw = raw.get("step_max_iterations")
+    try:
+        step_max = int(step_max_raw) if step_max_raw is not None else defaults.step_max_iterations
+    except (TypeError, ValueError):
+        step_max = defaults.step_max_iterations
+    if step_max < 1:
+        step_max = defaults.step_max_iterations
+    return PlanConfig(step_max_iterations=step_max)
 
 
 def _build_cost_limit(raw: object) -> CostLimitConfig:

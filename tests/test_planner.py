@@ -29,6 +29,7 @@ import json
 import pytest
 
 from reyn.chat.planner import (
+    _PLAN_STEP_MAX_ITERATIONS,
     Plan,
     PlanStep,
     PlanValidationError,
@@ -459,3 +460,41 @@ def test_plan_status_text_uses_step_description_not_id():
     fallback_id = "s1"
     truncated_empty = (empty_desc or fallback_id)[:60]
     assert truncated_empty == fallback_id  # empty falls back to step id
+
+
+# ── FP-0029: plan step iteration budget default = 5 ─────────────────────────
+
+
+def test_plan_step_max_iterations_default_is_5():
+    """Tier 2: FP-0029 — _PLAN_STEP_MAX_ITERATIONS is 5 (raised from 3).
+
+    The constant is the OS default that ``execute_plan`` uses when no
+    config override is provided. Pins that the behavioral change landed.
+    """
+    assert _PLAN_STEP_MAX_ITERATIONS == 5
+
+
+def test_plan_step_max_iterations_config_override():
+    """Tier 2: FP-0029 — PlanConfig.step_max_iterations can be set via
+    config and _build_plan_config parses it correctly.
+
+    Observation: load the config builder with a raw dict and verify the
+    resulting PlanConfig carries the overridden value.
+    """
+    from reyn.config import _build_plan_config  # type: ignore[attr-defined]
+
+    # Default when no plan: section present
+    cfg_default = _build_plan_config(None)
+    assert cfg_default.step_max_iterations == 5
+
+    # Override via dict
+    cfg_custom = _build_plan_config({"step_max_iterations": 8})
+    assert cfg_custom.step_max_iterations == 8
+
+    # Non-positive values fall back to default
+    cfg_bad = _build_plan_config({"step_max_iterations": 0})
+    assert cfg_bad.step_max_iterations == 5
+
+    # Non-numeric values fall back to default
+    cfg_bad2 = _build_plan_config({"step_max_iterations": "not-a-number"})
+    assert cfg_bad2.step_max_iterations == 5
