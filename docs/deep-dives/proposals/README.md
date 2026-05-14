@@ -91,3 +91,4 @@ Links to related ADRs, PRs, and docs.
 | [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | proposed | SMALL |
 | [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |
 | [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
+| [0026](0026-op-permission-cross-layer-coherence.md) | Op/Permission cross-layer coherence — `reyn skill validate` + auto-derived permission requirements from allowed_ops | proposed | SMALL |

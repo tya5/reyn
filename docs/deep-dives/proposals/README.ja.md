@@ -91,3 +91,4 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | proposed | SMALL |
 | [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | proposed | MEDIUM |
 | [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | proposed | SMALL |
+| [0026](0026-op-permission-cross-layer-coherence.ja.md) | Op/Permission クロスレイヤー整合性 — `reyn skill validate` + allowed_ops からの permission 要求自動導出 | proposed | SMALL |
