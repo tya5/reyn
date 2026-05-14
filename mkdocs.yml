@@ -165,6 +165,7 @@ nav:
       - concepts/workspace.md
       - concepts/events.md
       - concepts/permission-model.md
+      - concepts/sandbox.md
       - concepts/secret-handling.md
       - concepts/mcp.md
       - concepts/rag.md

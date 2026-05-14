@@ -1,7 +1,7 @@
 # FP-0017: Sandboxed Execution — Policy/Backend Abstraction and exec Op Deprecation
 
-**Status**: **Components A + D landed 2026-05-11** (commit `ddf2d05`);
-Components B / C / E remain proposed
+**Status**: **Components A + B + C + D landed 2026-05-15** (commit `ddf2d05` + this wave);
+Component E is deferred
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -31,12 +31,55 @@ first invocation, code comment "Deprecated by FP-0017. Will be removed
 in 1.0 release. Use sandboxed_exec instead." Op remains functional;
 zero test regressions.
 
-**Components B / C / E remain proposed**:
-- **C**: `SeatbeltBackend` (macOS `sandbox-exec`) + better `NoopBackend`
-  alias (SMALL)
-- **B**: `LandlockBackend` (Linux 5.13+, seccomp 重ね) — contributor-
-  friendly track, needs Linux dev env (MEDIUM)
-- **E**: `AppleContainerBackend` (macOS 26+) — deferred (LARGE)
+**State as of 2026-05-11** — Components B / C remained proposed at that point (see the 2026-05-15 landing notes below).
+
+---
+
+## Landing notes (2026-05-15)
+
+Components B and C landed in this wave.
+
+**Component C — `SeatbeltBackend` (macOS `sandbox-exec` SBPL wrapper)**
+
+Deny-default SBPL profile generated from `SandboxPolicy`, passed to `sandbox-exec -f`:
+
+- Generates SBPL automatically from `SandboxPolicy` fields — `read_paths` maps to `(allow file-read-data (subpath "..."))`, `write_paths` to `(allow file-write-data (subpath "..."))`.
+- Resolves all paths to absolute paths (`{{workspace}}` is expanded by the OS at runtime).
+- Automatically allows `/usr/lib`, `/System/Library`, `/usr/bin`, `/bin`, `/usr/share`, etc. read-only for dylib loading.
+- Available iff `platform.system() == "Darwin"`, `sandbox-exec` binary on PATH, and macOS < 26. Falls back to `NoopBackend` otherwise.
+- Internally marked deprecated (Apple is removing `sandbox-exec` in macOS 26) — emits a runtime WARN on first use prompting migration to the future `AppleContainerBackend`.
+- Files: `src/reyn/sandbox/backends/seatbelt.py`, `tests/test_sandbox_seatbelt.py`.
+
+**Component B — `LandlockBackend` (Linux 5.13+)**
+
+Filesystem + network restriction backend for Linux kernel 5.13+:
+
+- Enabled via the `sandbox-linux` optional extra (`pip install reyn[sandbox-linux]`), using the `landlock` PyPI package.
+- Detects ABI version (v1–v4) at startup and enables only features the running kernel supports (graceful degradation for kernels in the v1+ range).
+- Applies `LANDLOCK_RULE_PATH_BENEATH` rules for `read_paths` / `write_paths`.
+- Network restriction (`LANDLOCK_RULE_NET_PORT`) available on ABI v4+ (Linux 6.7+) only.
+- **Contributor-friendly track**: the primary maintainer's dev environment is macOS-only; Linux contributors are welcome to validate end-to-end.
+- Files: `src/reyn/sandbox/backends/landlock.py`, `tests/test_sandbox_landlock.py`.
+
+**Component B (seccomp portion) — syscall filter builder**
+
+seccomp-BPF layer stacked on top of `LandlockBackend`:
+
+- Same `sandbox-linux` extra as `LandlockBackend` (`pyseccomp` package).
+- Default-deny posture with a baseline allowlist sourced from Docker/Firejail defaults.
+- Extends the allowlist based on `policy.network` and `policy.allow_subprocess`.
+- Destructive filesystem syscalls (covered by Landlock) and known escape hatches (`ptrace`, `process_vm_readv`, etc.) are on the deny list unconditionally.
+- Landlock and seccomp-BPF are orthogonal: Landlock enforces path/port restrictions; seccomp-BPF reduces the syscall surface (e.g. blocks `ptrace` which Landlock cannot).
+- Files: `src/reyn/sandbox/backends/seccomp.py`, `tests/test_sandbox_seccomp.py`.
+
+**Backend auto-selection + `SandboxConfig`**
+
+`get_default_backend(config)` does lazy platform-aware backend selection:
+
+- Configured via the `sandbox:` section in `reyn.yaml` (`backend: auto|seatbelt|landlock|noop`, `on_unsupported: warn|error|ignore`).
+- `auto` inspects the platform and installed extras to select the best backend. See [concepts/sandbox.md](../../concepts/sandbox.md) for the selection table.
+- `on_unsupported: error` fails skill dispatch when the requested backend is unavailable (for production environments requiring enforcement guarantees).
+- Files: `src/reyn/config.py`, `src/reyn/sandbox/__init__.py`, `tests/test_sandbox_factory.py`.
 
 ---
 

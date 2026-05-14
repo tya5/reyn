@@ -138,7 +138,9 @@ Fields:
 - `env_passthrough` (optional) — env-var names that pass through (others are stripped).
 - `timeout_seconds` (optional, default `60`) — wall-clock cap.
 
-Backend selection is OS-internal. Today the default is `NoopBackend` (= no enforcement; emits a one-time WARN). Future waves add `SeatbeltBackend` (macOS) and `LandlockBackend` (Linux). Result fields: `returncode`, `stdout`, `stderr`, `truncated`, `backend`.
+**Backend selection**: `get_default_backend()` chooses per platform. On macOS < 26, `SeatbeltBackend` (sandbox-exec SBPL). On Linux ≥ 5.13 with the `sandbox-linux` extra installed, `LandlockBackend` (+ optional seccomp-BPF stack). On other platforms or when the chosen backend is unavailable, falls back to `NoopBackend` (audit-only, no enforcement) — emits a one-line WARN on first use. Override via `reyn.yaml` `sandbox.backend` (`auto` | `seatbelt` | `landlock` | `noop`) and `sandbox.on_unsupported` (`warn` | `error` | `ignore`).
+
+Result fields: `returncode`, `stdout`, `stderr`, `truncated`, `backend`.
 
 Events emitted: `sandboxed_exec_started`, `sandboxed_exec_completed` (P6 audit trail).
 
