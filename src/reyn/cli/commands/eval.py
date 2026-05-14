@@ -9,6 +9,9 @@ reyn eval run <skill_name> --dataset <path> [--threshold 0.8] [--tags smoke]
 reyn eval report <skill_name>
     List past eval-run results for a skill in reverse-chronological order.
 
+reyn eval compare <skill_name> [--baseline X] [--candidate Y] [--threshold 0.05]
+    Compare two eval runs (regression diff).  Exit 1 when regressions detected.
+
 reyn eval spec <FILE>  (legacy — run an eval.md spec against an app)
     Preserved for backward compatibility with the Component-A eval workflow.
 """
@@ -63,6 +66,7 @@ def register(sub) -> None:
 
     _register_run(eval_sub)
     _register_report(eval_sub)
+    _register_compare(eval_sub)
     _register_spec(eval_sub)
 
     p.set_defaults(func=_dispatch)
@@ -75,11 +79,13 @@ def _dispatch(args: argparse.Namespace) -> None:
         _run_golden(args)
     elif cmd == "report":
         _run_report(args)
+    elif cmd == "compare":
+        _run_compare(args)
     elif cmd == "spec":
         _run_spec(args)
     else:
         # Should never happen because eval_sub.required = True.
-        print("Error: expected sub-command: run | report | spec", file=sys.stderr)
+        print("Error: expected sub-command: run | report | compare | spec", file=sys.stderr)
         sys.exit(1)
 
 
@@ -448,6 +454,231 @@ def _format_timestamp(stem: str) -> str:
         return dt.strftime("%Y-%m-%d %H:%M")
     except ValueError:
         return stem
+
+
+# ── `reyn eval compare` ───────────────────────────────────────────────────────
+
+
+def _register_compare(eval_sub) -> None:
+    p = eval_sub.add_parser(
+        "compare",
+        help="Compare two eval runs for a skill (regression diff)",
+    )
+    p.add_argument(
+        "skill_name", metavar="SKILL",
+        help="Skill name to compare eval runs for",
+    )
+    p.add_argument(
+        "--baseline", default=None, metavar="RUN_ID",
+        help=(
+            "Baseline run_id (filename stem) or skill_version_hash prefix. "
+            "Defaults to the most recent run with a different version_hash than candidate."
+        ),
+    )
+    p.add_argument(
+        "--candidate", default=None, metavar="RUN_ID",
+        help=(
+            "Candidate run_id (filename stem) or skill_version_hash prefix. "
+            "Defaults to the most recent eval run for the skill."
+        ),
+    )
+    p.add_argument(
+        "--threshold", type=float, default=0.05, metavar="FLOAT",
+        help="Score-drop magnitude that triggers a regression alert (default: 0.05).",
+    )
+    p.add_argument(
+        "--format", dest="output_format", choices=["text", "json"],
+        default="text", metavar="FORMAT",
+        help="Output format: text (default) or json.",
+    )
+
+
+def _run_compare(args: argparse.Namespace) -> None:
+    """Execute ``reyn eval compare``."""
+    from reyn.eval.compare import compute_diff
+    from reyn.eval.result_loader import load_run_by_id, load_runs_for_skill
+
+    skill = args.skill_name
+    threshold = args.threshold
+
+    all_runs = load_runs_for_skill(skill, _RESULTS_DIR_TEMPLATE)
+
+    if len(all_runs) < 2:
+        count = len(all_runs)
+        if count == 0:
+            print(
+                f"Error: no eval results found for skill '{skill}'.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Error: cannot compare; need 2+ runs, found {count} for '{skill}'.",
+                file=sys.stderr,
+            )
+        sys.exit(2)
+
+    # Resolve candidate
+    if args.candidate:
+        candidate_run = load_run_by_id(skill, args.candidate, _RESULTS_DIR_TEMPLATE)
+        if candidate_run is None:
+            print(
+                f"Error: candidate run '{args.candidate}' not found for skill '{skill}'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+    else:
+        # Most recent run
+        candidate_run = all_runs[0]
+
+    # Resolve baseline
+    if args.baseline:
+        baseline_run = load_run_by_id(skill, args.baseline, _RESULTS_DIR_TEMPLATE)
+        if baseline_run is None:
+            print(
+                f"Error: baseline run '{args.baseline}' not found for skill '{skill}'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+    else:
+        # Most recent run with a DIFFERENT version_hash than candidate
+        c_hash = candidate_run.get("skill_version_hash") or "unknown"
+        baseline_run = None
+        for run in all_runs:
+            if run["run_id"] == candidate_run["run_id"]:
+                continue
+            b_hash = run.get("skill_version_hash") or "unknown"
+            if b_hash != c_hash or c_hash == "unknown":
+                baseline_run = run
+                break
+        # If no different-hash run exists, fall back to the second-most-recent run
+        if baseline_run is None:
+            for run in all_runs:
+                if run["run_id"] != candidate_run["run_id"]:
+                    baseline_run = run
+                    break
+        if baseline_run is None:
+            print(
+                f"Error: could not find a baseline run for skill '{skill}'.",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+
+    diff = compute_diff(baseline_run, candidate_run, threshold)
+
+    if args.output_format == "json":
+        _print_compare_json(skill, diff)
+    else:
+        _print_compare_text(skill, diff)
+
+    if diff["alert"]:
+        sys.exit(1)
+
+
+def _hash_display(h: str) -> str:
+    """Truncate a version hash to 8 chars for readability."""
+    if not h or h == "unknown":
+        return "unknown"
+    return h[:8]
+
+
+def _print_compare_text(skill: str, diff: dict) -> None:
+    b = diff["baseline"]
+    c = diff["candidate"]
+    s = diff["summary"]
+    threshold = diff["threshold"]
+
+    print(f"eval compare: {skill}")
+    print(
+        f"baseline:  run_id={b['run_id']}, "
+        f"version_hash={_hash_display(b['skill_version_hash'])}, "
+        f"timestamp={b['timestamp']}"
+    )
+    print(
+        f"candidate: run_id={c['run_id']}, "
+        f"version_hash={_hash_display(c['skill_version_hash'])}, "
+        f"timestamp={c['timestamp']}"
+    )
+    if diff.get("warning"):
+        print(f"warning: {diff['warning']}")
+    print(f"threshold: {threshold}")
+    print()
+
+    cases_compared = s["cases_compared"]
+    mean_delta = s["mean_delta"]
+    max_reg = s["max_regression"]
+    max_imp = s["max_improvement"]
+    regressing_count = s["regressing_count"]
+
+    mean_str = f"{mean_delta:+.2f}" if mean_delta is not None else "n/a"
+    max_reg_str = (
+        f"{max_reg['delta']:+.2f}  (case_id={max_reg['case_id']})" if max_reg else "none"
+    )
+    max_imp_str = (
+        f"{max_imp['delta']:+.2f}  (case_id={max_imp['case_id']})" if max_imp else "none"
+    )
+
+    print("Summary:")
+    print(f"- cases compared:        {cases_compared}")
+    print(f"- mean score Δ:         {mean_str}")
+    print(f"- max regression:       {max_reg_str}")
+    print(f"- max improvement:      {max_imp_str}")
+    print(f"- cases regressing:      {regressing_count}  (above threshold)")
+
+    missing_c = diff.get("missing_in_candidate", [])
+    missing_b = diff.get("missing_in_baseline", [])
+    if missing_c:
+        print(f"- missing in candidate: {len(missing_c)}  ({', '.join(missing_c[:5])}{'...' if len(missing_c) > 5 else ''})")
+    if missing_b:
+        print(f"- missing in baseline:  {len(missing_b)}  ({', '.join(missing_b[:5])}{'...' if len(missing_b) > 5 else ''})")
+
+    if diff["regressing_cases"]:
+        print()
+        print("Regressing cases:")
+        for rc in diff["regressing_cases"]:
+            print(
+                f"- {rc['case_id']:<16} "
+                f"{rc['baseline_score']:.2f} → {rc['candidate_score']:.2f}"
+                f"  ({rc['delta']:+.2f})"
+            )
+
+    print()
+    if diff["alert"]:
+        pct = (regressing_count / cases_compared * 100) if cases_compared else 0.0
+        print(
+            f"ALERT: {regressing_count} cases regressed beyond threshold "
+            f"({regressing_count}/{cases_compared} = {pct:.1f}%)."
+        )
+    else:
+        print("OK: no regressions beyond threshold.")
+
+
+def _print_compare_json(skill: str, diff: dict) -> None:
+    b = diff["baseline"]
+    c = diff["candidate"]
+
+    output = {
+        "skill": skill,
+        "baseline": {
+            "run_id": b["run_id"],
+            "skill_version_hash": _hash_display(b["skill_version_hash"]),
+            "timestamp": b["timestamp"],
+        },
+        "candidate": {
+            "run_id": c["run_id"],
+            "skill_version_hash": _hash_display(c["skill_version_hash"]),
+            "timestamp": c["timestamp"],
+        },
+        "threshold": diff["threshold"],
+        "summary": diff["summary"],
+        "regressing_cases": diff["regressing_cases"],
+        "missing_in_candidate": diff.get("missing_in_candidate", []),
+        "missing_in_baseline": diff.get("missing_in_baseline", []),
+        "alert": diff["alert"],
+    }
+    if diff.get("warning"):
+        output["warning"] = diff["warning"]
+
+    print(json.dumps(output, ensure_ascii=False, indent=2))
 
 
 # ── `reyn eval spec` (legacy) ─────────────────────────────────────────────────
