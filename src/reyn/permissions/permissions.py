@@ -810,6 +810,13 @@ class PermissionResolver:
             return perm
         # safe mode
         key = f"{skill_name}/python.safe/{module}:{function}"
+        # Mirror the unsafe-mode stdlib auto-allow path. Safe mode is more
+        # restricted (per _python_allowlist.py), so any context that auto-allows
+        # unsafe MUST auto-allow safe. Without this, stdlib skills declaring
+        # mode: safe fail in non-interactive `reyn run` while their unsafe
+        # siblings succeed — semantically backwards.
+        if not self._interactive and self._unsafe_python_allowed:
+            self._session.setdefault(key, True)
         if not await self._approve(key, f"safe python step: {module}:{function}", bus):
             raise PermissionError(
                 f"safe python step {module}:{function} denied by user"
