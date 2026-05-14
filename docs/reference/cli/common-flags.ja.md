@@ -23,14 +23,14 @@ applies_to: [reyn run, reyn eval, reyn chat]
 
 ## ランタイム制限
 
-すべての制限はデフォルトで `reyn.yaml` の `limits:` ブロックから読み取られ、呼び出しごとにオーバーライドできます。
+すべての制限はデフォルトで `reyn.yaml` の `safety:` ブロックから読み取られ、呼び出しごとにオーバーライドできます。
 
 | フラグ | デフォルト | 説明 |
 |------|---------|-------------|
-| `--max-phase-visits N` | `limits.phase.max_visits`（または `25`） | 1 回のランの任意の単一 Phase への再訪問上限。`0` で上限を無効化。暴走する修正ループを防ぎます。超過するとランはステータス `loop_limit_exceeded` で終了します。 |
-| `--phase-budget SECONDS` | `limits.phase.max_wall_seconds`（または `0`） | Phase ごとのウォールクロックバジェット。リトライ/ターンの境界でのソフトチェック。呼び出し途中はキャンセルしない。`0` で無効化。超過するとランはステータス `phase_budget_exceeded` で終了します。 |
-| `--llm-timeout SECONDS` | `limits.llm.timeout`（または `60`） | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
-| `--llm-max-retries N` | `limits.llm.max_retries`（または `3`） | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
+| `--max-phase-visits N` | `safety.loop.max_phase_visits`（または `25`） | 1 回のランの任意の単一 Phase への再訪問上限。`0` で上限を無効化。暴走する修正ループを防ぎます。超過するとランはステータス `loop_limit_exceeded` で終了します。 |
+| `--phase-budget SECONDS` | `safety.timeout.phase_seconds`（または `0`） | Phase ごとのウォールクロックバジェット。リトライ/ターンの境界でのソフトチェック。呼び出し途中はキャンセルしない。`0` で無効化。超過するとランはステータス `phase_budget_exceeded` で終了します。 |
+| `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds`（または `60`） | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
+| `--llm-max-retries N` | `safety.timeout.llm_max_retries`（または `3`） | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
 
 ## Permission ゲーティング（`reyn run` のみ）
 
