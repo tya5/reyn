@@ -498,3 +498,33 @@ def test_plan_step_max_iterations_config_override():
     # Non-numeric values fall back to default
     cfg_bad2 = _build_plan_config({"step_max_iterations": "not-a-number"})
     assert cfg_bad2.step_max_iterations == 5
+
+
+# ── FP-0030: plan step system prompt includes concrete details guidance ───────
+
+
+def test_plan_step_sp_includes_concrete_details_guidance():
+    """Tier 2: FP-0030 — the step system prompt now directs the step LLM
+    to include concrete details (code snippets, line numbers, exact values)
+    and uses a soft ~800-char target rather than "1–3 sentences".
+
+    Pins that the old terse guidance is gone and the new richer guidance
+    is present, so plan step outputs are more useful to the synthesis LLM.
+    """
+    plan = Plan(
+        goal="explore the codebase",
+        steps=(
+            PlanStep(id="s1", description="read core module", tools=("reyn_src_read",)),
+            PlanStep(id="s2", description="synthesise", tools=(), depends_on=("s1",)),
+        ),
+    )
+    prompt = build_plan_step_system_prompt(plan, plan.steps[0], {})
+
+    # New concrete-details guidance must be present
+    assert "concrete details" in prompt
+    assert "code snippets" in prompt
+    assert "800 characters" in prompt
+
+    # Old terse guidance must NOT be present
+    assert "1–3 sentences" not in prompt
+    assert "Summarise what this step found in 1" not in prompt

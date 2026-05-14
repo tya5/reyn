@@ -324,8 +324,11 @@ def build_plan_step_system_prompt(
     parts.append(
         "You are a Reyn agent executing one step of a multi-step plan. "
         "Use the tools provided (if any) to gather information, then "
-        "Summarise what this step found in 1–3 sentences. "
-        "Be factual; a separate synthesis step will produce the user reply."
+        "Report what this step found. Include concrete details: code snippets, "
+        "function signatures, specific line numbers, exact values, structured data. "
+        "Aim for ~800 characters as a soft target; exceed if the content requires "
+        "it (e.g. multi-line code blocks). Be factual — a separate synthesis step "
+        "will produce the user reply."
     )
     parts.append("")
     parts.append(f"## Plan goal\n{plan.goal}")
