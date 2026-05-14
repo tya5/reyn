@@ -15,6 +15,17 @@ persistent across calls because the registry caches each session
 in-process and ``ChatSession.load_history`` rehydrates from
 ``history.jsonl`` on construction.
 
+FP-0013: ``send_to_agent_impl`` now drives ``session.run_one_iteration()``
+via ``MessageBus.request`` rather than calling ``_handle_user_message``
+inline.  Pumping from the same task eliminates the anyio stdio-starvation
+failure mode (FP-0013 §ADR-A) and subsumes the previous tactical patches:
+  - ``drain_skill_completed_inbox`` (R-A2A-COMPLETION-DRAIN)
+  - ``running_plans`` manual gather (ADR-0023 §2.1.1)
+  - ``running_skills`` manual gather (FP-0012)
+These methods and attributes are retained for now (non-destructive migration)
+and will be deleted in a future cleanup wave after ADR-A residual
+verification (subprocess + real stdio probe / anyio CancelledError soak).
+
 P7: tool names + tool semantics are OS-level (agent / message). No
 skill-specific strings are baked in — what skills an agent runs in
 response to a message is its own internal decision.
@@ -51,9 +62,10 @@ _IDLE_GRACE_SECONDS: float = 0.05
 # same agent; without serialization both coroutines race on
 # ``session.history[-1]`` (RouterLoop reads the wrong prompt) and on
 # reply harvesting (each picks up the other's ``role="agent"`` entries).
-# This is the conservative short-term fix consistent with the existing
-# serial ``session.run()`` inbox architecture — the long-term shape is
-# to push these calls through the inbox like the chat path does.
+# FP-0013: with MessageBus, the inbox is the serialization point but the
+# lock is retained as a belt-and-suspenders measure during the migration
+# period — it prevents concurrent calls from racing on history harvest
+# (baseline → MessageBus.request → history-read must be atomic per agent).
 _AGENT_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -169,6 +181,12 @@ async def send_to_agent_impl(
     work is preserved on the inbox / running_skills, and the next
     ``send_to_agent`` call (or ``reyn chat`` attach) will see the rest
     of the work as it lands in history.
+
+    FP-0013: uses ``MessageBus.request`` to pump ``session.run_one_iteration``
+    from this task, eliminating the inline ``_handle_user_message`` bypass and
+    the tactical drains (``drain_skill_completed_inbox``, ``running_plans``
+    gather, ``running_skills`` gather).  The inbox is now the single intake
+    channel for every transport surface.
     """
     if not registry.exists(agent_name):
         raise ValueError(
@@ -178,86 +196,40 @@ async def send_to_agent_impl(
 
     session = await _get_session(registry, agent_name)
 
-    # Drive the user-message handler inline rather than going through
-    # session.inbox + session.run(). See `_get_session` docstring for the
-    # asyncio-starvation rationale.
+    from reyn.chat.message_bus import MessageBus  # noqa: PLC0415 — lazy import
     from reyn.chat.session import _new_chain_id  # noqa: PLC0415 — lazy import
-    chain_id = _new_chain_id()
+    from reyn.chat.transport import McpRef  # noqa: PLC0415 — lazy import
 
-    # Serialize concurrent calls to the same agent — see _AGENT_LOCKS for
-    # why. The lock is acquired AFTER session lookup (cheap) and AROUND
-    # both the handler call and the reply harvest so the baseline →
-    # _handle_user_message → history-read window is atomic per agent.
-    import time as _time
-    start = _time.monotonic()
+    chain_id = _new_chain_id()
+    req_id = f"mcp-{chain_id}"
+
+    # Serialize concurrent calls to the same agent — the lock keeps
+    # baseline → MessageBus.request → history-read atomic per agent.
     async with _get_agent_lock(agent_name):
         baseline = len(session.history)
-        try:
-            await asyncio.wait_for(
-                session._handle_user_message(message, chain_id=chain_id),
-                timeout=timeout,
-            )
-            idle = True
-        except asyncio.TimeoutError:
-            idle = False
-
-        # Batch 16 / G27: plan-mode async dispatch (ADR-0023 §2.1.1)
-        # returns from RouterLoop immediately after spawn ack — the
-        # plan task continues in the background and emits its terminal
-        # text via spawn_plan_task (outbox + history append). For A2A
-        # synchronous return semantics, await those tasks before
-        # harvesting so the caller sees the plan reply (within the
-        # remaining timeout budget).
-        plan_tasks = list(getattr(session, "running_plans", {}).values())
-        active_plans = [t for t in plan_tasks if not t.done()]
-        if active_plans:
-            elapsed = _time.monotonic() - start
-            remaining = max(0.1, timeout - elapsed)
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*active_plans, return_exceptions=True),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                idle = False
-
-        # FP-0012 / R-A2A-COMPLETION-DRAIN: ``invoke_skill`` in chat mode
-        # is now non-blocking (spawn-ack returns immediately; completion
-        # arrives via the ``skill_completed`` inbox kind). The A2A /
-        # MCP bypass path does not run ``session.run()`` so the inbox
-        # is never consumed normally. Await running_skills here, then
-        # drain ``skill_completed`` kinds inline so the router LLM
-        # narrates completion before we harvest the reply.
-        skill_tasks = list(getattr(session, "running_skills", {}).values())
-        active_skills = [t for t in skill_tasks if not t.done()]
-        if active_skills:
-            elapsed = _time.monotonic() - start
-            remaining = max(0.1, timeout - elapsed)
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*active_skills, return_exceptions=True),
-                    timeout=remaining,
-                )
-            except asyncio.TimeoutError:
-                idle = False
-
-        deadline_monotonic = start + timeout
-        try:
-            drained_ok = await session.drain_skill_completed_inbox(
-                deadline_monotonic=deadline_monotonic,
-            )
-        except Exception as exc:  # noqa: BLE001 — log + treat as partial
-            logger.warning(
-                "send_to_agent_impl: skill_completed drain failed: %s", exc,
-            )
-            drained_ok = False
-        if not drained_ok:
-            idle = False
-
+        bus = MessageBus()
+        replies = await bus.request(
+            session,
+            kind="user",
+            payload={"text": message, "chain_id": chain_id},
+            reply_to=McpRef(request_id=req_id),
+            timeout=timeout,
+        )
         new_replies = _new_agent_history_entries(
             session, baseline, chain_id=chain_id,
         )
+
+    # idle = MessageBus returned quiescently (all tasks done, inbox empty).
+    # We use history-based reply harvest for backward compat with chain_id
+    # filtering (outbox reply_to stamping is not yet universal).
+    idle = _is_quiescent_after_bus(session)
     reply_text = "\n\n".join(new_replies).strip()
+
+    if not reply_text:
+        # Fall back to outbox-collected text if history harvest is empty
+        # (e.g. when monkeypatched handlers write to outbox but not history).
+        outbox_texts = [r.text for r in replies if r.text]
+        reply_text = "\n\n".join(outbox_texts).strip()
 
     if not idle and not reply_text:
         reply_text = (
@@ -271,6 +243,23 @@ async def send_to_agent_impl(
         "partial": (not idle),
         "agent": agent_name,
     }
+
+
+def _is_quiescent_after_bus(session) -> bool:
+    """Check if the session is quiescent after MessageBus.request returns.
+
+    MessageBus already waited for quiescence; this is a final check
+    that captures the partial=True case (timeout fired before quiescence).
+    """
+    if not session.inbox.empty():
+        return False
+    running_skills: dict = getattr(session, "running_skills", {})
+    if any(not t.done() for t in running_skills.values()):
+        return False
+    running_plans: dict = getattr(session, "running_plans", {})
+    if any(not t.done() for t in running_plans.values()):
+        return False
+    return True
 
 
 # ── SDK glue ────────────────────────────────────────────────────────────────
