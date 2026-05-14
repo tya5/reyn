@@ -30,10 +30,12 @@ import pytest
 
 from reyn.chat.planner import (
     _PLAN_STEP_MAX_ITERATIONS,
+    _PLAN_STEP_RETRY_LIMIT,
     Plan,
     PlanStep,
     PlanValidationError,
     _PlanStepHost,
+    _PLAN_RETRY_EXCLUDED,
     _topological_order,
     build_plan_step_system_prompt,
     parse_and_validate_plan,
@@ -528,3 +530,221 @@ def test_plan_step_sp_includes_concrete_details_guidance():
     # Old terse guidance must NOT be present
     assert "1–3 sentences" not in prompt
     assert "Summarise what this step found in 1" not in prompt
+
+
+# ── FP-0031-C: auto-retry with exclusion list ───────────────────────────────
+
+
+class _SimpleHost:
+    """Minimal host for retry tests — no WAL, just events + outbox."""
+    chat_id = "test"
+    agent_name = "test"
+    agent_role = "test"
+    output_language = None
+    events = type("Ev", (), {"emit": lambda self, *a, **kw: None})()
+
+    def __init__(self):
+        self.outbox: list[dict] = []
+        self.step_failed_calls: list[dict] = []
+        self.step_started_calls: list[dict] = []
+        self.step_completed_calls: list[dict] = []
+        self.plan_started_calls: list[dict] = []
+        self.plan_completed_calls: list[dict] = []
+
+    async def put_outbox(self, *, kind, text, meta):
+        self.outbox.append({"kind": kind, "text": text, "meta": meta})
+
+    async def record_plan_started(self, *, plan_id, goal, n_steps):
+        self.plan_started_calls.append({})
+
+    async def record_plan_completed(self, *, plan_id):
+        self.plan_completed_calls.append({})
+
+    async def record_plan_step_started(self, *, plan_id, step_id, depends_on, n_tools):
+        self.step_started_calls.append({"step_id": step_id})
+
+    async def record_plan_step_completed(self, *, plan_id, step_id, content_len, result_text=None):
+        self.step_completed_calls.append({"step_id": step_id})
+
+    async def record_plan_step_failed(self, *, plan_id, step_id, error):
+        self.step_failed_calls.append({"step_id": step_id})
+
+
+def test_plan_step_retry_limit_default_is_3():
+    """Tier 2: FP-0031-C — _PLAN_STEP_RETRY_LIMIT is 3 (OS default).
+
+    Pins that the constant exists and has the correct value so callers
+    that read it (e.g. PlanRuntime, execute_plan) use the right default.
+    """
+    assert _PLAN_STEP_RETRY_LIMIT == 3
+
+
+def test_plan_retry_excluded_contains_permission_error():
+    """Tier 2: FP-0031-C — _PLAN_RETRY_EXCLUDED includes PermissionError
+    so plan steps don't retry ToolGateRefused / OpDenied exceptions
+    (they have their own ask-user path).
+    """
+    assert PermissionError in _PLAN_RETRY_EXCLUDED
+
+
+def test_plan_retry_limit_config_override():
+    """Tier 2: FP-0031-C — PlanConfig.retry_limit can be set via
+    reyn.yaml plan.retry_limit and _build_plan_config parses it correctly.
+    """
+    from reyn.config import _build_plan_config  # type: ignore[attr-defined]
+
+    # Default when plan: section absent
+    cfg_default = _build_plan_config(None)
+    assert cfg_default.retry_limit == 3
+
+    # Override via dict
+    cfg_custom = _build_plan_config({"retry_limit": 5})
+    assert cfg_custom.retry_limit == 5
+
+    # retry_limit=0 is valid (= disable retry)
+    cfg_zero = _build_plan_config({"retry_limit": 0})
+    assert cfg_zero.retry_limit == 0
+
+    # Negative values fall back to default
+    cfg_bad = _build_plan_config({"retry_limit": -1})
+    assert cfg_bad.retry_limit == 3
+
+    # Non-numeric falls back to default
+    cfg_bad2 = _build_plan_config({"retry_limit": "nope"})
+    assert cfg_bad2.retry_limit == 3
+
+
+@pytest.mark.asyncio
+async def test_plan_step_retries_on_transient_error_within_limit():
+    """Tier 2: FP-0031-C — a step that fails once then succeeds is
+    retried; the final step_results entry is populated (= no step_failure).
+
+    Observable contract: step_failures is empty for that step after the
+    plan completes when a transient error occurs on attempt 1 but
+    succeeds on attempt 2. Uses a shared call counter so retries that
+    rebuild the sub-loop still share state with the counter.
+    """
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+
+    # Shared mutable counter across all RouterLoop instances for this test.
+    _total_calls = [0]
+
+    class _OnceFailLoop:
+        """Fails on the first call, succeeds on all subsequent calls."""
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+
+        async def run(self, *, user_text, history):
+            _total_calls[0] += 1
+            if _total_calls[0] == 1:
+                raise RuntimeError("transient error on first attempt")
+            await self.host.put_outbox(kind="agent", text="ok", meta={})
+            return None
+
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _OnceFailLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="test retry",
+            steps=(
+                PlanStep(id="s1", description="step that fails once", tools=()),
+                PlanStep(id="s2", description="synthesise", tools=(), depends_on=("s1",)),
+            ),
+        )
+        result = await execute_plan(
+            plan,
+            parent_host=host,
+            chain_id="c0",
+            retry_limit=3,
+        )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop
+
+    # s1 failed once then succeeded via retry → no step_failures for s1.
+    assert "s1" not in result.step_failures, (
+        f"s1 should have recovered via retry; step_failures={result.step_failures}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_plan_step_does_not_retry_permission_error():
+    """Tier 2: FP-0031-C — PermissionError is in _PLAN_RETRY_EXCLUDED,
+    so execute_plan re-raises it immediately without retry (= the safety
+    layer's ask-user path handles it, not the retry loop).
+
+    Observable contract: a step sub-loop that raises PermissionError
+    propagates out of execute_plan rather than being caught-and-retried.
+    """
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+
+    class _PermErrorLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+        async def run(self, *, user_text, history):
+            raise PermissionError("tool gate refused")
+
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _PermErrorLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="test perm error",
+            steps=(
+                PlanStep(id="s1", description="perm-denied step", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        with pytest.raises(PermissionError):
+            await execute_plan(
+                plan,
+                parent_host=host,
+                chain_id="c0",
+                retry_limit=3,
+            )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop
+
+
+@pytest.mark.asyncio
+async def test_plan_step_does_not_retry_budget_exceeded():
+    """Tier 2: FP-0031-C — BudgetExceeded is in _PLAN_RETRY_EXCLUDED,
+    so execute_plan re-raises it immediately without retry.
+    """
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+
+    try:
+        from reyn.budget.budget import BudgetExceeded
+    except ImportError:
+        pytest.skip("BudgetExceeded not available in this environment")
+
+    class _BudgetExceededLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+        async def run(self, *, user_text, history):
+            # BudgetExceeded requires (dimension, detail) — use the correct signature.
+            raise BudgetExceeded("tokens", "budget exhausted")
+
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _BudgetExceededLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="test budget exceeded",
+            steps=(
+                PlanStep(id="s1", description="over-budget step", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        with pytest.raises(BudgetExceeded):
+            await execute_plan(
+                plan,
+                parent_host=host,
+                chain_id="c0",
+                retry_limit=3,
+            )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop

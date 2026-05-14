@@ -578,8 +578,14 @@ class PlanConfig:
     ``step_max_iterations``: maximum RouterLoop iterations per plan step
     before the OS records a step failure.  Default 5 (FP-0029).  Raise
     when steps regularly run long tool chains; lower for tighter budgets.
+
+    ``retry_limit``: maximum automatic retries per step on transient errors
+    (FP-0031-C).  Default 3.  Set 0 to disable auto-retry.  Exceptions
+    that have their own ask/abort path (PermissionError, BudgetExceeded,
+    etc.) are always excluded from retry regardless of this setting.
     """
     step_max_iterations: int = 5
+    retry_limit: int = 3
 
 
 @dataclass
@@ -1076,7 +1082,14 @@ def _build_plan_config(raw: object) -> PlanConfig:
         step_max = defaults.step_max_iterations
     if step_max < 1:
         step_max = defaults.step_max_iterations
-    return PlanConfig(step_max_iterations=step_max)
+    retry_limit_raw = raw.get("retry_limit")
+    try:
+        retry_limit = int(retry_limit_raw) if retry_limit_raw is not None else defaults.retry_limit
+    except (TypeError, ValueError):
+        retry_limit = defaults.retry_limit
+    if retry_limit < 0:
+        retry_limit = defaults.retry_limit
+    return PlanConfig(step_max_iterations=step_max, retry_limit=retry_limit)
 
 
 def _build_cost_limit(raw: object) -> CostLimitConfig:

@@ -38,6 +38,7 @@ validates structure.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
@@ -77,6 +78,48 @@ _PLAN_STEP_MAX_ITERATIONS = 5
 # with a structured error instead of crashing the executor.
 _PLAN_MIN_STEPS = 2
 _PLAN_MAX_STEPS = 7
+
+# FP-0031-C: auto-retry on transient step failures.
+# Maximum retries per step before the OS asks the user for an extension
+# (Component D) or records a step failure and continues.
+# Overridable via ``reyn.yaml plan.retry_limit``.
+_PLAN_STEP_RETRY_LIMIT = 3
+
+# Exception types that must NOT be retried — they have their own ask/abort
+# path in the safety layer and retrying them would cause double-ask or
+# bypass the budget enforcement invariant.
+#   PermissionError          — ToolGateRefused / OpDenied: wait for user approval
+#   BudgetExceeded           — cost guard: abort / ask in BudgetGateway
+#   PhaseBudgetExceededError — phase-level token cap: handled by OS runtime
+#   LoopLimitExceededError   — loop guard: handled by handle_limit_exceeded
+#   WorkflowAbortedError     — intentional skill abort: surface to caller
+# KeyboardInterrupt / SystemExit / asyncio.CancelledError are system signals
+# and are excluded separately below.
+def _build_retry_excluded() -> tuple:
+    """Build the tuple of exception classes to exclude from retry at import time.
+
+    Lazy-imports ``WorkflowAbortedError`` so circular-import issues (= the
+    ``_is_workflow_abort`` guard at the top of this module) are avoided.
+    Falls back gracefully if any class is unavailable (= test environments).
+    """
+    classes: list[type] = [PermissionError]
+    try:
+        from reyn.budget.budget import BudgetExceeded
+        classes.append(BudgetExceeded)
+    except ImportError:
+        pass
+    try:
+        from reyn.kernel.runtime_types import (
+            LoopLimitExceededError,
+            PhaseBudgetExceededError,
+            WorkflowAbortedError,
+        )
+        classes.extend([PhaseBudgetExceededError, LoopLimitExceededError, WorkflowAbortedError])
+    except ImportError:
+        pass
+    return tuple(classes)
+
+_PLAN_RETRY_EXCLUDED: tuple = _build_retry_excluded()
 
 
 # ── Data model ──────────────────────────────────────────────────────────────
@@ -645,6 +688,7 @@ async def execute_plan(
     plan_id: str | None = None,
     resume_plan: Any = None,
     step_max_iterations: int | None = None,
+    retry_limit: int | None = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -807,14 +851,72 @@ async def execute_plan(
                 exclude_tools={"plan"},
                 memo_provider=memo_provider,
             )
-            try:
-                sub_usage = await sub_loop.run(
-                    user_text=step.description, history=[],
-                )
-                if sub_usage is not None:
-                    total_usage.prompt_tokens += sub_usage.prompt_tokens
-                    total_usage.completion_tokens += sub_usage.completion_tokens
-            except Exception as exc:  # noqa: BLE001 — defensive, don't crash plan
+            # FP-0031-C: auto-retry on transient step failures.
+            # step_retry_limit is the per-step retry budget for this
+            # execute_plan call. Each attempt on failure decrements the
+            # budget; when exhausted Component D takes over.
+            step_retry_limit: int = retry_limit if retry_limit is not None else _PLAN_STEP_RETRY_LIMIT
+            last_exc: Exception | None = None
+            step_succeeded = False
+            desc_preview = (step.description or step.id)[:60]
+            for attempt in range(step_retry_limit + 1):
+                try:
+                    sub_usage = await sub_loop.run(
+                        user_text=step.description, history=[],
+                    )
+                    if sub_usage is not None:
+                        total_usage.prompt_tokens += sub_usage.prompt_tokens
+                        total_usage.completion_tokens += sub_usage.completion_tokens
+                    step_succeeded = True
+                    break  # success — exit retry loop
+                except _PLAN_RETRY_EXCLUDED as exc:
+                    raise  # delegate to safety layer / abort path
+                except (KeyboardInterrupt, SystemExit, asyncio.CancelledError):
+                    raise  # system signals — never retry
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    if attempt < step_retry_limit:
+                        # Retry available — emit status and loop.
+                        try:
+                            await parent_host.put_outbox(
+                                kind="status",
+                                text=f"  リトライ {attempt + 1}/{step_retry_limit}: {desc_preview}",
+                                meta={
+                                    "plan_id": plan_id, "chain_id": chain_id,
+                                    "step_id": step.id, "source": "plan",
+                                },
+                            )
+                        except AttributeError:
+                            pass
+                        except Exception as exc2:  # noqa: BLE001
+                            logger.warning("plan step retry outbox emit failed: %r", exc2)
+                        # Rebuild narrow_host and sub_loop for the retry so
+                        # captured_text is fresh (= the old host may have
+                        # partial state from the failed attempt).
+                        narrow_host = _PlanStepHost(
+                            plan=plan, step=step,
+                            prior_results=step_results, parent=parent_host,
+                        )
+                        sub_loop = RouterLoop(
+                            host=narrow_host,
+                            chain_id=chain_id,
+                            max_iterations=step_max_iterations or _PLAN_STEP_MAX_ITERATIONS,
+                            router_model=router_model,
+                            budget=budget,
+                            system_prompt_override=sys_prompt,
+                            exclude_tools={"plan"},
+                            memo_provider=memo_provider,
+                        )
+                        continue
+                    # Retry budget exhausted — fall out to failure handling.
+                    break
+
+            if not step_succeeded:
+                # All retries exhausted (Component D extension handled in
+                # the caller; here we record the step as failed and continue
+                # to the next step — Component D is wired via execute_plan's
+                # caller in a future integration step; for now fall through).
+                exc = last_exc  # type: ignore[assignment]
                 step_failures[step.id] = repr(exc)
                 try:
                     await parent_host.record_plan_step_failed(
@@ -833,7 +935,6 @@ async def execute_plan(
                 )
                 # FP-0031-B: emit failure status so the user sees which step
                 # failed and a short error summary while the plan continues.
-                desc_preview = (step.description or step.id)[:60]
                 err_summary = str(exc)[:80]
                 try:
                     await parent_host.put_outbox(
@@ -1102,6 +1203,8 @@ __all__ = [
     "PlanStep",
     "PlanExecutionResult",
     "PlanValidationError",
+    "_PLAN_RETRY_EXCLUDED",
+    "_PLAN_STEP_RETRY_LIMIT",
     "build_plan_step_system_prompt",
     "dispatch_plan_tool",
     "execute_plan",
