@@ -27,6 +27,9 @@ models:
 | `models` | map | Class name → LiteLLM model string **or** dict (see below). |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `limits` | map | Runtime bounds: phase visits, wall-clock budgets, LLM timeouts/retries. See below. |
+| `plan` | map | Plan-mode step budget and retry tuning. See below. |
+| `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
+| `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -190,6 +193,56 @@ plan:
 |-----|------|---------|-------------|
 | `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
 | `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
+
+## `web` block
+
+SSL settings for `web_fetch` and the MCP package registry (FP-0022).
+
+```yaml
+web:
+  fetch:
+    verify_ssl: true     # true | false | omit (default: env-var chain)
+    ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
+```
+
+Priority chain (highest first):
+
+| Priority | Condition | Effective SSL config |
+|----------|-----------|----------------------|
+| 1 | `web.fetch.ca_bundle` set | Custom CA bundle file (`verify=<path>`) |
+| 2 | `web.fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) — **use only in controlled environments** |
+| 3 | `web.fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
+| 4 | Both unset | Fall through: `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
+
+`verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
+
+## `eval` block
+
+Trace exporter backends. When configured, reyn exports P6 event traces from every skill run to the listed backends (FP-0007).
+
+```yaml
+eval:
+  exporters:
+    - type: file
+      path: .reyn/traces/        # default when no exporters are set
+    - type: langfuse
+      public_key: ${LANGFUSE_PUBLIC_KEY}
+      secret_key: ${LANGFUSE_SECRET_KEY}
+      host: https://cloud.langfuse.com   # optional; default cloud endpoint
+    - type: otlp
+      endpoint: http://localhost:4317
+    - type: ietf_audit
+      path: .reyn/audit/         # IETF Agent Audit Trail draft format
+```
+
+| `type` | Description |
+|--------|-------------|
+| `file` | JSON-lines file under `path`. Default backend when `exporters` is empty. |
+| `langfuse` | Sends traces to a Langfuse instance. `public_key` + `secret_key` support `${VAR}` env interpolation. |
+| `otlp` | OpenTelemetry Protocol; `endpoint` is the OTLP gRPC or HTTP receiver. |
+| `ietf_audit` | IETF Agent Audit Trail draft format written to `path`. |
+
+All exporters are fire-and-forget: export failures are logged but do not abort the skill run.
 
 ## `permissions` block
 

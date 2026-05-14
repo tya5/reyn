@@ -27,6 +27,9 @@ models:
 | `models` | マップ | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
 | `output_language` | 文字列 | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `limits` | マップ | ランタイム上限: Phase 訪問数、ウォールクロックバジェット、LLM タイムアウト/リトライ。以下参照。 |
+| `plan` | マップ | プランモードのステップバジェットとリトライ設定。以下参照。 |
+| `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
+| `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 
@@ -183,6 +186,56 @@ plan:
 |-----|------|---------|-------------|
 | `step_max_iterations` | integer | `5` | 1 つのプランステップが失敗として記録される前に消費できる最大 RouterLoop イテレーション数。 |
 | `retry_limit` | integer | `3` | 一時的エラーによるステップあたりの最大自動リトライ数。上限到達後はユーザーにバジェット延長を求めます。トークン制限と同様のコスト保護上限として機能します。 |
+
+## `web` ブロック
+
+`web_fetch` と MCP パッケージレジストリの SSL 設定（FP-0022）。
+
+```yaml
+web:
+  fetch:
+    verify_ssl: true     # true | false | 省略（デフォルト: 環境変数チェーン）
+    ca_bundle: /path/to/ca-bundle.pem   # 省略可; カスタム CA バンドル
+```
+
+優先度チェーン（高い順）:
+
+| 優先度 | 条件 | 有効な SSL 設定 |
+|--------|------|----------------|
+| 1 | `web.fetch.ca_bundle` 設定あり | カスタム CA バンドルファイル（`verify=<path>`） |
+| 2 | `web.fetch.verify_ssl: false` | SSL 検証を無効化（`verify=False`）— **管理された環境のみ** |
+| 3 | `web.fetch.verify_ssl: true` | SSL 検証を強制（`verify=True`） |
+| 4 | 両方省略 | フォールスルー: `SSL_VERIFY` 環境変数 → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
+
+`verify_ssl` と `ca_bundle` は MCP レジストリの HTTP 呼び出し（パッケージインストール）にも適用されます。
+
+## `eval` ブロック
+
+トレース exporter バックエンド。設定すると、すべての Skill 実行の P6 イベントトレースを指定バックエンドに送出します（FP-0007）。
+
+```yaml
+eval:
+  exporters:
+    - type: file
+      path: .reyn/traces/        # exporter 未設定時のデフォルト
+    - type: langfuse
+      public_key: ${LANGFUSE_PUBLIC_KEY}
+      secret_key: ${LANGFUSE_SECRET_KEY}
+      host: https://cloud.langfuse.com   # 省略可; デフォルトはクラウドエンドポイント
+    - type: otlp
+      endpoint: http://localhost:4317
+    - type: ietf_audit
+      path: .reyn/audit/         # IETF Agent Audit Trail ドラフト形式
+```
+
+| `type` | 説明 |
+|--------|------|
+| `file` | `path` 以下の JSON-lines ファイル。`exporters` が空のときのデフォルトバックエンド。 |
+| `langfuse` | Langfuse インスタンスにトレースを送信。`public_key` / `secret_key` は `${VAR}` 環境変数補間をサポート。 |
+| `otlp` | OpenTelemetry Protocol。`endpoint` は OTLP gRPC または HTTP レシーバー。 |
+| `ietf_audit` | IETF Agent Audit Trail ドラフト形式で `path` に書き込み。 |
+
+すべての exporter は fire-and-forget です: エクスポートの失敗はログに記録されますが、Skill 実行を中止しません。
 
 ## `permissions` ブロック
 
