@@ -831,6 +831,23 @@ async def execute_plan(
                     step_id=step.id,
                     error=repr(exc),
                 )
+                # FP-0031-B: emit failure status so the user sees which step
+                # failed and a short error summary while the plan continues.
+                desc_preview = (step.description or step.id)[:60]
+                err_summary = str(exc)[:80]
+                try:
+                    await parent_host.put_outbox(
+                        kind="status",
+                        text=f"plan step {n_done + 1}/{n_total}: {desc_preview} → 失敗 ({err_summary})",
+                        meta={
+                            "plan_id": plan_id, "chain_id": chain_id,
+                            "step_id": step.id, "source": "plan",
+                        },
+                    )
+                except AttributeError:
+                    pass
+                except Exception as exc3:  # noqa: BLE001
+                    logger.warning("plan step failure outbox emit failed: %r", exc3)
                 continue
 
             text = narrow_host.captured_text

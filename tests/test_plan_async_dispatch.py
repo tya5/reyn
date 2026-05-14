@@ -351,3 +351,63 @@ async def test_async_validation_failure_does_not_spawn() -> None:
     assert result["status"] == "error"
     assert host.spawn_calls == []
     assert host.write_decomp_calls == []
+
+
+# ── FP-0031-B: step failure emits status text ────────────────────────────
+
+
+class _FailingStubRouterLoop:
+    """RouterLoop stub that raises RuntimeError to trigger step failure."""
+
+    def __init__(self, *, host, **kwargs):
+        self.host = host
+
+    @property
+    def total_usage(self):
+        from reyn.llm.pricing import TokenUsage
+        return TokenUsage()
+
+    async def run(self, *, user_text, history):
+        raise RuntimeError("simulated transient step error")
+
+
+@pytest.mark.asyncio
+async def test_plan_step_failure_emits_status_text() -> None:
+    """Tier 2: FP-0031-B — when a plan step's sub-loop raises an exception,
+    execute_plan emits a failure status message to the parent_host outbox.
+
+    Observable contract: the failure status text contains the step's
+    description preview and the string '失敗' (= failure marker).
+    """
+    import reyn.chat.planner as planner_mod
+
+    host = _LegacyHost()
+
+    # Temporarily swap RouterLoop to the failing stub for this test.
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _FailingStubRouterLoop
+    try:
+        result = await dispatch_plan_tool(
+            args=_simple_plan_args(),
+            parent_host=host, chain_id="c0",
+            available_tool_names=set(),
+        )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop
+
+    # Both steps fail.
+    assert len(result["step_failures"]) == 2
+
+    # Failure status messages emitted — source="plan" (same meta as success).
+    failure_msgs = [
+        m for m in host.outbox
+        if m["kind"] == "status" and "失敗" in m["text"]
+    ]
+    assert len(failure_msgs) == 2, (
+        f"Expected 2 failure status messages, got {len(failure_msgs)}: "
+        f"{[m['text'] for m in host.outbox]}"
+    )
+    # Each failure message includes the step description preview.
+    texts = [m["text"] for m in failure_msgs]
+    assert any("first" in t for t in texts), texts
+    assert any("second" in t for t in texts), texts
