@@ -132,6 +132,17 @@ def parse_skill(path: Path) -> SkillDef:
             f"{type(permissions_raw).__name__}"
         )
 
+    search_hints_raw = fm.get("search_hints", [])
+    if isinstance(search_hints_raw, list):
+        search_hints = [str(h).strip() for h in search_hints_raw if str(h).strip()]
+    elif search_hints_raw is None:
+        search_hints = []
+    else:
+        raise ValueError(
+            f"skill.md '{path}': 'search_hints' must be a list of strings, got "
+            f"{type(search_hints_raw).__name__}"
+        )
+
     return SkillDef(
         name=fm["name"],
         description=str(fm.get("description") or "").strip(),
@@ -144,4 +155,5 @@ def parse_skill(path: Path) -> SkillDef:
         finish_criteria=finish_criteria,
         postprocessor=postprocessor_raw,
         permissions=permissions_raw,
+        search_hints=search_hints,
     )

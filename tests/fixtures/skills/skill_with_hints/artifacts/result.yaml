@@ -1,0 +1,8 @@
+name: result
+description: Skill output.
+schema:
+  type: object
+  properties:
+    output:
+      type: string
+  required: [output]

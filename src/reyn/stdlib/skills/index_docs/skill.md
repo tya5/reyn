@@ -22,6 +22,11 @@ finish_criteria:
   - File samples and cost preflight were reviewed
   - A chunk_strategy was decided (or abort was issued for high-cost inputs)
   - source, path, description, and mode are echoed in the artifact
+search_hints:
+  - "index my docs so I can search them"
+  - "build a semantic index over these files"
+  - "make my documentation searchable"
+  - "index the source code for recall queries"
 graph:
   strategy: []
 permissions:

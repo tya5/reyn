@@ -1,0 +1,8 @@
+name: user_input
+description: User query input.
+schema:
+  type: object
+  properties:
+    query:
+      type: string
+  required: [query]

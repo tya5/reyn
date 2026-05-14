@@ -183,6 +183,13 @@ class Skill(BaseModel):
     # the loader; used by python preprocessor steps to resolve relative module
     # paths. Empty string when the skill was constructed in memory.
     skill_dir: str = ""
+    # Tool2Vec-style retrieval hints (FP-0024 Component B).
+    # Optional list of example queries this skill can answer.  Absent in
+    # existing skill.md files (backward-compat: None = not provided by author).
+    # BM25/embedding backends concat these with the description to improve
+    # Recall@5 pre-filter.  Integration with search backends is deferred to
+    # the next wave (Track 3).
+    search_hints: list[str] | None = None
 
     @model_validator(mode="after")
     def _require_final_output_name(self) -> "Skill":

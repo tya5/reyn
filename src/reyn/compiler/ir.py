@@ -50,3 +50,8 @@ class SkillDef:
     # Non-empty → expander uses this directly (bypasses phase union).
     # Empty / absent → expander falls back to _union_phase_permissions.
     permissions: dict = field(default_factory=dict)
+    # Tool2Vec-style retrieval hints (FP-0024 Component B).
+    # Optional list of example queries this skill can answer.  Absent in
+    # existing skill.md files (backward-compat); BM25/embedding backends
+    # concat these with the description to improve Recall@5.
+    search_hints: list[str] = field(default_factory=list)

@@ -196,4 +196,5 @@ def expand_skill(
         permissions=PermissionDecl.from_dict(skill_def.permissions),
         postprocessor=_expand_postprocessor(skill_def.postprocessor, artifact_defs),
         preprocessor_sub_skills=preprocessor_sub_skills or {},
+        search_hints=skill_def.search_hints if skill_def.search_hints else None,
     )

@@ -14,6 +14,10 @@ Outbox is the **presentation stream**, distinct from history (durable log).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reyn.chat.transport import TransportRef
 
 
 @dataclass(frozen=True)
@@ -31,10 +35,17 @@ class OutboxMessage:
 
     Future keys (multi-agent):
       agent_id         which agent emitted this message
+
+    FP-0013:
+      reply_to         TransportRef identifying the logical destination for
+                       routing.  ``None`` during migration; the routing layer
+                       falls back to the registered default surface (TUI) when
+                       absent.
     """
     kind: str
     text: str
     meta: dict = field(default_factory=dict)
+    reply_to: "TransportRef | None" = field(default=None)
 
 
 __all__ = ["OutboxMessage"]

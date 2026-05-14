@@ -7,6 +7,11 @@ final_output: eval_spec_result
 final_output_description: |
   Path to the generated eval.md plus case/criterion counts and a brief summary.
   The user runs the spec separately with `reyn eval <eval_md_path>`.
+search_hints:
+  - "create an eval spec for a skill"
+  - "generate eval.md for testing a skill"
+  - "build evaluation criteria for a skill"
+  - "scaffold eval test cases for a skill"
 finish_criteria:
   - eval.md has been written at the eval_output_path resolved by the OS
   - eval_spec_result captures the path, case count, and criterion count
