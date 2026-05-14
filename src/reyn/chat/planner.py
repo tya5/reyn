@@ -85,21 +85,22 @@ _PLAN_MAX_STEPS = 7
 # Overridable via ``reyn.yaml plan.retry_limit``.
 _PLAN_STEP_RETRY_LIMIT = 3
 
-# Exception types that must NOT be retried — they have their own ask/abort
-# path in the safety layer and retrying them would cause double-ask or
-# bypass the budget enforcement invariant.
+# Exception types that must NOT be retried and must be re-raised to their
+# own safety-layer ask/abort path. Retrying them would cause double-ask or
+# bypass budget enforcement invariants.
 #   PermissionError          — ToolGateRefused / OpDenied: wait for user approval
 #   BudgetExceeded           — cost guard: abort / ask in BudgetGateway
 #   PhaseBudgetExceededError — phase-level token cap: handled by OS runtime
 #   LoopLimitExceededError   — loop guard: handled by handle_limit_exceeded
-#   WorkflowAbortedError     — intentional skill abort: surface to caller
-# KeyboardInterrupt / SystemExit / asyncio.CancelledError are system signals
-# and are excluded separately below.
+#
+# WorkflowAbortedError is NOT in this tuple: it is a deliberate step-level
+# termination that should be recorded as a step failure and let the plan
+# continue (per the ADR-0013 pattern pinned in test_plan_lifecycle_crash.py).
+# KeyboardInterrupt / SystemExit / asyncio.CancelledError are handled as
+# system signals in a separate except clause below.
 def _build_retry_excluded() -> tuple:
     """Build the tuple of exception classes to exclude from retry at import time.
 
-    Lazy-imports ``WorkflowAbortedError`` so circular-import issues (= the
-    ``_is_workflow_abort`` guard at the top of this module) are avoided.
     Falls back gracefully if any class is unavailable (= test environments).
     """
     classes: list[type] = [PermissionError]
@@ -112,9 +113,8 @@ def _build_retry_excluded() -> tuple:
         from reyn.kernel.runtime_types import (
             LoopLimitExceededError,
             PhaseBudgetExceededError,
-            WorkflowAbortedError,
         )
-        classes.extend([PhaseBudgetExceededError, LoopLimitExceededError, WorkflowAbortedError])
+        classes.extend([PhaseBudgetExceededError, LoopLimitExceededError])
     except ImportError:
         pass
     return tuple(classes)
@@ -689,6 +689,8 @@ async def execute_plan(
     resume_plan: Any = None,
     step_max_iterations: int | None = None,
     retry_limit: int | None = None,
+    on_limit: Any = None,
+    intervention_bus: Any = None,
 ) -> PlanExecutionResult:
     """Run a plan step-by-step in topological order, return the aggregated text.
 
@@ -852,14 +854,16 @@ async def execute_plan(
                 memo_provider=memo_provider,
             )
             # FP-0031-C: auto-retry on transient step failures.
-            # step_retry_limit is the per-step retry budget for this
-            # execute_plan call. Each attempt on failure decrements the
-            # budget; when exhausted Component D takes over.
-            step_retry_limit: int = retry_limit if retry_limit is not None else _PLAN_STEP_RETRY_LIMIT
+            # FP-0031-D: when retry budget is exhausted, ask the user via
+            # handle_limit_exceeded; on approval extend by the original limit.
+            _base_retry_limit: int = retry_limit if retry_limit is not None else _PLAN_STEP_RETRY_LIMIT
+            # step_retry_limit is mutable — Component D extends it on approval.
+            step_retry_limit = _base_retry_limit
             last_exc: Exception | None = None
             step_succeeded = False
             desc_preview = (step.description or step.id)[:60]
-            for attempt in range(step_retry_limit + 1):
+            attempt = 0
+            while attempt <= step_retry_limit:
                 try:
                     sub_usage = await sub_loop.run(
                         user_text=step.description, history=[],
@@ -875,12 +879,18 @@ async def execute_plan(
                     raise  # system signals — never retry
                 except Exception as exc:  # noqa: BLE001
                     last_exc = exc
-                    if attempt < step_retry_limit:
-                        # Retry available — emit status and loop.
+                    attempt += 1
+                    # WorkflowAbortedError — deliberate step termination per
+                    # ADR-0013. Record as step failure and let the plan continue
+                    # without retry (= the step is done intentionally).
+                    if _is_workflow_abort(type(exc)):
+                        break
+                    if attempt <= step_retry_limit:
+                        # Retry available — emit status and rebuild sub-loop.
                         try:
                             await parent_host.put_outbox(
                                 kind="status",
-                                text=f"  リトライ {attempt + 1}/{step_retry_limit}: {desc_preview}",
+                                text=f"  リトライ {attempt}/{step_retry_limit}: {desc_preview}",
                                 meta={
                                     "plan_id": plan_id, "chain_id": chain_id,
                                     "step_id": step.id, "source": "plan",
@@ -908,14 +918,36 @@ async def execute_plan(
                             memo_provider=memo_provider,
                         )
                         continue
-                    # Retry budget exhausted — fall out to failure handling.
+                    # FP-0031-D: retry budget exhausted — ask user for extension.
+                    if on_limit is not None:
+                        try:
+                            from reyn.safety.limit_handler import handle_limit_exceeded
+                            err_preview = str(last_exc)[:120]
+                            limit_decision = await handle_limit_exceeded(
+                                bus=intervention_bus,
+                                on_limit=on_limit,
+                                kind=f"plan_step_retry:{step.id}",
+                                run_id=plan_id or chain_id,
+                                prompt=(
+                                    f"Plan step '{desc_preview}' has failed "
+                                    f"{step_retry_limit} times. "
+                                    f"Allow {_base_retry_limit} more retries?"
+                                ),
+                                detail=f"Last error: {err_preview}",
+                                extension_amount=float(_base_retry_limit),
+                            )
+                            if limit_decision.allow_continue:
+                                # User approved extension — add base_limit more attempts.
+                                step_retry_limit += _base_retry_limit
+                                continue  # back to retry loop
+                        except Exception as exc_d:  # noqa: BLE001
+                            logger.warning(
+                                "plan step retry limit_handler failed: %r", exc_d,
+                            )
+                    # No extension granted (or on_limit=None) — fall through to failure.
                     break
 
             if not step_succeeded:
-                # All retries exhausted (Component D extension handled in
-                # the caller; here we record the step as failed and continue
-                # to the next step — Component D is wired via execute_plan's
-                # caller in a future integration step; for now fall through).
                 exc = last_exc  # type: ignore[assignment]
                 step_failures[step.id] = repr(exc)
                 try:

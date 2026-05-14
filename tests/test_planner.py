@@ -748,3 +748,120 @@ async def test_plan_step_does_not_retry_budget_exceeded():
             )
     finally:
         planner_mod.RouterLoop = orig_router_loop
+
+
+# ── FP-0031-D: retry exhaustion asks user via handle_limit_exceeded ──────────
+
+
+@pytest.mark.asyncio
+async def test_plan_step_retry_limit_exhaustion_asks_user_via_limit_handler():
+    """Tier 2: FP-0031-D — when a step exhausts its retry budget AND
+    on_limit / intervention_bus are provided, execute_plan calls
+    handle_limit_exceeded. On approval (allow_continue=True), the retry
+    limit is extended and execution resumes; on refusal, the step is
+    recorded as failed.
+
+    Observable contract (refusal path): the step appears in step_failures
+    and no more attempts were made after handle_limit_exceeded returned
+    allow_continue=False.
+
+    Observable contract (approval path): the step succeeds after the
+    user-approved extension grants additional retries.
+    """
+    import reyn.chat.planner as planner_mod
+    from reyn.chat.planner import execute_plan
+    from reyn.config import OnLimitConfig
+
+    # ── Refusal path ─────────────────────────────────────────────────────
+
+    class _AlwaysFailLoop:
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+        async def run(self, *, user_text, history):
+            raise RuntimeError("always fails")
+
+    class _StubBusRefuse:
+        """InterventionBus stub that always refuses (= user presses No)."""
+        async def request(self, iv):
+            class _Answer:
+                choice_id = "no"
+            return _Answer()
+
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _AlwaysFailLoop  # type: ignore[assignment]
+    try:
+        host = _SimpleHost()
+        plan = Plan(
+            goal="test retry exhaustion refusal",
+            steps=(
+                PlanStep(id="s1", description="always fails", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        on_limit = OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0)
+        result = await execute_plan(
+            plan,
+            parent_host=host,
+            chain_id="c0",
+            retry_limit=1,  # short limit so exhaustion happens fast
+            on_limit=on_limit,
+            intervention_bus=_StubBusRefuse(),
+        )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop
+
+    # User refused — s1 is in step_failures.
+    assert "s1" in result.step_failures, (
+        f"Expected s1 in step_failures after user refusal; got {result.step_failures}"
+    )
+
+    # ── Approval path ─────────────────────────────────────────────────────
+
+    _approval_call_count = [0]
+
+    class _FailThenSucceedLoop:
+        """Fails for first 2 calls, succeeds on call 3+."""
+        def __init__(self, *, host, **kwargs):
+            self.host = host
+        async def run(self, *, user_text, history):
+            _approval_call_count[0] += 1
+            if _approval_call_count[0] <= 2:
+                raise RuntimeError(f"fail #{_approval_call_count[0]}")
+            await self.host.put_outbox(kind="agent", text="ok", meta={})
+            return None
+
+    class _StubBusApprove:
+        """InterventionBus stub that always approves (= user presses Yes)."""
+        async def request(self, iv):
+            class _Answer:
+                choice_id = "yes"
+            return _Answer()
+
+    orig_router_loop = planner_mod.RouterLoop
+    planner_mod.RouterLoop = _FailThenSucceedLoop  # type: ignore[assignment]
+    try:
+        host2 = _SimpleHost()
+        plan2 = Plan(
+            goal="test retry exhaustion approval",
+            steps=(
+                PlanStep(id="s1", description="fails twice then ok", tools=()),
+                PlanStep(id="s2", description="synth", tools=(), depends_on=("s1",)),
+            ),
+        )
+        on_limit2 = OnLimitConfig(mode="interactive", ask_timeout_seconds=0.0)
+        result2 = await execute_plan(
+            plan2,
+            parent_host=host2,
+            chain_id="c0",
+            retry_limit=1,  # limit=1: fails on attempt 0 and 1; user extends; succeeds on 3rd
+            on_limit=on_limit2,
+            intervention_bus=_StubBusApprove(),
+        )
+    finally:
+        planner_mod.RouterLoop = orig_router_loop
+
+    # User approved extension → s1 should succeed after extended retries.
+    assert "s1" not in result2.step_failures, (
+        f"Expected s1 to succeed after user-approved extension; "
+        f"step_failures={result2.step_failures}"
+    )
