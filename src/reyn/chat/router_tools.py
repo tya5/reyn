@@ -508,10 +508,10 @@ def build_tools(
                 "docs\", \"build a summary across these N "
                 "files\"). For simple queries — chitchat, single-"
                 "tool retrieval, single-source narration — reply "
-                "directly or call one tool; do NOT use plan. The "
-                "terminal step's text reply becomes the user-"
-                "facing answer; design the last step to "
-                "synthesise."
+                "directly or call one tool; do NOT use plan. "
+                "Each step summarises what it found; the router "
+                "synthesises the final reply after all steps "
+                "complete."
             ),
             parameters={
                 "type": "object",
@@ -543,19 +543,18 @@ def build_tools(
                             # AND the empty-list semantics for synthesis steps.
                             "tools: list of TOP-LEVEL tool names this step "
                             "calls (e.g. \"reyn_src_read\", \"web_search\", "
-                            "\"invoke_skill\"). Use [] for steps that just "
-                            "synthesise / compare / summarise from prior step "
-                            "outputs — the step's LLM does that natively without "
-                            "any tool. To run a skill, use [\"invoke_skill\"], "
-                            "NOT the skill's name. depends_on: ids of prior "
-                            "steps whose output this step needs (default []). "
-                            "The terminal step's text reply becomes the user-"
-                            "facing answer; design the last step to "
-                            "synthesise (= tools: []). Example: "
+                            "\"invoke_skill\"). Use [] for steps that only "
+                            "need prior step outputs as context — the step "
+                            "LLM reasons from those natively. To run a skill, "
+                            "use [\"invoke_skill\"], NOT the skill's name. "
+                            "depends_on: ids of prior steps whose output this "
+                            "step needs (default []). Each step should "
+                            "summarise what it found; the router synthesises "
+                            "the final reply after all steps complete. Example: "
                             "[{\"id\": \"s1\", \"description\": \"read README\", "
                             "\"tools\": [\"reyn_src_read\"], \"depends_on\": []}, "
                             "{\"id\": \"s2\", \"description\": \"compare and "
-                            "summarise for user\", "
+                            "summarise findings\", "
                             "\"tools\": [], \"depends_on\": [\"s1\"]}]"
                         ),
                     },

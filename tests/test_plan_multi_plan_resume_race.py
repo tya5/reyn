@@ -192,16 +192,17 @@ async def test_concurrent_plans_record_distinct_step_results(
     # Drain background tasks. Both plans should complete cleanly.
     await _drain(session)
 
-    # Outbox should have 2 agent-kind messages (= one terminal text per
-    # plan, completion-order arbitrary). Both must be present and
-    # tagged with their respective plan_id.
-    agent_msgs: list = []
-    while not session.outbox.empty():
-        msg = session.outbox.get_nowait()
-        if msg.kind == "agent" and msg.meta.get("source") == "plan":
-            agent_msgs.append(msg)
-    assert len(agent_msgs) == 2
-    plan_ids_seen = {m.meta.get("plan_id") for m in agent_msgs}
+    # FP-0025 C: completion now triggers plan_completed inbox (not direct
+    # agent outbox). Both plans must have enqueued plan_completed messages.
+    inbox_items: list[tuple[str, dict]] = []
+    while not session.inbox.empty():
+        inbox_items.append(session.inbox.get_nowait())
+    plan_completed_msgs = [
+        payload for kind, payload in inbox_items
+        if kind == "plan_completed"
+    ]
+    assert len(plan_completed_msgs) == 2
+    plan_ids_seen = {m.get("plan_id") for m in plan_completed_msgs}
     assert plan_ids_seen == {p1, p2}
 
 

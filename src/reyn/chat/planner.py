@@ -107,11 +107,17 @@ class Plan:
 class PlanExecutionResult:
     """Output of ``execute_plan``. ``text`` is what the user sees; the
     per-step results are kept for audit / debugging.
+
+    ``plan_goal`` and ``n_steps`` are populated by ``execute_plan`` so
+    callers (= FP-0025 C: ``spawn_plan_task``) can enqueue a
+    ``plan_completed`` inbox message without re-reading the plan object.
     """
     text: str
     step_results: dict[str, str] = field(default_factory=dict)
     step_failures: dict[str, str] = field(default_factory=dict)
     usage: TokenUsage = field(default_factory=TokenUsage)
+    plan_goal: str = ""
+    n_steps: int = 0
 
 
 class PlanValidationError(ValueError):
@@ -921,6 +927,8 @@ async def execute_plan(
         step_results=step_results,
         step_failures=step_failures,
         usage=total_usage,
+        plan_goal=plan.goal,
+        n_steps=len(plan.steps),
     )
 
 

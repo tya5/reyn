@@ -1000,6 +1000,11 @@ class ChatSession:
                     # user-role completion message into the existing thread
                     # and run one router LLM turn for narration.
                     await self._handle_skill_completed(payload)
+                elif kind == "plan_completed":
+                    # FP-0025 C: a background plan finished. Inject a
+                    # user-role message with step_results and run one
+                    # router LLM turn for synthesis narration.
+                    await self._handle_plan_completed(payload)
         finally:
             await self._drain_on_shutdown()
             self._chat_events.emit("chat_stopped", agent_name=self.agent_name)
@@ -2807,6 +2812,77 @@ class ChatSession:
                 run_id, skill, exc,
             )
 
+    async def _enqueue_plan_completed(
+        self,
+        *,
+        plan_id: str,
+        chain_id: str,
+        goal: str,
+        step_results: dict[str, str],
+        n_steps: int,
+    ) -> None:
+        """FP-0025 C: enqueue plan_completed inbox for router narration."""
+        try:
+            await self._put_inbox(
+                "plan_completed",
+                {
+                    "plan_id": plan_id,
+                    "chain_id": chain_id,
+                    "goal": goal,
+                    "step_results": step_results,
+                    "n_steps": n_steps,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("_enqueue_plan_completed failed for %s: %r", plan_id, exc)
+
+    async def _handle_plan_completed(self, payload: dict) -> None:
+        """FP-0025 C: narrate plan completion via one router LLM turn.
+
+        Symmetric with _handle_skill_completed (FP-0012). Injects a
+        [plan_completed] user-role message into history so the router
+        LLM sees step_results and synthesises a user reply.
+        """
+        plan_id = payload.get("plan_id", "")
+        chain_id = payload.get("chain_id") or _new_chain_id()
+        goal = payload.get("goal", "")
+        step_results = payload.get("step_results") or {}
+        try:
+            results_str = json.dumps(step_results, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            results_str = repr(step_results)
+        injected_text = (
+            f"[plan_completed] plan_id={plan_id}\n"
+            f"goal: {goal}\n"
+            f"step_results:\n{results_str}\n\n"
+            "Please synthesize the step results into a complete response for the user."
+        )
+        self._append_history(ChatMessage(
+            role="user", text=injected_text, ts=_now_iso(),
+            meta={
+                "source": "plan_completion",
+                "plan_id": plan_id,
+                "chain_id": chain_id,
+            },
+        ))
+        self._chat_events.emit(
+            "plan_completion_injected",
+            plan_id=plan_id, chain_id=chain_id,
+        )
+        self._reset_router_turn_counter()
+        try:
+            await self._run_router_loop(injected_text, chain_id)
+        except RouterCapExceeded as exc:
+            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
+            return
+        except Exception as exc:
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"router failed (plan_completed): {exc}",
+                meta={"chain_id": chain_id, "plan_id": plan_id},
+            ))
+            return
+
     # ── RouterLoop helper methods (Wave 3 F1, kept for session callbacks) ──────────
     # _make_router_op_context + 3 helpers remain on ChatSession because the
     # session's internal MCP/file callbacks (_mcp_list_tools, _mcp_call_tool,
@@ -3223,11 +3299,10 @@ class ChatSession:
         async def _run_plan_task() -> None:
             from reyn.chat.planner import _is_workflow_abort
             clean_exit = False
-            result_text: str | None = None
+            result: Any = None
             try:
                 result = await runtime.run()
                 clean_exit = True
-                result_text = result.text if result is not None else None
             except BaseException as exc:
                 if _is_workflow_abort(type(exc)):
                     clean_exit = True
@@ -3235,49 +3310,22 @@ class ChatSession:
                     logger.warning(
                         "plan task crashed for %s: %r", plan_id, exc,
                     )
-            # Emit terminal aggregator text on clean exit.
-            if clean_exit and result_text:
+            # FP-0025 C: on clean exit, enqueue plan_completed inbox so
+            # the run() loop drives router narration (symmetric with
+            # FP-0012 skill_completed). The router LLM synthesises
+            # step_results into the final user reply.
+            if clean_exit and result is not None:
                 try:
-                    await self._put_outbox(OutboxMessage(
-                        kind="agent",
-                        text=result_text,
-                        meta={
-                            "plan_id": plan_id,
-                            "chain_id": chain_id,
-                            "source": "plan",
-                        },
-                    ))
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "plan task outbox emit failed for %s: %r",
-                        plan_id, exc,
+                    await self._enqueue_plan_completed(
+                        plan_id=plan_id,
+                        chain_id=parent_chain_id or chain_id,
+                        goal=result.plan_goal,
+                        step_results=result.step_results,
+                        n_steps=result.n_steps,
                     )
-                # Batch 16 / G27: also append to history so the
-                # terminal text is visible to A2A reply harvesting,
-                # `dogfood_trace --mode plan-trace`, and any future
-                # caller iterating session.history. Mirror the regular
-                # agent-reply pattern (= _put_outbox + _append_history
-                # always together for kind="agent").
-                #
-                # The history meta uses ``parent_chain_id`` (= the
-                # chat-turn / A2A caller's chain) so chain_id-filtered
-                # harvest picks up this entry. ``plan_chain_id`` is
-                # internal plan-mode bookkeeping (per-plan chain) —
-                # tracked in meta.plan_id for forensic continuity.
-                history_chain_id = parent_chain_id or chain_id
-                try:
-                    self._append_history(ChatMessage(
-                        role="agent", text=result_text, ts=_now_iso(),
-                        meta={
-                            "plan_id": plan_id,
-                            "chain_id": history_chain_id,
-                            "plan_chain_id": chain_id,
-                            "source": "plan",
-                        },
-                    ))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
-                        "plan task history append failed for %s: %r",
+                        "plan task enqueue_plan_completed failed for %s: %r",
                         plan_id, exc,
                     )
             # Artifact cleanup mirrors the old dispatch_plan_tool finally.
