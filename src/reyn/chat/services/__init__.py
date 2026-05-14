@@ -1,4 +1,5 @@
 """Service classes extracted from ChatSession (waves 1, 2, and 3)."""
+from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.auto_resume_handler import AutoResumeHandler
 from reyn.chat.services.budget_gateway import BudgetGateway
 from reyn.chat.services.chain_manager import ChainManager, _PendingChain
@@ -11,6 +12,7 @@ from reyn.chat.services.skill_runner import SkillRunner
 from reyn.chat.services.snapshot_journal import SnapshotJournal
 
 __all__ = [
+    "A2AHandler",
     "AutoResumeHandler",
     "BudgetGateway",
     "ChainManager",

@@ -34,6 +34,7 @@ from reyn.chat.services import (
     RouterHostAdapter,
     SnapshotJournal,
 )
+from reyn.chat.services.a2a_handler import A2AHandler
 from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
@@ -780,6 +781,33 @@ class ChatSession:
             launcher=self._spawn_resumed_skill,
         )
 
+        # FP-0019 Wave 2 part 2: A2AHandler — agent-to-agent messaging service.
+        # Extracts _send_to_agent / _send_agent_response / _handle_agent_request /
+        # _handle_agent_response / _resolve_pending_chain from ChatSession.
+        # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
+        # routing handled by FP-0013 RoutingLayer via send_request_callback /
+        # send_response_callback injection.
+        self._a2a_handler = A2AHandler(
+            event_log=self._chat_events,
+            chain_manager=self._chains,
+            agent_name=self.agent_name,
+            max_hop_depth=self._max_hop_depth,
+            safety_extensions=self._safety_extensions,
+            output_language=self.output_language,
+            append_history=self._append_history_for_a2a_handler,
+            put_outbox=self._put_outbox,
+            handle_chat_limit_checkpoint=self._handle_chat_limit_checkpoint,
+            run_router_loop=lambda text, cid: self._run_router_loop(text, cid),
+            reset_router_turn_counter=self._reset_router_turn_counter,
+            send_request_callback=self._a2a_send_request,
+            send_response_callback=self._a2a_send_response,
+            on_chain_timeout_fire=self._on_chain_timeout_fire,
+            get_router_loop_delegations=lambda: self._router_loop_delegations,
+            set_router_loop_delegations=lambda v: setattr(self, "_router_loop_delegations", v),
+            get_router_loop_agent_replies=lambda: self._router_loop_agent_replies,
+            set_router_loop_agent_replies=lambda v: setattr(self, "_router_loop_agent_replies", v),
+        )
+
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
@@ -854,6 +882,70 @@ class ChatSession:
         (which takes a ChatMessage).
         """
         self._append_history(ChatMessage(role=role, text=text, ts=ts, meta=meta))
+
+    def _append_history_for_a2a_handler(
+        self, role: str, text: str, ts: str, meta: dict,
+    ) -> None:
+        """Adapter callback injected into A2AHandler.
+
+        A2AHandler uses the same ``(role, text, ts, meta)`` signature as
+        InterventionHandler.  This adapter bridges to ChatSession._append_history
+        (which takes a ChatMessage).
+        """
+        self._append_history(ChatMessage(role=role, text=text, ts=ts, meta=meta))
+
+    # ── A2A transport callbacks (FP-0019 Wave 2 part 2) ─────────────────────────
+    # Session-side wrappers that perform registry topology checks and the
+    # actual submit_agent_request / submit_agent_response transport calls.
+    # A2AHandler delegates here after its own depth / guard logic; these
+    # callbacks are the FP-0013 RoutingLayer integration seam.
+
+    async def _a2a_send_request(
+        self,
+        to: str, from_agent: str, request: str, depth: int, chain_id: str,
+    ) -> None:
+        """Transport callback: validate topology and submit agent_request to ``to``.
+
+        Checks existence + topology permit via AgentRegistry, then boots the
+        target session (idempotent) and calls ``submit_agent_request``.
+        """
+        if self._registry is None or not self._registry.exists(to):
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"agent {to!r} not found",
+                meta={"chain_id": chain_id},
+            ))
+            return
+        # PR12: topology gate.
+        if not self._registry.permit(from_agent, to):
+            await self._put_outbox(OutboxMessage(
+                kind="error",
+                text=f"agent {to!r}: blocked by topology rules",
+                meta={"chain_id": chain_id},
+            ))
+            return
+        target = self._registry.get_or_load(to)
+        await self._registry.ensure_running(to)
+        await target.submit_agent_request(
+            from_agent=from_agent, request=request,
+            depth=depth, chain_id=chain_id,
+        )
+
+    async def _a2a_send_response(
+        self,
+        to: str, from_agent: str, response: str, depth: int, chain_id: str,
+    ) -> None:
+        """Transport callback: submit agent_response to ``to``.
+
+        Silently drops when the target no longer exists (race on shutdown).
+        """
+        if self._registry is None or not self._registry.exists(to):
+            return
+        target = self._registry.get_or_load(to)
+        await self._registry.ensure_running(to)
+        await target.submit_agent_response(
+            from_agent=from_agent, response=response,
+            depth=depth, chain_id=chain_id,
+        )
 
     def load_history(self) -> None:
         if not self.history_path.exists():
@@ -1704,336 +1796,34 @@ class ChatSession:
         return answer
 
     # ── agent-to-agent messaging (PR11 / PR14) ──────────────────────────────────
+    # FP-0019 Wave 2 part 2: business logic extracted to A2AHandler service.
+    # Session keeps thin delegators here so existing internal call sites
+    # (_on_chain_timeout_fire, _on_chain_peer_discarded, RouterHostAdapter
+    # send_to_agent callback) continue to resolve without changes.
 
     async def _send_to_agent(
         self, *, to: str, request: str, depth: int, chain_id: str,
     ) -> None:
-        """Route a delegation request from this agent to `to`.
-
-        depth is the hop count from the original user request (user → A = 1,
-        A → B = 2, ...). Refused when depth > max_hop_depth (LangGraph-style
-        guard, default 3). chain_id (PR14) identifies the logical request
-        thread for cross-agent trace; it propagates verbatim to the target's
-        inbox payload and is recorded in history meta + events.
-        """
-        # FP-0005: extension granted by safety-limit checkpoint raises
-        # the effective hop cap for this chain.
-        effective_max_hops = int(
-            self._max_hop_depth
-            + self._safety_extensions.get(f"max_agent_hops:{chain_id}", 0.0)
-        )
-        if depth > effective_max_hops:
-            # FP-0005: ask before refusing when on_limit.mode opts in.
-            decision = await self._handle_chat_limit_checkpoint(
-                kind=f"max_agent_hops:{chain_id}",
-                prompt=(
-                    f"Delegation depth {depth} exceeds max_agent_hops "
-                    f"({effective_max_hops}). Allow chain {chain_id} to "
-                    f"continue?"
-                ),
-                detail=f"to={to} depth={depth} cap={effective_max_hops}",
-                extension_amount=1.0,
-                run_id=chain_id,
-            )
-            if not decision.allow_continue:
-                # FP-0004: hint at the config key the operator can raise.
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=(
-                        f"agent message depth {depth} exceeds limit "
-                        f"{effective_max_hops}; chain refused. "
-                        f"→ Raise safety.loop.max_agent_hops to allow deeper "
-                        f"delegation chains."
-                    ),
-                    meta={"chain_id": chain_id},
-                ))
-                self._chat_events.emit(
-                    "agent_message_refused",
-                    reason="max_hop_depth",
-                    to_agent=to, depth=depth, chain_id=chain_id,
-                )
-                return
-            # Approved — continue. ``_safety_extensions[max_agent_hops:<chain_id>]``
-            # was bumped by the checkpoint helper so re-entry on the same
-            # chain at this depth would not re-prompt unless depth grows again.
-        if to == self.agent_name:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"agent {to!r}: cannot self-message",
-                meta={"chain_id": chain_id},
-            ))
-            return
-        if self._registry is None or not self._registry.exists(to):
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"agent {to!r} not found",
-                meta={"chain_id": chain_id},
-            ))
-            return
-        # PR12: topology gate. Defense in depth alongside the
-        # `iter_reachable_agents` filter that hides unreachable agents from
-        # the router LLM in the first place.
-        if not self._registry.permit(self.agent_name, to):
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"agent {to!r}: blocked by topology rules",
-                meta={"chain_id": chain_id},
-            ))
-            return
-
-        # Boot the target session if not yet loaded so its session.run() is
-        # ready to consume the inbox put. attach() handles task creation
-        # idempotently.
-        target = self._registry.get_or_load(to)
-        await self._registry.ensure_running(to)
-
-        # Sender-side audit: A's history records the delegation outgoing.
-        self._append_history(ChatMessage(
-            role="agent", text=request, ts=_now_iso(),
-            meta={
-                "source": "agent_request_outgoing",
-                "to_agent": to, "depth": depth, "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "agent_message_sent",
-            kind="agent_request",
-            from_agent=self.agent_name, to_agent=to,
-            depth=depth, chain_id=chain_id,
-        )
-        await target.submit_agent_request(
-            from_agent=self.agent_name, request=request,
-            depth=depth, chain_id=chain_id,
+        """Thin delegator — business logic lives in A2AHandler.send_to_agent."""
+        await self._a2a_handler.send_to_agent(
+            to=to, request=request, depth=depth, chain_id=chain_id,
         )
 
     async def _send_agent_response(
         self, *, to: str, response: str, depth: int, chain_id: str,
     ) -> None:
-        """Route a reply from this agent back to the requester `to`.
-
-        depth is propagated from the original request (B replying to A's
-        depth-1 request stays at depth 1; A's next hop will increment).
-        Empty response is still sent so chains never silently stall.
-        chain_id (PR14) carries the same value the original request did so
-        the requester can correlate the reply with its pending chain.
-        """
-        if depth > self._max_hop_depth:
-            return  # silently drop — sender already gave up the chain
-        if self._registry is None or not self._registry.exists(to):
-            return
-        target = self._registry.get_or_load(to)
-        await self._registry.ensure_running(to)
-        self._chat_events.emit(
-            "agent_message_sent",
-            kind="agent_response",
-            from_agent=self.agent_name, to_agent=to,
-            depth=depth, chain_id=chain_id,
-        )
-        await target.submit_agent_response(
-            from_agent=self.agent_name, response=response,
-            depth=depth, chain_id=chain_id,
+        """Thin delegator — business logic lives in A2AHandler.send_agent_response."""
+        await self._a2a_handler.send_agent_response(
+            to=to, response=response, depth=depth, chain_id=chain_id,
         )
 
     async def _handle_agent_request(self, payload: dict) -> None:
-        """Process an incoming agent_request.
-
-        PR14 deferred-reply path: if the router emits `messages_to_agents`
-        (= this agent wants to consult others before answering), the reply
-        to the requester is held back. A `_PendingChain` entry is created
-        keyed by chain_id; when every delegated agent has responded, the
-        router runs again with all replies in history and the synthesized
-        reply_text is finally sent upstream.
-
-        If no delegations are emitted, behavior matches PR11: send the
-        router's reply_text (or empty) right back to the requester.
-        """
-        from_agent = payload.get("from_agent", "")
-        request = payload.get("request", "")
-        depth = int(payload.get("depth", 1))
-        chain_id = payload.get("chain_id") or _new_chain_id()
-
-        # Receiver-side audit
-        self._append_history(ChatMessage(
-            role="user", text=request, ts=_now_iso(),
-            meta={
-                "source": "agent_request",
-                "from_agent": from_agent, "depth": depth,
-                "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "agent_request_received",
-            from_agent=from_agent, depth=depth, chain_id=chain_id,
-        )
-
-        # Reset the per-turn router cap counter — an inbound agent_request
-        # is a fresh top-level entry into this agent's loop.
-        self._reset_router_turn_counter()
-
-        # Arm delegation and reply capture before running RouterLoop.
-        self._router_loop_delegations = []
-        self._router_loop_agent_replies = []
-        try:
-            await self._run_router_loop(request, chain_id)
-        except RouterCapExceeded as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=(
-                    f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
-                    f"for incoming agent_request from {from_agent!r}. "
-                    f"Last reason: {exc.last_reason or '(none)'}."
-                ),
-                meta={"chain_id": chain_id, "from_agent": from_agent},
-            ))
-            # F6/F7 fix: send a structured failure marker (not "") so the
-            # upstream LLM doesn't mistake silence for "in-progress" and
-            # retry in a tight loop.
-            await self._send_agent_response(
-                to=from_agent,
-                response=_no_reply_marker(
-                    self.agent_name,
-                    f"router retry budget exhausted ({exc.count}/{exc.cap})",
-                ),
-                depth=depth, chain_id=chain_id,
-            )
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed (agent_request): {exc}",
-                meta={"chain_id": chain_id},
-            ))
-            # F6/F7 fix: send a structured failure marker so the requester
-            # chain receives a clear "no reply produced" instead of an
-            # ambiguous empty string.
-            await self._send_agent_response(
-                to=from_agent,
-                response=_no_reply_marker(
-                    self.agent_name, f"router error: {exc}"
-                ),
-                depth=depth, chain_id=chain_id,
-            )
-            return
-        finally:
-            dispatched = list(self._router_loop_delegations or [])
-            agent_replies = list(self._router_loop_agent_replies or [])
-            self._router_loop_delegations = None
-            self._router_loop_agent_replies = None
-
-        if dispatched:
-            # PR14 deferred path: RouterLoop called send_to_agent for one or
-            # more peers. Register a pending chain so the reply is held until
-            # all delegates respond. ChainManager persists via the journal +
-            # arms the timeout watchdog.
-            waiting_on = {d["to"] for d in dispatched}
-            await self._chains.register(
-                chain_id=chain_id,
-                from_user=False,
-                depth=depth,
-                original_text=request,
-                sender=from_agent,
-                waiting_on=waiting_on,
-                origin_agent=from_agent,
-                origin_depth=depth,
-            )
-            self._chains.arm_timeout(
-                chain_id, on_fire=self._on_chain_timeout_fire,
-            )
-            return
-
-        # PR11-compatible single-hop reply path. RouterLoop emitted reply_text
-        # via put_outbox → captured in agent_replies. Forward upstream.
-        # F6/F7 fix: when no clean text reply was captured (max_iterations,
-        # empty content, async-only dispatch with no follow-up text), send
-        # a structured marker rather than "" so the upstream LLM doesn't
-        # interpret silence as "in-progress" and re-delegate.
-        if agent_replies:
-            reply_text = agent_replies[0]
-        else:
-            reply_text = _no_reply_marker(
-                self.agent_name,
-                "router completed without producing a text reply",
-            )
-        # Note: history was already appended by put_outbox; add routing meta.
-        await self._send_agent_response(
-            to=from_agent, response=reply_text, depth=depth, chain_id=chain_id,
-        )
+        """Thin delegator — business logic lives in A2AHandler.handle_agent_request."""
+        await self._a2a_handler.handle_agent_request(payload)
 
     async def _handle_agent_response(self, payload: dict) -> None:
-        """Process an incoming agent_response.
-
-        Two branches:
-        - chain_id ∈ self._chains → multi-hop relay. Drop sender
-          from waiting_on; when waiting_on becomes empty, re-invoke router
-          and forward the synthesized reply (or fresh delegations) on the
-          same chain. Reply goes to the chain's `origin_agent`, NOT
-          `from_agent`.
-        - chain_id ∉ self._chains → user-initiated chain (PR11
-          compatibility). The router's reply_text is treated as a
-          user-facing message (outbox + history); further delegations
-          continue with depth+1 on the same chain_id.
-        """
-        from_agent = payload.get("from_agent", "")
-        response = payload.get("response", "")
-        depth = int(payload.get("depth", 1))
-        chain_id = payload.get("chain_id") or _new_chain_id()
-
-        self._append_history(ChatMessage(
-            role="user", text=response, ts=_now_iso(),
-            meta={
-                "source": "agent_response",
-                "from_agent": from_agent, "depth": depth,
-                "chain_id": chain_id,
-            },
-        ))
-        self._chat_events.emit(
-            "agent_response_received",
-            from_agent=from_agent, depth=depth, chain_id=chain_id,
-        )
-
-        pending = self._chains.get(chain_id)
-        if pending is not None:
-            await self._resolve_pending_chain(
-                pending, from_agent=from_agent, last_response=response,
-            )
-            return
-
-        # User-initiated chain: PR11 path, reply goes to user.
-
-        # B2-H2 fix: if the peer's reply is a no-reply marker, bypass the LLM
-        # entirely and surface the failure deterministically. Without this,
-        # gemini-2.5-flash-lite interprets the marker as a polite conversational
-        # reply (e.g. "かしこまりました") and the user never learns that the peer
-        # failed.
-        if _is_no_reply_marker(response):
-            parsed = _parse_no_reply_marker(response)
-            peer = parsed[0] if parsed else from_agent or "<unknown>"
-            reason = parsed[1] if parsed else "no reply produced"
-            msg_template = _PEER_REPLY_FAILED_MSG.get(
-                self.output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
-            )
-            user_text = msg_template.format(peer=peer, reason=reason)
-            await self._put_outbox(OutboxMessage(
-                kind="agent",
-                text=user_text,
-                meta={"chain_id": chain_id, "peer_failure": True},
-            ))
-            self._chat_events.emit(
-                "peer_reply_failed_surfaced",
-                chain_id=chain_id,
-                peer=peer,
-                reason=reason,
-            )
-            return
-
-        try:
-            await self._run_router_loop(response, chain_id)
-        except RouterCapExceeded as exc:
-            await self._emit_router_cap_exhausted_user(exc, chain_id=chain_id)
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed (agent_response): {exc}",
-                meta={"chain_id": chain_id},
-            ))
-            return
+        """Thin delegator — business logic lives in A2AHandler.handle_agent_response."""
+        await self._a2a_handler.handle_agent_response(payload)
 
     async def _handle_skill_completed(self, payload: dict) -> None:
         """FP-0012: drive narration of a background-spawned skill's completion.
@@ -2183,133 +1973,6 @@ class ChatSession:
         for item in deferred:
             self.inbox.put_nowait(item)
         return drained_ok
-
-    async def _resolve_pending_chain(
-        self, pending: "_PendingChain", *, from_agent: str, last_response: str = "",
-    ) -> None:
-        """Drive a multi-hop pending chain forward by one delegate response.
-
-        Drops `from_agent` from `pending.waiting_on`. If others remain,
-        no-op (the chain is still gathering replies). Otherwise, re-runs
-        the router on the original request — by now every delegate's
-        response is appended to history, so the LLM has all the material
-        to compose a synthesized answer (or decide on more delegations,
-        which keeps the chain pending).
-        """
-        chain_id = pending.chain_id
-        pending.waiting_on.discard(from_agent)
-        if pending.waiting_on:
-            # Partial resolution — record the new waiting_on for recovery.
-            await self._chains.update(chain_id, waiting_on=pending.waiting_on)
-            return  # still waiting on other delegates
-
-        # B2-H2 fix: if the peer's reply (the last incoming response) is a
-        # no-reply marker, bypass the LLM and surface the failure deterministically.
-        # Without this, weak models like gemini-2.5-flash-lite interpret the marker
-        # as a normal conversational reply and emit a polite close (e.g.
-        # "かしこまりました") while the user never learns the peer failed.
-        if _is_no_reply_marker(last_response):
-            parsed = _parse_no_reply_marker(last_response)
-            peer = parsed[0] if parsed else from_agent
-            reason = parsed[1] if parsed else "no reply produced"
-            msg_template = _PEER_REPLY_FAILED_MSG.get(
-                self.output_language or "en", _PEER_REPLY_FAILED_MSG["en"],
-            )
-            user_text = msg_template.format(peer=peer, reason=reason)
-            # Forward the failure upstream — the pending chain always has an
-            # origin_agent (chains from user requests don't reach _resolve_pending_chain;
-            # they are handled by the `chain_id ∉ self._chains` branch above).
-            await self._send_agent_response(
-                to=pending.origin_agent,
-                response=user_text,
-                depth=pending.origin_depth,
-                chain_id=chain_id,
-            )
-            self._chat_events.emit(
-                "peer_reply_failed_surfaced",
-                chain_id=chain_id,
-                peer=peer,
-                reason=reason,
-                from_user=False,
-            )
-            await self._chains.resolve(chain_id)
-            return
-
-        # Arm delegation and reply capture for the re-run.
-        self._router_loop_delegations = []
-        self._router_loop_agent_replies = []
-        try:
-            await self._run_router_loop(pending.original_request, chain_id)
-        except RouterCapExceeded as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=(
-                    f"Router exhausted retry budget ({exc.count}/{exc.cap}) "
-                    f"resolving chain {chain_id}. "
-                    f"Last reason: {exc.last_reason or '(none)'}."
-                ),
-                meta={"chain_id": chain_id},
-            ))
-            # F6/F7 fix: structured marker upstream, not "".
-            await self._send_agent_response(
-                to=pending.origin_agent,
-                response=_no_reply_marker(
-                    self.agent_name,
-                    f"router retry budget exhausted ({exc.count}/{exc.cap}) "
-                    f"resolving chain",
-                ),
-                depth=pending.origin_depth, chain_id=chain_id,
-            )
-            await self._chains.resolve(chain_id)
-            return
-        except Exception as exc:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"router failed (chain resolve): {exc}",
-                meta={"chain_id": chain_id},
-            ))
-            # F6/F7 fix: structured marker upstream, not "".
-            await self._send_agent_response(
-                to=pending.origin_agent,
-                response=_no_reply_marker(
-                    self.agent_name,
-                    f"router error during chain resolve: {exc}",
-                ),
-                depth=pending.origin_depth, chain_id=chain_id,
-            )
-            await self._chains.resolve(chain_id)
-            return
-        finally:
-            new_dispatched = list(self._router_loop_delegations or [])
-            agent_replies = list(self._router_loop_agent_replies or [])
-            self._router_loop_delegations = None
-            self._router_loop_agent_replies = None
-
-        if new_dispatched:
-            # Continue the chain with a fresh wave of delegations.
-            pending.waiting_on = {d["to"] for d in new_dispatched}
-            await self._chains.update(chain_id, waiting_on=pending.waiting_on)
-            # PR18: re-arm watchdog for the continued chain.
-            self._chains.arm_timeout(
-                chain_id, on_fire=self._on_chain_timeout_fire,
-            )
-            return
-
-        # F6/F7 fix: when no clean text reply was captured during chain
-        # resolve, send a structured marker upstream rather than "".
-        if agent_replies:
-            final_reply = agent_replies[0]
-        else:
-            final_reply = _no_reply_marker(
-                self.agent_name,
-                "chain resolved without producing a text reply",
-            )
-        # History already appended by put_outbox.
-        await self._send_agent_response(
-            to=pending.origin_agent, response=final_reply,
-            depth=pending.origin_depth, chain_id=chain_id,
-        )
-        await self._chains.resolve(chain_id)
 
     # ── chain timeout (PR18) ───────────────────────────────────────────────────
     # PR-refactor-session-1 wave 2: timer arm/cancel + sleep-and-fire loop are
