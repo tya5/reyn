@@ -1,1 +1,1 @@
-# backends package — concrete SandboxBackend implementations.
+"""Sandbox backend implementations (FP-0017)."""
