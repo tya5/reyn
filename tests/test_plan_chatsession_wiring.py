@@ -188,3 +188,89 @@ def test_get_plan_registry_returns_none_without_state_log(tmp_path):
         snapshot_path=tmp_path / "snap.json",
     )
     assert session._get_plan_registry() is None
+
+
+# ── FP-0031-A: plan summary status before execution ──────────────────────
+
+
+class _StubRuntime:
+    """Minimal PlanRuntime stub for spawn_plan_task tests.
+
+    Exposes the `plan` attribute (required by FP-0031-A) but never
+    actually executes (run() is not called in this test). The task
+    created by spawn_plan_task is cancelled before it can fire.
+    """
+
+    def __init__(self, plan):
+        self.plan = plan
+
+    async def run(self):
+        # Placeholder — never called in Component A tests.
+        from reyn.chat.planner import PlanExecutionResult
+        return PlanExecutionResult(text="")
+
+
+@pytest.mark.asyncio
+async def test_spawn_plan_task_emits_plan_summary_before_execution(
+    tmp_path, monkeypatch
+):
+    """Tier 2: FP-0031-A — spawn_plan_task emits a plan_summary status
+    message to the outbox *before* the background task starts executing.
+
+    Observable contract: after awaiting spawn_plan_task(), at least one
+    status message with source="plan_summary" is in session.outbox; the
+    text contains each step description in numbered order.
+    """
+    import asyncio
+
+    from reyn.chat.planner import Plan, PlanStep
+
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    # Attach so status messages are not dropped by _put_outbox.
+    session.is_attached = True
+
+    plan = Plan(
+        goal="test plan summary",
+        steps=(
+            PlanStep(id="s1", description="gather data", tools=()),
+            PlanStep(id="s2", description="synthesise results", tools=(), depends_on=("s1",)),
+        ),
+    )
+    stub_runtime = _StubRuntime(plan)
+
+    await session.spawn_plan_task(
+        plan_id="test_summary", runtime=stub_runtime, chain_id="plan_test_summary",
+    )
+
+    # Collect all status messages with source="plan_summary" from the outbox.
+    # The background task may or may not have run yet; we only check the
+    # summary message emitted synchronously before task creation.
+    summary_msgs = []
+    while not session.outbox.empty():
+        try:
+            msg = session.outbox.get_nowait()
+            if (
+                msg.kind == "status"
+                and msg.meta.get("source") == "plan_summary"
+            ):
+                summary_msgs.append(msg)
+        except asyncio.QueueEmpty:
+            break
+
+    assert len(summary_msgs) == 1, (
+        "Expected exactly one plan_summary status message before task execution"
+    )
+    summary_text = summary_msgs[0].text
+    assert "1. gather data" in summary_text
+    assert "2. synthesise results" in summary_text
+    assert summary_msgs[0].meta.get("plan_id") == "test_summary"
+
+    # Cancel the background task to avoid asyncio warnings.
+    task = session.running_plans.pop("test_summary", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass

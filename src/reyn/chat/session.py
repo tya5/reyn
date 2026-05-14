@@ -2914,7 +2914,27 @@ class ChatSession:
         task is fire-and-forget; the runtime's own finally emits
         plan_run_interrupted via events for forensic visibility, and
         crash cases preserve the artifact for restart resume).
+
+        FP-0031-A: emit a plan summary status message before starting
+        execution so the user immediately sees what steps are planned.
         """
+        # FP-0031-A: report plan steps to the user before execution starts.
+        plan = getattr(runtime, "plan", None)
+        if plan is not None:
+            plan_steps = getattr(plan, "steps", ())
+            if plan_steps:
+                plan_summary = "\n".join(
+                    f"{i + 1}. {step.description}"
+                    for i, step in enumerate(plan_steps)
+                )
+                try:
+                    await self._put_outbox(OutboxMessage(
+                        kind="status",
+                        text=f"以下の計画で実行します:\n{plan_summary}",
+                        meta={"plan_id": plan_id, "source": "plan_summary"},
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("spawn_plan_task plan_summary emit failed: %r", exc)
 
         async def _run_plan_task() -> None:
             from reyn.chat.planner import _is_workflow_abort
