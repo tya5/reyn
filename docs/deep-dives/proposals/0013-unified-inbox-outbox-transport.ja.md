@@ -1,6 +1,6 @@
 # FP-0013: 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消
 
-**Status**: **accepted** (= ADR-A starvation feasibility green-light、 2026-05-11)
+**Status**: **done** (= Components A+B+C+D 全 LANDED 2026-05-14; commits `11d96dc`→`bdd9235`。 A: TransportRef schema、 B: run_one_iteration pumping model、 C: RoutingLayer、 D: MessageBus + A2A/MCP migration。 bypass 削除、 tactical patches 除去済み。)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 設計議論 (FP-0012 R-A2A-COMPLETION-DRAIN retest 後)
 **Trigger**: FP-0012 retest F1 finding (= A2A endpoint が `session.run()` を bypass する

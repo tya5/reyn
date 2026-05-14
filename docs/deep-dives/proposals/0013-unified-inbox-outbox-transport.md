@@ -1,6 +1,6 @@
 # FP-0013: Unified Inbox/Outbox Transport Abstraction — Collapse CUI vs MCP/A2A Skew
 
-**Status**: **accepted** (= ADR-A starvation feasibility green-light, 2026-05-11)
+**Status**: **done** (= Components A+B+C+D all LANDED 2026-05-14; commits `11d96dc`→`bdd9235`. A: TransportRef schema, B: run_one_iteration pumping model, C: RoutingLayer, D: MessageBus + A2A/MCP migration. bypass deleted, tactical patches removed.)
 **Proposed**: 2026-05-11
 **Author**: 2026-05-11 design discussion (post FP-0012 R-A2A-COMPLETION-DRAIN retest)
 **Trigger**: FP-0012 retest F1 finding (= A2A endpoint bypasses `session.run()` so the

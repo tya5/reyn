@@ -1,6 +1,6 @@
 # FP-0019: ChatSession Responsibility Separation — Extracting Services from session.py
 
-**Status**: partially-landed — Wave 1 complete (CompactionController + SkillRunner extracted, 2026-05-13/14)
+**Status**: partially-landed — Wave 1+2 part 1+3 complete (CompactionController + SkillRunner + InterventionHandler + AutoResumeHandler extracted, 2026-05-13/14); Wave 2 part 2 (A2AHandler) proposed (next wave)
 **Proposed**: 2026-05-11
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -142,6 +142,8 @@ FP-0013 lands will cause the A2A interface to require adjustment again.
 
 **InterventionHandler** (`services/intervention_handler.py`)
 
+**LANDED** (commit `11d96dc`): src/reyn/chat/services/intervention_handler.py
+
 Extracts: `_maybe_answer_oldest_intervention`, `_dispatch_intervention`,
 `_announce_intervention`, `_wait_for_intervention_answer`
 
@@ -155,14 +157,19 @@ class InterventionHandler:
 `InterventionHandler` depends on the already-extracted `InterventionRegistry` and on
 `SkillRunner` (Wave 1). This wave therefore cannot start before Wave 1 is complete.
 
+**A2AHandler** extraction remains **proposed** (Wave 2 part 2) — coordinates with FP-0013
+which is now fully LANDED; A2AHandler should land in the next wave.
+
 Target files:
-- `src/reyn/chat/services/a2a_handler.py` — new file
-- `src/reyn/chat/services/intervention_handler.py` — new file
+- `src/reyn/chat/services/a2a_handler.py` — new file (proposed, next wave)
+- `src/reyn/chat/services/intervention_handler.py` — LANDED commit `11d96dc`
 - `src/reyn/chat/session.py` — wire injections, remove extracted methods
 
 ### Wave 3 — SMALL (cleanup wave, deferred to FP-0011 landing)
 
 **AutoResumeHandler** (`services/auto_resume_handler.py`)
+
+**LANDED** (commit `ba7f7c3`): src/reyn/chat/services/auto_resume_handler.py
 
 Extracts: `_auto_resume_active_skills`
 
@@ -172,19 +179,18 @@ class AutoResumeHandler:
     async def resume_active(self) -> int: ...  # returns count of resumed skills
 ```
 
-`AutoResumeHandler` depends on `SkillRunner` (Wave 1). Its extraction is coupled to
-FP-0011 (remove narrator) because `_auto_resume_active_skills` currently calls into the
-narrator path. FP-0011 removes that path; Wave 3 should land in the same PR or immediately
-after.
+`AutoResumeHandler` depends on `SkillRunner` (Wave 1). Its extraction was coupled to
+FP-0011 (remove narrator) because `_auto_resume_active_skills` previously called into the
+narrator path. FP-0011 landed first; Wave 3 landed in the same wave (commit `ba7f7c3`).
 
 Target files:
-- `src/reyn/chat/services/auto_resume_handler.py` — new file
+- `src/reyn/chat/services/auto_resume_handler.py` — LANDED commit `ba7f7c3`
 - `src/reyn/chat/session.py` — wire injections, remove extracted method
 
 ### Post-Wave 3 target state
 
-**Current position**: Wave 1 complete (2026-05-13/14). Wave 2 (A2AHandler + InterventionHandler)
-and Wave 3 (AutoResumeHandler) remain proposed.
+**Current position**: Wave 1+2 part 1+3 complete (2026-05-13/14). Wave 2 part 2 (A2AHandler)
+remains proposed for the next wave.
 
 ```
 src/reyn/chat/
@@ -198,9 +204,9 @@ src/reyn/chat/
     ├── snapshot_journal.py
     ├── compaction_controller.py   ← Wave 1 (LANDED commit 6620505)
     ├── skill_runner.py            ← Wave 1 (LANDED commit 9ae66fa)
-    ├── a2a_handler.py             ← Wave 2 (proposed)
-    ├── intervention_handler.py    ← Wave 2 (proposed)
-    └── auto_resume_handler.py     ← Wave 3 (proposed)
+    ├── intervention_handler.py    ← Wave 2 part 1 (LANDED commit 11d96dc)
+    ├── auto_resume_handler.py     ← Wave 3 (LANDED commit ba7f7c3)
+    └── a2a_handler.py             ← Wave 2 part 2 (proposed, next wave)
 ```
 
 `session.py` becomes a thin wiring layer: it instantiates all services in `__init__`, and

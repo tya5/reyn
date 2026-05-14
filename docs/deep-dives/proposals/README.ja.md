@@ -78,16 +78,16 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0010](0010-rag-routing.md) | RAG ルーティング — スキルカタログ + ルーティング履歴の semantic pre-filter | proposed | MEDIUM |
 | [0011](0011-remove-narrator.md) | `skill_narrator` 廃止 — スキル結果の narrate をルーターに委ねる | done (LANDED 2026-05-10, commit `59c991a`) | SMALL |
 | [0012](0012-async-skill-execution.md) | スキル/エージェント/プランの非同期実行 — 長時間タスクのノンブロッキング化 | done (LANDED 2026-05-10, commit `c9e79d6`) | LARGE |
-| [0013](0013-unified-inbox-outbox-transport.ja.md) | 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消 | accepted (ADR-A green-light 2026-05-11) | LARGE |
+| [0013](0013-unified-inbox-outbox-transport.ja.md) | 統合 Inbox/Outbox Transport 抽象化 — CUI vs MCP/A2A の skew を解消 | done (LANDED 2026-05-14、 commits `11d96dc`→`bdd9235` — Components A+B+C+D 全 landing) | LARGE |
 | [0014](0014-python-step-api-package.ja.md) | Python step 用 API package + mode 改名 (pure→safe, trusted→unsafe) | partial-landed 2026-05-11/13 (A–F + ADR-G Phase 1 + Class B 部分; commits `5b435e1`/`b405975`/`527e11f`/`c4b281a`) | MEDIUM |
 | [0015](0015-fine-grained-python-step-audit.ja.md) | Python step の per-call audit (双方向 RPC) | deferred (= enterprise audit 要件発生待ち) | MEDIUM |
 | [0016](0016-agent-authentication.ja.md) | エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー | Component A 着地 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.ja.md) | サンドボックス実行 — ポリシー/バックエンド抽象化と exec op の非推奨化 | Component A+D 着地 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.ja.md) | Event Store バックエンド抽象化 — JSONL / SQLite / DuckDB（優先度: LOW） | proposed | MEDIUM |
-| [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | partially-landed Wave 1+3 (Compaction+SkillRunner+AutoResume, 2026-05-13/14, `6620505`/`9ae66fa`/`ba7f7c3`); Wave 2 proposed (FP-0013 待ち) | MEDIUM |
+| [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | partially-landed (Wave 1+2 part 1+3、 commits `6620505`/`9ae66fa`/`11d96dc`/`ba7f7c3`); Wave 2 part 2 (A2AHandler) proposed | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
 | [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |
 | [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | done (LANDED 2026-05-14, commits `61dc193`/`1f49855` — SSL config follow-up 含む) | SMALL |
 | [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | done (LANDED 2026-05-14, commit `45512ba` — 5 edit + FP-0025 D 同梱) | SMALL |
-| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | partial-landed Component D (Anthropic tool_search_tool MCP, 2026-05-14, `aa1b36f`); A/B/C は現スケール YAGNI で deferred | MEDIUM |
+| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | partial-landed Components A+B+D (BM25 + search_hints + tool_search_tool、 2026-05-14、 `aa1b36f`/`4da2ef9`/`0c05c7a`); Component C (embedding) deferred (YAGNI) | MEDIUM |
 | [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | done (LANDED 2026-05-14, commits `6da92fe`/`45512ba`/`635ce55` — A+B+C+D 全 landing) | SMALL |

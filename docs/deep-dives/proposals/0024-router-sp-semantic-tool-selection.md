@@ -1,6 +1,6 @@
 # FP-0024: Router — Semantic Tool Selection
 
-**Status**: **partial-landed** — Component D (Anthropic `tool_search_tool` MCP integration) LANDED 2026-05-14 (commit `aa1b36f`) with threshold-based switch (default 30 MCP servers, configurable via `mcp.search_threshold`). Components A/B/C (BM25 / search_hints / embedding) **deferred** at current scale (= YAGNI: catalog ~30-50 skills、 invoke_skill enum bloat not yet observed); revisit when skill catalog ≥ 100 or dogfood surfaces decision-fatigue evidence.
+**Status**: **partial-landed** — Components A+B+D LANDED 2026-05-14 (commits `aa1b36f`/`4da2ef9`/`0c05c7a`): A = BM25 skill pre-filter (`skill_search.py`), B = `search_hints` frontmatter field, D = Anthropic `tool_search_tool` MCP integration (threshold-based switch, default 30 MCP servers, configurable via `mcp.search_threshold`). Component C (embedding / hybrid backend) **deferred** (= YAGNI at current scale); revisit when skill catalog ≥ 100 or dogfood surfaces decision-fatigue evidence.
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -69,7 +69,7 @@ at 1000x lower latency than LLM-based selection.
 
 Four components, implemented in order (A → B → C → D).
 
-### Component A — BM25 skill pre-filter (SMALL)
+### Component A — BM25 skill pre-filter (SMALL) — **LANDED** commit `4da2ef9`
 
 **What**: Before passing skills to the LLM, run a BM25 search over skill names
 + descriptions using the user message as the query. Pass only the top-K (default
@@ -96,7 +96,7 @@ full enum (existing behavior).
 **Impact on prompt**: `invoke_skill.name` enum shrinks from O(N_skills) to O(K).
 Cache hit rate for tool schema increases.
 
-### Component B — Skill description enrichment / Tool2Vec (MEDIUM)
+### Component B — Skill description enrichment / Tool2Vec (MEDIUM) — **LANDED** commit `0c05c7a`
 
 **What**: Augment each skill's search-facing description with a set of
 *example questions the skill can answer*, generated offline by a light LLM
@@ -148,7 +148,7 @@ Default `backend: bm25` (no embedding model required). Operators opt in to
 - Rebuilt when skill files change (file watcher or explicit `reyn skill reindex`)
 - Embedding freshness managed by skill file hash comparison
 
-### Component D — Anthropic tool_search_tool integration (MEDIUM)
+### Component D — Anthropic tool_search_tool integration (MEDIUM) — **LANDED** commit `aa1b36f`
 
 **What**: For MCP-heavy deployments with 30+ MCP tools, use Anthropic's
 server-side `tool_search_tool` (GA as of 2025-11) with `defer_loading: true`
