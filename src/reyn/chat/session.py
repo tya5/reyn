@@ -2430,6 +2430,7 @@ class ChatSession:
         chain_id: str,
         goal: str,
         step_results: dict[str, str],
+        step_failures: dict[str, str],
         n_steps: int,
     ) -> None:
         """FP-0025 C: enqueue plan_completed inbox for router narration."""
@@ -2441,6 +2442,7 @@ class ChatSession:
                     "chain_id": chain_id,
                     "goal": goal,
                     "step_results": step_results,
+                    "step_failures": step_failures,
                     "n_steps": n_steps,
                 },
             )
@@ -2458,6 +2460,7 @@ class ChatSession:
         chain_id = payload.get("chain_id") or _new_chain_id()
         goal = payload.get("goal", "")
         step_results = payload.get("step_results") or {}
+        step_failures = payload.get("step_failures") or {}
         try:
             results_str = json.dumps(step_results, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):
@@ -2468,6 +2471,12 @@ class ChatSession:
             f"step_results:\n{results_str}\n\n"
             "Please synthesize the step results into a complete response for the user."
         )
+        if step_failures:
+            try:
+                failures_str = json.dumps(step_failures, ensure_ascii=False, indent=2)
+            except (TypeError, ValueError):
+                failures_str = repr(step_failures)
+            injected_text += f"\n\nstep_failures:\n{failures_str}\n"
         self._append_history(ChatMessage(
             role="user", text=injected_text, ts=_now_iso(),
             meta={
@@ -2932,6 +2941,7 @@ class ChatSession:
                         chain_id=parent_chain_id or chain_id,
                         goal=result.plan_goal,
                         step_results=result.step_results,
+                        step_failures=result.step_failures,
                         n_steps=result.n_steps,
                     )
                 except Exception as exc:  # noqa: BLE001

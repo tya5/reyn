@@ -209,3 +209,78 @@ async def test_handle_plan_completed_runs_router_turn(
     assert router_call_count == 1, (
         f"Expected _run_router_loop called once; got {router_call_count}"
     )
+
+
+# ── 4. FP-0027: _handle_plan_completed injects step_failures when present ───
+
+
+@pytest.mark.asyncio
+async def test_handle_plan_completed_injects_step_failures_when_present(
+    tmp_path, monkeypatch,
+) -> None:
+    """Tier 2: FP-0027 — _handle_plan_completed includes step_failures in
+    the injected user-role message when the plan had failed steps.
+
+    Contract: when the ``plan_completed`` payload carries a non-empty
+    ``step_failures`` dict, the injected history message must contain
+    ``step_failures:`` text so the router LLM sees which steps failed
+    and can account for gaps in its synthesis.
+
+    When ``step_failures`` is absent or empty, the injected message must
+    NOT contain ``step_failures:`` (= no empty boilerplate).
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+
+    async def _noop_router_loop(self, user_text: str, chain_id: str) -> None:
+        pass
+
+    monkeypatch.setattr(ChatSession, "_run_router_loop", _noop_router_loop)
+
+    # ── Case A: plan with a failed step ─────────────────────────────────
+    payload_with_failures = {
+        "plan_id": "p_fail_001",
+        "chain_id": "chain_fail_001",
+        "goal": "read three files and compare",
+        "step_results": {"s1": "file A: 120 lines", "s3": "comparison done"},
+        "step_failures": {"s2": "TimeoutError('file B timed out')"},
+        "n_steps": 3,
+    }
+
+    history_before = len(session.history)
+    await session._handle_plan_completed(payload_with_failures)
+
+    injected = [
+        m for m in session.history[history_before:]
+        if m.role == "user" and "[plan_completed]" in m.text
+    ]
+    assert len(injected) >= 1, "Expected a [plan_completed] history entry"
+    msg = injected[0]
+    assert "step_failures" in msg.text, (
+        f"Expected 'step_failures' in injected message; got: {msg.text[:200]!r}"
+    )
+    assert "TimeoutError" in msg.text, (
+        "Expected the failure text to appear in the injected message"
+    )
+
+    # ── Case B: plan with no failures — step_failures must not appear ────
+    history_before2 = len(session.history)
+    payload_no_failures = {
+        "plan_id": "p_ok_002",
+        "chain_id": "chain_ok_002",
+        "goal": "read and summarise",
+        "step_results": {"s1": "file A content"},
+        "step_failures": {},
+        "n_steps": 1,
+    }
+    await session._handle_plan_completed(payload_no_failures)
+
+    injected2 = [
+        m for m in session.history[history_before2:]
+        if m.role == "user" and "[plan_completed]" in m.text
+    ]
+    assert len(injected2) >= 1
+    msg2 = injected2[0]
+    assert "step_failures" not in msg2.text, (
+        "step_failures section must not appear when there are no failures"
+    )
