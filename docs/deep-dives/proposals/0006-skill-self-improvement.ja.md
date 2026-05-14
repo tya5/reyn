@@ -1,8 +1,16 @@
 # FP-0006: スキル自己改善 — 実行トレース駆動 + バージョン管理 + ロールバック
 
-**Status**: proposed
+**Status**: **Component A 着地** 2026-05-15; B-E proposed
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component A — `skill_version_hash` event field — 着地 2026-05-15。`run_skill_started` event に sha256(skill.md) を埋め込み（フル 64 文字 hex。skill.md が存在しない場合は `"unknown"`）。FP-0007 C regression compare / FP-0009 A index_events で活用。
+
+Component B（`.reyn/skill-versions/` アーカイブ）・C（`collect_traces` フェーズ）・D（承認ゲート）・E（`reyn skill rollback` CLI）は proposed のまま。
 
 ---
 

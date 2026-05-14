@@ -233,6 +233,141 @@ The API key is read from `~/.reyn/secrets.env` via `${OPENAI_API_KEY}` — no li
 - **Sensitive data.** reyn does not redact sensitive content before indexing. Do not index secrets, credentials, or PII unless you understand the implications. A redaction policy is planned for Phase 2.
 - **Embedding API required.** Phase 1 has no local embedding path. An OpenAI-compatible API key is required.
 
+## Operational Intelligence — `recall` on events
+
+The `index_events` stdlib skill (FP-0009 Component A) populates a source named
+`"events"` by chunking the P6 event log (`.reyn/events/*.jsonl`) on run
+boundaries: one chunk per skill execution. This makes Reyn's own execution
+history semantically searchable through the standard `recall` op — no new
+op kinds required.
+
+### Source name
+
+```
+sources: ["events"]
+```
+
+`index_events` always writes to this fixed source name. Run it once (or
+schedule it periodically) to keep the index current:
+
+```bash
+reyn run index_events '{"period": "last-7d"}'
+```
+
+### Chunk metadata
+
+Each chunk carries structured metadata in `extra`:
+
+| Field | Type | Example |
+|-------|------|---------|
+| `skill` | string | `"swe_bench"` |
+| `skill_version_hash` | string | `"abc123..."` |
+| `started_at` / `completed_at` | ISO datetime | `"2026-05-10T09:15:00Z"` |
+| `duration_seconds` | number | `43` |
+| `status` | `"success"` \| `"failed"` \| `"aborted"` | `"failed"` |
+| `phases` | list[string] | `["explore","plan","verify"]` |
+| `errors` | list | `[{"phase": "verify", "msg": "..."}]` |
+| `tool_calls` | object | `{"grep": 3, "shell": 1}` |
+| `cost_usd` | number | `0.18` |
+
+The chunk text is a human-readable run summary; `extra` fields are attached as
+metadata but are not directly filterable — the LLM cannot issue structured
+`WHERE status="failed"` queries. The recommended pattern is: issue a semantic
+query to surface relevant chunks, then filter in post-processing logic.
+
+### Typical queries
+
+**Failure patterns for a specific skill:**
+
+```yaml
+- type: run_op
+  op:
+    kind: recall
+    query: "my_skill failure error phase"
+    sources: ["events"]
+    top_k: 20
+  output_name: trace_summary
+```
+
+This returns chunks where `my_skill` appears prominently in the run text,
+biased toward runs that mention errors and failures. Combine with a
+post-filter on `chunk.metadata.extra.status == "failed"` for precise results.
+
+**Surfacing error excerpts:**
+
+```
+query: "PermissionError が起きた run"
+sources: ["events"]
+top_k: 10
+```
+
+Because error messages are embedded in the chunk text itself, semantic
+similarity surfaces runs where that error class appeared — even without
+structured filtering.
+
+**Top-cost skills (recent period):**
+
+```
+query: "高コスト high cost expensive run"
+sources: ["events"]
+top_k: 20
+```
+
+The LLM cannot directly sort by `cost_usd` (no numeric range query in Phase 1
+SQLite backend). Return top-K semantically relevant chunks and sort in Python
+using `chunk.metadata.extra["cost_usd"]`.
+
+### Example skill usage
+
+A skill phase that collects execution traces before analysis:
+
+```yaml
+- type: run_op
+  op:
+    kind: recall
+    query: "{{ input.skill_name }} failure error phase"
+    sources: ["events"]
+    top_k: 20
+  output_name: trace_summary
+```
+
+The `trace_summary` artifact contains `trace_summary.chunks` — a list of the
+top-K matching run summaries. Downstream phases read this list directly.
+
+### Empty-index fallback
+
+If `index_events` has never been run, `sources=["events"]` returns an empty
+result (`trace_summary.chunks` has length 0). A skill should detect this and
+either:
+
+1. Emit a `run_skill` op to invoke `index_events` first, then retry `recall`.
+2. Fall back to direct file reads:
+   ```yaml
+   - type: run_op
+     op:
+       kind: file
+       op: glob
+       path: ".reyn/events/*.jsonl"
+     output_name: event_files
+   ```
+
+The `ops_report` stdlib skill (FP-0009 Component D) implements option 1
+as its `collect` phase.
+
+### Cross-references
+
+| Consumer | Uses events source for |
+|----------|----------------------|
+| FP-0006 `collect_traces` | failure pattern retrieval for skill self-improvement |
+| FP-0007 evaluation reports | regression detection across eval runs |
+| FP-0008 SWE-bench | past-case retrieval for analogous repository fixes |
+| `ops_report` stdlib skill | weekly/periodic operational summary generation |
+
+See [FP-0006](../deep-dives/proposals/0006-skill-self-improvement.md),
+[FP-0007](../deep-dives/proposals/0007-evaluation-infrastructure.md),
+[FP-0008](../deep-dives/proposals/0008-swe-bench-integration.md) for consumer
+design details.
+
 ## See also
 
 - [Reference: `reyn source`](../reference/cli/source.md) — manage indexed sources from the CLI

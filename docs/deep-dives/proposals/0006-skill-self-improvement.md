@@ -1,8 +1,16 @@
 # FP-0006: Skill Self-Improvement — Execution-Trace-Driven + Versioning + Rollback
 
-**Status**: proposed
+**Status**: **Component A landed** 2026-05-15; B-E proposed
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component A — `skill_version_hash` event field — landed 2026-05-15. `run_skill_started` event now embeds sha256(skill.md content) as a full 64-char hex string (`"unknown"` if skill.md is missing). Used by FP-0007 C regression compare and FP-0009 A `index_events` for per-version history aggregation.
+
+Components B (`.reyn/skill-versions/` archive), C (`collect_traces` phase), D (Approval gate), and E (`reyn skill rollback` CLI) remain proposed.
 
 ---
 

@@ -1,8 +1,20 @@
 # FP-0009: Operational Intelligence — イベントログの RAG インデックス化
 
-**Status**: proposed
+**Status**: **Components A + C + D 着地** 2026-05-15; B proposed (= FP-0001 待ち)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component A — `index_events` stdlib スキル着地。P6 events を run 単位でチャンク化し RAG インデックスに書き込む。任意フェーズから `recall(sources=["events"], ...)` クエリが使用可能になった。インクリメンタル indexing は `.reyn/index/events_cursor` で管理。
+
+Component C — recall usage パターンのドキュメント着地。`docs/concepts/operational-intelligence.md` に `recall(sources=["events"])` の利用ガイドを追加。
+
+Component D — `ops_report` stdlib スキル着地。events index が存在すれば preferred path として使用し、`index_events` 未実行の場合は raw events log walk にフォールバック。
+
+Component B（FP-0001 経由の cron 定期実行）は proposed のまま — FP-0001 A2A task lifecycle 着地待ち。
 
 ---
 

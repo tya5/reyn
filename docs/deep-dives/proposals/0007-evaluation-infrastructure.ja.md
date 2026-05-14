@@ -1,8 +1,16 @@
 # FP-0007: Agent 評価インフラ — P6 トレース export + スキル回帰評価
 
-**Status**: proposed
+**Status**: Components A + B + C + D 着地（E は deferred）
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component C — `reyn eval compare` CLI 着地 2026-05-15。FP-0006 A の `skill_version_hash` によって regression compare が可能化。既存 P6 ログを `skill_version_hash` でグルーピングして比較するため追加のスキル実行は不要。フルリファレンスは `docs/reference/cli/eval.md` を参照。
+
+Component A（P6 export adapter）・B（`reyn eval run` / `reyn eval report`）・D（`judge_output` op）は earlier wave で着地済み。
 
 ---
 

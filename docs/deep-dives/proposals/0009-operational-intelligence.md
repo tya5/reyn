@@ -1,8 +1,20 @@
 # FP-0009: Operational Intelligence — Indexing Event Logs with RAG
 
-**Status**: proposed
+**Status**: **Components A + C + D landed** 2026-05-15; B proposed (= FP-0001 waiting)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component A — `index_events` stdlib skill landed. P6 events are chunked per run and written to the RAG index. `recall(sources=["events"], ...)` queries are now usable from any phase. Incremental indexing via `.reyn/index/events_cursor`.
+
+Component C — recall usage patterns documented. A dedicated section in `docs/concepts/operational-intelligence.md` covers `recall(sources=["events"])` usage.
+
+Component D — `ops_report` stdlib skill landed. Uses the events index when available; falls back to raw event log walk when `index_events` has not been run.
+
+Component B (periodic cron via FP-0001) remains proposed — waiting on FP-0001 A2A task lifecycle landing.
 
 ---
 

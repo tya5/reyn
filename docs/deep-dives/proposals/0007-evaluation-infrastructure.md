@@ -1,8 +1,16 @@
 # FP-0007: Agent Evaluation Infrastructure — P6 Trace Export + Skill Regression Evaluation
 
-**Status**: proposed
+**Status**: Components A + B + C + D landed (E deferred)
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
+
+---
+
+## Landing notes (2026-05-15)
+
+Component C — `reyn eval compare` CLI landed 2026-05-15. FP-0006 A `skill_version_hash` unblocked regression compare: existing P6 logs are grouped by `skill_version_hash` and compared with no additional skill executions. See `docs/reference/cli/eval.md` for the full subcommand reference.
+
+Components A (P6 export adapter), B (`reyn eval run` / `reyn eval report`), and D (`judge_output` op) landed in an earlier wave.
 
 ---
 

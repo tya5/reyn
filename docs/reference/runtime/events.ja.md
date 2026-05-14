@@ -51,7 +51,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 |------|------|
 | `read_file`、`write_file`、`edit_file`、`delete_file`、`glob_files`、`grep` | `file` op のバリアント |
 | `shell_started`、`shell`（完了）、`shell_timeout`、`shell_not_allowed` | `shell` op |
-| `run_skill_started`、`skill_run_spawned`、`skill_run_failed` | `run_skill` op |
+| `run_skill_started`、`skill_run_spawned`、`skill_run_failed` | `run_skill` op — `run_skill_started` は `skill_version_hash: str`（実行時の `skill.md` 内容の sha256 hex。`skill.md` が存在しない場合は `"unknown"`）を持つ |
 | `mcp_called`、`mcp_completed`、`mcp_failed` | MCP ツール op |
 | `web_search_started`、`web_search_completed`、`web_search_failed`、`web_fetch_started` | 検索 op |
 | `control_ir_skipped`、`control_ir_failed`、`control_ir_validation_error` | ディスパッチ失敗（`control_ir_skipped` の理由は `shell_not_allowed`、`handler_not_implemented`、`not_allowed_in_phase` を含む） |

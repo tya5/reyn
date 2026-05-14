@@ -245,6 +245,111 @@ reyn eval report my_skill --dataset eval/golden.jsonl --limit 5
 
 ---
 
+## `reyn eval compare` — バージョン回帰比較（FP-0006 A + FP-0007 C）
+
+P6 イベントログを使用して、2 つのバージョン間でスキルの pass rate を比較します。`run_skill_started` イベントの `skill_version_hash` フィールドで集計するため、追加のスキル実行は不要です。
+
+### 概要
+
+```
+reyn eval compare <SKILL_NAME> [OPTIONS]
+```
+
+### 位置引数
+
+| 名前 | 説明 |
+|------|-------------|
+| `SKILL_NAME` | 比較するスキルの名前（標準スキルルックアップ順で解決）。 |
+
+### オプション
+
+| フラグ | 説明 |
+|------|-------------|
+| `--baseline HASH_OR_LABEL` | ベースラインバージョンのハッシュプレフィックスまたはラベル。省略時は自動選択（後述の自動ベースライン選択ルールを参照）。 |
+| `--candidate HASH_OR_LABEL` | 比較対象バージョンのハッシュプレフィックスまたはラベル。省略時は最新ハッシュを自動選択。 |
+| `--threshold FLOAT` | この値以上の低下で回帰アラート（exit code 1）を発動。デフォルト: `0.05`（5 パーセントポイント低下でアラート）。 |
+| `--format FORMAT` | 出力形式: `text`（デフォルト）または `json`。 |
+| `--dataset FILE` | 特定のゴールデンデータセットを使用したランのみにフィルタリング。省略可。 |
+| `--since DATE` | この ISO 日付以降のランのみ対象。省略可。 |
+
+### 自動ベースライン選択ルール
+
+`--baseline` を省略した場合、対象スキルの `.reyn/events/*.jsonl` から `skill_version_hash` 値を読み取り、初回出現タイムスタンプ順で以下を選択します:
+
+- **candidate** = 最も新しいハッシュ
+- **baseline** = 2 番目に新しいハッシュ
+
+ログ内に 2 種類未満のハッシュしか存在しない場合、exit code 2 と説明メッセージで終了します。
+
+### 終了コード
+
+| コード | 意味 |
+|------|---------|
+| `0` | 候補の pass rate がベースライン − threshold 以上。回帰なし。 |
+| `1` | 回帰アラート: 候補の pass rate がベースラインより `--threshold` 以上低下。 |
+| `2` | エラー: スキルが見つからない、バージョン履歴不足、または I/O 失敗。 |
+
+### text フォーマット例
+
+```
+reyn eval compare my_skill
+
+  Skill:     my_skill
+  Baseline:  sha:abc12345  (72% pass, 50 ラン中 36 通過)  2026-05-01 〜 2026-05-05
+  Candidate: sha:def67890  (88% pass, 50 ラン中 44 通過)  2026-05-05 〜 2026-05-15
+  Delta:     +16pp  /  threshold=-5pp
+  Result:    OK — 回帰なし
+```
+
+### json フォーマット例
+
+```bash
+reyn eval compare my_skill --format json
+```
+
+```json
+{
+  "skill": "my_skill",
+  "baseline": {
+    "hash": "abc123456789abcdef...",
+    "pass_rate": 0.72,
+    "run_count": 50,
+    "date_range": ["2026-05-01", "2026-05-05"]
+  },
+  "candidate": {
+    "hash": "def678901234567890...",
+    "pass_rate": 0.88,
+    "run_count": 50,
+    "date_range": ["2026-05-05", "2026-05-15"]
+  },
+  "delta_pp": 16.0,
+  "threshold_pp": -5.0,
+  "regression": false
+}
+```
+
+### 参照: `skill_version_hash`
+
+`reyn eval compare` は実行時のスキル `skill.md` の sha256 を持つ `skill_version_hash` フィールドに依存します。フィールドの契約は [FP-0006 Component A](../../deep-dives/proposals/0006-skill-self-improvement.ja.md)、イベントエンベロープは [リファレンス: events](../runtime/events.md) を参照してください。
+
+### 例
+
+```bash
+# ベースラインと候補を自動選択
+reyn eval compare my_skill
+
+# 特定のハッシュを指定して比較
+reyn eval compare my_skill --baseline abc123 --candidate def456
+
+# pass rate が 10pp 以上低下したら失敗
+reyn eval compare my_skill --threshold 0.10
+
+# CI 向けマシン可読出力
+reyn eval compare my_skill --format json --threshold 0.05
+```
+
+---
+
 ## 関連情報（FP-0007 追加分）
 
 - [コンセプト: 評価インフラ](../../concepts/evaluation.md) — アーキテクチャ概要と競合比較

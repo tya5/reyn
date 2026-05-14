@@ -245,6 +245,111 @@ reyn eval report my_skill --dataset eval/golden.jsonl --limit 5
 
 ---
 
+## `reyn eval compare` — version regression comparison (FP-0006 A + FP-0007 C)
+
+Compare a skill's pass rate across two versions using the P6 event log. No additional skill executions are required — results are aggregated from existing `run_skill_started` events whose `skill_version_hash` field matches the specified versions.
+
+### Synopsis
+
+```
+reyn eval compare <SKILL_NAME> [OPTIONS]
+```
+
+### Positional arguments
+
+| Name | Description |
+|------|-------------|
+| `SKILL_NAME` | Name of the skill to compare (resolved via the standard skill lookup order). |
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--baseline HASH_OR_LABEL` | The hash prefix or label for the baseline version. Auto-selected as the second-most-recent hash when omitted (see auto-baseline rule below). |
+| `--candidate HASH_OR_LABEL` | The hash prefix or label for the candidate version. Auto-selected as the most-recent hash when omitted. |
+| `--threshold FLOAT` | Delta below which a regression alert (exit code 1) is triggered. Default: `0.05` (5 percentage-point drop triggers alert). |
+| `--format FORMAT` | Output format: `text` (default) or `json`. |
+| `--dataset FILE` | Filter to runs that used a specific golden dataset. Optional. |
+| `--since DATE` | Only consider runs on or after this ISO date. Optional. |
+
+### Auto-baseline selection rule
+
+When `--baseline` is omitted, `reyn eval compare` reads the `skill_version_hash` values from `.reyn/events/*.jsonl` for the target skill, orders them by first-seen timestamp, and uses:
+
+- **candidate** = most-recently-seen hash
+- **baseline** = second-most-recently-seen hash
+
+If fewer than two distinct hashes exist in the log, the command exits with code 2 and an explanatory message.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Candidate pass rate is at or above `baseline − threshold`. No regression. |
+| `1` | Regression alert: candidate pass rate dropped by more than `--threshold` relative to baseline. |
+| `2` | Error: skill not found, insufficient version history, or I/O failure. |
+
+### Text format example
+
+```
+reyn eval compare my_skill
+
+  Skill:     my_skill
+  Baseline:  sha:abc12345  (72% pass, 36/50 runs)  2026-05-01 ~ 2026-05-05
+  Candidate: sha:def67890  (88% pass, 44/50 runs)  2026-05-05 ~ 2026-05-15
+  Delta:     +16pp  /  threshold=-5pp
+  Result:    OK — no regression
+```
+
+### JSON format example
+
+```bash
+reyn eval compare my_skill --format json
+```
+
+```json
+{
+  "skill": "my_skill",
+  "baseline": {
+    "hash": "abc123456789abcdef...",
+    "pass_rate": 0.72,
+    "run_count": 50,
+    "date_range": ["2026-05-01", "2026-05-05"]
+  },
+  "candidate": {
+    "hash": "def678901234567890...",
+    "pass_rate": 0.88,
+    "run_count": 50,
+    "date_range": ["2026-05-05", "2026-05-15"]
+  },
+  "delta_pp": 16.0,
+  "threshold_pp": -5.0,
+  "regression": false
+}
+```
+
+### Cross-reference: `skill_version_hash`
+
+`reyn eval compare` relies on the `skill_version_hash` field in every `run_skill_started` event — the sha256 of the skill's `skill.md` at the time of execution. See [FP-0006 Component A](../../deep-dives/proposals/0006-skill-self-improvement.md) for the field contract and [Reference: events](../runtime/events.md) for the event envelope.
+
+### Examples
+
+```bash
+# Auto-select baseline and candidate
+reyn eval compare my_skill
+
+# Compare two specific hashes
+reyn eval compare my_skill --baseline abc123 --candidate def456
+
+# Fail if pass rate drops more than 10pp
+reyn eval compare my_skill --threshold 0.10
+
+# Machine-readable output for CI
+reyn eval compare my_skill --format json --threshold 0.05
+```
+
+---
+
 ## See also (FP-0007 additions)
 
 - [Concepts: evaluation](../../concepts/evaluation.md) — architecture overview and competitive comparison
