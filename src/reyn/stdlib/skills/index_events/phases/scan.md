@@ -7,7 +7,7 @@ can_finish: true
 allowed_ops: []
 preprocessor:
   - type: python
-    module: ./event_chunker.py
+    module: ./chunkers.py
     function: resolve_scan_context
     into: data.scan_context
     output_schema:

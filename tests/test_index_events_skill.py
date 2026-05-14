@@ -22,9 +22,9 @@ from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
     collect_run_chunks,
     read_cursor,
+    resolve_scan_context,
     run_collect_chunks,
 )
-from reyn.stdlib.skills.index_events.event_chunker import resolve_scan_context
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -399,17 +399,17 @@ def test_resolve_scan_context_output_size_under_threshold(tmp_path, monkeypatch)
         (fake_events / f"run_{i:04d}.jsonl").write_text("{}\n", encoding="utf-8")
 
     # Patch the module-level _EVENTS_DIR and _CURSOR_FILE to use tmp_path
-    import reyn.stdlib.skills.index_events.event_chunker as ec
-    original_events_dir = ec._EVENTS_DIR
-    original_cursor_file = ec._CURSOR_FILE
-    ec._EVENTS_DIR = tmp_path / ".reyn" / "events"
-    ec._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
+    import reyn.stdlib.skills.index_events.chunkers as ck
+    original_events_dir = ck._EVENTS_DIR
+    original_cursor_file = ck._CURSOR_FILE
+    ck._EVENTS_DIR = tmp_path / ".reyn" / "events"
+    ck._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
     try:
         artifact = {"data": {"mode": "append"}}
         result = resolve_scan_context(artifact)
     finally:
-        ec._EVENTS_DIR = original_events_dir
-        ec._CURSOR_FILE = original_cursor_file
+        ck._EVENTS_DIR = original_events_dir
+        ck._CURSOR_FILE = original_cursor_file
 
     serialized = json.dumps(result, ensure_ascii=False)
     assert len(serialized) < 8000, (
@@ -429,16 +429,16 @@ def test_resolve_scan_context_returns_count_not_paths(tmp_path, monkeypatch):
     (fake_events / "run_001.jsonl").write_text("{}\n", encoding="utf-8")
     (fake_events / "run_002.jsonl").write_text("{}\n", encoding="utf-8")
 
-    import reyn.stdlib.skills.index_events.event_chunker as ec
-    original_events_dir = ec._EVENTS_DIR
-    original_cursor_file = ec._CURSOR_FILE
-    ec._EVENTS_DIR = fake_events
-    ec._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
+    import reyn.stdlib.skills.index_events.chunkers as ck
+    original_events_dir = ck._EVENTS_DIR
+    original_cursor_file = ck._CURSOR_FILE
+    ck._EVENTS_DIR = fake_events
+    ck._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
     try:
         result = resolve_scan_context({"data": {"mode": "append"}})
     finally:
-        ec._EVENTS_DIR = original_events_dir
-        ec._CURSOR_FILE = original_cursor_file
+        ck._EVENTS_DIR = original_events_dir
+        ck._CURSOR_FILE = original_cursor_file
 
     assert "event_files_count" in result, (
         f"'event_files_count' missing from resolve_scan_context output: {list(result.keys())}"

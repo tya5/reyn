@@ -30,7 +30,7 @@ graph:
   scan: []
 permissions:
   python:
-    - module: ./event_chunker.py
+    - module: ./chunkers.py
       function: resolve_scan_context
       mode: unsafe
       timeout: 30

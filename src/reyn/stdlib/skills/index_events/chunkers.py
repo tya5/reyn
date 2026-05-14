@@ -5,6 +5,9 @@ Public pure functions (Tier 2 testable — no artifact dict, no global state):
   advance_cursor      — atomic write of new max ts to cursor file
   read_cursor         — read cursor file; return None if missing
 
+Preprocessor entry point (called by the skill harness before LLM call):
+  resolve_scan_context — read cursor + summarise event file inventory
+
 Postprocessor entry points (called by the skill harness with artifact dict):
   run_collect_chunks  — artifact wrapper around collect_run_chunks
   run_advance_cursor  — artifact wrapper around advance_cursor
@@ -30,6 +33,95 @@ from typing import Any, Iterator
 _CHUNKS_JSONL_PATH = "artifacts/event_chunks.jsonl"
 _ERROR_EXCERPT_MAX = 200
 _EPOCH_ISO = "1970-01-01T00:00:00Z"
+
+# Preprocessor constants (used by resolve_scan_context; patchable in tests)
+_CURSOR_FILE = Path(".reyn") / "index" / "events_cursor"
+_EVENTS_DIR = Path(".reyn") / "events"
+
+
+# ── Preprocessor entry point ──────────────────────────────────────────────────
+
+
+def resolve_scan_context(artifact: dict) -> dict:
+    """Phase preprocessor: resolve cursor + summarise event file inventory.
+
+    Receives the full index_events_input artifact. Reads the cursor file
+    (if present) to determine the effective lower-bound timestamp, then
+    discovers all .jsonl files under .reyn/events/ and computes summary
+    statistics WITHOUT exposing the full file list to the LLM.
+
+    The full path list is intentionally excluded from the return value:
+    it can contain 100+ entries (67KB+) which exceeds ARTIFACT_REF_THRESHOLD
+    (8KB) and gets compressed to an artifact_ref the LLM cannot dereference
+    (scan phase declares allowed_ops: []). The postprocessor re-globs files
+    deterministically at run time — it does not need the LLM to echo them.
+
+    Returns:
+        {
+            "since":              str,           # effective ISO-8601 lower bound
+            "event_files_count":  int,           # number of candidate .jsonl files
+            "oldest_timestamp":   str | null,    # oldest file mtime ISO string (approx)
+            "newest_timestamp":   str | null,    # newest file mtime ISO string (approx)
+            "skill_filter":       list[str] | null,
+            "mode":               str,           # "append" | "replace"
+            "cursor_exists":      bool,
+            "cursor_value":       str | null,
+        }
+    """
+    data = artifact.get("data") or {}
+    since_input: str | None = data.get("since")
+    mode: str = str(data.get("mode") or "append")
+    skill_filter_raw = data.get("skills") or data.get("skill_filter")
+    skill_filter: list[str] | None = list(skill_filter_raw) if skill_filter_raw else None
+
+    cursor_exists = _CURSOR_FILE.exists()
+    cursor_value: str | None = None
+
+    if mode == "replace":
+        # Full reindex — ignore cursor
+        since = _EPOCH_ISO
+    elif since_input:
+        since = since_input
+    elif cursor_exists:
+        try:
+            cursor_value = _CURSOR_FILE.read_text(encoding="utf-8").strip()
+            since = cursor_value if cursor_value else _EPOCH_ISO
+        except OSError:
+            since = _EPOCH_ISO
+    else:
+        since = _EPOCH_ISO
+
+    event_files = _discover_event_files(str(_EVENTS_DIR))
+    event_files_count = len(event_files)
+
+    # Compute oldest/newest via file mtime (cheap — avoids reading JSONL content)
+    oldest_timestamp: str | None = None
+    newest_timestamp: str | None = None
+    if event_files:
+        mtimes = []
+        for fp in event_files:
+            try:
+                mtimes.append(os.path.getmtime(fp))
+            except OSError:
+                pass
+        if mtimes:
+            def _mtime_to_iso(mts: float) -> str:
+                return datetime.fromtimestamp(mts, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            oldest_timestamp = _mtime_to_iso(min(mtimes))
+            newest_timestamp = _mtime_to_iso(max(mtimes))
+
+    return {
+        "since": since,
+        "event_files_count": event_files_count,
+        "oldest_timestamp": oldest_timestamp,
+        "newest_timestamp": newest_timestamp,
+        "skill_filter": skill_filter,
+        "mode": mode,
+        "cursor_exists": cursor_exists,
+        "cursor_value": cursor_value,
+    }
 
 
 # ── Public pure functions ──────────────────────────────────────────────────────
