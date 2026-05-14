@@ -23,7 +23,8 @@ async def handle(
     ctx: OpContext,
     caller: Literal["preprocessor", "control_ir"],
 ) -> dict:
-    backend = get_default_backend()
+    sandbox_cfg = getattr(getattr(ctx, "config", None), "sandbox", None)
+    backend = get_default_backend(sandbox_cfg)
     policy = SandboxPolicy(
         network=op.network,
         read_paths=list(op.read_paths),

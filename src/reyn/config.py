@@ -571,6 +571,56 @@ def _build_web_config(raw: object) -> WebConfig:
 SKILL_RESUME_POLICIES = ("prompt", "retry", "skip", "discard_skill")
 
 
+_SANDBOX_BACKENDS = {"auto", "seatbelt", "landlock", "noop"}
+_SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
+
+
+@dataclass
+class SandboxConfig:
+    """`sandbox:` — backend selection and unsupported-platform policy (FP-0017).
+
+    Fields:
+        backend:
+            Which enforcement backend to use.
+            ``'auto'`` (default) lets the OS pick the best available backend
+            for the current platform (macOS < 26 → Seatbelt, Linux 5.13+ →
+            Landlock, else → Noop). Explicit values force a specific backend.
+            Allowed: ``{'auto', 'seatbelt', 'landlock', 'noop'}``.
+        on_unsupported:
+            Policy when the requested backend is unavailable on this platform.
+            ``'warn'`` (default) logs a WARNING and falls back to NoopBackend.
+            ``'error'`` raises RuntimeError (useful to fail-fast in enforced
+            production environments). ``'ignore'`` silently falls back.
+            Allowed: ``{'warn', 'error', 'ignore'}``.
+    """
+
+    backend: str = "auto"
+    on_unsupported: str = "warn"
+
+    def __post_init__(self) -> None:
+        if self.backend not in _SANDBOX_BACKENDS:
+            raise ValueError(
+                f"sandbox.backend {self.backend!r} is not one of "
+                f"{sorted(_SANDBOX_BACKENDS)}"
+            )
+        if self.on_unsupported not in _SANDBOX_ON_UNSUPPORTED:
+            raise ValueError(
+                f"sandbox.on_unsupported {self.on_unsupported!r} is not one of "
+                f"{sorted(_SANDBOX_ON_UNSUPPORTED)}"
+            )
+
+
+def _build_sandbox_config(raw: object) -> SandboxConfig:
+    """Parse the ``sandbox:`` section. Empty / missing returns SandboxConfig()."""
+    if not isinstance(raw, dict):
+        return SandboxConfig()
+    defaults = SandboxConfig()
+    backend = str(raw.get("backend", defaults.backend))
+    on_unsupported = str(raw.get("on_unsupported", defaults.on_unsupported))
+    # Validation delegated to __post_init__ — raises ValueError with clear message.
+    return SandboxConfig(backend=backend, on_unsupported=on_unsupported)
+
+
 @dataclass
 class PlanConfig:
     """`plan:` — plan-mode execution tuning.
@@ -816,6 +866,9 @@ class ReynConfig:
     # FP-0007 Component A: trace export adapter config.
     # Empty exporters list (default) = no export; full backward compat.
     eval: EvalConfig = field(default_factory=EvalConfig)
+    # FP-0017: sandbox backend selection + unsupported-platform policy.
+    # Default: auto-select the best available backend for this platform.
+    sandbox: SandboxConfig = field(default_factory=SandboxConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1075,6 +1128,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         skill_search=_build_skill_search_config(merged.get("skill_search")),
         plan=_build_plan_config(merged.get("plan")),
         eval=_build_eval_config(merged.get("eval")),
+        sandbox=_build_sandbox_config(merged.get("sandbox")),
     )
 
 
