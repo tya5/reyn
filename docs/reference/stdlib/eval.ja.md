@@ -33,8 +33,8 @@ LLM-as-judge として `judge_phase` を使用して、ターゲット Skill を
    ```yaml
    permissions:
      python:
-       pure: allow
-       trusted: allow   # --allow-untrusted-python も必要
+       safe: allow
+       unsafe: allow   # --allow-untrusted-python も必要
    ```
 
 事前承認がない場合、ターゲットのランは失敗し、ケースは未完了として報告されます。

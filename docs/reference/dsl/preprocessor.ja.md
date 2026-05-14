@@ -81,7 +81,7 @@ preprocessor:
   - python:
       module: stats
       function: compute
-      mode: pure                         # pure | trusted
+      mode: safe                         # safe | unsafe
       output_schema:
         type: object
         required: [word_count]
@@ -92,18 +92,18 @@ preprocessor:
 
 `<skill_dir>/<module>.py:<function>(artifact)` を呼び出し、JSON シリアライズ可能な結果を `into` に格納します。
 
-### モード: `pure`
+### モード: `safe`
 
 - 実行前に Reyn が AST 検証します: `open`、`eval`、`exec`、`__import__`、`compile`、`globals`、`locals`、`subprocess` およびその他の危険なモジュールを禁止。
 - インポートはキュレートされた allowlist に制限されます（`math`、`statistics`、`json`、`re`、`random`、`time`、`datetime`、...）。プロジェクトは `reyn.yaml` の `permissions.python.allowed_modules` で拡張できます。
 - 制限された `__builtins__`。
 - クラッシュ分離とタイムアウトのためにサブプロセスで実行されます。
 
-### モード: `trusted`
+### モード: `unsafe`
 
 - AST バリデーションなし。完全な Python。
-- `--allow-untrusted-python` AND `python.trusted: allow` Permission 付与の両方が必要です。
-- pure モードが禁止するケイパビリティ（ファイル I/O、カスタムパッケージ）を必要とするステップにのみ使用します。
+- `--allow-untrusted-python` AND `python.unsafe: allow` Permission 付与の両方が必要です。
+- safe モードが禁止するケイパビリティ（ファイル I/O、カスタムパッケージ）を必要とするステップにのみ使用します。
 
 ### `output_schema`
 
@@ -113,7 +113,7 @@ preprocessor:
 
 - `into` キーは既存の入力 artifact キーと衝突してはなりません。
 - ステップの順序が重要です: 後のステップは前のステップの `into` スロットを参照できます。
-- リンターチェック: 各 `python` ステップのモジュール/関数は `permissions.python` エントリーに一致する必要があり、`.py` ファイルが存在し、関数が定義されており、（pure モードでは）AST が検証されます。
+- リンターチェック: 各 `python` ステップのモジュール/関数は `permissions.python` エントリーに一致する必要があり、`.py` ファイルが存在し、関数が定義されており、（safe モードでは）AST が検証されます。
 
 ## Phase がやってはいけないこと
 

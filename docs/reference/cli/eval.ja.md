@@ -7,83 +7,38 @@ applies_to: [reyn eval]
 
 # `reyn eval`
 
-eval スペックをターゲット Skill に対して非インタラクティブに実行します。各ケースはルーブリック基準に対して Phase ごとに採点されます。ケースごとの結果と全体のサマリーが `.reyn/eval_reports/` に書き込まれます。
+Skill を評価します。3 つのサブコマンド:
+
+| サブコマンド | 説明 |
+|------------|------|
+| `run` | ゴールデン JSONL データセットに対してスキルを実行し、pass rate で CI をゲート |
+| `report` | スキルの過去の `reyn eval run` 結果をサマリー表示 |
+| `compare` | P6 イベントログを使用して 2 つのスキルバージョン間の pass rate を比較 |
+| `spec` | レガシー: `eval.md` スペックファイルを非インタラクティブに実行（後方互換） |
 
 ## 概要
 
 ```
-reyn eval [OPTIONS] FILE
+reyn eval run <SKILL_NAME> [OPTIONS]
+reyn eval report <SKILL_NAME> [OPTIONS]
+reyn eval compare <SKILL_NAME> [OPTIONS]
+reyn eval spec FILE [OPTIONS]
 ```
-
-## 位置引数
-
-| 名前 | 説明 |
-|------|-------------|
-| `FILE` | eval スペック Markdown へのパス（例: `reyn/local/my_skill/eval.md`）。スペックは `skill_dsl_path` frontmatter フィールドでターゲット Skill を参照します。 |
-
-## オプション
-
-| フラグ | 説明 |
-|------|-------------|
-| `--model MODEL` | モデルクラス（`light`/`standard`/`strong`）または LiteLLM モデル文字列。**優先度:** CLI > スペック > `reyn.yaml`。 |
-| `--dsl-root DIR` | ターゲット Skill の DSL ルートオーバーライド。デフォルトでは Skill パスから推論されます。 |
-| `--output-language LANG` | eval Skill とターゲット Skill の両方に渡される出力言語コード。デフォルトは `reyn.yaml` から。 |
-| `--max-phase-visits N` | ケースごとの単一 Phase 再訪問の上限。`0` = 無制限。デフォルトは `reyn.yaml` または `25`。 |
-
-## 終了コード
-
-| コード | 意味 |
-|------|---------|
-| `0` | すべてのケースが通過 |
-| `1` | スペックの読み込みに失敗（例: 不正な eval.md） |
-| `2` | 1 つ以上のケースが基準に失敗 |
-
-## 出力
-
-ケースごとのサマリー行が stdout に表示されます:
-
-```
-━━━ case: short_summary ━━━
-  input: reyn is a workflow OS for LLMs.
-  ✓ score=0.95  (4/4 required)
-```
-
-完全な構造化レポートが `.reyn/eval_reports/<target_skill>/<timestamp>.json` に書き込まれ、最終行にパスが表示されます。
 
 ## 非インタラクティブ制約
 
-`reyn eval` はプロンプトを表示しません。ターゲット Skill が必要とするすべての Permission は事前承認されている必要があります:
+すべての `reyn eval` サブコマンドは非インタラクティブです。ターゲット Skill が必要とするすべての Permission は事前承認されている必要があります:
 
 - ターゲットをインタラクティブで一度実行（`reyn run <target> "<sample>"`）してプロンプトを受け入れる。選択は `.reyn/approvals.yaml` に永続化されます。または
 - `reyn.yaml` にプロジェクト全体の付与を設定:
 
 ```yaml
 permissions:
-  python.pure: allow
-  python.trusted: allow   # ランタイムの --allow-untrusted-python も必要
+  python.safe: allow
+  python.unsafe: allow   # ランタイムの --allow-untrusted-python も必要
 ```
 
-事前承認がない場合、ターゲットランは失敗し、ケースは未完了として報告されます。ターゲット Skill のバグのように見えますが、原因は承認の欠如です。
-
-## 例
-
-プロジェクト Skill にバンドルされた eval を実行:
-
-```bash
-reyn eval reyn/project/article_writer/eval.md
-```
-
-このランのみモデルをオーバーライド:
-
-```bash
-reyn eval reyn/local/my_skill/eval.md --model strong
-```
-
-開発中のイテレーション（安価なモデル、単一ケース）:
-
-```bash
-reyn eval reyn/local/my_skill/eval.md --model light
-```
+事前承認がない場合、ターゲットランは失敗し、ケースは未完了として報告されます。
 
 ## 関連情報
 
@@ -94,7 +49,7 @@ reyn eval reyn/local/my_skill/eval.md --model light
 
 ---
 
-## `reyn eval run` — ゴールデンデータセット実行（FP-0007）
+## `reyn eval run` — ゴールデンデータセット実行
 
 JSONL ゴールデンデータセットに対してスキルを実行し、pass rate で CI をゲートします。
 
@@ -350,9 +305,54 @@ reyn eval compare my_skill --format json --threshold 0.05
 
 ---
 
-## 関連情報（FP-0007 追加分）
+## `reyn eval spec` — レガシースペック実行
 
+`eval.md` スペックファイルをターゲット Skill に対して非インタラクティブに実行します。各ケースはルーブリック基準に対して Phase ごとに採点されます。ケースごとの結果と全体のサマリーが `.reyn/eval_reports/` に書き込まれます。
+
+### 概要
+
+```
+reyn eval spec FILE [OPTIONS]
+```
+
+### 位置引数
+
+| 名前 | 説明 |
+|------|------|
+| `FILE` | eval スペック Markdown へのパス（例: `reyn/local/my_skill/eval.md`）。スペックは `skill_dsl_path` frontmatter フィールドでターゲット Skill を参照します。 |
+
+### オプション
+
+| フラグ | 説明 |
+|------|------|
+| `--model MODEL` | モデルクラス（`light`/`standard`/`strong`）または LiteLLM モデル文字列。**優先度:** CLI > スペック > `reyn.yaml`。 |
+| `--dsl-root DIR` | ターゲット Skill の DSL ルートオーバーライド。デフォルトでは Skill パスから推論されます。 |
+| `--output-language LANG` | eval Skill とターゲット Skill の両方に渡される出力言語コード。デフォルトは `reyn.yaml` から。 |
+| `--max-phase-visits N` | ケースごとの単一 Phase 再訪問の上限。`0` = 無制限。デフォルトは `reyn.yaml` または `25`。 |
+
+### 終了コード
+
+| コード | 意味 |
+|------|------|
+| `0` | すべてのケースが通過 |
+| `1` | スペックの読み込みに失敗（例: 不正な eval.md） |
+| `2` | 1 つ以上のケースが基準に失敗 |
+
+### 例
+
+```bash
+reyn eval spec reyn/project/article_writer/eval.md
+reyn eval spec reyn/local/my_skill/eval.md --model strong
+```
+
+---
+
+## 関連情報
+
+- [run.md](run.md) — `reyn run`（基盤となる実行パス）
 - [コンセプト: 評価インフラ](../../concepts/evaluation.md) — アーキテクチャ概要と競合比較
 - [ガイド: 評価インフラのセットアップ](../../guide/evaluation.md) — クイックスタート、export バックエンド、CI 連携
 - [リファレンス: `reyn.yaml`](../config/reyn-yaml.md) — `eval.exporters` 設定
 - [リファレンス: control-ir](../runtime/control-ir.md) — `judge_output` op スキーマ
+- [リファレンス: stdlib/eval](../stdlib/eval.md) — eval Skill が生成するもの
+- [リファレンス: permissions](../config/permissions.md) — 事前承認のメカニズム

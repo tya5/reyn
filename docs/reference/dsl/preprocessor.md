@@ -81,7 +81,7 @@ preprocessor:
   - python:
       module: stats
       function: compute
-      mode: pure                         # pure | trusted
+      mode: safe                         # safe | unsafe
       output_schema:
         type: object
         required: [word_count]
@@ -92,18 +92,18 @@ preprocessor:
 
 Invokes `<skill_dir>/<module>.py:<function>(artifact)` and stores the JSON-serializable result at `into`.
 
-### Mode: `pure`
+### Mode: `safe`
 
 - AST-validated by reyn before execution: bans `open`, `eval`, `exec`, `__import__`, `compile`, `globals`, `locals`, plus `subprocess` and other risky modules.
 - Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, ...). Project may extend via `reyn.yaml`'s `permissions.python.allowed_modules`.
 - Restricted `__builtins__`.
 - Run in a subprocess for crash isolation and timeout.
 
-### Mode: `trusted`
+### Mode: `unsafe`
 
 - No AST validation. Free Python.
-- Requires both `--allow-untrusted-python` AND a `python.trusted: allow` permission grant.
-- Use only for steps that require capabilities the pure mode disallows (file I/O, custom packages).
+- Requires both `--allow-untrusted-python` AND a `python.unsafe: allow` permission grant.
+- Use only for steps that require capabilities the safe mode disallows (file I/O, custom packages).
 
 ### `output_schema`
 
@@ -113,7 +113,7 @@ Required. The LLM-visible enrichment shape — declared explicitly because we wo
 
 - The `into` key must not collide with an existing input artifact key.
 - Step ordering matters: a later step can reference an earlier step's `into` slot.
-- Linter checks: each `python` step's module/function must match a `permissions.python` entry, the `.py` file must exist, the function must be defined, and (in pure mode) the AST is validated.
+- Linter checks: each `python` step's module/function must match a `permissions.python` entry, the `.py` file must exist, the function must be defined, and (in safe mode) the AST is validated.
 
 ## What phases MUST NOT do
 

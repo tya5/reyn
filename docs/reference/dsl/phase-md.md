@@ -28,7 +28,7 @@ preprocessor:                  # optional; deterministic pre-LLM steps
   - python:
       module: stats
       function: compute
-      mode: pure                # pure | trusted
+      mode: safe                # safe | unsafe
       output_schema: { ... }
 ---
 ```

@@ -176,6 +176,21 @@ limits:
 
 The legacy top-level `max_phase_visits` key is still accepted (with a deprecation warning) and is migrated to `limits.phase.max_visits`.
 
+## `plan` block
+
+Controls plan step execution budget and retry behavior.
+
+```yaml
+plan:
+  step_max_iterations: 5   # max RouterLoop turns per step (default: 5)
+  retry_limit: 3           # max auto-retries per step on failure (default: 3)
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
+| `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
+
 ## `permissions` block
 
 Project-wide capability defaults. Per-skill permissions in `skill.md` override these.
@@ -187,8 +202,8 @@ permissions:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]
   python:
-    pure:    allow      # default for pure-mode python steps
-    trusted: deny       # trusted mode also requires --allow-untrusted-python
+    safe:    allow      # default for safe-mode python steps
+    unsafe:  deny       # unsafe mode also requires --allow-untrusted-python
     allowed_modules:
       - math
       - statistics

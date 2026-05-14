@@ -37,7 +37,7 @@ All limits are read from `reyn.yaml`'s `limits:` block by default and can be ove
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--allow-shell` | off | Enable the `shell` Control IR op. Required for skills that invoke sub-processes. |
-| `--allow-untrusted-python` | off | Allow `mode: trusted` Python preprocessor steps (no AST sandbox). Pure-mode steps run without this. |
+| `--allow-untrusted-python` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. |
 | `--strict` | off | Validate required fields at every nesting depth (default: top level only). |
 
 ## Diagnostics

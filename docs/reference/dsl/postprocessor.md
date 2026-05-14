@@ -28,10 +28,10 @@ permissions:
   python:
     - module: rendering
       function: to_html
-      mode: pure
+      mode: safe
     - module: rendering
       function: count_words
-      mode: pure
+      mode: safe
 postprocessor:
   output_schema: rendered_post  # caller contract — what the skill returns
   output_description: |
@@ -157,7 +157,7 @@ postprocessor:
     - type: python
       module: stats
       function: count_words
-      mode: pure
+      mode: safe
       output_schema:
         type: object
         required: [word_count]
@@ -175,7 +175,7 @@ permissions:
   python:
     - module: stats
       function: count_words
-      mode: pure
+      mode: safe
 ```
 
 ### 2. Artifact-name reference for `output_schema`

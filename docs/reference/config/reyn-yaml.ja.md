@@ -169,6 +169,21 @@ limits:
 
 レガシーのトップレベル `max_phase_visits` キーは引き続き（非推奨警告付きで）受け付けられ、`limits.phase.max_visits` に移行されます。
 
+## `plan` ブロック
+
+プランのステップ実行バジェットとリトライ動作を制御します。
+
+```yaml
+plan:
+  step_max_iterations: 5   # ステップあたりの最大 RouterLoop ターン数（デフォルト: 5）
+  retry_limit: 3           # ステップ失敗時の最大自動リトライ数（デフォルト: 3）
+```
+
+| キー | 型 | デフォルト | 説明 |
+|-----|------|---------|-------------|
+| `step_max_iterations` | integer | `5` | 1 つのプランステップが失敗として記録される前に消費できる最大 RouterLoop イテレーション数。 |
+| `retry_limit` | integer | `3` | 一時的エラーによるステップあたりの最大自動リトライ数。上限到達後はユーザーにバジェット延長を求めます。トークン制限と同様のコスト保護上限として機能します。 |
+
 ## `permissions` ブロック
 
 プロジェクト全体のケイパビリティデフォルト。`skill.md` の Skill ごとの Permission がこれらをオーバーライドします。
@@ -180,8 +195,8 @@ permissions:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]
   python:
-    pure:    allow      # pure モードの python ステップのデフォルト
-    trusted: deny       # trusted モードには --allow-untrusted-python も必要
+    safe:    allow      # safe モードの python ステップのデフォルト
+    unsafe:  deny       # unsafe モードには --allow-untrusted-python も必要
     allowed_modules:
       - math
       - statistics
