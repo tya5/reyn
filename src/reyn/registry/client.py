@@ -113,11 +113,15 @@ class RegistryClient:
 
     async def __aenter__(self) -> "RegistryClient":
         import httpx
+        from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
+        # SSL verification — defer to litellm's get_ssl_verify() for consistency
+        # with LLM calls (SSL_VERIFY / SSL_CERT_FILE env vars).
         self._client = httpx.AsyncClient(
             timeout=15.0,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
+            verify=get_ssl_verify(),
         )
         return self
 

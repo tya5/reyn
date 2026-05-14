@@ -39,6 +39,7 @@ class _TextExtractor(html.parser.HTMLParser):
 
 async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     import httpx
+    from litellm.llms.custom_httpx.http_handler import get_ssl_verify
 
     # FP-0022: Tier 1 handler-level gate — 4-layer approval (config / approvals.yaml
     # / session / interactive). Replaces the catalog-level `web.fetch: allow` gate.
@@ -50,10 +51,14 @@ async def handle_web_fetch(op: WebFetchIROp, ctx: OpContext, caller: Literal["pr
 
     ctx.events.emit("web_fetch_started", url=op.url)
     try:
+        # SSL verification — defer to litellm's get_ssl_verify() so SSL_VERIFY
+        # / SSL_CERT_FILE env vars work consistently with LLM calls.
+        # Priority: SSL_VERIFY env → litellm.ssl_verify → SSL_CERT_FILE (if True).
         async with httpx.AsyncClient(
             timeout=op.timeout,
             follow_redirects=True,
             headers={"User-Agent": "reyn/1.0"},
+            verify=get_ssl_verify(),
         ) as client:
             response = await client.get(op.url)
     except httpx.TimeoutException:
