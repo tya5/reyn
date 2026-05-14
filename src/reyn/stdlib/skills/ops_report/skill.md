@@ -47,27 +47,6 @@ permissions:
       function: aggregate_from_recall_chunks
       mode: safe
       timeout: 10
-phases:
-  collect:
-    input: ops_report_input
-    preprocessor:
-      steps:
-        # Step 1: attempt recall from events index
-        - type: run_op
-          op:
-            kind: recall
-            query: "skill execution run summary failures errors"
-            sources: ["events"]
-            top_k: 50
-          into: data.recall_result
-          on_error: skip
-        # Step 2: aggregate — uses recall if non-empty, falls back to raw events
-        - type: python
-          module: ./aggregate.py
-          function: collect_aggregate
-          into: data.aggregate
-          mode: safe
-          timeout: 30
 ---
 
 ## Overview

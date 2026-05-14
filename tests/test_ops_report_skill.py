@@ -433,3 +433,37 @@ def test_collect_aggregate_default_period_days_when_missing(
     assert result["total_runs"] == 0
     # period reported in human-readable form should reflect default 7
     assert "7" in result.get("period", "") or result.get("period_days") == 7
+
+
+# ── BUG-3 regression: skill.md compile + phase file existence ────────────────
+
+
+def test_ops_report_skill_md_compiles() -> None:
+    """Tier 2: ops_report skill.md compiles without 'Phase not found' error (BUG-3 regression)."""
+    from pathlib import Path
+
+    from reyn.compiler.loader import load_dsl_skill
+
+    skill_md = (
+        Path(__file__).parent.parent
+        / "src" / "reyn" / "stdlib" / "skills" / "ops_report" / "skill.md"
+    )
+    skill_root = skill_md.parent.parent.parent  # src/reyn/stdlib/
+
+    assert skill_md.exists(), f"skill.md not found at {skill_md}"
+    skill = load_dsl_skill(skill_md, skill_root=skill_root)
+    assert skill.name == "ops_report"
+    assert skill.entry_phase == "collect"
+    assert "collect" in {p for p in skill.phases}
+    assert "summarize" in {p for p in skill.phases}
+
+
+def test_ops_report_skill_has_collect_phase_file() -> None:
+    """Tier 2: ops_report/phases/collect.md exists on disk (BUG-3 regression)."""
+    from pathlib import Path
+
+    collect_md = (
+        Path(__file__).parent.parent
+        / "src" / "reyn" / "stdlib" / "skills" / "ops_report" / "phases" / "collect.md"
+    )
+    assert collect_md.exists(), f"Expected {collect_md} to exist"
