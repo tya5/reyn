@@ -287,7 +287,13 @@ def _topological_order(steps: list[PlanStep] | tuple[PlanStep, ...]) -> list[Pla
 # ── Step system prompt ──────────────────────────────────────────────────────
 
 
-def build_plan_step_system_prompt(plan: Plan, step: PlanStep, prior_results: dict[str, str]) -> str:
+def build_plan_step_system_prompt(
+    plan: Plan,
+    step: PlanStep,
+    prior_results: dict[str, str],
+    *,
+    output_language: str | None = None,
+) -> str:
     """Construct the narrow system prompt for one plan step.
 
     Distinct from the full chat router prompt: drops Identity / Project /
@@ -300,19 +306,25 @@ def build_plan_step_system_prompt(plan: Plan, step: PlanStep, prior_results: dic
     direct mitigation of the per-call context bloat the dogfood
     surfaced). Each plan step is a focused LLM call, not a general-
     purpose router invocation.
+
+    ``output_language``: when set, prepends a language directive so the
+    step LLM replies in the user's language (= Component A fix for the
+    JA-user bug where plan step LLMs ignored the session output_language).
     """
     parts: list[str] = []
+    if output_language:
+        parts.append(f"Respond in {output_language}.")
+        parts.append("")
     parts.append(
         "You are a Reyn agent executing one step of a multi-step plan. "
         "Use the tools provided (if any) to gather information, then "
-        "emit a concise text reply (100-400 chars) summarising what "
-        "this step contributes to the plan goal. Do NOT restate the "
-        "full plan; focus on this step's output."
+        "Summarise what this step found in 1–3 sentences. "
+        "Be factual; a separate synthesis step will produce the user reply."
     )
     parts.append("")
     parts.append(f"## Plan goal\n{plan.goal}")
     parts.append("")
-    parts.append(f"## This step (id={step.id})\n{step.description}")
+    parts.append(f"## Your task\n{step.description}")
     if step.depends_on:
         parts.append("")
         parts.append("## Prior step results (your inputs)")
@@ -752,7 +764,10 @@ async def execute_plan(
             narrow_host = _PlanStepHost(
                 plan=plan, step=step, prior_results=step_results, parent=parent_host,
             )
-            sys_prompt = build_plan_step_system_prompt(plan, step, step_results)
+            sys_prompt = build_plan_step_system_prompt(
+                plan, step, step_results,
+                output_language=narrow_host.output_language,
+            )
 
             # ADR-0025: construct a per-step SubLoopMemoProvider so the
             # sub-loop's LLM calls are memoized (= recorded on every fresh

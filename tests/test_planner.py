@@ -215,7 +215,9 @@ def test_topological_order_independent_steps_preserve_emission_order():
 def test_step_system_prompt_includes_goal_and_step_description():
     """Tier 2: the narrow prompt has the plan goal + step description.
     These are the minimum context the step LLM needs to know what
-    to produce.
+    to produce. Step ids (e.g. "s1") must NOT appear in the prompt
+    body — they are internal planner bookkeeping and must not leak
+    into LLM context (Component B: step id removal).
     """
     plan = Plan(
         goal="multi-source synthesis on Reyn architecture",
@@ -227,7 +229,11 @@ def test_step_system_prompt_includes_goal_and_step_description():
     prompt = build_plan_step_system_prompt(plan, plan.steps[0], {})
     assert "multi-source synthesis on Reyn architecture" in prompt
     assert "read principles.md" in prompt
-    assert "s1" in prompt
+    # Component B: step id must NOT appear as a standalone label in the prompt.
+    # (It may appear inside the step description text, but not as a header id.)
+    assert "id=s1" not in prompt
+    assert "## This step" not in prompt
+    assert "## Your task" in prompt
 
 
 def test_step_system_prompt_includes_prior_step_results_when_deps_present():
@@ -260,6 +266,25 @@ def test_step_system_prompt_omits_prior_results_when_no_deps():
     )
     prompt = build_plan_step_system_prompt(plan, plan.steps[0], {})
     assert "Prior step results" not in prompt
+
+
+def test_step_system_prompt_output_language_prepended_when_set():
+    """Tier 2: when output_language is provided, the prompt starts with
+    a language directive. Verifies Component A fix — JA users no longer
+    get EN replies from plan step LLMs.
+    """
+    plan = Plan(
+        goal="g",
+        steps=(
+            PlanStep(id="s1", description="read", tools=()),
+            PlanStep(id="s2", description="synth", tools=()),
+        ),
+    )
+    prompt_ja = build_plan_step_system_prompt(plan, plan.steps[0], {}, output_language="Japanese")
+    assert prompt_ja.startswith("Respond in Japanese.")
+
+    prompt_none = build_plan_step_system_prompt(plan, plan.steps[0], {})
+    assert not prompt_none.startswith("Respond in")
 
 
 def test_step_system_prompt_smaller_than_full_router_prompt():
