@@ -74,6 +74,10 @@ PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
     "dataclasses", # pure: data class decorator and helpers
     "typing",      # pure: type annotation support
     "abc",         # pure: abstract base class infrastructure
+
+    # --- pure: compiler directives (no runtime capability) ---
+    "__future__",  # pure: compiler directives only (annotations, division, etc.)
+                   #       — no I/O, no module loading semantics
 })
 
 

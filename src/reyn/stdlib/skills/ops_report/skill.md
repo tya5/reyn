@@ -35,25 +35,23 @@ permissions:
       - ".reyn/events/"
       - ".reyn/index/"
   python:
-    # collect_aggregate + aggregate_from_raw_events: fs glob over
-    # .reyn/events/*.jsonl. No subprocess, no network — mode: safe is the
-    # honest declaration (restricted allowlist is sufficient). Previously
-    # worked around as mode: unsafe (commit a41d52a) because safe steps
-    # auto-denied in non-interactive `reyn run`. That gap is fixed in
-    # permissions.py (require_python safe-mode stdlib auto-allow parity).
+    # aggregate.py imports `glob` at module level for .reyn/events/*.jsonl
+    # discovery. `glob` is intentionally outside the safe-mode allowlist
+    # (operator filesystem-state ingress per R-PURE-MODE), so the whole
+    # module must load in `mode: unsafe`. Sibling skill index_events
+    # follows the same pattern. Stdlib unsafe is auto-allowed by `reyn run`
+    # via run.py:104-106.
     - module: ./aggregate.py
       function: collect_aggregate
-      mode: safe
+      mode: unsafe
       timeout: 30
     - module: ./aggregate.py
       function: aggregate_from_raw_events
-      mode: safe
+      mode: unsafe
       timeout: 30
-    # aggregate_from_recall_chunks is pure (operates on the in-memory chunks
-    # list); keep mode: safe to enforce the smaller capability surface.
     - module: ./aggregate.py
       function: aggregate_from_recall_chunks
-      mode: safe
+      mode: unsafe
       timeout: 10
 ---
 

@@ -543,11 +543,19 @@ class PermissionResolver:
     ) -> bool:
         """Approve a python step; persist on yes."""
         if not self._interactive:
-            # stdlib skills set unsafe_python_allowed=True — their unsafe steps
+            # stdlib skills set unsafe_python_allowed=True — their python steps
             # are safe by construction and must auto-approve even in non-interactive
             # mode (--non-interactive).  User-supplied unsafe steps without the
             # flag are already hard-rejected in startup_guard before this point.
-            if mode == "unsafe" and self._unsafe_python_allowed:
+            #
+            # Apply the auto-allow to BOTH unsafe and safe modes. `safe` is the
+            # more-restricted capability (per _python_allowlist.py), so any
+            # context that auto-allows unsafe MUST auto-allow safe — otherwise
+            # stdlib `mode: safe` is strictly more locked-down than stdlib
+            # `mode: unsafe`, which is semantically backwards. Pre-seeding the
+            # session here also primes the matching require_python check at
+            # runtime so the two code paths agree.
+            if self._unsafe_python_allowed:
                 self._session[key] = True
                 return True
             self._session[key] = False
