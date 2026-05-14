@@ -1,0 +1,83 @@
+name: ops_report_collect_output
+description: |
+  Intermediate artifact produced by the collect phase preprocessor.
+  Contains the aggregated execution statistics ready for the summarize
+  phase to narrate into a human-readable report.
+schema:
+  type: object
+  required: [aggregate, period, data_source]
+  properties:
+    period:
+      type: [string, "null"]
+      description: Original period string from the input.
+    period_days:
+      type: [integer, "null"]
+      description: Effective period in days (derived from period or period_days input).
+    focus:
+      type: [string, "null"]
+      description: Optional focus filter from the input.
+    data_source:
+      type: string
+      enum: [recall, raw_events, empty]
+      description: |
+        Indicates which data path was used:
+          recall      = events source was queried via recall op
+          raw_events  = fallback walk of .reyn/events/*.jsonl
+          empty       = no data available (index empty and no event files)
+    aggregate:
+      type: object
+      description: Aggregated stats dict from aggregate.py.
+      required: [total_runs, success_count, failure_count, by_skill,
+                 top_failing_skills, errors_sample]
+      properties:
+        total_runs:
+          type: integer
+          minimum: 0
+        success_count:
+          type: integer
+          minimum: 0
+        failure_count:
+          type: integer
+          minimum: 0
+        success_rate:
+          type: [number, "null"]
+          minimum: 0.0
+          maximum: 1.0
+        period_days:
+          type: [integer, "null"]
+        by_skill:
+          type: object
+          description: Per-skill stats keyed by skill name.
+          additionalProperties:
+            type: object
+            required: [count, success, failure]
+            properties:
+              count:
+                type: integer
+                minimum: 0
+              success:
+                type: integer
+                minimum: 0
+              failure:
+                type: integer
+                minimum: 0
+              avg_duration_seconds:
+                type: [number, "null"]
+        top_failing_skills:
+          type: array
+          items:
+            type: object
+            required: [skill, failure_count, total_count]
+            properties:
+              skill:
+                type: string
+              failure_count:
+                type: integer
+                minimum: 0
+              total_count:
+                type: integer
+                minimum: 0
+        errors_sample:
+          type: array
+          items:
+            type: string

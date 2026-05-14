@@ -1,0 +1,74 @@
+name: index_events_summary
+description: |
+  Caller-facing summary of a completed index_events run. Returned by the
+  skill postprocessor after chunk → embed → index_write pipeline completes.
+
+  Fields mirror the incremental processing results: how many runs were
+  indexed, skipped (incomplete), or filtered out, plus the new cursor
+  timestamp written to .reyn/index/events_cursor.
+schema:
+  type: object
+  required: [indexed_runs, skipped_runs, filtered_runs, new_cursor, sources_updated]
+  properties:
+    indexed_runs:
+      type: integer
+      minimum: 0
+      description: Number of complete runs indexed in this invocation.
+    skipped_runs:
+      type: integer
+      minimum: 0
+      description: |
+        Incomplete runs skipped (run_skill_started seen but no completion
+        event yet). These will be picked up on the next index pass.
+    filtered_runs:
+      type: integer
+      minimum: 0
+      description: |
+        Runs excluded by the since/skill_filter criteria (older than since,
+        or not in the skill_filter list).
+    new_cursor:
+      type: string
+      description: |
+        ISO-8601 timestamp written to .reyn/index/events_cursor after this
+        run. Equals the maximum completed_at of all indexed runs, or the
+        previous cursor value if no new runs were indexed.
+    sources_updated:
+      type: array
+      items:
+        type: string
+      description: |
+        Logical source names updated in the index backend. Always ["events"]
+        in Phase 1.
+    chunk_stats:
+      type: object
+      description: Result of the build_chunks python step.
+      properties:
+        chunk_count:
+          type: integer
+          minimum: 0
+        skipped_runs:
+          type: integer
+          minimum: 0
+        filtered_runs:
+          type: integer
+          minimum: 0
+    embed_result:
+      type: object
+      description: Result of the embed op.
+      properties:
+        embedded_count:
+          type: integer
+          minimum: 0
+        skipped_count:
+          type: integer
+          minimum: 0
+    index_result:
+      type: object
+      description: Result of the index_write op.
+      properties:
+        written:
+          type: integer
+          minimum: 0
+        skipped:
+          type: integer
+          minimum: 0

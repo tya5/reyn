@@ -1,0 +1,29 @@
+name: index_events_input
+description: |
+  Input for the index_events skill.
+
+  Specifies an optional lower-bound timestamp (since) and optional skill
+  filter. If since is null, the cursor file .reyn/index/events_cursor is
+  read by the preprocessor to determine the effective lower bound.
+schema:
+  type: object
+  properties:
+    since:
+      type: [string, "null"]
+      default: null
+      description: |
+        ISO-8601 timestamp lower bound (inclusive). null = read from cursor file.
+        If cursor file is absent, defaults to Unix epoch (index everything).
+    skills:
+      type: [array, "null"]
+      items:
+        type: string
+      default: null
+      description: |
+        Restrict indexing to runs from these skill names only. null = all skills.
+    mode:
+      type: string
+      enum: [append, replace]
+      default: append
+      description: |
+        append = incremental (default). replace = full reindex (ignores cursor).

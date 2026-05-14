@@ -1,0 +1,58 @@
+name: ops_report_output
+description: |
+  Final output artifact for the ops_report skill.
+
+  Contains the human-readable Markdown summary, structured statistics,
+  and actionable recommendations for the reporting period.
+schema:
+  type: object
+  required: [period, total_runs, top_failing_skills, recommendations]
+  properties:
+    period:
+      type: string
+      description: Human-readable period string (e.g. "last 7 days", "2026-W19").
+    total_runs:
+      type: integer
+      minimum: 0
+      description: Total skill executions observed in the period.
+    success_rate:
+      type: [number, "null"]
+      minimum: 0.0
+      maximum: 1.0
+      description: Fraction of successful runs (0.0–1.0). Null if no runs observed.
+    failure_breakdown:
+      type: array
+      description: Per-skill failure breakdown, sorted by failure_count descending.
+      items:
+        type: object
+        required: [skill, failure_count, total_count]
+        properties:
+          skill:
+            type: string
+          failure_count:
+            type: integer
+            minimum: 0
+          total_count:
+            type: integer
+            minimum: 0
+    cost_total_usd:
+      type: [number, "null"]
+      description: |
+        Total cost for the period in USD. Null in Phase 1 (cost data
+        not aggregated from raw events; available via recall path when
+        index_events includes cost_usd metadata).
+    top_failing_skills:
+      type: array
+      items:
+        type: string
+      description: Skill names ordered by failure count descending.
+    recommendations:
+      type: array
+      items:
+        type: string
+      description: Actionable recommendations based on the observed statistics.
+    summary_markdown:
+      type: [string, "null"]
+      description: |
+        Full Markdown-formatted narrative report. Null when format="json"
+        was requested.

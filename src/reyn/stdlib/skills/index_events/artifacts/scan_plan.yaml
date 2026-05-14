@@ -1,0 +1,41 @@
+name: scan_plan
+description: |
+  LLM-decided plan for the index_events scan phase.
+
+  The LLM decides the effective lower-bound timestamp, the list of event
+  files to process, and the indexing mode. The postprocessor uses this
+  plan to run the deterministic chunk → embed → index_write pipeline.
+
+  `since` is resolved from skill input or the cursor file before the LLM
+  sees it (via preprocessor); the LLM echoes it back in the artifact.
+schema:
+  type: object
+  required: [since, event_files, mode]
+  properties:
+    since:
+      type: string
+      description: |
+        Effective lower-bound ISO-8601 timestamp. Only events whose
+        completed_at is >= since will be indexed. Epoch ("1970-01-01T00:00:00Z")
+        means "index everything" (cursor absent or mode=replace).
+    event_files:
+      type: array
+      items:
+        type: string
+      description: |
+        List of .jsonl event file paths (workspace-relative) to process.
+        The postprocessor streams these files line by line.
+    skill_filter:
+      type: [array, "null"]
+      items:
+        type: string
+      default: null
+      description: |
+        Restrict indexing to runs from these skill names only. null = all skills.
+    mode:
+      type: string
+      enum: [append, replace]
+      default: append
+      description: |
+        append = only index runs not already indexed (default).
+        replace = clear the events source and rebuild from scratch.

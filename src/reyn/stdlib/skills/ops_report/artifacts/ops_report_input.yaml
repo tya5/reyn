@@ -1,0 +1,46 @@
+name: ops_report_input
+description: |
+  Input for the ops_report skill.
+
+  Specifies the reporting period, an optional skill focus filter, and
+  output format. The collect phase will attempt to retrieve data from
+  the events index (sources=["events"]) and fall back to raw event
+  log scanning if the index is unavailable.
+schema:
+  type: object
+  properties:
+    period:
+      type: string
+      default: "last-week"
+      description: |
+        Reporting period. Supported values:
+          last-week / last-7d    → last 7 days from now
+          last-30d               → last 30 days from now
+          2026-W19               → ISO week number (week 19 of 2026)
+    period_days:
+      type: integer
+      default: 7
+      description: |
+        Alternative to `period` — specify period as number of days.
+        Ignored if `period` is provided.
+    focus:
+      type: [string, "null"]
+      default: null
+      description: |
+        Optional focus filter. null = all skills and all statuses.
+        "failures" = focus on failed runs.
+        A skill name = focus on that specific skill.
+    format:
+      type: string
+      enum: [markdown, json]
+      default: markdown
+      description: |
+        Output format. "markdown" = human-readable summary_markdown field
+        is the primary output. "json" = structured fields only.
+    skills:
+      type: [array, "null"]
+      items:
+        type: string
+      default: null
+      description: |
+        Restrict report to runs from these skill names only. null = all skills.
