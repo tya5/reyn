@@ -6,13 +6,28 @@ role: workspace_initializer
 max_act_turns: 0
 allowed_ops: []
 preprocessor:
-  # Step 1: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
-  # target_skill is a short skill name only (e.g. "direct_llm"); no path strings from LLM.
-  # Runs in trusted mode (copy_to_work_resolver.py) because resolve_skill_path does
-  # filesystem existence checks. Pure-mode functions live in copy_to_work.py.
+  # Step 1: extract target skill name from the input artifact (pure dict/regex — safe mode).
+  # Handles the improvement_session shape: data.target_skill is a short skill name
+  # (e.g. "direct_llm"). Also handles top-level target_skill (OS runtime shape) and
+  # user_message free-form text via regex. No filesystem access.
+  - type: python
+    module: ./copy_to_work.py
+    function: extract_skill_name
+    into: data._name
+    output_schema:
+      type: object
+      properties:
+        target_skill: {type: string}
+      required: [target_skill]
+
+  # Step 2: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
+  # Reads data._name.target_skill (set by step 1) and calls resolve_skill_path which
+  # does filesystem existence checks. Runs in unsafe mode because resolve_skill_path
+  # imports reyn.skill.skill_paths (a reyn module) and performs Path.exists() I/O.
+  # All dict/regex logic was moved to step 1 (safe mode) in R-PURE-MODE-REDEFINE Class B.
   - type: python
     module: ./copy_to_work_resolver.py
-    function: compute_paths
+    function: resolve_paths
     into: data._prep
     output_schema:
       type: object
@@ -28,7 +43,7 @@ preprocessor:
       required: [skill_glob, phases_glob, work_dir, original_skill_root, skill_slug,
                  target_skill_path, target_skill_root, eval_spec_path]
 
-  # Step 2: glob skill.md using the computed pattern
+  # Step 3: glob skill.md using the computed pattern
   - type: run_op
     op:
       kind: file
@@ -38,7 +53,7 @@ preprocessor:
       path: data._prep.skill_glob
     into: data._glob_skill
 
-  # Step 3: glob phases/*.md using the computed pattern
+  # Step 4: glob phases/*.md using the computed pattern
   - type: run_op
     op:
       kind: file
@@ -48,7 +63,7 @@ preprocessor:
       path: data._prep.phases_glob
     into: data._glob_phases
 
-  # Step 4: combine glob results into a copy plan (excludes eval.md)
+  # Step 5: combine glob results into a copy plan (excludes eval.md)
   - type: python
     module: ./copy_to_work.py
     function: build_copy_plan
@@ -62,7 +77,7 @@ preprocessor:
           rel: {type: string}
         required: [src, rel]
 
-  # Step 5: read each source file
+  # Step 6: read each source file
   - type: iterate
     over: data._copy_plan
     apply:
@@ -76,7 +91,7 @@ preprocessor:
     into: data._reads
     on_error: fail
 
-  # Step 6: pair read results with destination paths
+  # Step 7: pair read results with destination paths
   - type: python
     module: ./copy_to_work.py
     function: build_write_ops
@@ -90,7 +105,7 @@ preprocessor:
           content: {type: string}
         required: [dst, content]
 
-  # Step 7: write each file to the work directory
+  # Step 8: write each file to the work directory
   - type: iterate
     over: data._write_ops
     apply:
@@ -106,7 +121,7 @@ preprocessor:
     into: data._write_results
     on_error: fail
 
-  # Step 8: validate that all expected files were written
+  # Step 9: validate that all expected files were written
   - type: python
     module: ./copy_to_work.py
     function: validate_copy
@@ -120,7 +135,7 @@ preprocessor:
         work_dir:       {type: string}
       required: [ok, files_written, files_expected, work_dir]
 
-  # Step 9: inject resolved path fields into the session for downstream phases
+  # Step 10: inject resolved path fields into the session for downstream phases
   - type: python
     module: ./copy_to_work.py
     function: inject_resolved_paths

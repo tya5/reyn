@@ -4,12 +4,93 @@ All functions here run in the pure-mode AST sandbox (no I/O, no reyn imports).
 File I/O (glob, read, write) is delegated to run_op steps in the preprocessor
 chain.
 
-The trusted-mode compute_paths function (which calls resolve_skill_path) lives
-in copy_to_work_resolver.py to keep this file importable in pure mode.
+The unsafe-mode resolve_paths function (which calls resolve_skill_path) lives
+in copy_to_work_resolver.py to keep this file importable in safe mode.
 
 NOTE: Do NOT add 'from __future__ import annotations' and do NOT import any
 reyn modules at the top level — the pure-mode AST sandbox blocks both.
 """
+import re
+
+# Regex patterns tried in order to extract a skill name from natural language.
+# Pattern 1 matches "skill named <name>" (preferred, explicit).
+# Pattern 2 is a loose fallback: "for <name>" at word boundary.
+_PATTERNS = [
+    re.compile(r"skill named\s+([A-Za-z_][A-Za-z0-9_]*)"),
+    re.compile(r"for\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s|$|\.)"),
+]
+
+
+def extract_skill_name(artifact):
+    """Extract the target skill name from the input artifact (pure dict/regex).
+
+    Runs in safe mode — no I/O, no reyn imports. All operations are pure
+    dict access and regex matching over the artifact payload.
+
+    The artifact is an improvement_session whose data.target_skill is the
+    short skill name (e.g. "direct_llm"). The OS may pass the artifact in
+    two structural shapes:
+
+      A. Wrapped form (typed improvement_session)::
+
+            {"type": "improvement_session", "data": {"target_skill": "direct_llm"}}
+
+      B. Top-level form — when the LLM emits
+         ``invoke_skill(input={"target_skill": "..."})`` without a type wrapper::
+
+            {"target_skill": "direct_llm"}
+
+    Priority order:
+      1. Top-level ``target_skill`` (form B — actual OS runtime shape)
+      2. ``data.target_skill`` (form A — typed improvement_session)
+      3. ``data.text`` regex fallback (user_message free-form input)
+
+    Returns a dict with a single key ``target_skill`` (string). The preprocessor
+    engine places this at ``data._name`` for the subsequent unsafe resolve_paths
+    step to read.
+
+    Raises ValueError if the skill name cannot be determined or is empty.
+
+    Mirrors the same extraction logic as eval_builder's extract_skill_name
+    (analyze_skill.py) as part of the R-PURE-MODE-REDEFINE Class B refactor.
+    """
+    # Priority 1: top-level target_skill — the OS runtime shape for
+    # invoke_skill(input={"target_skill": "..."}). No data wrapper.
+    if "target_skill" in artifact:
+        name = str(artifact["target_skill"]).strip()
+        if not name:
+            raise ValueError(
+                "Artifact has empty top-level 'target_skill' field. "
+                "Provide a short skill name (e.g. \"direct_llm\")."
+            )
+        return {"target_skill": name}
+
+    # Priority 2: wrapped form — data.target_skill (typed improvement_session,
+    # or legacy invocations that nested the input).
+    data = artifact.get("data", {})
+    if "target_skill" in data:
+        name = str(data["target_skill"]).strip()
+        if not name:
+            raise ValueError(
+                "Artifact has empty 'data.target_skill' field. "
+                "Provide a short skill name (e.g. \"direct_llm\")."
+            )
+        return {"target_skill": name}
+
+    # Priority 3: natural-language text fallback (user_message or similar).
+    # text may live at the top level or under data depending on how the OS
+    # constructed the artifact.
+    text = str(artifact.get("text") or data.get("text") or "").strip()
+    for pattern in _PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return {"target_skill": match.group(1)}
+
+    raise ValueError(
+        f"Cannot extract skill name from user_message text: {text!r}. "
+        "Please use the form \"Improve skill named <name>\" or "
+        "pass a structured improvement_session artifact with target_skill set."
+    )
 
 
 def build_copy_plan(artifact):

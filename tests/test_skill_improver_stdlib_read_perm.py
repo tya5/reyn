@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reyn.compiler.loader import load_dsl_skill
 from reyn.permissions.permissions import PermissionDecl, PermissionResolver
-from reyn.skill.skill_paths import stdlib_root
+from reyn.skill.skill_paths import resolve_skill_path, stdlib_root
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -181,4 +182,59 @@ def test_eval_builder_decl_includes_stdlib_read():
     assert any("stdlib" in p and "skills" in p for p in paths), (
         f"eval_builder.permissions.file.read must include a stdlib skills path; "
         f"got: {paths}"
+    )
+
+
+# ── R-PURE-MODE-REDEFINE Class B: permission declarations ────────────────────
+
+
+def _load_skill_improver_skill() -> object:
+    """Load the skill_improver Skill object from its installed stdlib path."""
+    skill_dir, _ = resolve_skill_path("skill_improver")
+    skill_md = Path(skill_dir) / "skill.md"
+    return load_dsl_skill(skill_md)
+
+
+def test_skill_improver_permissions_python_has_unsafe_resolve_paths():
+    """Tier 2: skill_improver skill.md declares resolve_paths as mode=unsafe.
+
+    resolve_paths is the only unsafe step in copy_to_work_resolver.py — it calls
+    resolve_skill_path which performs Path.exists() filesystem checks.
+    All dict/regex logic was moved to the preceding safe extract_skill_name step
+    as part of the R-PURE-MODE-REDEFINE Class B refactor (formerly compute_paths).
+
+    Guards that the permissions.python block is present and correct.
+    """
+    skill = _load_skill_improver_skill()
+
+    unsafe_entries = [
+        p for p in skill.permissions.python
+        if p.module == "./copy_to_work_resolver.py"
+        and p.function == "resolve_paths"
+        and p.mode == "unsafe"
+    ]
+    assert unsafe_entries, (
+        "skill_improver skill.md must declare "
+        "./copy_to_work_resolver.py:resolve_paths with mode=unsafe in permissions.python"
+    )
+
+
+def test_skill_improver_permissions_python_extract_skill_name_is_safe():
+    """Tier 2: skill_improver skill.md declares extract_skill_name as mode=safe.
+
+    extract_skill_name is pure dict + regex — no I/O, no reyn imports.
+    Guards that the R-PURE-MODE-REDEFINE Class B refactor correctly declares
+    the new safe step in copy_to_work.py.
+    """
+    skill = _load_skill_improver_skill()
+
+    safe_entries = [
+        p for p in skill.permissions.python
+        if p.module == "./copy_to_work.py"
+        and p.function == "extract_skill_name"
+        and p.mode == "safe"
+    ]
+    assert safe_entries, (
+        "skill_improver skill.md must declare "
+        "./copy_to_work.py:extract_skill_name with mode=safe in permissions.python"
     )

@@ -27,7 +27,23 @@ from reyn.skill.skill_paths import (
     eval_md_path_for,
     resolve_skill_path,
 )
-from reyn.stdlib.skills.skill_improver.copy_to_work_resolver import compute_paths
+from reyn.stdlib.skills.skill_improver.copy_to_work import extract_skill_name
+from reyn.stdlib.skills.skill_improver.copy_to_work_resolver import resolve_paths
+
+
+def compute_paths(artifact: dict) -> dict:
+    """Test helper: chain extract_skill_name → resolve_paths, mimicking the preprocessor.
+
+    Simulates the two-step preprocessor chain introduced by R-PURE-MODE-REDEFINE
+    Class B. Tests that previously called compute_paths directly now call this
+    helper to exercise the same end-to-end path resolution behaviour.
+    """
+    name_result = extract_skill_name(artifact)
+    enriched = dict(artifact)
+    enriched.setdefault("data", {})
+    enriched["data"] = dict(enriched["data"])
+    enriched["data"]["_name"] = name_result
+    return resolve_paths(enriched)
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

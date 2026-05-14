@@ -50,8 +50,12 @@ permissions:
     - path: reyn/project
       scope: recursive
   python:
+    - module: ./copy_to_work.py
+      function: extract_skill_name
+      mode: safe
+      timeout: 5
     - module: ./copy_to_work_resolver.py
-      function: compute_paths
+      function: resolve_paths
       mode: unsafe
       timeout: 5
     - module: ./copy_to_work.py
