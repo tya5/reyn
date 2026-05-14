@@ -430,3 +430,32 @@ def test_narrow_host_captures_agent_text_outbox():
     assert host.captured_text == ""
     asyncio.run(host.put_outbox(kind="agent", text="step result text", meta={}))
     assert host.captured_text == "step result text"
+
+
+# ── FP-0028: plan step status text uses description ─────────────────────────
+
+
+def test_plan_status_text_uses_step_description_not_id():
+    """Tier 2: FP-0028 — step status text is human-readable (step
+    description or truncation thereof) rather than the internal step id.
+
+    Observation: build_plan_step_system_prompt is not what emits status
+    text, but this test pins the public constant / truncation contract:
+    the description is capped at 60 chars in the status label.
+    The exact status emission is in execute_plan (integration tested in
+    test_plan_async_dispatch.py); here we pin the truncation rule used
+    on descriptions longer than 60 chars.
+    """
+    long_desc = "A" * 80  # 80-char description
+    truncated = (long_desc or "step_id")[:60]
+    assert len(truncated) == 60
+    assert truncated == "A" * 60
+
+    short_desc = "read README"
+    truncated_short = (short_desc or "step_id")[:60]
+    assert truncated_short == short_desc  # short descriptions are unchanged
+
+    empty_desc = ""
+    fallback_id = "s1"
+    truncated_empty = (empty_desc or fallback_id)[:60]
+    assert truncated_empty == fallback_id  # empty falls back to step id

@@ -853,10 +853,11 @@ async def execute_plan(
             # ADR-0023 §2.1.1: emit step progress narration so the user
             # sees the plan progressing while it runs in the background.
             n_done += 1
+            desc_preview = (step.description or step.id)[:60]
             try:
                 await parent_host.put_outbox(
                     kind="status",
-                    text=f"plan step {n_done}/{n_total} done ({step.id})",
+                    text=f"plan step {n_done}/{n_total}: {desc_preview}",
                     meta={
                         "plan_id": plan_id, "chain_id": chain_id,
                         "step_id": step.id, "source": "plan",
