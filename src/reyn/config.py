@@ -589,6 +589,76 @@ class PlanConfig:
 
 
 @dataclass
+class ExporterConfig:
+    """`eval.exporters[]:` — a single trace exporter backend declaration.
+
+    Fields:
+        type:       ``'file'`` | ``'langfuse'`` | ``'otlp'`` | ``'ietf_audit'``
+        path:       Local output dir / file path (file / ietf_audit backends).
+        public_key: Langfuse public API key (supports ``${VAR}``).
+        secret_key: Langfuse secret API key (supports ``${VAR}``).
+        host:       Langfuse base URL (e.g. ``https://cloud.langfuse.com``).
+        endpoint:   OTLP collector endpoint (e.g. ``http://localhost:4318``).
+    """
+
+    type: str = "file"
+    path: str = ".reyn/traces"
+    public_key: str = ""
+    secret_key: str = ""
+    host: str = ""
+    endpoint: str = ""
+
+
+@dataclass
+class EvalConfig:
+    """`eval:` — trace export configuration (FP-0007 Component A).
+
+    When absent from reyn.yaml the section defaults to an empty exporters
+    list (= no export, full backward compatibility).
+
+    Example::
+
+        eval:
+          exporters:
+            - type: file
+              path: .reyn/traces/
+            - type: langfuse
+              public_key: ${LANGFUSE_PUBLIC_KEY}
+              secret_key: ${LANGFUSE_SECRET_KEY}
+              host: https://your-langfuse.example.com
+            - type: otlp
+              endpoint: http://localhost:4317
+            - type: ietf_audit
+              path: .reyn/audit-trail/
+    """
+
+    exporters: list[ExporterConfig] = field(default_factory=list)
+
+
+def _build_eval_config(raw: object) -> EvalConfig:
+    """Parse the ``eval:`` section. Empty / missing returns empty exporters list."""
+    if not isinstance(raw, dict):
+        return EvalConfig()
+    exporters_raw = raw.get("exporters") or []
+    if not isinstance(exporters_raw, list):
+        return EvalConfig()
+    exporters: list[ExporterConfig] = []
+    for entry in exporters_raw:
+        if not isinstance(entry, dict):
+            continue
+        exp_type = str(entry.get("type", "file"))
+        exporters.append(ExporterConfig(
+            type=exp_type,
+            path=str(entry.get("path", ".reyn/traces")),
+            public_key=str(entry.get("public_key", "")),
+            secret_key=str(entry.get("secret_key", "")),
+            host=str(entry.get("host", "")),
+            endpoint=str(entry.get("endpoint", "")),
+        ))
+    return EvalConfig(exporters=exporters)
+
+
+@dataclass
 class SkillResumeConfig:
     """`skill_resume:` — policy for handling ambiguous steps on resume.
 
@@ -743,6 +813,9 @@ class ReynConfig:
     web: WebConfig = field(default_factory=WebConfig)
     # FP-0029: plan-mode execution tuning (step iteration budget, etc.)
     plan: PlanConfig = field(default_factory=PlanConfig)
+    # FP-0007 Component A: trace export adapter config.
+    # Empty exporters list (default) = no export; full backward compat.
+    eval: EvalConfig = field(default_factory=EvalConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1001,6 +1074,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         web=_build_web_config(merged.get("web")),
         skill_search=_build_skill_search_config(merged.get("skill_search")),
         plan=_build_plan_config(merged.get("plan")),
+        eval=_build_eval_config(merged.get("eval")),
     )
 
 
