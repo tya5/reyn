@@ -24,6 +24,7 @@ from reyn.budget.budget import (
 )
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
+    AutoResumeHandler,
     BudgetGateway,
     ChainManager,
     CompactionController,
@@ -754,6 +755,18 @@ class ChatSession:
             render_summary=_render_summary_for_storage,
         )
 
+        # FP-0019 Wave 3: crash recovery service.
+        # Discovers in-flight skill_runs from WAL and re-spawns them on
+        # session start.  All business logic lives in AutoResumeHandler;
+        # session delegates via _auto_resume_active_skills() (thin wrapper).
+        self._auto_resume_handler = AutoResumeHandler(
+            event_log=self._chat_events,
+            state_log=self._state_log,
+            get_skill_registry=self._get_skill_registry,
+            drop_interventions_for_run=self._drop_interventions_for_run,
+            launcher=self._spawn_resumed_skill,
+        )
+
     # ── cost accumulation ───────────────────────────────────────────────────────
 
     def _accumulate(self, result) -> None:
@@ -1080,54 +1093,25 @@ class ChatSession:
         config: "SkillResumeConfig | None" = None,
         launcher: "Callable[[Any], Awaitable[None]] | None" = None,
     ) -> list:
-        """Discover active skill runs, apply resume policy, launch tasks.
+        """Thin delegation wrapper → AutoResumeHandler._resume_and_collect.
 
-        Headline UX of PR-resume-auto: after restore_state rehydrates
-        the agent's snapshot + WAL, this auto-launches resume tasks for
-        every still-active skill_run with no interactive prompt.
+        FP-0019 Wave 3: business logic extracted to
+        ``src/reyn/chat/services/auto_resume_handler.py``.  This wrapper
+        preserves the original call signature and list-return type so
+        existing callers (tests + startup chain) continue to work unchanged.
 
-        Algorithm:
-          1. Discover active runs via SkillResumeCoordinator
-             (per-skill SkillSnapshot files + WAL)
-          2. For each, build a ResumePlan and apply the operator's
-             ``reyn.yaml`` policy (default = retry)
-          3. ``discard`` decisions: call SkillRegistry.complete +
-             drop pending interventions (no task launched)
-          4. All other decisions: invoke ``launcher(decision)`` so
-             the caller (production = ``self._spawn_resumed_skill``)
-             can wire the actual asyncio task
-
-        ``launcher`` is dependency-injected so tests can inspect
-        decisions without launching real skill runtimes. Production
-        callers pass None to use the default launcher.
+        ``launcher`` is dependency-injected so tests can inspect decisions
+        without launching real skill runtimes.  Production callers pass
+        ``None`` to use the default launcher (``_spawn_resumed_skill``).
 
         Returns the list of decisions that were launched (= decisions
         minus discards).
         """
-        from reyn.config import SkillResumeConfig as _Config
-        from reyn.skill.skill_resume_coordinator import (
-            SkillResumeCoordinator as _Coord,
+        return await self._auto_resume_handler._resume_and_collect(
+            coordinator=coordinator,
+            config=config,
+            launcher=launcher,
         )
-        coord = coordinator or _Coord()
-        cfg = config or _Config()
-        registry = self._get_skill_registry()
-        if registry is None or self._state_log is None:
-            return []
-        decisions = coord.discover_and_decide(
-            skill_registry=registry,
-            state_log=self._state_log,
-            policy=cfg,
-        )
-        if not decisions:
-            return []
-        remaining = await coord.apply_decisions(
-            decisions, skill_registry=registry,
-            drop_interventions_for_run=self._drop_interventions_for_run,
-        )
-        actual_launcher = launcher or self._spawn_resumed_skill
-        for decision in remaining:
-            await actual_launcher(decision)
-        return remaining
 
     async def _spawn_resumed_skill(self, decision: "Any") -> None:
         """Default launcher used by ``_auto_resume_active_skills``.
