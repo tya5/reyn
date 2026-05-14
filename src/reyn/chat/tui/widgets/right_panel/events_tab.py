@@ -59,6 +59,9 @@ _EVENT_COLORS: dict[str, str] = {
     "sandboxed_exec_completed":    "#888888",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
+    # Internal routing / multi-agent housekeeping — very dim so they don't
+    # crowd the visible window when many chains fire in a session.
+    "chain_peer_discarded":        "#2a2a2a",
     # Plan-mode (ADR-0022 / 0023 / 0024 / 0025) — orange family so a plan's
     # forensic events stand out from the blue skill_run / workflow events
     # while still reading as a sibling concept.
@@ -140,6 +143,14 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "user_message_received",
         "user_intervention_requested", "user_intervention_received",
         "chat_started", "chat_stopped",
+    })),
+    # Internal routing / housekeeping events — useful for debugging multi-agent
+    # chains and budget resets, but very noisy in normal sessions.
+    ("internal", frozenset({
+        "chain_peer_discarded",
+        "compaction_check",
+        "budget_reset",
+        "workspace_updated",
     })),
 ]
 

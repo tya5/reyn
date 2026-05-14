@@ -113,7 +113,7 @@ class RightPanel(Widget):
         self._project_root = project_root
         self._panel_type = PANEL_TYPES[0]
         self._event_filter_idx: int = 0
-        self._event_tail_idx: int = 0
+        self._event_tail_idx: int = 3  # default tail=200; phase/llm events buried past tail-30
         self._docs_cursor: int = 0
         self._docs_files: list[Path] = []
         self._docs_groups: dict[str, list[Path]] = {}
