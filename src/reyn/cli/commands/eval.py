@@ -302,7 +302,7 @@ def _run_case(
         "actual": actual,
         "pass": passed,
         "score": score,
-        "skill_version_hash": None,  # placeholder: FP-0006 not yet landed
+        "skill_version_hash": None,  # FP-0006-A landed on run_skill_started events; eval result record wiring deferred
         "tags": tags,
         "compare_mode": compare_mode,
         **({"error": error_msg} if error_msg else {}),

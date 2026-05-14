@@ -1,6 +1,7 @@
 """run_skill kind handler — invoke a sub-skill in-process."""
 from __future__ import annotations
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Literal
@@ -11,6 +12,23 @@ from . import register
 from .context import OpContext
 
 _log = logging.getLogger(__name__)
+
+
+def _compute_skill_hash(skill_path: Path) -> str:
+    """Return the sha256 hex digest of a skill.md file's raw bytes.
+
+    Full 64-character hex is used for collision safety; downstream consumers
+    that prefer a shorter prefix can truncate after reading the field.
+
+    Returns "unknown" when the file does not exist (e.g. dynamically-constructed
+    skills that have no on-disk skill.md) so the runtime never crashes on a
+    missing hash.
+    """
+    try:
+        content = skill_path.read_bytes()
+    except (FileNotFoundError, OSError):
+        return "unknown"
+    return hashlib.sha256(content).hexdigest()
 
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
@@ -24,16 +42,24 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
     if ctx.skill is not None:
         sub_skill = ctx.skill.preprocessor_sub_skills.get(op.skill)
 
+    skill_md_path_for_hash: Path | None = None
     if sub_skill is None:
         skill_ref = op.skill
         if "/" not in skill_ref and not skill_ref.endswith(".md"):
             skill_dir, inferred_root = resolve_skill_path(skill_ref)
             skill_md_path = str(skill_dir / "skill.md")
+            skill_md_path_for_hash = skill_dir / "skill.md"
             skill_root = str(inferred_root) if inferred_root else None
         else:
             skill_md_path = skill_ref
+            skill_md_path_for_hash = Path(skill_ref)
             skill_root = None
         sub_skill = load_dsl_skill(skill_md_path, skill_root=skill_root)
+    else:
+        # Pre-loaded preprocessor sub-skill: derive path from the skill spec if
+        # available, otherwise the hash falls back to "unknown".
+        if hasattr(sub_skill, "source_path") and sub_skill.source_path:
+            skill_md_path_for_hash = Path(sub_skill.source_path)
 
     # Model class resolution: op.model is only honoured when it is a known model
     # class in the resolver mapping (e.g. "light", "standard", "strong").
@@ -70,7 +96,8 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
             else:
                 sub_state_dir = str(parent_state / "invoke" / safe_name)
 
-    ctx.events.emit("run_skill_started", skill=op.skill, state_dir=sub_state_dir)
+    skill_hash = _compute_skill_hash(skill_md_path_for_hash) if skill_md_path_for_hash else "unknown"
+    ctx.events.emit("run_skill_started", skill=op.skill, state_dir=sub_state_dir, skill_version_hash=skill_hash)
 
     run_result = await invoke_sub_skill(
         sub_skill, op.input,
