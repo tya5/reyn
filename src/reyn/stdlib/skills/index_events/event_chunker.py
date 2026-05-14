@@ -36,23 +36,36 @@ _ERROR_EXCERPT_MAX = 200
 
 
 def resolve_scan_context(artifact: dict) -> dict:
-    """Phase preprocessor: resolve cursor + discover event files.
+    """Phase preprocessor: resolve cursor + summarise event file inventory.
 
     Receives the full index_events_input artifact. Reads the cursor file
     (if present) to determine the effective lower-bound timestamp, then
-    discovers all .jsonl files under .reyn/events/.
+    discovers all .jsonl files under .reyn/events/ and computes summary
+    statistics WITHOUT exposing the full file list to the LLM.
+
+    The full path list is intentionally excluded from the return value:
+    it can contain 100+ entries (67KB+) which exceeds ARTIFACT_REF_THRESHOLD
+    (8KB) and gets compressed to an artifact_ref the LLM cannot dereference
+    (scan phase declares allowed_ops: []). The postprocessor re-globs files
+    deterministically at run time — it does not need the LLM to echo them.
 
     Returns:
         {
-            "since":          str,          # effective ISO-8601 lower bound
-            "event_files":    list[str],    # all discovered .jsonl paths
-            "cursor_exists":  bool,
-            "cursor_value":   str | null,
+            "since":              str,           # effective ISO-8601 lower bound
+            "event_files_count":  int,           # number of candidate .jsonl files
+            "oldest_timestamp":   str | null,    # oldest file mtime ISO string (approx)
+            "newest_timestamp":   str | null,    # newest file mtime ISO string (approx)
+            "skill_filter":       list[str] | null,
+            "mode":               str,           # "append" | "replace"
+            "cursor_exists":      bool,
+            "cursor_value":       str | null,
         }
     """
     data = artifact.get("data") or {}
     since_input: str | None = data.get("since")
     mode: str = str(data.get("mode") or "append")
+    skill_filter_raw = data.get("skills") or data.get("skill_filter")
+    skill_filter: list[str] | None = list(skill_filter_raw) if skill_filter_raw else None
 
     cursor_exists = _CURSOR_FILE.exists()
     cursor_value: str | None = None
@@ -72,9 +85,33 @@ def resolve_scan_context(artifact: dict) -> dict:
         since = _EPOCH_ISO
 
     event_files = _discover_event_files()
+    event_files_count = len(event_files)
+
+    # Compute oldest/newest via file mtime (cheap — avoids reading JSONL content)
+    oldest_timestamp: str | None = None
+    newest_timestamp: str | None = None
+    if event_files:
+        mtimes = []
+        for fp in event_files:
+            try:
+                mtimes.append(os.path.getmtime(fp))
+            except OSError:
+                pass
+        if mtimes:
+            def _mtime_to_iso(mts: float) -> str:
+                return datetime.fromtimestamp(mts, tz=timezone.utc).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                )
+            oldest_timestamp = _mtime_to_iso(min(mtimes))
+            newest_timestamp = _mtime_to_iso(max(mtimes))
+
     return {
         "since": since,
-        "event_files": event_files,
+        "event_files_count": event_files_count,
+        "oldest_timestamp": oldest_timestamp,
+        "newest_timestamp": newest_timestamp,
+        "skill_filter": skill_filter,
+        "mode": mode,
         "cursor_exists": cursor_exists,
         "cursor_value": cursor_value,
     }

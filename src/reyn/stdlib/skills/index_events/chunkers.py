@@ -135,8 +135,16 @@ def run_collect_chunks(artifact: dict) -> dict:
     """Postprocessor python step: chunk events into run-unit JSONL.
 
     Receives the full postprocessor artifact (= LLM scan_plan merged with
-    skill input data). Extracts since, event_files, skill_filter, and mode
-    from the artifact, then calls the pure collect_run_chunks logic.
+    skill input data). Extracts `since` and `skill_filter` from the LLM
+    artifact, then re-globs event files deterministically from the workspace
+    `.reyn/events/` directory.
+
+    IMPORTANT: This function intentionally does NOT read `event_files` from
+    the artifact. The scan preprocessor no longer exposes the full file list
+    to the LLM (BUG-1 fix: the list exceeded ARTIFACT_REF_THRESHOLD, causing
+    the OS to compress it to an artifact_ref the LLM could not dereference,
+    leading to hallucinated file paths and chunk_count=0). File discovery is
+    purely deterministic and belongs in the postprocessor, not in LLM context.
 
     Writes chunks to artifacts/event_chunks.jsonl for the embed op.
     Returns summary dict placed at data.chunk_stats:
@@ -148,13 +156,17 @@ def run_collect_chunks(artifact: dict) -> dict:
     """
     data = artifact.get("data") or {}
     since_str: str | None = str(data.get("since") or "") or None
-    event_files_raw: list[str] = list(data.get("event_files") or [])
     skill_filter_raw = data.get("skill_filter")
     skill_filter: list[str] | None = list(skill_filter_raw) if skill_filter_raw else None
 
     since_dt: datetime | None = None
     if since_str and since_str != _EPOCH_ISO:
         since_dt = _parse_iso_safe(since_str)
+
+    # Re-glob event files deterministically — do NOT use data.event_files from
+    # the LLM artifact (it is no longer provided; BUG-1 fix).
+    events_root = str(Path(".reyn") / "events")
+    file_paths = _discover_event_files(events_root)
 
     output_path = Path(_CHUNKS_JSONL_PATH)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -165,7 +177,6 @@ def run_collect_chunks(artifact: dict) -> dict:
     chunk_index = 0
 
     with open(output_path, "w", encoding="utf-8") as out_f:
-        file_paths = [Path(f) for f in event_files_raw if f]
         for run_id, events, source_file in _stream_runs(file_paths):
             result = _build_chunk(run_id, events, source_file, since_dt, skill_filter)
             if result is None:

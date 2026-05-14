@@ -14,12 +14,13 @@ description: |
 entry: scan
 final_output: scan_plan
 final_output_description: |
-  LLM-contract artifact: echoes back the resolved since timestamp, event file
-  list, optional skill filter, and mode. The skill postprocessor uses this to
+  LLM-contract artifact: echoes back the resolved since timestamp, inventory
+  summary (count + ts range), optional skill filter, and mode. The skill
+  postprocessor re-globs event files deterministically and uses `since` to
   run the deterministic chunk → embed → index_write pipeline.
 finish_criteria:
   - Preprocessor-resolved scan context was reviewed
-  - scan_plan artifact echoes since, event_files, skill_filter, and mode
+  - scan_plan artifact echoes since, event_files_count, skill_filter, and mode
 search_hints:
   - "index my event log for recall queries"
   - "build operational intelligence from P6 events"
@@ -101,9 +102,10 @@ into the existing RAG infrastructure (ADR-0033). Uses `embed` / `index_write`
 ## Execution flow
 
 1. **Phase `scan`** (LLM):
-   - OS preprocessor runs `resolve_scan_context` to read cursor + discover files
-   - LLM echoes the resolved `since`, `event_files`, `skill_filter`, `mode` into
-     the `scan_plan` artifact and finishes immediately
+   - OS preprocessor runs `resolve_scan_context` to read cursor + summarise file
+     inventory (count + ts range; full path list is NOT exposed to the LLM)
+   - LLM echoes the resolved `since`, `event_files_count`, `skill_filter`, `mode`
+     into the `scan_plan` artifact and finishes immediately
 
 2. **Skill.postprocessor** (deterministic, LLM not involved):
    - `collect_run_chunks` (python step, unsafe): walks `.reyn/events/` from

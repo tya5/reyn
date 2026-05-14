@@ -8,6 +8,7 @@ Covers:
   - advance_cursor / read_cursor: round-trip and missing-file behaviour
   - text format contains required fields
   - skill.md compiles without errors
+  - BUG-1 regression: resolve_scan_context output < ARTIFACT_REF_THRESHOLD
 """
 from __future__ import annotations
 
@@ -21,7 +22,9 @@ from reyn.stdlib.skills.index_events.chunkers import (
     advance_cursor,
     collect_run_chunks,
     read_cursor,
+    run_collect_chunks,
 )
+from reyn.stdlib.skills.index_events.event_chunker import resolve_scan_context
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -376,6 +379,120 @@ def test_index_events_skill_graph_single_phase():
     skill = load_dsl_skill(skill_md, skill_root=skill_root)
     transitions = skill.graph.transitions.get("scan", [])
     assert transitions == [], f"Expected no transitions from scan, got: {transitions}"
+
+
+# ── Tier 2: BUG-1 regression — preprocessor output must stay below threshold ──
+
+
+def test_resolve_scan_context_output_size_under_threshold(tmp_path, monkeypatch):
+    """Tier 2: resolve_scan_context output JSON < 8000 bytes even with 100+ event files (BUG-1 regression).
+
+    ARTIFACT_REF_THRESHOLD = 8000 bytes.  If the preprocessor output exceeds
+    that, the OS converts it to an artifact_ref which the LLM cannot
+    dereference (scan phase has allowed_ops: []), causing hallucinated file
+    paths and chunk_count=0.
+    """
+    # Create 120 dummy .jsonl files under a fake .reyn/events/ dir
+    fake_events = tmp_path / ".reyn" / "events" / "2026-05"
+    fake_events.mkdir(parents=True)
+    for i in range(120):
+        (fake_events / f"run_{i:04d}.jsonl").write_text("{}\n", encoding="utf-8")
+
+    # Patch the module-level _EVENTS_DIR and _CURSOR_FILE to use tmp_path
+    import reyn.stdlib.skills.index_events.event_chunker as ec
+    original_events_dir = ec._EVENTS_DIR
+    original_cursor_file = ec._CURSOR_FILE
+    ec._EVENTS_DIR = tmp_path / ".reyn" / "events"
+    ec._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
+    try:
+        artifact = {"data": {"mode": "append"}}
+        result = resolve_scan_context(artifact)
+    finally:
+        ec._EVENTS_DIR = original_events_dir
+        ec._CURSOR_FILE = original_cursor_file
+
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert len(serialized) < 8000, (
+        f"resolve_scan_context output exceeds ARTIFACT_REF_THRESHOLD (8000 bytes): "
+        f"{len(serialized)} bytes. Output keys: {list(result.keys())}"
+    )
+
+
+def test_resolve_scan_context_returns_count_not_paths(tmp_path, monkeypatch):
+    """Tier 2: resolve_scan_context returns event_files_count (int) and NOT event_files (list) (BUG-1).
+
+    The file list is the root cause of BUG-1: it makes the output too large.
+    Verify the contract has changed to count-only.
+    """
+    fake_events = tmp_path / ".reyn" / "events"
+    fake_events.mkdir(parents=True)
+    (fake_events / "run_001.jsonl").write_text("{}\n", encoding="utf-8")
+    (fake_events / "run_002.jsonl").write_text("{}\n", encoding="utf-8")
+
+    import reyn.stdlib.skills.index_events.event_chunker as ec
+    original_events_dir = ec._EVENTS_DIR
+    original_cursor_file = ec._CURSOR_FILE
+    ec._EVENTS_DIR = fake_events
+    ec._CURSOR_FILE = tmp_path / ".reyn" / "index" / "events_cursor"
+    try:
+        result = resolve_scan_context({"data": {"mode": "append"}})
+    finally:
+        ec._EVENTS_DIR = original_events_dir
+        ec._CURSOR_FILE = original_cursor_file
+
+    assert "event_files_count" in result, (
+        f"'event_files_count' missing from resolve_scan_context output: {list(result.keys())}"
+    )
+    assert isinstance(result["event_files_count"], int), (
+        f"event_files_count should be int, got {type(result['event_files_count'])}"
+    )
+    assert result["event_files_count"] == 2, (
+        f"Expected 2 files, got {result['event_files_count']}"
+    )
+    assert "event_files" not in result, (
+        f"'event_files' (the old path list) must NOT appear in output — it triggers BUG-1. "
+        f"Keys: {list(result.keys())}"
+    )
+
+
+def test_run_collect_chunks_reglobs_files_internally(tmp_path, monkeypatch):
+    """Tier 2: run_collect_chunks succeeds without event_files in the artifact (BUG-1 fix).
+
+    After BUG-1 fix, the postprocessor must discover files via re-glob, not
+    by reading event_files from the LLM artifact. Passing an artifact with no
+    event_files key must still produce correct chunks.
+    """
+    # Write events under tmp_path/.reyn/events/ (cwd-relative path used by run_collect_chunks)
+    events_dir = tmp_path / ".reyn" / "events" / "2026-05"
+    events_dir.mkdir(parents=True)
+    events = _run_events(skill="my_skill", run_id="rc_001")
+    (events_dir / "rc_001.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
+    )
+
+    # Artifact has since + mode but NO event_files
+    artifact = {
+        "data": {
+            "since": "1970-01-01T00:00:00Z",
+            "mode": "append",
+            "skill_filter": None,
+            # deliberately omit event_files
+        }
+    }
+
+    # run_collect_chunks writes to cwd-relative artifacts/event_chunks.jsonl
+    # Change cwd to tmp_path so the re-glob and output path are correct
+    original_cwd = os.getcwd()
+    os.chdir(str(tmp_path))
+    try:
+        result = run_collect_chunks(artifact)
+    finally:
+        os.chdir(original_cwd)
+
+    assert result["chunk_count"] == 1, (
+        f"Expected 1 chunk from re-glob, got {result['chunk_count']}. "
+        f"Skipped: {result['skipped_runs']}, filtered: {result['filtered_runs']}"
+    )
 
 
 # ── TODO(fp-0009): Tier 3 e2e ─────────────────────────────────────────────────
