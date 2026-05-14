@@ -92,3 +92,7 @@ Links to related ADRs, PRs, and docs.
 | [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |
 | [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
 | [0026](0026-op-permission-cross-layer-coherence.md) | Op/Permission cross-layer coherence — `reyn skill validate` + auto-derived permission requirements from allowed_ops | proposed | SMALL |
+| [0027](0027-plan-step-failure-transparency.md) | Plan step failure transparency — thread `step_failures` to router synthesis | proposed | SMALL |
+| [0028](0028-plan-progress-ux.md) | Plan progress UX — show step description instead of step.id in status messages | proposed | SMALL |
+| [0029](0029-plan-step-iteration-budget.md) | Plan step iteration budget — raise `_PLAN_STEP_MAX_ITERATIONS` from 3 to 5 | proposed | SMALL |
+| [0030](0030-plan-step-result-quality.md) | Plan step result quality — richer output guidance (code snippets, ~800 char soft cap) | proposed | SMALL |
