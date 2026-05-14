@@ -78,10 +78,23 @@ permissions:
       function: inject_resolved_paths
       mode: safe
       timeout: 5
+    # FP-0006 C: trace_collector for collect_traces phase preprocessor.
+    # Unsafe mode: globs .reyn/events/**/*.jsonl when recall fallback path engages.
     - module: ./trace_collector.py
       function: collect_traces
       mode: unsafe
       timeout: 30
+    # FP-0006 B+D: version snapshot + on_propose config gate (finalize preprocessor).
+    # Unsafe mode: reads original skill.md from disk, writes .reyn/skill-versions/,
+    # manages the `current` pointer file, calls load_config() for on_propose.
+    - module: ./version_snapshot.py
+      function: save_snapshot
+      mode: unsafe
+      timeout: 10
+    - module: ./version_snapshot.py
+      function: read_on_propose_config
+      mode: unsafe
+      timeout: 5
 ---
 
 ## Overview

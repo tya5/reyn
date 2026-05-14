@@ -576,6 +576,64 @@ _SANDBOX_ON_UNSUPPORTED = {"warn", "error", "ignore"}
 
 
 @dataclass
+class SelfImprovementConfig:
+    """`self_improvement:` — skill_improver behavior knobs (FP-0006).
+
+    Fields:
+        on_propose:
+            What skill_improver does when it is about to apply improvements
+            back to the original skill directory:
+
+            - ``ask_user`` (default): pause and prompt the user via the
+              InterventionBus (summarise score + changes, wait for approval
+              before writing). Safe default — the user is in the loop.
+            - ``auto``: skip the prompt and apply directly. Intended for CI /
+              unattended runs where the operator trusts the eval gate.
+            - ``disabled``: do NOT apply the changes. Log a
+              ``skill_improvement_dry_run`` event noting what would have been
+              applied. Useful for "what would improve this skill?" exploration
+              without modifying the source.
+
+        max_versions:
+            Maximum number of v<N>.md snapshot files kept in
+            ``.reyn/skill-versions/<name>/``.  When the cap is exceeded the
+            OLDEST version is deleted (the version pointed to by ``current``
+            is never deleted).  Default 10.  Set 0 to disable pruning.
+    """
+
+    on_propose: Literal["ask_user", "auto", "disabled"] = "ask_user"
+    max_versions: int = 10
+
+    def __post_init__(self) -> None:
+        _VALID_ON_PROPOSE = {"ask_user", "auto", "disabled"}
+        if self.on_propose not in _VALID_ON_PROPOSE:
+            raise ValueError(
+                f"self_improvement.on_propose {self.on_propose!r} is not one of "
+                f"{sorted(_VALID_ON_PROPOSE)}"
+            )
+        if self.max_versions < 0:
+            raise ValueError(
+                f"self_improvement.max_versions must be >= 0, got {self.max_versions}"
+            )
+
+
+def _build_self_improvement_config(raw: object) -> "SelfImprovementConfig":
+    """Parse the ``self_improvement:`` section. Empty / missing returns defaults."""
+    defaults = SelfImprovementConfig()
+    if not isinstance(raw, dict):
+        return defaults
+    on_propose_raw = raw.get("on_propose", defaults.on_propose)
+    on_propose = str(on_propose_raw) if on_propose_raw is not None else defaults.on_propose
+    max_versions_raw = raw.get("max_versions", defaults.max_versions)
+    try:
+        max_versions = int(max_versions_raw)
+    except (TypeError, ValueError):
+        max_versions = defaults.max_versions
+    # Validation is delegated to __post_init__ — raises ValueError with clear message.
+    return SelfImprovementConfig(on_propose=on_propose, max_versions=max_versions)
+
+
+@dataclass
 class SandboxConfig:
     """`sandbox:` — backend selection and unsupported-platform policy (FP-0017).
 
@@ -869,6 +927,8 @@ class ReynConfig:
     # FP-0017: sandbox backend selection + unsupported-platform policy.
     # Default: auto-select the best available backend for this platform.
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
+    # FP-0006 B+D: skill_improver behavior knobs (on_propose gate + max_versions cap).
+    self_improvement: SelfImprovementConfig = field(default_factory=SelfImprovementConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1129,6 +1189,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         plan=_build_plan_config(merged.get("plan")),
         eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
+        self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
     )
 
 
