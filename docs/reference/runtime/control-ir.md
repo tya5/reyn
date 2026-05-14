@@ -233,6 +233,36 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
+## `judge_output`
+
+LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D). Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
+
+```json
+{
+  "kind": "judge_output",
+  "target": "artifact.data.summary",
+  "rubric": "Score 0.0-1.0: is the summary concise, accurate, and complete?",
+  "threshold": 0.8,
+  "on_fail": "transition"
+}
+```
+
+Fields:
+- `target` (str, required): Dot-path to the value being scored (e.g. `"artifact.data.summary"`). Resolved against the current workspace artifact.
+- `rubric` (str, required): LLM prompt body. Skill author writes the evaluation criteria. The OS never interprets this content (P7).
+- `threshold` (float, optional, default `0.8`): Passing score in `[0.0, 1.0]`.
+- `on_fail` (`"transition" | "abort" | "continue"`, optional, default `"transition"`):
+  - `"transition"`: LLM picks next phase (existing decision flow).
+  - `"abort"`: Abort skill execution.
+  - `"continue"`: Score recorded only; no flow change.
+- `model` (str | null, optional): Model class override (e.g. `"strong"`). Defaults to the skill's current model.
+
+Returns: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str, "threshold": float, "on_fail": str}`
+
+Audit event: `tool_executed` with `op=judge_output, target, score, passed, threshold, reason` (P6).
+
+**P7 note**: Reyn is rubric-agnostic. The rubric content is part of the skill's authored prompt; the OS only routes it to the LLM without inspection.
+
 ---
 
 **Note for contributors:** When adding a new Control IR op kind to `src/reyn/schemas/models.py` and `src/reyn/op_runtime/registry.py`, **also add a section here** in the same PR. The reference and the registry must stay in sync — see [CLAUDE.md](https://github.com/tya5/reyn/blob/main/CLAUDE.md) for the rule.

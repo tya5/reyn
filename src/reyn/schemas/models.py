@@ -439,16 +439,34 @@ class IndexDropIROp(BaseModel):
     source: str
 
 
+class JudgeOutputIROp(BaseModel):
+    """LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D).
+
+    The OS resolves `target` to a value, calls an LLM with `rubric`, and
+    returns a score (0.0–1.0) plus a pass/fail flag against `threshold`.
+
+    P7 note: rubric content is owned by the skill author; the OS is rubric-
+    agnostic and never interprets it. `on_fail` uses OS-level vocabulary only.
+    """
+    kind: Literal["judge_output"]
+    target: str              # JSONPath-like dot path, e.g. "artifact.data.summary"
+    rubric: str              # LLM prompt body; skill author owns content (P7)
+    threshold: float = 0.8  # passing score in [0.0, 1.0]
+    on_fail: Literal["transition", "abort", "continue"] = "transition"
+    model: str | None = None  # model class override; None = inherit from ctx
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
 #   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
-#   mcp_install, embed, index_write, index_query, recall, index_drop.
+#   mcp_install, embed, index_write, index_query, recall, index_drop,
+#   sandboxed_exec, judge_output.
 ControlIROp = Annotated[
     Union[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
-        SandboxedExecIROp,
+        SandboxedExecIROp, JudgeOutputIROp,
     ],
     Field(discriminator="kind"),
 ]

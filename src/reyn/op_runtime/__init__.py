@@ -120,6 +120,7 @@ from . import file as _file  # noqa: F401, E402
 from . import index_drop as _index_drop  # noqa: F401, E402
 from . import index_query as _index_query  # noqa: F401, E402
 from . import index_write as _index_write  # noqa: F401, E402
+from . import judge_output as _judge_output  # noqa: F401, E402
 from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402

@@ -60,6 +60,7 @@ from reyn.schemas.models import (
     IndexDropIROp,
     IndexQueryIROp,
     IndexWriteIROp,
+    JudgeOutputIROp,
     LintIROp,
     MCPInstallIROp,
     MCPIROp,
@@ -125,6 +126,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "index_drop":  IndexDropIROp,
     # FP-0017: sandboxed_exec — argv under SandboxPolicy via SandboxBackend.
     "sandboxed_exec": SandboxedExecIROp,
+    # FP-0007 Component D: LLM-based output scorer for in-phase eval loops.
+    "judge_output": JudgeOutputIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -170,6 +173,8 @@ OP_PURITY: dict[str, OpPurity] = {
     "index_drop":  OpPurity.side_effect,
     # FP-0017: sandboxed_exec — same external side-effect class as shell.
     "sandboxed_exec": OpPurity.external,
+    # FP-0007 Component D: LLM call with token cost side effect.
+    "judge_output": OpPurity.llm,
 }
 
 

@@ -167,6 +167,36 @@ OS は server のトランスポート（`stdio`、`http`、`sse`）を解決し
 
 server の設定、トランスポートの選択、セキュリティモデルについては [concepts/mcp.md](../../concepts/mcp.md) を参照してください。
 
+## `judge_output`
+
+Phase 内の評価ループで使用する LLM ベースの出力スコアラー（FP-0007 Component D）。`target` の dot-path で値を解決し、呼び出し元が供給する `rubric` と共に LLM を呼び出し、スコア（0.0〜1.0）と合格/不合格フラグを返します。
+
+```json
+{
+  "kind": "judge_output",
+  "target": "artifact.data.summary",
+  "rubric": "0.0〜1.0 でスコアリング: サマリーは簡潔で正確かつ完全ですか？",
+  "threshold": 0.8,
+  "on_fail": "transition"
+}
+```
+
+フィールド:
+- `target`（str、必須）: スコアリング対象の値への dot-path（例: `"artifact.data.summary"`）。現在のワークスペース artifact に対して解決されます。
+- `rubric`（str、必須）: LLM prompt 本文。評価基準は Skill author が記述します。OS はこの内容を解釈しません（P7）。
+- `threshold`（float、省略可、デフォルト `0.8`）: 合格スコア（`[0.0, 1.0]`）。
+- `on_fail`（`"transition" | "abort" | "continue"`、省略可、デフォルト `"transition"`）:
+  - `"transition"`: LLM が次の Phase を選択（既存の decision フロー）。
+  - `"abort"`: Skill 実行を中止。
+  - `"continue"`: スコアを記録するのみ。フロー変更なし。
+- `model`（str | null、省略可）: モデルクラスのオーバーライド（例: `"strong"`）。省略時は Skill の現在のモデルを使用。
+
+戻り値: `{"kind": "judge_output", "score": float, "passed": bool, "reason": str, "threshold": float, "on_fail": str}`
+
+Audit イベント: `tool_executed`（`op=judge_output, target, score, passed, threshold, reason`）（P6）。
+
+**P7 注記**: Reyn は rubric に依存しません。rubric の内容は Skill author の authored prompt の一部であり、OS は解釈せずそのまま LLM に渡すだけです。
+
 ---
 
 **コントリビューター向けメモ:** `src/reyn/schemas/models.py` および `src/reyn/op_runtime/registry.py` に新しい Control IR op kind を追加する際は、**同じ PR でここにセクションを追加してください**。reference と registry は同期を保つ必要があります。ルールの詳細は [CLAUDE.md](https://github.com/tya5/reyn/blob/main/CLAUDE.md) を参照してください。
