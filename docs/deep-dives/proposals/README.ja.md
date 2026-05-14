@@ -84,10 +84,10 @@ SMALL / MEDIUM / LARGE（根拠付き）。
 | [0016](0016-agent-authentication.ja.md) | エージェント認証 — OAuth 委譲・トークンライフサイクル・MCP 認証ヘッダー | Component A 着地 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.ja.md) | サンドボックス実行 — ポリシー/バックエンド抽象化と exec op の非推奨化 | Component A+D 着地 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.ja.md) | Event Store バックエンド抽象化 — JSONL / SQLite / DuckDB（優先度: LOW） | proposed | MEDIUM |
-| [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | partially-landed Wave 1 (Compaction+SkillRunner, 2026-05-13/14, `6620505`/`9ae66fa`); Wave 2/3 proposed | MEDIUM |
+| [0019](0019-chat-session-refactor.ja.md) | ChatSession 責務分離 — session.py からのサービス抽出 | partially-landed Wave 1+3 (Compaction+SkillRunner+AutoResume, 2026-05-13/14, `6620505`/`9ae66fa`/`ba7f7c3`); Wave 2 proposed (FP-0013 待ち) | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.ja.md) | OSRuntime レイヤ分解 — runtime.py を垂直レイヤに分割する | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
 | [0021](0021-event-log-audit-completeness.ja.md) | イベントログ監査完全性 — 欠落 run_id/skill の追加 + permission_granted 新設 | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |
-| [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | done (LANDED 2026-05-14, commit `61dc193`) | SMALL |
-| [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | proposed | SMALL |
-| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | proposed | MEDIUM |
-| [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | proposed | SMALL |
+| [0022](0022-permission-tier-model.ja.md) | パーミッション Tier モデル正式化 — 2 軸フレームワーク明文化 + web_fetch/web_search 非対称修正 | done (LANDED 2026-05-14, commits `61dc193`/`1f49855` — SSL config follow-up 含む) | SMALL |
+| [0023](0023-router-sp-quick-wins.ja.md) | Router システムプロンプト速攻改善 — キャッシュ効率・重複解消・spawn-ack 優先順位・delegate_to_agent ルール・JA 例文 | done (LANDED 2026-05-14, commit `45512ba` — 5 edit + FP-0025 D 同梱) | SMALL |
+| [0024](0024-router-sp-semantic-tool-selection.ja.md) | Router — セマンティックツール選択（invoke_skill enum の BM25/embedding 事前絞り込み） | partial-landed Component D (Anthropic tool_search_tool MCP, 2026-05-14, `aa1b36f`); A/B/C は現スケール YAGNI で deferred | MEDIUM |
+| [0025](0025-planner-narration-and-sp-fixes.ja.md) | Planner — Router narration（スキルと同形、FP-0012 対称）+ plan step SP 修正 | done (LANDED 2026-05-14, commits `6da92fe`/`45512ba`/`635ce55` — A+B+C+D 全 landing) | SMALL |

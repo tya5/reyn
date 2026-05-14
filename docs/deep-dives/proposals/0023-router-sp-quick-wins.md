@@ -1,6 +1,6 @@
 # FP-0023: Router System Prompt — Quick Wins
 
-**Status**: proposed
+**Status**: **done** — LANDED 2026-05-14 (commit `45512ba`): all 5 edits (cache reorder, intent dedup, spawn-ack priority, delegate_to_agent rule, JA recall/memory examples) in `router_system_prompt.py`. FP-0025 Component D (Plan decomposition Behaviour rule) piggybacked in same commit.
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 

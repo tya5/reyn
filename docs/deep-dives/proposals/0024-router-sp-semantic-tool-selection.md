@@ -1,6 +1,6 @@
 # FP-0024: Router — Semantic Tool Selection
 
-**Status**: proposed
+**Status**: **partial-landed** — Component D (Anthropic `tool_search_tool` MCP integration) LANDED 2026-05-14 (commit `aa1b36f`) with threshold-based switch (default 30 MCP servers, configurable via `mcp.search_threshold`). Components A/B/C (BM25 / search_hints / embedding) **deferred** at current scale (= YAGNI: catalog ~30-50 skills、 invoke_skill enum bloat not yet observed); revisit when skill catalog ≥ 100 or dogfood surfaces decision-fatigue evidence.
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 

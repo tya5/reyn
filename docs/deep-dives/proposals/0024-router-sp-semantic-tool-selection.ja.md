@@ -1,6 +1,6 @@
 # FP-0024: Router — セマンティックツール選択
 
-**Status**: proposed
+**Status**: **partial-landed** — Component D (Anthropic `tool_search_tool` MCP integration) LANDED 2026-05-14 (commit `aa1b36f`) with threshold-based switch (default 30 MCP servers、 `mcp.search_threshold` で configurable)。 Components A/B/C (BM25 / search_hints / embedding) は現スケール (= ~30-50 skills、 invoke_skill enum bloat 未観測) で **YAGNI 判定 deferred**; skill catalog ≥ 100 or dogfood decision-fatigue 観測時に再開。
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 

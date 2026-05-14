@@ -84,10 +84,10 @@ Links to related ADRs, PRs, and docs.
 | [0016](0016-agent-authentication.md) | Agent authentication — OAuth delegation, token lifecycle, and MCP auth headers | Component A landed 2026-05-11 (commit `ec94a06`); B/C/D/E proposed | LARGE |
 | [0017](0017-sandboxed-execution.md) | Sandboxed execution — policy/backend abstraction and exec op deprecation | Components A+D landed 2026-05-11 (commit `ddf2d05`); B/C/E proposed | MEDIUM |
 | [0018](0018-event-store-backend.md) | Event Store backend abstraction — JSONL / SQLite / DuckDB (priority: LOW) | proposed | MEDIUM |
-| [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | partially-landed Wave 1 (Compaction+SkillRunner, 2026-05-13/14, `6620505`/`9ae66fa`); Waves 2/3 proposed | MEDIUM |
+| [0019](0019-chat-session-refactor.md) | ChatSession responsibility separation — extracting services from session.py | partially-landed Waves 1+3 (Compaction+SkillRunner+AutoResume, 2026-05-13/14, `6620505`/`9ae66fa`/`ba7f7c3`); Wave 2 proposed (FP-0013 待ち) | MEDIUM |
 | [0020](0020-runtime-layer-decomposition.md) | OSRuntime layer decomposition — splitting runtime.py into vertical layers | done (Components A/B/C/D LANDED 2026-05-13/14, `1dac280`/`5628993`/`7e51216`/`929d81f`; runtime.py 1882→507 LoC) | MEDIUM |
 | [0021](0021-event-log-audit-completeness.md) | Event log audit completeness — add run_id/skill to missing events + permission_granted | done (LANDED 2026-05-13, commits `c6f4218`..`a03bcfc`) | SMALL |
-| [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | done (LANDED 2026-05-14, commit `61dc193`) | SMALL |
-| [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | proposed | SMALL |
-| [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | proposed | MEDIUM |
-| [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | proposed | SMALL |
+| [0022](0022-permission-tier-model.md) | Permission tier model — formalize two-axis framework + fix web_fetch/web_search asymmetry | done (LANDED 2026-05-14, commits `61dc193`/`1f49855` — SSL config follow-up included) | SMALL |
+| [0023](0023-router-sp-quick-wins.md) | Router system prompt quick wins — cache efficiency, dedup, spawn-ack priority, delegate_to_agent rule, JA examples | done (LANDED 2026-05-14, commit `45512ba` — 5 edits + FP-0025 D piggyback) | SMALL |
+| [0024](0024-router-sp-semantic-tool-selection.md) | Router — semantic tool selection (BM25/embedding pre-filter for invoke_skill enum) | partial-landed Component D (Anthropic tool_search_tool MCP, 2026-05-14, `aa1b36f`); A/B/C deferred (YAGNI at current scale) | MEDIUM |
+| [0025](0025-planner-narration-and-sp-fixes.md) | Planner — router narration (align with skill/FP-0012) + plan step SP fixes | done (LANDED 2026-05-14, commits `6da92fe`/`45512ba`/`635ce55` — A+B+C+D all landed) | SMALL |

@@ -1,6 +1,6 @@
 # FP-0023: Router システムプロンプト — クイック改善
 
-**Status**: proposed
+**Status**: **done** — LANDED 2026-05-14 (commit `45512ba`): 5 edit (cache reorder / intent dedup / spawn-ack priority / delegate_to_agent rule / JA recall/memory examples) を `router_system_prompt.py` に landing。 FP-0025 Component D (Plan decomposition Behaviour rule) も同 commit に同梱。
 **Proposed**: 2026-05-13
 **Author**: Research session (eager-shaw-389d9d)
 
