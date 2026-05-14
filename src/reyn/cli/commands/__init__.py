@@ -18,10 +18,11 @@ from . import memory as memory
 from . import permissions as permissions
 from . import run as run
 from . import secret as secret
+from . import skill as skill
 from . import skills as skills
 from . import source as source
 from . import topology as topology
 from . import web as web
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, run, chat, agent, topology, eval, lint, memory, permissions, events, web, mcp, secret, source]
+ALL = [init, config, skills, skill, run, chat, agent, topology, eval, lint, memory, permissions, events, web, mcp, secret, source]

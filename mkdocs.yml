@@ -113,6 +113,7 @@ nav:
           - reference/cli/eval.md
           - reference/cli/lint.md
           - reference/cli/chat.md
+          - reference/cli/skill.md
           - reference/cli/mcp.md
           - reference/cli/secret.md
           - reference/cli/source.md
