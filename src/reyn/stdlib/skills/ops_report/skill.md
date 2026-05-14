@@ -35,14 +35,20 @@ permissions:
       - ".reyn/events/"
       - ".reyn/index/"
   python:
+    # collect_aggregate + aggregate_from_raw_events touch the filesystem
+    # (glob over .reyn/events/*.jsonl) — `mode: unsafe` matches reality and
+    # leverages the stdlib auto-allow path in `reyn run`. Sibling skill
+    # index_events uses the same pattern.
     - module: ./aggregate.py
       function: collect_aggregate
-      mode: safe
+      mode: unsafe
       timeout: 30
     - module: ./aggregate.py
       function: aggregate_from_raw_events
-      mode: safe
+      mode: unsafe
       timeout: 30
+    # aggregate_from_recall_chunks is pure (operates on the in-memory chunks
+    # list); keep mode: safe to enforce the smaller capability surface.
     - module: ./aggregate.py
       function: aggregate_from_recall_chunks
       mode: safe

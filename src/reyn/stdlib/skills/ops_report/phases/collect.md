@@ -18,6 +18,7 @@ preprocessor:
     module: ./aggregate.py
     function: collect_aggregate
     into: data.aggregate
+    mode: unsafe
     output_schema:
       type: object
       required: [total_runs, success_count, failure_count, by_skill,
