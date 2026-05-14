@@ -620,6 +620,13 @@ class ReynConfig:
     #           Authorization: "Bearer ${GITHUB_TOKEN}"
     #           X-API-Version: "2024-01-01"
     mcp: dict = field(default_factory=dict)
+    # FP-0024 Component D — Anthropic tool_search_tool threshold.
+    # Number of MCP tools at or above which build_tools() switches from
+    # inlining all MCP tool schemas to using Anthropic's tool_search_tool
+    # (deferred-loading mode).  Default 30; set 0 to disable.
+    # Configurable via ``mcp.search_threshold:`` in reyn.yaml.
+    # Spring AI experiment: 63–64% token reduction at 40+ MCP tools.
+    mcp_search_threshold: int = 30
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
     # Chat-session settings (compaction, etc.)
@@ -822,6 +829,25 @@ def _warn_legacy_dot_reyn_config(path: Path) -> None:
         )
 
 
+def _parse_mcp_search_threshold(raw_mcp: object) -> int:
+    """Extract ``mcp.search_threshold`` from the raw ``mcp:`` section dict.
+
+    Returns the default (30) when the section is absent, the key is missing,
+    or the value is invalid. Accepts 0 (= disable the search tool switch).
+    """
+    _default = 30  # mirrors ReynConfig.mcp_search_threshold default
+    if not isinstance(raw_mcp, dict):
+        return _default
+    threshold_raw = raw_mcp.get("search_threshold", _default)
+    try:
+        threshold = int(threshold_raw)
+        if threshold < 0:
+            threshold = 0
+        return threshold
+    except (TypeError, ValueError):
+        return _default
+
+
 def load_config(cwd: Path | None = None) -> ReynConfig:
     """Load and merge config from all sources. CLI flags are applied by the caller."""
     cwd = (cwd or Path.cwd()).resolve()
@@ -886,6 +912,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         api_base=str(merged.get("api_base") or ""),
         permissions=dict(merged.get("permissions") or {}),
         mcp=dict(merged.get("mcp") or {}),
+        mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
         chat=_build_chat_config(merged.get("chat")),
         events=_build_events_config(merged.get("events")),

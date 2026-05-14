@@ -25,4 +25,10 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # User intervention (op_runtime/ask_user.py)
     "user_intervention_requested": frozenset({"run_id", "skill", "intervention_id"}),
     "user_intervention_received": frozenset({"run_id", "skill", "intervention_id"}),
+    # MCP tool-search deferred loading (chat/router_tools.py — FP-0024 Component D)
+    # Emitted by the router when the LLM invokes the tool_search_tool meta-tool.
+    # mcp_search_invoked: LLM called tool_search; query + result count recorded.
+    # mcp_tool_loaded: a specific MCP tool was loaded from a search result.
+    "mcp_search_invoked": frozenset({"query", "result_count"}),
+    "mcp_tool_loaded": frozenset({"tool_name", "server_name"}),
 }

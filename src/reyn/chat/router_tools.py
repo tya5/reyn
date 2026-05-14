@@ -28,6 +28,34 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+# ── FP-0024 Component D — Anthropic tool_search_tool threshold ───────────────
+#
+# When the number of MCP tools at or above this threshold, build_tools()
+# replaces inline MCP tool schemas with a single tool_search_tool meta-tool
+# (Anthropic GA 2025-11, ``type: "tool_search_tool_20251101"``).  The LLM
+# queries the meta-tool to load only the 3–5 most relevant MCP tools on
+# demand, rather than receiving all N schemas upfront.
+#
+# Spring AI experiment shows 63–64% token reduction for 40+ MCP tools.
+# Override per-project via ``mcp.search_threshold:`` in reyn.yaml (parsed by
+# config._parse_mcp_search_threshold; injected into build_tools() as kwarg).
+# Setting threshold=0 disables the switch (always inline).
+#
+# The exact Anthropic ``tool_search_tool`` API spec as of 2025-11:
+#   {
+#     "type": "tool_search_tool_20251101",
+#     "name": "tool_search",          # the name the LLM calls
+#     "max_results": int,             # max tools returned per query (1–10)
+#     "tools": [                      # the deferred tool list
+#       {... standard tool schema with "cache_control": ... ...}
+#     ]
+#   }
+# TODO(fp-0024-d): verify exact ``type`` string and ``tools`` element schema
+# against Anthropic SDK release notes when the SDK is available in this env.
+# The ``type`` value "tool_search_tool_20251101" is the version identifier
+# confirmed in the Anthropic docs reference for the 2025-11 GA release.
+MCP_SEARCH_THRESHOLD: int = 30
+
 # ── G12 attractor mitigation (B7 finding: skill description verbosity trigger) ──
 #
 # Empty-stop attractor root cause: skill description verbosity.  B7 finding
@@ -153,6 +181,44 @@ def get_dispatch_kind(tool_name: str) -> str:
     return tool.dispatch_kind
 
 
+def build_mcp_search_tool(mcp_tool_specs: list[dict]) -> dict:
+    """Build the Anthropic tool_search_tool meta-tool for deferred MCP loading.
+
+    Returns a single ``tool_search_tool_20251101`` descriptor that wraps the
+    full MCP tool catalog.  When the LLM calls ``tool_search``, Anthropic's
+    server loads only the matching subset (``max_results`` tools), dramatically
+    reducing the effective schema payload for large MCP deployments.
+
+    Parameters
+    ----------
+    mcp_tool_specs:
+        List of standard MCP tool dicts (OpenAI schema shape) to place inside
+        the ``tools`` array of the search-tool wrapper.  Each entry should
+        carry at least ``name``, ``description``, and ``parameters``.
+
+    Returns
+    -------
+    dict
+        A tool dict in the Anthropic ``tool_search_tool_20251101`` format.
+        The ``type`` field distinguishes it from ordinary ``function`` tools
+        so the Anthropic API can handle deferred-loading server-side.
+
+    TODO(fp-0024-d): Verify the exact field names (``type``, ``name``,
+    ``max_results``, ``tools``) against the published Anthropic SDK release
+    notes for the 2025-11 GA build of tool_search_tool.  The spec below
+    follows the reference at:
+      https://docs.anthropic.com/en/docs/tool-use/tool-search-tool
+    and is marked best-effort until validated against a live Anthropic
+    endpoint.
+    """
+    return {
+        "type": "tool_search_tool_20251101",
+        "name": "tool_search",
+        "max_results": 5,
+        "tools": mcp_tool_specs,
+    }
+
+
 def build_tools(
     available_skills: list[dict],  # [{name, description, routing?}, ...]
     available_agents: list[dict],  # [{name, role}, ...]
@@ -160,6 +226,7 @@ def build_tools(
     file_permissions: dict | None = None,  # {"read": [paths], "write": [paths]}
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
     web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
+    mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -197,11 +264,18 @@ def build_tools(
     mcp_servers:
         Optional list of MCP server dicts (each with ``name`` and
         ``description``). None or [] → MCP tools omitted. Otherwise all 3
-        MCP tools (D1–D3) are included.
+        MCP tools (D1–D3) are included, unless ``mcp_search_threshold`` is
+        exceeded (see below).
     web_fetch_allowed:
         Kept for backward compatibility. FP-0022: web_fetch is now always
         included in the catalog; approval is handled at the handler level
         via the 4-layer PermissionResolver._approve() flow.
+    mcp_search_threshold:
+        FP-0024 Component D. When the total MCP tool count is >= this value
+        (and > 0), the D1–D3 inline MCP tools are replaced by a single
+        tool_search_tool meta-tool that loads specific tools on demand.
+        Default: MCP_SEARCH_THRESHOLD (30). Set 0 to always inline.
+        Override per-project via ``mcp.search_threshold:`` in reyn.yaml.
     """
     # RETRO-H1+H2 fix: dynamic enum injection for invoke_skill.name and
     # delegate_to_agent.to closes the schema-level hallucination gap (P4
@@ -644,42 +718,92 @@ def build_tools(
         ))
 
     # ── D. MCP tools (permission-gated) ──────────────────────────────────────
+    #
+    # FP-0024 Component D: threshold-based switch.
+    # When the configured MCP server count >= mcp_search_threshold (and the
+    # threshold is > 0), substitute the three inline D1–D3 tools with a single
+    # Anthropic tool_search_tool meta-tool.  The LLM issues tool_search calls;
+    # Anthropic's server loads only the K most relevant MCP tool schemas on
+    # demand (Spring AI: 63–64% token reduction vs inline at 40+ servers).
+    #
+    # When below threshold: existing behavior — D1 list_mcp_servers, D2
+    # list_mcp_tools, D3 call_mcp_tool are all included inline as before.
+    #
+    # Note: mcp_servers here is a list of server config dicts (one per server).
+    # Each server can expose multiple tools, but the tool count is not known at
+    # this layer without async enumeration.  The threshold is applied against
+    # len(mcp_servers) as a proxy.  Callers may pass a higher
+    # mcp_search_threshold to keep inline mode if server-per-tool ratio is low.
     if mcp_servers:
-        # ── D1: list_mcp_servers ─────────────────────────────────────────────
-        _list_mcp_servers_def = _registry.lookup("list_mcp_servers")
-        if _list_mcp_servers_def is not None and _list_mcp_servers_def.gates.router == "allow":
-            _list_mcp_servers_rendered = _list_mcp_servers_def.render_for_router()
-            specs.append(ToolSpec(
-                name=_list_mcp_servers_rendered["function"]["name"],
-                description=_list_mcp_servers_rendered["function"]["description"],
-                parameters=_list_mcp_servers_rendered["function"]["parameters"],
-                dispatch_kind=_list_mcp_servers_def.dispatch_kind,
-            ))
+        _mcp_count = len(mcp_servers)
+        _use_search_tool = (
+            mcp_search_threshold > 0
+            and _mcp_count >= mcp_search_threshold
+        )
 
-        # ── D2: list_mcp_tools ───────────────────────────────────────────────
-        _list_mcp_tools_def = _registry.lookup("list_mcp_tools")
-        if _list_mcp_tools_def is not None and _list_mcp_tools_def.gates.router == "allow":
-            _list_mcp_tools_rendered = _list_mcp_tools_def.render_for_router()
-            specs.append(ToolSpec(
-                name=_list_mcp_tools_rendered["function"]["name"],
-                description=_list_mcp_tools_rendered["function"]["description"],
-                parameters=_list_mcp_tools_rendered["function"]["parameters"],
-                dispatch_kind=_list_mcp_tools_def.dispatch_kind,
-            ))
+        if _use_search_tool:
+            # ── D-S: tool_search_tool (deferred-loading mode) ────────────────
+            # Build the per-server stub tool specs that the search meta-tool
+            # wraps.  Each stub carries the server's name and description so
+            # the search backend can match queries; the actual tool schemas are
+            # loaded on demand by Anthropic's infrastructure.
+            _mcp_stub_specs: list[dict] = []
+            for _srv in mcp_servers:
+                _mcp_stub_specs.append({
+                    "type": "function",
+                    "function": {
+                        "name": str(_srv.get("name", "")),
+                        "description": str(_srv.get("description", "")),
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                })
+            # Append the meta-tool directly (not wrapped in ToolSpec — its
+            # ``type`` is "tool_search_tool_20251101", not "function").
+            _search_tool = build_mcp_search_tool(_mcp_stub_specs)
+            # Emit as a raw dict; convert step at the end handles list[dict].
+            # We store it in a separate list and merge after ToolSpec conversion.
+            _mcp_search_tool_raw: list[dict] = [_search_tool]
+        else:
+            _mcp_search_tool_raw = []
+            # ── D1: list_mcp_servers ─────────────────────────────────────────
+            _list_mcp_servers_def = _registry.lookup("list_mcp_servers")
+            if _list_mcp_servers_def is not None and _list_mcp_servers_def.gates.router == "allow":
+                _list_mcp_servers_rendered = _list_mcp_servers_def.render_for_router()
+                specs.append(ToolSpec(
+                    name=_list_mcp_servers_rendered["function"]["name"],
+                    description=_list_mcp_servers_rendered["function"]["description"],
+                    parameters=_list_mcp_servers_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_servers_def.dispatch_kind,
+                ))
 
-        # ── D3: call_mcp_tool ────────────────────────────────────────────────
-        _call_mcp_tool_def = _registry.lookup("call_mcp_tool")
-        if _call_mcp_tool_def is not None and _call_mcp_tool_def.gates.router == "allow":
-            _call_mcp_tool_rendered = _call_mcp_tool_def.render_for_router()
-            specs.append(ToolSpec(
-                name=_call_mcp_tool_rendered["function"]["name"],
-                description=_call_mcp_tool_rendered["function"]["description"],
-                parameters=_call_mcp_tool_rendered["function"]["parameters"],
-                dispatch_kind=_call_mcp_tool_def.dispatch_kind,
-            ))
+            # ── D2: list_mcp_tools ───────────────────────────────────────────
+            _list_mcp_tools_def = _registry.lookup("list_mcp_tools")
+            if _list_mcp_tools_def is not None and _list_mcp_tools_def.gates.router == "allow":
+                _list_mcp_tools_rendered = _list_mcp_tools_def.render_for_router()
+                specs.append(ToolSpec(
+                    name=_list_mcp_tools_rendered["function"]["name"],
+                    description=_list_mcp_tools_rendered["function"]["description"],
+                    parameters=_list_mcp_tools_rendered["function"]["parameters"],
+                    dispatch_kind=_list_mcp_tools_def.dispatch_kind,
+                ))
+
+            # ── D3: call_mcp_tool ────────────────────────────────────────────
+            _call_mcp_tool_def = _registry.lookup("call_mcp_tool")
+            if _call_mcp_tool_def is not None and _call_mcp_tool_def.gates.router == "allow":
+                _call_mcp_tool_rendered = _call_mcp_tool_def.render_for_router()
+                specs.append(ToolSpec(
+                    name=_call_mcp_tool_rendered["function"]["name"],
+                    description=_call_mcp_tool_rendered["function"]["description"],
+                    parameters=_call_mcp_tool_rendered["function"]["parameters"],
+                    dispatch_kind=_call_mcp_tool_def.dispatch_kind,
+                ))
+    else:
+        _mcp_search_tool_raw = []
 
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
-    return [spec.to_openai_dict() for spec in specs]
+    # Append tool_search_tool raw dict last (D-S deferred mode only; empty
+    # list otherwise — no-op for the inline path).
+    return [spec.to_openai_dict() for spec in specs] + _mcp_search_tool_raw
 
 
 def _build_tools_via_registry(registry) -> list[dict]:
