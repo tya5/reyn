@@ -70,7 +70,15 @@ def build_system_prompt(
 
     parts: list[str] = []
 
-    # ── OS-level identity preamble ──────────────────────────────────────────
+    # ==========================================================================
+    # STATIC — cache prefix target (FP-0023 Change 1)
+    # Sections 1–5: Identity, Role, Capabilities, Behaviour (static core)
+    # These are session-invariant; placing them first maximises cache-prefix
+    # coverage (~60% of prompt chars) for Anthropic prompt cache.
+    # Dynamic sections follow below (project_context onward).
+    # ==========================================================================
+
+    # ── 1. OS-level identity preamble ──────────────────────────────────────
     #
     # Without this, an agent with an empty `role:` falls back to the
     # underlying LLM's baseline identity ("I am a large language model
@@ -134,32 +142,20 @@ def build_system_prompt(
     )
     parts.append("")
 
-    # ── Project context (REYN.md) ──────────────────────────────────────────
-    #
-    # `project_context` carries the operator's REYN.md content (or whatever
-    # `project_context_path` points to). This is operator-editable
-    # surface — do NOT use it to inject Reyn's own identity (that's the
-    # preamble above). Inject only when non-empty so an unset / empty
-    # REYN.md doesn't leak placeholder text into the prompt.
-    if project_context.strip():
-        parts.append("## About this project (project_context)")
-        parts.append("")
-        parts.append(project_context.strip())
-        parts.append("")
-        parts.append(
-            "Prefer project_context (above) as the primary source when "
-            "answering questions about this project. Use web_search only as "
-            "a supplementary source when project_context lacks the "
-            "information needed."
-        )
-        parts.append("")
-
+    # ── 2. Role ─────────────────────────────────────────────────────────────
     parts.append(
         f"Role: chat router for agent {agent_name} (role: {agent_role})."
     )
     parts.append("")
-    parts.append("## What you can do (intent axis)")
-    parts.append("")
+
+    # ── 3. Capabilities (routing guide) — FP-0023 Change 2 ─────────────────
+    # Merges the old "## What you can do (intent axis)" (internal routing
+    # labels) and "## When asked what you can do" (user-facing) into one
+    # section with a clear internal-vs-user-facing split.
+    # Risk mitigated: internal labels leaking into user replies is prevented
+    # by the explicit "do NOT use these labels in user replies" directive.
+    # The user_capabilities list is still built dynamically below (section 13)
+    # and referenced here so the prompt stays consistent.
     has_file_read = bool(
         file_permissions and file_permissions.get("read")
     )
@@ -168,6 +164,11 @@ def build_system_prompt(
     )
     has_mcp = bool(mcp_servers)
 
+    parts.append("## Capabilities (routing guide)")
+    parts.append("")
+    parts.append(
+        "Internal routing axes — do NOT use these labels in user replies:"
+    )
     parts.append("- Action — run external work")
     parts.append(
         "           skills:  list_skills / describe_skill / invoke_skill"
@@ -213,203 +214,37 @@ def build_system_prompt(
         parts.append("           tools: forget_memory")
     parts.append("- Reply — answer directly (no tool)")
     parts.append("")
-    # category-only catalog (= O(1) SP scaling、 industry-aligned per
-    # Anthropic Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical
-    # patterns). The previous design inlined skill names + truncated
-    # descriptions for hallucination defense (RETRO-H1+H2)、 but this scaled
-    # O(N_skills) and was duplicate of the `invoke_skill.name` enum
-    # constraint already in tool schema (= structural defense at build_tools).
-    # Now: SP describes only the **category catalog** (= what kinds of
-    # resources exist)、 actual names lazy-fetched via list_skills.
-    # Hallucination defense: schema enum (= invoke_skill rejects unknown
-    # name) + Behaviour rule "Never invent names; only use those returned by
-    # list_*". Verified by 2026-05-07 N=10 dogfood post-G12-envelope-fix.
-    skill_count = len(available_skills)
-    if skill_count > 0:
-        parts.append(
-            f"## Skills ({skill_count} available) — categories: {skill_section}"
-        )
-        parts.append(
-            "  Call list_skills(path) to browse names + descriptions, then"
-        )
-        parts.append(
-            "  describe_skill(name) for full schema or invoke_skill(name, input)"
-        )
-        parts.append("  to run. Skill names are validated by schema enum.")
-    else:
-        parts.append("## Skills — (none available in this session)")
-    parts.append("")
-    parts.append("## Agents (resource axis, clusters)")
-    parts.append(f"  {agent_section}")
-    parts.append("")
     parts.append(
-        "## Memory (entries inlined — answer recall queries from these "
-        "descriptions; use read_memory_body for full content if vague)"
-    )
-    for line in memory_section:
-        parts.append(f"  {line}")
-    parts.append("")
-    # ── Indexed sources (ADR-0033 UX gap fix A) ─────────────────────────────
-    # Injected verbatim from SourceManifest.format_for_prompt() which already
-    # renders the empty-state getting-started hint when 0 sources exist.
-    # Placed after Memory (conceptually similar recall stores) and before
-    # Files / MCP (distinct resource axes). When None, the section is omitted
-    # entirely for backward compat (tests + non-chat paths).
-    if indexed_sources_section is not None:
-        parts.append(indexed_sources_section)
-        parts.append("")
-    if file_section:
-        parts.append("## Files (resource axis — permission-scoped)")
-        for line in file_section:
-            parts.append(f"  {line}")
-        parts.append("")
-    if mcp_section:
-        parts.append("## MCP servers (resource axis)")
-        for line in mcp_section:
-            parts.append(f"  {line}")
-        parts.append("")
-    # ── User-facing capability framing ───────────────────────────────────────
-    # The intent-axis section above is internal routing guidance. When a user
-    # asks the meta question "what can you do?" the LLM previously parroted
-    # the intent labels back, which reads as internal jargon. Give it a
-    # concrete user-facing answer template instead. The list reflects the
-    # tools that ARE actually exposed in this session (= avoids hallucinating
-    # capabilities that aren't wired up).
-    user_capabilities: list[str] = ["run skills, build new skills, and improve existing ones"]
-    if has_file_read:
-        user_capabilities.append("read files in your project")
-    if has_file_write:
-        user_capabilities.append("write files to approved paths")
-    # reyn_src_* is unconditional — agent can always explain Reyn itself.
-    user_capabilities.append(
-        "read Reyn's own source and docs to explain how Reyn works"
-    )
-    user_capabilities.append("search the web (DuckDuckGo)")
-    # FP-0022: web_fetch is always available (Tier 1, handler-level approval).
-    user_capabilities.append("fetch a specific web page")
-    user_capabilities.append("remember and recall facts via your memory (= Memory section)")
-    # Indexed sources: always mention, both with and without available sources.
-    # B17-S1-1 fix: when the user asks about 'data sources', they need to know
-    # indexed sources and memory are DIFFERENT storage layers.
-    if indexed_sources_section is not None:
-        user_capabilities.append(
-            "search indexed document sources via the `recall` tool (= Indexed sources section)"
-        )
-    if available_agents:
-        user_capabilities.append("delegate to other agents on your team")
-    if mcp_servers:
-        user_capabilities.append(
-            f"call external services through {len(mcp_servers)} configured MCP server(s)"
-        )
-    parts.append("## When asked what you can do")
-    parts.append(
-        "  Answer in plain user-facing terms — never with the routing labels"
+        "When a user asks what you can do, answer in plain user-facing terms —"
     )
     parts.append(
-        "  (Action / Memory access / Save / Forget / Reply). The honest answer is:"
+        "never with the routing labels (Action / Memory access / Save / Forget / Reply)."
     )
-    for cap in user_capabilities:
-        parts.append(f"    • I can {cap}.")
-    parts.append("  Tailor the wording naturally; don't list every bullet verbatim.")
-    if indexed_sources_section is not None:
-        parts.append(
-            "  IMPORTANT: When listing 'data sources', mention BOTH memory entries"
-        )
-        parts.append(
-            "  AND indexed sources (see Indexed sources section below). They are"
-        )
-        parts.append("  separate storage layers.")
+    parts.append(
+        'Honest answer: "I can run skills, search your documents, remember things."'
+    )
+    parts.append(
+        "Do NOT say \"Your intent is Action\" or use any routing label in replies."
+    )
     parts.append("")
 
+    # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
+    # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
+    # sections) to maximise cache prefix coverage. The two dynamic conditional
+    # blocks (output_language, indexed_sources_section) are emitted later,
+    # after the dynamic resource sections, since they vary per session/config.
+    #
+    # Audit result (FP-0023 Change 1 pre-check):
+    #   Truly static: intent-decision rule, skill routing bullets 1–4,
+    #   memory-access rule, spawn-ack block, task_completed narration,
+    #   parallel/sequential tool_calls rule, never-invent rule,
+    #   memory-writes rule, delegate_to_agent rule (Change 4, new),
+    #   plan decomposition rule (FP-0025 D, new), ABSOLUTE ROUTING RULE.
+    #   Catalog-dependent (must stay dynamic / after dynamic):
+    #     - output_language conditional
+    #     - indexed_sources_section conditional (recall disambiguation + JA
+    #       examples from Change 5)
     parts.append("## Behaviour")
-    # Explicit language instruction (only when the user configured one):
-    # a concrete language tag is stronger than "match the user's language"
-    # — the LLM stays in this language even on clarifying-question and
-    # error fallback paths (F11). When output_language is None (= user did
-    # not configure), we omit the directive entirely so the LLM can pick
-    # the reply language based on the user's input naturally instead of
-    # being forced into a Reyn default. (Q2 follow-up to F11 fix.)
-    if output_language:
-        parts.append(
-            f"  - Always reply in language: {output_language}."
-            "  Do NOT switch language even for error messages or clarifying questions."
-        )
-    # ── Vocabulary disambiguation rules (B17-S1-1 + B17-S5-3 fix) ──────────
-    # Two collisions fixed here:
-    #   1. "recall" in user input → LLM mapped to "Recall" (memory) intent.
-    #      Fix: renamed intent to "Memory access"; add explicit rule that
-    #      "recall" word → indexed-search tool, not memory.
-    #   2. "data sources" in user input → LLM mapped to memory layers only,
-    #      ignoring the Indexed sources section.
-    #      Fix: explicit rule to list BOTH memory AND indexed sources.
-    # These rules are only relevant when RAG (indexed sources) is wired up.
-    # Without indexed_sources_section, the `recall` tool is not available and
-    # the disambiguation rules would reference a non-existent section.
-    if indexed_sources_section is not None:
-        parts.append(
-            "  - The word 'recall' in user input refers to the `recall` tool"
-        )
-        parts.append(
-            "    (= indexed document search). Do NOT map it to list_memory or"
-        )
-        parts.append(
-            "    read_memory_body. For memory retrieval, the intent label is"
-        )
-        parts.append(
-            "    'Memory access', not 'Recall'."
-        )
-        parts.append(
-            "  - When user asks about 'data sources', 'available information',"
-        )
-        parts.append(
-            "    or 'what can I search', list BOTH memory entries (Memory section)"
-        )
-        parts.append(
-            "    AND indexed sources (Indexed sources section). They are different"
-        )
-        parts.append(
-            "    storage layers. Do NOT report only memory as 'your data sources'."
-        )
-        parts.append(
-            "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
-        )
-        parts.append(
-            "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
-        )
-        parts.append(
-            "    for these queries."
-        )
-        # NOTE (batch 19 self-audit, post `1c5856d` revert): a previous
-        # iteration added "for 'how is X implemented?' prefer recall over
-        # reyn_src_read" guidance here, motivated by S6 batch-18 0/3 refuted.
-        # The fix was reverted because the scenario design itself was the
-        # flaw: "How is recall implemented?" is a code-reading query (= the
-        # answer lives in source files, NOT in the indexed concept docs),
-        # and reyn_src_read's description claims this exact use case
-        # ("how does Reyn / how does Reyn's X work?"). Adding generic
-        # "prefer recall" guidance here actively conflicted with that
-        # specialised tool description and was the wrong layer to fix.
-        # Real R-RAG-srcread evidence requires a scenario where indexed
-        # docs semantically cover the prompt topic; until then, treat
-        # affordance-bias as hypothesis only. See
-        # docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/
-        # retrospective.md for the full audit.
-        # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
-        # When 0 indexed sources are available, the LLM must actively tell the
-        # user how to add them instead of silently defaulting to memory.
-        parts.append(
-            "  - If 0 indexed sources are available AND the user asks about data"
-        )
-        parts.append(
-            "    sources or what they can do: explicitly tell them to run"
-        )
-        parts.append(
-            "    `reyn run index_docs '{\"source\":\"<name>\",\"path\":\"<glob>\""
-            ",\"description\":\"<text>\"}'`"
-        )
-        parts.append(
-            "    to enable indexed retrieval. Do NOT answer with memory-only."
-        )
     parts.append(
         "  - First decide intent (Action / Memory access / Save / Forget / Reply),"
     )
@@ -499,6 +334,11 @@ def build_system_prompt(
     # the completion side: errors MUST be surfaced verbatim, never narrated
     # as success.
     #
+    # FP-0023 Change 3: Numbered priority block replaces flat MUST list.
+    # Dogfood shows /tasks compliance was most fragile with flat listing.
+    # Explicit Priority 1 / Priority 2 / ... concentrates LLM attention on
+    # the non-negotiable constraint (= /tasks link) before the secondary ones.
+    #
     # 2026-05-11 N=10 retest findings (= R-SP-TASKS-POINTER-MUST +
     # R-SP-NO-FABRICATE-AT-SPAWN-ACK):
     #   - Soft "Mention /tasks" wording produced only 3/60 (= 5%) compliance.
@@ -514,48 +354,47 @@ def build_system_prompt(
     parts.append(
         "  - When invoke_skill returns {status: \"spawned\", chain_id, run_id, note}:"
     )
+    parts.append("    the skill is running in the background.")
+    parts.append("")
     parts.append(
-        "    the skill is running in the background. Reply ONCE with a 1-sentence"
+        "    Priority 1 (non-negotiable): Your reply MUST include `/tasks` as the"
     )
     parts.append(
-        "    acknowledgment ('Started <skill> — I'll let you know when it finishes.')."
+        "      user's way to check progress. This is non-negotiable — the user has no"
     )
     parts.append(
-        "    Your reply MUST include `/tasks` as the user's way to check progress —"
+        "      other way to track in-flight tasks. Omitting `/tasks` from the"
     )
     parts.append(
-        "    this is non-negotiable, the user has no other way to track in-flight"
+        "      spawn-ack reply is a hard failure."
     )
     parts.append(
-        "    tasks. Omitting `/tasks` from the spawn-ack reply is a hard failure."
+        "    Priority 2: Keep your reply to 1–2 sentences. You MUST NOT pre-fill"
     )
     parts.append(
-        "    You MUST NOT pre-fill the user with information the skill is supposed"
+        "      the user with information the skill is supposed to produce."
     )
     parts.append(
-        "    to produce. The spawn-ack envelope carries ONLY {status, run_id,"
+        "      The spawn-ack envelope carries ONLY {status, run_id, chain_id, note} —"
     )
     parts.append(
-        "    chain_id, note} — no results, no names, no URLs, no scores, no fields"
+        "      no results, no names, no URLs, no scores, no fields from the skill's"
     )
     parts.append(
-        "    from the skill's output schema. Any such content in the spawn-ack"
+        "      output schema. Any such content in the spawn-ack reply is"
     )
     parts.append(
-        "    reply is fabrication by construction (the skill has not executed)."
+        "      fabrication by construction (the skill has not executed)."
     )
     parts.append(
-        "    Acknowledge the spawn and point at `/tasks`; nothing more."
+        "    Priority 3: Do NOT call invoke_skill again for the same request (it's already"
     )
+    parts.append("      running).")
     parts.append(
-        "    Do NOT call invoke_skill again for the same request (it's already"
+        "    Priority 4: Do NOT ask follow-up questions while the skill is running;"
     )
-    parts.append(
-        "    running). Do NOT ask follow-up questions about the in-flight task;"
-    )
-    parts.append(
-        "    wait for the [task_completed] message."
-    )
+    parts.append("      wait for the [task_completed] message.")
+    parts.append("")
     parts.append(
         "  - When you see a user message starting with [task_completed]: a"
     )
@@ -595,6 +434,58 @@ def build_system_prompt(
     parts.append(
         "        on errors is the single largest router-narration failure mode."
     )
+    # ── FP-0023 Change 4 — delegate_to_agent Behaviour rule ─────────────────
+    # delegate_to_agent appeared in the tool list but had no Behaviour rule.
+    # Vendor prompt-writing guides (Anthropic, OpenAI) advise placing usage
+    # guidance in the SP, not only in the tool schema. Added here alongside
+    # the invoke_skill rules so delegation has the same structural support.
+    parts.append("")
+    parts.append("  ## Agent delegation")
+    parts.append("")
+    parts.append("  When a user task requires a peer agent (not a skill):")
+    parts.append(
+        "    call delegate_to_agent(to=<agent_name>, request=<user_query>)"
+    )
+    parts.append("")
+    parts.append("  Use this when:")
+    parts.append(
+        "    - The task is outside available skills but matches a peer agent's role"
+    )
+    parts.append("    - The user explicitly addresses a named agent")
+    parts.append("")
+    parts.append(
+        "  Do NOT delegate tasks that can be solved with available skills."
+    )
+    parts.append(
+        "  Acknowledge the delegation in 1 sentence."
+    )
+    # ── FP-0025 D — Plan decomposition Behaviour rule ─────────────────────────
+    # plan tool previously relied solely on its schema description for when-to-use
+    # guidance. No Behaviour rule reinforced or constrained this, unlike
+    # invoke_skill and delegate_to_agent. Added here for parity.
+    parts.append("")
+    parts.append("  ## Plan decomposition")
+    parts.append("")
+    parts.append(
+        "  Use the `plan` tool when the query requires combining information from"
+    )
+    parts.append(
+        "  multiple independent sources (e.g. \"compare A and B from two docs\","
+    )
+    parts.append(
+        "  \"explain X with code references from N files\", \"summarise across these"
+    )
+    parts.append(
+        "  sources\"). Each step should gather one piece of information; the OS"
+    )
+    parts.append("  synthesises the final reply.")
+    parts.append("")
+    parts.append("  Do NOT use `plan` for:")
+    parts.append("    - Single-tool lookups or single-source narrations")
+    parts.append("    - Chitchat or conversational replies")
+    parts.append("    - Queries that invoke_skill handles end-to-end")
+    parts.append("    - Queries answerable in one router reply without tools")
+    parts.append("")
     parts.append(
         "  - Use parallel tool_calls when discovery / fetches are independent."
     )
@@ -633,6 +524,224 @@ def build_system_prompt(
     parts.append(
         "    「<skill_name> で <X> を作って」 → invoke_skill(name=<skill_name>)"
     )
+    parts.append("")
+
+    # ==========================================================================
+    # DYNAMIC — varies per session / configuration
+    # Sections 6–13: project_context, Skills, Agents, Memory, Indexed sources,
+    # Files, MCP, + dynamic Behaviour conditionals (output_language,
+    # indexed_sources disambiguation + JA examples).
+    # ==========================================================================
+
+    # ── 6. Project context (REYN.md) ────────────────────────────────────────
+    #
+    # `project_context` carries the operator's REYN.md content (or whatever
+    # `project_context_path` points to). This is operator-editable
+    # surface — do NOT use it to inject Reyn's own identity (that's the
+    # preamble above). Inject only when non-empty so an unset / empty
+    # REYN.md doesn't leak placeholder text into the prompt.
+    if project_context.strip():
+        parts.append("## About this project (project_context)")
+        parts.append("")
+        parts.append(project_context.strip())
+        parts.append("")
+        parts.append(
+            "Prefer project_context (above) as the primary source when "
+            "answering questions about this project. Use web_search only as "
+            "a supplementary source when project_context lacks the "
+            "information needed."
+        )
+        parts.append("")
+
+    # ── 7. Skills catalog ────────────────────────────────────────────────────
+    # category-only catalog (= O(1) SP scaling、 industry-aligned per
+    # Anthropic Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical
+    # patterns). The previous design inlined skill names + truncated
+    # descriptions for hallucination defense (RETRO-H1+H2)、 but this scaled
+    # O(N_skills) and was duplicate of the `invoke_skill.name` enum
+    # constraint already in tool schema (= structural defense at build_tools).
+    # Now: SP describes only the **category catalog** (= what kinds of
+    # resources exist)、 actual names lazy-fetched via list_skills.
+    # Hallucination defense: schema enum (= invoke_skill rejects unknown
+    # name) + Behaviour rule "Never invent names; only use those returned by
+    # list_*". Verified by 2026-05-07 N=10 dogfood post-G12-envelope-fix.
+    skill_count = len(available_skills)
+    if skill_count > 0:
+        parts.append(
+            f"## Skills ({skill_count} available) — categories: {skill_section}"
+        )
+        parts.append(
+            "  Call list_skills(path) to browse names + descriptions, then"
+        )
+        parts.append(
+            "  describe_skill(name) for full schema or invoke_skill(name, input)"
+        )
+        parts.append("  to run. Skill names are validated by schema enum.")
+    else:
+        parts.append("## Skills — (none available in this session)")
+    parts.append("")
+
+    # ── 8. Agents catalog ────────────────────────────────────────────────────
+    parts.append("## Agents (resource axis, clusters)")
+    parts.append(f"  {agent_section}")
+    parts.append("")
+
+    # ── 9. Memory ────────────────────────────────────────────────────────────
+    parts.append(
+        "## Memory (entries inlined — answer recall queries from these "
+        "descriptions; use read_memory_body for full content if vague)"
+    )
+    for line in memory_section:
+        parts.append(f"  {line}")
+    parts.append("")
+
+    # ── 10. Indexed sources (ADR-0033 UX gap fix A) ──────────────────────────
+    # Injected verbatim from SourceManifest.format_for_prompt() which already
+    # renders the empty-state getting-started hint when 0 sources exist.
+    # Placed after Memory (conceptually similar recall stores) and before
+    # Files / MCP (distinct resource axes). When None, the section is omitted
+    # entirely for backward compat (tests + non-chat paths).
+    if indexed_sources_section is not None:
+        parts.append(indexed_sources_section)
+        parts.append("")
+
+    # ── 11. Files ────────────────────────────────────────────────────────────
+    if file_section:
+        parts.append("## Files (resource axis — permission-scoped)")
+        for line in file_section:
+            parts.append(f"  {line}")
+        parts.append("")
+
+    # ── 12. MCP servers ──────────────────────────────────────────────────────
+    if mcp_section:
+        parts.append("## MCP servers (resource axis)")
+        for line in mcp_section:
+            parts.append(f"  {line}")
+        parts.append("")
+
+    # ── 13. Dynamic Behaviour conditionals ───────────────────────────────────
+    # These vary per session config (output_language) or per-request state
+    # (indexed_sources_section). They are Behaviour addenda that cannot live
+    # in the static prefix above.
+
+    # Explicit language instruction (only when the user configured one):
+    # a concrete language tag is stronger than "match the user's language"
+    # — the LLM stays in this language even on clarifying-question and
+    # error fallback paths (F11). When output_language is None (= user did
+    # not configure), we omit the directive entirely so the LLM can pick
+    # the reply language based on the user's input naturally instead of
+    # being forced into a Reyn default. (Q2 follow-up to F11 fix.)
+    if output_language:
+        parts.append(
+            f"  - Always reply in language: {output_language}."
+            "  Do NOT switch language even for error messages or clarifying questions."
+        )
+
+    # ── Vocabulary disambiguation rules (B17-S1-1 + B17-S5-3 fix) ──────────
+    # Two collisions fixed here:
+    #   1. "recall" in user input → LLM mapped to "Recall" (memory) intent.
+    #      Fix: renamed intent to "Memory access"; add explicit rule that
+    #      "recall" word → indexed-search tool, not memory.
+    #   2. "data sources" in user input → LLM mapped to memory layers only,
+    #      ignoring the Indexed sources section.
+    #      Fix: explicit rule to list BOTH memory AND indexed sources.
+    # These rules are only relevant when RAG (indexed sources) is wired up.
+    # Without indexed_sources_section, the `recall` tool is not available and
+    # the disambiguation rules would reference a non-existent section.
+    if indexed_sources_section is not None:
+        parts.append(
+            "  - The word 'recall' in user input refers to the `recall` tool"
+        )
+        parts.append(
+            "    (= indexed document search). Do NOT map it to list_memory or"
+        )
+        parts.append(
+            "    read_memory_body. For memory retrieval, the intent label is"
+        )
+        parts.append(
+            "    'Memory access', not 'Recall'."
+        )
+        parts.append(
+            "  - When user asks about 'data sources', 'available information',"
+        )
+        parts.append(
+            "    or 'what can I search', list BOTH memory entries (Memory section)"
+        )
+        parts.append(
+            "    AND indexed sources (Indexed sources section). They are different"
+        )
+        parts.append(
+            "    storage layers. Do NOT report only memory as 'your data sources'."
+        )
+        parts.append(
+            "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
+        )
+        parts.append(
+            "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
+        )
+        parts.append(
+            "    for these queries."
+        )
+        # NOTE (batch 19 self-audit, post `1c5856d` revert): a previous
+        # iteration added "for 'how is X implemented?' prefer recall over
+        # reyn_src_read" guidance here, motivated by S6 batch-18 0/3 refuted.
+        # The fix was reverted because the scenario design itself was the
+        # flaw: "How is recall implemented?" is a code-reading query (= the
+        # answer lives in source files, NOT in the indexed concept docs),
+        # and reyn_src_read's description claims this exact use case
+        # ("how does Reyn / how does Reyn's X work?"). Adding generic
+        # "prefer recall" guidance here actively conflicted with that
+        # specialised tool description and was the wrong layer to fix.
+        # Real R-RAG-srcread evidence requires a scenario where indexed
+        # docs semantically cover the prompt topic; until then, treat
+        # affordance-bias as hypothesis only. See
+        # docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/
+        # retrospective.md for the full audit.
+        # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
+        # When 0 indexed sources are available, the LLM must actively tell the
+        # user how to add them instead of silently defaulting to memory.
+        parts.append(
+            "  - If 0 indexed sources are available AND the user asks about data"
+        )
+        parts.append(
+            "    sources or what they can do: explicitly tell them to run"
+        )
+        parts.append(
+            "    `reyn run index_docs '{\"source\":\"<name>\",\"path\":\"<glob>\""
+            ",\"description\":\"<text>\"}'`"
+        )
+        parts.append(
+            "    to enable indexed retrieval. Do NOT answer with memory-only."
+        )
+        # ── FP-0023 Change 5 — JA recall/memory disambiguation examples ──────
+        # Extends the EN disambiguation block above with JA-specific examples.
+        # Dogfood measurement (B12-R2) showed JA examples reduced non-compliance
+        # from ~50% to ~5% for routing rules. Same technique applied here.
+        # Placed inside the indexed_sources_section guard because these examples
+        # reference recall/remember_* which are only meaningful when RAG is live.
+        parts.append("")
+        parts.append("  Japanese input disambiguation:")
+        parts.append(
+            "    - 「思い出して」「前回の話」「あのとき言ってた〜」"
+        )
+        parts.append(
+            "        → recall (indexed search) — if indexed sources exist"
+        )
+        parts.append(
+            "        → list_memory / read_memory_body — if no indexed sources"
+        )
+        parts.append(
+            "    - 「覚えて」「メモして」「記録して」「保存して」「忘れないで」"
+        )
+        parts.append(
+            "        → remember_shared or remember_agent (memory write)"
+        )
+        parts.append(
+            "    - 「忘れて」「削除して」「消して」(about a memory entry)"
+        )
+        parts.append(
+            "        → forget_memory"
+        )
 
     return "\n".join(parts)
 
