@@ -91,3 +91,163 @@ reyn eval reyn/local/my_skill/eval.md --model light
 - [リファレンス: stdlib/eval](../stdlib/eval.md) — eval Skill が生成するもの
 - [リファレンス: stdlib/eval_builder](../stdlib/eval_builder.md) — スペックファイルを生成
 - [リファレンス: permissions](../config/permissions.md) — 事前承認のメカニズム
+
+---
+
+## `reyn eval run` — ゴールデンデータセット実行（FP-0007）
+
+JSONL ゴールデンデータセットに対してスキルを実行し、pass rate で CI をゲートします。
+
+### 概要
+
+```
+reyn eval run <SKILL_NAME> --dataset <FILE> [OPTIONS]
+```
+
+### 位置引数
+
+| 名前 | 説明 |
+|-----|-----|
+| `SKILL_NAME` | 評価するスキルの名前（標準スキルルックアップ順で解決）。 |
+
+### オプション
+
+| フラグ | 説明 |
+|------|-----|
+| `--dataset FILE` | ゴールデン JSONL データセットへのパス。**必須。** 各行は `input` フィールドを持つ JSON オブジェクト。`expected` と `tags` は任意。 |
+| `--threshold FLOAT` | exit code 0 の最小 pass rate（0.0〜1.0）。デフォルト: `0.0`（全結果を記録し、rate では失敗しない）。 |
+| `--tags TAG[,TAG...]` | `tags` 配列に指定したタグのいずれかを含むケースのみ実行。 |
+| `--mode MODE` | 比較モード: `judge`（デフォルト、`judge_output` で LLM スコアリング）または `exact`（`expected` との完全一致）。 |
+| `--model MODEL` | モデルクラス（`light`/`standard`/`strong`）または LiteLLM モデル文字列。デフォルトは `reyn.yaml` から。 |
+| `--output-language LANG` | スキルに渡す出力言語コード。デフォルトは `reyn.yaml` から。 |
+| `--max-phase-visits N` | ケースごとの単一フェーズ再訪問の上限。`0` = 無制限。デフォルトは `reyn.yaml` または `25`。 |
+
+### 終了コード
+
+| コード | 意味 |
+|------|-----|
+| `0` | pass rate が `--threshold` 以上（またはしきい値未設定）。 |
+| `1` | データセットファイルが見つからない、JSONL が不正、またはスキルが見つからない。 |
+| `2` | pass rate が `--threshold` 未満。 |
+
+### 出力
+
+ケースごとのサマリー行が stdout に表示されます:
+
+```
+=== Eval: my_skill [3 case(s)] ===
+    model=standard
+
+━━━ case: smoke/0 ━━━
+  input: 非同期プログラミングの要点をまとめてください
+  ✓ score=0.91  passed
+
+━━━ case: edge-case/empty-input ━━━
+  input: (empty)
+  ✗ score=0.31  failed
+
+═══════════════════════════════════════════════════════
+ ✗ 2/3 cases passed (66.7%)  threshold=0.8
+ Results → .reyn/eval-results/my_skill/2026-05-14T12:00:00.jsonl
+═══════════════════════════════════════════════════════
+```
+
+完全な構造化結果は `.reyn/eval-results/<skill>/<timestamp>.jsonl` に書き込まれます。各行はケースの入力、expected、実際の `final_output`、スコア、passed フラグ、`skill_version_hash` を記録します。
+
+### Workspace 隔離
+
+各ケースは隔離された workspace コピーで実行されます。本番 workspace の状態（index 済みソース、承認、既存アーティファクト）は eval ケースから見えません。あるケースの結果が次のケースに影響しません。
+
+### 非インタラクティブ制約
+
+`reyn eval run` はプロンプトを表示しません。スキルが必要とするすべてのパーミッションは事前承認されている必要があります。[非インタラクティブ事前承認ガイド](../../guide/evaluation.md#non-interactive-permissions) または [リファレンス: permissions](../config/permissions.md) を参照してください。
+
+### 例
+
+```bash
+# ゴールデンデータセットに対して実行し、pass rate が 80% を下回ったら CI を失敗させる
+reyn eval run my_skill --dataset eval/golden.jsonl --threshold 0.8
+
+# smoke タグのケースのみ実行
+reyn eval run my_skill --dataset eval/golden.jsonl --tags smoke --threshold 1.0
+
+# 完全一致比較（データセットの全行に 'expected' が必要）
+reyn eval run my_skill --dataset eval/golden.jsonl --mode exact
+
+# 開発中の高速イテレーション向けに安価なモデルを使用
+reyn eval run my_skill --dataset eval/golden.jsonl --model light
+```
+
+---
+
+## `reyn eval report` — 結果サマリー（FP-0007）
+
+スキルの過去の `reyn eval run` 結果をサマリー表示します。
+
+### 概要
+
+```
+reyn eval report <SKILL_NAME> [OPTIONS]
+```
+
+### 位置引数
+
+| 名前 | 説明 |
+|-----|-----|
+| `SKILL_NAME` | 結果を表示するスキルの名前。 |
+
+### オプション
+
+| フラグ | 説明 |
+|------|-----|
+| `--limit N` | 表示する最新ランの件数。デフォルト: `10`。 |
+| `--json` | デフォルトのテーブル形式の代わりに JSON 配列として出力。 |
+| `--dataset FILE` | このデータセットファイルを使用したランのみにフィルタリング。 |
+
+### 終了コード
+
+| コード | 意味 |
+|------|-----|
+| `0` | 結果が見つかり表示された（結果なしのケースを含む）。 |
+| `1` | スキルが見つからない、または `.reyn/eval-results/` の読み取りエラー。 |
+
+### 出力
+
+デフォルトのテーブル形式:
+
+```
+my_skill — 3 runs on record
+
+  2026-05-14  dataset=eval/golden.jsonl  2/3 passed (66.7%)  model=standard
+  2026-05-13  dataset=eval/golden.jsonl  3/3 passed (100%)   model=standard
+  2026-05-12  dataset=eval/golden.jsonl  1/3 passed (33.3%)  model=light
+```
+
+結果が記録されていない場合:
+
+```
+No eval results found for 'my_skill'.
+Try: reyn eval run my_skill --dataset eval/golden.jsonl
+```
+
+### 例
+
+```bash
+# 最新 10 ランを表示
+reyn eval report my_skill
+
+# マシン可読出力
+reyn eval report my_skill --json
+
+# 特定のデータセットに対するランのみフィルタリング
+reyn eval report my_skill --dataset eval/golden.jsonl --limit 5
+```
+
+---
+
+## 関連情報（FP-0007 追加分）
+
+- [コンセプト: 評価インフラ](../../concepts/evaluation.md) — アーキテクチャ概要と競合比較
+- [ガイド: 評価インフラのセットアップ](../../guide/evaluation.md) — クイックスタート、export バックエンド、CI 連携
+- [リファレンス: `reyn.yaml`](../config/reyn-yaml.md) — `eval.exporters` 設定
+- [リファレンス: control-ir](../runtime/control-ir.md) — `judge_output` op スキーマ

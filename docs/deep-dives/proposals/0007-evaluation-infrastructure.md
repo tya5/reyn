@@ -226,3 +226,18 @@ production workspace) and **Component A's IETF format accuracy** (the draft spec
 - `docs/deep-dives/research/landscape/hn-practitioner-voice-2026.md` — HN observability criticism
 - [IETF Agent Audit Trail draft](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/)
 - [Langfuse OSS](https://langfuse.com/) — self-hostable evaluation platform
+
+---
+
+## User documentation
+
+The following user-facing docs were created as part of the FP-0007 documentation wave:
+
+| Document | Path | Description |
+|----------|------|-------------|
+| Concept doc | `docs/concepts/evaluation.md` | Architecture, 3-layer model, competitive comparison |
+| Concept doc (JA) | `docs/concepts/evaluation.ja.md` | Japanese translation |
+| Operator guide | `docs/guide/evaluation.md` | Quickstart, export backends, CI integration, `judge_output` usage |
+| Operator guide (JA) | `docs/guide/evaluation.ja.md` | Japanese translation |
+| CLI reference | `docs/reference/cli/eval.md` | `reyn eval run` + `reyn eval report` flag reference (appended) |
+| CLI reference (JA) | `docs/reference/cli/eval.ja.md` | Japanese translation (appended) |

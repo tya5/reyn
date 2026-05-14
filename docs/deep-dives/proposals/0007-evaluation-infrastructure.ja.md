@@ -226,3 +226,18 @@ Component C のみ FP-0006 の `skill_version_hash` が前提。
 - `docs/deep-dives/research/landscape/hn-practitioner-voice-2026.md` — HN の観測性批判
 - [IETF Agent Audit Trail draft](https://datatracker.ietf.org/doc/draft-sharif-agent-audit-trail/)
 - [Langfuse OSS](https://langfuse.com/) — 自己ホスト対応評価プラットフォーム
+
+---
+
+## ユーザー向けドキュメント
+
+FP-0007 ドキュメント wave として以下のユーザー向け doc が作成されました:
+
+| ドキュメント | パス | 説明 |
+|------------|-----|-----|
+| コンセプト doc | `docs/concepts/evaluation.md` | アーキテクチャ、3 層モデル、競合比較 |
+| コンセプト doc（JA） | `docs/concepts/evaluation.ja.md` | 日本語翻訳 |
+| オペレーターガイド | `docs/guide/evaluation.md` | クイックスタート、export バックエンド、CI 連携、`judge_output` 使用例 |
+| オペレーターガイド（JA） | `docs/guide/evaluation.ja.md` | 日本語翻訳 |
+| CLI リファレンス | `docs/reference/cli/eval.md` | `reyn eval run` + `reyn eval report` フラグリファレンス（既存 eval.md に追記） |
+| CLI リファレンス（JA） | `docs/reference/cli/eval.ja.md` | 日本語翻訳（既存 eval.ja.md に追記） |

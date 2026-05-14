@@ -73,6 +73,7 @@ nav:
           - guide/getting-started/03-your-first-skill.md
           - guide/getting-started/04-running-a-skill.md
           - guide/getting-started/05-writing-an-eval.md
+      - Setup evaluation: guide/evaluation.md
       - For users:
           - guide/for-users/manage-permissions.md
           - guide/for-users/ask-user-mid-phase.md
@@ -177,6 +178,7 @@ nav:
       - concepts/postprocessor.md
       - concepts/python-safe-mode.md
       - concepts/skill-design-patterns.md
+      - concepts/evaluation.md
       - concepts/skill-resume.md
       - Agent engineering — seven lenses:
           - concepts/agent-engineering/index.md
