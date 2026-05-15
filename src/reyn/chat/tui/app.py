@@ -36,7 +36,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.theme import Theme
 
-from .widgets import ConversationView, InputBar, ReynHeader, RightPanel
+from .widgets import ConversationView, InputBar, InterventionWidget, ReynHeader, RightPanel
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -629,13 +629,34 @@ class ReynTUIApp(App):
             pass
 
     def action_focus_toggle_panel(self) -> None:
-        """ctrl+o — cycle focus: input → panel tabs → preview pane → input."""
+        """ctrl+o — cycle focus: input → intervention buttons (if pending) → panel tabs → preview pane → input."""
         panel = self.query_one("#right_panel", RightPanel)
         focused = self.focused
         ancestors = [focused, *focused.ancestors] if focused else []
         in_panel = any(a is panel for a in ancestors)
 
         if not in_panel:
+            # Check for a pending intervention widget — focus its first button
+            # so the user can Tab through choices and press Space/Enter to pick one.
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                iv_list = list(conv.query(InterventionWidget))
+                if iv_list:
+                    in_iv = any(a in iv_list for a in ancestors)
+                    if not in_iv:
+                        # Focus the first button (or the free-text Input if no buttons)
+                        iv = iv_list[-1]  # most recent intervention
+                        from textual.widgets import Button, Input as _Input
+                        btns = list(iv.query(Button))
+                        if btns:
+                            btns[0].focus()
+                            return
+                        inputs = list(iv.query(_Input))
+                        if inputs:
+                            inputs[0].focus()
+                            return
+            except Exception:
+                pass
             # Not in panel at all → move to panel tabs
             panel.focus_tabs()
             return
