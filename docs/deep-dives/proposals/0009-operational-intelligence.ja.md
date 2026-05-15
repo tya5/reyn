@@ -18,6 +18,54 @@ Component B（FP-0001 経由の cron 定期実行）は proposed のまま — F
 
 ---
 
+## Landing notes — 2026-05-15 post-dogfood fixes
+
+初回着地後のコードレビューと dogfood リテストで 6 件の問題が発覚し、同日中にすべて修正された。
+
+**R-1: `collect_aggregate` パブリック名の欠落（commit `5f56005`）**
+`ops_report` の `skill.md` が `_collect_aggregate`（プライベート関数）を参照していたが、
+実装に該当する公開 API が存在しなかった（スキーマ見落とし）。`aggregate.py` に
+`collect_aggregate(artifact: dict) -> dict` をパブリック関数として追加 — recall path を優先し、
+index 未実行時は raw events walk にフォールバックする設計。
+
+**R-2: `event_chunker.py` ステータス導出バグ（commit `5f56005`）**
+削除予定コード内の条件式が `"failed" if "fail" in ... else "failed"` と両分岐同一になっており、
+`aborted` ステータスに到達不能だった（コードロジック誤り）。条件式を修正し、
+`aborted` が正しくキャプチャされるように変更。
+
+**BUG-1: `index_events` scan フェーズの artifact_ref 漏洩（commit `982bc2a`）**
+scan フェーズの前処理器が 67KB の `event_files` リストをアーティファクトに格納したため、
+`ARTIFACT_REF_THRESHOLD`（8KB）を超えて `artifact_ref` に昇格。scan フェーズは
+`allowed_ops: []` のためアーティファクト参照を逆引きできず、LLM が存在しないパスを
+生成 → 0 チャンクインデックスという連鎖障害（P5/P8 違反: LLM にファイルシステム列挙を
+キャリーさせるべきでない）。前処理器の出力を `event_files_count` + `oldest_timestamp` +
+`newest_timestamp`（~300 バイト）に最小化。postprocessor がランタイムで再 glob して解決。
+
+**BUG-3: `ops_report` の `phases/collect.md` が存在しない（commit `5589906`）**
+`skill.md` のインラインフェーズ宣言（`phases.collect`）は DSL コンパイラに無視されており、
+ファイルベースのフェーズが存在しないためコンパイルエラーとなっていた（`skill.md` インライン
+フェーズは DSL 仕様外）。`phases/collect.md` をファイルとして作成し、同じ前処理器を持つ
+フェーズとして実体化。`skill.md` の misleading インラインブロックを削除。
+コンパイル + フェーズファイル存在を検証する regression test 2 件を追加。
+
+**python step の permission mode 宣言（commit `a41d52a` → `9025e1e` + `a0cb630`）**
+`aggregate.py` がモジュールレベルで `glob` を import しているため、`mode: safe` では
+非インタラクティブ実行コンテキストで自動拒否されていた。`aggregate.py` はオペレーター
+管理のファイルシステム状態を参照する意図的な設計（`docs/concepts/python-safe-mode.md`
+の「operator state ingress」区分に相当）であり、`mode: unsafe` の正直な宣言が適切。
+その後のアーキテクチャ修正（`9025e1e` + `a0cb630`）で `mode: safe` の stdlib 自動許可
+起動ガードのホールを閉じ、真に安全な stdlib python の safe mode 動作を整合させた。
+
+**Y-1: chunker 死コード統合（commit `ce23bdc`）（コードレビュー起点）**
+`event_chunker.py`（669 LoC）が `chunkers.py` と重複していた。有用な部分を
+`chunkers.py` に統合し `event_chunker.py` を削除。約 400 LoC の死コード除去。
+
+---
+
+Post-fix dogfood確認: `reyn run index_events` で 38 events indexed → SQLite 5 unique chunks、 `reyn run ops_report` で recall path 経由 ($0.0016)、 全 E2E pipeline 動作確認済。
+
+---
+
 ## Summary
 
 P6 イベントログ（`.reyn/events/*.jsonl`）を `index_docs` + `recall` op の RAG インフラ上で

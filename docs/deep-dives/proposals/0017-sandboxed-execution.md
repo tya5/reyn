@@ -81,6 +81,27 @@ seccomp-BPF layer stacked on top of `LandlockBackend`:
 - `on_unsupported: error` fails skill dispatch when the requested backend is unavailable (for production environments requiring enforcement guarantees).
 - Files: `src/reyn/config.py`, `src/reyn/sandbox/__init__.py`, `tests/test_sandbox_factory.py`.
 
+### Post-dogfood fix — macOS 26 compatibility (commit `b477508`)
+
+Two `SeatbeltBackend` bugs surfaced during manual smoke testing on a macOS 26.3.1 dev box shortly after the initial landing.
+
+**Bug 1: Hard-coded version gate**
+`SeatbeltBackend.available()` returned `False` for macOS ≥ 26 unconditionally, based on FP-doc speculation
+that Apple would remove `sandbox-exec` in macOS 26. macOS 26.3.1 ships the binary at `/usr/bin/sandbox-exec`.
+Fix: removed the version comparison; gate on binary presence via `shutil.which("sandbox-exec")`. If a future
+macOS release truly removes the binary, automatic fallthrough to `AppleContainerBackend` (Component E,
+deferred) will kick in without any code change.
+
+**Bug 2: Generated SBPL profile rejected `execvp()`**
+The SBPL profile produced under a `(deny default)` posture rejected `execvp()` system calls, preventing
+subprocess startup. Fix: added `(import "bsd.sb")` baseline (covers mach-lookup, sysctl-read, signal, etc.),
+explicit `(allow process-exec*)` and `(allow process-fork)`, and `/private/var/db/dyld` to the
+always-read paths (the dyld shared cache location on modern macOS).
+
+End-to-end smoke verification: `/bin/echo` ran under the Seatbelt sandbox on macOS 26.3.1 with
+`returncode 0`. Two darwin-only execution tests that had been skipping now run unconditionally
+(test suite +2).
+
 ---
 
 ## Summary

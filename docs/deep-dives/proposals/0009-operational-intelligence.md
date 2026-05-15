@@ -18,6 +18,56 @@ Component B (periodic cron via FP-0001) remains proposed — waiting on FP-0001 
 
 ---
 
+## Landing notes — 2026-05-15 post-dogfood fixes
+
+A code review and dogfood retest after the initial landing surfaced 6 issues, all fixed on the same day.
+
+**R-1: Missing public name for `collect_aggregate` (commit `5f56005`)**
+`ops_report`'s `skill.md` referenced `_collect_aggregate` (a private function name), but no
+public API with that contract existed — a schema oversight. Added `collect_aggregate(artifact: dict) -> dict`
+as a public function in `aggregate.py`. Prefers the recall path; falls back to raw events walk when the
+index has not been run.
+
+**R-2: Status derivation bug in `event_chunker.py` (commit `5f56005`)**
+A conditional expression in the to-be-deleted file read `"failed" if "fail" in ... else "failed"` — both
+branches identical, making `aborted` status unreachable (logic error). Fixed the conditional so `aborted`
+is correctly captured.
+
+**BUG-1: `artifact_ref` leak from the `index_events` scan-phase preprocessor (commit `982bc2a`)**
+The scan-phase preprocessor returned a 67 KB `event_files` list as part of its artifact output, exceeding
+the `ARTIFACT_REF_THRESHOLD` (8 KB) and causing the OS to promote it to an `artifact_ref`. Because scan
+has `allowed_ops: []`, the LLM could not dereference the reference and hallucinated paths, resulting in
+0 chunks indexed (P5/P8 violation: the LLM should not carry filesystem enumeration through context).
+Fix: minimize preprocessor output to `event_files_count` + `oldest_timestamp` + `newest_timestamp`
+(~300 bytes). The postprocessor re-globs deterministically at runtime.
+
+**BUG-3: `ops_report`'s `phases/collect.md` missing from disk (commit `5589906`)**
+The inline `phases.collect` block in `skill.md` was silently ignored by the DSL compiler — inline phases
+are not part of the DSL spec — so there was no file-based phase for the compiler to find, causing a
+compile error. Fix: materialized `phases/collect.md` as a proper file-based phase carrying the same
+preprocessor. Removed the misleading inline block from `skill.md`. Added 2 regression tests covering
+compile success and phase file existence.
+
+**Python step permission mode declaration (commit `a41d52a` → `9025e1e` + `a0cb630`)**
+`aggregate.py` imports `glob` at module level. In a non-interactive execution context, `mode: safe` was
+auto-denying this import. Because `aggregate.py` intentionally reads operator-controlled filesystem state
+(the "filesystem ingress" category in `docs/concepts/python-safe-mode.md`), `mode: unsafe` is the honest
+declaration. A follow-up architecture fix (`9025e1e` + `a0cb630`) closed a startup-guard hole in
+`permissions.py` that had prevented genuinely-safe stdlib Python steps from being auto-allowed under
+`mode: safe`, aligning safe-mode behaviour with its specification.
+
+**Y-1: Chunker dead-code consolidation (commit `ce23bdc`) (code-review follow-up)**
+`event_chunker.py` (669 LoC) duplicated work already done in `chunkers.py`. Useful pieces were merged
+into `chunkers.py` and `event_chunker.py` was deleted — approximately 400 LoC of dead code removed.
+
+---
+
+Post-fix dogfood verification: `reyn run index_events` indexed 38 events → 5 unique chunks written to
+SQLite; `reyn run ops_report` activated the recall path (`data_source=recall`, cost $0.0016). Full E2E
+pipeline confirmed working.
+
+---
+
 ## Summary
 
 By indexing P6 event logs (`.reyn/events/*.jsonl`) through the RAG infrastructure of the
