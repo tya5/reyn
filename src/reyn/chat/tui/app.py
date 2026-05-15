@@ -646,7 +646,8 @@ class ReynTUIApp(App):
                     if not in_iv:
                         # Focus the first button (or the free-text Input if no buttons)
                         iv = iv_list[-1]  # most recent intervention
-                        from textual.widgets import Button, Input as _Input
+                        from textual.widgets import Button
+                        from textual.widgets import Input as _Input
                         btns = list(iv.query(Button))
                         if btns:
                             btns[0].focus()
