@@ -161,7 +161,7 @@ class ConversationView(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield RichLog(highlight=False, markup=False, wrap=True, id="log")
+        yield RichLog(highlight=False, markup=False, wrap=True, max_lines=5000, id="log")
         # B5: empty-state hint, removed on first message
         yield Static(
             "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
@@ -206,6 +206,9 @@ class ConversationView(Widget):
             # Record turn anchor for agent turns (B4 navigation)
             if speaker == "reyn":
                 self._turn_anchors.append(len(log.lines))
+                # Cap to last 200 to avoid unbounded growth (long sessions)
+                if len(self._turn_anchors) > 200:
+                    self._turn_anchors = self._turn_anchors[-200:]
             log.write(_msg_header(label_text, name_style, dash_style))
         self._last_speaker = speaker
         self._last_speaker_at = now

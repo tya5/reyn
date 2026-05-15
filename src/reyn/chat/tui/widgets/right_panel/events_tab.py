@@ -379,6 +379,7 @@ def _load_chain_replies(project_root: Path) -> dict[str, str]:
 def _load_events_cached(
     project_root: Path,
     cache: dict[Path, tuple[float, list[dict]]],
+    filelist_cache: list | None = None,
 ) -> list[dict]:
     """Read all events/.jsonl with file-mtime caching (perf).
 
@@ -386,13 +387,33 @@ def _load_events_cached(
     changes — events panel re-renders every 2 s and the events directory
     grows monotonically with each turn, so re-reading every file every
     refresh adds up.
+
+    ``filelist_cache`` is an optional mutable list used as a cheap TTL
+    cache for the rglob directory walk itself (expensive once the events
+    directory has hundreds of files).  Format: ``[timestamp, [Path…]]``.
+    The walk is repeated at most once every 10 s.
     """
+    import time as _time
+
     events_root = project_root / ".reyn" / "events"
     if not events_root.is_dir():
         return []
     all_events: list[dict] = []
     seen: set[Path] = set()
-    for jsonl in sorted(events_root.rglob("*.jsonl")):
+    # --- filelist TTL cache (10 s) ---
+    _now = _time.monotonic()
+    if (
+        filelist_cache is not None
+        and len(filelist_cache) == 2
+        and _now - filelist_cache[0] < 10.0
+    ):
+        jsonl_files: list[Path] = filelist_cache[1]
+    else:
+        jsonl_files = sorted(events_root.rglob("*.jsonl"))
+        if filelist_cache is not None:
+            filelist_cache.clear()
+            filelist_cache.extend([_now, jsonl_files])
+    for jsonl in jsonl_files:
         seen.add(jsonl)
         try:
             mtime = jsonl.stat().st_mtime
@@ -433,6 +454,7 @@ def render_events(
     *,
     cursor: int = 0,
     cache: dict | None = None,
+    filelist_cache: list | None = None,
 ) -> tuple[str, list[dict]]:
     """Render the recent-events list for the events tab.
 
@@ -451,7 +473,7 @@ def render_events(
 
     if cache is None:
         cache = {}
-    all_events = _load_events_cached(project_root, cache)
+    all_events = _load_events_cached(project_root, cache, filelist_cache)
 
     filter_name, filter_set = _FILTER_GROUPS[event_filter_idx]
     tail = _TAIL_CYCLE[event_tail_idx]

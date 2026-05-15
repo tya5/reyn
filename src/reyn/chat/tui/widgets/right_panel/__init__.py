@@ -124,6 +124,8 @@ class RightPanel(Widget):
         self._exec_state: dict[str, dict] = {}
         # Events tab state — mtime-based parse cache + cursor + visible-list cache
         self._events_cache: dict[Path, tuple[float, list[dict]]] = {}
+        # File-list TTL cache: [] or [timestamp, [Path…]] — refreshed ≤ every 10s
+        self._events_filelist_cache: list = []
         self._events_cursor: int = 0
         self._events_visible: list[dict] = []
         # Memory tab state — flat cursor over all entries
@@ -1288,6 +1290,7 @@ class RightPanel(Widget):
                     self._event_tail_idx,
                     cursor=self._events_cursor,
                     cache=self._events_cache,
+                    filelist_cache=self._events_filelist_cache,
                 )
                 self._events_visible = windowed
                 if self._events_cursor >= len(windowed):
