@@ -1,6 +1,6 @@
 # FP-0006: Skill Self-Improvement — Execution-Trace-Driven + Versioning + Rollback
 
-**Status**: **Component A landed** 2026-05-15; B-E proposed
+**Status**: **All components A + B + C + D + E landed** 2026-05-15
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -8,9 +8,51 @@
 
 ## Landing notes (2026-05-15)
 
-Component A — `skill_version_hash` event field — landed 2026-05-15. `run_skill_started` event now embeds sha256(skill.md content) as a full 64-char hex string (`"unknown"` if skill.md is missing). Used by FP-0007 C regression compare and FP-0009 A `index_events` for per-version history aggregation.
+All five components (A–E) landed in the morning and evening waves on 2026-05-15.
 
-Components B (`.reyn/skill-versions/` archive), C (`collect_traces` phase), D (Approval gate), and E (`reyn skill rollback` CLI) remain proposed.
+### Component A — `skill_version_hash` event field (commit `ea17285`, morning)
+
+- **Files changed**: `src/reyn/op_runtime/run_skill.py` (added `_compute_skill_hash` helper)
+- `run_skill_started` event now embeds sha256(skill.md content) as a full 64-char hex string (`"unknown"` if skill.md is missing). Consumed by FP-0007 C regression compare and FP-0009 A `index_events` for per-version history aggregation.
+- **Tests**: 5 Tier 2 regression tests.
+
+### Component B — `.reyn/skill-versions/` version archive (commit `3e2aca4`, evening)
+
+- **Files changed**: `src/reyn/stdlib/skills/skill_improver/phases/finalize.md` (preprocessor wiring), `src/reyn/stdlib/skills/skill_improver/version_snapshot.py` (new)
+- The `finalize` preprocessor python step saves `.reyn/skill-versions/<name>/v<N>.md` snapshots and updates the `current` pointer file. The `max_versions` cap (default 10) drops oldest versions while preserving the current pointer's target.
+- **Tests**: 10 Tier 2 tests.
+
+### Component C — `collect_traces` phase (commit `4242a4d`, evening)
+
+- **Files changed**: `src/reyn/stdlib/skills/skill_improver/phases/collect_traces.md` (new), `src/reyn/stdlib/skills/skill_improver/trace_collector.py` (new), `src/reyn/stdlib/skills/skill_improver/skill.md` (graph update)
+- Inserted between `prepare` and `copy_to_work` when `improvement_source: traces|both` (default `tests` preserves existing behaviour). `trace_collector.py` attempts `recall(sources=["events"])` and falls back to raw event file reads. Outputs `traces_summary.md` for the `plan_improvements` phase to consume.
+- **Tests**: 8 Tier 2 tests.
+- **Dependency**: The recall path activates only when FP-0009 Component A (`index_events`) and Component C (events index) have landed.
+
+### Component D — `SelfImprovementConfig` + `on_propose` approval gate (commit `3e2aca4`, bundled with B)
+
+- **Files changed**: `src/reyn/config.py` (new `SelfImprovementConfig` dataclass), `src/reyn/stdlib/skills/skill_improver/phases/finalize.md` (branch added to preprocessor)
+- `on_propose: ask_user|auto|disabled` (default `ask_user`) and `max_versions: 10` defined in `SelfImprovementConfig`. The `finalize` preprocessor python step consults `data._on_propose` to decide whether to require user approval. `decide_on_propose_action()` extracted as a pure function for Tier 2 testability.
+- **Tests**: Covered within Component B's 10-test suite.
+
+### Component E — `reyn skill versions` / `reyn skill rollback` CLI (commit `cdf7e59`, evening)
+
+- **Files changed**: `src/reyn/cli/skill.py` (new `versions` / `rollback` subcommands), `docs/reference/cli/skill.md` (new CLI reference)
+- `reyn skill versions <name>` lists the version history; `reyn skill rollback <name> [--to vN]` performs an atomic write and updates the `current` pointer. Rollback of stdlib skills (`src/reyn/stdlib/`) is refused — ship-bundled files are immutable. In the CLI context there is no active EventStore, so `skill_rolled_back` event emission is skipped — flagged for follow-up.
+- **Tests**: 6 Tier 2 tests.
+
+### Wave summary
+
+The test suite went from 2515 → 2539 (+24). The evening wave produced 3 commits (B+D bundled, C, E). Meta-improvement (the `skill_improver` modifying itself) remains prohibited by default via the Permission model — `src/reyn/stdlib/` is outside the default write zone, so the operation fails with a PermissionError unless the user explicitly adds the stdlib path to `permissions.file.write`. No additional implementation is needed.
+
+### Related surfaces
+
+- `docs/reference/cli/skill.md` — new CLI reference for `reyn skill versions` / `reyn skill rollback`, created in the same wave
+- `src/reyn/stdlib/skills/skill_improver/version_snapshot.py` — Component B version-saving helper
+- `src/reyn/stdlib/skills/skill_improver/trace_collector.py` — Component C trace-collection helper
+- `src/reyn/stdlib/skills/skill_improver/phases/collect_traces.md` — Component C new phase file
+- `src/reyn/config.py` `SelfImprovementConfig` — Component D config dataclass
+- FP-0009 (`0009-operational-intelligence.md`) — Component C's recall path depends on FP-0009 Components A + C for the events-RAG-recall path
 
 ---
 

@@ -1,6 +1,6 @@
 # FP-0006: スキル自己改善 — 実行トレース駆動 + バージョン管理 + ロールバック
 
-**Status**: **Component A 着地** 2026-05-15; B-E proposed
+**Status**: **All components A + B + C + D + E 着地** 2026-05-15
 **Proposed**: 2026-05-10
 **Author**: Research session (eager-shaw-389d9d)
 
@@ -8,9 +8,51 @@
 
 ## Landing notes (2026-05-15)
 
-Component A — `skill_version_hash` event field — 着地 2026-05-15。`run_skill_started` event に sha256(skill.md) を埋め込み（フル 64 文字 hex。skill.md が存在しない場合は `"unknown"`）。FP-0007 C regression compare / FP-0009 A index_events で活用。
+全 5 コンポーネント（A〜E）が 2026-05-15 の朝波 + 夕方波で着地した。
 
-Component B（`.reyn/skill-versions/` アーカイブ）・C（`collect_traces` フェーズ）・D（承認ゲート）・E（`reyn skill rollback` CLI）は proposed のまま。
+### Component A — `skill_version_hash` イベントフィールド（commit `ea17285`、朝波）
+
+- **変更ファイル**: `src/reyn/op_runtime/run_skill.py`（`_compute_skill_hash` ヘルパー追加）
+- `run_skill_started` イベントに sha256(skill.md) をフル 64 文字 hex で埋め込む。skill.md が存在しない場合は `"unknown"`。FP-0007 C regression compare / FP-0009 A index_events で活用。
+- **テスト**: Tier 2 regression テスト 5 件。
+
+### Component B — `.reyn/skill-versions/` バージョンアーカイブ（commit `3e2aca4`、夕方波）
+
+- **変更ファイル**: `src/reyn/stdlib/skills/skill_improver/phases/finalize.md`（preprocessor 連携）、`src/reyn/stdlib/skills/skill_improver/version_snapshot.py`（新規）
+- `finalize` フェーズの preprocessor python step が `.reyn/skill-versions/<name>/v<N>.md` へのスナップショット保存と `current` ポインタファイルの更新を担う。`max_versions`（デフォルト 10）上限超過時は最古から削除（current 参照バージョンは保護）。
+- **テスト**: Tier 2 テスト 10 件。
+
+### Component C — `collect_traces` フェーズ（commit `4242a4d`、夕方波）
+
+- **変更ファイル**: `src/reyn/stdlib/skills/skill_improver/phases/collect_traces.md`（新規）、`src/reyn/stdlib/skills/skill_improver/trace_collector.py`（新規）、`src/reyn/stdlib/skills/skill_improver/skill.md`（グラフ更新）
+- `improvement_source: traces|both`（デフォルト `tests` で既存互換）のとき `prepare` → `collect_traces` → `copy_to_work` … の順に挿入。`trace_collector.py` は `recall(sources=["events"])` を試みて失敗時は raw events 直接読み取りにフォールバック。出力 `traces_summary.md` を `plan_improvements` フェーズが参照する。
+- **テスト**: Tier 2 テスト 8 件。
+- **依存**: FP-0009 Component A（`index_events`）+ Component C（events インデックス）が着地済みの場合に recall パスが有効化される。
+
+### Component D — `SelfImprovementConfig` + `on_propose` 承認ゲート（commit `3e2aca4`、B と同梱）
+
+- **変更ファイル**: `src/reyn/config.py`（`SelfImprovementConfig` データクラス追加）、`src/reyn/stdlib/skills/skill_improver/phases/finalize.md`（preprocessor 分岐追加）
+- `on_propose: ask_user|auto|disabled`（デフォルト `ask_user`）と `max_versions: 10` を `SelfImprovementConfig` として定義。finalize の preprocessor python step が `data._on_propose` を参照してユーザー承認要否を決定する。`decide_on_propose_action()` 純関数として切り出し Tier 2 テスト可能。
+- **テスト**: Component B テスト 10 件に含まれる。
+
+### Component E — `reyn skill versions` / `reyn skill rollback` CLI（commit `cdf7e59`、夕方波）
+
+- **変更ファイル**: `src/reyn/cli/skill.py`（`versions` / `rollback` サブコマンド追加）、`docs/reference/cli/skill.md`（新規 CLI リファレンス）
+- `reyn skill versions <name>` でバージョン一覧表示、`reyn skill rollback <name> [--to vN]` でアトミック書き込み + current ポインタ更新。stdlib スキル（`src/reyn/stdlib/` 配下）へのロールバックは ship-bundled ファイル不変の原則から拒否。CLI コンテキストでは EventStore が非活性のため `skill_rolled_back` イベント emit はスキップ（フォローアップ課題として記録済み）。
+- **テスト**: Tier 2 テスト 6 件。
+
+### ウェーブ全体のまとめ
+
+テストスイートは 2515 → 2539（+24）。夕方波のコミット数は 3（B+D 同梱 / C / E）。メタ改善（`skill_improver` が自身を改善すること）は Permission model により自動禁止 — `src/reyn/stdlib/` はデフォルト書き込みゾーン外のため、ユーザーが明示的に `permissions.file.write` に stdlib パスを追加しない限り PermissionError となる。追加実装は不要。
+
+### 関連 surfaces
+
+- `docs/reference/cli/skill.md` — Component E で作成した `reyn skill versions` / `reyn skill rollback` の CLI リファレンス
+- `src/reyn/stdlib/skills/skill_improver/version_snapshot.py` — Component B のバージョン保存ヘルパー
+- `src/reyn/stdlib/skills/skill_improver/trace_collector.py` — Component C のトレース収集ヘルパー
+- `src/reyn/stdlib/skills/skill_improver/phases/collect_traces.md` — Component C の新規フェーズファイル
+- `src/reyn/config.py` `SelfImprovementConfig` — Component D の設定データクラス
+- FP-0009（`0009-operational-intelligence.md`）— Component C の recall パスは FP-0009 Component A（index_events）+ Component C（events インデックス）に依存
 
 ---
 
