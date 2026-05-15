@@ -84,7 +84,8 @@ reyn skill rollback <SKILL_NAME> [--to vN]
 3. `.reyn/skill-versions/<name>/<target>.md` の存在を確認する。
 4. スナップショットの内容をスキルの `skill.md` にアトミック書き込みで上書きする。
 5. `.reyn/skill-versions/<name>/current` を復元後のバージョン番号に更新する。
-6. 確認メッセージを stdout に表示する。
+6. `skill_rolled_back` P6 イベントを `.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl` に書き込む。
+7. 確認メッセージを stdout に表示する。
 
 #### stdlib スキルの制限
 
@@ -134,10 +135,6 @@ reyn skill rollback my_skill
 reyn skill rollback my_skill --to v1
 ```
 
-> **P6 監査ギャップ:** `reyn skill rollback` は現時点で `skill_rolled_back`
-> イベントを発行しません。スタンドアロン CLI コンテキストにはアクティブな
-> EventStore が存在しないためです。代わりに確認メッセージを stdout に出力します。
-> フォローアップ PR で対応予定です。[リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) を参照してください。
 
 ## スナップショットディレクトリ構造
 
@@ -158,4 +155,4 @@ reyn skill rollback my_skill --to v1
 - `reyn skills` — インストール済みスキルの一覧表示と詳細確認
 - [リファレンス: stdlib/skill_improver](../stdlib/skill_improver.md) — スナップショットを作成する
 - [提案: FP-0006 スキル自己改善](../../deep-dives/proposals/0006-skill-self-improvement.ja.md) — Component B（バージョン管理）と Component E（CLI）
-- [リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) — 予定している P6 イベントペイロード
+- [リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) — P6 イベントペイロード

@@ -95,7 +95,7 @@ Each Control IR op kind emits its own event:
 
 | Kind | Payload fields | Emitted when |
 |------|---------------|--------------|
-| `skill_rolled_back` | `skill: str`, `from_version: int`, `to_version: int`, `reason: str` (default `"user rollback via CLI"`) | A `reyn skill rollback` invocation restores a prior version. **Currently NOT emitted** — no active EventStore in the standalone CLI context. Planned to be wired in a follow-up PR. See [Reference: CLI — `reyn skill rollback`](../cli/skill.md). |
+| `skill_rolled_back` | `skill: str`, `from_version: int`, `to_version: int`, `reason: str` (default `"user rollback via CLI"`) | A `reyn skill rollback` invocation restores a prior version. Written to `.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl`. See [Reference: CLI — `reyn skill rollback`](../cli/skill.md). |
 
 ## Replay
 

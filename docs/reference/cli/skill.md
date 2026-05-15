@@ -84,7 +84,8 @@ reyn skill rollback <SKILL_NAME> [--to vN]
 3. Verifies `.reyn/skill-versions/<name>/<target>.md` exists.
 4. Atomically overwrites the skill's `skill.md` with the snapshot content.
 5. Updates `.reyn/skill-versions/<name>/current` to the restored version.
-6. Prints a confirmation line to stdout.
+6. Emits a `skill_rolled_back` P6 event to `.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl`.
+7. Prints a confirmation line to stdout.
 
 #### Stdlib restriction
 
@@ -134,10 +135,6 @@ Roll back to a specific version:
 reyn skill rollback my_skill --to v1
 ```
 
-> **P6 audit gap:** `reyn skill rollback` does not currently emit a
-> `skill_rolled_back` event — no active EventStore exists in the standalone
-> CLI context. The rollback is confirmed via a printed audit line instead.
-> Tracked for a follow-up PR. See [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management).
 
 ## Snapshot directory layout
 
@@ -158,4 +155,4 @@ reads them; it never creates new snapshots.
 - `reyn skills` — list and inspect all installed skills
 - [Reference: stdlib/skill_improver](../stdlib/skill_improver.md) — creates snapshots
 - [Proposal: FP-0006 skill self-improvement](../../deep-dives/proposals/0006-skill-self-improvement.md) — Component B (versioning) and Component E (CLI)
-- [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management) — planned P6 event payload
+- [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management) — P6 event payload

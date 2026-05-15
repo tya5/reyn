@@ -15,25 +15,30 @@ Version snapshots live in ``.reyn/skill-versions/<name>/``, created by
 FP-0006 Component B (skill_improver finalize step).  This module is read/restore
 only; it never writes snapshots.
 
-P6 note: no EventStore is wired in standalone CLI context (there is no
-active skill-run EventLog).  The rollback is instead confirmed via a printed
-audit line.  A future PR may attach a lightweight CLI EventStore to
-``.reyn/events/cli/<date>.jsonl`` for full audit coverage.
+P6: after a successful rollback this module emits a ``skill_rolled_back``
+event via ``emit_cli_event``, which routes to
+``.reyn/events/direct/cli/<YYYY-MM-DD>.jsonl``.  If the emit fails (disk
+full, permissions) the CLI logs a warning to stderr and exits 0 — the
+rollback succeeded; audit-emit failure must not undo it.
 """
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from reyn.events.events import emit_cli_event
 from reyn.skill.skill_paths import (
     SkillNotFoundError,
     is_stdlib_skill,
     resolve_skill_path,
 )
+
+_log = logging.getLogger(__name__)
 
 # Root directory for skill version snapshots (relative to CWD / project root).
 _VERSIONS_DIR = Path(".reyn") / "skill-versions"
@@ -210,7 +215,19 @@ def cmd_rollback(args: argparse.Namespace) -> None:
     current_file = versions_dir / "current"
     _atomic_write(current_file, str(target_num))
 
-    # Confirmation output (P6 audit substitute — see module docstring).
+    # P6: emit audit event — swallow failures so a write error doesn't undo the rollback.
+    try:
+        emit_cli_event(
+            "skill_rolled_back",
+            skill=skill_name,
+            from_version=current_num,
+            to_version=target_num,
+            reason="user rollback via CLI",
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("P6 emit failed for skill_rolled_back: %s", exc)
+
+    # Confirmation output.
     print(f"Rolled back '{skill_name}' from v{current_num} to v{target_num}.")
     print(
         f"skill.md content restored from "
