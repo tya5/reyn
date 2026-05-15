@@ -68,6 +68,7 @@ from reyn.schemas.models import (
     RunSkillIROp,
     SandboxedExecIROp,
     ShellIROp,
+    SkillResolveIROp,
     WebFetchIROp,
     WebSearchIROp,
 )
@@ -128,6 +129,8 @@ OP_KIND_MODEL_MAP: dict[str, type[BaseModel]] = {
     "sandboxed_exec": SandboxedExecIROp,
     # FP-0007 Component D: LLM-based output scorer for in-phase eval loops.
     "judge_output": JudgeOutputIROp,
+    # R-PURE-MODE Wave 5a: resolve a skill name to its on-disk path.
+    "skill_resolve": SkillResolveIROp,
 }
 
 # ---------------------------------------------------------------------------
@@ -175,6 +178,8 @@ OP_PURITY: dict[str, OpPurity] = {
     "sandboxed_exec": OpPurity.external,
     # FP-0007 Component D: LLM call with token cost side effect.
     "judge_output": OpPurity.llm,
+    # R-PURE-MODE Wave 5a: read-only path resolution, no external API calls.
+    "skill_resolve": OpPurity.world,
 }
 
 

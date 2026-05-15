@@ -232,6 +232,35 @@ Audit イベント: `tool_executed`（`op=judge_output, target, score, passed, t
 
 **P7 注記**: Reyn は rubric に依存しません。rubric の内容は Skill author の authored prompt の一部であり、OS は解釈せずそのまま LLM に渡すだけです。
 
+## `skill_resolve`
+
+Skill 名をオンディスクの `skill.md` パスに解決します。標準解決チェーン（`reyn/local/` → `reyn/project/` → `stdlib/`）を使用し、パスメタデータを返します。ファイル内容の読み取りは行いません。
+
+```json
+{
+  "kind": "skill_resolve",
+  "name": "skill_improver"
+}
+```
+
+フィールド:
+- `name`（str、必須）: 短い Skill 名（スラッシュや `.md` 拡張子は不要）。
+
+戻り値:
+- `name: str` — 入力のエコー
+- `resolved: bool` — いずれかの解決レイヤーに `skill.md` が存在する場合 `true`
+- `skill_md_path: str | null` — `skill.md` への絶対パス。未解決の場合 `null`
+- `source: "local" | "project" | "stdlib" | null` — マッチした解決レイヤー
+- `skill_dir: str | null` — `skill.md` の親ディレクトリ。未解決の場合 `null`
+
+**イベント**: `skill_resolve_completed`（`name`、`resolved`、`source`）— 呼び出しごとに発行（P6）。
+
+**パーミッション**: 不要。本 op は読み取り専用（信頼済み解決チェーン内のパス存在確認のみ）であり、ファイル内容は読み取りません。
+
+**OpPurity**: `world`（ファイルシステムメタデータの読み取り。Skill が追加／削除されると結果が変わる可能性あり）。
+
+**ユースケース**: Skill の絶対パスを必要とする stdlib python ステップは、このフィルシステムウォーク処理を本 op に委ねることで `mode: safe` を宣言できます。R-PURE-MODE Class D リファクタの主要利用元は `skill_improver/copy_to_work_resolver` および `eval_builder/analyze_skill_resolver` です。
+
 ---
 
 **コントリビューター向けメモ:** `src/reyn/schemas/models.py` および `src/reyn/op_runtime/registry.py` に新しい Control IR op kind を追加する際は、**同じ PR でここにセクションを追加してください**。reference と registry は同期を保つ必要があります。ルールの詳細は [CLAUDE.md](https://github.com/tya5/reyn/blob/main/CLAUDE.md) を参照してください。

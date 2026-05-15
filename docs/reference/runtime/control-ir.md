@@ -265,6 +265,37 @@ Audit event: `tool_executed` with `op=judge_output, target, score, passed, thres
 
 **P7 note**: Reyn is rubric-agnostic. The rubric content is part of the skill's authored prompt; the OS only routes it to the LLM without inspection.
 
+## `skill_resolve`
+
+Resolve a skill name to its on-disk `skill.md` path via the canonical
+resolution chain (`reyn/local/` → `reyn/project/` → `stdlib/`). Returns
+path metadata; performs no content read.
+
+```json
+{
+  "kind": "skill_resolve",
+  "name": "skill_improver"
+}
+```
+
+Fields:
+- `name` (str, required): Short skill name (no slashes or `.md` extensions).
+
+Returns:
+- `name: str` — echo of input
+- `resolved: bool` — `true` if `skill.md` exists in any resolution layer
+- `skill_md_path: str | null` — absolute path to `skill.md`; `null` when unresolved
+- `source: "local" | "project" | "stdlib" | null` — which resolution layer matched
+- `skill_dir: str | null` — parent directory of `skill.md`; `null` when unresolved
+
+**Events**: `skill_resolve_completed` (`name`, `resolved`, `source`) — emitted after every call (P6).
+
+**Permission**: none required. The op is read-only (path existence walk within the trusted resolution chain); it never reads file content.
+
+**OpPurity**: `world` (filesystem metadata read; result may vary if skills are added/removed between calls).
+
+**Use case**: stdlib python steps that need a skill's absolute path can offload the filesystem walk to this op and stay in `mode: safe`. See R-PURE-MODE Class D refactor — `skill_improver/copy_to_work_resolver` and `eval_builder/analyze_skill_resolver` are the primary consumers.
+
 ---
 
 **Note for contributors:** When adding a new Control IR op kind to `src/reyn/schemas/models.py` and `src/reyn/op_runtime/registry.py`, **also add a section here** in the same PR. The reference and the registry must stay in sync — see [CLAUDE.md](https://github.com/tya5/reyn/blob/main/CLAUDE.md) for the rule.

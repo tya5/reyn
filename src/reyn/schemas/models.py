@@ -456,17 +456,30 @@ class JudgeOutputIROp(BaseModel):
     model: str | None = None  # model class override; None = inherit from ctx
 
 
+class SkillResolveIROp(BaseModel):
+    """Resolve a skill name to its on-disk skill.md path (R-PURE-MODE Wave 5a).
+
+    Walks the canonical resolution chain (reyn/local/ → reyn/project/ →
+    stdlib/) and returns path metadata. Read-only; no content is read.
+
+    P7 note: `name` is the only skill-specific value; the OS does not
+    interpret it beyond passing it to the resolution chain.
+    """
+    kind: Literal["skill_resolve"]
+    name: str   # short skill name, e.g. "skill_improver" (no slashes or extensions)
+
+
 # Discriminated union — Pydantic selects the variant via the "kind" field.
 # All variants below are implemented in `op_runtime/`:
 #   file, mcp, ask_user, shell, lint, run_skill, web_fetch, web_search,
 #   mcp_install, embed, index_write, index_query, recall, index_drop,
-#   sandboxed_exec, judge_output.
+#   sandboxed_exec, judge_output, skill_resolve.
 ControlIROp = Annotated[
     Union[
         FileIROp, MCPIROp, AskUserIROp, ShellIROp, LintIROp,
         RunSkillIROp, WebFetchIROp, WebSearchIROp, MCPInstallIROp,
         EmbedIROp, IndexWriteIROp, IndexQueryIROp, RecallIROp, IndexDropIROp,
-        SandboxedExecIROp, JudgeOutputIROp,
+        SandboxedExecIROp, JudgeOutputIROp, SkillResolveIROp,
     ],
     Field(discriminator="kind"),
 ]
