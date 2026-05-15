@@ -110,24 +110,82 @@ The categories are:
 
 ## Currently-allowed stdlib modules
 
-| Module | Ambient class |
-|--------|---------------|
-| `math`, `cmath`, `statistics`, `decimal`, `fractions`, `numbers` | pure compute |
-| `string`, `re`, `textwrap`, `unicodedata` | pure compute |
-| `json`, `base64`, `binascii`, `hashlib`, `hmac` | pure compute |
-| `collections`, `itertools`, `functools`, `operator`, `copy` | pure compute |
-| `enum`, `dataclasses`, `typing`, `abc` | pure compute |
-| `random` | entropy |
-| `secrets` | entropy |
-| `time` | clock |
-| `datetime`, `calendar` | clock |
-| `zoneinfo` | bundled static data (tz database) |
+| Module | Ambient class | Rationale |
+|--------|---------------|-----------|
+| `math`, `cmath`, `statistics` | pure compute | Math functions over numeric inputs only |
+| `decimal`, `fractions`, `numbers` | pure compute | Arbitrary-precision and rational arithmetic; ABC only |
+| `string`, `re`, `textwrap` | pure compute | String constants, regex, text wrapping — no I/O |
+| `unicodedata` | pure compute | Unicode property tables compiled into CPython; no file I/O at runtime |
+| `json`, `base64`, `binascii` | pure compute | Serialisation / codec over byte/string inputs |
+| `hashlib`, `hmac` | pure compute | Cryptographic hash computation over inputs |
+| `collections`, `itertools`, `functools`, `operator`, `copy` | pure compute | Container types, iterator combinators, higher-order functions |
+| `enum`, `dataclasses`, `typing`, `abc` | pure compute | Type infrastructure; no runtime state |
+| `__future__` | pure: compiler directives | Compiler flags only (`annotations`, `division`); no runtime capability |
+| `random` | ambient: entropy | `/dev/urandom`-seeded PRNG — entropy I/O, not operator-state |
+| `secrets` | ambient: entropy | `/dev/urandom`-backed CSPRNG — entropy I/O, not operator-state |
+| `time` | ambient: clock | System wall clock + monotonic clock |
+| `datetime` | ambient: clock | `datetime.now()` reads the wall clock; date arithmetic is pure |
+| `calendar` | pure compute | Calendar arithmetic; no system clock read at any call site |
+| `zoneinfo` | ambient: bundled static data | IANA TZ database shipped with Python — same install = deterministic |
 
 The list of record is
 [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py).
 A project may extend it via `permissions.python.allowed_modules` in
 `reyn.yaml`; the same "ambient sources only" property is the bar for any
 extension.
+
+## Stdlib auto-allow contract
+
+`reyn run` applies different auto-allow rules depending on whether the skill is
+a stdlib skill or a user skill:
+
+| Context | `mode: safe` | `mode: unsafe` |
+|---------|-------------|----------------|
+| **stdlib skill** via `reyn run` (non-interactive) | auto-allowed (no prompt) | auto-allowed (no prompt) |
+| **user skill** (`reyn/project/`, `reyn/local/`) non-interactive | auto-allowed (no prompt) | requires `--allow-unsafe-python` or interactive approval |
+| **user skill** interactive run | auto-allowed (no prompt) | startup approval prompt |
+
+The non-interactive auto-allow for user-skill `mode: safe` was added to mirror
+the same behavior already in place for eval/CI runs (see [permission model](permission-model.md#python-permission-and-mode-safe-allowlist)).
+
+## How to refactor an unsafe step to safe
+
+If your python step reads a file or calls a service, extract the I/O into a
+preceding `run_op` step. The python step then receives the result as a plain
+input and becomes a pure function of that value.
+
+**Before (unsafe — reads a file inside python):**
+
+```yaml
+preprocessor:
+  - type: python
+    mode: unsafe
+    fn: |
+      import pathlib
+      text = pathlib.Path(artifact["config_path"]).read_text()
+      return {"lines": text.splitlines()}
+```
+
+**After (safe — I/O in run_op, compute in python):**
+
+```yaml
+preprocessor:
+  - type: run_op
+    op: read_file
+    args:
+      path: "{{ artifact.config_path }}"
+    output_key: config_text
+
+  - type: python
+    mode: safe
+    args_from: [artifact, data.config_text]
+    fn: |
+      return {"lines": config_text.splitlines()}
+```
+
+The pattern: **split I/O from compute**. Put the I/O in a `run_op` (where it
+gets its own permission gate and event log entry per [P6](principles.md#p6-events-are-the-audit-truth));
+put the computation in a `mode: safe` python step.
 
 ## How to extend — when `safe` is not enough
 
@@ -149,6 +207,8 @@ ambient sources. Everything else is a `run_op`.**
 
 ## See also
 
+- [Concept: permission model](permission-model.md) — the broader `python.pure` / `python.trusted` permission keys and the `mode: safe` auto-allow rules
+- [Concept: care boundary](care-boundary.md) — what Reyn cares about vs. observes only
 - [Reference: preprocessor DSL](../reference/dsl/preprocessor.md) — declaring `python` steps
 - [Reference: postprocessor DSL](../reference/dsl/postprocessor.md) — same DSL on the finish side
 - [Concept: preprocessor](preprocessor.md) — the deterministic-split story

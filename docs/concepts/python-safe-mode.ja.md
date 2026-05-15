@@ -110,23 +110,81 @@ state ではないために残されています。
 
 ## 現在許可されている stdlib モジュール
 
-| モジュール | Ambient クラス |
-|--------|---------------|
-| `math`, `cmath`, `statistics`, `decimal`, `fractions`, `numbers` | 純粋計算 |
-| `string`, `re`, `textwrap`, `unicodedata` | 純粋計算 |
-| `json`, `base64`, `binascii`, `hashlib`, `hmac` | 純粋計算 |
-| `collections`, `itertools`, `functools`, `operator`, `copy` | 純粋計算 |
-| `enum`, `dataclasses`, `typing`, `abc` | 純粋計算 |
-| `random` | entropy |
-| `secrets` | entropy |
-| `time` | clock |
-| `datetime`, `calendar` | clock |
-| `zoneinfo` | 同梱静的データ (tz データベース) |
+| モジュール | Ambient クラス | 根拠 |
+|--------|---------------|------|
+| `math`, `cmath`, `statistics` | 純粋計算 | 数値入力に対する数学関数のみ |
+| `decimal`, `fractions`, `numbers` | 純粋計算 | 任意精度・有理数演算; ABC のみ |
+| `string`, `re`, `textwrap` | 純粋計算 | 文字列定数・正規表現・折り返し — I/O なし |
+| `unicodedata` | 純粋計算 | Unicode プロパティテーブルは CPython にコンパイル済み; 実行時ファイル I/O なし |
+| `json`, `base64`, `binascii` | 純粋計算 | バイト/文字列入力のシリアライズ/コーデック |
+| `hashlib`, `hmac` | 純粋計算 | 入力に対する暗号ハッシュ計算 |
+| `collections`, `itertools`, `functools`, `operator`, `copy` | 純粋計算 | コンテナ型・イテレータ結合子・高階関数 |
+| `enum`, `dataclasses`, `typing`, `abc` | 純粋計算 | 型インフラ; 実行時状態なし |
+| `__future__` | 純粋: コンパイラディレクティブ | コンパイラフラグのみ (`annotations`, `division`); 実行時ケイパビリティなし |
+| `random` | ambient: entropy | `/dev/urandom` ベースの PRNG — entropy I/O、オペレータ状態ではない |
+| `secrets` | ambient: entropy | `/dev/urandom` ベースの CSPRNG — entropy I/O、オペレータ状態ではない |
+| `time` | ambient: clock | システム壁時計 + 単調クロック |
+| `datetime` | ambient: clock | `datetime.now()` で壁時計を読む; 日付演算は純粋 |
+| `calendar` | 純粋計算 | カレンダー演算; システムクロック読み取りなし |
+| `zoneinfo` | ambient: 同梱静的データ | Python 同梱 IANA TZ データベース — 同じ install = 決定的 |
 
 正本リストは
 [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
 です。 プロジェクトは `reyn.yaml` の `permissions.python.allowed_modules`
 で拡張できますが、拡張の基準は同じ「ambient sources only」性質です。
+
+## stdlib 自動許可の契約
+
+`reyn run` は stdlib スキルとユーザースキルで異なる自動許可ルールを適用します。
+
+| コンテキスト | `mode: safe` | `mode: unsafe` |
+|-------------|-------------|----------------|
+| **stdlib スキル** via `reyn run`（非インタラクティブ） | 自動許可（プロンプトなし） | 自動許可（プロンプトなし） |
+| **ユーザースキル**（`reyn/project/`、`reyn/local/`）非インタラクティブ | 自動許可（プロンプトなし） | `--allow-unsafe-python` または インタラクティブ承認が必要 |
+| **ユーザースキル** インタラクティブ実行 | 自動許可（プロンプトなし） | 起動時承認プロンプト |
+
+ユーザースキル `mode: safe` の非インタラクティブ自動許可は、eval / CI 実行で
+すでに適用されている他の op の非インタラクティブ動作に合わせて追加されました
+([パーミッションモデル](permission-model.ja.md#python-パーミッションと-mode-safe-allowlist) 参照)。
+
+## unsafe ステップを safe にリファクタリングする方法
+
+python ステップがファイルを読んだりサービスを呼び出したりする場合、I/O を
+先行する `run_op` ステップに切り出します。 python ステップはその結果を
+プレーンな入力として受け取り、純粋な関数になります。
+
+**変更前（unsafe — python の中でファイルを読む）:**
+
+```yaml
+preprocessor:
+  - type: python
+    mode: unsafe
+    fn: |
+      import pathlib
+      text = pathlib.Path(artifact["config_path"]).read_text()
+      return {"lines": text.splitlines()}
+```
+
+**変更後（safe — I/O は run_op、計算は python）:**
+
+```yaml
+preprocessor:
+  - type: run_op
+    op: read_file
+    args:
+      path: "{{ artifact.config_path }}"
+    output_key: config_text
+
+  - type: python
+    mode: safe
+    args_from: [artifact, data.config_text]
+    fn: |
+      return {"lines": config_text.splitlines()}
+```
+
+パターン: **I/O と計算を分離する**。I/O は `run_op` に置く（そこでは
+独自のパーミッションゲートと [P6](principles.md#p6-events-are-the-audit-truth)
+に従ったイベントログ記録が行われる）; 計算は `mode: safe` python ステップに置く。
 
 ## 拡張方法 — `safe` で足りないとき
 
@@ -146,10 +204,12 @@ preprocessor / postprocessor チェーンで `type: run_op` を使います。
 要するに、 **`safe` python は入力 + ambient sources に対する
 決定論的-ish な計算のためのもの。 それ以外はすべて `run_op`** です。
 
-## See also
+## 参考
 
+- [コンセプト: パーミッションモデル](permission-model.ja.md) — `python.pure` / `python.trusted` パーミッションキーと `mode: safe` 自動許可ルール
+- [コンセプト: care 境界](care-boundary.ja.md) — Reyn が care する範囲と観察のみの範囲
 - [Reference: preprocessor DSL](../reference/dsl/preprocessor.md) — `python` ステップの宣言
 - [Reference: postprocessor DSL](../reference/dsl/postprocessor.md) — finish 側の同じ DSL
-- [Concept: preprocessor](preprocessor.md) — deterministic-split の説明
-- [Concept: postprocessor](postprocessor.md) — finish 側のミラー
+- [コンセプト: preprocessor](preprocessor.md) — deterministic-split の説明
+- [コンセプト: postprocessor](postprocessor.md) — finish 側のミラー
 - [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py) — 正本リスト

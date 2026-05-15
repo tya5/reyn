@@ -1,35 +1,54 @@
-"""Allowlists used by the Python preprocessor harness.
+"""Allowlist + ambient-sources contract for python step `mode: safe`.
 
-These define what `safe` mode lets through. The harness consults
-PURE_STDLIB_ALLOWLIST when validating import statements in user code,
-strips BANNED_BUILTINS from __builtins__ before exec, and (only when
-the parent provides them via the JSON protocol) extends the import
-allowlist with user-configured `python.allowed_modules` from reyn.yaml.
+`mode: safe` is a *contract* for the python step's output: it must depend
+only on (input artifact + ambient sources). Ambient sources are limited to:
 
-Lists kept here so they're a single source of truth across parent and
-child processes.
+  - **clock** — `time`, `datetime.now()`, `calendar`
+  - **entropy** — `random`, `secrets` (= /dev/urandom on POSIX)
+  - **bundled static data** — `zoneinfo` (= shipped IANA tz tables),
+    `unicodedata` (= Unicode property tables compiled into CPython),
+    Python's own `__future__` compiler-directive flags
+
+Everything else in `PURE_STDLIB_ALLOWLIST` is pure (= mathematically derivable
+from input alone — `math`, `json`, `re`, `hashlib`, `collections`, ...).
+
+What `mode: safe` rules out by *syntactic unreachability*:
+
+  - filesystem path I/O — `glob`, `os`, `pathlib`, `shutil`, `tempfile`
+  - network — `urllib`, `socket`, `http`, `ssl`, `requests`, `httpx`
+  - subprocess / external command — `subprocess`, `os.system`, `popen`
+  - environment — `os.environ`, `sys.argv` (= operator-injected state)
+  - dynamic code — `exec`, `eval`, `compile`, `__import__`,
+    `importlib`, file-reading codec / encoding loaders
+
+Authors who need *any* of the above must declare `mode: unsafe` (= stdlib
+auto-allowed via `reyn run`, user skills need `--allow-unsafe-python` or
+explicit operator approval). The boundary is sharp: if the python step's
+output depends on a value the operator can change without editing the
+input artifact, the step is non-`safe`.
+
+Honest scope: import allowlist + banned-builtin reference detection at AST
+parse time. The real safety boundary is the subprocess execution sandbox +
+permission gating — this validator catches honest authoring mistakes, not
+motivated attackers.
+
+Each allowlisted module entry below has been audited against this contract.
+
+Categories used in inline comments:
+  # pure          — no ambient access at all; output is a pure function of inputs
+  # ambient: …    — reads an ambient source (clock / entropy / bundled static data)
+                    but never observes or mutates operator-visible state
+  # restricted    — admitted module but only a subset of operations is safe
+                    (e.g. pure path manipulation only, not filesystem reads)
+
+If a step needs a non-ambient capability (operator files, network, env vars,
+process spawning), use a `run_op` step — that is the proper escape hatch with
+its own permission gate and event log entry.
+
+Full author guide: docs/concepts/python-safe-mode.md
 """
 from __future__ import annotations
 
-# mode: safe — output is determined by input artifact + ambient sources only.
-# Ambient sources = clock (time, datetime), entropy (random, secrets), and
-# bundled static data (zoneinfo). Filesystem, network, subprocess, and
-# environment access are syntactically unreachable.
-#
-# Each allowlisted entry below has been audited against this contract.
-#
-# Categories used in inline comments:
-#   # pure        — no ambient access at all; output is a pure function of inputs
-#   # ambient: …  — reads an ambient source (clock / entropy / bundled static data)
-#                   but never observes or mutates operator-visible state
-#   # restricted  — admitted module but only a subset of operations is safe
-#                   (e.g. pure path manipulation only, not filesystem reads)
-#
-# If a step needs a non-ambient capability (operator files, network, env vars,
-# process spawning), use a `run_op` step — that is the proper escape hatch with
-# its own permission gate and event log entry.
-#
-# Full author guide: docs/concepts/python-safe-mode.md
 PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
     # --- pure: numeric computation ---
     "math",        # pure: standard math functions over numeric inputs
@@ -43,12 +62,12 @@ PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
     "string",      # pure: string constants and Template formatting
     "re",          # pure: regular-expression matching
     "textwrap",    # pure: text wrapping and indentation
-    "unicodedata", # pure: Unicode character property lookup (bundled table)
+    "unicodedata", # pure: Unicode property tables compiled into CPython (no file I/O at runtime)
 
     # --- ambient: clock + bundled tz static data ---
     "time",        # ambient: system wall clock + monotonic clock (clock I/O)
     "datetime",    # ambient: system clock via datetime.now(); also pure date arithmetic
-    "calendar",    # pure: calendar computations (no clock call at import time)
+    "calendar",    # pure: calendar arithmetic (grouped here; no system clock read at any call site)
     "zoneinfo",    # ambient: bundled IANA TZ database shipped with Python (static files)
 
     # --- pure: data encoding and hashing ---
@@ -81,17 +100,23 @@ PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
 })
 
 
-# Builtins removed from the user function's exec environment in safe mode.
-# Anything in the standard `builtins` module that isn't here remains available.
+# Builtins removed from the user function's exec environment in `mode: safe`.
+# These are the remaining built-in escape hatches that would violate the
+# "ambient sources only" property even when all imports are restricted:
+#   - non-ambient ingress (open, input, __import__)
+#   - dynamic code that bypasses the import allowlist (exec, eval, compile)
+#   - side-effecting process ops that mutate state beyond the step's scope
+# Anything in the standard `builtins` module that isn't listed here remains
+# available to safe-mode steps.
 BANNED_BUILTINS: frozenset[str] = frozenset({
-    "open",         # file I/O
-    "exec", "eval", "compile",  # arbitrary code execution
-    "__import__",   # bypass import allowlist
-    "breakpoint",   # interactive debugger
-    "input",        # stdin
-    "exit", "quit", # process termination
-    "memoryview",   # raw memory access
-    "globals", "vars",  # discoverable in safe mode but listed for hygiene
+    "open",         # non-ambient: arbitrary file I/O — violates ambient-sources property
+    "exec", "eval", "compile",  # dynamic code — bypasses import allowlist entirely
+    "__import__",   # dynamic import — bypasses PURE_STDLIB_ALLOWLIST check
+    "breakpoint",   # interactive debugger — non-ambient process I/O
+    "input",        # non-ambient: stdin read — operator-injected state
+    "exit", "quit", # process termination — non-ambient side effect
+    "memoryview",   # raw memory access — non-ambient, may expose interpreter state
+    "globals", "vars",  # retained for hygiene; discoverable but not functionally unsafe
 })
 
 

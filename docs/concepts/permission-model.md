@@ -239,7 +239,9 @@ The `python` permission has two levels:
 
 `PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
 
-**Non-interactive auto-allow**: when a stdlib skill is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs. See [Concepts: Python `safe` mode](python-safe-mode.md) for the full ambient-sources contract.
+**Non-interactive auto-allow**: when a stdlib skill is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs.
+
+**The formal contract for `mode: safe`** (= "ambient sources only") is documented in [Python safe mode](python-safe-mode.md). That page covers the full allowlist rationale, the safe-vs-unsafe auto-allow rules by context, and the refactor pattern for converting unsafe steps to safe.
 
 ## What the permission system is NOT
 
