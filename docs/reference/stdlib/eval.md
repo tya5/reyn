@@ -33,8 +33,8 @@ Two ways to pre-approve:
    ```yaml
    permissions:
      python:
-       pure: allow
-       trusted: allow   # also requires --allow-untrusted-python
+       safe: allow
+       unsafe: allow   # also requires --allow-untrusted-python
    ```
 
 Without prior approval, the target's run fails and the case is reported as not-finished.

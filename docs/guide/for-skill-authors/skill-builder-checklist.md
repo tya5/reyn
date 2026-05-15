@@ -44,10 +44,10 @@ If you find yourself wanting any of these, stop and reconsider — they signal a
 If a phase uses a `python` preprocessor step:
 
 - [ ] The `.py` file lives in the skill directory (relative path only — no `..`, no absolute paths).
-- [ ] Mode is `pure` unless trusted access is genuinely required.
+- [ ] Mode is `safe` unless unsafe access is genuinely required.
 - [ ] `output_schema` is declared explicitly (the LLM-visible enrichment shape).
 - [ ] The skill's `permissions.python` lists the same module/function pair as the preprocessor step.
-- [ ] In pure mode: no `open`, `eval`, `exec`, `__import__`, `subprocess`, or imports outside the allowlist.
+- [ ] In safe mode: no `open`, `eval`, `exec`, `__import__`, `subprocess`, or imports outside the allowlist.
 - [ ] If the function is non-trivial (>30 LOC), break it up — preprocessor functions should be small and obvious.
 
 ## Eval-friendliness

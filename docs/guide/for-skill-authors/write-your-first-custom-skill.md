@@ -153,7 +153,7 @@ permissions:
   python:
     - module: ./stats.py
       function: count_chars
-      mode: pure
+      mode: safe
       timeout: 5
 ---
 
@@ -233,7 +233,7 @@ git mv reyn/local/react_to_text reyn/project/react_to_text
 
 - [Compose skills with `run_skill`](compose-skills-with-run-skill.md) — call one skill from another.
 - [Validate artifacts](validate-artifacts.md) — strict-mode checks and schema patterns.
-- [Add a Python preprocessor](add-a-python-preprocessor.md) — `pure` vs `trusted` modes, deeper signatures.
+- [Add a Python preprocessor](add-a-python-preprocessor.md) — `safe` vs `unsafe` modes, deeper signatures.
 - [Reference: `skill.md` frontmatter](../../reference/dsl/skill-md.md)
 - [Reference: `phase.md` frontmatter](../../reference/dsl/phase-md.md)
 - [Reference: `artifact.yaml`](../../reference/dsl/artifact-yaml.md)

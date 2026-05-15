@@ -35,7 +35,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--events` | Print the full event log after execution. |
 | `--strict` | Enforce required fields at every nesting depth (default: top-level only). |
 | `--allow-shell` | Enable the `shell` Control IR op. Off by default. |
-| `--allow-untrusted-python` | Enable trusted-mode Python preprocessor steps (no AST sandbox). |
+| `--allow-untrusted-python` | Enable unsafe-mode Python preprocessor steps (no AST sandbox). |
 
 ## Examples
 

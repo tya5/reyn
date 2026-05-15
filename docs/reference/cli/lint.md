@@ -7,7 +7,7 @@ applies_to: [reyn lint]
 
 # `reyn lint`
 
-Run deterministic structural checks on a skill directory: graph, frontmatter, artifact references, and Python preprocessor steps (when `mode: pure`, the AST is also validated). Detects most authoring mistakes before runtime.
+Run deterministic structural checks on a skill directory: graph, frontmatter, artifact references, and Python preprocessor steps (when `mode: safe`, the AST is also validated). Detects most authoring mistakes before runtime.
 
 ## Synopsis
 
@@ -27,7 +27,7 @@ reyn lint SKILL
 - **Reachability**: every phase reachable from `entry`; phases with `can_finish: true` have a path to `end`.
 - **Frontmatter**: required keys (`type`, `name`, `entry`, `final_output`).
 - **Artifact references**: every `input` and `final_output_schema` resolves to an artifact file.
-- **Preprocessor**: each `python` step has a matching `permissions.python` entry, the `.py` file exists, and the function is defined. In `mode: pure`, the AST is checked against the allowlist (no `open`, `eval`, `exec`, `__import__`, `subprocess`, etc.).
+- **Preprocessor**: each `python` step has a matching `permissions.python` entry, the `.py` file exists, and the function is defined. In `mode: safe`, the AST is checked against the allowlist (no `open`, `eval`, `exec`, `__import__`, `subprocess`, etc.).
 
 ## Exit codes
 
@@ -78,3 +78,4 @@ reyn lint my_skill || exit 1
 - [Reference: phase.md](../dsl/phase-md.md)
 - [Reference: graph](../dsl/graph.md)
 - [Reference: preprocessor](../dsl/preprocessor.md)
+- [Reference: reyn skills](skills.md) — `reyn skills validate` for op/permission consistency (complements lint)

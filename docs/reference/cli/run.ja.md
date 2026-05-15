@@ -35,7 +35,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 | `--events` | 実行後に完全なイベントログを表示。 |
 | `--strict` | すべてのネスト深さで必須フィールドを強制します（デフォルト: トップレベルのみ）。 |
 | `--allow-shell` | `shell` Control IR op を有効にする。デフォルトはオフ。 |
-| `--allow-untrusted-python` | trusted モードの Python preprocessor ステップを有効にする（AST サンドボックスなし）。 |
+| `--allow-untrusted-python` | unsafe モードの Python preprocessor ステップを有効にする（AST サンドボックスなし）。 |
 
 ## 例
 

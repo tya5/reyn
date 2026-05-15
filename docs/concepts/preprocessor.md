@@ -59,7 +59,7 @@ the phase reuse guarantee from [P1](principles.md#p1-phase-is-stateless-and-reus
 | `iterate` | Fan a sub-step out over a list, collect results into `into` |
 | `validate` | Run a JSON-Schema check; surface findings so the LLM can judge them |
 | `lint_plan` | Run deterministic structural checks (cycles, coverage) on a plan artifact |
-| `python` | Call a user-supplied Python function in sandboxed `pure` or `trusted` mode |
+| `python` | Call a user-supplied Python function in sandboxed `safe` or `unsafe` mode |
 
 All steps share two invariants: the result is placed at `into`, and steps run
 in declaration order — each step can read what earlier steps produced.

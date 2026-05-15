@@ -7,7 +7,7 @@ applies_to: [reyn.yaml, skill.md, phases/*.md]
 
 # Permissions
 
-reyn's permission system gates access to file paths, shell, MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a phase-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
+reyn's permission system gates access to file paths, shell, MCP tools, named tools, and Python preprocessor steps. Defaults are conservative; anything outside the defaults requires either a skill-level declaration plus user approval, OR a project-wide pre-approval in `reyn.yaml`.
 
 ## Default grants (no declaration needed)
 
@@ -18,13 +18,16 @@ reyn's permission system gates access to file paths, shell, MCP tools, named too
 
 Anything outside these defaults must be declared.
 
-## Phase declarations (`permissions:` in phase frontmatter)
+## Skill declarations (`permissions:` in skill.md frontmatter)
+
+Phase-level `permissions:` was removed. All permission declarations belong in `skill.md` frontmatter — see [skill-md.md](../dsl/skill-md.md#permissions-skill-level). Phases inherit whatever the skill declares.
 
 ```yaml
 ---
-type: phase
+type: skill
 name: example
-input: user_message
+entry: main
+final_output: result
 permissions:
   shell: true
   mcp: [my_server]
@@ -39,7 +42,7 @@ permissions:
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
       timeout: 30
 ---
 ```
@@ -68,8 +71,23 @@ For paths outside the default zones. Each entry has:
 Per-(module, function) declarations for `python` preprocessor steps. See [`reference/dsl/preprocessor.md`](../dsl/preprocessor.md).
 
 - `module`, `function` — must match the corresponding preprocessor step.
-- `mode` — `pure` (sandboxed) or `trusted` (no AST sandbox; needs `--allow-untrusted-python`).
+- `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-untrusted-python`).
 - `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
+
+## Web ops (Tier 1 — default allow)
+
+`web_search` and `web_fetch` are **Tier 1**: they pass through by default without any declaration. No `permissions:` entry is needed to use them (FP-0022).
+
+They can be restricted project-wide in `reyn.yaml`:
+
+```yaml
+permissions:
+  web.search: deny   # block all web_search ops
+  web.fetch: deny    # block all web_fetch ops
+  web.fetch: allow   # explicit pre-approval (skips per-run prompt entirely)
+```
+
+This differs from Tier 2-3 ops (`shell`, `mcp`) which require an explicit declaration in `skill.md` before the op is even attempted.
 
 ## Approval flow (interactive)
 
@@ -94,8 +112,8 @@ permissions:
   shell: allow
   file.write: allow         # grants ALL write-class ops for ALL skills
   python:
-    pure: allow             # auto-approve all pure-mode python steps
-    trusted: allow          # also requires --allow-untrusted-python at runtime
+    safe: allow             # auto-approve all safe-mode python steps
+    unsafe: allow           # also requires --allow-untrusted-python at runtime
     allowed_modules:
       - math
       - statistics

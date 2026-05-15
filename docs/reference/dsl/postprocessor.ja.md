@@ -28,10 +28,10 @@ permissions:
   python:
     - module: rendering
       function: to_html
-      mode: pure
+      mode: safe
     - module: rendering
       function: count_words
-      mode: pure
+      mode: safe
 postprocessor:
   output_schema: rendered_post  # 呼び出し元 contract — Skill が返すもの
   output_description: |
@@ -157,7 +157,7 @@ postprocessor:
     - type: python
       module: stats
       function: count_words
-      mode: pure
+      mode: safe
       output_schema:
         type: object
         required: [word_count]
@@ -175,7 +175,7 @@ permissions:
   python:
     - module: stats
       function: count_words
-      mode: pure
+      mode: safe
 ```
 
 ### 2. `output_schema` に artifact 名参照を使う

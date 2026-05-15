@@ -35,7 +35,7 @@ permissions:
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
       timeout: 30
 ---
 ```
@@ -66,8 +66,8 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    pure: allow
-    trusted: allow      # ランタイムの --allow-untrusted-python も必要
+    safe: allow
+    unsafe: allow      # ランタイムの --allow-untrusted-python も必要
 ```
 
 `allow` はプロンプトを完全に削除します。`ask`（デフォルト）はプロンプトを表示します。`deny` は拒否します。

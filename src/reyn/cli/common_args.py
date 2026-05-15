@@ -3,8 +3,8 @@
 All three subcommands accept the same set of flags: `--model`,
 `--output-language`, and the runtime-limits flags (`--max-phase-visits`,
 `--phase-budget`, `--llm-timeout`, `--llm-max-retries`). Each defaults to
-the corresponding `limits.*` value from reyn.yaml and is resolved by
-Session.limits_for().
+the corresponding `safety.*` value from reyn.yaml (safety.loop.* /
+safety.timeout.*) and is resolved by Session.limits_for().
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def add_limits_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Maximum times any single phase may be visited per run (0 = unlimited). "
             "Prevents infinite rollback/revision loops. "
-            "Default: from reyn.yaml `limits.phase.max_visits` or 25."
+            "Default: from reyn.yaml `safety.loop.max_phase_visits` or 25."
         ),
     )
     parser.add_argument(
@@ -46,7 +46,7 @@ def add_limits_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Per-phase wall-clock budget in seconds (0 = unlimited). "
             "Soft check at retry/turn boundaries — does not cancel mid-call. "
-            "Default: from reyn.yaml `limits.phase.max_wall_seconds` or 0."
+            "Default: from reyn.yaml `safety.timeout.phase_seconds` or 0."
         ),
     )
     parser.add_argument(
@@ -54,7 +54,7 @@ def add_limits_args(parser: argparse.ArgumentParser) -> None:
         default=None, metavar="SECONDS",
         help=(
             "Per-call LLM HTTP timeout (seconds). "
-            "Default: from reyn.yaml `limits.llm.timeout` or 60."
+            "Default: from reyn.yaml `safety.timeout.llm_call_seconds` or 60."
         ),
     )
     parser.add_argument(
@@ -62,7 +62,7 @@ def add_limits_args(parser: argparse.ArgumentParser) -> None:
         default=None, metavar="N",
         help=(
             "Transient-error retries per LLM call (LiteLLM exponential backoff). "
-            "Default: from reyn.yaml `limits.llm.max_retries` or 3."
+            "Default: from reyn.yaml `safety.timeout.llm_max_retries` or 3."
         ),
     )
 

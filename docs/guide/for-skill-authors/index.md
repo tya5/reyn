@@ -32,7 +32,7 @@ How skills compose with each other and with peer agents.
 
 Deterministic controls inside a phase — pre-LLM steps, schema validation, state persistence.
 
-- **[Add a Python preprocessor](add-a-python-preprocessor.md)** — `pure` vs `trusted` mode, signatures, sandbox boundaries.
+- **[Add a Python preprocessor](add-a-python-preprocessor.md)** — `safe` vs `unsafe` mode, signatures, sandbox boundaries.
 - **[Validate artifacts](validate-artifacts.md)** — strict-mode checks and schema patterns.
 - **[Persist state](persist-state.md)** — what survives across runs and how the workspace stores it.
 

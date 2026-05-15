@@ -32,7 +32,7 @@ Skill 同士、 agent 同士の組み立て方。
 
 Phase 内の決定論的コントロール — pre-LLM ステップ、 スキーマ検証、 state 永続化。
 
-- **[Python preprocessor を追加](add-a-python-preprocessor.md)** — `pure` / `trusted` モード、 関数シグネチャ、 sandbox 境界。
+- **[Python preprocessor を追加](add-a-python-preprocessor.md)** — `safe` / `unsafe` モード、 関数シグネチャ、 sandbox 境界。
 - **[Artifact を検証](validate-artifacts.md)** — strict モードのチェックとスキーマパターン。
 - **[State を永続化](persist-state.md)** — 実行をまたいで何が残るか、 Workspace がどう保存するか。
 

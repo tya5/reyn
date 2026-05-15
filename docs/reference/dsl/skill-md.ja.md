@@ -31,7 +31,7 @@ permissions:                   # 省略可能; 必要なケイパビリティを
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
 imported_from: ...              # 省略可能; `skill_importer` が設定する出自情報
 imported_at: 2026-04-29T...
 imported_format: claude-skill
@@ -54,6 +54,8 @@ imported_revision: <git-sha>
 - **`finish_criteria`** — 終了が許可されるタイミングを Phase が知るために使用されます。
 - **`permissions`** — `reference/config/permissions.md` を参照してください。
 - **`imported_*`** — `skill_importer` が書き込む出自フィールド。非アクティブ; パーサーはこれらを無視します。
+- **`search_hints`** — 省略可; このスキルが答えられる例示クエリのリスト。カタログがルーターのコンテキストウィンドウを超える際の BM25/embedding 事前フィルタに使用される。大規模マルチスキルリポジトリでの recall 向上目的。
+  例: `search_hints: ["記事を要約して", "tl;dr"]`
 
 ## ボディ
 

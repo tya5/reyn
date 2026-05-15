@@ -26,7 +26,11 @@ models:
 | `model` | string | Default model class. Resolved via `models`. Override with `--model`. |
 | `models` | map | Class name → LiteLLM model string **or** dict (see below). |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
-| `limits` | map | Runtime bounds: phase visits, wall-clock budgets, LLM timeouts/retries. See below. |
+| `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
+| `plan` | map | Plan-mode step budget and retry tuning. See below. |
+| `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
+| `eval` | map | Trace exporter backends for `reyn eval`. See below. |
+| `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -153,28 +157,135 @@ is a convenience starting point; your `reyn.yaml` is always the source of truth.
 
 See [Reference: built-in models](../builtin-models.md) for per-entry details.
 
-## `limits` block
+## `safety` block
 
-Central place for runtime bounds. Each value can be overridden per-invocation by the matching CLI flag.
+Unified stop-condition namespace. Each value can be overridden per-invocation by the matching CLI flag. (The old `limits:` key was removed in FP-0004/0005; `safety:` is the single source of truth.)
 
 ```yaml
-limits:
-  llm:
-    timeout: 60        # seconds per LLM HTTP call (--llm-timeout)
-    max_retries: 3     # transient-error retries per call (--llm-max-retries)
-  phase:
-    max_visits: 25         # cap per phase per run; 0 = unlimited (--max-phase-visits)
-    max_wall_seconds: 0    # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
+safety:
+  loop:
+    max_phase_visits: 25       # cap per phase per run; 0 = unlimited (--max-phase-visits)
+    max_act_turns_per_phase: 10  # LLM ↔ op volleys per phase visit; 0 = unlimited
+    max_router_calls_per_turn: 3 # chat-router calls per user turn
+    max_agent_hops: 3          # maximum delegation depth
+  timeout:
+    llm_call_seconds: 60       # per-call HTTP timeout (--llm-timeout)
+    llm_max_retries: 3         # transient-error retries per call (--llm-max-retries)
+    phase_seconds: 0           # per-phase wall-clock budget; 0 = unlimited (--phase-budget)
+    chain_seconds: 60          # wait for delegate reply before upstream error
+  on_limit:
+    mode: unattended           # interactive | unattended | auto_extend
+    auto_extend_times: 1       # (auto_extend mode) number of auto-extensions
+    ask_timeout_seconds: 60    # (interactive mode) user-prompt timeout
 ```
+
+### `safety.loop` fields
+
+| Path | Type | Default | CLI flag | Description |
+|------|------|---------|----------|-------------|
+| `safety.loop.max_phase_visits` | int | `25` | `--max-phase-visits` | Cap on revisits to any single phase per run. `0` = unlimited. |
+| `safety.loop.max_act_turns_per_phase` | int | `10` | — | LLM ↔ op volleys allowed inside one phase visit. `0` = unlimited. |
+| `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
+| `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
+
+### `safety.timeout` fields
+
+| Path | Type | Default | CLI flag | Description |
+|------|------|---------|----------|-------------|
+| `safety.timeout.llm_call_seconds` | float (s) | `60` | `--llm-timeout` | Per-call HTTP timeout passed to LiteLLM. |
+| `safety.timeout.llm_max_retries` | int | `3` | `--llm-max-retries` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
+| `safety.timeout.phase_seconds` | float (s) | `0` | `--phase-budget` | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` = unlimited. |
+| `safety.timeout.chain_seconds` | float (s) | `60` | — | How long a multi-agent chain waits for a delegate reply before synthesising an error. `0` = disabled. |
+
+### `safety.on_limit` fields
 
 | Path | Type | Default | Description |
 |------|------|---------|-------------|
-| `limits.llm.timeout` | float (s) | `60` | Per-call HTTP timeout passed to LiteLLM. |
-| `limits.llm.max_retries` | int | `3` | Transient-error retries per LLM call (LiteLLM exponential backoff). |
-| `limits.phase.max_visits` | int | `25` | Cap on revisits to any single phase per run. `0` = unlimited. |
-| `limits.phase.max_wall_seconds` | float (s) | `0` | Per-phase wall-clock budget. Soft check at retry/turn boundaries — does not cancel mid-call. `0` = unlimited. |
+| `safety.on_limit.mode` | string | `unattended` | What happens when a loop/timeout cap fires. `interactive` — prompt the user via `ask_user` for permission to extend. `unattended` — abort immediately (default for `reyn run` / CI). `auto_extend` — auto-extend `auto_extend_times` times then abort. |
+| `safety.on_limit.auto_extend_times` | int | `1` | Number of auto-extensions before falling through to `unattended`. Used only when `mode: auto_extend`. |
+| `safety.on_limit.ask_timeout_seconds` | float (s) | `60` | How long `interactive` mode waits for a user response. On timeout the request is treated as a refusal (abort with partial data). |
 
-The legacy top-level `max_phase_visits` key is still accepted (with a deprecation warning) and is migrated to `limits.phase.max_visits`.
+## `plan` block
+
+Controls plan step execution budget and retry behavior.
+
+```yaml
+plan:
+  step_max_iterations: 5   # max RouterLoop turns per step (default: 5)
+  retry_limit: 3           # max auto-retries per step on failure (default: 3)
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `step_max_iterations` | integer | `5` | Maximum RouterLoop iterations one plan step may consume before being recorded as failed. |
+| `retry_limit` | integer | `3` | Maximum automatic retries per step on transient errors. When exhausted, the user is prompted to extend the budget. Acts as a cost protection ceiling analogous to token limits. |
+
+## `web` block
+
+SSL settings for `web_fetch` and the MCP package registry (FP-0022).
+
+```yaml
+web:
+  fetch:
+    verify_ssl: true     # true | false | omit (default: env-var chain)
+    ca_bundle: /path/to/ca-bundle.pem   # optional custom CA bundle
+```
+
+Priority chain (highest first):
+
+| Priority | Condition | Effective SSL config |
+|----------|-----------|----------------------|
+| 1 | `web.fetch.ca_bundle` set | Custom CA bundle file (`verify=<path>`) |
+| 2 | `web.fetch.verify_ssl: false` | Disable SSL verification (`verify=False`) — **use only in controlled environments** |
+| 3 | `web.fetch.verify_ssl: true` | Force SSL verification (`verify=True`) |
+| 4 | Both unset | Fall through: `SSL_VERIFY` env var → `litellm.ssl_verify` → `SSL_CERT_FILE` → `True` |
+
+`verify_ssl` and `ca_bundle` also apply to MCP registry HTTP calls (package install).
+
+## `eval` block
+
+Trace exporter backends. When configured, reyn exports P6 event traces from every skill run to the listed backends (FP-0007).
+
+```yaml
+eval:
+  exporters:
+    - type: file
+      path: .reyn/traces/        # default when no exporters are set
+    - type: langfuse
+      public_key: ${LANGFUSE_PUBLIC_KEY}
+      secret_key: ${LANGFUSE_SECRET_KEY}
+      host: https://cloud.langfuse.com   # optional; default cloud endpoint
+    - type: otlp
+      endpoint: http://localhost:4317
+    - type: ietf_audit
+      path: .reyn/audit/         # IETF Agent Audit Trail draft format
+```
+
+| `type` | Description |
+|--------|-------------|
+| `file` | JSON-lines file under `path`. Default backend when `exporters` is empty. |
+| `langfuse` | Sends traces to a Langfuse instance. `public_key` + `secret_key` support `${VAR}` env interpolation. |
+| `otlp` | OpenTelemetry Protocol; `endpoint` is the OTLP gRPC or HTTP receiver. |
+| `ietf_audit` | IETF Agent Audit Trail draft format written to `path`. |
+
+All exporters are fire-and-forget: export failures are logged but do not abort the skill run.
+
+## `sandbox` block
+
+Backend selection and unsupported-platform policy for `sandboxed_exec` ops (FP-0017).
+
+```yaml
+sandbox:
+  backend: auto          # auto | seatbelt | landlock | noop
+  on_unsupported: warn   # warn | error | ignore
+```
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `backend` | string | `auto` | Enforcement backend. `auto` lets the OS pick: macOS < 26 → `seatbelt` (sandbox-exec SBPL), Linux ≥ 5.13 with `sandbox-linux` extra → `landlock` (+ optional seccomp-BPF), otherwise → `noop` (audit-only, no enforcement). Explicit values force a specific backend. |
+| `on_unsupported` | string | `warn` | Policy when the requested backend is unavailable on this platform. `warn` logs a WARNING and falls back to `noop`. `error` raises `RuntimeError` (fail-fast for production environments that require enforcement). `ignore` silently falls back. |
+
+See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
 
 ## `permissions` block
 
@@ -187,8 +298,8 @@ permissions:
     read:  [".reyn/", "src/stdlib/"]
     write: [".reyn/state/", "reyn/local/"]
   python:
-    pure:    allow      # default for pure-mode python steps
-    trusted: deny       # trusted mode also requires --allow-untrusted-python
+    safe:    allow      # default for safe-mode python steps
+    unsafe:  deny       # unsafe mode also requires --allow-untrusted-python
     allowed_modules:
       - math
       - statistics

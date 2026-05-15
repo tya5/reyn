@@ -48,7 +48,7 @@ For each preprocessor step:
 - [ ] The step kind is one of `run_skill`, `iterate`, `validate`, `lint_plan`, `python`.
 - [ ] `into` doesn't collide with an existing input artifact key.
 - [ ] If `python`: matching `permissions.python` entry, `.py` file exists, function defined, `output_schema` declared.
-- [ ] If `python` `mode: pure`: no banned constructs in the AST (`open`, `eval`, `subprocess`, etc.).
+- [ ] If `python` `mode: safe`: no banned constructs in the AST (`open`, `eval`, `subprocess`, etc.).
 
 ## Eval-friendliness
 

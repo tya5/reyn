@@ -18,8 +18,8 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `lint` | Run the DSL linter on a skill directory | none |
 | `shell` | Run a shell command (**deprecated** — use `sandboxed_exec`, FP-0017) | `shell` (off by default; needs `--allow-shell`) |
 | `sandboxed_exec` | Run argv under a `SandboxPolicy` via a `SandboxBackend` (FP-0017) | enforced by backend (`SandboxPolicy`) |
-| `web_search` | Search the public web via DuckDuckGo | none (always allowed) |
-| `web_fetch` | Fetch a single URL and return extracted text | `web.fetch: allow` in `reyn.yaml` |
+| `web_search` | Search the public web via DuckDuckGo | Tier 1 — default allow; `web.search: deny` in `reyn.yaml` blocks |
+| `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
 
@@ -146,7 +146,7 @@ Events emitted: `sandboxed_exec_started`, `sandboxed_exec_completed` (P6 audit t
 
 ## `web_search`
 
-Searches the public web using DuckDuckGo and returns structured results. Always available — no permission declaration required.
+Searches the public web using DuckDuckGo and returns structured results. **Tier 1** — default allow; no permission declaration required. Can be blocked project-wide with `web.search: deny` in `reyn.yaml`.
 
 ```json
 {
@@ -169,7 +169,7 @@ Use operators when the user's intent is site-specific or phrase-anchored; plain 
 
 ## `web_fetch`
 
-Fetches a single URL and returns its text-extracted content. **Operator opt-in** — requires `web.fetch: allow` in `reyn.yaml`. Typically used after `web_search` to read a result page in detail.
+Fetches a single URL and returns its text-extracted content. **Tier 1** — default allow; no permission declaration required (FP-0022). Typically used after `web_search` to read a result page in detail. Block with `web.fetch: deny` in `reyn.yaml`; pre-approve silently with `web.fetch: allow`.
 
 ```json
 {

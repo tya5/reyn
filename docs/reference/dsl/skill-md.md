@@ -31,7 +31,7 @@ permissions:                   # optional; declares required capabilities
   python:
     - module: stats
       function: compute
-      mode: pure
+      mode: safe
 imported_from: ...              # optional; provenance, set by skill_importer
 imported_at: 2026-04-29T...
 imported_format: claude-skill
@@ -55,6 +55,8 @@ imported_revision: <git-sha>
 - **`permissions`** — see [`permissions:` (skill-level)](#permissions-skill-level) below.
 - **`postprocessor`** — see [`postprocessor:`](#postprocessor) below.
 - **`imported_*`** — provenance fields written by `skill_importer`. Inert; the parser ignores them.
+- **`search_hints`** — optional; list of example query strings this skill can answer. Used by the BM25/embedding pre-filter when the catalog exceeds the router context window. Set by skill authors to improve recall in large multi-skill repos.
+  Example: `search_hints: ["summarize an article", "tl;dr a document"]`
 
 ## `permissions:` (skill-level)
 
@@ -73,10 +75,10 @@ permissions:
   python:
     - module: stats           # module name (no .py extension)
       function: compute
-      mode: pure              # pure | trusted
+      mode: safe              # safe | unsafe
     - module: rendering
       function: to_html
-      mode: trusted           # requires --allow-untrusted-python flag
+      mode: unsafe            # requires --allow-untrusted-python flag
   tool:
     - name: web_search        # Control IR tool name
       allow: true
@@ -87,7 +89,7 @@ permissions:
 - **`shell`** — `allow` or `deny` (default `deny`). Governs whether Control IR `shell` ops are accepted.
 - **`file.read`** / **`file.write`** — workspace file access. Default: `file.read: allow`, `file.write: deny`.
 - **`mcp`** — list of MCP server entries. Each entry names a server and an `ops` allowlist. Ops not in the list are rejected at dispatch.
-- **`python`** — list of Python function entries allowed in preprocessor and postprocessor `python` steps. Each entry must match the `module` + `function` pair used in a step. `mode: pure` runs sandboxed; `mode: trusted` requires `--allow-untrusted-python` at the CLI.
+- **`python`** — list of Python function entries allowed in preprocessor and postprocessor `python` steps. Each entry must match the `module` + `function` pair used in a step. `mode: safe` runs sandboxed; `mode: unsafe` requires `--allow-untrusted-python` at the CLI.
 - **`tool`** — list of named Control IR tools the skill may invoke.
 
 The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops` would permit an op, the op is rejected at dispatch if it falls outside `skill.permissions`. See [permission-model.md](../../concepts/permission-model.md) for the layered enforcement model.

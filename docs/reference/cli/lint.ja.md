@@ -7,7 +7,7 @@ applies_to: [reyn lint]
 
 # `reyn lint`
 
-Skill ディレクトリに対して決定論的な構造チェックを実行します: グラフ、frontmatter、artifact 参照、Python preprocessor ステップ（`mode: pure` の場合は AST も検証）。ほとんどのオーサリングミスをランタイム前に検出します。
+Skill ディレクトリに対して決定論的な構造チェックを実行します: グラフ、frontmatter、artifact 参照、Python preprocessor ステップ（`mode: safe` の場合は AST も検証）。ほとんどのオーサリングミスをランタイム前に検出します。
 
 ## 概要
 
@@ -27,7 +27,7 @@ reyn lint SKILL
 - **到達可能性**: `entry` から到達可能なすべての Phase; `can_finish: true` の Phase が `end` へのパスを持つ。
 - **Frontmatter**: 必須キー（`type`、`name`、`entry`、`final_output`）。
 - **artifact 参照**: すべての `input` と `final_output_schema` が artifact ファイルに解決される。
-- **Preprocessor**: 各 `python` ステップに一致する `permissions.python` エントリーがあり、`.py` ファイルが存在し、関数が定義されている。`mode: pure` では AST が allowlist に対してチェックされます（`open`、`eval`、`exec`、`__import__`、`subprocess` などは禁止）。
+- **Preprocessor**: 各 `python` ステップに一致する `permissions.python` エントリーがあり、`.py` ファイルが存在し、関数が定義されている。`mode: safe` では AST が allowlist に対してチェックされます（`open`、`eval`、`exec`、`__import__`、`subprocess` などは禁止）。
 
 ## 終了コード
 
@@ -78,3 +78,4 @@ reyn lint my_skill || exit 1
 - [リファレンス: phase.md](../dsl/phase-md.md)
 - [リファレンス: graph](../dsl/graph.md)
 - [リファレンス: preprocessor](../dsl/preprocessor.md)
+- [リファレンス: reyn skills](skills.md) — op/permission 整合性チェックの `reyn skills validate`（lint と補完）
