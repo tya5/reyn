@@ -2719,18 +2719,6 @@ class ChatSession:
             }
         return {"error": result.get("error", "regenerate_index failed")}
 
-    async def _run_remember(self, **kwargs) -> dict:
-        """Delegates to MemoryService.remember (wave 3 PR2)."""
-        return await self._memory.remember(**kwargs)
-
-    async def _read_memory_body(self, **kwargs) -> dict:
-        """Delegates to MemoryService.read_body (wave 3 PR2)."""
-        return await self._memory.read_body(**kwargs)
-
-    async def _run_forget(self, **kwargs) -> dict:
-        """Delegates to MemoryService.forget (wave 3 PR2)."""
-        return await self._memory.forget(**kwargs)
-
     async def _run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
         """Awaitable variant of _spawn_skill. Runs a single skill, awaits its
         completion, returns the final_output dict.
