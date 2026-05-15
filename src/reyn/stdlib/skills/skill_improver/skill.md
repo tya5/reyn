@@ -52,6 +52,11 @@ permissions:
       scope: recursive
     - path: .reyn/events
       scope: recursive
+    # R-PURE-MODE Wave 3b: finalize preprocessor step D-1 reads reyn.yaml to
+    # extract the self_improvement config (on_propose, max_versions) via the
+    # OS file_read op. Replaces the former load_config() unsafe python call.
+    - path: reyn.yaml
+      scope: single
   recall: allow
   python:
     - module: ./copy_to_work.py
@@ -84,13 +89,23 @@ permissions:
       function: collect_traces
       mode: unsafe
       timeout: 30
-    # FP-0006 B+D: version snapshot + on_propose config gate (finalize preprocessor).
+    # FP-0006 B: version snapshot (finalize preprocessor).
     # Unsafe mode: reads original skill.md from disk, writes .reyn/skill-versions/,
-    # manages the `current` pointer file, calls load_config() for on_propose.
+    # manages the `current` pointer file.
     - module: ./version_snapshot.py
       function: save_snapshot
       mode: unsafe
       timeout: 10
+    # R-PURE-MODE Wave 3b (Component D replacement): pure regex parser for
+    # self_improvement subset of reyn.yaml. The file_read step (D-1) passes
+    # raw YAML text via data._reyn_yaml_text; this step extracts the two
+    # fields (on_propose, max_versions) without any fs I/O.
+    - module: ./version_snapshot_pure.py
+      function: parse_on_propose_config_minimal
+      mode: safe
+      timeout: 5
+    # KEPT for backward-compat (tests that call read_on_propose_config directly).
+    # No longer used by finalize.md preprocessor as of Wave 3b.
     - module: ./version_snapshot.py
       function: read_on_propose_config
       mode: unsafe

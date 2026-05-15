@@ -28,13 +28,28 @@ preprocessor:
         original_skill_root: {type: string}
       required: [saved_version, snapshot_path, next_version, versions_dir, original_skill_root]
 
-  # FP-0006 Component D — read on_propose config so the LLM can decide
-  # whether to apply, ask the user, or dry-run without touching the OS.
-  # Runs in unsafe mode: calls load_config() which reads reyn.yaml.
+  # FP-0006 Component D (R-PURE-MODE Wave 3b) — read on_propose config so the
+  # LLM can decide whether to apply, ask the user, or dry-run.
+  # Split into two steps:
+  #   Step D-1: file_read op reads reyn.yaml text (OS-level, gated by file
+  #             permission). on_error: skip so a missing reyn.yaml falls back
+  #             to defaults in step D-2.
+  #   Step D-2: pure regex parser extracts the self_improvement subset
+  #             (mode: safe — no fs I/O, only re + builtins).
+  - type: run_op
+    op:
+      kind: file
+      op: read
+      path: reyn.yaml
+    into: data._reyn_yaml_text
+    on_error: skip
+
   - type: python
-    module: ./version_snapshot.py
-    function: read_on_propose_config
+    module: ./version_snapshot_pure.py
+    function: parse_on_propose_config_minimal
     into: data._on_propose
+    mode: safe
+    timeout: 5
     output_schema:
       type: object
       properties:
