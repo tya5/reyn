@@ -83,8 +83,24 @@ permissions:
       function: inject_resolved_paths
       mode: safe
       timeout: 5
-    # FP-0006 C: trace_collector for collect_traces phase preprocessor.
-    # Unsafe mode: globs .reyn/events/**/*.jsonl when recall fallback path engages.
+    # R-PURE-MODE wave 4: dispatch_traces is pure — aggregates recall chunks
+    # inline via aggregate_from_recall_chunks_for_traces. No glob/os/pathlib imports.
+    # Declared mode: safe; 99% hot path (recall hit) runs here.
+    - module: ./trace_collector_pure.py
+      function: dispatch_traces
+      mode: safe
+      timeout: 10
+
+    # R-PURE-MODE wave 4: collect_traces_fallback is honestly mode: unsafe
+    # (globs .reyn/events/**/*.jsonl). Runs unconditionally but no-ops if upstream
+    # dispatch_traces already produced recall stats (_path=recall).
+    - module: ./trace_collector.py
+      function: collect_traces_fallback
+      mode: unsafe
+      timeout: 30
+
+    # FP-0006 C: collect_traces back-compat wrapper. Kept for existing tests and
+    # direct callers; delegates to dispatch_traces + collect_traces_fallback.
     - module: ./trace_collector.py
       function: collect_traces
       mode: unsafe

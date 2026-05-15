@@ -5,6 +5,9 @@ Tests for:
   - trace_collector.collect_traces pure-function behavior
     (recall path, raw-events fallback, empty data, skill-name filtering,
      lookback cap, error aggregation)
+  - R-PURE-MODE wave 4: dispatch_traces / collect_traces_fallback split
+    (dispatcher recall path, dispatcher fallback sentinel,
+     fallback no-op when upstream recalled, fallback walks raw events)
 
 No mocks, no AsyncMock, no patch decorators — per CLAUDE.md testing policy.
 Real filesystem I/O via tmp_path; real Python function calls.
@@ -17,7 +20,11 @@ from pathlib import Path
 
 import pytest
 
-from reyn.stdlib.skills.skill_improver.trace_collector import collect_traces
+from reyn.stdlib.skills.skill_improver.trace_collector import (
+    collect_traces,
+    collect_traces_fallback,
+)
+from reyn.stdlib.skills.skill_improver.trace_collector_pure import dispatch_traces
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -389,3 +396,114 @@ def test_trace_collector_aggregates_top_errors(tmp_path: Path, monkeypatch) -> N
         f"Expected 'timeout' as top error; got: {top_msg!r}"
     )
     assert top_errors[0]["count"] == 3
+
+
+# ── Tests 9–12: R-PURE-MODE Wave 4 (dispatch_traces / collect_traces_fallback) ─
+
+
+def test_dispatch_traces_with_recall_chunks_returns_recall_path() -> None:
+    """Tier 2: dispatch_traces uses recall chunks when non-empty → _path=recall, stats computed."""
+    chunks = [
+        _make_recall_chunk("my_skill", status="success", duration=10.0),
+        _make_recall_chunk("my_skill", status="failed", duration=5.0, errors=["bad output"]),
+        _make_recall_chunk("my_skill", status="success", duration=8.0),
+    ]
+    artifact = {
+        "data": {
+            "skill_name": "my_skill",
+            "trace_lookback_runs": 20,
+            "trace_recall_result": {"chunks": chunks, "mode": "semantic"},
+        }
+    }
+    result = dispatch_traces(artifact)
+
+    assert result["_path"] == "recall"
+    assert result["skill_name"] == "my_skill"
+    assert result["runs_analyzed"] == 3
+    assert result["data_source"] == "recall"
+    assert result["success_rate"] == pytest.approx(2 / 3)
+    assert isinstance(result["summary_markdown"], str)
+    assert "my_skill" in result["summary_markdown"]
+    # No fallback-only fields
+    assert "target_skill" not in result
+    assert "trace_lookback_runs" not in result
+
+
+def test_dispatch_traces_without_chunks_returns_fallback_sentinel() -> None:
+    """Tier 2: dispatch_traces emits needs_fallback sentinel when recall has no chunks."""
+    artifact = {
+        "data": {
+            "skill_name": "my_skill",
+            "trace_lookback_runs": 15,
+            "trace_recall_result": {"chunks": [], "mode": "fallback"},
+        }
+    }
+    result = dispatch_traces(artifact)
+
+    assert result["_path"] == "needs_fallback"
+    assert result["target_skill"] == "my_skill"
+    assert result["trace_lookback_runs"] == 15
+    # No full stats fields
+    assert "runs_analyzed" not in result
+    assert "summary_markdown" not in result
+
+
+def test_collect_traces_fallback_no_ops_when_upstream_recalled() -> None:
+    """Tier 2: collect_traces_fallback strips _path sentinel and returns recall stats unchanged."""
+    upstream_summary = {
+        "_path": "recall",
+        "skill_name": "my_skill",
+        "runs_analyzed": 5,
+        "data_source": "recall",
+        "summary_markdown": "# Traces summary for `my_skill`\n\n**Runs analyzed**: 5",
+        "success_rate": 0.8,
+        "top_errors": [{"phase": "unknown", "msg": "some error", "count": 1}],
+    }
+    artifact = {
+        "data": {
+            "skill_name": "my_skill",
+            "traces_summary": upstream_summary,
+        }
+    }
+    result = collect_traces_fallback(artifact)
+
+    # Sentinel stripped
+    assert "_path" not in result
+    # Stats passed through verbatim
+    assert result["skill_name"] == "my_skill"
+    assert result["runs_analyzed"] == 5
+    assert result["data_source"] == "recall"
+    assert result["success_rate"] == pytest.approx(0.8)
+    assert result["top_errors"] == [{"phase": "unknown", "msg": "some error", "count": 1}]
+
+
+def test_collect_traces_fallback_walks_raw_events_when_needed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tier 2: collect_traces_fallback walks .reyn/events when traces_summary._path=needs_fallback."""
+    events_dir = tmp_path / ".reyn" / "events" / "agents" / "default" / "skill_runs"
+    events_dir.mkdir(parents=True)
+    log = events_dir / "runs.jsonl"
+    _write_events(log, skill="my_skill", run_id="r1", status="success")
+    _write_events(log, skill="my_skill", run_id="r2", status="failed")
+    _write_events(log, skill="my_skill", run_id="r3", status="success")
+
+    monkeypatch.chdir(tmp_path)
+
+    artifact = {
+        "data": {
+            "traces_summary": {
+                "_path": "needs_fallback",
+                "target_skill": "my_skill",
+                "trace_lookback_runs": 20,
+            }
+        }
+    }
+    result = collect_traces_fallback(artifact)
+
+    assert "_path" not in result
+    assert result["data_source"] == "raw_events"
+    assert result["runs_analyzed"] == 3
+    assert result["skill_name"] == "my_skill"
+    assert isinstance(result["summary_markdown"], str)
+    assert "raw_events" in result["summary_markdown"]
