@@ -18,9 +18,9 @@ import pytest
 # Module under test
 from reyn.stdlib.skills.ops_report.aggregate import (
     aggregate_from_raw_events,
-    aggregate_from_recall_chunks,
     collect_aggregate,
 )
+from reyn.stdlib.skills.ops_report.aggregate_pure import aggregate_from_recall_chunks
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -467,3 +467,34 @@ def test_ops_report_skill_has_collect_phase_file() -> None:
         / "src" / "reyn" / "stdlib" / "skills" / "ops_report" / "phases" / "collect.md"
     )
     assert collect_md.exists(), f"Expected {collect_md} to exist"
+
+
+# ── R-PURE-MODE-REDEFINE wave 2: safe-mode import contract ───────────────────
+
+
+def test_aggregate_pure_imports_only_safe_modules() -> None:
+    """Tier 2: aggregate_pure.py imports only PURE_STDLIB_ALLOWLIST modules (R-PURE-MODE).
+
+    AST-walks aggregate_pure.py and asserts every imported top-level module is
+    in PURE_STDLIB_ALLOWLIST (or ``__future__``). This pins the R-PURE-MODE-REDEFINE
+    wave 2 guarantee: the mode: safe declaration in skill.md is honest.
+    """
+    import ast
+    from pathlib import Path
+
+    from reyn.kernel._python_allowlist import PURE_STDLIB_ALLOWLIST
+
+    src = (
+        Path(__file__).parent.parent
+        / "src" / "reyn" / "stdlib" / "skills" / "ops_report" / "aggregate_pure.py"
+    ).read_text()
+    tree = ast.parse(src)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.add(node.module.split(".")[0])
+    forbidden = imported - PURE_STDLIB_ALLOWLIST - {"__future__"}
+    assert not forbidden, f"aggregate_pure.py imports non-safe modules: {forbidden}"

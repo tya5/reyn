@@ -1,12 +1,18 @@
-"""aggregate.py — pure-function aggregations for ops_report (FP-0009 Component D).
+"""aggregate.py — I/O-using aggregations for ops_report (FP-0009 Component D).
 
 Public functions:
   collect_aggregate(artifact)                              → dict   (preprocessor entry point)
   aggregate_from_raw_events(events_root, period_days, skills) → dict
-  aggregate_from_recall_chunks(chunks)                     → dict
 
-All three return the same aggregate-stats output shape. No LLM calls,
-no side effects, fully testable at Tier 2.
+These functions use filesystem I/O (glob, os, pathlib) and must be declared
+``mode: unsafe`` in skill.md.
+
+``aggregate_from_recall_chunks`` has been extracted to the sibling module
+``aggregate_pure.py`` (no unsafe imports) so it can be declared ``mode: safe``.
+``collect_aggregate`` dispatches to it via a lazy import.
+
+All functions return the same aggregate-stats output shape. No LLM calls,
+no side effects beyond filesystem reads, fully testable at Tier 2.
 
 P7 note: this module is skill-local and may freely reference event-domain
 concepts (skill names, run boundaries, event type names, etc.). OS code
@@ -56,6 +62,7 @@ def collect_aggregate(artifact: dict) -> dict:
     chunks: list[dict] = list(recall_result.get("chunks") or []) if isinstance(recall_result, dict) else []
 
     if chunks:
+        from reyn.stdlib.skills.ops_report.aggregate_pure import aggregate_from_recall_chunks
         return aggregate_from_recall_chunks(chunks)
 
     # Fallback: walk raw events log.
@@ -109,107 +116,6 @@ def aggregate_from_raw_events(
 
     runs = _group_events_by_run(event_files)
     return _aggregate_runs(runs, cutoff=cutoff, skills=skills, period_days=period_days)
-
-
-def aggregate_from_recall_chunks(chunks: list[dict]) -> dict:
-    """Aggregate from recall chunks (already filtered by recall query).
-
-    Each chunk has the shape returned by the events source:
-        {
-            "content":  str,
-            "metadata": {
-                "extra": {
-                    "skill":            str,
-                    "status":           str,          # "success"|"failed"|"aborted"
-                    "duration_seconds": int | None,
-                    "errors":           list[str],
-                    "started_at":       str,
-                    "completed_at":     str,
-                    ...
-                }
-            }
-        }
-
-    Returns the same shape as aggregate_from_raw_events.
-    Period information is not available from chunks alone — period_days is
-    set to None in the returned dict to signal this.
-    """
-    by_skill: dict[str, dict] = defaultdict(lambda: {
-        "count": 0,
-        "success": 0,
-        "failure": 0,
-        "_duration_sum": 0.0,
-        "_duration_count": 0,
-    })
-    total_runs = 0
-    success_count = 0
-    failure_count = 0
-    errors_sample: list[str] = []
-
-    for chunk in chunks:
-        meta = chunk.get("metadata") or {}
-        extra = meta.get("extra") or {}
-
-        skill_name = str(extra.get("skill") or "unknown")
-        status = str(extra.get("status") or "unknown").lower()
-        duration = extra.get("duration_seconds")
-        errors = list(extra.get("errors") or [])
-
-        total_runs += 1
-        is_success = status == "success"
-        is_failure = status in ("failed", "aborted")
-
-        if is_success:
-            success_count += 1
-        elif is_failure:
-            failure_count += 1
-
-        sk = by_skill[skill_name]
-        sk["count"] += 1
-        if is_success:
-            sk["success"] += 1
-        elif is_failure:
-            sk["failure"] += 1
-
-        if duration is not None:
-            try:
-                sk["_duration_sum"] += float(duration)
-                sk["_duration_count"] += 1
-            except (TypeError, ValueError):
-                pass
-
-        for err in errors:
-            if len(errors_sample) < _ERROR_SAMPLE_MAX:
-                errors_sample.append(str(err)[:_ERROR_EXCERPT_MAX])
-
-    # Compute per-skill avg_duration
-    by_skill_clean = {}
-    for name, stats in by_skill.items():
-        avg_dur = (
-            stats["_duration_sum"] / stats["_duration_count"]
-            if stats["_duration_count"] > 0
-            else None
-        )
-        by_skill_clean[name] = {
-            "count": stats["count"],
-            "success": stats["success"],
-            "failure": stats["failure"],
-            "avg_duration_seconds": avg_dur,
-        }
-
-    success_rate = success_count / total_runs if total_runs > 0 else None
-    top_failing = _top_failing_skills(by_skill_clean)
-
-    return {
-        "total_runs": total_runs,
-        "success_count": success_count,
-        "failure_count": failure_count,
-        "success_rate": success_rate,
-        "period_days": None,
-        "by_skill": by_skill_clean,
-        "top_failing_skills": top_failing,
-        "errors_sample": errors_sample,
-    }
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────

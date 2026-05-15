@@ -37,10 +37,10 @@ permissions:
   python:
     # aggregate.py imports `glob` at module level for .reyn/events/*.jsonl
     # discovery. `glob` is intentionally outside the safe-mode allowlist
-    # (operator filesystem-state ingress per R-PURE-MODE), so the whole
-    # module must load in `mode: unsafe`. Sibling skill index_events
-    # follows the same pattern. Stdlib unsafe is auto-allowed by `reyn run`
-    # via run.py:104-106.
+    # (operator filesystem-state ingress per R-PURE-MODE), so collect_aggregate
+    # and aggregate_from_raw_events must load in `mode: unsafe`. Sibling skill
+    # index_events follows the same pattern. Stdlib unsafe is auto-allowed by
+    # `reyn run` via run.py:104-106.
     - module: ./aggregate.py
       function: collect_aggregate
       mode: unsafe
@@ -49,9 +49,13 @@ permissions:
       function: aggregate_from_raw_events
       mode: unsafe
       timeout: 30
-    - module: ./aggregate.py
+    # aggregate_pure.py imports only PURE_STDLIB_ALLOWLIST entries (collections,
+    # typing) — no glob/os/pathlib. R-PURE-MODE-REDEFINE wave 2 Class C fix:
+    # the function was already pure; extraction from aggregate.py unblocks the
+    # honest mode: safe declaration.
+    - module: ./aggregate_pure.py
       function: aggregate_from_recall_chunks
-      mode: unsafe
+      mode: safe
       timeout: 10
 ---
 
