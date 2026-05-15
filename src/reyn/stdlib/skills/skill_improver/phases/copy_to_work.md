@@ -20,26 +20,40 @@ preprocessor:
         target_skill: {type: string}
       required: [target_skill]
 
-  # Step 2: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
-  # Reads data._name.target_skill (set by step 1) and calls resolve_skill_path which
-  # does filesystem existence checks. Runs in unsafe mode because resolve_skill_path
-  # imports reyn.skill.skill_paths (a reyn module) and performs Path.exists() I/O.
-  # All dict/regex logic was moved to step 1 (safe mode) in R-PURE-MODE-REDEFINE Class B.
+  # Step 2a: OS-level skill resolution via skill_resolve run_op (R-PURE-MODE Class D).
+  # Moves the fs walk (resolve_skill_path) into the OS layer. The `name` field is
+  # populated at runtime via args_from (dot-path override) from data._name.target_skill
+  # set by step 1. Never raises — resolution failure yields resolved=False with null fields.
+  # on_error: skip so a missing skill surfaces as an informative error in step 2b rather
+  # than aborting the preprocessor chain with an opaque OS error.
+  - type: run_op
+    op:
+      kind: skill_resolve
+      name: PLACEHOLDER
+    args_from:
+      name: data._name.target_skill
+    into: data._resolved
+    on_error: skip
+
+  # Step 2b: pure dict transform — skill_resolve op output → resolve_paths shape.
+  # Runs in safe mode (mode: safe): no fs I/O, no reyn imports. Derives all path strings
+  # from data._resolved (set by step 2a) deterministically. Returns the same shape as
+  # the legacy unsafe resolve_paths so downstream steps (steps 3–10) are unaffected.
   - type: python
-    module: ./copy_to_work_resolver.py
-    function: resolve_paths
+    module: ./copy_to_work_resolver_pure.py
+    function: resolve_paths_from_op
     into: data._prep
     output_schema:
       type: object
       properties:
-        skill_glob:         {type: string}
-        phases_glob:        {type: string}
-        work_dir:           {type: string}
-        original_skill_root:  {type: string}
+        skill_glob:         {type: [string, "null"]}
+        phases_glob:        {type: [string, "null"]}
+        work_dir:           {type: [string, "null"]}
+        original_skill_root:  {type: [string, "null"]}
         skill_slug:         {type: string}
-        target_skill_path:  {type: string}
-        target_skill_root:    {type: string}
-        eval_spec_path:     {type: string}
+        target_skill_path:  {type: [string, "null"]}
+        target_skill_root:    {type: [string, "null"]}
+        eval_spec_path:     {type: [string, "null"]}
       required: [skill_glob, phases_glob, work_dir, original_skill_root, skill_slug,
                  target_skill_path, target_skill_root, eval_spec_path]
 

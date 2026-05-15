@@ -63,6 +63,16 @@ permissions:
       function: extract_skill_name
       mode: safe
       timeout: 5
+    # R-PURE-MODE Class D: pure resolver consuming skill_resolve op output (mode: safe).
+    # Receives data._resolved (set by the skill_resolve run_op preprocessor step) and
+    # produces the same path dict as the legacy resolve_paths, without any fs I/O.
+    - module: ./copy_to_work_resolver_pure.py
+      function: resolve_paths_from_op
+      mode: safe
+      timeout: 5
+
+    # KEPT for back-compat: legacy unsafe resolver for direct callers (tests).
+    # No longer used by the copy_to_work.md preprocessor as of R-PURE-MODE Class D.
     - module: ./copy_to_work_resolver.py
       function: resolve_paths
       mode: unsafe
