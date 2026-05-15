@@ -56,6 +56,13 @@ permissions:
       function: extract_skill_name
       mode: safe
       timeout: 5
+    # NEW: pure resolver consuming skill_resolve op output (R-PURE-MODE Class D).
+    # Replaces the unsafe resolve_paths step in the preprocessor chain.
+    - module: ./analyze_skill_resolver_pure.py
+      function: resolve_paths_from_op
+      mode: safe
+      timeout: 5
+    # KEEP: legacy unsafe resolver for back-compat with any direct callers.
     - module: ./analyze_skill_resolver.py
       function: resolve_paths
       mode: unsafe

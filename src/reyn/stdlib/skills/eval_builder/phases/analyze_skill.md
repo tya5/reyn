@@ -19,26 +19,36 @@ preprocessor:
         target_skill: {type: string}
       required: [target_skill]
 
-  # Step 2: resolve target_skill → all derived paths via OS resolver (resolve_skill_path).
-  # Reads data._name.target_skill (set by step 1) and calls resolve_skill_path which
-  # does filesystem existence checks. Runs in unsafe mode because resolve_skill_path
-  # imports reyn.skill.skill_paths (a reyn module) and performs Path.exists() I/O.
-  # All dict/regex logic was moved to step 1 (safe mode) in R-PURE-MODE-REDEFINE Class B.
+  # Step 2a: OS-level skill path resolution via skill_resolve run_op (R-PURE-MODE Class D).
+  # Calls resolve_skill_path (fs walk) inside the OS layer, not in a python step.
+  # name is bound at execution time from data._name.target_skill via args_from.
+  # on_error: skip — if the skill is not found, step 2b handles the error case.
+  - type: run_op
+    op:
+      kind: skill_resolve
+      name: PLACEHOLDER
+    args_from:
+      name: data._name.target_skill
+    into: data._skill_resolved_op
+    on_error: skip
+
+  # Step 2b: pure dict transform: skill_resolve op output -> resolve_paths shape (mode: safe).
+  # Replaces the former unsafe resolve_paths step. No fs I/O — consumes data._skill_resolved_op.
   - type: python
-    module: ./analyze_skill_resolver.py
-    function: resolve_paths
+    module: ./analyze_skill_resolver_pure.py
+    function: resolve_paths_from_op
     into: data._prep
     output_schema:
       type: object
       properties:
-        skill_dir:          {type: string}
-        skill_root:         {type: string}
+        skill_dir:          {type: [string, "null"]}
+        skill_root:         {type: [string, "null"]}
         target_skill:       {type: string}
-        skill_dsl_path:     {type: string}
-        phases_glob:        {type: string}
-        artifacts_glob:     {type: string}
-        existing_eval_path: {type: string}
-        eval_output_path:   {type: string}
+        skill_dsl_path:     {type: [string, "null"]}
+        phases_glob:        {type: [string, "null"]}
+        artifacts_glob:     {type: [string, "null"]}
+        existing_eval_path: {type: [string, "null"]}
+        eval_output_path:   {type: [string, "null"]}
       required: [skill_dir, skill_root, target_skill, skill_dsl_path, phases_glob,
                  artifacts_glob, existing_eval_path, eval_output_path]
 
