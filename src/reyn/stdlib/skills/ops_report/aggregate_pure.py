@@ -20,6 +20,15 @@ they ever diverge.
 
 R-PURE-MODE-REDEFINE wave 2; see
 docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md.
+
+R-PURE-MODE-REDEFINE wave 3a: ``dispatch_aggregate`` added as the pure hot-path
+dispatcher. When recall chunks are present (99% of invocations once
+``index_events`` has run), it aggregates inline via
+``aggregate_from_recall_chunks`` and returns ``{"_path": "recall", ...stats}``.
+When chunks are absent it returns ``{"_path": "needs_fallback", ...}``, letting
+a downstream ``mode: unsafe`` step (``collect_aggregate_fallback``) walk raw
+events. The ``_path`` sentinel is stripped before stats reach downstream
+consumers.
 """
 from __future__ import annotations
 
@@ -33,6 +42,48 @@ _ERROR_EXCERPT_MAX = 200
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+
+def dispatch_aggregate(artifact: dict) -> dict:
+    """Preprocessor step: prefer recall (pure), else flag needs_fallback.
+
+    Mode: safe — imports only PURE_STDLIB_ALLOWLIST modules.
+
+    Receives the workspace artifact carrying:
+      - ``data.recall_result``: ``{"chunks": [...], "mode": ...}`` or ``None``
+        (= recall op skipped via ``on_error: skip``).
+      - ``data.period_days``, ``data.skills``: ops_report_input fields passed
+        through to the fallback if needed.
+
+    If recall chunks present:
+      → call ``aggregate_from_recall_chunks(chunks)``; return
+        ``{..stats, "_path": "recall"}``.
+    Else:
+      → return ``{"_path": "needs_fallback", "period_days": ..., "skills": ...}``.
+        A downstream unsafe step (``collect_aggregate_fallback``) then walks
+        ``.reyn/events/`` and produces the real stats.
+    """
+    data = artifact.get("data") or {}
+    recall_result = data.get("recall_result") or {}
+    chunks: list[dict] = (
+        list(recall_result.get("chunks") or [])
+        if isinstance(recall_result, dict)
+        else []
+    )
+
+    if chunks:
+        stats = aggregate_from_recall_chunks(chunks)
+        stats["_path"] = "recall"
+        return stats
+
+    # No recall chunks — signal the fallback step.
+    period_days = data.get("period_days")
+    skills_raw = data.get("skills")
+    return {
+        "_path": "needs_fallback",
+        "period_days": period_days,
+        "skills": list(skills_raw) if isinstance(skills_raw, list) else None,
+    }
 
 
 def aggregate_from_recall_chunks(chunks: list[dict]) -> dict:

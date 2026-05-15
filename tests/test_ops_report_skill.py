@@ -19,8 +19,12 @@ import pytest
 from reyn.stdlib.skills.ops_report.aggregate import (
     aggregate_from_raw_events,
     collect_aggregate,
+    collect_aggregate_fallback,
 )
-from reyn.stdlib.skills.ops_report.aggregate_pure import aggregate_from_recall_chunks
+from reyn.stdlib.skills.ops_report.aggregate_pure import (
+    aggregate_from_recall_chunks,
+    dispatch_aggregate,
+)
 
 # ── Fixtures / helpers ────────────────────────────────────────────────────────
 
@@ -498,3 +502,116 @@ def test_aggregate_pure_imports_only_safe_modules() -> None:
                 imported.add(node.module.split(".")[0])
     forbidden = imported - PURE_STDLIB_ALLOWLIST - {"__future__"}
     assert not forbidden, f"aggregate_pure.py imports non-safe modules: {forbidden}"
+
+
+# ── R-PURE-MODE-REDEFINE wave 3a: dispatch_aggregate / collect_aggregate_fallback ─
+
+
+def test_dispatch_aggregate_with_recall_chunks_returns_recall_path() -> None:
+    """Tier 2: dispatch_aggregate uses recall chunks when non-empty → _path=recall, stats computed."""
+    chunks = [
+        {
+            "content": "skill: sk\nstatus: success",
+            "metadata": {
+                "extra": {"skill": "sk", "status": "success", "duration_seconds": 5, "errors": []}
+            },
+        },
+        {
+            "content": "skill: sk\nstatus: failed",
+            "metadata": {
+                "extra": {"skill": "sk", "status": "failed", "duration_seconds": 3, "errors": ["oops"]}
+            },
+        },
+    ]
+    artifact = {
+        "data": {
+            "recall_result": {"chunks": chunks, "mode": "semantic"},
+            "period_days": 7,
+            "skills": None,
+        }
+    }
+    result = dispatch_aggregate(artifact)
+
+    assert result["_path"] == "recall"
+    assert result["total_runs"] == 2
+    assert result["success_count"] == 1
+    assert result["failure_count"] == 1
+    assert "sk" in result["by_skill"]
+
+
+def test_dispatch_aggregate_without_chunks_returns_fallback_sentinel() -> None:
+    """Tier 2: dispatch_aggregate emits needs_fallback sentinel when recall has no chunks."""
+    artifact = {
+        "data": {
+            "recall_result": {"chunks": [], "mode": "fallback"},
+            "period_days": 14,
+            "skills": ["my_skill"],
+        }
+    }
+    result = dispatch_aggregate(artifact)
+
+    assert result["_path"] == "needs_fallback"
+    assert result["period_days"] == 14
+    assert result["skills"] == ["my_skill"]
+    # No stats fields (full aggregate not yet computed)
+    assert "total_runs" not in result
+
+
+def test_collect_aggregate_fallback_no_ops_when_upstream_recalled() -> None:
+    """Tier 2: collect_aggregate_fallback strips _path sentinel and returns recall stats unchanged."""
+    upstream_stats = {
+        "_path": "recall",
+        "total_runs": 3,
+        "success_count": 2,
+        "failure_count": 1,
+        "success_rate": 2 / 3,
+        "period_days": None,
+        "by_skill": {"sk": {"count": 3, "success": 2, "failure": 1, "avg_duration_seconds": 7.0}},
+        "top_failing_skills": [{"skill": "sk", "failure_count": 1, "total_count": 3}],
+        "errors_sample": ["err1"],
+    }
+    artifact = {
+        "data": {
+            "aggregate": upstream_stats,
+        }
+    }
+    result = collect_aggregate_fallback(artifact)
+
+    # Sentinel stripped
+    assert "_path" not in result
+    # Stats passed through verbatim
+    assert result["total_runs"] == 3
+    assert result["success_count"] == 2
+    assert result["failure_count"] == 1
+    assert result["by_skill"]["sk"]["count"] == 3
+    assert result["errors_sample"] == ["err1"]
+
+
+def test_collect_aggregate_fallback_walks_raw_events_when_needed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Tier 2: collect_aggregate_fallback walks .reyn/events when aggregate._path=needs_fallback."""
+    events_dir = tmp_path / ".reyn" / "events"
+    events_dir.mkdir(parents=True)
+    log = events_dir / "runs.jsonl"
+    _write_events(log, skill="raw_skill", run_id="r1", status="success")
+    _write_events(log, skill="raw_skill", run_id="r2", status="failed")
+
+    monkeypatch.chdir(tmp_path)
+
+    artifact = {
+        "data": {
+            "aggregate": {
+                "_path": "needs_fallback",
+                "period_days": 7,
+                "skills": None,
+            }
+        }
+    }
+    result = collect_aggregate_fallback(artifact)
+
+    assert "_path" not in result
+    assert result["total_runs"] == 2
+    assert result["success_count"] == 1
+    assert result["failure_count"] == 1
+    assert "raw_skill" in result["by_skill"]

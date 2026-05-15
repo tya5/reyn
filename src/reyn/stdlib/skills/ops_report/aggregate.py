@@ -1,7 +1,8 @@
 """aggregate.py — I/O-using aggregations for ops_report (FP-0009 Component D).
 
 Public functions:
-  collect_aggregate(artifact)                              → dict   (preprocessor entry point)
+  collect_aggregate(artifact)                              → dict   (back-compat wrapper; prefer dispatch_aggregate + collect_aggregate_fallback)
+  collect_aggregate_fallback(artifact)                     → dict   (mode: unsafe fallback; no-ops if upstream recalled)
   aggregate_from_raw_events(events_root, period_days, skills) → dict
 
 These functions use filesystem I/O (glob, os, pathlib) and must be declared
@@ -9,7 +10,17 @@ These functions use filesystem I/O (glob, os, pathlib) and must be declared
 
 ``aggregate_from_recall_chunks`` has been extracted to the sibling module
 ``aggregate_pure.py`` (no unsafe imports) so it can be declared ``mode: safe``.
-``collect_aggregate`` dispatches to it via a lazy import.
+
+R-PURE-MODE-REDEFINE wave 3a: the preprocessor chain is now 3 steps:
+  1. recall run_op (unchanged)
+  2. ``dispatch_aggregate`` in ``aggregate_pure.py`` (mode: safe) — aggregates
+     recall chunks inline; returns ``{..., "_path": "recall"}`` or
+     ``{"_path": "needs_fallback", ...}`` sentinel.
+  3. ``collect_aggregate_fallback`` (this module, mode: unsafe) — no-ops when
+     upstream already recalled; otherwise walks ``.reyn/events/*.jsonl``.
+
+``collect_aggregate`` is kept as a back-compat wrapper (called by existing tests
+and any code that imports it directly); it dispatches to the new two-step path.
 
 All functions return the same aggregate-stats output shape. No LLM calls,
 no side effects beyond filesystem reads, fully testable at Tier 2.
@@ -38,43 +49,69 @@ _ERROR_EXCERPT_MAX = 200
 # ── Public API ────────────────────────────────────────────────────────────────
 
 
-def collect_aggregate(artifact: dict) -> dict:
-    """Preprocessor python step entry point: prefer recall, fall back to raw events.
+def collect_aggregate_fallback(artifact: dict) -> dict:
+    """Fallback raw-events aggregator. Runs unconditionally; no-ops if upstream
+    dispatcher already produced stats.
 
-    Receives the workspace artifact carrying:
-      - ``data.recall_result``: output of the prior ``recall`` op
-        (``{"chunks": [...], "mode": ...}``) or ``None`` if the op failed
-        (``on_error: skip``) or was never run.
-      - input fields from ``ops_report_input`` (``period_days``, ``skills``).
+    Mode: unsafe — imports glob/os/pathlib for .reyn/events/*.jsonl walk.
 
-    Decision logic:
-      - if recall produced ≥1 chunk → ``aggregate_from_recall_chunks``
-        (= preferred path: events index queried semantically, no full
-         linear scan)
-      - else → ``aggregate_from_raw_events`` (= fallback: walk
-        ``.reyn/events/*.jsonl`` directly; index not built or empty)
+    If ``data.aggregate._path == "recall"``, the upstream ``dispatch_aggregate``
+    step already computed real stats. Strip the sentinel and return them.
+    If ``data.aggregate._path == "needs_fallback"`` (or aggregate is absent),
+    walk ``.reyn/events/`` directly and produce stats from raw events.
 
-    Returns the aggregate stats dict, written by the OS to ``data.aggregate``
-    (the step's ``into:`` target).
+    The ``_path`` sentinel is always stripped before returning so that downstream
+    consumers (summarize phase, tests) see a normal aggregate dict.
     """
     data = artifact.get("data") or {}
-    recall_result = data.get("recall_result") or {}
-    chunks: list[dict] = list(recall_result.get("chunks") or []) if isinstance(recall_result, dict) else []
+    aggregate = data.get("aggregate") or {}
 
-    if chunks:
-        from reyn.stdlib.skills.ops_report.aggregate_pure import aggregate_from_recall_chunks
-        return aggregate_from_recall_chunks(chunks)
+    if aggregate.get("_path") == "recall":
+        # Upstream dispatch_aggregate already produced stats — just strip sentinel.
+        result = dict(aggregate)
+        result.pop("_path", None)
+        return result
 
-    # Fallback: walk raw events log.
-    period_days = int(data.get("period_days") or 7)
-    skills_raw = data.get("skills")
+    # Fallback path: walk raw events.
+    # Pull period_days / skills from the "needs_fallback" sentinel if present,
+    # or fall back to the top-level data fields (for callers that skip dispatch).
+    period_days = int(aggregate.get("period_days") or data.get("period_days") or 7)
+    skills_raw = aggregate.get("skills") if "skills" in aggregate else data.get("skills")
     skills: list[str] | None = list(skills_raw) if isinstance(skills_raw, list) else None
-    # `.reyn/events/` is the conventional path under the project workspace.
-    return aggregate_from_raw_events(
+    result = aggregate_from_raw_events(
         events_root=".reyn/events",
         period_days=period_days,
         skills=skills,
     )
+    result["_path"] = "raw_events"  # for debuggability; stripped below
+    result.pop("_path", None)
+    return result
+
+
+def collect_aggregate(artifact: dict) -> dict:
+    """Back-compat wrapper: dispatches to dispatch_aggregate then collect_aggregate_fallback.
+
+    Kept so that existing tests and any direct callers continue to work.
+    New preprocessor chains should use the 3-step split in collect.md instead.
+
+    Decision logic:
+      - if recall produced ≥1 chunk → pure inline aggregation (mode: safe path)
+      - else → ``aggregate_from_raw_events`` (= fallback: walk
+        ``.reyn/events/*.jsonl`` directly; index not built or empty)
+    """
+    from reyn.stdlib.skills.ops_report.aggregate_pure import dispatch_aggregate
+
+    # Step 1: pure dispatch — produces either recall stats or needs_fallback sentinel.
+    dispatched = dispatch_aggregate(artifact)
+
+    # Inject dispatched result as data.aggregate so collect_aggregate_fallback can read it.
+    import copy
+    patched = copy.deepcopy(artifact)
+    data = patched.setdefault("data", {})
+    data["aggregate"] = dispatched
+
+    # Step 2: fallback step (no-ops if dispatched._path == "recall").
+    return collect_aggregate_fallback(patched)
 
 
 def aggregate_from_raw_events(
