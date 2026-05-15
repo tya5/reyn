@@ -137,4 +137,12 @@ Emit `improvement_session` with:
 DO NOT include any path fields (`target_skill_path`, `target_skill_root`, `eval_spec_path`,
 `original_skill_root`). These are derived by the OS preprocessor in copy_to_work.
 
-Choose `transition` → `copy_to_work`.
+## Step 5 — Choose transition target
+
+Inspect `data.improvement_source` (default: `"tests"` if absent or null).
+
+- If `improvement_source` is `"traces"` or `"both"`: transition to `collect_traces`
+  first — the phase will pull historical execution data before the copy step.
+- Otherwise (`"tests"` or absent): transition directly to `copy_to_work`.
+
+Choose `transition` → `collect_traces` or `transition` → `copy_to_work` accordingly.

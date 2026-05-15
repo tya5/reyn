@@ -27,6 +27,16 @@ Read each returned file with file read ops. You need the current state of:
 - `phases/*.md` — instructions and roles
 - `artifacts/*.yaml` — schemas
 
+## Step 1b — Check for trace signal (optional)
+
+If a `skill_improver_traces` artifact is available in the workspace (written by the
+`collect_traces` phase when `improvement_source ∈ {traces, both}`), incorporate its
+findings into your diagnosis. The traces artifact carries observed failure patterns,
+error frequencies, slow phases, and version-hash success-rate splits — use this
+alongside the test scores to identify which phase deserves attention first.
+
+If no traces artifact is present, proceed with test scores alone (default behavior).
+
 ## Step 2 — Diagnose the weakness
 
 Use `iteration_state.latest_eval.weakest_phase` and `latest_eval.summary` to identify what is failing this iteration. Cross-reference with the phase's instructions and the artifact schema you just read.

@@ -13,7 +13,8 @@ finish_criteria:
   - If score_threshold_met, improved files have been copied back to the original skill directory
   - The user has a concrete next-step command to verify the result
 graph:
-  prepare: [copy_to_work]
+  prepare: [collect_traces, copy_to_work]
+  collect_traces: [copy_to_work]
   copy_to_work: [run_and_eval]
   run_and_eval: [plan_improvements]
   plan_improvements: [apply_improvements]
@@ -49,6 +50,9 @@ permissions:
       scope: recursive
     - path: reyn/project
       scope: recursive
+    - path: .reyn/events
+      scope: recursive
+  recall: allow
   python:
     - module: ./copy_to_work.py
       function: extract_skill_name
@@ -74,6 +78,10 @@ permissions:
       function: inject_resolved_paths
       mode: safe
       timeout: 5
+    - module: ./trace_collector.py
+      function: collect_traces
+      mode: unsafe
+      timeout: 30
 ---
 
 ## Overview
@@ -85,14 +93,18 @@ Copies the target skill to a temp work directory (`.reyn/skill_improver_work/<na
 ## Phase flow
 
 ```
-prepare  →  copy_to_work  →  run_and_eval  →  plan_improvements  →  apply_improvements  →  finalize
-                                    ↑___________________________________|
-                                           (rollback for next iteration)
+prepare  →  [collect_traces]  →  copy_to_work  →  run_and_eval  →  plan_improvements  →  apply_improvements  →  finalize
+                                                          ↑___________________________________|
+                                                                 (rollback for next iteration)
 ```
+
+`collect_traces` is conditional: only inserted when `improvement_source ∈ {traces, both}`.
+Default `improvement_source: tests` keeps the existing `prepare → copy_to_work` path.
 
 | Phase | Role | Responsibility |
 |-------|------|----------------|
 | `prepare` | coordinator | Parses the request, ensures an `eval.md` exists (auto-generates via `eval_builder` if not), picks a test case, initializes session state |
+| `collect_traces` | trace_collector | (conditional) Queries the P6 events log via `recall(sources=["events"])` or raw `.reyn/events/*.jsonl` walk; writes a `traces_summary.md` artifact for `plan_improvements` to use alongside test scores |
 | `copy_to_work` | workspace_initializer | Globs the target skill's DSL files, copies them to `.reyn/skill_improver_work/<name>/`, and updates `target_skill_root` in the session to the temp path |
 | `run_and_eval` | evaluator | Invokes the `eval` stdlib skill via `run_skill`; records the score in `iteration_state` |
 | `plan_improvements` | architect | Reads the target's DSL files from the work dir, diagnoses the weakest phase, and proposes minimal DSL changes targeting failing criteria. Adapts strategy from iteration history (regression / stagnation detection) |
@@ -132,6 +144,14 @@ reyn run skill_improver '{
   }
 }'
 ```
+
+Optional fields (FP-0006 Component C — trace-driven mode):
+
+- `improvement_source`: `tests` (default) | `traces` | `both` — source of improvement signal.
+  `tests` keeps the existing eval-loop behavior. `traces` or `both` inserts a `collect_traces`
+  phase before `copy_to_work` that pulls historical run data from the P6 events log.
+- `trace_lookback_runs`: integer (default `20`) — how many recent runs to inspect. Only used
+  when `improvement_source` is `traces` or `both`.
 
 If no `eval.md` exists at `<target_skill_root>/eval.md`, `prepare` invokes `eval_builder` to generate one before the loop starts. If `target_skill_path` is missing, `prepare` asks for it via `ask_user`.
 
