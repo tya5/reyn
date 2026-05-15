@@ -2767,24 +2767,23 @@ class ChatSession:
                 },
             }
 
-        # PR22: budget cap check
-        if self._budget_tracker is not None:
-            check = self._budget_tracker.check_pre_spawn(
-                chain_id=chain_id, skill=skill_name,
+        # PR22: budget cap check — routed through BudgetGateway (wave 3 PR1
+        # missed this call site; _spawn_skill / SkillRunner.spawn already uses
+        # the gateway).
+        check = self._budget.check_pre_spawn(chain_id=chain_id, skill=skill_name)
+        if not check.allowed:
+            self._chat_events.emit(
+                "budget_exceeded",
+                dimension=check.hard_dimension,
+                detail=check.detail,
+                skill=skill_name,
+                chain_id=chain_id,
             )
-            if not check.allowed:
-                self._chat_events.emit(
-                    "budget_exceeded",
-                    dimension=check.hard_dimension,
-                    detail=check.detail,
-                    skill=skill_name,
-                    chain_id=chain_id,
-                )
-                return {
-                    "status": "error",
-                    "data": {"error": check.detail or "budget exceeded"},
-                }
-            self._budget_tracker.record_spawn(chain_id=chain_id, skill=skill_name)
+            return {
+                "status": "error",
+                "data": {"error": check.detail or "budget exceeded"},
+            }
+        self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
 
         run_id = (
             f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
