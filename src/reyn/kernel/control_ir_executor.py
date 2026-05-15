@@ -17,7 +17,10 @@ handlers are preserved (they run inside the invoker).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from reyn.config import SandboxConfig
 
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.events import EventLog
@@ -85,6 +88,7 @@ class ControlIRExecutor:
         skill_run_id: str | None = None,
         resume_plan: Any = None,
         run_id: str | None = None,
+        sandbox_config: "SandboxConfig | None" = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -115,6 +119,12 @@ class ControlIRExecutor:
         # ``None`` means normal execution (no memoization), which is
         # the default for fresh starts.
         self._resume_plan = resume_plan
+        # FP-0017 follow-up: SandboxConfig (= reyn.yaml `sandbox:` section)
+        # propagated into every OpContext so sandboxed_exec backend
+        # selection honors the operator's declared backend / on_unsupported
+        # policy. ``None`` means the factory falls through to platform
+        # auto-detection (= unchanged behavior pre-wiring).
+        self._sandbox_config = sandbox_config
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -265,6 +275,8 @@ class ControlIRExecutor:
             # FP-0021: thread the OSRuntime run_id into every OpContext
             # so event emit helpers can stamp the correct run scope.
             run_id=self._run_id,
+            # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
+            sandbox_config=self._sandbox_config,
         )
 
     async def teardown_mcp_clients(self) -> None:

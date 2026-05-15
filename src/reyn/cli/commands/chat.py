@@ -201,6 +201,7 @@ def run(args: argparse.Namespace) -> None:
             events_config=session_cfg.config.events,
             state_log=state_log,
             budget_tracker=budget_tracker,
+            sandbox_config=session_cfg.config.sandbox,
         )
         s.load_history()
         return s

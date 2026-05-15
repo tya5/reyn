@@ -10,6 +10,7 @@ from reyn.schemas.models import CandidateOutput, ContextFrame, Skill
 
 if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
+    from reyn.config import SandboxConfig
     from reyn.events.state_log import StateLog
     from reyn.skill.skill_registry import SkillRegistry
 from reyn.config import SafetyConfig
@@ -70,6 +71,7 @@ class OSRuntime:
         skill_registry: "SkillRegistry | None" = None,
         resume_plan: Any = None,
         parent_run_id: str | None = None,
+        sandbox_config: "SandboxConfig | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -118,6 +120,10 @@ class OSRuntime:
         # SkillRegistry.start so the parent / child tree survives crash.
         # ``None`` = top-level (user-invoked, or preprocessor sub-skill).
         self._parent_run_id = parent_run_id
+        # FP-0017 follow-up: thread reyn.yaml `sandbox:` config into the
+        # executor so sandboxed_exec backend selection honors the operator's
+        # declared backend / on_unsupported policy. None → platform default.
+        self._sandbox_config = sandbox_config
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -133,6 +139,7 @@ class OSRuntime:
             skill_run_id=run_id,
             resume_plan=resume_plan,
             run_id=run_id,
+            sandbox_config=sandbox_config,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,

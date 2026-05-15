@@ -128,6 +128,7 @@ def run(args: argparse.Namespace) -> None:
         prompt_cache_enabled=session.config.prompt_cache_enabled,
         project_context=project_context,
         caller="direct",
+        sandbox_config=session.config.sandbox,
     )
 
     input_type = initial_input.get("type", "unknown")

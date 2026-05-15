@@ -39,7 +39,7 @@ from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig
+from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -486,6 +486,7 @@ class ChatSession:
         state_log: StateLog | None = None,
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
+        sandbox_config: "SandboxConfig | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -500,6 +501,10 @@ class ChatSession:
         self._perm = permission_resolver
         _safety = safety or SafetyConfig()
         self._safety = _safety
+        # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
+        # Plumbed through to spawned Agents so sandboxed_exec backend selection
+        # honors the operator's declared policy.
+        self._sandbox_config = sandbox_config
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -1426,6 +1431,7 @@ class ChatSession:
             agent_role=self._agent_role,
             caller=f"agents/{self.agent_name}",
             budget_tracker=self._budget_tracker,
+            sandbox_config=self._sandbox_config,
         )
 
     async def _put_outbox(self, msg: OutboxMessage) -> None:

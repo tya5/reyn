@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from reyn.config import WebConfig
+    from reyn.config import SandboxConfig, WebConfig
     from reyn.events.events import EventLog
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
@@ -85,3 +85,9 @@ class OpContext:
     # Defaults to WebConfig() (= no override, falls through to env-var chain).
     # Callers that have a ReynConfig available should pass config.web here.
     web_config: "WebConfig | None" = None
+
+    # FP-0017 follow-up: declarative sandbox config for sandboxed_exec op.
+    # Callers that have a ReynConfig available should pass config.sandbox here.
+    # When None, sandboxed_exec falls back to platform auto-detection
+    # (= same as no-config-loaded behavior).
+    sandbox_config: "SandboxConfig | None" = None
