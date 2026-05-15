@@ -11,6 +11,13 @@ Manage version history and roll back skill definitions. Reads snapshots
 created by the `skill_improver` finalize step (FP-0006 Component B), stored
 under `.reyn/skill-versions/<name>/`.
 
+## Synopsis
+
+```
+reyn skill versions <SKILL_NAME>
+reyn skill rollback <SKILL_NAME> [--to vN]
+```
+
 ## Subcommands
 
 ### `reyn skill versions`
@@ -108,6 +115,13 @@ List all saved snapshots:
 reyn skill versions my_skill
 ```
 
+Check a skill that has no saved snapshots yet (exits 0):
+
+```bash
+reyn skill versions new_skill
+# No versions saved for skill 'new_skill'.
+```
+
 Roll back to the previous version (current − 1):
 
 ```bash
@@ -119,6 +133,11 @@ Roll back to a specific version:
 ```bash
 reyn skill rollback my_skill --to v1
 ```
+
+> **P6 audit gap:** `reyn skill rollback` does not currently emit a
+> `skill_rolled_back` event — no active EventStore exists in the standalone
+> CLI context. The rollback is confirmed via a printed audit line instead.
+> Tracked for a follow-up PR. See [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management).
 
 ## Snapshot directory layout
 
@@ -138,3 +157,5 @@ reads them; it never creates new snapshots.
 
 - `reyn skills` — list and inspect all installed skills
 - [Reference: stdlib/skill_improver](../stdlib/skill_improver.md) — creates snapshots
+- [Proposal: FP-0006 skill self-improvement](../../deep-dives/proposals/0006-skill-self-improvement.md) — Component B (versioning) and Component E (CLI)
+- [Reference: events — `skill_rolled_back`](../runtime/events.md#skill-management) — planned P6 event payload

@@ -91,6 +91,12 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `workspace_updated` | 任意の artifact が書き込まれたとき |
 | `tool` / `tool_executed` | 汎用ツールディスパッチ |
 
+## スキル管理 {#skill-management}
+
+| 種類 | ペイロードフィールド | 発行タイミング |
+|------|-------------|--------------|
+| `skill_rolled_back` | `skill: str`、`from_version: int`、`to_version: int`、`reason: str`（デフォルト `"user rollback via CLI"`） | `reyn skill rollback` が以前のバージョンを復元したとき。**現時点では発行されません** — スタンドアロン CLI コンテキストにはアクティブな EventStore が存在しないためです。フォローアップ PR での対応を予定。[リファレンス: CLI — `reyn skill rollback`](../cli/skill.md) を参照。 |
+
 ## リプレイ
 
 ```bash

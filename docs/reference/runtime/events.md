@@ -91,6 +91,12 @@ Each Control IR op kind emits its own event:
 | `workspace_updated` | Any artifact is written |
 | `tool` / `tool_executed` | Generic tool dispatch |
 
+## Skill management {#skill-management}
+
+| Kind | Payload fields | Emitted when |
+|------|---------------|--------------|
+| `skill_rolled_back` | `skill: str`, `from_version: int`, `to_version: int`, `reason: str` (default `"user rollback via CLI"`) | A `reyn skill rollback` invocation restores a prior version. **Currently NOT emitted** — no active EventStore in the standalone CLI context. Planned to be wired in a follow-up PR. See [Reference: CLI — `reyn skill rollback`](../cli/skill.md). |
+
 ## Replay
 
 ```bash

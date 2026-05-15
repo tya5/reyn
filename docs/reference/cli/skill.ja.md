@@ -11,6 +11,13 @@ applies_to: [reyn skill]
 finalize ステップ（FP-0006 Component B）が `.reyn/skill-versions/<name>/` に
 保存したスナップショットを読み取ります。
 
+## 概要
+
+```
+reyn skill versions <SKILL_NAME>
+reyn skill rollback <SKILL_NAME> [--to vN]
+```
+
 ## サブコマンド
 
 ### `reyn skill versions`
@@ -108,6 +115,13 @@ skill.md content restored from .reyn/skill-versions/my_skill/v2.md.
 reyn skill versions my_skill
 ```
 
+スナップショット未保存のスキルを確認（終了コード 0）:
+
+```bash
+reyn skill versions new_skill
+# No versions saved for skill 'new_skill'.
+```
+
 1 つ前のバージョン（current − 1）へロールバック:
 
 ```bash
@@ -119,6 +133,11 @@ reyn skill rollback my_skill
 ```bash
 reyn skill rollback my_skill --to v1
 ```
+
+> **P6 監査ギャップ:** `reyn skill rollback` は現時点で `skill_rolled_back`
+> イベントを発行しません。スタンドアロン CLI コンテキストにはアクティブな
+> EventStore が存在しないためです。代わりに確認メッセージを stdout に出力します。
+> フォローアップ PR で対応予定です。[リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) を参照してください。
 
 ## スナップショットディレクトリ構造
 
@@ -138,3 +157,5 @@ reyn skill rollback my_skill --to v1
 
 - `reyn skills` — インストール済みスキルの一覧表示と詳細確認
 - [リファレンス: stdlib/skill_improver](../stdlib/skill_improver.md) — スナップショットを作成する
+- [提案: FP-0006 スキル自己改善](../../deep-dives/proposals/0006-skill-self-improvement.ja.md) — Component B（バージョン管理）と Component E（CLI）
+- [リファレンス: events — `skill_rolled_back`](../runtime/events.md#skill-management) — 予定している P6 イベントペイロード
