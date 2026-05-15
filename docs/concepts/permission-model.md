@@ -228,6 +228,19 @@ is configured — there is no regression for environments that already use env v
 - **Internal dev environment with self-signed certs**: set `verify_ssl: false`
 - **Enforce verification regardless of env vars**: set `verify_ssl: true`
 
+## `python` permission and `mode: safe` allowlist
+
+The `python` permission has two levels:
+
+| Level | Config key | What it allows |
+|-------|-----------|----------------|
+| `safe` | `python.pure: allow` (legacy key) | Steps that import only from `PURE_STDLIB_ALLOWLIST` — clock, entropy, pure compute, and `__future__` (compiler directive). No filesystem, network, or process access. |
+| `unsafe` | `python.trusted: allow` | Steps that may import any module, including filesystem and network. |
+
+`PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
+
+**Non-interactive auto-allow**: when a stdlib skill is invoked via `reyn run` (non-interactive context), both `mode: safe` and `mode: unsafe` python steps are auto-allowed without a prompt. This mirrors the same non-interactive behavior already in place for other ops in eval/CI runs. See [Concepts: Python `safe` mode](python-safe-mode.md) for the full ambient-sources contract.
+
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step in `mode: trusted` runs as the same user; reyn doesn't sandbox the kernel.

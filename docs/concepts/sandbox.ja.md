@@ -37,6 +37,8 @@ Reyn のサンドボックスレイヤーは、スキルが宣言したポリシ
 
 `NoopBackend` が使用される場合、Reyn は初回呼び出し時に一行 `WARN` をログ出力します。代わりにハードフェイルさせるには `sandbox.on_unsupported: error` を設定してください。
 
+**macOS 26.3+ と `SeatbeltBackend`**: macOS 26.3 では `sandbox-exec` は継続出荷されています。SBPL プロファイルに `(import "bsd.sb")` と `(allow process-exec*)` を含めることでバックエンドが動作します。詳細は FP-0017 の post-dogfood fix landing notes（コミット `b477508`）を参照してください。
+
 ## `reyn.yaml` 設定
 
 ```yaml

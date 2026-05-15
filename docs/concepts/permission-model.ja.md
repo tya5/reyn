@@ -207,6 +207,19 @@ web:
 - **自己署名証明書の開発環境**: `verify_ssl: false` を設定
 - **env var に関係なく SSL 検証を強制**: `verify_ssl: true` を設定
 
+## `python` パーミッションと `mode: safe` allowlist
+
+`python` パーミッションには 2 段階あります:
+
+| 段階 | 設定キー | 許可する内容 |
+|-------|-----------|----------------|
+| `safe` | `python.pure: allow`（旧キー） | `PURE_STDLIB_ALLOWLIST` に含まれるモジュールのみ import 可能なステップ — clock、entropy、純粋計算、および `__future__`（コンパイラディレクティブ）。ファイルシステム・ネットワーク・プロセスへのアクセス不可。 |
+| `unsafe` | `python.trusted: allow` | ファイルシステム・ネットワークを含む任意モジュールの import が可能なステップ。 |
+
+`PURE_STDLIB_ALLOWLIST` は `src/reyn/kernel/_python_allowlist.py` で定義されています。`__future__` はコンパイラディレクティブとして一覧に含まれており、ランタイムのケイパビリティを持ちません。
+
+**非インタラクティブ自動許可**: stdlib スキルが `reyn run`（非インタラクティブコンテキスト）経由で呼び出される場合、`mode: safe` と `mode: unsafe` の両方の python ステップはプロンプトなしで自動許可されます。これは eval / CI 実行で他の op に既に適用されている非インタラクティブ動作と同等です。ambient-sources の contract の全詳細は [コンセプト: Python `safe` モード](python-safe-mode.ja.md) を参照してください。
+
 ## パーミッションシステムではないもの
 
 - **Linux ケイパビリティサンドボックスではありません。** `mode: trusted` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。

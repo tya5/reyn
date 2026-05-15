@@ -37,6 +37,8 @@ Defined in `src/reyn/sandbox/policy.py`. Passed as fields on a `sandboxed_exec` 
 
 When `NoopBackend` is used, Reyn logs a one-line `WARN` on first invocation. Set `sandbox.on_unsupported: error` to hard-fail instead.
 
+**macOS 26.3+ and `SeatbeltBackend`**: `sandbox-exec` remains shipped in macOS 26.3. An SBPL profile that includes `(import "bsd.sb")` and `(allow process-exec*)` is sufficient for the backend to function. See the FP-0017 post-dogfood fix landing notes (commit `b477508`) for details.
+
 ## `reyn.yaml` configuration
 
 ```yaml
