@@ -21,7 +21,7 @@ qualified name (`<category>__<entry>`) and dispatched through
 introspection through `describe_action`.
 
 The wrappers are flag-gated through `action_retrieval` in
-[`reyn.yaml`](../reference/config/reyn-yaml.md#action_retrieval) and
+[`reyn.yaml`](../reference/config/reyn-yaml.md#action_retrieval-block) and
 ON by default. Existing LLMReplay fixtures stay valid because the legacy
 tools (`invoke_skill` / `delegate_to_agent` / `call_mcp_tool` / …) still
 exist and the wrappers simply re-route through them — no handler was
@@ -255,4 +255,4 @@ deferred to Phase 2:
 - [`src/reyn/chat/router_tools.py`](https://github.com/anthropics/reyn) — `build_tools` integration (flag-gated wrappers)
 - [`src/reyn/chat/router_system_prompt.py`](https://github.com/anthropics/reyn) — `## Action categories` section
 - [`src/reyn/config.py`](https://github.com/anthropics/reyn) — `ActionRetrievalConfig`
-- [`docs/reference/config/reyn-yaml.md`](../reference/config/reyn-yaml.md#action_retrieval) — config reference
+- [`docs/reference/config/reyn-yaml.md`](../reference/config/reyn-yaml.md#action_retrieval-block) — config reference
