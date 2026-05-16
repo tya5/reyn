@@ -555,7 +555,7 @@ Automated detection of three attractor patterns in a dogfood workspace:
 3. **Tool name hallucination**: the LLM called a tool by a name not in the tools schema
 
 ```bash
-python scripts/detect_attractor.py --root .reyn/
+python scripts/detect_attractor.py --trace <jsonl_path>
 ```
 
 Run this after every dogfood batch to catch attractor patterns that might not be visible in the high-level scenario outcome. A scenario can "complete" (produce a final output) while containing one or more attractor events at intermediate phases.
@@ -712,7 +712,7 @@ The attractor detector (`scripts/detect_attractor.py`) is useful for plan-mode t
 
 ```bash
 REYN_LLM_TRACE_DUMP=plan_trace.jsonl reyn chat
-python scripts/detect_attractor.py --root .reyn/  # catches step-level attractors
+python scripts/detect_attractor.py --trace plan_trace.jsonl  # catches step-level attractors
 ```
 
 ---

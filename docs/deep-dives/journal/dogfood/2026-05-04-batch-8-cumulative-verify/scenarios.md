@@ -174,7 +174,7 @@ python scripts/dogfood_trace.py --mode events | grep router_empty_response
 python scripts/dogfood_trace.py llm-payloads --trace /tmp/batch8_s1.jsonl | grep stop
 
 # attractor 自動検出 (= G12 cross-check)
-python scripts/detect_attractor.py /tmp/batch8_s1.jsonl
+python scripts/detect_attractor.py --trace /tmp/batch8_s1.jsonl
 ```
 
 ### Prediction (4 区分)
@@ -366,7 +366,7 @@ python scripts/dogfood_trace.py --mode events | grep -E "preprocessor_step"
 ls -la .reyn/eval_builder_work/direct_llm/eval.md
 
 # router enum fix の hallucinate 消失 cross-check
-python scripts/detect_attractor.py /tmp/batch8_s5.jsonl
+python scripts/detect_attractor.py --trace /tmp/batch8_s5.jsonl
 ```
 
 ### Prediction (4 区分)
