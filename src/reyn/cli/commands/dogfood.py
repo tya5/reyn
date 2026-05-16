@@ -6,12 +6,14 @@ Subcommands:
   report     Print 4-band breakdown + Brier score from a stored run
   compare    Regression diff between a baseline run and a candidate run
   baseline   Symlink a run as a named baseline under .reyn/dogfood/baselines/
+  publish    Create a GitHub Discussion thread from a stored run's summary.json
 
 The CLI delegates to:
   load_scenario_set  — F1 (reyn.dogfood.scenarios)
   run_scenario_set   — F2 (reyn.dogfood.runner, this slice)
   compute_coverage   — F4 (reyn.dogfood.coverage)
   compare_runs       — F2 (reyn.dogfood.compare, this slice)
+  publish_run        — FP-0036 (reyn.dogfood.publish)
 """
 from __future__ import annotations
 
@@ -145,6 +147,54 @@ def register(sub) -> None:
                            "Example: --label v1.2-stable"
                        ))
     bl_p.set_defaults(func=run_baseline)
+
+    # --- publish ---
+    from reyn.dogfood.publish import DEFAULT_REPO, DEFAULT_CATEGORY_SLUG, _DEFAULT_TEMPLATE_PATH  # noqa: E402
+    pub_p = dsub.add_parser(
+        "publish",
+        help="Create a GitHub Discussion thread from a stored run",
+        description=(
+            "Read the summary.json from a stored dogfood run, render a Discussion "
+            "body from the Markdown template, and create a thread in the configured "
+            "GitHub Discussions category. Authentication via GH_TOKEN or GITHUB_TOKEN "
+            "env var (same convention as the gh CLI)."
+        ),
+    )
+    pub_p.add_argument("run_id", metavar="RUN_ID",
+                        help=(
+                            "Run ID or path to the run directory under "
+                            ".reyn/dogfood/runs/."
+                        ))
+    pub_p.add_argument("--repo", metavar="OWNER/REPO", default=None,
+                        help=(
+                            f"GitHub repository (default: '{DEFAULT_REPO}', "
+                            "or detected from 'git remote get-url origin')."
+                        ))
+    pub_p.add_argument("--category", metavar="SLUG", default=DEFAULT_CATEGORY_SLUG,
+                        help=(
+                            f"Discussion category slug (default: '{DEFAULT_CATEGORY_SLUG}')."
+                        ))
+    pub_p.add_argument("--dry-run", action="store_true",
+                        help=(
+                            "Render the Discussion title and body to stdout without "
+                            "posting to GitHub."
+                        ))
+    pub_p.add_argument("--template", metavar="PATH", default=None,
+                        help=(
+                            "Override the Discussion body template path "
+                            f"(default: {_DEFAULT_TEMPLATE_PATH})."
+                        ))
+    pub_p.add_argument("--batch-id", metavar="N", default=None,
+                        help=(
+                            "Batch number (e.g. 27). Required if summary.json "
+                            "does not carry a 'batch_id' field."
+                        ))
+    pub_p.add_argument("--topic", metavar="TOPIC", default=None,
+                        help=(
+                            "Short topic description. Required if summary.json "
+                            "does not carry a 'topic' field."
+                        ))
+    pub_p.set_defaults(func=run_publish)
 
 
 def _no_subcommand(args: argparse.Namespace) -> None:  # pragma: no cover
@@ -487,3 +537,86 @@ def run_baseline(args: argparse.Namespace) -> None:
     target.symlink_to(run_dir.resolve())
     print(f"Baseline '{label}' → {run_dir.resolve()}")
     print(f"  stored at: {target}")
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: publish
+# ---------------------------------------------------------------------------
+
+def run_publish(args: argparse.Namespace) -> None:
+    """Create a GitHub Discussion thread from a stored run's summary.json."""
+    try:
+        from reyn.dogfood.publish import (
+            PublishConfig,
+            _DEFAULT_TEMPLATE_PATH,
+            DEFAULT_REPO,
+            DEFAULT_CATEGORY_SLUG,
+            detect_repo_from_git,
+            get_token,
+            publish_run,
+        )
+    except ImportError as exc:
+        print(f"Error loading publish module: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+    run_dir = _resolve_run_dir(args.run_id)
+
+    # Resolve --repo: explicit flag → git remote → hardcoded default
+    repo = args.repo
+    if not repo:
+        repo = detect_repo_from_git()
+    if not repo:
+        repo = DEFAULT_REPO
+
+    template_path = Path(args.template) if args.template else _DEFAULT_TEMPLATE_PATH
+    if not template_path.exists():
+        print(
+            f"Error: Discussion template not found: {template_path}\n"
+            "Pass --template <path> to point at a custom template.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    token = get_token()
+    if not token and not args.dry_run:
+        print(
+            "Error: No GitHub token found. Set GH_TOKEN or GITHUB_TOKEN and retry.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    config = PublishConfig(
+        repo=repo,
+        category_slug=args.category,
+        template_path=template_path,
+        token=token,
+    )
+
+    try:
+        result = publish_run(
+            args.run_id,
+            config=config,
+            storage_dir=run_dir,
+            dry_run=args.dry_run,
+            batch_id=args.batch_id,
+            topic=args.topic,
+        )
+    except FileNotFoundError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(2)
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if args.dry_run:
+        print(f"[dry-run] Title: {result['title']}")
+        print()
+        print("[dry-run] Body:")
+        print(result["body"])
+    else:
+        print(f"Discussion created: {result['discussion_url']}")
+        print(f"  Title  : {result['title']}")
+        print(f"  Number : #{result['discussion_number']}")

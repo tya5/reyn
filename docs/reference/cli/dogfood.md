@@ -17,6 +17,7 @@ reyn dogfood coverage [--feature-map FILE] [--json] [<SET_YAML>...]
 reyn dogfood report <RUN_ID> [--json]
 reyn dogfood compare <BASELINE> <CANDIDATE> [--threshold FLOAT] [--json]
 reyn dogfood baseline <RUN_ID> [--label NAME]
+reyn dogfood publish <RUN_ID> [--repo OWNER/REPO] [--category SLUG] [--dry-run] [--template PATH] [--batch-id N] [--topic TOPIC]
 ```
 
 ## Description
@@ -374,10 +375,102 @@ scenarios:
 
 `outcome_prediction` enables Brier score tracking — declare your confidence in each band and the framework measures calibration over time.
 
+---
+
+## `reyn dogfood publish` — publish a batch Discussion to GitHub
+
+Read a stored run's `summary.json`, render the Discussion body from the Markdown template, and create a thread in the configured GitHub Discussions category.
+
+**Authentication**: set `GH_TOKEN` or `GITHUB_TOKEN` env var (same convention as the `gh` CLI). The command exits with an error if neither is set and `--dry-run` is not passed.
+
+### Synopsis
+
+```
+reyn dogfood publish <RUN_ID> [--repo OWNER/REPO] [--category SLUG] \
+                               [--dry-run] [--template PATH] \
+                               [--batch-id N] [--topic TOPIC]
+```
+
+### Positional arguments
+
+| Name | Description |
+|------|-------------|
+| `RUN_ID` | Run ID (UUID) or path to the run directory. |
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--repo OWNER/REPO` | `tya5/reyn` (or detected from `git remote`) | GitHub repository to post the Discussion in. |
+| `--category SLUG` | `dogfood-batches` | Discussion category slug. |
+| `--dry-run` | — | Render the title and body to stdout without posting to GitHub. |
+| `--template PATH` | `docs/deep-dives/contributing/templates/dogfood-discussion-template.md` | Override the template file. |
+| `--batch-id N` | *(from summary.json)* | Batch number override (required if `summary.json` lacks `batch_id`). |
+| `--topic TOPIC` | *(from summary.json)* | Short topic string override (required if `summary.json` lacks `topic`). |
+
+### Authentication
+
+`GH_TOKEN` takes precedence over `GITHUB_TOKEN`. The token must have the `write:discussion` scope (or `repo` scope for private repositories).
+
+```bash
+export GH_TOKEN="ghp_..."
+reyn dogfood publish <RUN_ID>
+```
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Discussion created (or dry-run completed). |
+| `1` | GitHub API error (network, auth, GraphQL error). |
+| `2` | Error: run directory not found, summary.json missing, template not found. |
+
+### Title format
+
+```
+Batch <N> (YYYY-MM-DD): <topic> — <verified_pct>% verified, <regressed_count> regressed
+```
+
+Example:
+
+```
+Batch 27 (2026-05-17): chat router smoke + stdlib core — 75% verified, 1 regressed
+```
+
+### Output
+
+```
+Discussion created: https://github.com/tya5/reyn/discussions/42
+  Title  : Batch 27 (2026-05-17): chat router smoke — 75% verified, 1 regressed
+  Number : #42
+```
+
+### Examples
+
+```bash
+# Dry-run: see the rendered body without posting
+reyn dogfood publish a1b2c3d4-... --dry-run
+
+# Post to default repo (tya5/reyn) with batch-id + topic overrides
+reyn dogfood publish a1b2c3d4-... --batch-id 27 --topic "chat router smoke"
+
+# Post to a fork
+reyn dogfood publish a1b2c3d4-... --repo acme/reyn-fork
+
+# Use a custom template
+reyn dogfood publish a1b2c3d4-... --template path/to/my-template.md
+
+# Dry-run from a full path
+reyn dogfood publish .reyn/dogfood/runs/a1b2c3d4-... --dry-run
+```
+
+---
+
 ## Related
 
 - [Reference: `reyn eval compare`](eval.md) — per-skill rubric regression (orthogonal surface)
 - [Reference: `reyn run`](run.md) — headless skill execution (same Agent.run path)
 - [Concepts: events](../../concepts/events.md) — P6 event log
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.md) — 4-band outcome + 9-principle framework
+- [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.md) — Discussion format + issue filing guide
 - [Proposal: FP-0036](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — full design spec

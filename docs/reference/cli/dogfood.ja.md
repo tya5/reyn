@@ -17,6 +17,7 @@ reyn dogfood coverage [--feature-map FILE] [--json] [<SET_YAML>...]
 reyn dogfood report <RUN_ID> [--json]
 reyn dogfood compare <BASELINE> <CANDIDATE> [--threshold FLOAT] [--json]
 reyn dogfood baseline <RUN_ID> [--label NAME]
+reyn dogfood publish <RUN_ID> [--repo OWNER/REPO] [--category SLUG] [--dry-run] [--template PATH] [--batch-id N] [--topic TOPIC]
 ```
 
 ## 説明
@@ -360,10 +361,99 @@ scenarios:
 
 `outcome_prediction` により Brier スコア追跡が有効になります。各バンドへの確信度を宣言することで、フレームワークが時間経過とともにキャリブレーションを測定します。
 
+---
+
+## `reyn dogfood publish` — バッチ Discussion を GitHub に公開
+
+保存済みランの `summary.json` を読み込み、Markdown テンプレートから Discussion 本文をレンダリングし、設定された GitHub Discussions カテゴリにスレッドを作成します。
+
+**認証**: `GH_TOKEN` または `GITHUB_TOKEN` 環境変数を設定してください（`gh` CLI と同じ規約）。`--dry-run` なしでどちらも未設定の場合はエラーになります。
+
+### 概要
+
+```
+reyn dogfood publish <RUN_ID> [--repo OWNER/REPO] [--category SLUG] \
+                               [--dry-run] [--template PATH] \
+                               [--batch-id N] [--topic TOPIC]
+```
+
+### 位置引数
+
+| 名前 | 説明 |
+|------|------|
+| `RUN_ID` | ラン ID（UUID）またはランディレクトリのパス。 |
+
+### オプション
+
+| フラグ | デフォルト | 説明 |
+|--------|-----------|------|
+| `--repo OWNER/REPO` | `tya5/reyn`（または git remote から検出） | Discussion を投稿する GitHub リポジトリ。 |
+| `--category SLUG` | `dogfood-batches` | Discussion カテゴリスラグ。 |
+| `--dry-run` | — | GitHub に投稿せずタイトルと本文を標準出力にレンダリング。 |
+| `--template PATH` | `docs/deep-dives/contributing/templates/dogfood-discussion-template.md` | テンプレートファイルのオーバーライド。 |
+| `--batch-id N` | *（summary.json から）* | バッチ番号のオーバーライド（`summary.json` に `batch_id` がない場合は必須）。 |
+| `--topic TOPIC` | *（summary.json から）* | トピック文字列のオーバーライド（`summary.json` に `topic` がない場合は必須）。 |
+
+### 認証
+
+`GH_TOKEN` が `GITHUB_TOKEN` より優先されます。トークンには `write:discussion` スコープ（プライベートリポジトリの場合は `repo` スコープ）が必要です。
+
+```bash
+export GH_TOKEN="ghp_..."
+reyn dogfood publish <RUN_ID>
+```
+
+### 終了コード
+
+| コード | 意味 |
+|--------|------|
+| `0` | Discussion 作成完了（または dry-run 完了）。 |
+| `1` | GitHub API エラー（ネットワーク、認証、GraphQL エラー）。 |
+| `2` | エラー：ランディレクトリが見つからない、summary.json が欠損、テンプレートが見つからない。 |
+
+### タイトル形式
+
+```
+Batch <N> (YYYY-MM-DD): <topic> — <verified_pct>% verified, <regressed_count> regressed
+```
+
+例：
+
+```
+Batch 27 (2026-05-17): chat router smoke + stdlib core — 75% verified, 1 regressed
+```
+
+### 出力例
+
+```
+Discussion created: https://github.com/tya5/reyn/discussions/42
+  Title  : Batch 27 (2026-05-17): chat router smoke — 75% verified, 1 regressed
+  Number : #42
+```
+
+### 使用例
+
+```bash
+# dry-run：投稿せずにレンダリング結果を確認
+reyn dogfood publish a1b2c3d4-... --dry-run
+
+# デフォルトリポジトリ（tya5/reyn）に batch-id + topic を指定して投稿
+reyn dogfood publish a1b2c3d4-... --batch-id 27 --topic "chat router smoke"
+
+# フォークに投稿
+reyn dogfood publish a1b2c3d4-... --repo acme/reyn-fork
+
+# カスタムテンプレートを使用
+reyn dogfood publish a1b2c3d4-... --template path/to/my-template.md
+```
+
+---
+
 ## 関連
 
 - [Reference: `reyn eval compare`](eval.ja.md) — スキル単位ルーブリック回帰（直交する観測面）
 - [Reference: `reyn run`](run.ja.md) — ヘッドレスなスキル実行（同じ Agent.run パス）
 - [Concepts: events](../../concepts/events.md) — P6 イベントログ
 - [Deep dive: dogfood discipline](../../deep-dives/contributing/dogfood-discipline.ja.md) — 4 段階アウトカム + 9 原則フレームワーク
+- [Deep dive: dogfood reporting](../../deep-dives/contributing/dogfood-reporting.ja.md) — Discussion 形式 + Issue 起票ガイド
 - [Proposal: FP-0036](../../deep-dives/proposals/0036-dogfood-scenario-framework.md) — 完全設計仕様
