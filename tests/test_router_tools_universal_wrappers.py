@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from reyn.chat.router_tools import build_tools
+import pytest
 
+from reyn.chat.router_loop import RouterLoop
+from reyn.chat.router_tools import build_tools
 
 _SAMPLE_SKILLS = [{"name": "example_skill", "description": "An example skill"}]
 _SAMPLE_AGENTS = [{"name": "peer_agent", "role": "Peer"}]
@@ -343,3 +345,159 @@ def test_hide_legacy_byte_identical_to_explicit_false() -> None:
         universal_wrappers_enabled=True, hide_legacy_tools=False,
     )
     assert a == b
+
+
+# ── 7. hot_list_aliases injected by build_tools (FP-0034 Phase 2 step 5) ──
+
+
+def test_hot_list_aliases_injected_into_build_tools() -> None:
+    """Tier 2: hot list aliases appear in build_tools output when universal_wrappers_enabled=True.
+
+    FP-0034 Phase 2 step 5 contract:
+      - When hot_list_aliases is passed with one or more alias dicts, each
+        alias name appears in the returned tools= list.
+      - Aliases appear only when universal_wrappers_enabled=True (= aliases
+        are universal-catalog-adjacent and meaningless without wrappers).
+      - Passing None or empty list is a no-op.
+    """
+    aliases = [
+        {
+            "type": "function",
+            "function": {
+                "name": "skill__foo",
+                "description": "Direct alias for skill__foo. Use invoke_action for schema details.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                },
+            },
+        }
+    ]
+    tools = build_tools(
+        [], [], universal_wrappers_enabled=True, hot_list_aliases=aliases,
+    )
+    names = {t["function"]["name"] for t in tools}
+    assert "skill__foo" in names, (
+        "Hot list alias 'skill__foo' must appear in build_tools output "
+        "when universal_wrappers_enabled=True and hot_list_aliases is set"
+    )
+
+
+def test_hot_list_aliases_absent_when_wrappers_disabled() -> None:
+    """Tier 2: hot list aliases are suppressed when wrappers are off.
+
+    Aliases are meaningless without the universal wrappers — the LLM
+    would have no way to discover what a qualified_name refers to.
+    build_tools must not inject them when universal_wrappers_enabled=False.
+    """
+    aliases = [
+        {
+            "type": "function",
+            "function": {
+                "name": "skill__bar",
+                "description": "Direct alias for skill__bar.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": True},
+            },
+        }
+    ]
+    tools = build_tools(
+        [], [], universal_wrappers_enabled=False, hot_list_aliases=aliases,
+    )
+    names = {t["function"]["name"] for t in tools}
+    assert "skill__bar" not in names, (
+        "Hot list alias must NOT appear when universal_wrappers_enabled=False"
+    )
+
+
+def test_hot_list_aliases_none_is_noop() -> None:
+    """Tier 2: passing hot_list_aliases=None does not change the tools= list."""
+    a = build_tools([], [], universal_wrappers_enabled=True)
+    b = build_tools([], [], universal_wrappers_enabled=True, hot_list_aliases=None)
+    assert a == b
+
+
+# ── 8. _invoke_router_tool routes qualified names to invoke_action ────────
+
+
+class _CapturingRouterLoop(RouterLoop):
+    """RouterLoop subclass that records _invoke_via_registry calls.
+
+    Overrides _invoke_via_registry to capture (name, args) without
+    touching the real registry or network.  No MagicMock — pure
+    subclass override per CLAUDE.md test policy.
+    """
+
+    def __init__(self) -> None:
+        # Skip super().__init__ — we only need the dispatch logic,
+        # not the full host/chain_id/catalog wiring.
+        self.host = None  # type: ignore[assignment]
+        self.chain_id = "test-chain"
+        self._calls: list[tuple[str, dict]] = []
+
+    async def _invoke_via_registry(self, name: str, args: dict) -> Any:  # type: ignore[override]
+        self._calls.append((name, args))
+        return {"captured": True}
+
+
+@pytest.mark.asyncio
+async def test_hot_list_alias_call_redirects_to_invoke_action() -> None:
+    """Tier 2: tool call with qualified-name format routes via invoke_action.
+
+    FP-0034 Phase 2 step 5: _invoke_router_tool must forward any name
+    containing '__' (= hot list alias) to _invoke_via_registry as
+    invoke_action(action_name=<alias>, args=<original_args>).
+
+    This ensures the LLM's direct alias call (e.g. skill__code_review)
+    reaches the universal_dispatch handler instead of the
+    'unhandled tool' error path.
+    """
+    loop = _CapturingRouterLoop()
+    result = await loop._invoke_router_tool("skill__code_review", {"pr_url": "https://example.com"})
+
+    assert result == {"captured": True}, "Expected _invoke_via_registry to be called"
+    assert len(loop._calls) == 1
+    dispatched_name, dispatched_args = loop._calls[0]
+    assert dispatched_name == "invoke_action", (
+        f"Expected redirect to 'invoke_action', got {dispatched_name!r}"
+    )
+    assert dispatched_args == {
+        "action_name": "skill__code_review",
+        "args": {"pr_url": "https://example.com"},
+    }, f"Unexpected invoke_action args: {dispatched_args}"
+
+
+@pytest.mark.asyncio
+async def test_hot_list_alias_with_none_args_uses_empty_dict() -> None:
+    """Tier 2: qualified alias call with no args passes empty dict, not None.
+
+    invoke_action handler expects args to be a dict, not None.
+    The dispatch must coerce None → {} to avoid downstream KeyErrors.
+    """
+    loop = _CapturingRouterLoop()
+    await loop._invoke_router_tool("rag.corpus__meetings", None)  # type: ignore[arg-type]
+
+    assert loop._calls[0] == (
+        "invoke_action",
+        {"action_name": "rag.corpus__meetings", "args": {}},
+    )
+
+
+@pytest.mark.asyncio
+async def test_non_qualified_name_does_not_redirect() -> None:
+    """Tier 2: plain tool name without '__' falls through to unhandled error.
+
+    Ensures the hot-list dispatch branch is not triggered for ordinary
+    tool names — the caller (dispatch_tool) already validated them
+    against the catalog, so unrecognised names correctly error.
+
+    Uses a name not in _REGISTRY_DISPATCH_TOOLS to avoid registry dispatch.
+    The '__' check must NOT match names that are plain alphanumeric.
+    """
+    loop = _CapturingRouterLoop()
+    # 'unknown_plain_tool' has no '__' and is not in _REGISTRY_DISPATCH_TOOLS.
+    result = await loop._invoke_router_tool("unknown_plain_tool", {})
+
+    # No _invoke_via_registry call via the alias path — falls through to error
+    assert loop._calls == [], "Plain name must not trigger invoke_action redirect"
+    assert "error" in result

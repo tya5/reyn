@@ -167,6 +167,13 @@ class RouterHostAdapter:
         # whether to expose ``exec__sandboxed_exec``. Default None hides
         # the exec category (= noop / no sandbox configured).
         sandbox_backend: str | None = None,
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
+        # ChatSession passes the session-scoped tracker; None when wrappers are
+        # off or hot_list_n == 0.
+        action_usage_tracker: Any = None,
+        # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
+        # hot_list_seed.  ChatSession passes its config; None → default.
+        action_retrieval_config: Any = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -214,6 +221,9 @@ class RouterHostAdapter:
         self._embedding_model_class = embedding_model_class
         # FP-0034 Phase 2
         self._sandbox_backend = sandbox_backend
+        # FP-0034 Phase 2 step 5
+        self._action_usage_tracker = action_usage_tracker
+        self._action_retrieval_config = action_retrieval_config
 
     # --- RouterLoopHost identity attributes ---
 
@@ -359,6 +369,25 @@ class RouterHostAdapter:
         ``"landlock"`` / ``"auto"``) makes it visible.
         """
         return self._sandbox_backend
+
+    def get_action_usage_tracker(self) -> Any:
+        """Return the ActionUsageTracker for hot list freq+recency, or None.
+
+        FP-0034 Phase 2 step 5.  RouterLoop reads this to record successful
+        tool calls and to build hot_list_aliases for build_tools.  None when
+        universal wrappers are off or hot_list_n == 0.
+        """
+        return self._action_usage_tracker
+
+    def get_action_retrieval_config(self) -> Any:
+        """Return the ActionRetrievalConfig for hot_list_n / hot_list_seed.
+
+        FP-0034 Phase 2 step 5.  RouterLoop reads this to determine how many
+        hot list aliases to generate and which seed to apply when freq history
+        is sparse.  Returns None when not set; RouterLoop falls back to a
+        default-constructed ActionRetrievalConfig.
+        """
+        return self._action_retrieval_config
 
     # --- Web ops ---
 

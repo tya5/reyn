@@ -362,6 +362,36 @@ class RouterLoopHost(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# FP-0034 Phase 2 step 5: hot list alias builder
+# ---------------------------------------------------------------------------
+
+def _build_hot_list_aliases(names: list[str]) -> list[dict]:
+    """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
+
+    Each alias has additionalProperties=True so any args pass through.
+    The dispatcher routes these via invoke_action semantics (same path).
+    """
+    result = []
+    for name in names:
+        result.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": (
+                    f"Direct alias for {name}. "
+                    "Use invoke_action for schema details."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                },
+            },
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # RouterLoop
 # ---------------------------------------------------------------------------
 
@@ -442,6 +472,10 @@ class RouterLoop:
         # catalogue exceeds the threshold. Falls through to full enum on
         # 0 BM25 results so no skill can become invisible (Fallback safety).
         skills_for_tools = self._apply_skill_search(all_skills, user_text)
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
+        # Resolved once per run() so recording below can reuse without re-fetching.
+        _tracker_getter = getattr(host, "get_action_usage_tracker", None)
+        _tracker = _tracker_getter() if _tracker_getter else None
         # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
         # getattr fallback so narrow hosts (= plan-mode sub-host) that
         # don't implement the method default to off (= preserve prior
@@ -497,6 +531,27 @@ class RouterLoop:
                         _idx, _provider, _model_class,
                     )
                 )
+        # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
+        # Build only when universal wrappers are on and a tracker is present.
+        _hot_list_aliases: list[dict] | None = None
+        if _univ_enabled and _tracker is not None:
+            from reyn.config import ActionRetrievalConfig as _ARC
+            _ar_cfg_getter = getattr(host, "get_action_retrieval_config", None)
+            _ar_cfg = _ar_cfg_getter() if _ar_cfg_getter else None
+            if _ar_cfg is None:
+                _ar_cfg = _ARC()
+            _n = _ar_cfg.hot_list_n
+            if _n > 0:
+                from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
+                _seed_cfg = _ar_cfg.hot_list_seed
+                _seed: list[str] = (
+                    list(DEFAULT_HOT_LIST_SEED)
+                    if _seed_cfg == "default"
+                    else (list(_seed_cfg) if isinstance(_seed_cfg, list) else [])
+                )
+                _top_names = _tracker.get_top_n(_n, _seed)
+                if _top_names:
+                    _hot_list_aliases = _build_hot_list_aliases(_top_names)
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
@@ -506,6 +561,7 @@ class RouterLoop:
             universal_wrappers_enabled=_univ_enabled,
             hide_legacy_tools=_hide_legacy,
             search_actions_visible=_search_visible,
+            hot_list_aliases=_hot_list_aliases,
         )
         if self._exclude_tools:
             tools = [
@@ -709,6 +765,33 @@ class RouterLoop:
                         )
                         return self._total_usage
 
+                # FP-0034 Phase 2 step 5: record tool calls for hot list freq+recency.
+                # Done before message accumulation so recording happens even on
+                # subsequent iterations. invoke_action calls record the target
+                # action_name; hot list alias calls record the alias name directly.
+                if _tracker is not None:
+                    for tc in tool_calls:
+                        _tc_name = tc.get("function", {}).get("name", "")
+                        if not _tc_name:
+                            continue
+                        if _tc_name == "invoke_action":
+                            _tc_args = tc.get("function", {}).get("arguments", {})
+                            if isinstance(_tc_args, str):
+                                try:
+                                    import json as _json_inner
+                                    _tc_args = _json_inner.loads(_tc_args)
+                                except Exception:
+                                    _tc_args = {}
+                            _target = (
+                                _tc_args.get("action_name", "")
+                                if isinstance(_tc_args, dict)
+                                else ""
+                            )
+                            if _target:
+                                _tracker.record(_target)
+                        else:
+                            # hot list direct alias or other tool
+                            _tracker.record(_tc_name)
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
@@ -1211,6 +1294,16 @@ class RouterLoop:
         # per-tool review.  When that review surfaces a new cluster /
         # capability not yet in the dispatch set, the new branch lands
         # here as the legacy stop-gap until the adapter migrates.
+
+        # FP-0034 Phase 2 step 5: hot list direct alias dispatch.
+        # Qualified names (containing "__") not in the static dispatch set
+        # are hot list aliases. Route them as invoke_action so the catalog
+        # dispatch handles them correctly.
+        if "__" in name:
+            return await self._invoke_via_registry(
+                "invoke_action",
+                {"action_name": name, "args": args or {}},
+            )
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.

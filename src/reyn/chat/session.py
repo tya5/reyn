@@ -549,6 +549,20 @@ class ChatSession:
                 self._embedding_provider = None
                 self._action_embedding_index = None
                 self._embedding_model_class = None
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
+        # Created when universal_wrappers_enabled=True and hot_list_n > 0.
+        self._action_usage_tracker: Any = None
+        if (
+            self._action_retrieval.universal_wrappers_enabled
+            and self._action_retrieval.hot_list_n > 0
+        ):
+            try:
+                from reyn.tools.action_usage_tracker import ActionUsageTracker
+                self._action_usage_tracker = ActionUsageTracker(
+                    persist_path=Path(".reyn") / "state" / "action_usage.jsonl",
+                )
+            except Exception:
+                self._action_usage_tracker = None
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -802,6 +816,9 @@ class ChatSession:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
+            # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
+            action_usage_tracker=self._action_usage_tracker,
+            action_retrieval_config=self._action_retrieval,
             # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
             # None when sandbox_config is None (= noop assumed).
             sandbox_backend=(
