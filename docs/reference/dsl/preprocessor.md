@@ -95,14 +95,14 @@ Invokes `<skill_dir>/<module>.py:<function>(artifact)` and stores the JSON-seria
 ### Mode: `safe`
 
 - AST-validated by reyn before execution: bans `open`, `eval`, `exec`, `__import__`, `compile`, `globals`, `locals`, plus `subprocess` and other risky modules.
-- Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, ...). Project may extend via `reyn.yaml`'s `permissions.python.allowed_modules`.
+- Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, ...). Project may extend via `reyn.yaml`'s `python.allowed_modules`.
 - Restricted `__builtins__`.
 - Run in a subprocess for crash isolation and timeout.
 
 ### Mode: `unsafe`
 
 - No AST validation. Free Python.
-- Requires both `--allow-untrusted-python` AND a `python.unsafe: allow` permission grant.
+- Requires `--allow-unsafe-python` at the CLI AND a `permissions.python` entry with `mode: unsafe` in `skill.md`.
 - Use only for steps that require capabilities the safe mode disallows (file I/O, custom packages).
 
 ### `output_schema`

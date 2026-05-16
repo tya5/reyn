@@ -54,11 +54,52 @@ imported_revision: <git-sha>
 - **`description`** — `reyn skills` に表示されます。
 - **`final_output_description`** — Skill 詳細に表示される長い説明。
 - **`finish_criteria`** — 終了が許可されるタイミングを Phase が知るために使用されます。
-- **`permissions`** — `reference/config/permissions.md` を参照してください。
-- **`required_credentials`** — 下記 [`required_credentials:`](#required_credentials) を参照してください。
+- **`permissions`** — 下記 [`permissions:` (skill-level)](#permissions-skill-level) を参照してください。
+- **`required_credentials`** — 下記 [`required_credentials:`](#required_credentials-省略可能) を参照してください。
+- **`postprocessor`** — 下記 [`postprocessor:`](#postprocessor) を参照してください。
 - **`imported_*`** — `skill_importer` が書き込む出自フィールド。非アクティブ; パーサーはこれらを無視します。
 - **`search_hints`** — 省略可; このスキルが答えられる例示クエリのリスト。カタログがルーターのコンテキストウィンドウを超える際の BM25/embedding 事前フィルタに使用される。大規模マルチスキルリポジトリでの recall 向上目的。
   例: `search_hints: ["記事を要約して", "tl;dr"]`
+
+## `permissions:` (skill-level)
+
+`permissions:` は `skill.md` frontmatter の **唯一** のパーミッション宣言場所です。Phase レベルのパーミッションは skill-only permissions migration で廃止されました。完全なセマンティクスとケイパビリティ階層については [permission-model.md](../../concepts/permission-model.md) を参照してください。
+
+```yaml
+permissions:
+  shell: true                 # false（デフォルト）| true; シェル操作を有効化
+  file.read:                  # CWD 外でスキルが読み取れるパス
+    - path: ~/notes
+      scope: recursive
+  file.write:                 # デフォルト書き込みゾーン外のパス（.reyn/, reyn/）
+    - path: /tmp/output
+      scope: just_path
+  mcp: [github, jira]         # スキルが呼び出せる MCP サーバー名のリスト
+  python:
+    - module: stats           # モジュール名（.py 拡張子なし）
+      function: compute
+      mode: safe              # safe | unsafe
+    - module: rendering
+      function: to_html
+      mode: unsafe            # --allow-unsafe-python フラグが必要
+  tool: [web_search]          # Control IR tool 名のリスト
+  mcp_install: true           # mcp_install 操作を許可（省略可; デフォルト false）
+  index_drop: true            # index_drop 操作を許可（省略可; デフォルト false）
+  mcp_drop_server: true       # mcp_drop_server 操作を許可（省略可; デフォルト false）
+```
+
+### 主要フィールド
+
+- **`shell`** — `true` または `false`（デフォルト `false`）。Control IR `shell` 操作の受け付け可否を制御します。CLI で `--allow-shell` も必要です。
+- **`file.read`** / **`file.write`** — デフォルトゾーン外のパス。各エントリ: `path`（絶対パスまたは CWD 相対パス; `~` 展開あり）と `scope`（`just_path` または `recursive`）。`file.write` は `edit` および `delete` 操作も対象。省略するとデフォルト範囲内（read: CWD; write: `.reyn/`, `reyn/`）に留まります。
+- **`mcp`** — スキルが呼び出せる MCP サーバー名のリスト。`reyn.yaml` の `mcp.servers` で定義されたサーバーキーのみ。
+- **`python`** — preprocessor/postprocessor の `python` ステップで許可する Python 関数エントリのリスト。各エントリはステップで使用する `module` + `function` ペアと一致する必要があります。`mode: safe` はサンドボックス実行; `mode: unsafe` は CLI で `--allow-unsafe-python` が必要です。
+- **`tool`** — スキルが呼び出せる Control IR tool 名のリスト（例: `web_search`, `web_fetch`）。
+- **`mcp_install`** — `true` で `mcp_install` Control IR 操作を許可（デフォルト `false`）。
+- **`index_drop`** — `true` で `index_drop` Control IR 操作を許可（デフォルト `false`）。
+- **`mcp_drop_server`** — `true` で `mcp_drop_server` Control IR 操作を許可（デフォルト `false`）。
+
+`permissions` ブロックは上限ゲートです: Phase の `allowed_ops` が許可する操作であっても、`skill.permissions` の範囲外であればディスパッチ時に拒否されます。レイヤー化された適用モデルについては [permission-model.md](../../concepts/permission-model.md) を参照してください。
 
 ## `required_credentials:` (省略可能)
 
@@ -84,17 +125,15 @@ imported_revision: <git-sha>
 ```yaml
 ---
 name: pr-reviewer
-entry_phase: review
+entry: review
 required_credentials:
   - github_token
 permissions:
   mcp: [github]
-  file:
-    read: [.]
-phases:
-  review:
-    artifact: review_output
-final_output_schema: { ... }
+  file.read:
+    - path: .
+      scope: recursive
+final_output: review_output
 ---
 ```
 
@@ -103,6 +142,30 @@ final_output_schema: { ... }
 - [permission-model.md](../../concepts/permission-model.md) — "スキル別クレデンシャルスコーピング" セクション: 脅威モデルと詳細説明
 - [secret-handling.md](../../concepts/secret-handling.md) — シークレットストアの概要
 - [events.md](../runtime/events.md) — `sub_skill_credential_scope` イベントペイロード
+
+## `postprocessor:`
+
+スキルはオプションで `postprocessor` ブロックを宣言できます。これは Skill 完了時に LLM の最終出力と呼び出し元に返される artifact の間で実行される決定論的変換です。
+
+```yaml
+postprocessor:
+  output_schema: rendered_post   # artifact 名文字列またはインライン dict
+  output_description: |
+    ワードカウント付きの完全にレンダリングされた HTML ポスト。
+  steps:
+    - type: python
+      module: rendering
+      function: to_html
+      into: html_body
+    - type: validate
+      schema:
+        type: object
+        required: [html_body]
+        properties:
+          html_body: { type: string }
+```
+
+完全な構文（必須フィールド、省略可能フィールド、ステップ種別、`on_error` ポリシー、パーミッションゲート）については [postprocessor.md](postprocessor.md) を参照してください。設計の意図については [コンセプト: postprocessor](../../concepts/postprocessor.md) を参照してください。
 
 ## ボディ
 
