@@ -1,7 +1,7 @@
 ---
 type: skill
 name: eval
-description: Evaluate a target skill against a single test case using judge_phase as LLM-as-judge.
+description: "Run a single eval case: score a target skill against one test-case input using LLM-as-judge criteria. Output: per-criterion judgment report. Does NOT modify the skill."
 entry: run_target
 final_output: eval_result_raw
 final_output_description: |
