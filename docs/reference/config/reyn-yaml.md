@@ -298,6 +298,7 @@ action_retrieval:
   embedding_class: null               # name in embedding.classes for search_actions
   hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
   mode: default                       # default | minimal | performance (§D24)
+  hide_legacy_tools: false            # Phase 2 prep — strip legacy per-kind tools (opt-in)
 ```
 
 ### `action_retrieval` fields
@@ -308,6 +309,7 @@ action_retrieval:
 | `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  No-op until the action-retrieval index lands in FP-0034 Phase 2. |
 | `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24).  Field is reserved for Phase 2 wiring; setting it today is harmless.  Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
 | `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top.  Reserved for Phase 2; today's value is informational only. |
+| `hide_legacy_tools` | bool | `false` | **Phase 2 prep** — exclusive-wrapper mode.  When `true` AND `universal_wrappers_enabled` is also `true`, the legacy per-kind tools (`invoke_skill`, `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `delegate_to_agent`, `list_mcp_*`, `call_mcp_tool`, `describe_mcp_tool`, `list_memory`, `read_memory_body`, `remember_*`, `forget_memory`, `recall`, `drop_source`, `read_file` / `write_file` / `delete_file` / `list_directory`, `web_search` / `web_fetch`, `reyn_src_*`, `plan`) are stripped from `tools=` so the LLM addresses every action exclusively through the 3 wrappers.  Safety guard: when `universal_wrappers_enabled=false`, this flag is a no-op (= stripping legacy without wrappers would leave the LLM with no addressing surface).  Default `false` keeps the additive Phase 1 coexistence shape. |
 
 ### Quick-start — opt out
 

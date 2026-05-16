@@ -291,6 +291,7 @@ action_retrieval:
   embedding_class: null               # search_actions 用の embedding.classes 名
   hot_list_n: 10                      # Phase 2 — top-N freq+recency 投影
   mode: default                       # default | minimal | performance (§D24)
+  hide_legacy_tools: false            # Phase 2 prep — legacy per-kind tools 除去 (opt-in)
 ```
 
 ### `action_retrieval` フィールド
@@ -301,6 +302,7 @@ action_retrieval:
 | `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 action-retrieval index は FP-0034 Phase 2 でランディング予定。 現時点では no-op。 |
 | `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 Phase 2 配線用の予約フィールド。 今日設定しても影響なし。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
 | `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 Phase 2 予約; 今日の値は情報のみ。 |
+| `hide_legacy_tools` | bool | `false` | **Phase 2 prep** — exclusive-wrapper モード。 `true` かつ `universal_wrappers_enabled` も `true` の場合、 legacy per-kind tool (`invoke_skill` / `list_skills` / `describe_skill` / `list_agents` / `describe_agent` / `delegate_to_agent` / `list_mcp_*` / `call_mcp_tool` / `describe_mcp_tool` / `list_memory` / `read_memory_body` / `remember_*` / `forget_memory` / `recall` / `drop_source` / `read_file` / `write_file` / `delete_file` / `list_directory` / `web_search` / `web_fetch` / `reyn_src_*` / `plan`) を `tools=` から除去し、 LLM は 3 wrapper 経由でのみアクションをアドレッシングする。 安全ガード: `universal_wrappers_enabled=false` の場合この flag は no-op (= wrapper なしで legacy を除去すると LLM のアドレッシング手段がなくなる)。 デフォルト `false` で Phase 1 の加算的共存 shape を維持。 |
 
 ### クイックスタート — オプトアウト
 

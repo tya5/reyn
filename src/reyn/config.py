@@ -876,6 +876,18 @@ class ActionRetrievalConfig:
     embedding_class: str | None = None
     hot_list_n: int = 10
     mode: str = "default"
+    # FP-0034 Phase 2 prep — exclusive-wrapper surface.  When True (and
+    # universal_wrappers_enabled is also True), legacy per-kind tools
+    # (invoke_skill / list_skills / describe_skill / list_agents /
+    # describe_agent / delegate_to_agent / list_mcp_servers /
+    # list_mcp_tools / call_mcp_tool / describe_mcp_tool /
+    # list_memory / read_memory_body / remember_shared /
+    # remember_agent / forget_memory / recall / drop_source) are
+    # removed from the LLM-visible tools= list — the LLM must address
+    # everything through the 3 universal wrappers.  Default False so
+    # the additive Phase 1 behavior remains the steady state until
+    # production-confirmed.  Read by build_tools() in router_tools.py.
+    hide_legacy_tools: bool = False
 
 
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
@@ -937,6 +949,15 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
                 f"action_retrieval.mode must be a string, got {type(val).__name__}"
             )
         cfg.mode = val
+
+    if "hide_legacy_tools" in raw:
+        val = raw["hide_legacy_tools"]
+        if not isinstance(val, bool):
+            raise ValueError(
+                "action_retrieval.hide_legacy_tools must be a bool, "
+                f"got {type(val).__name__}"
+            )
+        cfg.hide_legacy_tools = val
 
     return cfg
 

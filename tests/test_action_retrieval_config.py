@@ -43,6 +43,7 @@ def test_default_action_retrieval_config_is_on() -> None:
     assert cfg.embedding_class is None
     assert cfg.hot_list_n == 10  # §D24 balanced
     assert cfg.mode == "default"
+    assert cfg.hide_legacy_tools is False  # Phase 2 prep, opt-in
 
 
 def test_reyn_config_carries_action_retrieval_default() -> None:
@@ -118,18 +119,32 @@ def test_parser_mode_performance() -> None:
     assert cfg.mode == "performance"
 
 
+def test_parser_hide_legacy_tools_true() -> None:
+    """Tier 2: hide_legacy_tools=true (Phase 2 prep) flows through."""
+    cfg = _build_action_retrieval_config({"hide_legacy_tools": True})
+    assert cfg.hide_legacy_tools is True
+
+
+def test_parser_hide_legacy_tools_false() -> None:
+    """Tier 2: explicit hide_legacy_tools=false matches default."""
+    cfg = _build_action_retrieval_config({"hide_legacy_tools": False})
+    assert cfg.hide_legacy_tools is False
+
+
 def test_parser_all_fields_at_once() -> None:
-    """Tier 2: all 4 fields can be set together."""
+    """Tier 2: all 5 fields can be set together."""
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
         "embedding_class": "voyage_multi",
         "hot_list_n": 15,
         "mode": "performance",
+        "hide_legacy_tools": True,
     })
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class == "voyage_multi"
     assert cfg.hot_list_n == 15
     assert cfg.mode == "performance"
+    assert cfg.hide_legacy_tools is True
 
 
 # ── 3. Parser — validation errors ─────────────────────────────────────────
@@ -169,6 +184,12 @@ def test_parser_rejects_non_string_mode() -> None:
     """Tier 2: mode with non-string raises."""
     with pytest.raises(ValueError, match="mode"):
         _build_action_retrieval_config({"mode": 42})
+
+
+def test_parser_rejects_non_bool_hide_legacy_tools() -> None:
+    """Tier 2: hide_legacy_tools with non-bool raises."""
+    with pytest.raises(ValueError, match="hide_legacy_tools"):
+        _build_action_retrieval_config({"hide_legacy_tools": "yes"})
 
 
 def test_parser_ignores_unknown_keys() -> None:

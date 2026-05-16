@@ -232,6 +232,7 @@ def build_tools(
     web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
+    hide_legacy_tools: bool = False,            # FP-0034 Phase 2 prep: exclusive-wrapper mode
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -851,6 +852,33 @@ def build_tools(
                 parameters=_wrapper_rendered["function"]["parameters"],
                 dispatch_kind=_wrapper_def.dispatch_kind,
             ))
+
+    # ── J. Phase 2 prep: hide_legacy_tools exclusive-wrapper mode ─────────────
+    #
+    # When both flags are true, strip all legacy per-kind tools so the LLM
+    # surface is the 3 wrappers only.  Safety: only takes effect when the
+    # wrappers are also enabled (= the LLM still has *some* addressing path).
+    # When only hide_legacy_tools=True with universal_wrappers_enabled=False,
+    # this branch is a no-op — the operator misconfigured, but stripping
+    # all addressing surfaces would leave the LLM tool-less.  Future Phase 2
+    # may raise on this combination once the wrapper surface is dogfood-stable.
+    if hide_legacy_tools and universal_wrappers_enabled:
+        _LEGACY_TOOL_NAMES = frozenset({
+            "list_skills", "describe_skill",
+            "invoke_skill",
+            "list_agents", "describe_agent",
+            "delegate_to_agent",
+            "list_mcp_servers", "list_mcp_tools",
+            "call_mcp_tool", "describe_mcp_tool",
+            "list_memory", "read_memory_body",
+            "remember_shared", "remember_agent", "forget_memory",
+            "recall", "drop_source",
+            "read_file", "write_file", "delete_file", "list_directory",
+            "web_search", "web_fetch",
+            "reyn_src_list", "reyn_src_read",
+            "plan",
+        })
+        specs = [s for s in specs if s.name not in _LEGACY_TOOL_NAMES]
 
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
     # Append tool_search_tool raw dict last (D-S deferred mode only; empty

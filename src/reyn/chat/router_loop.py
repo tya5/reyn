@@ -173,6 +173,17 @@ class RouterLoopHost(Protocol):
         from reyn.yaml. Default False preserves the prior tools= shape."""
         ...
 
+    def get_hide_legacy_tools(self) -> bool:
+        """Return whether legacy per-kind tools should be stripped from tools=.
+
+        FP-0034 Phase 2 prep.  Mirrors
+        ``action_retrieval.hide_legacy_tools`` from reyn.yaml.  Only
+        takes effect when ``get_universal_wrappers_enabled()`` is also
+        True (= the LLM needs *some* addressing path).  Default False
+        keeps the additive Phase 1 coexistence shape.
+        """
+        ...
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
@@ -394,6 +405,15 @@ class RouterLoop:
             host, "get_universal_wrappers_enabled", None,
         )
         _univ_enabled = bool(_univ_enabled_getter()) if _univ_enabled_getter else False
+        # FP-0034 Phase 2 prep: hide_legacy_tools opt-in.  Same getattr-
+        # fallback pattern as universal_wrappers_enabled — direct callers
+        # / FakeRouterHost get False so the additive coexistence shape
+        # is preserved.  Only takes effect when wrappers are also on
+        # (= build_tools enforces the combined gate).
+        _hide_legacy_getter = getattr(
+            host, "get_hide_legacy_tools", None,
+        )
+        _hide_legacy = bool(_hide_legacy_getter()) if _hide_legacy_getter else False
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
@@ -401,6 +421,7 @@ class RouterLoop:
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
             universal_wrappers_enabled=_univ_enabled,
+            hide_legacy_tools=_hide_legacy,
         )
         if self._exclude_tools:
             tools = [
