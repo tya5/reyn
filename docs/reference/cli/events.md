@@ -30,8 +30,8 @@ reyn events purge [OPTIONS]
 | `--filter TYPE` | all | Include only events of this kind. Repeatable. |
 | `--skip TYPE` | none | Exclude events of this kind. Repeatable. |
 | `--conversation` | off | Group output by run boundary. |
-| `--since DATETIME` | beginning | Show events after this ISO datetime. |
-| `--until DATETIME` | now | Show events before this ISO datetime. |
+| `--since YYYY-MM-DD` | beginning | Skip files and events before this date (inclusive). |
+| `--until YYYY-MM-DD` | now | Skip files and events after this date (inclusive). |
 
 ## Options — purge mode
 

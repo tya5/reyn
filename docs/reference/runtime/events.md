@@ -55,11 +55,17 @@ Each Control IR op kind emits its own event:
 
 | Kind | When |
 |------|------|
-| `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep` | `file` op variants |
+| `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
 | `shell_started`, `shell` (completed), `shell_timeout`, `shell_not_allowed` | `shell` op |
+| `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `backend`; `completed`: `argv`, `backend`, `returncode` |
 | `run_skill_started`, `skill_run_spawned`, `skill_run_failed` | `run_skill` op — `run_skill_started` carries `skill_version_hash: str` (sha256 hex of `skill.md` content at execution time; `"unknown"` if `skill.md` is absent) |
 | `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
+| `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
 | `web_search_started`, `web_search_completed`, `web_search_failed`, `web_fetch_started` | search ops |
+| `embed_progress` | `embed` op (Form B artifact reference only) — `embedded: int`, `skipped: int` cumulative per batch |
+| `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
+| `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |
+| `skill_resolve_completed` | `skill_resolve` op — `name`, `resolved: bool`, `source: "local"\|"project"\|"stdlib"\|null` |
 | `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
 

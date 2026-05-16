@@ -35,7 +35,7 @@ All `reyn eval` subcommands are non-interactive — they do not prompt. Every pe
 ```yaml
 permissions:
   python.safe: allow
-  python.unsafe: allow   # also requires --allow-untrusted-python at runtime
+  python.unsafe: allow   # also requires --allow-unsafe-python at runtime
 ```
 
 Without prior approval the target run fails and the case is reported as not-finished.

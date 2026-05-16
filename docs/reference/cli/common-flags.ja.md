@@ -32,13 +32,13 @@ applies_to: [reyn run, reyn eval, reyn chat]
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds`（または `60`） | LiteLLM に渡される呼び出しごとの HTTP タイムアウト。 |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries`（または `3`） | LLM 呼び出しごとの一時的エラーのリトライ数（LiteLLM 指数バックオフ）。 |
 
-## Permission ゲーティング（`reyn run` のみ）
+## Permission ゲーティング
 
-| フラグ | デフォルト | 説明 |
-|------|---------|-------------|
-| `--allow-shell` | オフ | `shell` Control IR op を有効にする。サブプロセスを呼び出す Skill に必要。 |
-| `--allow-untrusted-python` | オフ | `mode: unsafe` の Python preprocessor ステップを許可（AST サンドボックスなし）。safe モードのステップはこれなしで動作します。 |
-| `--strict` | オフ | すべてのネスト深さで必須フィールドを検証します（デフォルト: トップレベルのみ）。 |
+| フラグ | 利用可能 | デフォルト | 説明 |
+|------|---------|---------|-------------|
+| `--allow-shell` | `run` | オフ | `shell` Control IR op を有効にする。サブプロセスを呼び出す Skill に必要。 |
+| `--allow-unsafe-python` | `run`、`chat` | オフ | `mode: unsafe` の Python preprocessor ステップを許可（AST サンドボックスなし）。`--allow-untrusted-python` はレガシーエイリアス。safe モードのステップはこれなしで動作します。 |
+| `--strict` | `run` | オフ | すべてのネスト深さで必須フィールドを検証します（デフォルト: トップレベルのみ）。 |
 
 ## 診断
 
