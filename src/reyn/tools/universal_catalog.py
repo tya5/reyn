@@ -512,6 +512,43 @@ def _enumerate_static_category(category: str) -> list[dict[str, str]]:
     return out
 
 
+# Mapping from qualified web action name to the reyn.yaml permission key
+# checked by PermissionResolver. Hardcoded because web ops are OS-level
+# Control IR ops with stable names (P7-safe: web is a first-class concept,
+# not a skill-specific string).
+_WEB_QUALIFIED_TO_PERMISSION_KEY: dict[str, str] = {
+    "web__search": "web.search",
+    "web__fetch": "web.fetch",
+}
+
+
+def _filter_web_by_config_deny(
+    items: list[dict[str, str]],
+    ctx: ToolContext,
+) -> list[dict[str, str]]:
+    """Drop web actions whose corresponding ``web.*`` permission is config-denied.
+
+    This is Pattern D (= pre-exclusion) per issue #49: when reyn.yaml sets
+    ``web.search: deny`` or ``web.fetch: deny``, the corresponding op is
+    non-actionable for the LLM. Hiding it from ``list_actions`` prevents
+    a wasted ``invoke_action`` call → PermissionError → confused LLM path.
+    If the resolver is unavailable (test fixtures, early init) we return
+    items unchanged — over-exposure is preferable to silent under-exposure.
+    """
+    resolver = ctx.permission_resolver
+    if resolver is None or not hasattr(resolver, "_is_config_denied"):
+        return items
+
+    kept: list[dict[str, str]] = []
+    for entry in items:
+        qn = entry.get("qualified_name", "")
+        perm_key = _WEB_QUALIFIED_TO_PERMISSION_KEY.get(qn)
+        if perm_key is not None and resolver._is_config_denied(perm_key):
+            continue
+        kept.append(entry)
+    return kept
+
+
 def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
     """Enumerate qualified names for ``category`` consulting caller state.
 
@@ -537,7 +574,10 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         "file", "web", "memory.operation", "reyn.source", "rag.operation",
         "mcp.operation",
     ):
-        return _enumerate_static_category(category)
+        items = _enumerate_static_category(category)
+        if category == "web":
+            items = _filter_web_by_config_deny(items, ctx)
+        return items
 
     if category == "skill":
         if rs is None or not rs.available_skills:

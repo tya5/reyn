@@ -90,6 +90,72 @@ def test_list_actions_web_static_category() -> None:
     assert qns == {"web__search", "web__fetch"}
 
 
+class _FakeResolver:
+    """Minimal PermissionResolver substitute exposing _is_config_denied."""
+
+    def __init__(self, denied: set[str]) -> None:
+        self._denied = set(denied)
+
+    def _is_config_denied(self, key: str) -> bool:
+        return key in self._denied
+
+
+def _ctx_with_resolver(denied: set[str]) -> ToolContext:
+    """Build a ToolContext whose permission_resolver denies the given keys."""
+    return ToolContext(
+        events=_NullEvents(),
+        permission_resolver=_FakeResolver(denied),
+        workspace=None,
+        caller_kind="router",
+        router_state=None,
+        phase_state=None,
+    )
+
+
+def test_list_actions_web_hides_search_when_config_denied() -> None:
+    """Tier 2: web.search: deny removes web__search from list_actions (issue #49)."""
+    result = _run(
+        LIST_ACTIONS.handler(
+            {"category": ["web"]},
+            _ctx_with_resolver({"web.search"}),
+        )
+    )
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert qns == {"web__fetch"}, f"unexpected qns: {qns}"
+
+
+def test_list_actions_web_hides_fetch_when_config_denied() -> None:
+    """Tier 2: web.fetch: deny removes web__fetch from list_actions (issue #49)."""
+    result = _run(
+        LIST_ACTIONS.handler(
+            {"category": ["web"]},
+            _ctx_with_resolver({"web.fetch"}),
+        )
+    )
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert qns == {"web__search"}
+
+
+def test_list_actions_web_hides_both_when_top_level_denied() -> None:
+    """Tier 2: web: deny (top-level) hides both web ops (issue #49)."""
+    result = _run(
+        LIST_ACTIONS.handler(
+            {"category": ["web"]},
+            _ctx_with_resolver({"web.search", "web.fetch"}),
+        )
+    )
+    assert result["items"] == [], "expected zero items when both web ops denied"
+
+
+def test_list_actions_web_unchanged_when_resolver_missing() -> None:
+    """Tier 2: no resolver = items unchanged (= safe default, not silent under-exposure)."""
+    result = _run(
+        LIST_ACTIONS.handler({"category": ["web"]}, _make_ctx()),
+    )
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert qns == {"web__search", "web__fetch"}
+
+
 def test_list_actions_memory_operation_static_category() -> None:
     """Tier 2: list_actions(category=['memory.operation']) returns 3 ops."""
     result = _run(LIST_ACTIONS.handler(
