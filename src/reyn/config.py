@@ -888,6 +888,11 @@ class ActionRetrievalConfig:
     # the additive Phase 1 behavior remains the steady state until
     # production-confirmed.  Read by build_tools() in router_tools.py.
     hide_legacy_tools: bool = False
+    # FP-0034 §D16: seed qualified names for initial hot list (before freq
+    # accumulates). "default" means the OS-defined 10-item seed (5 universal
+    # + 5 Reyn flagship). [] means no seed. Explicit list overrides the
+    # default. Parsed by _build_action_retrieval_config.
+    hot_list_seed: list[str] | str = "default"
 
 
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
@@ -958,6 +963,24 @@ def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
                 f"got {type(val).__name__}"
             )
         cfg.hide_legacy_tools = val
+
+    if "hot_list_seed" in raw:
+        val = raw["hot_list_seed"]
+        if val == "default":
+            cfg.hot_list_seed = "default"
+        elif isinstance(val, list):
+            for item in val:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        "action_retrieval.hot_list_seed list items must be "
+                        f"strings, got {type(item).__name__}"
+                    )
+            cfg.hot_list_seed = list(val)
+        else:
+            raise ValueError(
+                "action_retrieval.hot_list_seed must be \"default\" or a "
+                f"list of strings, got {type(val).__name__!r}"
+            )
 
     return cfg
 
