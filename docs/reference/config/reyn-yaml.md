@@ -32,6 +32,8 @@ models:
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
 | `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
+| `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
+| `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -342,6 +344,67 @@ Default `true` since PR-3b-iv. The test suite is structurally insulated from the
 Subsequent FP-0034 phases (= system-prompt refactor for category-only listing per §D9, embedding-driven hot list and `search_actions` activation, redundant tool pruning) land in separate releases — each opt-in until verified via dogfood.
 
 See [`docs/concepts/architecture.md`](../../concepts/architecture.md) for the tool registry / dispatch background.
+
+## `agent` block
+
+Runtime agent identity for audit trail and HTTP header propagation (FP-0016 Component E).
+
+```yaml
+agent:
+  id: "reyn/acme/code-review-agent"  # default: reyn/<hostname>
+```
+
+### `agent` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `agent.id` | string | `reyn/<hostname>` | Stable identifier for this Reyn instance. Stamped onto every P6 event payload as `agent_id` and injected into outgoing MCP, A2A, and external HTTP requests as the `X-Reyn-Agent-Id` header (SOC2 / ISO27001 / METI v1.1 audit pattern). Recommended format: `reyn/<org>/<role>` (operator-defined). An empty string falls back to the default so leaving the field blank does not emit an empty `agent_id` into events or headers. |
+
+The default `reyn/<hostname>` gives a fresh install a usable identity without operator action. Override in `reyn.yaml` when running multi-agent fleets or enterprise deployments that need a stable per-role identifier.
+
+See [Concepts: multi-agent — Agent ID propagation](../../concepts/multi-agent.md) for cross-agent tracing and A2A header forwarding.
+
+## `auth` block
+
+OAuth provider configurations for `reyn auth login` (FP-0016 Component C). Each named entry under `auth.providers` defines an RFC 8628 Device Authorization Grant provider. Empty by default; the operator declares providers they want to authenticate against.
+
+```yaml
+auth:
+  providers:
+    github:
+      client_id: "${secret:github_oauth_client_id}"
+      device_authorization_url: "https://github.com/login/device/code"
+      token_url: "https://github.com/login/oauth/access_token"
+      scopes: [repo, user]
+      # client_secret optional — omit for PKCE-only / public clients
+      client_secret: "${secret:github_oauth_client_secret}"
+    google:
+      client_id: "...apps.googleusercontent.com"
+      device_authorization_url: "https://oauth2.googleapis.com/device/code"
+      token_url: "https://oauth2.googleapis.com/token"
+      scopes: [openid, email]
+      client_secret: "${secret:google_oauth_client_secret}"
+      # audience: required by some providers (e.g. Auth0)
+```
+
+### `auth.providers.<name>` fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `client_id` | yes | OAuth client identifier issued by the provider. |
+| `device_authorization_url` | yes | Endpoint that returns `device_code`, `user_code`, and `verification_uri` (RFC 8628 §3.1). |
+| `token_url` | yes | Endpoint that issues access and refresh tokens after the user completes authorisation (RFC 8628 §3.4). |
+| `scopes` | yes (list) | OAuth scopes to request. Pass `[]` if the provider requires no scopes. |
+| `client_secret` | no | For confidential clients. Omit for PKCE-only or public clients — RFC 6749 §2.3.1 permits this for installed apps. |
+| `audience` | no | API audience identifier required by some providers (e.g. Auth0). Omit for providers that do not use it (e.g. GitHub, Google). |
+
+`${secret:<key>}` values resolve at config-load time from `~/.reyn/secrets.env` (ADR-0030). Use `reyn secret set <key>` to store them.
+
+See also:
+
+- [Reference: `reyn auth`](../../reference/cli/auth.md) — `reyn auth login/list/revoke` commands
+- [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping
+- [Concepts: multi-agent](../../concepts/multi-agent.md) — agent identity propagation
 
 ## `permissions` block
 

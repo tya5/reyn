@@ -189,10 +189,107 @@ grep '"secret_' .reyn/events.jsonl
 - Secret **values** live in `~/.reyn/secrets.env` (user-global, never in git).
 - Per-machine overrides use `reyn.local.yaml` for non-secret config; `~/.reyn/secrets.env` for secret values.
 
+## OAuth token lifecycle (FP-0016 B)
+
+The static dotenv path (`~/.reyn/secrets.env`, chmod 600) is designed for **rotating API keys** that are set manually. Tokens that auto-refresh require a separate mechanism.
+
+reyn ships an `OAuthToken` value type stored in `~/.reyn/oauth_tokens.json` (chmod 600). Each entry holds the access token, refresh token, expiry timestamp, and token endpoint URL.
+
+**Runtime API** — skills access OAuth tokens via:
+
+```python
+from reyn.secrets import get_valid_token
+token = await get_valid_token("github_oauth")
+```
+
+`get_valid_token(key)` behaviour:
+
+- If the token expires within **60 seconds**, it refreshes via RFC 6749 §6 (refresh token grant) before returning.
+- On successful refresh: persists the new token to `~/.reyn/oauth_tokens.json`, emits a `token_refreshed` P6 event, returns the fresh `access_token`.
+- On refresh failure: emits `token_refresh_failed` and raises `OAuthRefreshError` — callers catch and surface to the operator.
+- Concurrent refresh attempts for the same key are serialised with a per-key `asyncio.Lock` (avoids double-refresh races).
+
+**Summary of P6 events emitted:**
+
+| Event | Trigger |
+|-------|---------|
+| `token_refreshed` | Successful refresh; payload includes `key`, masked token hint |
+| `token_refresh_failed` | Refresh request failed; payload includes `key`, `error` |
+
+## Per-skill credential scoping (FP-0016 D)
+
+**Threat model:** sub-skills that process untrusted documents could be prompt-injected into exfiltrating the parent skill's full secret store (Confused Deputy attack). Scoping prevents this.
+
+### Declaration
+
+Each skill declares `required_credentials` in its `skill.md` frontmatter:
+
+```yaml
+# skill.md frontmatter
+---
+name: pr-reviewer
+required_credentials:
+  - github_token
+---
+```
+
+Accepted values:
+
+| Value | Meaning |
+|-------|---------|
+| `[]` | No credentials needed (default for stdlib skills) |
+| `["github_token", "openai_key"]` | Explicit allowlist |
+| `["*"]` | Full delegation — backward-compat default when field is omitted |
+
+### Enforcement
+
+At `run_skill` boundaries the OS constructs a `ScopedSecretStore(allowed_keys=...)` and **intersects** it with the parent's scope (parent-cap semantics — a sub-skill can never have wider access than its parent).
+
+Reads outside the allowed set raise `CredentialScopeError` (a `PermissionError` subclass).
+
+Every scope decision emits a `sub_skill_credential_scope` P6 event for audit:
+
+```json
+{"skill": "<name>", "allowed_keys": ["github_token"]}
+```
+
+**Cross-references:**
+
+- [Concepts: permission model](permission-model.md) "Per-skill credential scoping" — deeper detail including capability inheritance rules.
+- [Reference: `skill.md` DSL](../reference/dsl/skill-md.md) — full `required_credentials` field reference.
+
+## Device authorization grant (FP-0016 C)
+
+For OAuth flows that require a browser redirect (unusable in headless agent contexts), reyn implements RFC 8628 Device Authorization Grant via:
+
+```bash
+reyn auth login <provider>
+```
+
+The command prints a user code and verification URL, polls the token endpoint, and stores the resulting tokens in `~/.reyn/oauth_tokens.json` for use by `get_valid_token`. No browser automation or callback server is required — the operator opens the URL and approves on their own device.
+
+- Full CLI usage: [Reference: `reyn auth`](../reference/cli/auth.md)
+- Provider configuration (`oauth.providers`): [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md)
+
+## Agent identity (FP-0016 E)
+
+Every P6 event and every outbound HTTP call (MCP, future A2A) carries the agent identity. The identity is the `agent.id` field from `reyn.yaml`; when omitted it defaults to `reyn/<hostname>`.
+
+The identity appears in:
+
+- Event payloads as `agent_id`.
+- Outbound HTTP requests as the `X-Reyn-Agent-Id` header.
+- A2A task envelopes as the `initiator` field.
+
+For cross-agent tracing and multi-agent topology: [Concepts: multi-agent](multi-agent.md) "Agent ID propagation".
+
 ## See also
 
 - [Reference: `reyn secret`](../reference/cli/secret.md) — full CLI syntax
 - [Reference: `reyn mcp`](../reference/cli/mcp.md) — `set-secret` / `clear-secret` subcommands
-- [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md) — `${VAR}` interpolation in config fields
-- [Concepts: permission model](permission-model.md) — `mcp_install` permission gating
+- [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md) — `${VAR}` interpolation in config fields; OAuth provider config
+- [Reference: `reyn auth`](../reference/cli/auth.md) — device authorization grant CLI
+- [Reference: `skill.md` DSL](../reference/dsl/skill-md.md) — `required_credentials` field reference
+- [Concepts: permission model](permission-model.md) — `mcp_install` permission gating; per-skill credential scoping
+- [Concepts: multi-agent](multi-agent.md) — agent ID propagation
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-secret-handling.md` — design rationale (implementation team, internal)

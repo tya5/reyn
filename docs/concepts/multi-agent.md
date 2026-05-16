@@ -142,6 +142,31 @@ That preserves the existing chat UX ("you'll see I'm working on it") while letti
 
 Agents are first-class identity + state; topology and skill access are policy layered on top.
 
+## Agent ID propagation (FP-0016 Component E)
+
+Enterprise deployments need per-agent attribution: SOC2 / ISO27001 / METI v1.1 audit requirements mandate proving "which agent did what" at the actor level — not at the human user level. Reyn assigns every running instance an `agent.id` (configured via `reyn.yaml`; defaults to `reyn/<hostname>`) and propagates it through three channels:
+
+1. **P6 events**: every event emitted from the session carries `agent_id` in its payload. This makes the event log replay-capable as an audit trail of agent-attributed actions.
+2. **MCP HTTP calls**: outgoing requests to HTTP-mode MCP servers add an `X-Reyn-Agent-Id: <agent.id>` header. Downstream MCP servers can apply RBAC based on the calling agent identity (= the "Entra Agent ID" pattern from Microsoft's identity model).
+3. **Sub-skill calls**: nested `run_skill` invocations inherit the parent's `agent_id` (= the same identity persists through the entire call tree from chat entry to deepest sub-skill).
+
+Configuration:
+
+```yaml
+# reyn.yaml
+agent:
+  id: "reyn/acme-corp/code-review-agent"
+```
+
+Sane default: when `agent.id` is omitted, Reyn uses `reyn/<hostname>` so the audit trail is never empty.
+
+Recommended format: `reyn/<org>/<role>` (= operator-defined; Reyn does not enforce structure beyond requiring a non-empty string).
+
+Cross-references:
+- [`docs/reference/config/reyn-yaml.md`](../reference/config/reyn-yaml.md) — `agent:` block field reference
+- [`docs/reference/runtime/events.md`](../reference/runtime/events.md) — `agent_id` base event field
+- [`docs/concepts/secret-handling.md`](secret-handling.md) — credential scoping + OAuth lifecycle (= the other half of FP-0016)
+
 ## See also
 
 - [Reference: agent CLI](../reference/cli/agent.md)

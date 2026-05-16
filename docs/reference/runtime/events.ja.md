@@ -22,6 +22,12 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 }
 ```
 
+## Agent ID フィールド（全イベント共通）
+
+`reyn.yaml` で `agent.id` が設定されているセッションから発行されるすべてのイベントのペイロードには、自動的に `agent_id` フィールドが付与されます。デフォルト値は `reyn/<hostname>` です。これにより、SOC2 / ISO 27001 / METI v1.1 要件に準拠した RBAC およびマルチエージェント監査証跡が実現されます。
+
+詳細は [コンセプト: マルチエージェント](../../concepts/multi-agent.md) の「Agent ID 伝播」を参照してください。
+
 ## ライフサイクルイベント
 
 | 種類 | タイミング | 主要なペイロード |
@@ -56,6 +62,28 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `web_search_started`、`web_search_completed`、`web_search_failed`、`web_fetch_started` | 検索 op |
 | `control_ir_skipped`、`control_ir_failed`、`control_ir_validation_error` | ディスパッチ失敗（`control_ir_skipped` の理由は `shell_not_allowed`、`handler_not_implemented`、`not_allowed_in_phase` を含む） |
 | `permission_denied` | op がリゾルバーに拒否されたとき |
+
+## クレデンシャルと OAuth
+
+| 種類 | トリガー | 主要なペイロード |
+|------|---------|-------------|
+| `sub_skill_credential_scope` | `run_skill` op ハンドラーがサブスキル入口で、OS が有効なクレデンシャルスコープ（サブスキルの `required_credentials` と親スコープの交差）を算出した後に発行されます。 | `skill: str` — サブスキル参照（`op.skill` と同じ値）; `allowed_keys: list[str]` — 許可されたシークレットキーのソート済み重複排除リスト。有効スコープが無制限の場合は `["*"]`。 |
+| `token_refreshed` | `reyn.secrets.get_valid_token(key)` がプロバイダーのトークンエンドポイント（RFC 6749 §6）に対して OAuth リフレッシュに成功した後に発行されます。 | `key: str` — OAuth トークンキー（`~/.reyn/oauth_tokens.json` エントリと同じ）; `expires_at: str` — 新しいアクセストークンの有効期限の ISO-8601 タイムスタンプ。 |
+| `token_refresh_failed` | `get_valid_token` がトークンエンドポイントから非 2xx レスポンスを受け取るか、レスポンスペイロードが不正な形式の場合に発行されます。`OAuthRefreshError` を raise します。 | `key: str`; `error: str` — 短いエラー説明（HTTP ステータス + 利用可能な場合はプロバイダーエラーコード）。 |
+
+**注記:**
+- `sub_skill_credential_scope` は監査グレードのイベントで、ネストされたスキル実行間のクレデンシャル認可チェーンを再構築するために使用されます。同じ `skill` 名の `run_skill_started` とペアになります。
+- `token_refresh_failed` は `token_refreshed` とペアになります — ネットワークリフレッシュを実行する `get_valid_token` 呼び出しごとに、どちらか一方のみ発行されます。
+
+関連情報: [コンセプト: シークレット処理](../../concepts/secret-handling.md) — OAuth ライフサイクルとクレデンシャルスコープ; [コンセプト: パーミッションモデル](../../concepts/permission-model.md) — スキルごとのクレデンシャルスコープ; [DSL リファレンス: `required_credentials`](../dsl/skill-md.md)。
+
+## アクションカタログルーティング
+
+| 種類 | トリガー | 主要なペイロード |
+|------|---------|-------------|
+| `routing_decided` | アクションラッパー（`list_actions` / `search_actions` / `describe_action` / `invoke_action`）がリクエストをルーティングするとき、ユニバーサルアクションカタログのディスパッチパスから発行されます（FP-0034 Phase 1–3）。 | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — クロスコール相関用リクエストチェーン識別子。 |
+
+**注記:** ラッパーオンリーのルーティングパスの監査が可能です。`chain_id` を使って、アクションのダウンストリームイベントとのクロスコリレーションが行えます。
 
 ## ユーザーインタラクション
 

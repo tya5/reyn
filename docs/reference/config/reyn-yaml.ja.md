@@ -32,6 +32,8 @@ models:
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択と非対応プラットフォームポリシー。以下参照。 |
 | `action_retrieval` | マップ | FP-0034 ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
+| `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
+| `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 
@@ -335,6 +337,67 @@ PR-3b-iv 以降デフォルト `true`。 テストスイートはフリップに
 後続 FP-0034 フェーズ (§D9 カテゴリのみ表示への system prompt リファクタリング、 embedding-driven hot list と `search_actions` 有効化、 冗長 tool の削減) は別リリースでランディング。 各 dogfood 検証で確認するまでオプトイン継続。
 
 ツールレジストリ / dispatch の背景は [`docs/concepts/architecture.md`](../../concepts/architecture.md) を参照。
+
+## `agent` ブロック
+
+監査証跡と HTTP ヘッダー伝播のためのランタイムエージェント識別子（FP-0016 Component E）。
+
+```yaml
+agent:
+  id: "reyn/acme/code-review-agent"  # デフォルト: reyn/<hostname>
+```
+
+### `agent` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `agent.id` | 文字列 | `reyn/<hostname>` | この Reyn インスタンスの安定識別子。すべての P6 イベントペイロードに `agent_id` としてスタンプされ、MCP / A2A / 外部 HTTP リクエストの送信時に `X-Reyn-Agent-Id` ヘッダーとして付与される（SOC2 / ISO27001 / METI v1.1 監査パターン）。推奨フォーマット: `reyn/<org>/<role>`（operator 定義）。空文字列を指定した場合はデフォルトにフォールバックし、空の `agent_id` がイベントやヘッダーに漏れるのを防ぐ。 |
+
+デフォルト `reyn/<hostname>` により、フレッシュインストールでも operator の設定なしに使用可能な識別子が付与されます。マルチエージェントフリートや安定したロール単位の識別子が必要なエンタープライズデプロイでは `reyn.yaml` でオーバーライドしてください。
+
+[コンセプト: マルチエージェント — Agent ID 伝播](../../concepts/multi-agent.md) でクロスエージェントトレースと A2A ヘッダー転送の詳細を参照してください。
+
+## `auth` ブロック
+
+`reyn auth login` 用の OAuth プロバイダー設定（FP-0016 Component C）。`auth.providers` 以下の各名前付きエントリが RFC 8628 Device Authorization Grant プロバイダーを定義します。デフォルトは空であり、operator が認証対象のプロバイダーを宣言します。
+
+```yaml
+auth:
+  providers:
+    github:
+      client_id: "${secret:github_oauth_client_id}"
+      device_authorization_url: "https://github.com/login/device/code"
+      token_url: "https://github.com/login/oauth/access_token"
+      scopes: [repo, user]
+      # client_secret 省略可 — PKCE のみ / public client の場合は省略
+      client_secret: "${secret:github_oauth_client_secret}"
+    google:
+      client_id: "...apps.googleusercontent.com"
+      device_authorization_url: "https://oauth2.googleapis.com/device/code"
+      token_url: "https://oauth2.googleapis.com/token"
+      scopes: [openid, email]
+      client_secret: "${secret:google_oauth_client_secret}"
+      # audience: Auth0 等の一部プロバイダーで必要
+```
+
+### `auth.providers.<name>` フィールド
+
+| フィールド | 必須 | 説明 |
+|-------|----------|-------------|
+| `client_id` | はい | プロバイダーが発行した OAuth クライアント識別子。 |
+| `device_authorization_url` | はい | `device_code`、`user_code`、`verification_uri` を返すエンドポイント（RFC 8628 §3.1）。 |
+| `token_url` | はい | ユーザーが認可を完了した後に access / refresh トークンを発行するエンドポイント（RFC 8628 §3.4）。 |
+| `scopes` | はい（リスト） | リクエストする OAuth スコープ。プロバイダーがスコープを必要としない場合は `[]` を渡す。 |
+| `client_secret` | いいえ | コンフィデンシャルクライアント用。PKCE のみ / public client では省略可（RFC 6749 §2.3.1 にて installed app での省略を許可）。 |
+| `audience` | いいえ | 一部プロバイダー（Auth0 等）で必要な API audience 識別子。GitHub や Google 等では省略する。 |
+
+`${secret:<key>}` の値はコンフィグロード時に `~/.reyn/secrets.env` から解決されます（ADR-0030）。保存には `reyn secret set <key>` を使用します。
+
+関連情報:
+
+- [Reference: `reyn auth`](../../reference/cli/auth.md) — `reyn auth login/list/revoke` コマンド
+- [コンセプト: シークレット管理](../../concepts/secret-handling.md) — OAuth ライフサイクルと認証情報スコープ
+- [コンセプト: マルチエージェント](../../concepts/multi-agent.md) — エージェント識別子伝播
 
 ## `permissions` ブロック
 

@@ -189,10 +189,107 @@ grep '"secret_' .reyn/events.jsonl
 - シークレットの**値**は `~/.reyn/secrets.env`（ユーザーグローバル、git に入らない）に置きます。
 - マシンごとの非シークレット設定は `reyn.local.yaml`、シークレット値は `~/.reyn/secrets.env` を使います。
 
+## OAuth トークンライフサイクル (FP-0016 B)
+
+静的 dotenv パス（`~/.reyn/secrets.env`、chmod 600）は手動でローテーションする **API キー**向けの設計です。自動更新が必要なトークンには別の仕組みが必要です。
+
+reyn は `~/.reyn/oauth_tokens.json`（chmod 600）に格納される `OAuthToken` 値型を提供します。各エントリにはアクセストークン、リフレッシュトークン、有効期限タイムスタンプ、トークンエンドポイント URL が含まれます。
+
+**ランタイム API** — スキルは OAuth トークンを次の方法でアクセスします：
+
+```python
+from reyn.secrets import get_valid_token
+token = await get_valid_token("github_oauth")
+```
+
+`get_valid_token(key)` の動作：
+
+- トークンが **60 秒以内**に期限切れになる場合、返す前に RFC 6749 §6（リフレッシュトークングラント）でリフレッシュします。
+- リフレッシュ成功時：新しいトークンを `~/.reyn/oauth_tokens.json` に永続化し、`token_refreshed` P6 イベントを発行し、新しい `access_token` を返します。
+- リフレッシュ失敗時：`token_refresh_failed` を発行し、`OAuthRefreshError` を raise します。呼び出し元がキャッチしてオペレーターに通知します。
+- 同じキーへの並行リフレッシュ試行はキーごとの `asyncio.Lock` でシリアライズされます（二重リフレッシュ競合を防止）。
+
+**発行される P6 イベント一覧：**
+
+| イベント | トリガー |
+|---------|---------|
+| `token_refreshed` | リフレッシュ成功。ペイロードに `key`、マスクされたトークンヒントを含む |
+| `token_refresh_failed` | リフレッシュリクエスト失敗。ペイロードに `key`、`error` を含む |
+
+## スキルごとの認証情報スコーピング (FP-0016 D)
+
+**脅威モデル：** 信頼されないドキュメントを処理するサブスキルは、親スキルの全シークレットストアを外部に持ち出すようにプロンプトインジェクションされる可能性があります（Confused Deputy 攻撃）。スコーピングはこれを防ぎます。
+
+### 宣言
+
+各スキルは `skill.md` フロントマターで `required_credentials` を宣言します：
+
+```yaml
+# skill.md フロントマター
+---
+name: pr-reviewer
+required_credentials:
+  - github_token
+---
+```
+
+指定できる値：
+
+| 値 | 意味 |
+|----|------|
+| `[]` | 認証情報不要（stdlib スキルのデフォルト） |
+| `["github_token", "openai_key"]` | 明示的な許可リスト |
+| `["*"]` | 完全委任 — フィールド省略時の後方互換デフォルト |
+
+### 強制適用
+
+`run_skill` の境界でOS が `ScopedSecretStore(allowed_keys=...)` を構築し、親のスコープと**交差**させます（親キャップセマンティクス — サブスキルが親より広いアクセスを持つことはできません）。
+
+許可セット外の読み取りは `CredentialScopeError`（`PermissionError` のサブクラス）を raise します。
+
+すべてのスコープ決定は監査用の `sub_skill_credential_scope` P6 イベントを発行します：
+
+```json
+{"skill": "<name>", "allowed_keys": ["github_token"]}
+```
+
+**クロスリファレンス：**
+
+- [コンセプト: パーミッションモデル](permission-model.md) "スキルごとの認証情報スコーピング" — ケイパビリティ継承ルールを含む詳細解説。
+- [Reference: `skill.md` DSL](../reference/dsl/skill-md.md) — `required_credentials` フィールドの完全なリファレンス。
+
+## デバイス認可グラント (FP-0016 C)
+
+ブラウザリダイレクトが必要な OAuth フロー（ヘッドレスエージェント環境では使用不可）に対して、reyn は RFC 8628 デバイス認可グラントを次の CLI で実装しています：
+
+```bash
+reyn auth login <provider>
+```
+
+コマンドはユーザーコードと確認 URL を表示し、トークンエンドポイントをポーリングし、取得したトークンを `~/.reyn/oauth_tokens.json` に格納して `get_valid_token` から使えるようにします。ブラウザ自動化やコールバックサーバーは不要 — オペレーターが自分のデバイスで URL を開いて承認します。
+
+- 完全な CLI 使用方法：[Reference: `reyn auth`](../reference/cli/auth.md)
+- プロバイダー設定（`oauth.providers`）：[Reference: `reyn.yaml`](../reference/config/reyn-yaml.md)
+
+## エージェント ID (FP-0016 E)
+
+すべての P6 イベントおよびすべての外部 HTTP 呼び出し（MCP、将来の A2A）はエージェント ID を含みます。ID は `reyn.yaml` の `agent.id` フィールドから取得され、省略時は `reyn/<hostname>` がデフォルトです。
+
+ID が登場する場所：
+
+- イベントペイロードの `agent_id` フィールド。
+- 外部 HTTP リクエストの `X-Reyn-Agent-Id` ヘッダー。
+- A2A タスクエンベロープの `initiator` フィールド。
+
+クロスエージェントトレーシングとマルチエージェントトポロジについては：[コンセプト: マルチエージェント](multi-agent.md) "エージェント ID 伝播"。
+
 ## 関連項目
 
 - [Reference: `reyn secret`](../reference/cli/secret.md) — 完全な CLI 構文
 - [Reference: `reyn mcp`](../reference/cli/mcp.md) — `set-secret` / `clear-secret` サブコマンド
-- [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md) — 設定フィールドでの `${VAR}` interpolation
-- [コンセプト: パーミッションモデル](permission-model.md) — `mcp_install` パーミッションゲート
+- [Reference: `reyn.yaml`](../reference/config/reyn-yaml.md) — 設定フィールドでの `${VAR}` interpolation；OAuth プロバイダー設定
+- [Reference: `reyn auth`](../reference/cli/auth.md) — デバイス認可グラント CLI
+- [Reference: `skill.md` DSL](../reference/dsl/skill-md.md) — `required_credentials` フィールドリファレンス
+- [コンセプト: パーミッションモデル](permission-model.md) — `mcp_install` パーミッションゲート；スキルごとの認証情報スコーピング
+- [コンセプト: マルチエージェント](multi-agent.md) — エージェント ID 伝播
 - ADR-0030 `docs/deep-dives/decisions/0030-universal-secret-handling.md` — 設計の根拠（実装チーム向け、内部）

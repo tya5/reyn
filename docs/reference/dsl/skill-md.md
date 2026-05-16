@@ -32,6 +32,8 @@ permissions:                   # optional; declares required capabilities
     - module: stats
       function: compute
       mode: safe
+required_credentials:          # optional; credential keys this skill may read
+  - github_token
 imported_from: ...              # optional; provenance, set by skill_importer
 imported_at: 2026-04-29T...
 imported_format: claude-skill
@@ -53,6 +55,7 @@ imported_revision: <git-sha>
 - **`final_output_description`** — long-form description shown in skill detail.
 - **`finish_criteria`** — used by phases to know when finishing is allowed.
 - **`permissions`** — see [`permissions:` (skill-level)](#permissions-skill-level) below.
+- **`required_credentials`** — see [`required_credentials:`](#required_credentials-optional) below.
 - **`postprocessor`** — see [`postprocessor:`](#postprocessor) below.
 - **`imported_*`** — provenance fields written by `skill_importer`. Inert; the parser ignores them.
 - **`search_hints`** — optional; list of example query strings this skill can answer. Used by the BM25/embedding pre-filter when the catalog exceeds the router context window. Set by skill authors to improve recall in large multi-skill repos.
@@ -93,6 +96,50 @@ permissions:
 - **`tool`** — list of named Control IR tools the skill may invoke.
 
 The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops` would permit an op, the op is rejected at dispatch if it falls outside `skill.permissions`. See [permission-model.md](../../concepts/permission-model.md) for the layered enforcement model.
+
+## `required_credentials:` (optional)
+
+- **Type**: `list[str]`
+- **Default**: `["*"]` (full delegation — preserves pre-FP-0016 behaviour where sub-skills inherited every parent credential)
+- **Purpose**: declares which keys from `~/.reyn/secrets.env` and `~/.reyn/oauth_tokens.json` this skill (and any sub-skill it invokes) is permitted to read.
+- **Enforcement**: at `run_skill` boundaries the OS constructs a `ScopedSecretStore` from this list and intersects it with the parent skill's scope (parent-cap semantics). Reads outside the allowed set raise `CredentialScopeError`.
+
+### Values
+
+| Value | Meaning |
+|---|---|
+| `[]` | No credentials needed. Recommended explicit declaration for skills that don't read secrets. |
+| `["github_token", "openai_key"]` | Explicit allowlist — only the named keys are accessible. |
+| `["*"]` | Full delegation. Use only for trusted internal skills. |
+
+### Audit
+
+Every `run_skill` invocation emits a `sub_skill_credential_scope` event with the effective `allowed_keys`. See [events.md](../runtime/events.md).
+
+### Example
+
+```yaml
+---
+name: pr-reviewer
+entry_phase: review
+required_credentials:
+  - github_token
+permissions:
+  mcp: [github]
+  file:
+    read: [.]
+phases:
+  review:
+    artifact: review_output
+final_output_schema: { ... }
+---
+```
+
+### Cross-references
+
+- [permission-model.md](../../concepts/permission-model.md) — "Per-skill credential scoping" section: threat model and deeper coverage
+- [secret-handling.md](../../concepts/secret-handling.md) — secret store overview
+- [events.md](../runtime/events.md) — `sub_skill_credential_scope` event payload
 
 ## `postprocessor:`
 

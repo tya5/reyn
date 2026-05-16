@@ -116,7 +116,7 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 | **CrewAI** | Role-driven (sequential / hierarchical / Flow event-driven); no OS-level candidate constraint | Flow `@persist` (SQLite); manual resume on crash | Task replay (last run only) | Role-orchestration ergonomics; 30+ built-in tools; RAG and memory out of the box |
 | **AutoGen** | Conversational multi-agent (message bus); LLM selects next speaker freely in SelectorGroupChat | `save_state()` / `load_state()` — application-managed, no built-in auto-checkpoint | OpenTelemetry spans (not replay-capable) | Multi-agent dialog patterns; actor model for distributed agents |
 | **Semantic Kernel** | Function calling loop; LLM selects plugins autonomously; no OS-level candidate constraint | ChatHistory (in-memory); external DB persistence is app-managed | OpenTelemetry spans (not replay-capable) | Azure-native integration; C# / Python / Java parity; MIT OSS |
-| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; per-agent / per-chain / per-model cost caps; MCP server + client; RAG framework foundation (skill.md-driven indexing strategy override) |
+| **Reyn** | OS-enforced: validated transitions, closed candidate set (P3, P4) | Workspace + WAL, file-based SSoT (P5); automatic crash recovery | Append-only events log, replay-capable (P6) | Predictability; audit trail; weak-model viability; per-agent / per-chain / per-model cost caps; MCP server + client (bearer headers for hosted MCP); OAuth login + per-skill credential scoping (Confused Deputy mitigation); agent_id in P6 events (SOC2 / METI audit trail); RAG framework foundation (skill.md-driven indexing strategy override) |
 
 **Reyn is more constrained.** If you want maximum LLM autonomy and creative agent behavior, LangGraph or AutoGen will feel less restrictive.
 
@@ -134,6 +134,7 @@ The LLM picks the chunking strategy from a closed candidate set (P4); the chunk 
 - You want weak models to be reliable — the structural constraints (P4, P5) compensate for capability gaps without prompt-level workarounds.
 - You need predictable cost: the closed candidate set prevents surprise tool invention and unbounded loops, and token + USD caps per agent / chain / model refuse-on-exceed to prevent runaway spend (see [docs/reference/config/budget.md](docs/reference/config/budget.md)).
 - You want to integrate with Claude Code, Claude Desktop, Cursor, or any MCP-aware client — `reyn mcp serve` exposes your agent fleet via MCP. See [docs/reference/cli/mcp.md](docs/reference/cli/mcp.md).
+- You need enterprise-grade credential handling: `reyn auth login <provider>` runs the RFC 8628 Device Authorization Grant flow; tokens auto-refresh silently; per-skill credential scoping prevents one skill from reaching another skill's secrets (Confused Deputy mitigation). Agent identity (`agent_id`) propagates through P6 events and MCP headers — ready for SOC2 / ISO27001 / METI v1.1 audit trails.
 
 ### Reyn does not fit when
 
@@ -340,7 +341,7 @@ When `recall` is available against an indexed source whose description covers Re
 **Implementation questions** ("how does X work?"):
 `src/reyn/chat/router_loop.py`, `src/reyn/chat/router_system_prompt.py` (= recall vs reyn_src_read routing), `src/reyn/chat/session.py`, `src/reyn/kernel/runtime.py`, `src/reyn/kernel/control_ir_executor.py`, `src/reyn/op_runtime/` (file, web, mcp, ask_user, embed, index_*, recall, …), `src/reyn/permissions/permissions.py`.
 
-**Design rationale**: `docs/deep-dives/decisions/` — ADRs. Recent: ADR-0033 (RAG framework foundation), ADR-0030 (universal secret handling), ADR-0026 (unified tool registry).
+**Design rationale**: `docs/deep-dives/decisions/` — ADRs. Recent: ADR-0033 (RAG framework foundation), ADR-0030 (universal secret handling), ADR-0026 (unified tool registry). FP-0016 proposal: `docs/deep-dives/proposals/0016-agent-authentication.md` (all five components landed 2026-05-11 – 2026-05-16).
 
 **Testing / contribution**: `docs/deep-dives/contributing/testing.md` (Tier 1/2/3 policy), `docs/deep-dives/contributing/dogfood-discipline.md` (cognitive-bias and affordance-bias fix templates).
 
@@ -350,12 +351,12 @@ When in doubt: `reyn_src_list("")` to see the top, `reyn_src_read(<path>)` to di
 
 ## Project Status
 
-**1.0 OSS launch ready.** The release-blocker schema-layer fix landed in batch 22; the framework foundation is green; the dogfood discipline is operational. As of 2026-05-10:
+**1.0 OSS launch ready.** The release-blocker schema-layer fix landed in batch 22; the framework foundation is green; the dogfood discipline is operational. As of 2026-05-16:
 
-- Test suite: **2223 passed / 2 xfailed** on `main`.
-- Recent main HEAD: `8c84431` — RAG framework foundation (ADR-0033 Phase 1 Accepted) + batches 17-20 fix-and-retest sequence + batch 21 real e2e dogfood + B21-S0-1 description/path propagation fix + batch 22 affordance-bias schema fix + FP-0003..0010 + Flywheel milestone landed.
-- Stable surfaces: DSL (skill.md / phase.md / artifact YAML), CLI (`reyn run` / `reyn chat` / `reyn web` / `reyn mcp serve` / `reyn source`), event log envelope (`ts`, `kind`, `phase`, `run_id`, payload).
-- Dogfood evidence: batch 22 restored a natural-concept-query scenario (Q1–Q3 against indexed `docs/concepts/*.md`) from 0/3 to 3/3 in one commit by combining a system-prompt routing rule with two tool-description rewrites — see `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`.
+- Test suite: **3007 collected** on `main`.
+- Recent main HEAD: `45c7035` — FP-0016 authentication stack (MCP bearer headers + OAuth refresh lifecycle + `reyn auth login` device grant CLI + per-skill credential scoping + agent_id propagation) + FP-0034 wrapper-only universal action catalog (N=5 production-grade, batch 26) + RAG framework foundation (ADR-0033 Phase 1 Accepted) + Flywheel milestone.
+- Stable surfaces: DSL (skill.md / phase.md / artifact YAML), CLI (`reyn run` / `reyn chat` / `reyn web` / `reyn mcp serve` / `reyn source` / `reyn auth`), event log envelope (`ts`, `kind`, `phase`, `run_id`, `agent_id`, payload).
+- Dogfood evidence: batch 22 restored a natural-concept-query scenario (Q1–Q3 against indexed `docs/concepts/*.md`) from 0/3 to 3/3 in one commit by combining a system-prompt routing rule with two tool-description rewrites — see `docs/deep-dives/journal/dogfood/2026-05-10-batch-22-affordance-bias-fix/findings.md`. FP-0034 wrapper-only universal action catalog reached N=5 production-grade stability (batch 26).
 
 ### What's not in 1.0 (= maturity gaps, deliberate)
 

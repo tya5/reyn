@@ -32,6 +32,8 @@ permissions:                   # 省略可能; 必要なケイパビリティを
     - module: stats
       function: compute
       mode: safe
+required_credentials:          # 省略可能; このスキルが読み取れるクレデンシャルキー
+  - github_token
 imported_from: ...              # 省略可能; `skill_importer` が設定する出自情報
 imported_at: 2026-04-29T...
 imported_format: claude-skill
@@ -53,9 +55,54 @@ imported_revision: <git-sha>
 - **`final_output_description`** — Skill 詳細に表示される長い説明。
 - **`finish_criteria`** — 終了が許可されるタイミングを Phase が知るために使用されます。
 - **`permissions`** — `reference/config/permissions.md` を参照してください。
+- **`required_credentials`** — 下記 [`required_credentials:`](#required_credentials) を参照してください。
 - **`imported_*`** — `skill_importer` が書き込む出自フィールド。非アクティブ; パーサーはこれらを無視します。
 - **`search_hints`** — 省略可; このスキルが答えられる例示クエリのリスト。カタログがルーターのコンテキストウィンドウを超える際の BM25/embedding 事前フィルタに使用される。大規模マルチスキルリポジトリでの recall 向上目的。
   例: `search_hints: ["記事を要約して", "tl;dr"]`
+
+## `required_credentials:` (省略可能)
+
+- **型**: `list[str]`
+- **デフォルト**: `["*"]`（完全委譲 — FP-0016 以前のサブスキルが親のクレデンシャルをすべて継承する動作を維持）
+- **目的**: このスキル（およびそれが呼び出すサブスキル）が `~/.reyn/secrets.env` および `~/.reyn/oauth_tokens.json` から読み取れるキーを宣言します。
+- **適用**: `run_skill` の境界で OS がこのリストから `ScopedSecretStore` を構築し、親スキルのスコープと交差させます（parent-cap セマンティクス）。許可セット外の読み取りは `CredentialScopeError` を発生させます。
+
+### 値
+
+| 値 | 意味 |
+|---|---|
+| `[]` | クレデンシャル不要。シークレットを読み取らないスキルへの明示的な宣言として推奨。 |
+| `["github_token", "openai_key"]` | 明示的な許可リスト — 指定したキーのみアクセス可能。 |
+| `["*"]` | 完全委譲。信頼できる内部スキルにのみ使用してください。 |
+
+### 監査
+
+すべての `run_skill` 呼び出しは有効な `allowed_keys` を含む `sub_skill_credential_scope` イベントを発行します。[events.md](../runtime/events.md) を参照してください。
+
+### 例
+
+```yaml
+---
+name: pr-reviewer
+entry_phase: review
+required_credentials:
+  - github_token
+permissions:
+  mcp: [github]
+  file:
+    read: [.]
+phases:
+  review:
+    artifact: review_output
+final_output_schema: { ... }
+---
+```
+
+### 関連情報
+
+- [permission-model.md](../../concepts/permission-model.md) — "スキル別クレデンシャルスコーピング" セクション: 脅威モデルと詳細説明
+- [secret-handling.md](../../concepts/secret-handling.md) — シークレットストアの概要
+- [events.md](../runtime/events.md) — `sub_skill_credential_scope` イベントペイロード
 
 ## ボディ
 

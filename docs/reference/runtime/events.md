@@ -22,6 +22,12 @@ Every event has:
 }
 ```
 
+## Agent ID field (all events)
+
+Every event emitted from a session whose `agent.id` is configured (in `reyn.yaml`) automatically carries an `agent_id` field in its payload. The default value is `reyn/<hostname>`. This enables RBAC and multi-agent audit trails per SOC2 / ISO 27001 / METI v1.1 requirements.
+
+See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propagation" for details.
+
 ## Lifecycle events
 
 | Kind | When | Key payload |
@@ -56,6 +62,28 @@ Each Control IR op kind emits its own event:
 | `web_search_started`, `web_search_completed`, `web_search_failed`, `web_fetch_started` | search ops |
 | `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
+
+## Credentials and OAuth
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `sub_skill_credential_scope` | Emitted by the `run_skill` op handler at sub-skill entry, after the OS computes the effective credential scope (intersection of the sub-skill's `required_credentials` with the parent scope). | `skill: str` — sub-skill reference (same value as `op.skill`); `allowed_keys: list[str]` — sorted, deduplicated list of allowed secret keys, or `["*"]` if the effective scope is unrestricted. |
+| `token_refreshed` | Emitted by `reyn.secrets.get_valid_token(key)` after a successful OAuth refresh against the provider's token endpoint (RFC 6749 §6). | `key: str` — OAuth token key (same as the `~/.reyn/oauth_tokens.json` entry); `expires_at: str` — ISO-8601 timestamp of the new access token's expiry. |
+| `token_refresh_failed` | Emitted by `get_valid_token` when the token endpoint returns a non-2xx response or the response payload is malformed. Raises `OAuthRefreshError`. | `key: str`; `error: str` — short error description (HTTP status + provider error code if available). |
+
+**Notes:**
+- `sub_skill_credential_scope` is audit-grade; used to reconstruct the credential authorisation chain across nested skill runs. Pairs with `run_skill_started` (same `skill` name).
+- `token_refresh_failed` pairs with `token_refreshed` — exactly one is emitted per `get_valid_token` call that performs a network refresh.
+
+See also: [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping; [Concepts: permission model](../../concepts/permission-model.md) — per-skill credential scoping; [DSL reference: `required_credentials`](../dsl/skill-md.md).
+
+## Action catalog routing
+
+| Kind | Trigger | Key payload |
+|------|---------|-------------|
+| `routing_decided` | Emitted by the universal action catalog dispatch path when an action wrapper (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) routes a request (FP-0034 Phase 1–3). | `action_name: str`; `source: str` — `"catalog"` \| `"hot_alias"` \| `"direct"`; `outcome: str` — `"dispatched"` \| `"deflected"` \| `"error"`; `chain_id: str` — request chain identifier for cross-call correlation. |
+
+**Notes:** enables auditing the wrapper-only routing path. Cross-correlate with `chain_id` across the action's downstream events.
 
 ## User interaction
 
