@@ -67,7 +67,7 @@ permissions:
   file.write: allow
   python:
     safe: allow
-    unsafe: allow      # ランタイムの --allow-untrusted-python も必要
+    unsafe: allow      # ランタイムの --allow-unsafe-python も必要
 ```
 
 `allow` はプロンプトを完全に削除します。`ask`（デフォルト）はプロンプトを表示します。`deny` は拒否します。

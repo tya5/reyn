@@ -97,7 +97,7 @@ permissions:
     unsafe: allow
 ```
 
-…そして `--allow-untrusted-python` オプションで実行します。
+…そして `--allow-unsafe-python` オプションで実行します。
 
 ## `safe` モードで禁止されること
 

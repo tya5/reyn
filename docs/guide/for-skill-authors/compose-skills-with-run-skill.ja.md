@@ -73,7 +73,7 @@ graph:
 
 1. `reyn/project/<name>/skill.md`
 2. `reyn/local/<name>/skill.md`
-3. `src/stdlib/skills/<name>/skill.md`
+3. `src/reyn/stdlib/skills/<name>/skill.md`
 
 ## 関連情報
 
