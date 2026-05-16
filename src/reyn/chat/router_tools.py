@@ -231,6 +231,7 @@ def build_tools(
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
     web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
+    universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -823,6 +824,32 @@ def build_tools(
                 ))
     else:
         _mcp_search_tool_raw = []
+
+    # ── I. Universal catalog wrappers (FP-0034 PR-3b-i, opt-in) ──────────────
+    #
+    # When universal_wrappers_enabled=True, append the 4 universal wrappers
+    # (list_actions / search_actions / describe_action / invoke_action) at
+    # the END of the specs list per §D21.  The default is OFF so the byte
+    # output of build_tools() is unchanged for existing callers + cached
+    # LLMReplay fixtures.  Once PR-3b-iii (= flip the default) lands +
+    # fixtures are re-recorded, this gate disappears.
+    #
+    # search_actions is gated separately by D14 (= embedding configured);
+    # PR-3b-i conservatively excludes it because no embedding plumbing
+    # exists yet.  PR-3b-ii adds the action_retrieval config + decides
+    # when search_actions appears.
+    if universal_wrappers_enabled:
+        for _wrapper_name in ("list_actions", "describe_action", "invoke_action"):
+            _wrapper_def = _registry.lookup(_wrapper_name)
+            if _wrapper_def is None or _wrapper_def.gates.router != "allow":
+                continue
+            _wrapper_rendered = _wrapper_def.render_for_router()
+            specs.append(ToolSpec(
+                name=_wrapper_rendered["function"]["name"],
+                description=_wrapper_rendered["function"]["description"],
+                parameters=_wrapper_rendered["function"]["parameters"],
+                dispatch_kind=_wrapper_def.dispatch_kind,
+            ))
 
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
     # Append tool_search_tool raw dict last (D-S deferred mode only; empty
