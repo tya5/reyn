@@ -41,22 +41,10 @@ _EVENT_COLORS: dict[str, str] = {
     "chat_stopped":                "#dddddd",
     "user_intervention_requested": "#ffcc88",
     "user_intervention_received":  "#ffcc88",
-    "preprocessor_step_started":   "#555555",
-    "preprocessor_step_completed": "#555555",
-    "postprocessor_step_started":   "#555555",
-    "postprocessor_step_completed": "#555555",
     "postprocessor_step_failed":    "#ff6644",
-    "postprocessor_step_memoized":  "#cc8855",
-    "python_step_started":         "#555555",
-    "python_step_completed":       "#555555",
     "web_fetch_started":           "#888888",
-    "web_fetch_completed":         "#888888",
     "web_search_started":          "#888888",
     "web_search_completed":        "#888888",
-    # Sandboxed execution (FP-0017) — same dim grey as shell ops; they're
-    # the same concept at a lower privilege level.
-    "sandboxed_exec_started":      "#888888",
-    "sandboxed_exec_completed":    "#888888",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
     # Internal routing / multi-agent housekeeping — very dim so they don't
