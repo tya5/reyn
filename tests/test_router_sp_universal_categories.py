@@ -20,8 +20,10 @@ output.
 
 from __future__ import annotations
 
-from reyn.chat.router_system_prompt import build_system_prompt
+import re
 
+from reyn.chat.router_system_prompt import build_system_prompt
+from reyn.tools.universal_catalog import CATEGORIES
 
 _BASE_KWARGS = {
     "agent_name": "alpha",
@@ -91,6 +93,36 @@ def test_flag_on_lists_all_thirteen_categories() -> None:
         assert f"**{cat}**" in prompt, (
             f"category {cat!r} must be listed as a bullet in the SP"
         )
+
+
+def test_sp_bullets_match_categories_tuple_exactly() -> None:
+    """Tier 2: drift-detection — SP `**X**` bullets ≡ ``CATEGORIES`` tuple.
+
+    If a 14th category is added to ``universal_catalog.CATEGORIES`` but
+    the SP section is not extended (or vice versa), this test fails so
+    the divergence cannot land silently.  The handlers enumerate by
+    iterating ``CATEGORIES`` while the SP is hand-authored prose; this
+    invariant pins the two together.
+    """
+    prompt = build_system_prompt(
+        **_BASE_KWARGS, universal_wrappers_enabled=True,
+    )
+    # Slice to the Action categories section only so unrelated bold
+    # spans in Behaviour / other sections don't confuse the match.
+    section_start = prompt.index("## Action categories")
+    section_end = prompt.index("## Behaviour", section_start)
+    section = prompt[section_start:section_end]
+
+    bullet_re = re.compile(r"^- \*\*([a-z.]+)\*\*", re.MULTILINE)
+    sp_bullets = tuple(bullet_re.findall(section))
+
+    assert sp_bullets == tuple(CATEGORIES), (
+        f"SP bullets diverged from CATEGORIES.\n"
+        f"  SP:        {sp_bullets}\n"
+        f"  CATEGORIES:{tuple(CATEGORIES)}\n"
+        f"Update both src/reyn/chat/router_system_prompt.py AND "
+        f"src/reyn/tools/universal_catalog.py together."
+    )
 
 
 def test_flag_on_describes_qualified_name_format() -> None:
