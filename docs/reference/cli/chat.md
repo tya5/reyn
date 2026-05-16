@@ -112,7 +112,7 @@ reyn chat --model strong
 - [Reference: topology CLI](topology.md) — `reyn topology` to declare communication structure
 - [Reference: skill_router](../stdlib/skill_router.md)
 - [Reference: profile-yaml](../dsl/profile-yaml.md)
-- [Reference: multi-agent config](../config/multi-agent.md) — `multi_agent.max_hop_depth`
+- [Reference: multi-agent config](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
 - [Concepts: multi-agent](../../concepts/multi-agent.md)
 - [Concepts: memory](../../concepts/memory.md)

@@ -124,7 +124,7 @@ self_improvement:
 
 **メタ改善はデフォルトで自動禁止。** `src/reyn/stdlib/` はデフォルトの書き込みゾーン外です。`skill_improver` 自身やその他の stdlib スキルを改善しようとすると、`write_file` op のディスパッチ段階で `PermissionError` になります。OS レイヤーで特別なチェックは不要（P7 準拠）。
 
-**stdlib スキルのロールバックは CLI が拒否。** `reyn skill rollback` は `reyn/project/` および `reyn/local/` スキルのみを対象とします。stdlib スキル（`src/reyn/stdlib/skills/`）はシップバンドルされており、不変です。stdlib スキルをカスタマイズしたい場合は `reyn/project/<name>/` にコピーしてください — スキル解決順序（`reyn/project/` > `reyn/local/` > `src/stdlib/skills/`）によりプロジェクトコピーが優先されます。
+**stdlib スキルのロールバックは CLI が拒否。** `reyn skill rollback` は `reyn/project/` および `reyn/local/` スキルのみを対象とします。stdlib スキル（`src/reyn/stdlib/skills/`）はシップバンドルされており、不変です。stdlib スキルをカスタマイズしたい場合は `reyn/project/<name>/` にコピーしてください — スキル解決順序（`reyn/project/` > `reyn/local/` > `src/reyn/stdlib/skills/`）によりプロジェクトコピーが優先されます。
 
 **`on_propose: auto` はオペレータの信頼が必要。** インタラクティブ利用には `ask_user` が適切なデフォルトです。`auto` に切り替えるのは、オペレータが改善パイプラインをレビュー済みで自律的な書き込みを許容する環境（例: 1 週間のトレース評価後に `skill_improver` を実行する夜間 CI ジョブ）に限定してください。
 
