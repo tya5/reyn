@@ -32,7 +32,7 @@ See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propaga
 
 | Kind | When | Key payload |
 |------|------|-------------|
-| `workflow_started` | First phase enters | `entry_phase`, `input_artifact_type` |
+| `workflow_started` | First phase enters | `entry_phase`, `input_type`, `default_model` |
 | `workflow_finished` | Skill completes cleanly | `phase`, `reason`, `confidence`, `total_phase_count`, `final_output_keys` |
 | `phase_started` | Each phase visit begins | `phase`, `visit_count` |
 | `phase_completed` | Each phase visit ends | `phase`, `next_phase`, `decision` |

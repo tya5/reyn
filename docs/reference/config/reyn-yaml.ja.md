@@ -461,7 +461,7 @@ permissions:
     write: [".reyn/state/", "reyn/local/"]
   python:
     safe:    allow      # safe モードの python ステップのデフォルト
-    unsafe:  deny       # unsafe モードには --allow-untrusted-python も必要
+    unsafe:  deny       # unsafe モードには --allow-unsafe-python も必要
     allowed_modules:
       - math
       - statistics
@@ -579,12 +579,6 @@ cost:
   per_agent_cost_usd:
     hard_limit: 2.00     # 1 エージェントが $2.00 消費した後に拒否
 
-  # チェーン + Skill ごとの上限（メモリ内）
-  per_chain_skill_calls:
-    hard_limit: 5        # 同じ Skill がチェーンで 5 回以上起動されると拒否
-  per_chain_skill_tokens:
-    hard_limit: 100000   # 1 つの Skill がチェーンで 100k トークン以上蓄積すると拒否
-
   # モデルごとのレートリミット（1 分あたりの呼び出し数）
   rate_limit_per_minute:
     openai/gpt-4o: 60
@@ -607,13 +601,13 @@ cost:
 |---|---|---|---|
 | `per_agent_tokens` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
 | `per_agent_cost_usd` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
-| `per_chain_skill_calls` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
-| `per_chain_skill_tokens` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
 | `rate_limit_per_minute` | モデルごと | メモリ内（60 秒ウィンドウ） | 自動（スライディングウィンドウ） |
 | `daily_tokens` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `daily_cost_usd` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `monthly_tokens` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 | `monthly_cost_usd` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
+
+> **注意**: チェーンごとの Skill スポーン・トークン上限（`skill_calls_per_chain`、`skill_tokens_per_chain`）とルーター呼び出し上限（`max_router_calls_per_turn`）は FP-0004/0005 で `safety.loop` に移動しました。上記の [`safety` ブロック](#safety-ブロック) を参照してください。
 
 **上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `/budget`、メモリ内カウンターをクリアするには `/budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
 

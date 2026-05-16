@@ -16,7 +16,7 @@ The workspace is the single source of truth for everything reyn produces during 
 | Files written by `file.write` Control IR ops | Under the workspace root the skill chose |
 | Sub-skill outputs (from `run_skill` ops) | Bound to a named slot in the calling phase's input |
 | Event log | `.reyn/events/<run_id>.jsonl` |
-| Eval reports | `.reyn/eval_reports/<skill>/<timestamp>.json` |
+| Eval reports | `.reyn/eval-results/<skill>/<timestamp>.json` |
 
 ## Why a single source
 

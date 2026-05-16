@@ -468,6 +468,6 @@ OS は利用可能な op をすべてのコンテキストフレームに `avail
 
 ## 関連情報
 
-- [run.md](../cli/run.md) — `--allow-shell`、`--allow-untrusted-python`
+- [run.md](../cli/run.md) — `--allow-shell`、`--allow-unsafe-python`
 - [events.md](events.md) — op の種類ごとに発行されるイベント
 - [コンセプト: principles P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)

@@ -32,7 +32,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 
 | 種類 | タイミング | 主要なペイロード |
 |------|------|-------------|
-| `workflow_started` | 最初の Phase が入ったとき | `entry_phase`、`input_artifact_type` |
+| `workflow_started` | 最初の Phase が入ったとき | `entry_phase`、`input_type`、`default_model` |
 | `workflow_finished` | Skill がクリーンに完了したとき | `phase`、`reason`、`confidence`、`total_phase_count`、`final_output_keys` |
 | `phase_started` | 各 Phase 訪問の開始時 | `phase`、`visit_count` |
 | `phase_completed` | 各 Phase 訪問の終了時 | `phase`、`next_phase`、`decision` |
