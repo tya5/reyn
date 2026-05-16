@@ -279,3 +279,76 @@ def test_dispatch_emits_skill_run_spawned_event(tmp_path, monkeypatch):
         f"skill_run_spawned.data['skill'] must be 'my_skill', "
         f"got {spawned[0].data.get('skill')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Invariant 4: wait_for_completion() lets tasks finish → skill_run_completed
+# (B27-H4 fix: no CancelledError-driven skill_run_interrupted on shutdown)
+# ---------------------------------------------------------------------------
+
+
+def test_wait_for_completion_emits_skill_run_completed(tmp_path, monkeypatch):
+    """Tier 2: wait_for_completion() waits for in-flight tasks to finish
+    naturally so ``skill_run_completed`` is emitted instead of
+    ``skill_run_interrupted``.
+
+    B27-H4 root cause: ``_drain_on_shutdown`` used to call ``cancel_all()``
+    immediately, propagating ``asyncio.CancelledError`` through
+    ``RunOrchestrator.run()`` which triggered ``skill_run_interrupted``
+    instead of ``skill_run_completed``.
+
+    Verified by:
+      1. Spawning a skill backed by a blocking fake agent (block_on set).
+      2. Releasing the block *concurrently* (simulating an LLM call that
+         completes during the grace window).
+      3. Calling ``wait_for_completion(timeout_sec=5.0)``.
+      4. Asserting ``skill_run_completed`` is emitted and
+         ``skill_run_interrupted`` is NOT emitted.
+      5. Asserting ``running_names()`` is empty after the wait.
+    """
+    import reyn.chat.services.skill_runner as sr_mod
+
+    dummy_dir = tmp_path / "fake_skill"
+    dummy_dir.mkdir()
+
+    monkeypatch.setattr(sr_mod, "resolve_skill_path", lambda name: (dummy_dir, tmp_path))
+    monkeypatch.setattr(sr_mod, "load_dsl_skill", lambda path, *, skill_root: object())
+
+    block = asyncio.Event()
+    runner, events, outbox, completed = _make_runner(block_on=block)
+
+    async def _run():
+        # Spawn a skill whose agent blocks until the event fires.
+        await runner.spawn({"skill": "test_skill", "input": {}})
+        assert len(runner.running_names()) == 1, "Task must be registered"
+
+        # Release the block shortly after, simulating the LLM call finishing
+        # during the shutdown grace window.
+        async def _release_after_tick():
+            await asyncio.sleep(0)  # yield so the skill task starts running
+            block.set()
+
+        asyncio.create_task(_release_after_tick())
+
+        # wait_for_completion gives the task the chance to complete naturally.
+        await runner.wait_for_completion(timeout_sec=5.0)
+
+    asyncio.run(_run())
+
+    # After wait_for_completion the task is done; cleanup callback fired.
+    assert runner.running_names() == [], (
+        f"running_names() must be empty after wait_for_completion, "
+        f"got {runner.running_names()}"
+    )
+
+    emitted = events.all()
+    completed_evts = [e for e in emitted if e.type == "skill_run_completed"]
+    interrupted_evts = [e for e in emitted if e.type == "skill_run_interrupted"]
+    assert len(completed_evts) >= 1, (
+        f"Expected skill_run_completed, got event types: "
+        f"{[e.type for e in emitted]}"
+    )
+    assert len(interrupted_evts) == 0, (
+        f"skill_run_interrupted must NOT be emitted when the skill "
+        f"completes naturally; got {interrupted_evts}"
+    )

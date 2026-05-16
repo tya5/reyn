@@ -172,6 +172,27 @@ class SkillRunner:
         if task is not None and not task.done():
             task.cancel()
 
+    async def wait_for_completion(self, timeout_sec: float = 30.0) -> None:
+        """Wait up to *timeout_sec* for all in-flight skill tasks to finish.
+
+        Does NOT cancel tasks — allows background LLM calls to complete
+        naturally so ``skill_run_completed`` is emitted instead of
+        ``skill_run_interrupted``.  After the timeout, still-running tasks
+        are left in place (the caller should follow up with ``cancel_all``).
+
+        Used by ``_drain_on_shutdown`` before the hard cancel so that a
+        skill whose LLM call is nearly done gets the chance to land its
+        P6 ``skill_run_completed`` event.
+        """
+        if not self.running_skills:
+            return
+        tasks = list(self.running_skills.values())
+        try:
+            await asyncio.wait(tasks, timeout=timeout_sec)
+        except Exception:
+            # asyncio.wait itself should never raise, but guard defensively.
+            pass
+
     async def cancel_all(self) -> None:
         """Cancel all in-flight tasks and await them (shutdown path).
 

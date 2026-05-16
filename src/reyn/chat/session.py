@@ -1251,15 +1251,25 @@ class ChatSession:
             await self._put_outbox(OutboxMessage(kind="__end__", text=""))
 
     async def _drain_on_shutdown(self) -> None:
-        """Cancel any in-flight user-initiated skill runs and await compaction.
+        """Wait for in-flight skill runs to complete, then cancel stragglers.
 
         Memory writes happen inline during each router turn, so there is no
-        background extraction to drain — shutdown is now strictly a teardown
-        of whatever the user explicitly launched, plus a final await on the
-        compaction task (if any) so the summary entry gets persisted before
-        the process exits.
+        background extraction to drain — shutdown is teardown of whatever the
+        user explicitly launched, plus a final await on the compaction task
+        (if any) so the summary entry gets persisted before the process exits.
+
+        B27-H4 fix: give in-flight skill tasks a 30-second grace window to
+        complete naturally before the hard cancel.  Without the grace window,
+        skills whose LLM call is in-progress at session shutdown receive
+        ``asyncio.CancelledError``, which propagates through
+        ``RunOrchestrator.run()`` → ``skill_run_interrupted`` instead of
+        ``skill_run_completed``.  The 30-second limit prevents hanging
+        indefinitely on a stalled LLM call.
         """
         # FP-0019 Wave 1b: delegated to SkillRunner.
+        # Grace window: wait up to 30 s for background skills to land their
+        # skill_run_completed event before resorting to cancellation.
+        await self._skill_runner.wait_for_completion(timeout_sec=30.0)
         await self._skill_runner.cancel_all()
 
         # PR18: cancel any pending chain-timeout watchdogs so they don't keep
