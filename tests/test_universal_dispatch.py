@@ -321,10 +321,11 @@ def test_known_static_names_is_sorted_and_deduped() -> None:
 
 
 def test_known_static_names_covers_seven_operation_categories() -> None:
-    """Tier 2: PR-2 statically routes the 4 operation-style categories.
+    """Tier 2: statically-routed operation categories cover §D11 baseline.
 
-    file / web / memory.operation / reyn.source / rag.operation are
-    fully routed. mcp.operation lands in PR-4. exec lands later.
+    file / web / memory.operation / reyn.source / rag.operation /
+    mcp.operation (PR-4) are fully routed. ``exec`` enumeration is
+    deferred to Phase 2 (= sandbox-backed introspection).
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
     # file (4 ops)
