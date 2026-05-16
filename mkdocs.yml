@@ -122,6 +122,7 @@ nav:
   - Reference:
       - CLI:
           - reference/cli/run.md
+          - reference/cli/dogfood.md
           - reference/cli/eval.md
           - reference/cli/lint.md
           - reference/cli/chat.md
@@ -206,6 +207,7 @@ nav:
       - concepts/universal-catalog.md
       - concepts/chat-compaction.md
       - concepts/rag.md
+      - concepts/dogfood-scenarios.md
       - concepts/operational-intelligence.md
       - concepts/skill-self-improvement.md
       - concepts/a2a.md
