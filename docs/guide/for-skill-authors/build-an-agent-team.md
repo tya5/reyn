@@ -162,11 +162,12 @@ If they share no topology, the edge is denied (the router can't even see the tar
 
 **`agent X: blocked by topology rules` in the outbox.** The LLM hallucinated a delegation target it shouldn't have proposed. Verify your topology kind matches your intent — for example, you might've declared `team` when you meant `network`.
 
-**`agent message depth N exceeds limit M; chain refused`.** Your overlapping teams form a deeper tree than `multi_agent.max_hop_depth` allows. Raise the limit in `reyn.yaml`:
+**`agent message depth N exceeds limit M; chain refused`.** Your overlapping teams form a deeper tree than `safety.loop.max_agent_hops` allows. Raise the limit in `reyn.yaml`:
 
 ```yaml
-multi_agent:
-  max_hop_depth: 5
+safety:
+  loop:
+    max_agent_hops: 5
 ```
 
 ## See also

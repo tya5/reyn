@@ -52,7 +52,7 @@ Before moving to `reyn/project/`:
 
 - [ ] `reyn lint <name>` is clean.
 - [ ] At least one happy-path eval case passes.
-- [ ] `final_output_schema` matches what callers actually need.
+- [ ] `final_output` artifact matches what callers actually need.
 - [ ] Phase instructions follow P8 (no schema enumeration, no Control IR syntax).
 
 ## See also

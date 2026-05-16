@@ -78,7 +78,7 @@ Work through each section in order. Each item names the failure mode it prevents
 
 ## Budget
 
-- [ ] **A `cost:` block is present in `reyn.yaml` (or `.reyn/config.yaml`).**
+- [ ] **A `cost:` block is present in `reyn.yaml` (or `reyn.local.yaml`).**
 
   Without it, a runaway skill or routing loop has no cap. A conservative
   starting point for most skills:

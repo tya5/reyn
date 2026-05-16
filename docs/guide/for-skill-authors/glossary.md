@@ -43,7 +43,7 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 | Preprocessor | プリプロセッサ | Deterministic pre-LLM steps a phase may declare (`run_skill`, `iterate`, `validate`, `python`). |
 | Decision | 決定 | OS-level value: `continue` / `finish` / `abort`. Never skill-specific. |
 | Transition | 遷移 | A move from one phase to another, validated against the skill graph. |
-| Final Output | 最終出力 | The artifact produced when a skill finishes; validated against `final_output_schema`. |
+| Final Output | 最終出力 | The artifact produced when a skill finishes; validated against the skill's `final_output` declaration. |
 | Visit Count | 訪問回数 | Number of times a single phase has been entered in the current run. |
 
 ## DSL files
