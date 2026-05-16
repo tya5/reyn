@@ -1,0 +1,62 @@
+{
+  "worker": 1,
+  "set_name": "chat_router_smoke",
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Reply correct (mentions skills/agents); skill_run_spawned/completed absent in event log; no direct_llm artifact created"
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Reply explains idempotency correctly; skill_run_spawned/completed absent; no direct_llm artifact"
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Reply lists 16 skills (PASS); tool_called/tool_returned for list_actions emitted but skill_run_spawned/completed absent"
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "BadRequestError: Duplicate function declaration found: list_actions — tools list has list_actions at positions 0 and 3 (trace 7cba69d2)"
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Same duplicate list_actions crash; routing_decided not emitted; fresh agent s5 trace 528971cd confirms"
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Duplicate list_actions crash on turn 1; both user_message_received emitted but no agent replies"
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Same duplicate list_actions crash on fresh agent s7"
+    }
+  ]
+}

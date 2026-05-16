@@ -1,0 +1,78 @@
+{
+  "worker": 2,
+  "set_name": "stdlib_skills_core",
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Router dispatched operation__create_index (hot_list_alias, outcome=error); skill_run_spawned never emitted; reply: tool not available"
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": true,
+      "evidence_one_liner": "skill_run_spawned emitted x3, but skill_run_completed never emitted (only skill_run_interrupted); reply thin (mentions cron but lacks detail); artifact present at .reyn/agents/b27-s2/state/skills/*_read_local_files.snapshot.json"
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Router called list_actions(filter=...) twice, never dispatched read_local_files skill; reply: 'couldn't find files'; no skill_run_spawned"
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": true,
+      "evidence_one_liner": "skill_run_spawned emitted (routing_decided action=skill__skill_builder, outcome=success); skill_run_completed never emitted (skill_run_interrupted); reply says 'started in background' but no completion/lint confirmation or skill name; artifact at .reyn/agents/b27-s4/state/skills/*_skill_builder.snapshot.json"
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Python safe-mode step (./stats.py:compute_text_stats) denied by permissions; reyn.yaml only allows python.pure; skill_run_failed emitted; preprocessor_step_failed in events"
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Heredoc multi-line input split into 5 separate user_message_received events; router never dispatched skill; reply claims 'tool does not accept text as argument'; no skill_run_spawned"
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Router dispatched skill_improver (not eval); skill_improver failed on unsafe python step --allow-unsafe-python required; eval artifact absent; skill_run_failed emitted"
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "All 5 turns answered directly by LLM without skill dispatch; no skill_run_spawned, no llm_called in events (only chat lifecycle); final reply coherently explains routing_decided; direct_llm artifact absent"
+    },
+    {
+      "id": "chained_find_then_index",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turn 1: router misused list_actions(filter=regex) as file lister; turn 2: dispatched rag.operation__add_source (not index_docs); no skill_run_spawned; reply: 'rag.operation__add_source not available'"
+    }
+  ]
+}

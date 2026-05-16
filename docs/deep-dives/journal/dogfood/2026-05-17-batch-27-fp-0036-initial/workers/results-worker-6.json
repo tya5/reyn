@@ -1,0 +1,108 @@
+{
+  "worker": 6,
+  "set_name": "plan_mode + fp_0011",
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "plan tool stripped from tool list (universal_wrappers_enabled=True, _LEGACY_TOOL_NAMES); LLM tried invoke_action(default_api.plan) — wrong path; no plan_emitted event"
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Gemini 400: Duplicate function declaration: list_actions appears in both universal_wrappers AND hot_list_aliases (action_usage from prior run)"
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Same duplicate list_actions error as plan_explain"
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "mcp_search requires --allow-unsafe-python; routing correct (skill invoked), skill failed at preprocessing; anti-optimism held (error surfaced verbatim)"
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Skill spawned correctly; --cui exits before async completion; spawn ack correct (1-2 sentences + /tasks); completion narration unobservable"
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "skill_builder spawned async; spawn ack 1 sentence + /tasks pointer; error narration unobservable (--cui exits before completion)"
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Router invoked skill__skill_eval (hallucinated name, not skill__eval); error surfaced correctly (no score fabricated); wrong skill invoked"
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "mcp_search blocked by --allow-unsafe-python; error surfaced verbatim (anti-optimism holds); empty-candidates path unreachable"
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "D2 PASS: 2-sentence spawn ack with /tasks, 1 invoke_action (no double dispatch); D3 completion narration unobservable (--cui exits before async finish)"
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "mcp_search blocked by --allow-unsafe-python same as narr-1; completion narration unreachable"
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Spawn ack correct (1 sentence + /tasks); error path async narration unobservable in --cui mode"
+    }
+  ],
+  "fix_40_verification": "inconclusive",
+  "fix_40_note": "The _PLAN_PARAMETERS update (invoke_action, reyn.source__read examples) is correctly installed in plan.py, but plan is stripped from LLM tool list under universal_wrappers_enabled=True (_LEGACY_TOOL_NAMES includes plan). No plan_emitted event fired. Fix is syntactically correct but E2E unreachable.",
+  "critical_bugs_found": [
+    {
+      "id": "B1",
+      "desc": "plan tool stripped from router LLM tool list when universal_wrappers_enabled=True; all plan_mode scenarios blocked at tool-visibility layer",
+      "location": "src/reyn/chat/router_tools.py:888 (_LEGACY_TOOL_NAMES)"
+    },
+    {
+      "id": "B2",
+      "desc": "Duplicate function declaration: list_actions appears in both universal_wrappers AND hot_list_aliases when action_usage has list_actions entries; causes Gemini 400 BadRequest",
+      "location": "src/reyn/chat/router_loop.py (hot_list builder) + router_tools.py (wrapper dedup gap)"
+    }
+  ]
+}

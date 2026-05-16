@@ -1,0 +1,62 @@
+{
+  "worker": 5,
+  "set_name": "multi_agent_and_mcp",
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "inconclusive",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": null,
+      "evidence_one_liner": "skill_run_spawned fired but mcp_search failed: --allow-unsafe-python not provided for registry_fetch.py preprocessor"
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "No skill_run_spawned; agent asked for arguments instead of explaining github MCP server not configured"
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "invoke_action(agent.peer__researcher) failed with KeyError: 'request'; no skill_run_spawned; vague error reply"
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "Same KeyError: 'request' on researcher hop; writer hop never reached; no skill_run_spawned"
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "No skill_run_spawned; reply gave generic HTTP ops description, omitted JSON-RPC message/send and specific polling URL"
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "Flat refusal 'I cannot install MCP servers'; no skill_run_spawned; no permission gate mentioned"
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": null,
+      "evidence_one_liner": "Flat refusal 'I do not have access to cron job listing'; no skill_run_spawned; no ops-report skill invoked"
+    }
+  ]
+}

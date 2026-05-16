@@ -1,0 +1,62 @@
+{
+  "worker": 7,
+  "set_name": "long_session_v1",
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "All 5 turns completed; final reply was apology ('cannot answer'); rubric items 1+2 failed; no skill_run_spawned; turns 3-5 blocked by wrong action name (reyn__source__read vs reyn.source__read)"
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turn 1 succeeded (skill list returned); turns 2-6 blocked by Duplicate function declaration: list_actions (hot-list alias collision with universal wrapper)"
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turns 1-2 completed; turns 3-5 blocked by Duplicate function declaration: list_actions; chat-completion criterion failed (3/5 turns produced no reply)"
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turn 1 succeeded; turns 2-6 all blocked by duplicate tool error; G12 attractor untestable due to blocker bug"
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turn 1 partial reply (no asyncio content); turns 2-5 blocked by Duplicate function declaration: list_actions; no producer-consumer queue produced; no skill_run_spawned"
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turn 1 checked wrong ADR path (ADR/index.md not found); turns 2-5 blocked by duplicate tool error"
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Turns 2-4 completed with rich distributed-systems content; turn 1 empty (tool_failed); turn 5 blocked by Duplicate function declaration: list_actions; best survival at 4/5 turns"
+    }
+  ]
+}

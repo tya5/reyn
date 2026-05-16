@@ -1,0 +1,78 @@
+{
+  "worker": 3,
+  "set_name": "control_ir_ops",
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Reply summarised P1-P8 correctly; tool_executed emitted; skill_run_spawned absent (router dispatches directly, not via skill run); no workspace artifacts written"
+    },
+    {
+      "id": "file_glob_grep",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "file__grep has no routing rule; agent replied capability unavailable; rubric criteria (file path + judge_output mention) unmet"
+    },
+    {
+      "id": "web_search_query",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "web_search_started + web_search_completed emitted; reply mentions OpenAI SDK v2.30.0 (March 2026); skill_run_spawned absent; no artifacts"
+    },
+    {
+      "id": "web_fetch_url",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "web_fetch_started emitted; reply is structured Python 3.12 summary with PEPs 695/701/684; skill_run_spawned absent; no artifacts"
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "LLM called non-existent exec__run (routing error); did not retry with suggested exec__sandboxed_exec; no sandboxed_exec events; output 4 not produced"
+    },
+    {
+      "id": "lint_a_skill",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Agent asked confirmation instead of linting; index_events skill not in catalog; no lint_completed event; fresh agent also blocked by dup-tool bug"
+    },
+    {
+      "id": "recall_indexed_source",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Blocked: router crashed with 'Duplicate function declaration found: list_actions' (action_usage.jsonl recorded list_actions as used action; hot-list alias duplicates universal wrapper)"
+    },
+    {
+      "id": "judge_output_direct",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Blocked: same duplicate list_actions infrastructure bug as S7"
+    },
+    {
+      "id": "ask_user_round_trip",
+      "verdict": "blocked",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "evidence_one_liner": "Blocked: same duplicate list_actions infrastructure bug; both turns failed"
+    }
+  ]
+}
