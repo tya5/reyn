@@ -68,8 +68,8 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 
 | Mode | Where | Meaning |
 |------|-------|---------|
-| pure | Python preprocessor | AST-validated, sandboxed builtins, allowed-modules-only imports. |
-| trusted | Python preprocessor | Free Python; requires `--allow-untrusted-python` plus permission grant for **user skills** (`reyn/local/`, `reyn/project/`). **Stdlib skills are auto-trusted** — the flag is not required (the skill is vendored with reyn, not user-supplied). |
+| `safe` | Python preprocessor | AST-validated, sandboxed builtins, allowed-modules-only imports. No extra flag needed. |
+| `unsafe` | Python preprocessor | Free Python; requires `--allow-unsafe-python` at the CLI plus a `permissions.python` entry with `mode: unsafe` in `skill.md`. **Stdlib skills in `mode: unsafe` are auto-trusted** — the flag is still required but no approval prompt fires (the skill is vendored with reyn, not user-supplied). |
 
 ## DO NOT confuse
 

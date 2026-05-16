@@ -98,7 +98,7 @@ permissions:
     unsafe: allow
 ```
 
-…and run with `--allow-untrusted-python`.
+…and run with `--allow-unsafe-python`.
 
 ## What `safe` mode disallows
 
@@ -106,7 +106,7 @@ permissions:
 - `subprocess` and other risky modules
 - Imports outside the curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …)
 
-Extend the allowlist via `reyn.yaml`'s `permissions.python.allowed_modules`.
+Extend the allowlist via `reyn.yaml`'s `python.allowed_modules`.
 
 ## See also
 

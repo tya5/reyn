@@ -45,4 +45,4 @@ LLM-as-judge として `judge_phase` を使用して、ターゲット Skill を
 
 ## ソース
 
-[`src/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/eval/skill.md)
+[`src/reyn/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/eval/skill.md)

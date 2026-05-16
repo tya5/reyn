@@ -29,4 +29,4 @@ reyn run skill_importer "find a markdown summarizer skill"
 
 ## Source
 
-[`src/stdlib/skills/skill_importer/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_importer/skill.md)
+[`src/reyn/stdlib/skills/skill_importer/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_importer/skill.md)

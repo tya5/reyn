@@ -34,7 +34,7 @@ Two ways to pre-approve:
    permissions:
      python:
        safe: allow
-       unsafe: allow   # also requires --allow-untrusted-python
+       unsafe: allow   # also requires --allow-unsafe-python
    ```
 
 Without prior approval, the target's run fails and the case is reported as not-finished.
@@ -45,4 +45,4 @@ Without prior approval, the target's run fails and the case is reported as not-f
 
 ## Source
 
-[`src/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/eval/skill.md)
+[`src/reyn/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/eval/skill.md)

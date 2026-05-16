@@ -473,6 +473,6 @@ The OS injects available ops into every context frame as `available_control_ops`
 
 ## See also
 
-- [run.md](../cli/run.md) — `--allow-shell`, `--allow-untrusted-python`
+- [run.md](../cli/run.md) — `--allow-shell`, `--allow-unsafe-python`
 - [events.md](events.md) — events emitted per op kind
 - [Concepts: principles P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)

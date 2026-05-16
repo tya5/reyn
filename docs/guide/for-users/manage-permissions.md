@@ -67,7 +67,7 @@ permissions:
   file.write: allow
   python:
     safe: allow
-    unsafe: allow      # also requires --allow-untrusted-python at runtime
+    unsafe: allow      # also requires --allow-unsafe-python at runtime
 ```
 
 `allow` removes the prompt entirely. `ask` (default) prompts. `deny` rejects.

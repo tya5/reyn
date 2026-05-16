@@ -30,14 +30,13 @@ applies_to: [skill_improver]
 ## 要件
 
 - 対象 Skill に `eval.md` スペックが必要です。
-- improver がサブプロセスを呼び出す場合は `--allow-shell` が必要になることがあります。
 
 ## 例
 
 ```bash
-reyn run skill_improver "improve my_explainer" --allow-shell
+reyn run skill_improver "improve my_explainer"
 ```
 
 ## ソース
 
-[`src/stdlib/skills/skill_improver/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_improver/skill.md)
+[`src/reyn/stdlib/skills/skill_improver/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_improver/skill.md)

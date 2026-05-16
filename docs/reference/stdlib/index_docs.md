@@ -39,4 +39,4 @@ reyn run index_docs '{"source":"my_docs","path":"docs/**/*.md","description":"My
 
 ## Source
 
-[`src/stdlib/skills/index_docs/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/index_docs/skill.md)
+[`src/reyn/stdlib/skills/index_docs/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/index_docs/skill.md)
