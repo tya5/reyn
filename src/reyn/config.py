@@ -17,9 +17,59 @@ models dict: shallow merge — each key overrides independently.
 """
 from __future__ import annotations
 
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+
+def _default_agent_id() -> str:
+    """Compute the default agent_id used when reyn.yaml ``agent.id`` is unset.
+
+    Format: ``reyn/<hostname>``. Pure function so the default is
+    inspectable / overridable in tests via the same call site.
+    """
+    return f"reyn/{socket.gethostname()}"
+
+
+@dataclass
+class AgentConfig:
+    """``agent:`` — runtime agent identity for audit trail + HTTP propagation.
+
+    FP-0016 Component E. The ``id`` value is stamped onto every P6 event
+    payload (via ``EventLog`` auto-injection) and is added as the
+    ``X-Reyn-Agent-Id`` header on outgoing MCP / A2A / external HTTP
+    requests. Default ``reyn/<hostname>`` so a fresh install has a usable
+    identity without operator action; override in reyn.yaml when running
+    multi-agent fleets or enterprise deployments that need a stable
+    per-role identifier.
+    """
+
+    id: str = field(default_factory=_default_agent_id)
+
+
+def _build_agent_config(raw: object) -> AgentConfig:
+    """Parse ``agent:`` from reyn.yaml.
+
+    ``None`` / missing block / empty dict → default (= ``reyn/<hostname>``).
+    Empty string ``id:`` also falls back to default so operators who
+    leave the field blank don't end up with an empty agent_id leaking
+    into events / headers.
+    """
+    if raw is None:
+        return AgentConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"agent must be a mapping, got {type(raw).__name__}"
+        )
+    raw_id = raw.get("id")
+    if raw_id is None or raw_id == "":
+        return AgentConfig()
+    if not isinstance(raw_id, str):
+        raise ValueError(
+            f"agent.id must be a string, got {type(raw_id).__name__}"
+        )
+    return AgentConfig(id=raw_id)
 
 
 @dataclass
@@ -1024,6 +1074,11 @@ class ReynConfig:
     skill_search: SkillSearchConfig = field(default_factory=SkillSearchConfig)
     # Python preprocessor step settings.
     python: PythonConfig = field(default_factory=PythonConfig)
+    # FP-0016 Component E — agent identity for audit trail + HTTP header
+    # propagation. Default `reyn/<hostname>` when reyn.yaml has no
+    # `agent:` block. Read by ChatSession to construct its EventLog and
+    # by mcp_client.MCPClient for the X-Reyn-Agent-Id header.
+    agent: AgentConfig = field(default_factory=AgentConfig)
     # Chat-session settings (compaction, etc.)
     chat: ChatConfig = field(default_factory=ChatConfig)
     # Audit-log rotation policy (PR20).
@@ -1326,6 +1381,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         mcp=dict(merged.get("mcp") or {}),
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
+        agent=_build_agent_config(merged.get("agent")),
         chat=_build_chat_config(merged.get("chat")),
         events=_build_events_config(merged.get("events")),
         cost=cost,

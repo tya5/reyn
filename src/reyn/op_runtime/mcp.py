@@ -38,7 +38,9 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
 
     if op.server not in ctx.mcp_clients:
         try:
-            ctx.mcp_clients[op.server] = MCPClient(expanded)
+            # FP-0016 E: thread agent_id so X-Reyn-Agent-Id is added to
+            # outgoing MCP HTTP requests.
+            ctx.mcp_clients[op.server] = MCPClient(expanded, agent_id=ctx.agent_id)
         except ValueError as exc:
             return {"kind": "mcp", "status": "error", "server": op.server,
                     "tool": op.tool, "error": str(exc)}

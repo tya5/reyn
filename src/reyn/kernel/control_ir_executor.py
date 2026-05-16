@@ -275,6 +275,10 @@ class ControlIRExecutor:
             # FP-0021: thread the OSRuntime run_id into every OpContext
             # so event emit helpers can stamp the correct run scope.
             run_id=self._run_id,
+            # FP-0016 E: pick up agent_id from the EventLog (= populated
+            # at session level) so X-Reyn-Agent-Id is added to outgoing
+            # MCP HTTP calls dispatched from control-IR ops.
+            agent_id=getattr(self.events, "agent_id", None),
             # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
             sandbox_config=self._sandbox_config,
         )

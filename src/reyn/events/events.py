@@ -11,18 +11,44 @@ logger = logging.getLogger(__name__)
 
 
 class EventLog:
-    def __init__(self, subscribers: list[Callable[[Event], None]] | None = None) -> None:
+    def __init__(
+        self,
+        subscribers: list[Callable[[Event], None]] | None = None,
+        *,
+        agent_id: str | None = None,
+    ) -> None:
         self._events: list[Event] = []
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
+        # FP-0016 Component E: agent_id is auto-injected into every event
+        # payload when set. None preserves prior behaviour for callers
+        # (= tests + emit_cli_event) that don't have a session identity.
+        self._agent_id = agent_id
 
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
         return self._subscribers
 
+    @property
+    def agent_id(self) -> str | None:
+        """The agent_id this EventLog stamps onto emitted events (FP-0016 E).
+
+        Public read-only view of the constructor-injected agent_id so
+        downstream consumers (= kernel executors building OpContext) can
+        pick it up without a separate threading parameter.
+        """
+        return self._agent_id
+
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 
     def emit(self, type: str, **data) -> Event:
+        # FP-0016 Component E: stamp the session's agent_id onto every
+        # event payload so the P6 audit trail can answer "which agent
+        # did this?" without correlating across multiple logs.  Caller-
+        # provided ``agent_id`` wins (= delegation flows may preserve
+        # the upstream origin's identity).
+        if self._agent_id and "agent_id" not in data:
+            data = {**data, "agent_id": self._agent_id}
         event = Event(type=type, data=data)
         self._events.append(event)
         for sub in self._subscribers:

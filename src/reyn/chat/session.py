@@ -497,6 +497,7 @@ class ChatSession:
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
         eager_embedding_build: bool = False,
+        agent_id: str | None = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -525,6 +526,14 @@ class ChatSession:
         # search_actions wrapper is visible to the LLM from the very first
         # call. Default False keeps the existing lazy background-build path.
         self._eager_embedding_build = eager_embedding_build
+        # FP-0016 Component E: agent_id flows from reyn.yaml `agent.id`
+        # (= ReynConfig.agent.id) via the session factory. Falls back to
+        # `reyn/<hostname>` when callers (= old tests) don't pass one so
+        # there's always a non-empty identifier for events / headers.
+        if agent_id is None:
+            from reyn.config import _default_agent_id
+            agent_id = _default_agent_id()
+        self._agent_id: str = agent_id
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has
         # configured ``action_retrieval.embedding_class``.  Both stay
@@ -684,7 +693,10 @@ class ChatSession:
             max_bytes=self._events_config.max_bytes,
             max_age_seconds=self._events_config.max_age_seconds,
         )
-        self._chat_events = EventLog(subscribers=[self._event_store])
+        self._chat_events = EventLog(
+            subscribers=[self._event_store],
+            agent_id=self._agent_id,  # FP-0016 E: auto-inject agent_id into every event
+        )
 
         # PR-refactor-session-1 wave 3 PR1: per-session budget adapter.
         # Absorbs total_usage / total_cost_usd / router-cap state that
@@ -2711,6 +2723,7 @@ class ChatSession:
             skill_name="chat_router",
             mcp_servers=self._mcp_servers_flat(),
             run_id=None,  # FP-0021: chat router is outside run scope
+            agent_id=self._agent_id,  # FP-0016 E
         )
 
     async def _file_op(self, op_dict: dict) -> dict:
@@ -2944,7 +2957,7 @@ class ChatSession:
             expanded = {**expanded, "type": "http"}
 
         try:
-            client = MCPClient(expanded)
+            client = MCPClient(expanded, agent_id=self._agent_id)
             tools = await client.list_tools()
             await client.close()
             return tools
