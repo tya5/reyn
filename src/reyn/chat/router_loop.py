@@ -208,6 +208,20 @@ class RouterLoopHost(Protocol):
         """
         ...
 
+    def get_sandbox_backend(self) -> "str | None":
+        """Return the configured sandbox backend name, or None.
+
+        FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
+        (resolved from ``session._sandbox_config.backend``).  RouterLoop
+        forwards this into ``RouterCallerState.sandbox_backend`` so the
+        ``exec`` category D14 visibility gate in
+        ``universal_catalog._enumerate_category`` can decide whether to
+        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        hide the category; any other value (``"seatbelt"`` /
+        ``"landlock"`` / ``"auto"``) makes it visible.
+        """
+        ...
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
@@ -1096,6 +1110,12 @@ class RouterLoop:
             ),
             embedding_model_class=(
                 getattr(self.host, "get_embedding_model_class", lambda: None)()
+            ),
+            # FP-0034 Phase 2: sandbox backend name for exec D14 gate.
+            # getattr fallback so narrow hosts (= FakeRouterHost, plan-step
+            # host) without this method default to None, hiding exec category.
+            sandbox_backend=(
+                getattr(self.host, "get_sandbox_backend", lambda: None)()
             ),
         )
 

@@ -72,7 +72,9 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.plan import PLAN
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
+    from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.shell import SHELL
+
     # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
     # not yet added to router build_tools() — that lands in PR-3b).
     from reyn.tools.universal_catalog import (
@@ -115,6 +117,7 @@ def get_default_registry() -> ToolRegistry:
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
     # ── Phase-only capabilities (gates.router=deny, gates.phase=allow) ──
+    registry.register(SANDBOXED_EXEC)
     registry.register(SHELL)
     registry.register(LINT)
     registry.register(ASK_USER)

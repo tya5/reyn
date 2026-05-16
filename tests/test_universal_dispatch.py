@@ -202,16 +202,16 @@ def test_unknown_action_error_unknown_category() -> None:
     assert exc_info.value.action_name == "nonexistent__entry"
 
 
-def test_unknown_action_error_no_rule_for_known_category() -> None:
-    """Tier 2: known category but no rule (e.g. exec, mcp.operation) raises.
+def test_unknown_action_error_no_rule_for_unknown_entry() -> None:
+    """Tier 2: known category with an unknown entry raises UnknownActionError.
 
-    mcp.operation and exec are valid categories but PR-2 has no routing
-    rules for them yet (PR-4 / future PR). Resolve should raise with a
-    clear reason mentioning the missing rule.
+    exec__sandboxed_exec now has a routing rule (FP-0034 Phase 2), so
+    use a genuinely unknown entry within the exec category to verify the
+    error path still works.
     """
     with pytest.raises(UnknownActionError) as exc_info:
-        resolve_invoke_action("exec__sandboxed_exec", {})
-    assert exc_info.value.action_name == "exec__sandboxed_exec"
+        resolve_invoke_action("exec__unknown_op", {})
+    assert exc_info.value.action_name == "exec__unknown_op"
     assert "exec" in exc_info.value.reason or "rule" in exc_info.value.reason
 
 
@@ -320,12 +320,11 @@ def test_known_static_names_is_sorted_and_deduped() -> None:
     assert len(set(names)) == len(names)
 
 
-def test_known_static_names_covers_seven_operation_categories() -> None:
+def test_known_static_names_covers_all_operation_categories() -> None:
     """Tier 2: statically-routed operation categories cover §D11 baseline.
 
     file / web / memory.operation / reyn.source / rag.operation /
-    mcp.operation (PR-4) are fully routed. ``exec`` enumeration is
-    deferred to Phase 2 (= sandbox-backed introspection).
+    mcp.operation (PR-4) / exec (FP-0034 Phase 2) are all fully routed.
     """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
     # file (4 ops)
@@ -369,17 +368,15 @@ def test_known_static_names_includes_mcp_operation_drop_server() -> None:
     assert "mcp.operation__drop_server" in KNOWN_STATIC_QUALIFIED_NAMES
 
 
-def test_known_static_names_excludes_exec_pending_category() -> None:
-    """Tier 2: exec has no static entries yet (= sandboxed_exec PR pending).
+def test_known_static_names_includes_exec_sandboxed_exec() -> None:
+    """Tier 2: exec__sandboxed_exec is in the static catalogue (FP-0034 Phase 2).
 
-    mcp.operation is no longer excluded after PR-4 landed drop_server.
+    FP-0034 Phase 2 landed the exec route; exec__sandboxed_exec is now
+    in _OPERATION_RULES and therefore in KNOWN_STATIC_QUALIFIED_NAMES.
+    D14 visibility gating (= hide when sandbox_backend is None/noop)
+    happens at the catalog enumeration layer, not here.
     """
-    names = set(KNOWN_STATIC_QUALIFIED_NAMES)
-    matches = [n for n in names if n.startswith("exec__")]
-    assert matches == [], (
-        f"exec__ should have no static entries until sandboxed_exec "
-        f"integration lands; found {matches}"
-    )
+    assert "exec__sandboxed_exec" in KNOWN_STATIC_QUALIFIED_NAMES
 
 
 def test_known_qualified_name_for_category() -> None:
@@ -390,8 +387,8 @@ def test_known_qualified_name_for_category() -> None:
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()
-    # exec is still pending (= future PR)
-    assert known_qualified_name_for_category("exec") == ()
+    # exec now has sandboxed_exec (FP-0034 Phase 2)
+    assert known_qualified_name_for_category("exec") == ("exec__sandboxed_exec",)
     # mcp.operation now has drop_server (PR-4)
     assert known_qualified_name_for_category("mcp.operation") == (
         "mcp.operation__drop_server",

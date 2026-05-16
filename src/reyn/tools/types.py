@@ -179,6 +179,14 @@ class RouterCallerState:
     embedding_provider: Any = None
     embedding_model_class: str | None = None
 
+    # FP-0034 Phase 2: sandbox backend name for the exec category
+    # D14 visibility gate.  RouterLoop binds this from
+    # ``session._sandbox_config.backend`` so ``list_actions(category=
+    # ["exec"])`` returns ``exec__sandboxed_exec`` when a real backend
+    # is configured (= not "noop" / not None).  ``None`` = sandbox not
+    # configured or noop backend; exec category stays hidden.
+    sandbox_backend: str | None = None
+
 
 @dataclass
 class PhaseCallerState:

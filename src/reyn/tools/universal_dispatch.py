@@ -262,8 +262,8 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     # mcp_drop_server op_runtime handler.
     "mcp.operation__drop_server": ("mcp_drop_server", _passthrough_args),
 
-    # exec category — sandboxed_exec lands in a future PR
-    # (= FP-0017 op_runtime integration). PR-2 omits the route.
+    # exec category (FP-0017 sandboxed_exec, D14 visibility gating).
+    "exec__sandboxed_exec": ("sandboxed_exec", _passthrough_args),
 }
 
 
@@ -435,8 +435,9 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
     rag.operation / mcp.operation / exec) return the qualified names
     this module has routing rules for. ``mcp.operation`` returns
     ``("mcp.operation__drop_server",)`` (= PR-4 landed). ``exec``
-    returns ``()`` because ``sandboxed_exec`` enumeration is a future
-    Phase 2 task (= depends on sandbox-backend introspection).
+    returns ``("exec__sandboxed_exec",)`` — the route is now wired
+    (FP-0034 Phase 2); D14 visibility gating stays in the catalog
+    enumeration layer (``_enumerate_category`` checks sandbox_backend).
     """
     if category not in CATEGORIES:
         raise ValueError(

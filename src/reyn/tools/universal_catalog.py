@@ -576,7 +576,24 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             })
         return out2
 
-    # exec — Phase 2 will populate via sandbox-backed introspection.
+    # exec category — sandboxed_exec (FP-0017).
+    # Visible only when a real sandbox backend is configured (D14-ext).
+    # RouterCallerState.sandbox_backend carries the backend name (None = noop).
+    if category == "exec":
+        if rs is None:
+            return []
+        backend = getattr(rs, "sandbox_backend", None)
+        if not is_exec_available(sandbox_backend=backend):
+            return []
+        return [
+            {
+                "qualified_name": "exec__sandboxed_exec",
+                "short_description": (
+                    "Execute a command in a sandboxed environment."
+                ),
+            }
+        ]
+
     return []
 
 

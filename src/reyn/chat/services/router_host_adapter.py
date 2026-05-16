@@ -161,6 +161,12 @@ class RouterHostAdapter:
         action_embedding_index: Any = None,
         embedding_provider: Any = None,
         embedding_model_class: str | None = None,
+        # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
+        # gate. Passed from ``session._sandbox_config.backend`` so the
+        # universal catalog ``_enumerate_category("exec")`` can decide
+        # whether to expose ``exec__sandboxed_exec``. Default None hides
+        # the exec category (= noop / no sandbox configured).
+        sandbox_backend: str | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -206,6 +212,8 @@ class RouterHostAdapter:
         self._action_embedding_index = action_embedding_index
         self._embedding_provider = embedding_provider
         self._embedding_model_class = embedding_model_class
+        # FP-0034 Phase 2
+        self._sandbox_backend = sandbox_backend
 
     # --- RouterLoopHost identity attributes ---
 
@@ -337,6 +345,20 @@ class RouterHostAdapter:
         the LLM addresses everything through the 3 universal wrappers.
         """
         return self._hide_legacy_tools
+
+    def get_sandbox_backend(self) -> str | None:
+        """Return the configured sandbox backend name, or None.
+
+        FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
+        (resolved via ``session._sandbox_config.backend``).  RouterLoop
+        forwards this into ``RouterCallerState.sandbox_backend`` so the
+        exec category D14 visibility gate in
+        ``universal_catalog._enumerate_category`` can decide whether to
+        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        hide the exec category; any other value (``"seatbelt"`` /
+        ``"landlock"`` / ``"auto"``) makes it visible.
+        """
+        return self._sandbox_backend
 
     # --- Web ops ---
 

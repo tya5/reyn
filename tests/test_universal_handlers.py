@@ -641,3 +641,158 @@ def test_describe_action_via_registry_returns_target_meta() -> None:
     assert result["qualified_name"] == "web__search"
     assert result["metadata"]["target_tool_name"] == "web_search"
     assert result["metadata"]["category"]  # non-empty
+
+
+# ── FP-0034 Phase 2: exec category enumeration + dispatch ─────────────────
+
+
+def test_exec_enumerable_when_sandbox_configured() -> None:
+    """Tier 2: exec__sandboxed_exec appears in list_actions when sandbox backend is set.
+
+    D14-ext visibility gate: when RouterCallerState.sandbox_backend is a
+    real backend name (not 'noop' / None), the exec category returns
+    exec__sandboxed_exec in list_actions output.
+    """
+    rs = RouterCallerState(sandbox_backend="seatbelt")
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["exec"]}, _make_ctx(rs),
+    ))
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert "exec__sandboxed_exec" in qns
+    assert result["total"] == 1
+    # short_description must be a non-empty string
+    for item in result["items"]:
+        assert isinstance(item["short_description"], str)
+        assert item["short_description"]
+
+
+def test_exec_enumerable_when_sandbox_landlock() -> None:
+    """Tier 2: exec category is visible with any real backend name.
+
+    Both 'seatbelt' and 'landlock' are real backends per §D14-ext.
+    """
+    rs = RouterCallerState(sandbox_backend="landlock")
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["exec"]}, _make_ctx(rs),
+    ))
+    assert result["total"] == 1
+    assert result["items"][0]["qualified_name"] == "exec__sandboxed_exec"
+
+
+def test_exec_hidden_when_sandbox_noop() -> None:
+    """Tier 2: exec category returns empty when sandbox_backend is 'noop'.
+
+    D14-ext: noop backend means no real enforcement; exec stays hidden
+    so the LLM does not attempt sandboxed_exec without isolation.
+    """
+    rs = RouterCallerState(sandbox_backend="noop")
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["exec"]}, _make_ctx(rs),
+    ))
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
+def test_exec_hidden_when_sandbox_backend_none() -> None:
+    """Tier 2: exec category returns empty when sandbox_backend is None.
+
+    D14-ext: None = not configured; exec stays hidden.
+    """
+    rs = RouterCallerState(sandbox_backend=None)
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["exec"]}, _make_ctx(rs),
+    ))
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
+def test_exec_hidden_when_no_router_state() -> None:
+    """Tier 2: exec category returns empty without router_state.
+
+    When ctx.router_state is None, exec category defaults to empty
+    (= cannot determine sandbox backend = treat as noop).
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["exec"]}, _make_ctx(),
+    ))
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
+def test_exec_dispatch_routes_to_sandboxed_exec() -> None:
+    """Tier 2: invoke_action('exec__sandboxed_exec', ...) resolves to sandboxed_exec op.
+
+    Verifies the routing layer contract: exec__sandboxed_exec maps to
+    the 'sandboxed_exec' ToolDefinition via _OPERATION_RULES. The
+    actual handler invocation is covered separately; this test pins
+    the routing decision alone (pure-function layer, no I/O).
+    """
+    from reyn.tools.universal_dispatch import resolve_invoke_action
+    resolved = resolve_invoke_action(
+        "exec__sandboxed_exec",
+        {"argv": ["echo", "hello"]},
+    )
+    assert resolved.target_tool_name == "sandboxed_exec"
+    # passthrough transformer — args forwarded unchanged
+    assert resolved.target_args == {"argv": ["echo", "hello"]}
+
+
+def test_exec_sandboxed_exec_in_registry() -> None:
+    """Tier 2: sandboxed_exec ToolDefinition is in get_default_registry().
+
+    The routing layer resolves exec__sandboxed_exec to 'sandboxed_exec';
+    that target must exist in the default registry so describe_action /
+    invoke_action can find it.
+    """
+    registry = get_default_registry()
+    td = registry.lookup("sandboxed_exec")
+    assert td is not None, "sandboxed_exec must be in the default registry"
+    assert td.name == "sandboxed_exec"
+    # Both router and phase callable (exec is a side-effect op usable
+    # from phase Control IR as well as the router's universal wrapper).
+    assert td.gates.router == "allow"
+    assert td.gates.phase == "allow"
+
+
+def test_exec_describe_action_returns_sandboxed_exec_schema() -> None:
+    """Tier 2: describe_action('exec__sandboxed_exec') returns the sandboxed_exec schema.
+
+    End-to-end: describe_action resolves the routing target via the
+    registry and returns its description + input_schema.
+    """
+    result = _run(DESCRIBE_ACTION.handler(
+        {"action_name": "exec__sandboxed_exec"}, _make_ctx(),
+    ))
+    assert result["qualified_name"] == "exec__sandboxed_exec"
+    assert result["metadata"]["target_tool_name"] == "sandboxed_exec"
+    # argv is a required field in the sandboxed_exec schema
+    props = result["input_schema"].get("properties", {})
+    assert "argv" in props
+    required = result["input_schema"].get("required", [])
+    assert "argv" in required
+
+
+def test_list_actions_all_categories_exec_hidden_by_default() -> None:
+    """Tier 2: list_actions() with no category filter hides exec without sandbox.
+
+    The exec category should NOT appear in the default (no-sandbox)
+    enumeration because RouterCallerState has sandbox_backend=None.
+    """
+    rs = RouterCallerState(sandbox_backend=None)
+    result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
+    qns = [it["qualified_name"] for it in result["items"]]
+    assert not any(qn.startswith("exec__") for qn in qns), (
+        f"exec__ entries should be hidden when sandbox_backend=None; got {qns}"
+    )
+
+
+def test_list_actions_all_categories_exec_visible_with_sandbox() -> None:
+    """Tier 2: list_actions() with no filter includes exec when sandbox is real.
+
+    When RouterCallerState.sandbox_backend is a real backend, the exec
+    category is included in the unrestricted enumeration.
+    """
+    rs = RouterCallerState(sandbox_backend="seatbelt")
+    result = _run(LIST_ACTIONS.handler({}, _make_ctx(rs)))
+    qns = [it["qualified_name"] for it in result["items"]]
+    assert "exec__sandboxed_exec" in qns

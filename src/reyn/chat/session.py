@@ -39,7 +39,14 @@ from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import ActionRetrievalConfig, EmbeddingConfig, EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
+from reyn.config import (  # noqa: F401
+    ActionRetrievalConfig,
+    EmbeddingConfig,
+    EventsConfig,
+    OnLimitConfig,
+    SafetyConfig,
+    SandboxConfig,
+)
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -795,6 +802,12 @@ class ChatSession:
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,
+            # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
+            # None when sandbox_config is None (= noop assumed).
+            sandbox_backend=(
+                self._sandbox_config.backend if self._sandbox_config is not None
+                else None
+            ),
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.
