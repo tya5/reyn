@@ -1,4 +1,4 @@
-"""OAuth token lifecycle — FP-0016 Component B.
+"""OAuth token lifecycle — FP-0016 Component B + C.
 
 Adds value-typed OAuth credentials on top of the existing flat
 ``secrets.env`` static-key store. The tokens live in
@@ -29,6 +29,7 @@ import json
 import os
 import stat
 import warnings
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -438,3 +439,320 @@ async def get_valid_token(
             except Exception:  # noqa: BLE001 — emit failure must not break refresh
                 pass
         return new_token.access_token
+
+
+# ── RFC 8628 Device Authorization Grant (Component C) ──────────────────────
+
+# Default polling interval when the server does not specify one (RFC 8628
+# §3.2 recommends 5 s as the minimum).
+_DEVICE_POLL_INTERVAL_DEFAULT = 5.0
+
+# Default token lifetime when the server omits expires_in (30 minutes,
+# the example value from RFC 8628 §3.2).
+_DEVICE_EXPIRES_IN_DEFAULT = 1800
+
+# Number of seconds added to the poll interval on a slow_down response
+# (RFC 8628 §3.5 mandates "at least 5 seconds").
+_SLOW_DOWN_INCREMENT = 5.0
+
+# HTTP POST timeout for device-grant endpoints (generous; auth servers are
+# typically fast but enterprise proxies can add latency).
+_DEVICE_HTTP_TIMEOUT = 15.0
+
+
+@dataclass
+class OAuthProviderConfig:
+    """OAuth 2.0 provider configuration for RFC 8628 device authorization grant.
+
+    Operators define one per provider in reyn.yaml ``auth.providers.<name>``.
+    """
+
+    name: str  # provider 名 (= "github", "google", "acme")、display 用
+    client_id: str  # provider 側で発行された OAuth client ID
+    device_authorization_url: str  # POST 先 — device_code 発行 endpoint
+    token_url: str  # POST 先 — access_token polling endpoint
+    scopes: list[str] = field(default_factory=list)  # OAuth scope strings
+    client_secret: str | None = None  # 公開 client (= installed app) では省略可
+    audience: str | None = None  # Auth0 等の API audience 識別子 (optional)
+
+
+class DeviceGrantError(RuntimeError):
+    """Device grant 失敗 (= access_denied / expired_token / 不正 response)."""
+
+    def __init__(self, message: str, *, error_code: str | None = None) -> None:
+        super().__init__(message)
+        self.error_code = error_code  # RFC 8628 §3.5 error_code (= access_denied 等)
+
+
+async def _post_device_authorization(
+    provider: OAuthProviderConfig,
+    http_client: Any,
+) -> dict[str, Any]:
+    """POST to the device_authorization_url and return the parsed JSON body.
+
+    RFC 8628 §3.1: the request carries ``client_id`` and optionally ``scope``
+    (space-separated). Returns the JSON object including ``device_code``,
+    ``user_code``, ``verification_uri``, ``expires_in``, and ``interval``.
+    """
+    import httpx
+
+    payload: dict[str, str] = {"client_id": provider.client_id}
+    if provider.scopes:
+        payload["scope"] = " ".join(provider.scopes)
+
+    resp = await http_client.post(
+        provider.device_authorization_url,
+        data=payload,
+        headers={"Accept": "application/json"},
+    )
+    if resp.status_code >= 400:
+        raise DeviceGrantError(
+            f"Device authorization endpoint returned HTTP {resp.status_code} "
+            f"for provider {provider.name!r}.",
+            error_code="device_authorization_failed",
+        )
+    try:
+        return resp.json()  # type: ignore[no-any-return]
+    except ValueError as exc:
+        raise DeviceGrantError(
+            f"Device authorization endpoint returned non-JSON body: {exc}",
+            error_code="device_authorization_failed",
+        ) from exc
+
+
+async def _poll_token(
+    provider: OAuthProviderConfig,
+    device_code: str,
+    http_client: Any,
+) -> tuple[int, dict[str, Any]]:
+    """POST to the token_url and return (status_code, parsed_body).
+
+    Body per RFC 8628 §3.4: ``grant_type``, ``device_code``, ``client_id``
+    (+ optional ``client_secret`` and ``audience``). We return the raw status
+    code so the caller can implement the RFC 8628 §3.5 polling state machine
+    without re-parsing.
+    """
+    payload: dict[str, str] = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        "device_code": device_code,
+        "client_id": provider.client_id,
+    }
+    if provider.client_secret:
+        payload["client_secret"] = provider.client_secret
+    if provider.audience:
+        payload["audience"] = provider.audience
+
+    resp = await http_client.post(
+        provider.token_url,
+        data=payload,
+        headers={"Accept": "application/json"},
+    )
+    try:
+        body: dict[str, Any] = resp.json()
+    except ValueError:
+        body = {}
+    return resp.status_code, body
+
+
+def _parse_token_success(
+    body: dict[str, Any],
+    *,
+    provider: OAuthProviderConfig,
+) -> OAuthToken:
+    """Build an OAuthToken from a successful RFC 8628 token response body."""
+    access_token = body.get("access_token")
+    if not access_token:
+        raise DeviceGrantError(
+            "Token endpoint success response missing 'access_token'.",
+            error_code="invalid_response",
+        )
+    refresh_token: str = body.get("refresh_token") or ""
+    expires_in = body.get("expires_in")
+    if not isinstance(expires_in, int) or expires_in <= 0:
+        expires_in = _DEVICE_EXPIRES_IN_DEFAULT
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    raw_scope = body.get("scope")
+    if isinstance(raw_scope, str) and raw_scope.strip():
+        scopes = raw_scope.split()
+    else:
+        scopes = list(provider.scopes)
+    return OAuthToken(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_uri=provider.token_url,
+        client_id=provider.client_id,
+        expires_at=expires_at,
+        scopes=scopes,
+        client_secret=provider.client_secret,
+    )
+
+
+async def device_grant_flow(
+    provider: OAuthProviderConfig,
+    *,
+    events: Any = None,  # EventLog | None
+    http_client: Any = None,  # httpx.AsyncClient | None
+    on_user_action: Callable[[dict], None] | None = None,
+    poll_interval_override: float | None = None,  # for tests
+    deadline_override: float | None = None,  # max wall-clock seconds (for tests)
+) -> OAuthToken:
+    """RFC 8628 Device Authorization Grant flow.
+
+    Steps:
+    1. POST provider.device_authorization_url with client_id + scope
+       → response has device_code, user_code, verification_uri,
+         verification_uri_complete (optional), interval (default 5s),
+         expires_in (default 1800s = 30 min)
+    2. Display user_code + verification_uri to user via on_user_action
+       callback (= CLI subprocess prints them). When callback is None,
+       fall back to print() to stdout.
+    3. Emit oauth_login_started event (key=provider.name, device_code
+       last 4 chars only for security, verification_uri, expires_at).
+    4. Poll provider.token_url with grant_type=
+       urn:ietf:params:oauth:grant-type:device_code, client_id,
+       device_code (and client_secret + audience if set):
+       - HTTP 200 with access_token → SUCCESS: parse and return
+         OAuthToken, emit oauth_login_completed.
+       - HTTP 400 with error=authorization_pending → user has not yet
+         approved; wait interval seconds, poll again.
+       - HTTP 400 with error=slow_down → server says back off; add 5s
+         to interval, poll again.
+       - HTTP 400 with error=access_denied → user denied; raise
+         DeviceGrantError(error_code="access_denied").
+       - HTTP 400 with error=expired_token → device code expired;
+         raise DeviceGrantError(error_code="expired_token").
+       - Other HTTP error → raise DeviceGrantError(error_code=
+         response_error_code).
+    5. After expires_in seconds without success → raise
+       DeviceGrantError(error_code="timeout").
+    """
+    import httpx
+
+    owns_client = http_client is None
+    if owns_client:
+        http_client = httpx.AsyncClient(timeout=_DEVICE_HTTP_TIMEOUT)
+
+    try:
+        # ── Step 1: request device_code ──────────────────────────────────
+        auth_resp = await _post_device_authorization(provider, http_client)
+
+        device_code: str = auth_resp.get("device_code", "")
+        user_code: str = auth_resp.get("user_code", "")
+        verification_uri: str = auth_resp.get("verification_uri", "")
+        # verification_uri_complete is optional (RFC 8628 §3.2); pass it
+        # through to on_user_action so CLI can display a clickable link.
+        verification_uri_complete: str | None = auth_resp.get(
+            "verification_uri_complete"
+        )
+        expires_in: int = int(auth_resp.get("expires_in", _DEVICE_EXPIRES_IN_DEFAULT))
+        server_interval: float = float(
+            auth_resp.get("interval", _DEVICE_POLL_INTERVAL_DEFAULT)
+        )
+        poll_interval: float = (
+            poll_interval_override
+            if poll_interval_override is not None
+            else server_interval
+        )
+        deadline_seconds: float = (
+            deadline_override if deadline_override is not None else float(expires_in)
+        )
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+
+        # ── Step 2: notify user ──────────────────────────────────────────
+        user_action_data: dict[str, Any] = {
+            "user_code": user_code,
+            "verification_uri": verification_uri,
+        }
+        if verification_uri_complete:
+            user_action_data["verification_uri_complete"] = verification_uri_complete
+
+        if on_user_action is not None:
+            on_user_action(user_action_data)
+        else:
+            print(f"Visit: {verification_uri}")
+            print(f"Enter code: {user_code}")
+            if verification_uri_complete:
+                print(f"Or open: {verification_uri_complete}")
+
+        # ── Step 3: emit oauth_login_started (P6) ───────────────────────
+        # Log only the last 4 chars of device_code for security.
+        device_code_tail = device_code[-4:] if len(device_code) >= 4 else device_code
+        if events is not None:
+            try:
+                events.emit(
+                    "oauth_login_started",
+                    key=provider.name,
+                    provider=provider.name,
+                    device_code=device_code_tail,
+                    verification_uri=verification_uri,
+                    expires_at=expires_at.isoformat(),
+                )
+            except Exception:  # noqa: BLE001 — emit failure must not break flow
+                pass
+
+        # ── Step 4: poll loop (wrapped in deadline) ──────────────────────
+        async def _poll_loop() -> OAuthToken:
+            nonlocal poll_interval
+            while True:
+                await asyncio.sleep(poll_interval)
+                status, body = await _poll_token(provider, device_code, http_client)
+
+                if status == 200 and body.get("access_token"):
+                    # SUCCESS path.
+                    return _parse_token_success(body, provider=provider)
+
+                error_code: str = body.get("error", "")
+
+                if status == 400 and error_code == "authorization_pending":
+                    # Normal — user has not yet approved; keep waiting.
+                    continue
+                elif status == 400 and error_code == "slow_down":
+                    # Server instructs us to back off.
+                    poll_interval += _SLOW_DOWN_INCREMENT
+                    continue
+                elif status == 400 and error_code == "access_denied":
+                    raise DeviceGrantError(
+                        f"User denied the {provider.name!r} authorization request.",
+                        error_code="access_denied",
+                    )
+                elif status == 400 and error_code == "expired_token":
+                    raise DeviceGrantError(
+                        f"Device code for {provider.name!r} has expired.",
+                        error_code="expired_token",
+                    )
+                else:
+                    # Unexpected status or error — surface verbatim.
+                    detail = error_code or f"HTTP {status}"
+                    raise DeviceGrantError(
+                        f"Unexpected polling response from {provider.name!r}: "
+                        f"{detail}.",
+                        error_code=error_code or None,
+                    )
+
+        try:
+            token = await asyncio.wait_for(_poll_loop(), timeout=deadline_seconds)
+        except asyncio.TimeoutError:
+            raise DeviceGrantError(
+                f"Device grant for {provider.name!r} timed out after "
+                f"{deadline_seconds:.0f}s.",
+                error_code="timeout",
+            )
+        # CancelledError propagates as-is (= abort-capable per spec).
+
+        # ── Step 5: emit oauth_login_completed (P6) ──────────────────────
+        if events is not None:
+            try:
+                events.emit(
+                    "oauth_login_completed",
+                    key=provider.name,
+                    expires_at=token.expires_at.isoformat(),
+                    scopes=list(token.scopes),
+                )
+            except Exception:  # noqa: BLE001 — emit failure must not break flow
+                pass
+
+        return token
+
+    finally:
+        if owns_client:
+            await http_client.aclose()

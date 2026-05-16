@@ -73,6 +73,104 @@ def _build_agent_config(raw: object) -> AgentConfig:
 
 
 @dataclass
+class AuthConfig:
+    """``auth:`` — OAuth provider configurations for `reyn auth login`.
+
+    FP-0016 Component C. Each entry maps a provider name to its OAuth
+    2.0 device authorization grant parameters. Empty by default; the
+    operator declares providers they want to authenticate against.
+    """
+
+    providers: dict[str, "OAuthProviderConfig"] = field(default_factory=dict)
+
+
+def _build_auth_config(raw: object) -> AuthConfig:
+    """Parse ``auth:`` block from reyn.yaml.
+
+    Shape::
+
+        auth:
+          providers:
+            github:
+              client_id: "1234abcd"
+              device_authorization_url: "https://github.com/login/device/code"
+              token_url: "https://github.com/login/oauth/access_token"
+              scopes: ["repo", "user:email"]
+              # client_secret: omit for public clients
+              # audience: omit for non-Auth0 providers
+            google:
+              client_id: "...apps.googleusercontent.com"
+              device_authorization_url: "https://oauth2.googleapis.com/device/code"
+              token_url: "https://oauth2.googleapis.com/token"
+              scopes: ["openid", "email"]
+              client_secret: "..."
+
+    ``None`` / missing → empty AuthConfig.providers.
+    Unknown provider fields are ignored (= forward-compatible).
+    """
+    from reyn.secrets.oauth import OAuthProviderConfig
+
+    if raw is None:
+        return AuthConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"auth must be a mapping, got {type(raw).__name__}"
+        )
+    raw_providers = raw.get("providers", {}) or {}
+    if not isinstance(raw_providers, dict):
+        raise ValueError(
+            f"auth.providers must be a mapping, got "
+            f"{type(raw_providers).__name__}"
+        )
+    providers: dict[str, OAuthProviderConfig] = {}
+    for name, spec in raw_providers.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                f"auth.providers key must be a non-empty string, got {name!r}"
+            )
+        if not isinstance(spec, dict):
+            raise ValueError(
+                f"auth.providers.{name} must be a mapping, got "
+                f"{type(spec).__name__}"
+            )
+        required = ["client_id", "device_authorization_url", "token_url"]
+        for k in required:
+            if k not in spec:
+                raise ValueError(
+                    f"auth.providers.{name}: missing required field {k!r}"
+                )
+            if not isinstance(spec[k], str) or not spec[k]:
+                raise ValueError(
+                    f"auth.providers.{name}.{k} must be a non-empty string"
+                )
+        scopes = spec.get("scopes", []) or []
+        if not isinstance(scopes, list):
+            raise ValueError(
+                f"auth.providers.{name}.scopes must be a list of strings"
+            )
+        client_secret = spec.get("client_secret")
+        if client_secret is not None and not isinstance(client_secret, str):
+            raise ValueError(
+                f"auth.providers.{name}.client_secret must be a string or null"
+            )
+        audience = spec.get("audience")
+        if audience is not None and not isinstance(audience, str):
+            raise ValueError(
+                f"auth.providers.{name}.audience must be a string or null"
+            )
+        providers[name] = OAuthProviderConfig(
+            name=name,
+            client_id=spec["client_id"],
+            device_authorization_url=spec["device_authorization_url"],
+            token_url=spec["token_url"],
+            scopes=[str(s) for s in scopes],
+            client_secret=client_secret,
+            audience=audience,
+        )
+    return AuthConfig(providers=providers)
+
+
+@dataclass
 class PythonConfig:
     """`python` section — settings for the python preprocessor step."""
     # Modules that user code may import in pure mode in addition to the
@@ -1079,6 +1177,10 @@ class ReynConfig:
     # `agent:` block. Read by ChatSession to construct its EventLog and
     # by mcp_client.MCPClient for the X-Reyn-Agent-Id header.
     agent: AgentConfig = field(default_factory=AgentConfig)
+    # FP-0016 Component C — OAuth provider configurations for
+    # `reyn auth login`. Empty by default; operator declares providers
+    # in reyn.yaml `auth.providers.<name>`.
+    auth: "AuthConfig" = field(default_factory=AuthConfig)
     # Chat-session settings (compaction, etc.)
     chat: ChatConfig = field(default_factory=ChatConfig)
     # Audit-log rotation policy (PR20).
@@ -1382,6 +1484,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         mcp_search_threshold=_parse_mcp_search_threshold(merged.get("mcp")),
         python=_build_python_config(merged.get("python")),
         agent=_build_agent_config(merged.get("agent")),
+        auth=_build_auth_config(merged.get("auth")),
         chat=_build_chat_config(merged.get("chat")),
         events=_build_events_config(merged.get("events")),
         cost=cost,
