@@ -78,7 +78,8 @@ class RightPanel(Widget):
 
     RightPanel Tab {
         color: #666666;
-        padding: 0 2;
+        padding: 0 0;
+        margin: 0 1 0 0;
     }
 
     RightPanel Tab.-active {
