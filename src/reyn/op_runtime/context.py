@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.schemas.models import Skill
+    from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import InterventionBus
     from reyn.workspace.workspace import Workspace
 
@@ -97,3 +98,10 @@ class OpContext:
     # When None, sandboxed_exec falls back to platform auto-detection
     # (= same as no-config-loaded behavior).
     sandbox_config: "SandboxConfig | None" = None
+
+    # FP-0016 D: per-skill credential scoping. None = unrestricted (= today's
+    # behaviour; preserves backward compat for top-level / chat-router /
+    # CLI-direct OpContext construction). The run_skill handler constructs a
+    # ScopedSecretStore based on the sub-skill's required_credentials and
+    # passes it down through Agent → OSRuntime → executors → OpContext.
+    secret_store: "ScopedSecretStore | None" = None

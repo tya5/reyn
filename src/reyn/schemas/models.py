@@ -190,6 +190,13 @@ class Skill(BaseModel):
     # Recall@5 pre-filter.  Integration with search backends is deferred to
     # the next wave (Track 3).
     search_hints: list[str] | None = None
+    # FP-0016 Component D: per-skill credential scoping declaration.
+    # Default ["*"] = full delegation (backward-compat — pre-FP-0016 behaviour
+    # where sub-skills inherited all parent secrets). Authors opt into
+    # scoping by listing specific keys ([], ["github_token"], etc.).
+    # The OS reads this at run_skill boundaries to construct a
+    # ScopedSecretStore for the sub-skill.
+    required_credentials: list[str] = Field(default_factory=lambda: ["*"])
 
     @model_validator(mode="after")
     def _require_final_output_name(self) -> "Skill":

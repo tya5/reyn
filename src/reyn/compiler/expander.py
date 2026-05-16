@@ -197,4 +197,5 @@ def expand_skill(
         postprocessor=_expand_postprocessor(skill_def.postprocessor, artifact_defs),
         preprocessor_sub_skills=preprocessor_sub_skills or {},
         search_hints=skill_def.search_hints if skill_def.search_hints else None,
+        required_credentials=skill_def.required_credentials if skill_def.required_credentials is not None else ["*"],
     )

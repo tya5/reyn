@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
+    from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import InterventionBus
     from reyn.workspace.workspace import Workspace
 
@@ -107,6 +108,7 @@ class PreprocessorExecutor:
         python_allowed_modules: list[str] | None = None,
         caller: str = "direct",
         run_id: str | None = None,
+        secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self._skill = skill
         self._workspace = workspace
@@ -123,6 +125,9 @@ class PreprocessorExecutor:
         # FP-0021: run_id of the currently-executing OSRuntime run.
         # Propagated into OpContext so event emit helpers can stamp run scope.
         self._run_id = run_id
+        # FP-0016 D: per-skill credential scoping. None = unrestricted
+        # (= preserves backward compat for callers that don't supply a store).
+        self._secret_store = secret_store
 
     def _build_op_ctx(self, phase: "Phase", step_index: int):
         """Construct an OpContext for an op_runtime call from this preprocessor."""
@@ -156,6 +161,8 @@ class PreprocessorExecutor:
             # at session level) so X-Reyn-Agent-Id is added to outgoing
             # MCP HTTP calls dispatched from preprocessor ops.
             agent_id=getattr(self._events, "agent_id", None),
+            # FP-0016 D: per-skill credential scoping.
+            secret_store=self._secret_store,
         )
 
     async def run(

@@ -222,6 +222,82 @@ web:
 
 **`mode: safe` の形式的契約**（= "ambient sources only"）は [Python safe モード](python-safe-mode.ja.md) で文書化されています。allowlist の根拠・コンテキスト別の safe/unsafe 自動許可ルール・unsafe ステップを safe に変換するリファクタリングパターンを網羅しています。
 
+## スキルごとのクレデンシャルスコーピング (FP-0016 D)
+
+### 脅威モデル：Confused Deputy
+
+親スキルが `run_skill` でサブスキルを呼び出す際、スコーピングが適用されていないと
+サブスキルは親の全権限で実行されます。サブスキルが処理する悪意あるドキュメントが、
+正当なアクセス権のないクレデンシャルを読み取り、その内容を出力に含めるよう
+サブスキルに指示する可能性があります。これは OS が攻撃者のために自身の権限を
+悪用させられる古典的な **Confused Deputy** 攻撃です。
+
+### `required_credentials` の宣言
+
+サブスキルは `skill.md` フロントマターでクレデンシャルの必要性を宣言します：
+
+```yaml
+# skill.md
+name: github_pr_reviewer
+required_credentials:
+  - github_token
+  - atlassian_token
+```
+
+`required_credentials` が省略された場合のデフォルトは `["*"]` で、完全なクレデンシャル委譲を意味します。
+FP-0016 以前に記述された既存スキルとの後方互換性を保つためです。
+
+クレデンシャルが一切不要なスキルを明示的に宣言するには、空リストを使います：
+
+```yaml
+required_credentials: []
+```
+
+### `run_skill` によるスコープの絞り込み
+
+`run_skill` の境界で、OS はサブスキルの `required_credentials` 宣言から
+`ScopedSecretStore` を構築し、親のスコープ済みストアと交差（intersection）します。
+サブスキルが親自身が保持しないクレデンシャルを取得することはできません：
+
+```
+親のスコープ: {"github_token", "stripe_key", "datadog_key"}
+サブスキルの宣言: ["github_token", "slack_token"]
+有効スコープ: {"github_token"}  ← 交差結果; slack_token は親になし
+```
+
+親ストアが非制限（`["*"]`）の場合は、サブスキルの宣言リストがそのまま採用されます
+（交差は不要）。
+
+### `CredentialScopeError`
+
+サブスキルが有効な許可セット外のクレデンシャルを読み取ろうとすると、
+`CredentialScopeError`（`PermissionError` のサブクラス）が発生します。
+列挙操作もブロックされます。`list_visible_keys()` は許可かつ存在するキーのみを返し、
+スコープ外のキーは「読めない」のではなく「見えない」状態になります。
+
+```python
+from reyn.secrets import ScopedSecretStore, CredentialScopeError
+
+store = ScopedSecretStore(allowed_keys=["github_token"], path=secrets_path)
+store.get("github_token")    # OK — 値を返す
+store.get("stripe_key")      # CredentialScopeError を発生
+"stripe_key" in store        # False — 例外なし、漏洩なし
+store.list_visible_keys()    # ["github_token"] のみ
+```
+
+### 監査証跡
+
+すべての `run_skill` 呼び出しは、その呼び出しで有効な許可キーセットを記録した
+`sub_skill_credential_scope` P6 イベントを発行します：
+
+```bash
+grep '"sub_skill_credential_scope"' .reyn/events.jsonl
+```
+
+イベントペイロードには `skill`（サブスキル名）と `allowed_keys`
+（ソート済みリスト、または非制限の場合 `["*"]`）が含まれます。
+これにより、すべてのサブスキルへのクレデンシャル付与が監査可能かつリプレイ可能になります（P6）。
+
 ## パーミッションシステムではないもの
 
 - **Linux ケイパビリティサンドボックスではありません。** `mode: unsafe` での Python ステップは同じユーザーとして実行されます。reyn はカーネルをサンドボックス化しません。

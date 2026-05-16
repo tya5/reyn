@@ -55,3 +55,7 @@ class SkillDef:
     # existing skill.md files (backward-compat); BM25/embedding backends
     # concat these with the description to improve Recall@5.
     search_hints: list[str] = field(default_factory=list)
+    # FP-0016 Component D: per-skill credential scoping — raw frontmatter value.
+    # Empty list = explicit no-credential scope.
+    # None = field omitted in frontmatter; expander applies ["*"] default.
+    required_credentials: list[str] | None = None

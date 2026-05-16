@@ -136,6 +136,8 @@ permissions:
       function: read_on_propose_config
       mode: unsafe
       timeout: 5
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

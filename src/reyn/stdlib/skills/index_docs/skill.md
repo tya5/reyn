@@ -101,6 +101,8 @@ postprocessor:
         mode: data.mode
         description: data.description
         path: data.path
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

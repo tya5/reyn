@@ -75,6 +75,8 @@ permissions:
       function: collect_aggregate
       mode: unsafe
       timeout: 30
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

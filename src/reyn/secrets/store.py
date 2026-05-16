@@ -107,3 +107,68 @@ def list_secret_keys(path: Path | None = None) -> list[str]:
             seen.add(k)
             result.append(k)
     return result
+
+
+class CredentialScopeError(PermissionError):
+    """Raised when a skill attempts to read a credential outside its declared scope (FP-0016 D)."""
+
+
+class ScopedSecretStore:
+    """Per-skill read-only view of the secret store (FP-0016 Component D).
+
+    Constructed at the run_skill boundary from the sub-skill's
+    `required_credentials` declaration in skill.md frontmatter. Reads
+    outside the allowed set raise CredentialScopeError. The literal "*"
+    in allowed_keys means full delegation (= unrestricted view, preserves
+    pre-FP-0016 behaviour for backward compat).
+    """
+
+    def __init__(
+        self,
+        *,
+        allowed_keys: list[str] | set[str] | frozenset[str],
+        path: Path | None = None,
+    ) -> None:
+        self._allowed_keys: frozenset[str] = frozenset(allowed_keys)
+        self._path = path
+
+    @property
+    def allowed_keys(self) -> frozenset[str]:
+        return self._allowed_keys
+
+    @property
+    def is_unrestricted(self) -> bool:
+        """True iff '*' is in allowed_keys (= no scope check)."""
+        return "*" in self._allowed_keys
+
+    def _check(self, key: str) -> None:
+        """Raise CredentialScopeError if key is not in allowed_keys (unless unrestricted)."""
+        if self.is_unrestricted:
+            return
+        if key not in self._allowed_keys:
+            allowed_repr = ", ".join(sorted(self._allowed_keys)) if self._allowed_keys else "(none)"
+            raise CredentialScopeError(
+                f"Credential '{key}' is not in the declared scope for this skill. "
+                f"Allowed keys: [{allowed_repr}]. "
+                f"To grant access, add '{key}' to required_credentials in skill.md frontmatter."
+            )
+
+    def get(self, key: str, default: str | None = None) -> str | None:
+        """Return the secret value or default. Raises CredentialScopeError if key is not in allowed_keys (unless unrestricted)."""
+        self._check(key)
+        secrets = load_secrets(self._path)
+        return secrets.get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        """True iff key is both allowed AND present in the source store. Never raises."""
+        if not self.is_unrestricted and key not in self._allowed_keys:
+            return False
+        secrets = load_secrets(self._path)
+        return key in secrets
+
+    def list_visible_keys(self) -> list[str]:
+        """Return keys present in the source AND in the allowed set."""
+        all_keys = list_secret_keys(self._path)
+        if self.is_unrestricted:
+            return all_keys
+        return [k for k in all_keys if k in self._allowed_keys]

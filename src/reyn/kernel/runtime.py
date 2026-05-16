@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from reyn.budget.budget import BudgetTracker
     from reyn.config import SandboxConfig
     from reyn.events.state_log import StateLog
+    from reyn.secrets.store import ScopedSecretStore
     from reyn.skill.skill_registry import SkillRegistry
 from reyn.config import SafetyConfig
 from reyn.context_builder import build_frame
@@ -72,6 +73,7 @@ class OSRuntime:
         resume_plan: Any = None,
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -124,6 +126,9 @@ class OSRuntime:
         # executor so sandboxed_exec backend selection honors the operator's
         # declared backend / on_unsupported policy. None → platform default.
         self._sandbox_config = sandbox_config
+        # FP-0016 D: per-skill credential scoping. None = unrestricted
+        # (= preserves backward compat for callers that don't supply a store).
+        self._secret_store = secret_store
         self.control_ir_executor = ControlIRExecutor(
             self.workspace, self.events,
             intervention_bus=intervention_bus,
@@ -140,6 +145,7 @@ class OSRuntime:
             resume_plan=resume_plan,
             run_id=run_id,
             sandbox_config=sandbox_config,
+            secret_store=secret_store,
         )
         self._preprocessor = PreprocessorExecutor(
             skill=skill,
@@ -154,6 +160,7 @@ class OSRuntime:
             python_allowed_modules=python_allowed_modules,
             caller=caller,
             run_id=run_id,
+            secret_store=secret_store,
         )
         # FP-0020 Component A: all mutable run-scope state encapsulated in RunState.
         self._state = RunState()

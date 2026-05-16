@@ -23,6 +23,8 @@ permissions:
       function: compute_covers_through_seq
       mode: safe
       timeout: 5
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 postprocessor:
   output_schema: chat_summary
   output_name: chat_summary

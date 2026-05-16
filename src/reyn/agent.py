@@ -10,6 +10,7 @@ from reyn.config import OnLimitConfig, SafetyConfig
 
 if TYPE_CHECKING:
     from reyn.config import SandboxConfig
+    from reyn.secrets.store import ScopedSecretStore
 from reyn.events.event_store import EventStore
 from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
@@ -53,6 +54,7 @@ class Agent:
         caller: str = "direct",
         budget_tracker: BudgetTracker | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.model = model
         self.state_dir = ".reyn"
@@ -73,6 +75,7 @@ class Agent:
         # FP-0017 follow-up: declarative sandbox config (reyn.yaml `sandbox:`).
         # None → platform auto-detect; otherwise honors backend/on_unsupported.
         self._sandbox_config = sandbox_config
+        self._secret_store = secret_store
         self._runtime: OSRuntime | None = None
         self.run_id: str | None = None
         self.events_path: Path | None = None
@@ -141,6 +144,7 @@ class Agent:
             resume_plan=resume_plan,
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
+            secret_store=self._secret_store,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

@@ -40,7 +40,14 @@ from .oauth import (
     load_oauth_token,
     save_oauth_token,
 )
-from .store import clear_secret, list_secret_keys, load_secrets, save_secret
+from .store import (
+    CredentialScopeError,
+    ScopedSecretStore,
+    clear_secret,
+    list_secret_keys,
+    load_secrets,
+    save_secret,
+)
 
 __all__ = [
     "expand_env",
@@ -49,6 +56,8 @@ __all__ = [
     "load_secrets",
     "clear_secret",
     "list_secret_keys",
+    "CredentialScopeError",
+    "ScopedSecretStore",
     "OAuthToken",
     "OAuthRefreshError",
     "get_valid_token",

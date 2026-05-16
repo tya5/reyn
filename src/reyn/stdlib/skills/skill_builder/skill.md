@@ -32,6 +32,8 @@ routing:
       - "skill って何？"
       - "DSL の書き方を教えて"
       - "既存のスキルを改善して"   # this is skill_improver, not skill_builder
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview
