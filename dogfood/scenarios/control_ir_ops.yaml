@@ -1,0 +1,261 @@
+---
+type: dogfood_scenario_set
+name: control_ir_ops
+description: >
+  Control IR op coverage via chat router and direct skill invocations (FP-0036).
+  Each scenario targets one or more specific op kinds and asserts the corresponding
+  P6 events that the op handler emits.
+covers:
+  - control-ir-ops/file
+  - control-ir-ops/ask-user
+  - control-ir-ops/sandboxed-exec
+  - control-ir-ops/web-search
+  - control-ir-ops/web-fetch
+  - control-ir-ops/mcp
+  - control-ir-ops/lint
+  - control-ir-ops/embed
+  - control-ir-ops/index-write
+  - control-ir-ops/recall
+  - control-ir-ops/judge-output
+
+scenarios:
+  # ── 1. file.read via chat router ─────────────────────────────────────────────
+  - id: file_read_via_chat
+    covers:
+      - control-ir-ops/file
+    input: "Show me the contents of `docs/concepts/principles.md`."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - quotes or summarises content from the principles document
+          - mentions at least one of P1 through P8 or their descriptions
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: tool_executed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.65
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 2. file.glob + file.grep via chat router ──────────────────────────────
+  - id: file_glob_grep
+    covers:
+      - control-ir-ops/file
+    input: "Find all skill.md files under src/ that mention 'judge_output'."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - lists at least one file path containing skill.md
+          - mentions judge_output in relation to the found file(s)
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: tool_executed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.60
+      inconclusive: 0.30
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 3. web_search via chat router ─────────────────────────────────────────
+  - id: web_search_query
+    covers:
+      - control-ir-ops/web-search
+    input: "Search the web for 'OpenAI Python SDK changelog 2026'."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reports search results or a summary of what was found
+          - references OpenAI or the Python SDK in the response
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: web_search_started, count: ">=1" }
+          - { type: web_search_completed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+          - { type: web_search_failed }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.65
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 4. web_fetch via chat router ──────────────────────────────────────────
+  - id: web_fetch_url
+    covers:
+      - control-ir-ops/web-fetch
+    input: "Fetch and summarise https://docs.python.org/3/whatsnew/3.12.html — what are the key new features?"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - mentions at least one Python 3.12 feature (e.g. f-string improvements, type parameter syntax, or similar)
+          - reply is a summary, not a raw HTML dump
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: web_fetch_started, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.60
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.10
+
+  # ── 5. sandboxed_exec simple calculation ─────────────────────────────────
+  - id: sandboxed_exec_simple
+    covers:
+      - control-ir-ops/sandboxed-exec
+    input: "Run `python -c 'print(2 + 2)'` in the sandbox and show me the output."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reports the output as 4 (or that the command produced 4)
+          - does not report an error or permission denial
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: sandboxed_exec_started, count: ">=1" }
+          - { type: sandboxed_exec_completed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.55
+      inconclusive: 0.30
+      refuted: 0.05
+      blocked: 0.10
+
+  # ── 6. lint via chat router ────────────────────────────────────────────────
+  - id: lint_a_skill
+    covers:
+      - control-ir-ops/lint
+    input: "Lint the index_events skill and tell me if it passes with no errors."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reports whether the skill passed linting or not
+          - mentions error count or warning count
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: lint_completed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.60
+      inconclusive: 0.30
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 7. recall indexed source ──────────────────────────────────────────────
+  # Calibrated high inconclusive: source may not be indexed in this environment.
+  - id: recall_indexed_source
+    covers:
+      - control-ir-ops/recall
+      - control-ir-ops/embed
+      - control-ir-ops/index-query
+    input: "Use recall to find documentation about 'phase rollback'."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - either returns relevant documentation chunks about phase rollback,
+            OR clearly reports that no indexed sources were found
+          - does not fabricate phase rollback details without citing a source
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.30
+      inconclusive: 0.55
+      refuted: 0.05
+      blocked: 0.10
+
+  # ── 8. judge_output via judge_phase skill ────────────────────────────────
+  - id: judge_output_direct
+    covers:
+      - control-ir-ops/judge-output
+    input: >
+      Run the judge_phase skill to evaluate the following text against this
+      rubric: "Is the text concise and mentions at least one Reyn principle?"
+      Text to evaluate: "P5 states that the workspace is the single source of truth."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reports a numeric score or pass/fail verdict
+          - references the rubric or evaluation criteria in the response
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: tool_executed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.55
+      inconclusive: 0.30
+      refuted: 0.10
+      blocked: 0.05
+
+  # ── 9. ask_user round-trip (multi-turn) ──────────────────────────────────
+  # Turn 1: a request that causes a skill to emit ask_user for clarification.
+  # Turn 2: the user supplies the answer; the skill continues.
+  - id: ask_user_round_trip
+    covers:
+      - control-ir-ops/ask-user
+    prompts:
+      - >
+        Run the skill_builder skill to scaffold a new skill. For the skill
+        name, please ask me before proceeding.
+      - "my_demo_skill"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - the final reply references the skill name provided (my_demo_skill)
+          - OR reports that scaffolding was started or completed
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: user_intervention_requested, count: ">=1" }
+          - { type: user_intervention_received, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.40
+      inconclusive: 0.40
+      refuted: 0.10
+      blocked: 0.10

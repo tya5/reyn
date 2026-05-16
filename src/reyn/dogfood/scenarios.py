@@ -305,6 +305,10 @@ def _parse_scenario(raw: Any, index: int, source: str) -> Scenario:
     covers = [str(c) for c in covers]
 
     input_val = raw.get("input")
+    # Legacy back-compat: pre-FP-0036 dogfood YAMLs (fp_0011_*, etc.) used
+    # ``user_prompt:`` for the single-turn input field. Accept it as an alias.
+    if input_val is None:
+        input_val = raw.get("user_prompt")
     prompts = raw.get("prompts", [])
     kind = raw.get("kind")
 

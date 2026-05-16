@@ -131,7 +131,11 @@ def test_is_multi_turn_flag(tmp_path: Path) -> None:
 
 
 def test_long_session_v1_loads(tmp_path: Path) -> None:
-    """Tier 1: load_scenario_set accepts legacy long_session_v1.yaml without error; expected_* are None."""
+    """Tier 1: load_scenario_set accepts long_session_v1.yaml; mixed expected coverage.
+
+    After the S5 back-fill wave (FP-0036 scenario authoring), some scenarios in
+    this file have expected blocks and some don't — both shapes must load.
+    """
     long_session_path = (
         Path(__file__).parent.parent / "dogfood" / "scenarios" / "long_session_v1.yaml"
     )
@@ -139,13 +143,15 @@ def test_long_session_v1_loads(tmp_path: Path) -> None:
     assert isinstance(ss, ScenarioSet)
     assert ss.name == "long_session_v1"
     assert len(ss.scenarios) == 7
-    # All legacy scenarios have no expected fields
     for s in ss.scenarios:
-        assert s.expected_reply is None
-        assert s.expected_events is None
-        assert s.expected_artifacts is None
-        assert s.outcome_prediction is None
+        # All scenarios are multi-turn (= prompts: [...])
         assert s.is_multi_turn is True
+    # At least one scenario has expected back-filled (= S5 wave); at least one
+    # remains expected-less (= legacy shape still accepted).
+    with_expected = [s for s in ss.scenarios if s.expected_reply is not None]
+    without_expected = [s for s in ss.scenarios if s.expected_reply is None]
+    assert len(with_expected) >= 1, "expected back-fill applied to at least one scenario"
+    assert len(without_expected) >= 1, "legacy expected-less scenarios still load"
 
 
 # ── 5. type mismatch raises ───────────────────────────────────────────────
@@ -658,6 +664,30 @@ def test_file_not_found_raises(tmp_path: Path) -> None:
 
 
 # ── legacy backward compat: metadata.name fallback ───────────────────────
+
+
+def test_legacy_user_prompt_field_aliases_input(tmp_path: Path) -> None:
+    """Tier 1: Legacy single-turn YAML with 'user_prompt:' loads as input.
+
+    The pre-FP-0036 dogfood/scenarios/fp_0011_*.yaml files use ``user_prompt``
+    as the single-turn input field. The loader accepts it as an alias for
+    ``input`` so legacy files stay runnable.
+    """
+    p = write_yaml(
+        tmp_path,
+        """\
+        metadata:
+          name: legacy_user_prompt_set
+        scenarios:
+          - id: legacy_one
+            user_prompt: "Build a skill for X"
+        """,
+    )
+    ss = load_scenario_set(p)
+    assert ss.name == "legacy_user_prompt_set"
+    assert ss.scenarios[0].id == "legacy_one"
+    assert ss.scenarios[0].input == "Build a skill for X"
+    assert ss.scenarios[0].is_multi_turn is False
 
 
 def test_legacy_metadata_name_used_as_set_name(tmp_path: Path) -> None:

@@ -1,0 +1,340 @@
+---
+type: dogfood_scenario_set
+name: stdlib_skills_core
+description: >
+  Core stdlib skill dispatch via chat router (FP-0036 starter set).
+  Exercises eight stdlib skills end-to-end via reyn chat: index_docs,
+  read_local_files, skill_builder, word_stats_demo, chat_compactor
+  (session-triggered), eval, judge_phase (via eval), and direct_llm.
+  Covers structural (events + artifacts) and judge (reply) verifiers.
+covers:
+  - stdlib-skills/direct-llm
+  - stdlib-skills/index-docs
+  - stdlib-skills/read-local-files
+  - stdlib-skills/skill-builder
+  - stdlib-skills/word-stats-demo
+  - stdlib-skills/chat-compactor
+  - stdlib-skills/eval
+  - stdlib-skills/judge-phase
+  - control-ir-ops/run-skill
+  - control-ir-ops/embed
+  - control-ir-ops/index-write
+  - control-ir-ops/mcp
+  - control-ir-ops/judge-output
+  - os-core/preprocessor/python-step
+  - os-core/postprocessor/skill-finish-transform
+  - os-core/event-system-p6
+  - memory-rag/chat-compaction
+
+scenarios:
+
+  # ── 1. index_docs — build a semantic index over docs/concepts/ ───────────
+  - id: index_docs_basic
+    covers:
+      - stdlib-skills/index-docs
+      - control-ir-ops/embed
+      - control-ir-ops/index-write
+      - os-core/preprocessor/python-step
+      - os-core/postprocessor/skill-finish-transform
+      - memory-rag/sqlite-index-per-source
+    input: >
+      docs/concepts/ 以下の Markdown ファイルを "concepts_index" という名前で
+      セマンティック インデックスに登録してください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply confirms that indexing has completed or started successfully
+          - reply mentions the source name, indexed files, or chunk count
+          - reply does not claim an error occurred
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+          - { type: phase_started, count: ">=1" }
+          - { type: phase_completed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: index_docs, present: true }
+    outcome_prediction:
+      verified: 0.55
+      inconclusive: 0.30
+      refuted: 0.10
+      blocked: 0.05
+
+  # ── 2. read_local_files — explain a source file ─────────────────────────
+  - id: read_local_files_explain_source
+    covers:
+      - stdlib-skills/read-local-files
+      - control-ir-ops/mcp
+    input: "src/reyn/cron/scheduler.py が何をするファイルか教えてください。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply explains the purpose of the file (cron scheduling, job management, or similar)
+          - reply demonstrates understanding of the file's role in the codebase
+          - reply does not fabricate contents; if the MCP server is unavailable it says so
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, count: ">=1" }
+          - { type: phase_started, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: read_local_files, present: true }
+    outcome_prediction:
+      verified: 0.55
+      inconclusive: 0.30
+      refuted: 0.10
+      blocked: 0.05
+
+  # ── 3. read_local_files — multi-file inspection ─────────────────────────
+  - id: read_local_files_multi_file
+    covers:
+      - stdlib-skills/read-local-files
+      - control-ir-ops/mcp
+    input: >
+      src/reyn/op_runtime/ ディレクトリ にある ファイルは 何をしていますか?
+      概要を教えてください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply describes at least one file in src/reyn/op_runtime/
+          - reply references Control IR ops or operation handling
+          - reply does not claim a permission error unless MCP is actually unavailable
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: read_local_files, present: true }
+    outcome_prediction:
+      verified: 0.50
+      inconclusive: 0.33
+      refuted: 0.12
+      blocked: 0.05
+
+  # ── 4. skill_builder — scaffold a new summarisation skill ───────────────
+  - id: skill_builder_web_summariser
+    covers:
+      - stdlib-skills/skill-builder
+      - control-ir-ops/run-skill
+      - control-ir-ops/lint
+      - os-core/postprocessor/skill-finish-transform
+    input: >
+      ウェブ記事の URL を受け取り、内容を 3 文で要約する skill を作ってください。
+      スキル名は "web_article_summariser" で、確認質問は不要です。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply reports that the skill was generated or lint passed
+          - reply mentions the skill name (web_article_summariser) or output path
+          - reply does not claim total failure without a concrete error reason
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, count: ">=1" }
+          - { type: phase_started, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: skill_builder, present: true }
+    outcome_prediction:
+      verified: 0.55
+      inconclusive: 0.28
+      refuted: 0.12
+      blocked: 0.05
+
+  # ── 5. word_stats_demo — python preprocessor step end-to-end ────────────
+  - id: word_stats_demo_sentence
+    covers:
+      - stdlib-skills/word-stats-demo
+      - os-core/preprocessor/python-step
+    input: >
+      word_stats_demo で次のテキストを解析してください:
+      "The quick brown fox jumps over the lazy dog."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply contains at least one computed statistic (word count, character count, or line count)
+          - reply references the actual text that was analysed
+          - statistics are consistent with the input text length
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+          - { type: phase_started, count: ">=1" }
+          - { type: llm_called, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: word_stats_demo, present: true }
+    outcome_prediction:
+      verified: 0.65
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 6. word_stats_demo — longer text, multiple stat dimensions ───────────
+  - id: word_stats_demo_multiline
+    covers:
+      - stdlib-skills/word-stats-demo
+      - os-core/preprocessor/python-step
+      - os-core/event-system-p6
+    input: |
+      word_stats_demo でこのテキストを解析してください:
+      "Reyn is an Agent OS.
+      Skills are the units of work.
+      Phases are the steps inside a skill.
+      The OS connects them via a phase engine."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply mentions word count or character count for a multi-line text
+          - reply references the precomputed statistics rather than estimating them
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: word_stats_demo, present: true }
+    outcome_prediction:
+      verified: 0.65
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.05
+
+  # ── 7. eval — run eval on direct_llm ────────────────────────────────────
+  - id: eval_run_direct_llm
+    covers:
+      - stdlib-skills/eval
+      - stdlib-skills/judge-phase
+      - control-ir-ops/run-skill
+      - control-ir-ops/judge-output
+      - os-core/postprocessor/skill-finish-transform
+    input: >
+      direct_llm スキルを eval してください。テストケース: 入力「日本語で
+      「hello」を翻訳してください」に対して、「こんにちは」を含む応答が
+      返ること を 基準として採点してください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply reports an eval result including pass/fail or a score
+          - reply references the criterion (translation of hello / こんにちは)
+          - reply does not fabricate a score without running eval
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, count: ">=1" }
+          - { type: phase_started, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: eval, present: true }
+    outcome_prediction:
+      verified: 0.50
+      inconclusive: 0.33
+      refuted: 0.12
+      blocked: 0.05
+
+  # ── 8. chat_compactor — session-triggered after long multi-turn ──────────
+  #
+  # chat_compactor is internal infrastructure excluded from the router's
+  # available_skills. The only way to trigger it via reyn chat is to produce
+  # a session long enough to hit chat.compaction.trigger_total_tokens.
+  # This scenario uses 5 turns of verbose exchange to approach that threshold.
+  # The must_emit assertion on skill_run_spawned is intentionally weak
+  # (count: ">=1") since compaction fires at a token threshold we cannot
+  # control precisely in a scenario. The chat_compactor artifact assertion
+  # is marked present: true only if compaction triggered — we use
+  # inconclusive: 0.45 to reflect that the threshold may not be reached.
+  - id: chat_compactor_long_session
+    covers:
+      - stdlib-skills/chat-compactor
+      - memory-rag/chat-compaction
+      - os-core/postprocessor/skill-finish-transform
+    prompts:
+      - >
+        Reyn Agent OS のアーキテクチャについて詳しく説明してください。
+        Phase、Skill、OS の役割の違い、P1〜P8 の原則の意味を丁寧に解説してください。
+      - >
+        続いて、Control IR Ops の各 Op の役割を解説してください。
+        file、ask_user、run_skill、embed、index_write、judge_output のそれぞれについて
+        詳しく教えてください。
+      - >
+        次に、Workspace (P5) と Events (P6) がどのように協調して
+        クラッシュリカバリを可能にするか、具体的なシナリオで説明してください。
+      - >
+        Stdlib Skills のうち、index_docs と eval の関係を説明してください。
+        また、judge_phase がどのように eval の内部で使われているかも教えてください。
+      - >
+        最後に、reyn chat でのルーティングの仕組みを説明してください。
+        universal action catalog と skill routing の関係、
+        routing_decided イベントが何を表すかも含めてください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - final reply answers the routing / catalog question coherently
+          - reply mentions skill routing or the chat router mechanism
+          - reply does not produce a bare error
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: llm_called, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+    outcome_prediction:
+      verified: 0.45
+      inconclusive: 0.40
+      refuted: 0.10
+      blocked: 0.05
+
+  # ── 9. chained dispatch — find markdown files then index them ────────────
+  - id: chained_find_then_index
+    covers:
+      - stdlib-skills/index-docs
+      - control-ir-ops/embed
+      - control-ir-ops/index-write
+      - os-core/event-system-p6
+    prompts:
+      - >
+        docs/concepts/ 以下にある Markdown ファイルの一覧を教えてください。
+      - >
+        その中から architecture.md と events.md を "arch_events_index" という
+        ソース名でセマンティック インデックスに登録してください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - final reply confirms that indexing was requested or completed
+          - reply references "arch_events_index" as the source name
+          - reply does not report a generic error without a concrete reason
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, count: ">=1" }
+          - { type: phase_started, count: ">=1" }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: index_docs, present: true }
+    outcome_prediction:
+      verified: 0.50
+      inconclusive: 0.33
+      refuted: 0.12
+      blocked: 0.05

@@ -10,6 +10,10 @@
 #   - cross_reference: compare two things named in prior turns
 #   - repetitive_context: forced re-ask pattern to grow context without entropy
 #   - general_topic: non-Reyn topics — agent can't use project context as crutch
+#
+# Back-fill (FP-0036): expected: fields added to scenario_1 and scenario_5
+# (most predictable outcomes). Remaining 5 scenarios are expected-less and
+# accepted by the loader as-is. All scenarios now carry covers: tags.
 
 metadata:
   name: long_session_v1
@@ -17,18 +21,42 @@ metadata:
   version: 1
   default_turns: 5
 
+covers:
+  - cli/reyn-chat
+  - memory-rag/chat-compaction
+  - os-core/event-system-p6/113-event-types
+
 scenarios:
   - id: scenario_1_reyn_research_chain
     description: >
       Multi-turn Reyn deep-dive. Each question assumes the prior answer.
       Natural context growth from successive concept lookups.
     kind: research_chain
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+      - os-core/phase-engine/act-decide-loop
     prompts:
       - "What is Reyn and what problem does it solve?"
       - "How does its skill system work?"
       - "What is the difference between a Phase and a Skill in that system?"
       - "Where does the OS fit in the architecture you just described?"
       - "What principles prevent skill-specific code from leaking into the OS?"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - final answer addresses skill-specific leakage prevention (P7 or equivalent)
+          - references concepts established in earlier turns without re-explaining from scratch
+          - does not produce an empty reply on the final turn
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+    outcome_prediction:
+      verified: 0.65
+      inconclusive: 0.25
+      refuted: 0.05
+      blocked: 0.05
 
   - id: scenario_2_pronoun_followup
     description: >
@@ -36,6 +64,10 @@ scenarios:
       "those" to reference the prior answer, forcing the LLM to maintain
       session context across turns.
     kind: pronoun_followup
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+      - os-core/event-system-p6/append-only-jsonl
     prompts:
       - "What stdlib skills does Reyn bundle?"
       - "Tell me more about the simplest one."
@@ -49,6 +81,10 @@ scenarios:
       Introduces two systems early, then forces a comparison later.
       Exercises context recall across 4+ turns.
     kind: cross_reference
+    covers:
+      - cli/reyn-chat
+      - multi-agent/agent-registry
+      - stdlib-skills/direct-llm
     prompts:
       - "Describe how LangGraph structures multi-agent workflows."
       - "Now describe how Reyn structures multi-agent workflows."
@@ -62,6 +98,10 @@ scenarios:
       Forces context to grow without new entropy — the classic G12 Pattern E
       trigger. This is the primary attractor-detection scenario.
     kind: repetitive_context
+    covers:
+      - cli/reyn-chat
+      - memory-rag/chat-compaction
+      - stdlib-skills/chat-compactor
     prompts:
       - "What skills are available in Reyn?"
       - "List the available skills again, but this time include a one-line description for each."
@@ -76,12 +116,30 @@ scenarios:
       long sessions on non-project topics without falling back on project
       knowledge or producing empty replies.
     kind: general_topic
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
     prompts:
       - "Explain Python's asyncio event loop in simple terms."
       - "What is the difference between asyncio.gather and asyncio.wait?"
       - "When would you choose asyncio over threading?"
       - "How does Python's GIL interact with async code?"
       - "Give me a minimal example of an async producer-consumer queue."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - final reply contains a working minimal async producer-consumer queue example in Python
+          - the code uses asyncio.Queue or equivalent
+          - does not produce an empty reply on the final turn
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+    outcome_prediction:
+      verified: 0.7
+      inconclusive: 0.2
+      refuted: 0.05
+      blocked: 0.05
 
   - id: scenario_6_file_and_doc_lookup_chain
     description: >
@@ -89,6 +147,10 @@ scenarios:
       across turns and checks that tool results are carried into subsequent
       answers without context loss.
     kind: research_chain
+    covers:
+      - cli/reyn-chat
+      - control-ir-ops/file
+      - stdlib-skills/read-local-files
     prompts:
       - "What ADRs exist in this project?"
       - "Summarize the most recent one."
@@ -103,6 +165,9 @@ scenarios:
       project-context shortcuts and exercise general reasoning under
       growing context.
     kind: general_topic
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
     prompts:
       - "Explain eventual consistency in distributed systems."
       - "What is the CAP theorem and how does it relate to what you just described?"

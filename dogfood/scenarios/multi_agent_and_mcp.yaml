@@ -1,0 +1,185 @@
+---
+type: dogfood_scenario_set
+name: multi_agent_and_mcp
+description: >
+  Multi-agent + MCP + A2A coverage (FP-0036 starter set).
+  Exercises MCP registry search, MCP tool dispatch, agent-to-agent
+  delegation, multi-hop fan-out, A2A lifecycle, permission gating,
+  and scheduled-job introspection.
+covers:
+  - multi-agent/agent-registry
+  - multi-agent/delegate-to-agent
+  - multi-agent/messagebus
+  - mcp/mcp-install
+  - mcp/mcp-search
+  - mcp/tool-dispatch
+  - web-protocol/a2a-agent-card
+  - web-protocol/a2a-message-send
+  - permissions/layer-4-interactive-prompt
+
+scenarios:
+  # ── 1. MCP registry search ─────────────────────────────────────────────────
+  - id: mcp_search_registry
+    covers:
+      - stdlib-skills/mcp-search
+      - cli/reyn-mcp
+      - mcp/mcp-install
+    input: "MCP レジストリで github 関連のサーバーを探して。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - lists one or more MCP server candidates related to github
+          - includes server name or package identifier for at least one result
+          - or explains that no registry results were found and suggests alternatives
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.6
+        inconclusive: 0.3
+        refuted: 0.05
+        blocked: 0.05
+
+  # ── 2. MCP tool call (pre-condition: configured server) ───────────────────
+  - id: mcp_call_remote_tool
+    covers:
+      - mcp/tool-dispatch
+      - control-ir-ops/mcp
+      - os-core/event-system-p6/113-event-types
+    input: "github MCP サーバーを使って最近の PR を一覧して。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - lists recent pull requests OR explains that the github MCP server is not configured
+          - does not silently fail — replies with actionable information either way
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.2
+        inconclusive: 0.55
+        refuted: 0.05
+        blocked: 0.2
+
+  # ── 3. Simple agent delegation ────────────────────────────────────────────
+  - id: agent_delegation_simple
+    covers:
+      - multi-agent/delegate-to-agent
+      - multi-agent/agent-registry
+      - multi-agent/chain-id-propagation
+    input: "researcher エージェントに FP-0001 の概要を要約してもらって。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - provides a summary of FP-0001 OR explains that the researcher agent does not exist
+          - if delegation succeeded, the reply contains substantive content from the delegate
+          - if agent not found, the reply explains how to create the agent
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.3
+        inconclusive: 0.45
+        refuted: 0.05
+        blocked: 0.2
+
+  # ── 4. Multi-hop agent fan-out ────────────────────────────────────────────
+  - id: multi_agent_topology_route
+    covers:
+      - multi-agent/delegate-to-agent
+      - multi-agent/messagebus
+      - multi-agent/agent-hops-cap
+      - multi-agent/chain-id-propagation
+    prompts:
+      - "researcher エージェントに Reyn の Phase エンジンについて調べてもらって、その結果を教えて。"
+      - "次に writer エージェントに、今の説明を 3 行にまとめてもらって。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - produces a concise 3-line summary OR reports that agent(s) do not exist
+          - if both agents existed, the reply reflects synthesis from two delegation hops
+          - does not return an empty reply
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.2
+        inconclusive: 0.45
+        refuted: 0.05
+        blocked: 0.3
+
+  # ── 5. A2A task lifecycle polling ─────────────────────────────────────────
+  - id: a2a_task_lifecycle_status_poll
+    covers:
+      - web-protocol/a2a-message-send
+      - web-protocol/a2a-agent-card
+      - web-protocol/a2a-agent-discovery
+      - cli/reyn-web
+    input: >
+      reyn web を起動して A2A エンドポイントにタスクを投げ、
+      GET /a2a/tasks/<id> でステータスを確認するにはどうすればいい?
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - describes the A2A message/send JSON-RPC method and endpoint shape
+          - mentions GET /a2a/tasks/{run_id} for polling
+          - explains that reyn web must be running first
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.5
+        inconclusive: 0.35
+        refuted: 0.05
+        blocked: 0.1
+
+  # ── 6. MCP install permission gate ───────────────────────────────────────
+  - id: mcp_install_permission_gate
+    covers:
+      - mcp/mcp-install
+      - stdlib-skills/mcp-install
+      - permissions/layer-4-interactive-prompt
+      - control-ir-ops/mcp-install
+    input: "postgres MCP サーバーをインストールして。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - attempts to install a postgres-related MCP server OR explains what would be installed
+          - mentions permission approval step or asks for confirmation before proceeding
+          - does not silently skip the permission gate
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.4
+        inconclusive: 0.4
+        refuted: 0.05
+        blocked: 0.15
+
+  # ── 7. Scheduled job status introspection ────────────────────────────────
+  - id: cron_schedule_status
+    covers:
+      - cli/reyn-run
+      - stdlib-skills/ops-report
+    input: "現在スケジュールされている cron ジョブの一覧を見せて。"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - lists any scheduled cron jobs OR explains that no cron jobs are configured
+          - does not fabricate job entries
+          - if applicable, shows how to configure recurring runs via reyn.yaml or reyn CLI
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+      outcome_prediction:
+        verified: 0.4
+        inconclusive: 0.45
+        refuted: 0.05
+        blocked: 0.1

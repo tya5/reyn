@@ -1,0 +1,206 @@
+---
+type: dogfood_scenario_set
+name: chat_router_smoke
+description: >
+  Chat-router-level smoke suite covering intent routing (FP-0034 universal catalog,
+  wrapper-only path) + basic stdlib catalog dispatch. Regression baseline for the
+  routing_decided event, skill_run_spawned / skill_run_completed lifecycle, and
+  graceful no-permission handling. 5-7 scenarios mixing structural (events +
+  artifacts) and judge (reply) verifiers.
+covers:
+  - cli/reyn-chat
+  - stdlib-skills/direct-llm
+  - stdlib-skills/chat-compactor
+  - stdlib-skills/word-stats-demo
+  - control-ir-ops/run-skill
+  - os-core/event-system-p6
+  - permissions/tier-0-always-allowed
+
+scenarios:
+
+  # ── 1. Simple capability question ────────────────────────────────────────
+  - id: simple_capability_question
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+    input: "こんにちは、Reyn で何ができますか?"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - mentions skills, agents, or chat capabilities at a high level
+          - reply is helpful and does not report an error
+      events:
+        must_emit:
+          - { type: user_message_received, count: ">=1" }
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.70
+        inconclusive: 0.20
+        refuted: 0.05
+        blocked: 0.05
+
+  # ── 2. Factual Q&A routed to direct_llm ─────────────────────────────────
+  - id: factual_query_direct_llm
+    covers:
+      - stdlib-skills/direct-llm
+      - control-ir-ops/run-skill
+    input: "「冪等」とはどういう意味ですか?"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - explains the concept of idempotency in a factual and comprehensible way
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.75
+        inconclusive: 0.18
+        refuted: 0.05
+        blocked: 0.02
+
+  # ── 3. Skill discovery — list available skills ──────────────────────────
+  - id: skill_discovery_request
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+    input: "利用可能なスキルを教えてください"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply mentions at least one skill name or describes the skill catalogue
+          - reply does not return a bare error message
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.65
+        inconclusive: 0.25
+        refuted: 0.05
+        blocked: 0.05
+
+  # ── 4. Explicit skill invocation — word_stats_demo ──────────────────────
+  - id: explicit_skill_invocation_word_stats
+    covers:
+      - stdlib-skills/word-stats-demo
+      - control-ir-ops/run-skill
+      - os-core/event-system-p6
+    input: "word_stats_demo でこのテキストを解析して: The quick brown fox jumps over the lazy dog."
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply contains word count, character count, or similar statistics about the text
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: word_stats_demo, present: true }
+      outcome_prediction:
+        verified: 0.60
+        inconclusive: 0.28
+        refuted: 0.07
+        blocked: 0.05
+
+  # ── 5. Universal catalog routing event (routing_decided) ─────────────────
+  - id: catalog_routing_decided_emitted
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+      - os-core/event-system-p6
+    input: "短い詩を書いてください"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply contains a poem or poem-like text
+          - reply is in a natural poetic form with at least two lines
+      events:
+        must_emit:
+          - { type: routing_decided, count: ">=1" }
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.65
+        inconclusive: 0.25
+        refuted: 0.05
+        blocked: 0.05
+
+  # ── 6. Multi-turn pronoun reference ─────────────────────────────────────
+  - id: multi_turn_pronoun_reference
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+    prompts:
+      - "Pythonのリスト内包表記を一行で説明してください"
+      - "それをコード例で示してください"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - second reply contains a Python code example demonstrating list comprehension
+          - the example is coherent with the first turn's topic
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=2" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.60
+        inconclusive: 0.28
+        refuted: 0.07
+        blocked: 0.05
+
+  # ── 7. Out-of-scope request — graceful decline ──────────────────────────
+  - id: out_of_scope_graceful_decline
+    covers:
+      - cli/reyn-chat
+      - stdlib-skills/direct-llm
+      - permissions/tier-0-always-allowed
+    input: "画像を生成してください"
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply politely declines or explains the capability is not available
+          - reply does not pretend to generate an image
+      events:
+        must_emit:
+          - { type: skill_run_spawned, count: ">=1" }
+          - { type: skill_run_completed, status: success }
+        must_not_emit:
+          - { type: permission_denied }
+      artifacts:
+        - { skill: direct_llm, present: true }
+      outcome_prediction:
+        verified: 0.65
+        inconclusive: 0.25
+        refuted: 0.07
+        blocked: 0.03
