@@ -54,7 +54,11 @@ from typing import Literal
 # against Anthropic SDK release notes when the SDK is available in this env.
 # The ``type`` value "tool_search_tool_20251101" is the version identifier
 # confirmed in the Anthropic docs reference for the 2025-11 GA release.
-MCP_SEARCH_THRESHOLD: int = 30
+MCP_SEARCH_THRESHOLD: int = 0
+# FP-0032: Default 0 (always inline D1–D4). The prior value of 30 activated
+# Anthropic's tool_search_tool_20251101, which is Anthropic-API-specific and
+# conflicts with Reyn's provider-agnostic posture. Set > 0 via reyn.yaml
+# mcp.search_threshold to opt in. Full removal of tool_search_tool is FP-0033.
 
 # ── G12 attractor mitigation (B7 finding: skill description verbosity trigger) ──
 #
@@ -238,7 +242,7 @@ def build_tools(
       B3 remember_shared, B4 remember_agent, B5 forget_memory,
       C1 list_directory, C2 read_file (when any file scope),
       C3 write_file, C4 delete_file (only when write scope),
-      D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool (when mcp configured).
+      D1 list_mcp_servers, D2 list_mcp_tools, D3 call_mcp_tool, D4 describe_mcp_tool (when mcp configured).
 
     Internally collects ToolSpec objects (= single source of truth for name,
     description, parameters, dispatch_kind) and returns the OpenAI dict shape
@@ -788,14 +792,34 @@ def build_tools(
                 ))
 
             # ── D3: call_mcp_tool ────────────────────────────────────────────
+            # FP-0032: enum injection via _enrich_router_schema — builds a
+            # minimal RouterCallerState carrying mcp_servers so the enricher
+            # can inject server + mcp_tool_name enums (P4 alignment).
+            from reyn.tools.types import RouterCallerState as _RouterCallerState
+            _mcp_state = _RouterCallerState(mcp_servers=list(mcp_servers or []))
             _call_mcp_tool_def = _registry.lookup("call_mcp_tool")
             if _call_mcp_tool_def is not None and _call_mcp_tool_def.gates.router == "allow":
-                _call_mcp_tool_rendered = _call_mcp_tool_def.render_for_router()
+                _call_mcp_tool_rendered = _call_mcp_tool_def.render_for_router(
+                    state=_mcp_state
+                )
                 specs.append(ToolSpec(
                     name=_call_mcp_tool_rendered["function"]["name"],
                     description=_call_mcp_tool_rendered["function"]["description"],
                     parameters=_call_mcp_tool_rendered["function"]["parameters"],
                     dispatch_kind=_call_mcp_tool_def.dispatch_kind,
+                ))
+
+            # ── D4: describe_mcp_tool ─────────────────────────────────────────
+            _describe_mcp_tool_def = _registry.lookup("describe_mcp_tool")
+            if _describe_mcp_tool_def is not None and _describe_mcp_tool_def.gates.router == "allow":
+                _describe_mcp_tool_rendered = _describe_mcp_tool_def.render_for_router(
+                    state=_mcp_state
+                )
+                specs.append(ToolSpec(
+                    name=_describe_mcp_tool_rendered["function"]["name"],
+                    description=_describe_mcp_tool_rendered["function"]["description"],
+                    parameters=_describe_mcp_tool_rendered["function"]["parameters"],
+                    dispatch_kind=_describe_mcp_tool_def.dispatch_kind,
                 ))
     else:
         _mcp_search_tool_raw = []

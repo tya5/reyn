@@ -53,7 +53,13 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.file import DELETE_FILE, FILE_OP, LIST_DIRECTORY, READ_FILE, WRITE_FILE
     from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
     from reyn.tools.lint import LINT
-    from reyn.tools.mcp import CALL_MCP_TOOL, LIST_MCP_SERVERS, LIST_MCP_TOOLS, MCP_OP
+    from reyn.tools.mcp import (
+        CALL_MCP_TOOL,
+        DESCRIBE_MCP_TOOL,
+        LIST_MCP_SERVERS,
+        LIST_MCP_TOOLS,
+        MCP_OP,
+    )
     from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.memory import (
         FORGET_MEMORY,
@@ -83,9 +89,11 @@ def get_default_registry() -> ToolRegistry:
     registry.register(DELETE_FILE)
     registry.register(LIST_DIRECTORY)
     # MCP ops (Wave 2 — Type C closure: phase-side discover)
+    # FP-0032: DESCRIBE_MCP_TOOL added as D4 (mirror of describe_skill).
     registry.register(CALL_MCP_TOOL)
     registry.register(LIST_MCP_SERVERS)
     registry.register(LIST_MCP_TOOLS)
+    registry.register(DESCRIBE_MCP_TOOL)
     # Memory ops (Wave 2 — Type C closure: memory write phase-side)
     registry.register(LIST_MEMORY)
     registry.register(READ_MEMORY_BODY)

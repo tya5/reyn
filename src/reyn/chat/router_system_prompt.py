@@ -193,7 +193,7 @@ def build_system_prompt(
     )
     if has_mcp:
         parts.append(
-            "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool"
+            "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool / describe_mcp_tool"
         )
     # NOTE: renamed from "Recall" to "Memory access" (B17-S5-3 fix) to avoid
     # vocabulary collision with the `recall` indexed-search tool (ADR-0033).
@@ -612,9 +612,9 @@ def build_system_prompt(
             parts.append(f"  {line}")
         parts.append("")
 
-    # ── 12. MCP servers ──────────────────────────────────────────────────────
+    # ── 12. MCP servers and tools ────────────────────────────────────────────
     if mcp_section:
-        parts.append("## MCP servers (resource axis)")
+        parts.append("## MCP servers and tools (resource axis)")
         for line in mcp_section:
             parts.append(f"  {line}")
         parts.append("")
@@ -844,14 +844,35 @@ def _render_files(file_permissions: dict | None) -> list[str]:
 
 
 def _render_mcp(mcp_servers: list[dict] | None) -> list[str]:
-    """Return lines for the MCP servers section, or [] when nothing to render."""
+    """Return lines for the MCP servers and tools section, or [] when nothing to render.
+
+    FP-0032: renders a flat list of available mcp_tools (dotted form
+    <server>.<tool>) alongside each server, mirroring the "Available skills"
+    flat list pattern. When a server's ``tools`` list is absent (= not yet
+    async-enumerated), falls back to the prior server-only line with a hint
+    to use list_mcp_tools.
+    """
     if not mcp_servers:
         return []
     lines: list[str] = []
     for server in mcp_servers:
         name = server.get("name", "(unnamed)")
         desc = server.get("description") or "(no description)"
-        lines.append(f"- {name}: {desc}  (use list_mcp_tools to see tools)")
+        tools = server.get("tools") or []
+        if tools:
+            lines.append(f"- {name}: {desc}")
+            for t in tools:
+                tool_name = t.get("name", "(unnamed)")
+                tool_desc = t.get("description") or ""
+                dotted = f"{name}.{tool_name}"
+                if tool_desc:
+                    lines.append(f"    {dotted}  — {tool_desc}")
+                else:
+                    lines.append(f"    {dotted}")
+        else:
+            lines.append(
+                f"- {name}: {desc}  (use list_mcp_tools to see mcp_tools)"
+            )
     return lines
 
 
