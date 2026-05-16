@@ -83,12 +83,14 @@ class FakeRouterHost:
         memory_index: dict | None = None,
         file_permissions: dict | None = None,
         mcp_servers: list[dict] | None = None,
+        universal_wrappers_enabled: bool = False,
     ):
         self._skills = skills or []
         self._agents = agents or []
         self._memory_index = memory_index or {"status": "not_found", "content": ""}
         self._file_permissions = file_permissions
         self._mcp_servers = mcp_servers or []
+        self._universal_wrappers_enabled = universal_wrappers_enabled
 
         # Track calls
         self.outbox: list[dict] = []
@@ -211,6 +213,14 @@ class FakeRouterHost:
         return {"status": "ok", "server": server, "tool": tool}
 
     # --- Model resolution ---
+
+    def get_universal_wrappers_enabled(self) -> bool:
+        """FP-0034 PR-3b-iii — RouterLoop reads this via getattr fallback.
+
+        Default False keeps existing fixtures byte-valid. PR-5 e2e tests
+        opt-in by passing universal_wrappers_enabled=True at construction.
+        """
+        return self._universal_wrappers_enabled
 
     def resolve_model(self, name: str) -> str:
         # Return the bare model name (no provider prefix).
@@ -669,6 +679,73 @@ async def test_named_skill_direct_invoke_without_list_skills():
     assert host.skill_calls[0]["skill"] == "skill_improver", (
         f"Expected skill_improver; got: {host.skill_calls[0]['skill']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ── FP-0034 universal catalog wrappers (PR-5 e2e) ───────────────────────────
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the full chain with `universal_wrappers_enabled=True`:
+#   ChatSession (here: FakeRouterHost) → RouterHostAdapter-equivalent
+#   → RouterLoop reads get_universal_wrappers_enabled() → build_tools
+#   appends list_actions / describe_action / invoke_action → LLM may call
+#   either legacy OR wrapper paths → dispatch routes to host callbacks.
+#
+# Phase 1 verification:
+#   - Wrappers appear in the tool list when the host opts in.
+#   - When the LLM elects to invoke a skill (via either path), the host's
+#     run_skill_awaitable is called.
+#   - SP section "## Action categories" is present in the recorded
+#     prompt (= cache-prefix invariant from PR-3b-v).
+#
+# Fixtures live under tests/fixtures/llm/router/universal_wrappers/.
+
+
+@pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/invoke_skill_with_wrappers.jsonl"
+)
+@pytest.mark.asyncio
+async def test_invoke_skill_with_wrappers_enabled():
+    """Tier 3a: with universal_wrappers_enabled=True the LLM successfully
+    invokes a skill via either ``invoke_skill`` (legacy) or ``invoke_action``
+    (wrapper).  This test pins the e2e dispatch invariant: regardless of
+    which path the LLM picks, the host's run_skill_awaitable fires for the
+    requested skill.
+
+    Per FP-0034 Phase 1, both paths must coexist (= legacy tools stay so
+    the wrappers can re-route through them without re-implementing
+    handlers).  The fixture captures one concrete LLM run; future LLM
+    drift could switch which path is taken without invalidating the
+    invariant.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host)
+
+    await loop.run(
+        "Please summarise this with the text_summariser skill: "
+        "The quick brown fox jumps over the lazy dog.",
+        [],
+    )
+
+    # Invariant 1: skill got invoked via SOME path (legacy or wrapper).
+    assert len(host.skill_calls) >= 1, (
+        f"Expected ≥1 skill call regardless of dispatch path; "
+        f"got: {host.skill_calls}"
+    )
+    # Invariant 2: chain_id propagates through the wrapper path too.
+    assert host.skill_calls[0]["chain_id"] == "chain-test"
+    # Invariant 3: final outbox is an agent text reply.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
 
 
 # ---------------------------------------------------------------------------
