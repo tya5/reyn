@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-from reyn.chat.router_loop import RouterLoop
+from reyn.chat.router_loop import _UNIVERSAL_WRAPPER_NAMES, RouterLoop, _build_hot_list_aliases
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
 
@@ -1252,3 +1252,68 @@ async def test_no_events_attribute_needed_for_unknown_tool_path():
     assert result_data["error"]["kind"] == "unknown_tool"
     # events were emitted
     assert any(e["type"] == "tool_failed" for e in host.events.emitted)
+
+
+# ---------------------------------------------------------------------------
+# B27-C1: _build_hot_list_aliases must filter universal wrapper names
+# ---------------------------------------------------------------------------
+
+
+def test_build_hot_list_aliases_filters_universal_wrappers() -> None:
+    """Tier 2: universal wrapper names are excluded from hot-list alias output.
+
+    When the input list contains universal wrapper names (list_actions,
+    describe_action, invoke_action, search_actions) alongside a real action
+    name, only the real action appears in the returned alias list.
+
+    This is the OS-level invariant that prevents duplicate function
+    declarations when ActionUsageTracker.get_top_n() returns a wrapper name
+    that was recorded as usage (B27-C1 regression).
+    """
+    input_names = ["list_actions", "file__read", "describe_action"]
+    result = _build_hot_list_aliases(input_names)
+    returned_names = [entry["function"]["name"] for entry in result]
+    assert returned_names == ["file__read"], (
+        f"Expected only ['file__read'] but got {returned_names}; "
+        "universal wrappers must be filtered before alias construction"
+    )
+
+
+def test_build_hot_list_aliases_all_wrappers_returns_empty() -> None:
+    """Tier 2: when all inputs are universal wrapper names the result is empty.
+
+    All four wrapper names must be present in _UNIVERSAL_WRAPPER_NAMES and
+    all must be filtered, leaving an empty list.
+    """
+    all_wrappers = list(_UNIVERSAL_WRAPPER_NAMES)
+    result = _build_hot_list_aliases(all_wrappers)
+    assert result == [], (
+        f"Expected empty list but got {result}; "
+        "_UNIVERSAL_WRAPPER_NAMES must cover all four wrapper names"
+    )
+
+
+def test_build_hot_list_aliases_no_wrappers_passes_through() -> None:
+    """Tier 2: when no universal wrapper names are present all names pass through.
+
+    Smoke test: the filter must not affect non-wrapper action names.
+    """
+    names = ["skill__summarise", "file__write", "agent__planner"]
+    result = _build_hot_list_aliases(names)
+    returned_names = [entry["function"]["name"] for entry in result]
+    assert returned_names == names, (
+        f"Expected {names} but got {returned_names}; "
+        "non-wrapper names must not be filtered"
+    )
+
+
+def test_universal_wrapper_names_constant_covers_all_four() -> None:
+    """Tier 2: _UNIVERSAL_WRAPPER_NAMES contains exactly the four wrapper names.
+
+    Guards against accidental shrinkage of the constant if the set is later
+    edited without updating the filter logic.
+    """
+    expected = {"list_actions", "search_actions", "describe_action", "invoke_action"}
+    assert _UNIVERSAL_WRAPPER_NAMES == expected, (
+        f"_UNIVERSAL_WRAPPER_NAMES mismatch: got {_UNIVERSAL_WRAPPER_NAMES}"
+    )
