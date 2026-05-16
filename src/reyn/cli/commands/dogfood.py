@@ -339,16 +339,235 @@ def run_run(args: argparse.Namespace) -> None:
 
 
 def _build_live_runner(agent_name: str):
-    """Return an async runner_fn that drives the chat router via Agent.run.
+    """Return an async runner_fn that drives the chat router via send_to_agent_impl.
 
-    This injects the real headless execution path.  For MVP, returns the
-    stub (inconclusive) runner; the full integration follows the same pattern
-    as reyn cron's _build_runner().
+    Reuses the same path as MCP / web A2A: build a minimal AgentRegistry +
+    session factory, then call send_to_agent_impl per turn.
+
+    Per-scenario state isolation:
+    - Wipes events/agents/<name>/chat/ before each scenario so captured
+      events contain only the events from that scenario's turns.
+    - Wipes state/action_usage.jsonl before each scenario so hot-list
+      frequency counters don't bleed across scenarios.
+    - Drops the cached ChatSession from the registry between scenarios so
+      the session's in-memory EventLog starts empty each time.
+
+    Artifact collection:
+    - Snapshots .reyn/agents/<name>/artifacts/ after the run (if present).
+      Artifact diffs (= new files only) are not computed here; the caller
+      receives the full post-run snapshot.  Per-scenario artifact diffs
+      would require a pre-run snapshot which adds latency; the verifier can
+      compare across scenarios if needed.
+
+    Permission injection:
+    - PermissionResolver is constructed with interactive=False so the runner
+      never blocks on stdin prompts.  This accepts the limitation that ops
+      requiring interactive approval are blocked; this is the correct
+      behaviour for headless dogfood dispatch (equivalent to running in CI).
+
+    chain_id:
+    - Allocated internally by send_to_agent_impl; not surfaced here because
+      events are harvested by filesystem scan after the turn, not by
+      chain-id filtering.
     """
-    # MVP: return None so the runner uses its default stub.
-    # Full integration: wire up the chat MessageBus / Agent.run path here,
-    # capture events + artifacts from the session, and populate RunResult.
-    return None
+    import asyncio
+    import shutil
+    from pathlib import Path
+
+    from reyn.budget.budget import BudgetTracker
+    from reyn.chat.profile import AgentProfile
+    from reyn.chat.registry import AgentRegistry
+    from reyn.chat.session import ChatSession
+    from reyn.config import _find_project_root, load_config, load_project_context
+    from reyn.dogfood.runner import ScenarioRunResult
+    from reyn.events.event_store import EventStore
+    from reyn.llm.model_resolver import ModelResolver
+    from reyn.mcp_server import send_to_agent_impl
+    from reyn.permissions.permissions import PermissionResolver
+
+    project_root = _find_project_root(Path.cwd()) or Path.cwd()
+    config = load_config()
+    resolver = ModelResolver(config.models)
+    model = config.model
+    output_language = config.output_language
+    safety = config.safety
+    project_context = load_project_context(config, project_root)
+    perm_config = getattr(config, "permissions", {}) or {}
+
+    perm_resolver = PermissionResolver(
+        config_permissions=perm_config,
+        project_root=project_root,
+        interactive=False,  # headless — never block on stdin
+        unsafe_python_allowed=False,
+    )
+    budget_tracker = BudgetTracker(config.cost, safety=safety)
+    budget_tracker.hydrate(project_root / ".reyn" / "state" / "budget_ledger.jsonl")
+
+    # Per-call registry and session cache. Rebuilt each invocation of the
+    # returned runner_fn so scenarios don't share session state.
+    _registry_cache: dict = {}
+
+    def _make_registry() -> AgentRegistry:
+        """Build a fresh registry + session factory for one scenario run."""
+        # registry is captured by the nested factory closure; we use a list
+        # cell so the factory can reference it before assignment completes.
+        _reg_cell: list = []
+
+        def _session_factory(profile: AgentProfile) -> ChatSession:
+            s = ChatSession(
+                agent_name=profile.name,
+                model=model,
+                resolver=resolver,
+                permission_resolver=perm_resolver,
+                safety=safety,
+                mcp_servers=config.mcp,
+                output_language=output_language,
+                prompt_cache_enabled=config.prompt_cache_enabled,
+                project_context=project_context,
+                agent_role=profile.role,
+                compaction_config=config.chat.compaction,
+                registry=_reg_cell[0] if _reg_cell else None,
+                allowed_skills=profile.allowed_skills,
+                allowed_mcp=profile.allowed_mcp,
+                events_config=config.events,
+                state_log=None,  # no WAL for dogfood dispatch
+                budget_tracker=budget_tracker,
+                sandbox_config=config.sandbox,
+                action_retrieval_config=config.action_retrieval,
+            )
+            s.load_history()
+            return s
+
+        reg = AgentRegistry(
+            project_root=project_root,
+            session_factory=_session_factory,
+            state_log=None,
+        )
+        _reg_cell.append(reg)
+        return reg
+
+    def _wipe_scenario_state() -> None:
+        """Delete per-scenario ephemeral state so each run starts clean."""
+        # Wipe the agent's chat event files so EventStore.iter_all() only
+        # returns events from this scenario's turns.
+        events_chat_dir = project_root / ".reyn" / "events" / "agents" / agent_name / "chat"
+        if events_chat_dir.is_dir():
+            shutil.rmtree(events_chat_dir, ignore_errors=True)
+        # Wipe action_usage ledger to prevent hot-list bleed across scenarios.
+        action_usage_path = project_root / ".reyn" / "state" / "action_usage.jsonl"
+        action_usage_path.unlink(missing_ok=True)
+
+    def _collect_events(registry: AgentRegistry) -> list[dict]:
+        """Harvest events emitted during the scenario from the EventStore."""
+        session = registry._agents.get(agent_name)
+        if session is None:
+            return []
+        try:
+            store: EventStore = session._event_store
+            return [e.model_dump(mode="json") for e in store.iter_all()]
+        except Exception:
+            return []
+
+    def _collect_artifacts() -> list[dict]:
+        """Snapshot artifact files in .reyn/agents/<name>/artifacts/."""
+        artifacts_dir = project_root / ".reyn" / "agents" / agent_name / "artifacts"
+        if not artifacts_dir.is_dir():
+            return []
+        import json
+        results: list[dict] = []
+        for f in sorted(artifacts_dir.iterdir()):
+            if not f.is_file():
+                continue
+            try:
+                raw = f.read_text(encoding="utf-8")
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    data = {"raw": raw}
+                results.append({"path": str(f.name), **data} if isinstance(data, dict) else {"path": str(f.name), "content": data})
+            except Exception:
+                continue
+        return results
+
+    async def runner_fn(scenario) -> ScenarioRunResult:
+        """Async callable (Scenario) -> ScenarioRunResult.
+
+        Per-scenario state isolation is applied before invoking the agent.
+        Errors inside the run are caught and returned as a blocked outcome
+        so a single crashing scenario does not abort the whole set.
+        """
+        _wipe_scenario_state()
+        # Fresh registry per scenario — no session state bleed.
+        registry = _make_registry()
+
+        try:
+            await registry.ensure_running(agent_name)
+        except Exception as exc:  # noqa: BLE001 — agent not found etc.
+            return ScenarioRunResult(
+                scenario_id=scenario.id,
+                reply_text="",
+                events=[],
+                artifacts=[],
+                reply_outcome="blocked",
+                events_outcome="blocked",
+                artifacts_outcome="blocked",
+                detail={"error": str(exc), "stage": "ensure_running"},
+            )
+
+        reply_parts: list[str] = []
+
+        try:
+            if scenario.is_multi_turn:
+                for prompt in scenario.prompts:
+                    result = await send_to_agent_impl(
+                        registry,
+                        agent_name=agent_name,
+                        message=prompt,
+                    )
+                    if result.get("reply"):
+                        reply_parts.append(result["reply"])
+            else:
+                message = scenario.input or ""
+                result = await send_to_agent_impl(
+                    registry,
+                    agent_name=agent_name,
+                    message=message,
+                )
+                if result.get("reply"):
+                    reply_parts.append(result["reply"])
+        except Exception as exc:  # noqa: BLE001
+            events = _collect_events(registry)
+            return ScenarioRunResult(
+                scenario_id=scenario.id,
+                reply_text="\n\n".join(reply_parts),
+                events=events,
+                artifacts=[],
+                reply_outcome="blocked",
+                events_outcome="blocked",
+                artifacts_outcome="blocked",
+                detail={"error": str(exc), "stage": "send_to_agent"},
+            )
+        finally:
+            try:
+                await registry.shutdown()
+            except Exception:  # noqa: BLE001
+                pass
+
+        events = _collect_events(registry)
+        artifacts = _collect_artifacts()
+        reply_text = "\n\n".join(reply_parts).strip()
+
+        return ScenarioRunResult(
+            scenario_id=scenario.id,
+            reply_text=reply_text,
+            events=events,
+            artifacts=artifacts,
+            # Verifier outcomes are left at "inconclusive" (default).
+            # The verifier triad (run_scenario_set's caller layer) fills
+            # these in after this function returns.
+        )
+
+    return runner_fn
 
 
 # ---------------------------------------------------------------------------
