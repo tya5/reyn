@@ -243,6 +243,84 @@ The `python` permission has two levels:
 
 **The formal contract for `mode: safe`** (= "ambient sources only") is documented in [Python safe mode](python-safe-mode.md). That page covers the full allowlist rationale, the safe-vs-unsafe auto-allow rules by context, and the refactor pattern for converting unsafe steps to safe.
 
+## Per-skill credential scoping (FP-0016 D)
+
+### Threat model: Confused Deputy
+
+When a parent skill invokes a sub-skill via `run_skill`, the sub-skill executes
+with the parent's full authority if no scoping is applied. A malicious document
+processed by the sub-skill could instruct it to read credentials it has no
+legitimate need for and include them in its output — a classic **Confused Deputy**
+attack where the OS is tricked into using its authority on behalf of an adversary.
+
+### `required_credentials` declaration
+
+Sub-skills declare their credential needs in `skill.md` frontmatter:
+
+```yaml
+# skill.md
+name: github_pr_reviewer
+required_credentials:
+  - github_token
+  - atlassian_token
+```
+
+The default — when `required_credentials` is omitted — is `["*"]`, which grants
+full credential delegation. This preserves backward compatibility for existing
+skills written before FP-0016.
+
+To explicitly declare that a skill needs no credentials at all, use an empty list:
+
+```yaml
+required_credentials: []
+```
+
+### How `run_skill` narrows the scope
+
+At the `run_skill` boundary, the OS constructs a `ScopedSecretStore` from the
+sub-skill's `required_credentials` declaration and intersects it with the
+parent's already-scoped store. A sub-skill can never gain credentials the parent
+does not itself hold:
+
+```
+parent scope: {"github_token", "stripe_key", "datadog_key"}
+sub-skill declares: ["github_token", "slack_token"]
+effective scope: {"github_token"}  ← intersection; slack_token not in parent
+```
+
+If the parent store is unrestricted (`["*"]`), the sub-skill's declared list is
+honoured as-is (no intersection needed).
+
+### `CredentialScopeError`
+
+Any attempt by the sub-skill to read a credential outside its effective allowed
+set raises `CredentialScopeError` (a `PermissionError` subclass). Enumeration is
+also blocked: `list_visible_keys()` returns only keys that are both allowed and
+present — out-of-scope keys are invisible, not just unreadable.
+
+```python
+from reyn.secrets import ScopedSecretStore, CredentialScopeError
+
+store = ScopedSecretStore(allowed_keys=["github_token"], path=secrets_path)
+store.get("github_token")    # ok — returns value
+store.get("stripe_key")      # raises CredentialScopeError
+"stripe_key" in store        # False — no raise, no leak
+store.list_visible_keys()    # ["github_token"] only
+```
+
+### Audit trail
+
+Every `run_skill` invocation emits a `sub_skill_credential_scope` P6 event
+recording the effective allowed key set for that invocation:
+
+```bash
+grep '"sub_skill_credential_scope"' .reyn/events.jsonl
+```
+
+The event payload contains `skill` (sub-skill name) and `allowed_keys` (sorted
+list, or `["*"]` for unrestricted). This makes every sub-skill credential grant
+auditable and replay-capable (P6).
+
 ## What the permission system is NOT
 
 - **Not a Linux capability sandbox.** A Python step in `mode: unsafe` runs as the same user; reyn doesn't sandbox the kernel.

@@ -23,6 +23,8 @@ permissions:
   file.write:
     - path: reyn/local
       scope: recursive
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 routing:
   intents: [task]
   when_to_use:

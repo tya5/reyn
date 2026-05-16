@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from reyn.llm.model_resolver import ModelResolver
     from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import Skill
+    from reyn.secrets.store import ScopedSecretStore
     from reyn.user_intervention import InterventionBus
 
 
@@ -44,6 +45,7 @@ async def invoke_sub_skill(
     max_phase_visits: int = 25,
     caller: str = "direct",
     parent_run_id: str | None = None,
+    secret_store: "ScopedSecretStore | None" = None,  # NEW (FP-0016 D)
 ) -> SubSkillResult:
     """Run a sub-app and return a SubSkillResult.
 
@@ -78,6 +80,7 @@ async def invoke_sub_skill(
         intervention_bus=intervention_bus,
         permission_resolver=permission_resolver,
         caller=caller,
+        secret_store=secret_store,
     )
     run_result = await agent.run(
         sub_skill, input_artifact,

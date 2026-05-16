@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from reyn.config import SandboxConfig
+    from reyn.secrets.store import ScopedSecretStore
 
 from reyn.dispatch import DispatchContext, dispatch_tool
 from reyn.events.events import EventLog
@@ -89,6 +90,7 @@ class ControlIRExecutor:
         resume_plan: Any = None,
         run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
+        secret_store: "ScopedSecretStore | None" = None,
     ) -> None:
         self.workspace = workspace
         self.events = events
@@ -125,6 +127,9 @@ class ControlIRExecutor:
         # policy. ``None`` means the factory falls through to platform
         # auto-detection (= unchanged behavior pre-wiring).
         self._sandbox_config = sandbox_config
+        # FP-0016 D: per-skill credential scoping. None = unrestricted
+        # (= preserves backward compat for callers that don't supply a store).
+        self._secret_store = secret_store
 
     def available_ops(self) -> list[ControlIROpSpec]:
         """Return the Control IR op kinds this executor advertises to the LLM.
@@ -281,6 +286,8 @@ class ControlIRExecutor:
             agent_id=getattr(self.events, "agent_id", None),
             # FP-0017 follow-up: declarative sandbox config (reyn.yaml).
             sandbox_config=self._sandbox_config,
+            # FP-0016 D: per-skill credential scoping.
+            secret_store=self._secret_store,
         )
 
     async def teardown_mcp_clients(self) -> None:

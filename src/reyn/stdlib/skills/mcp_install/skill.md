@@ -21,6 +21,8 @@ permissions:
       function: fetch_server_for_install
       mode: unsafe
       timeout: 20
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 routing:
   intents: [task]
   when_to_use:

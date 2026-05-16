@@ -21,6 +21,8 @@ permissions:
       function: compute_text_stats
       mode: safe
       timeout: 5
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

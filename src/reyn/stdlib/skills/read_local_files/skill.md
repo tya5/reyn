@@ -19,6 +19,8 @@ graph:
   read_and_respond: []
 permissions:
   mcp: [filesystem]
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 routing:
   intents: [task]
   priority: normal

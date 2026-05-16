@@ -71,6 +71,8 @@ permissions:
       function: inject_resolved_paths
       mode: safe
       timeout: 5
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

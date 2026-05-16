@@ -99,6 +99,32 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
     skill_hash = _compute_skill_hash(skill_md_path_for_hash) if skill_md_path_for_hash else "unknown"
     ctx.events.emit("run_skill_started", skill=op.skill, state_dir=sub_state_dir, skill_version_hash=skill_hash)
 
+    # FP-0016 Component D: per-skill credential scoping. Construct a
+    # ScopedSecretStore for the sub-skill based on its required_credentials
+    # declaration. If the parent already had a (non-unrestricted) scope,
+    # intersect with it — a sub-skill can never have wider access than its
+    # parent. Emit a P6 event recording the effective scope.
+    from reyn.secrets.store import ScopedSecretStore
+
+    allowed: list[str] = list(sub_skill.required_credentials)  # default ["*"]
+    parent = ctx.secret_store
+    if parent is not None and not parent.is_unrestricted:
+        parent_allowed = parent.allowed_keys
+        if "*" in allowed:
+            # Sub-skill declared full delegation, but parent is scoped —
+            # cap at parent's set.
+            allowed = sorted(parent_allowed)
+        else:
+            # Intersect explicit declarations.
+            allowed = [k for k in allowed if k in parent_allowed]
+
+    scoped_store = ScopedSecretStore(allowed_keys=allowed)
+    ctx.events.emit(
+        "sub_skill_credential_scope",
+        skill=op.skill,
+        allowed_keys=sorted(set(allowed)) if "*" not in allowed else ["*"],
+    )
+
     run_result = await invoke_sub_skill(
         sub_skill, op.input,
         model=model,
@@ -115,6 +141,7 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         # R-D13: stamp parent_run_id on the child snapshot so
         # /skill list and future cascade-discard can walk the tree.
         parent_run_id=ctx.parent_skill_run_id,
+        secret_store=scoped_store,
     )
 
     # PR20: per-run events live at

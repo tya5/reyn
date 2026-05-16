@@ -44,6 +44,8 @@ routing:
       - "Run a shell command"              # needs shell
       - "Schedule weekly reports"          # multi-step / scheduling
       - "Improve this skill"               # → skill_improver
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

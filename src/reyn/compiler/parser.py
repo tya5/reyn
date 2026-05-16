@@ -143,6 +143,23 @@ def parse_skill(path: Path) -> SkillDef:
             f"{type(search_hints_raw).__name__}"
         )
 
+    # FP-0016 Component D: required_credentials — optional field.
+    # None = omitted (expander will apply ["*"] default).
+    # [] = explicitly no credentials.
+    # ["key1", ...] = scoped list.
+    if "required_credentials" in fm:
+        rc_raw = fm["required_credentials"]
+        if not isinstance(rc_raw, list):
+            raise ValueError(
+                f"skill.md '{path}': 'required_credentials' must be a list of strings, "
+                f"got {type(rc_raw).__name__}. "
+                f"Use a YAML list (e.g. [github_token, openai_key]) or [] for no credentials, "
+                f'or omit the field entirely for full delegation (["*"]).'
+            )
+        required_credentials: list[str] | None = [str(k).strip() for k in rc_raw]
+    else:
+        required_credentials = None
+
     return SkillDef(
         name=fm["name"],
         description=str(fm.get("description") or "").strip(),
@@ -156,4 +173,5 @@ def parse_skill(path: Path) -> SkillDef:
         postprocessor=postprocessor_raw,
         permissions=permissions_raw,
         search_hints=search_hints,
+        required_credentials=required_credentials,
     )

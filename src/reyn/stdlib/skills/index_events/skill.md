@@ -91,6 +91,8 @@ postprocessor:
           filtered_runs:   {type: integer, minimum: 0}
           new_cursor:      {type: string}
           sources_updated: {type: array, items: {type: string}}
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 ---
 
 ## Overview

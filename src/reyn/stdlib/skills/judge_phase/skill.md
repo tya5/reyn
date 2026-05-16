@@ -18,6 +18,8 @@ permissions:
       function: compute_score
       mode: safe
       timeout: 5
+# FP-0016 D: this skill needs no static secrets / OAuth tokens.
+required_credentials: []
 postprocessor:
   output_name: phase_judgment
   output_description: |
