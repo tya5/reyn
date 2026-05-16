@@ -236,8 +236,8 @@ def test_missing_fields_in_jsonl_skipped(tmp_path: Path) -> None:
 # ── 8. DEFAULT_HOT_LIST_SEED ──────────────────────────────────────────────────
 
 
-def test_default_seed_has_eleven_items() -> None:
-    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 11 entries.
+def test_default_seed_has_twelve_items() -> None:
+    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 12 entries.
 
     file__grep was removed (B27-M2) because FP-0034 §D20 file-ops
     (edit / glob / grep) are not yet implemented as ToolDefinitions.
@@ -245,8 +245,11 @@ def test_default_seed_has_eleven_items() -> None:
     so directory-listing intent has a discoverable cold-start path
     (= avoids the catch-22 where list_actions itself is the only
     tool the LLM knows and gets misused as a filesystem finder).
+    skill__index_docs was added in B28-MED-1 follow-up so RAG
+    indexing intent surfaces the real skill instead of luring the
+    LLM into hallucinating rag.operation__add_source (= W2 attractor).
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 11
+    assert len(DEFAULT_HOT_LIST_SEED) == 12
 
 
 def test_default_seed_items_are_strings() -> None:

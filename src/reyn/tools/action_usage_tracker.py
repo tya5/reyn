@@ -49,6 +49,7 @@ DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "skill__skill_importer",
     "skill__mcp_search",
     "skill__read_local_files",
+    "skill__index_docs",
 )
 
 _SECONDS_PER_DAY = 86400.0
