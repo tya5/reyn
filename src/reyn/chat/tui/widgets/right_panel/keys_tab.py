@@ -77,15 +77,21 @@ def render_keys(app: "App") -> str:
         groups[group].append((_pretty_key(b.key), b.description))
 
     lines: list[str] = []
+    # Key column width: max key length within the group, capped at 6
+    # (longest pretty key is ⇧Tab / Enter / Space = 5 chars + 1 pad).
+    # Single-line "<key>  <desc>" fits the narrow panel; previously the
+    # column was a fixed 16 chars which forced every binding onto two
+    # rows after wrapping.
     for group_name in _GROUP_ORDER:
         entries = groups.get(group_name, [])
         if not entries:
             continue
         lines.append(f"[bold #aaaaaa]  \\[{_esc(group_name)}][/]")
+        key_width = min(6, max((len(k) for k, _ in entries), default=2) + 1)
         for key_display, desc in entries:
-            key_col = f"{_esc(key_display):<16}"
+            key_col = f"{_esc(key_display):<{key_width}}"
             lines.append(
-                f"[{_CORAL}]    {key_col}[/]  [#dddddd]{_esc(desc)}[/]"
+                f"  [{_CORAL}]{key_col}[/]  [#dddddd]{_esc(desc)}[/]"
             )
         lines.append("")
     if not lines:
