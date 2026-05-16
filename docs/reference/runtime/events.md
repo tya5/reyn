@@ -113,8 +113,8 @@ See also: [Concepts: secret handling](../../concepts/secret-handling.md) — OAu
 | `agent_message_sent` | `_send_to_agent` or `_send_agent_response` delivered a payload | `kind=agent_request\|agent_response`, `from_agent`, `to_agent`, `depth`, `chain_id` |
 | `agent_request_received` | Receiving agent pulled an `agent_request` from its inbox | `from_agent`, `depth`, `chain_id` |
 | `agent_response_received` | Originating agent pulled an `agent_response` from its inbox | `from_agent`, `depth`, `chain_id` |
-| `agent_message_refused` | A send was refused (e.g. exceeded `multi_agent.max_hop_depth`) | `reason`, `to_agent`, `depth`, `chain_id` |
-| `chain_timeout` | A pending chain exceeded `multi_agent.chain_timeout_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
+| `agent_message_refused` | A send was refused (e.g. exceeded `safety.loop.max_agent_hops`) | `reason`, `to_agent`, `depth`, `chain_id` |
+| `chain_timeout` | A pending chain exceeded `safety.timeout.chain_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
 
 `chain_id` is uuid4 hex; one per top-level user submission, propagated unchanged across every hop. Cross-agent reconstruction is `grep <chain_id>` over each agent's `events.jsonl` plus `history.jsonl`.
 

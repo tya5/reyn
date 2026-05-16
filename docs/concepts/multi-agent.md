@@ -122,7 +122,7 @@ Every top-level user submission mints a `chain_id` (uuid4 hex) at `submit_user_t
 
 ### Fan-out
 
-`messages_to_agents` may contain multiple entries. The pending chain's `waiting_on` set holds all of them; the synthesized reply happens only after **every** delegate responds (wait-for-all). A single slow delegate delays the whole synthesis until either it responds or `multi_agent.chain_timeout_seconds` (default 60s) elapses — at which point a `chain_timeout` event fires and a synthesized error response unblocks the upstream agent.
+`messages_to_agents` may contain multiple entries. The pending chain's `waiting_on` set holds all of them; the synthesized reply happens only after **every** delegate responds (wait-for-all). A single slow delegate delays the whole synthesis until either it responds or `safety.timeout.chain_seconds` (default 60s) elapses — at which point a `chain_timeout` event fires and a synthesized error response unblocks the upstream agent.
 
 ## User-initiated vs agent-initiated chains
 
@@ -132,7 +132,7 @@ That preserves the existing chat UX ("you'll see I'm working on it") while letti
 
 ## max_hop_depth
 
-`multi_agent.max_hop_depth` (default 3) caps how far a chain can extend. `depth = 0` is the user input; each `_send_to_agent` increments. A send with `depth > max_hop_depth` is refused with an `agent_message_refused` event. See [reference: multi-agent config](../reference/config/multi-agent.md).
+`safety.loop.max_agent_hops` (default 3) caps how far a chain can extend. `depth = 0` is the user input; each `_send_to_agent` increments. A send with `depth > max_agent_hops` is refused with an `agent_message_refused` event. See [reference: multi-agent config](../reference/config/multi-agent.md).
 
 ## What the OS does NOT manage
 

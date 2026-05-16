@@ -138,7 +138,7 @@ reyn topology new team_sales --kind team --leader vp_sales \
 | `ceo ↔ eng_a` | ✗ | 共有 Topology なし — `ceo` は `vp_eng` 経由でエスカレートが必要 |
 | `eng_a ↔ eng_b` | ✗ | `team_eng` ピア ↔ ピア禁止 |
 
-複数レベルのエスカレーションは単一ホップの繰り返し（`ceo → vp_eng → eng_a`）で行われ、`multi_agent.max_hop_depth`（デフォルト 3、より深いツリーには増やす）で制限されます。なぜこれが特別な kind なしに設計から導き出されるかは [コンセプト/topology — ツリーパターン](../../concepts/topology.md#tree-pattern) を参照してください。
+複数レベルのエスカレーションは単一ホップの繰り返し（`ceo → vp_eng → eng_a`）で行われ、`safety.loop.max_agent_hops`（デフォルト 3、より深いツリーには増やす）で制限されます。なぜこれが特別な kind なしに設計から導き出されるかは [コンセプト/topology — ツリーパターン](../../concepts/topology.md#tree-pattern) を参照してください。
 
 ## kind の選び方
 

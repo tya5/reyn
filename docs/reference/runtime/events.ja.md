@@ -113,8 +113,8 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `agent_message_sent` | `_send_to_agent` または `_send_agent_response` がペイロードを届けたとき | `kind=agent_request\|agent_response`、`from_agent`、`to_agent`、`depth`、`chain_id` |
 | `agent_request_received` | 受信 agent が受信トレイから `agent_request` を取り出したとき | `from_agent`、`depth`、`chain_id` |
 | `agent_response_received` | 発信元 agent が受信トレイから `agent_response` を取り出したとき | `from_agent`、`depth`、`chain_id` |
-| `agent_message_refused` | 送信が拒否されたとき（例: `multi_agent.max_hop_depth` を超えた） | `reason`、`to_agent`、`depth`、`chain_id` |
-| `chain_timeout` | 保留中のチェーンが `multi_agent.chain_timeout_seconds` を超え、上流の合成エラーレスポンスで強制解決されたとき | `chain_id`、`waiting_on`（返信していなかった agent のソート済みリスト）、`timeout_seconds`、`origin_agent` |
+| `agent_message_refused` | 送信が拒否されたとき（例: `safety.loop.max_agent_hops` を超えた） | `reason`、`to_agent`、`depth`、`chain_id` |
+| `chain_timeout` | 保留中のチェーンが `safety.timeout.chain_seconds` を超え、上流の合成エラーレスポンスで強制解決されたとき | `chain_id`、`waiting_on`（返信していなかった agent のソート済みリスト）、`timeout_seconds`、`origin_agent` |
 
 `chain_id` は uuid4 hex。トップレベルのユーザー送信ごとに 1 つ、すべてのホップを通じて変更されずに伝播します。クロス agent の再構築は各 agent の `events.jsonl` と `history.jsonl` に対する `grep <chain_id>` です。
 

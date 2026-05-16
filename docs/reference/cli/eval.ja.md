@@ -35,7 +35,7 @@ reyn eval spec FILE [OPTIONS]
 ```yaml
 permissions:
   python.safe: allow
-  python.unsafe: allow   # ランタイムの --allow-untrusted-python も必要
+  python.unsafe: allow   # ランタイムの --allow-unsafe-python も必要
 ```
 
 事前承認がない場合、ターゲットランは失敗し、ケースは未完了として報告されます。
@@ -307,7 +307,7 @@ reyn eval compare my_skill --format json --threshold 0.05
 
 ## `reyn eval spec` — レガシースペック実行
 
-`eval.md` スペックファイルをターゲット Skill に対して非インタラクティブに実行します。各ケースはルーブリック基準に対して Phase ごとに採点されます。ケースごとの結果と全体のサマリーが `.reyn/eval_reports/` に書き込まれます。
+`eval.md` スペックファイルをターゲット Skill に対して非インタラクティブに実行します。各ケースはルーブリック基準に対して Phase ごとに採点されます。ケースごとの結果と全体のサマリーが `.reyn/eval-results/` に書き込まれます。
 
 ### 概要
 

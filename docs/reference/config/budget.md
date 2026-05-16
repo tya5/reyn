@@ -227,7 +227,7 @@ process first, or wait for the period rollover).
 Be aware of the following limitations:
 
 - **Persistent per-agent / per-chain counters across restarts** — `per_agent_tokens`,
-  `per_agent_cost_usd`, `per_chain_skill_calls`, and `per_chain_skill_tokens` are
+  `per_agent_cost_usd`, `safety.loop.skill_calls_per_chain`, and `safety.loop.skill_tokens_per_chain` are
   in-memory only. A process restart or `/budget reset` zeroes them out. Only the
   daily / monthly quotas survive restarts via the ledger.
 - **Auto-throttle** — when a rate limit is hit, Reyn refuses the call rather than

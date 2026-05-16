@@ -65,7 +65,7 @@ graph:
   aggregate:  [end]
 ```
 
-`run_skill` Control IR op は同じ名前解決を使います: `reyn/project/` → `reyn/local/` → `src/stdlib/skills/`。
+`run_skill` Control IR op は同じ名前解決を使います: `reyn/project/` → `reyn/local/` → `src/reyn/stdlib/skills/`。
 
 ## リンターチェック
 

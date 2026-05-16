@@ -307,7 +307,7 @@ reyn eval compare my_skill --format json --threshold 0.05
 
 ## `reyn eval spec` — legacy spec runner
 
-Run an `eval.md` spec file against a target skill non-interactively. Each case is judged phase-by-phase against rubric criteria; per-case results and an overall summary are written to `.reyn/eval_reports/`.
+Run an `eval.md` spec file against a target skill non-interactively. Each case is judged phase-by-phase against rubric criteria; per-case results and an overall summary are written to `.reyn/eval-results/`.
 
 ### Synopsis
 

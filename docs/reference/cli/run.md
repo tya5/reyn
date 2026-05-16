@@ -19,7 +19,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 
 | Name | Description |
 |------|-------------|
-| `SKILL` | Skill name. Resolved in order: `reyn/project/<name>` → `reyn/local/<name>` → `src/stdlib/skills/<name>`. |
+| `SKILL` | Skill name. Resolved in order: `reyn/project/<name>` → `reyn/local/<name>` → `src/reyn/stdlib/skills/<name>`. |
 | `INPUT` | Initial input. JSON string is used as-is (must be a valid artifact). Natural-language string is auto-wrapped as `{"type": "user_message", "data": {"text": "..."}}`. Reads stdin when omitted. |
 
 ## Options

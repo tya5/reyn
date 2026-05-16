@@ -65,7 +65,7 @@ graph:
   aggregate:  [end]
 ```
 
-`run_skill` Control IR ops use the same name resolution: `reyn/project/` → `reyn/local/` → `src/stdlib/skills/`.
+`run_skill` Control IR ops use the same name resolution: `reyn/project/` → `reyn/local/` → `src/reyn/stdlib/skills/`.
 
 ## Linter checks
 

@@ -19,7 +19,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 
 | 名前 | 説明 |
 |------|-------------|
-| `SKILL` | Skill 名。順番に解決されます: `reyn/project/<name>` → `reyn/local/<name>` → `src/stdlib/skills/<name>`。 |
+| `SKILL` | Skill 名。順番に解決されます: `reyn/project/<name>` → `reyn/local/<name>` → `src/reyn/stdlib/skills/<name>`。 |
 | `INPUT` | 初期入力。JSON 文字列はそのまま使用されます（有効な artifact でなければなりません）。自然言語の文字列は `{"type": "user_message", "data": {"text": "..."}}` として自動ラップされます。省略した場合は stdin から読み取ります。 |
 
 ## オプション

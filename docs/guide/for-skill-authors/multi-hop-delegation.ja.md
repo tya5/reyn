@@ -13,7 +13,7 @@ applies_to: [reyn chat, agent_request, agent_response]
 
 - ユーザーが最終的な返信を受け取ったが、どの agent が貢献したかを知りたい。
 - チェーンがハングしており、デリゲートが応答していないと思われる。
-- `multi_agent.max_hop_depth` を調整していて、実際のチェーンを見たい。
+- `safety.loop.max_agent_hops` を調整していて、実際のチェーンを見たい。
 - `messages_to_agents` を出力する Skill を構築していて、外部から遅延返信メカニズムを検証したい。
 
 ## ユーザー視点で何が見えるか
@@ -93,7 +93,7 @@ done
 
 `researcher` は `archivist` からの `agent_response_received` が届くまで `lead` への `agent_message_sent (response)` を出力しないことに注目してください。これが遅延返信メカニズムです: `researcher` のルーターが `messages_to_agents`（ここでは `archivist` へ）を出力すると、レジストリは `chain_id` をキーとする `_PendingChain` を保持し、`waiting_on` のすべてのエントリーが解決されるまで `lead` への返信を待ちます。
 
-fan-out の場合（researcher が 1 ターンで複数のピアに委任）、researcher のルーターが再び実行されて統合するまでに、すべてのデリゲートが応答する必要があります。遅い 1 つのデリゲートは `multi_agent.chain_timeout_seconds`（デフォルト 60 秒）まで統合全体を遅延させます。時間を超えると `chain_timeout` イベントが発生し、上流の agent は統合されたエラーレスポンスを受け取るのでチェーンがハングしません。
+fan-out の場合（researcher が 1 ターンで複数のピアに委任）、researcher のルーターが再び実行されて統合するまでに、すべてのデリゲートが応答する必要があります。遅い 1 つのデリゲートは `safety.timeout.chain_seconds`（デフォルト 60 秒）まで統合全体を遅延させます。時間を超えると `chain_timeout` イベントが発生し、上流の agent は統合されたエラーレスポンスを受け取るのでチェーンがハングしません。
 
 ## `/attach` でライブ監視する
 
@@ -114,7 +114,7 @@ attached: researcher
 
 ## `max_hop_depth` の拒否
 
-重複する Topology が `multi_agent.max_hop_depth` が許可するよりも深いツリーを形成する場合、ランタイムは過度に深い送信を拒否します:
+重複する Topology が `safety.loop.max_agent_hops` が許可するよりも深いツリーを形成する場合、ランタイムは過度に深い送信を拒否します:
 
 ```
 [error] agent message depth 4 exceeds limit 3; chain refused
@@ -126,7 +126,7 @@ attached: researcher
 {"type":"agent_message_refused","data":{"reason":"max_hop_depth","to_agent":"deep_specialist","depth":4,"chain_id":"71d6..."}}
 ```
 
-発信元チェーンの上流 agent での保留状態は `multi_agent.chain_timeout_seconds`（デフォルト 60 秒）を待ち、その後強制的に統合されたエラーレスポンスで解決されます。[events リファレンス](../../reference/runtime/events.md) の `chain_timeout` イベントを参照してください。上流 agent は自動的にブロック解除されます。プロセスの再起動は不要です。
+発信元チェーンの上流 agent での保留状態は `safety.timeout.chain_seconds`（デフォルト 60 秒）を待ち、その後強制的に統合されたエラーレスポンスで解決されます。[events リファレンス](../../reference/runtime/events.md) の `chain_timeout` イベントを参照してください。上流 agent は自動的にブロック解除されます。プロセスの再起動は不要です。
 
 ## 履歴メタの確認
 

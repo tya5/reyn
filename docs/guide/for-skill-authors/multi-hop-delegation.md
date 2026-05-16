@@ -13,7 +13,7 @@ applies_to: [reyn chat, agent_request, agent_response]
 
 - The user got a final reply but you want to know *which* agents contributed.
 - A chain hangs and you suspect a delegate isn't responding.
-- You're tuning `multi_agent.max_hop_depth` and need to see real chains.
+- You're tuning `safety.loop.max_agent_hops` and need to see real chains.
 - You're building a skill that emits `messages_to_agents` and want to verify the deferred-reply mechanic from the outside.
 
 ## What you'll see at the user seat
@@ -93,7 +93,7 @@ Reading top-to-bottom: `user → lead → researcher → archivist → researche
 
 Notice that `researcher` does NOT emit `agent_message_sent (response)` to `lead` until **after** `agent_response_received` from `archivist` arrives. That's the deferred-reply mechanic: when `researcher`'s router emits `messages_to_agents` (here, to `archivist`), the registry holds a `_PendingChain` keyed by `chain_id`, and `lead`'s reply waits until every entry in `waiting_on` resolves.
 
-For a fan-out (researcher delegates to multiple peers in one turn), every delegate must respond before researcher's router runs again to synthesize. A single slow delegate delays the whole synthesis up to `multi_agent.chain_timeout_seconds` (default 60s); past that, a `chain_timeout` event fires and the upstream agent receives a synthesized error response so the chain doesn't hang.
+For a fan-out (researcher delegates to multiple peers in one turn), every delegate must respond before researcher's router runs again to synthesize. A single slow delegate delays the whole synthesis up to `safety.timeout.chain_seconds` (default 60s); past that, a `chain_timeout` event fires and the upstream agent receives a synthesized error response so the chain doesn't hang.
 
 ## Watching live with `/attach`
 
@@ -114,7 +114,7 @@ attached: researcher
 
 ## `max_hop_depth` refusal
 
-If your overlapping topologies form a deeper tree than `multi_agent.max_hop_depth` allows, the runtime refuses the over-deep send:
+If your overlapping topologies form a deeper tree than `safety.loop.max_agent_hops` allows, the runtime refuses the over-deep send:
 
 ```
 [error] agent message depth 4 exceeds limit 3; chain refused
@@ -126,7 +126,7 @@ and emits an audit event:
 {"type":"agent_message_refused","data":{"reason":"max_hop_depth","to_agent":"deep_specialist","depth":4,"chain_id":"71d6..."}}
 ```
 
-The originating chain's pending state in the upstream agent waits out `multi_agent.chain_timeout_seconds` (default 60s) and is then force-resolved with a synthesized error response — see the `chain_timeout` event in [the events reference](../../reference/runtime/events.md). The upstream agent unblocks automatically; no process restart needed.
+The originating chain's pending state in the upstream agent waits out `safety.timeout.chain_seconds` (default 60s) and is then force-resolved with a synthesized error response — see the `chain_timeout` event in [the events reference](../../reference/runtime/events.md). The upstream agent unblocks automatically; no process restart needed.
 
 ## Inspecting history meta
 
