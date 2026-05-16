@@ -624,6 +624,12 @@ The reply is the agent's final synthesised text — exactly what the TUI would r
 
 **Why this is easy to forget.** The web server isn't part of the dogfood batch driver scripts (those drive `reyn chat --cui` via subprocess for parity with real users). The A2A endpoint is the operator's hand-driven debug tool; reach for it when piping into `reyn chat --cui` is awkward (TUI buffering issues, missing terminal, etc.).
 
+### scripts/dogfood_sp_render.py
+
+A CLI for verifying system prompt rendering. Preview the wrapper-only or legacy SP and get size-delta stats in one command, without writing a throwaway script each time you want to confirm what the LLM will receive.
+
+Full reference: [docs/reference/dogfood-sp-render.md](../../reference/dogfood-sp-render.md)
+
 ### Adapting to other LLM-driven systems
 
 The core requirement is payload observability: you must be able to see what the LLM receives and produces for each call. Every LLM API provider supports capturing request/response pairs; the question is whether your system routes all calls through a capture layer.

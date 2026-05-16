@@ -152,8 +152,12 @@ nav:
           - reference/stdlib/read_local_files.md
       - Testing:
           - reference/testing/replay.md
+          - reference/test-tier-audit.md
       - Replay & Tracing:
           - reference/dogfood-tracing.md
+          - reference/dogfood-sp-render.md
+      - Contributor Tools:
+          - reference/agent-worktree-cleanup.md
       - Other:
           - reference/upgrade-policy.md
   - Concepts:

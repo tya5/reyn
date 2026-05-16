@@ -599,6 +599,12 @@ curl -s -X POST http://localhost:8080/a2a/agents/default \
 
 **忘れがちな理由.** web サーバは dogfood batch driver script の一部ではありません（ driver は real user との等価性のため `reyn chat --cui` を subprocess 駆動）。 A2A endpoint は operator が手で叩く debug 用ツール。 `reyn chat --cui` への pipe が面倒な状況（ TUI バッファリング、 terminal なし等）で reach for してください。
 
+### scripts/dogfood_sp_render.py
+
+System prompt レンダリング確認用 CLI。wrapper-only / legacy SP のプレビューと差分 stats を 1 コマンドで取得できます。LLM に何が渡るかを確認するための ad-hoc スクリプトを都度書く必要がなくなります。
+
+完全リファレンス: [docs/reference/dogfood-sp-render.md](../../reference/dogfood-sp-render.md)
+
 ### 他のシステムへの適用
 
 core な要件は payload observability です: 各 call について LLM が受け取るものと生産するものを見られる必要があります。すべての LLM API プロバイダーはリクエスト/レスポンスペアのキャプチャをサポートしています。問題は、システムがすべての call を capture layer 経由でルーティングするかどうかです。

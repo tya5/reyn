@@ -383,3 +383,22 @@ LLM 依存の OS パスを新たに追加する場合:
 - [ ] 公開コントラクト（yaml スキーマ、Events ペイロード、DSL セクション）を変更する場合は Tier 1 テストを更新／追加
 - [ ] `current_datetime=datetime.now()` を使っていないことを確認 — 常に `REPLAY_DATETIME` を使う
 - [ ] 各テストの docstring 一行目に Tier の明記（例: `"""Tier 3a: ..."""`）
+
+---
+
+## Tier コンプライアンス監査ツール
+
+`testing.ja.md` のポリシーに基づく **自動リンター**: `scripts/test_tier_audit.py`。
+
+新しいテスト追加時の pre-commit チェック、既存スイートの Tier 4 違反監査、PR レビューでのテストポリシー違反検出に使用します。
+
+検出ルール (6):
+
+- Missing Tier docstring (= Tier 宣言の欠如)
+- Format pinning (= 行数 / 文字数等の Tier 4 違反)
+- Private state assertion (= プライベート状態への assertion)
+- MagicMock / AsyncMock / patch の使用
+- Bounded-life test in regular dir (= scaffold/ 候補)
+- Snapshot/golden test outside scaffold
+
+完全リファレンス: [docs/reference/test-tier-audit.md](../../reference/test-tier-audit.md)

@@ -457,3 +457,22 @@ When adding a new LLM-dependent OS path:
 - [ ] If the feature changes a public contract (yaml schema, events payload, DSL section), update / add a Tier 1 test
 - [ ] Verify no `current_datetime=datetime.now()` — always `REPLAY_DATETIME`
 - [ ] Each test has a one-line docstring naming its tier (e.g. `"""Tier 3a: ..."""`)
+
+---
+
+## Tier compliance auditor
+
+An **automated linter** based on this policy: `scripts/test_tier_audit.py`.
+
+Use it as a pre-commit check when adding new tests, for a Tier 4 violation sweep of the existing suite, or to audit test policy violations during PR review.
+
+Detection rules (6):
+
+- Missing Tier docstring
+- Format pinning (line count / char count / exact length = Tier 4 violation)
+- Private state assertion
+- MagicMock / AsyncMock / patch usage
+- Bounded-life test in regular dir (scaffold/ candidate)
+- Snapshot/golden test outside scaffold
+
+Full reference: [docs/reference/test-tier-audit.md](../../reference/test-tier-audit.md)
