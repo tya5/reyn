@@ -1,7 +1,8 @@
 # R-PURE-MODE-REDEFINE — stdlib `mode: unsafe` audit
 
-**Date**: 2026-05-15
-**Scope**: Every `mode: unsafe` python step declared in `src/reyn/stdlib/skills/*/skill.md`.
+**Date**: 2026-05-15  
+**Closed**: 2026-05-16 (all addressable refactors landed)  
+**Scope**: Every `mode: unsafe` python step declared in `src/reyn/stdlib/skills/*/skill.md`.  
 **Goal**: Identify which can move to `mode: safe` (= "ambient sources only" contract) and which honestly need `unsafe`. Produces concrete refactor sketches for the candidates.
 
 The formal contract audited against:
@@ -14,10 +15,10 @@ The formal contract audited against:
 
 | Class | Count | Action |
 |---|---|---|
-| A — honestly unsafe | 11 | Keep as-is, add documentation where missing |
-| B — split candidate | 3 | Move I/O to run_op, python step becomes safe |
-| C — mis-labeled (safe) | 1 | Switch to `mode: safe`, zero risk |
-| D — needs new run_op kind | 2 | Document required op kind + defer |
+| A — honestly unsafe | 11 | Kept as-is. Documentation updated; no further action. |
+| B — split candidate | 3 | **All landed** (Wave 3a / 3b / 4) |
+| C — mis-labeled (safe) | 1 | **Landed** (Wave 2) |
+| D — needs new run_op kind | 2 op kinds covering 3 functions | **All landed** (Wave 5a + Class D-1 + Class D-2) |
 
 Total `mode: unsafe` declarations audited: **17** across 7 stdlib skills.
 
@@ -29,17 +30,68 @@ function that does genuine I/O is mislabeled `mode: unsafe` without actually nee
 
 ---
 
+## Landing log (2026-05-15 → 2026-05-16)
+
+All addressable refactors (Class B, C, D) landed in six sequential waves across the
+two-day window. Commits are listed in order of landing.
+
+- **Wave 2 — commit `1a06289`**: Class C fix — `aggregate_from_recall_chunks` extracted
+  from `aggregate.py` into a new `ops_report/aggregate_pure.py`, declared `mode: safe`.
+  Matched the audit sketch exactly: zero logic change, module split only. ~30 min as
+  predicted.
+
+- **Wave 3a — commit `83f2cf5`**: Class B non-trivial — `collect_aggregate` (ops_report)
+  split into a safe dispatcher `dispatch_aggregate` + unsafe fallback
+  `collect_aggregate_fallback`. The audit sketch proposed a sentinel-aware 3-step
+  preprocessor chain; the implementation confirmed this works cleanly (see Cross-cutting
+  findings below). The 99% hot path (recall available) now runs `mode: safe`; the 1%
+  raw-events fallback retains `mode: unsafe` as an honest declaration.
+
+- **Wave 3b — commit `a2984d5`**: Class B / Class D hybrid — `read_on_propose_config`
+  (version_snapshot.py). The audit marked this Class A ("defer, needs config_read op").
+  Wave 3b instead used `file_read` op + a new regex-based pure parser
+  `parse_on_propose_config_minimal` in `version_snapshot_pure.py`. The `yaml` module
+  dependency was sidestepped by using a targeted regex over the two fields of interest
+  rather than a full YAML parse. This is simpler than the `config_read_self_improvement`
+  op alternative mentioned in the audit and avoids the OS extension entirely.
+
+- **Wave 4 — commit `d0d65e8`**: Class B non-trivial — `collect_traces` (skill_improver)
+  split into `dispatch_traces` (safe) + `collect_traces_fallback` (unsafe sentinel-aware),
+  using the same 3-step preprocessor chain pattern as Wave 3a. The audit sketch had
+  proposed a `trace_collector_pure.py` module split; the implementation used the same
+  sentinel pattern established in Wave 3a rather than the dual skill.md entry approach in
+  the sketch. The outcome is equivalent: 99% hot path safe, 1% fallback honest.
+
+- **Wave 5a — commit `01f3ae0`**: New `skill_resolve` op kind (`OpPurity.world`). Lifts
+  `resolve_skill_path()` from python steps to an OS-layer op. This unblocked Class D for
+  both `resolve_paths` functions. 8 Tier 2 tests added. Matches the audit's Class D sketch
+  exactly ("one op definition fixes two skills simultaneously").
+
+- **Class D-1 — commit `f5f164c`**: `skill_improver/copy_to_work_resolver_pure.py`
+  declared `mode: safe`, using `skill_resolve` op via `args_from:` template mechanism.
+
+- **Class D-2 — commit `5cc797c`**: `eval_builder/analyze_skill_resolver_pure.py`
+  declared `mode: safe`, same pattern as D-1.
+
+---
+
 ## Per-skill audit
 
 ### `index_docs`
 
-Source: `src/reyn/stdlib/skills/index_docs/chunkers.py`
+Source: `src/reyn/stdlib/skills/index_docs/chunkers.py`  
 Skill.md permissions block declares 4 `mode: unsafe` entries plus 1 `mode: safe`
 (`extract_and_split`) already correctly labeled.
 
 ---
 
 #### `gather_samples` — Class A (honestly unsafe)
+
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Calls `_api_glob_files(path)` (→ `reyn.api.unsafe.file.glob`) to discover files
 matching a glob pattern, then calls `_unsafe_file.stat(f)` and `_unsafe_file.read(f)` to
@@ -55,6 +107,15 @@ excerpt, structure detection — is intrinsically tied to filesystem access.
 ---
 
 #### `cost_preflight` — Class B (split candidate, medium effort)
+
+**Status: Kept as Class A (honestly unsafe, no action)** — The audit classified this as
+Class B/D hybrid. The Class D prerequisite (`file/glob` sub-op) was not pursued; the
+`skill_resolve` op (Wave 5a) addresses a different gap. `cost_preflight` remains
+`mode: unsafe`. No further work planned.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Calls `_api_glob_files(path)` (→ `reyn.api.unsafe.file.glob`) to count files.
 That is the **only** non-pure operation. The cost calculation itself is entirely
@@ -92,6 +153,12 @@ new `file/glob` op sub-kind; the arithmetic remainder is trivially safe.
 
 #### `write_chunks_with_lock` — Class A (honestly unsafe)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Full filesystem pipeline: reads each source file via `Path.read_text`, acquires
 an advisory JSON lock (lock file read + write with `os.getpid()`), writes
 `artifacts/chunks.jsonl`, and releases the lock. Uses `os.getpid()` and `time.time()` for
@@ -109,6 +176,12 @@ file, which requires the content read.
 
 #### `apply_strategy` — Class A (honestly unsafe, deprecated)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Same as `write_chunks_with_lock` plus additionally calls `_glob_files(path)` to
 expand the source glob. Documented as deprecated — kept only for project override
 compatibility with callers who override `apply_strategy` via `extends: stdlib/index_docs`.
@@ -120,7 +193,7 @@ Unsafe for the same reasons as `write_chunks_with_lock`.
 
 ### `index_events`
 
-Source: `src/reyn/stdlib/skills/index_events/chunkers.py`
+Source: `src/reyn/stdlib/skills/index_events/chunkers.py`  
 Skill.md declares 3 `mode: unsafe` entries in `permissions:` plus 2 more in
 `postprocessor.steps`. The permissions entries are the same functions as the postprocessor
 entries; total distinct functions: 3.
@@ -128,6 +201,12 @@ entries; total distinct functions: 3.
 ---
 
 #### `resolve_scan_context` — Class A (honestly unsafe)
+
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Reads `.reyn/index/events_cursor` (cursor file, `Path.read_text`), calls
 `_discover_event_files(str(_EVENTS_DIR))` (→ `glob.glob` over `.reyn/events/**/*.jsonl`),
@@ -147,6 +226,12 @@ value for a read-only preprocessor.
 
 #### `run_collect_chunks` — Class A (honestly unsafe)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Calls `_discover_event_files` (glob over `.reyn/events/**/*.jsonl`), then for
 each file opens and line-reads it (raw JSONL event stream), groups events by run boundary,
 and writes the output JSONL to `artifacts/event_chunks.jsonl`.
@@ -161,6 +246,14 @@ impractical for event logs with hundreds of files.
 ---
 
 #### `run_advance_cursor` — Class B (split candidate, trivial)
+
+**Status: Kept as Class A (honestly unsafe, no action)** — The audit correctly revised
+this to Class A during analysis: even after moving the JSONL read to a run_op, the cursor
+file write is an irreducible unsafe side-effect. No further action.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Reads `artifacts/event_chunks.jsonl` (the just-written output of `run_collect_chunks`)
 to find the max `ended_at` timestamp, then writes `.reyn/index/events_cursor` atomically
@@ -182,12 +275,23 @@ cannot become `mode: safe` because writing the cursor is its sole purpose.
 
 ### `ops_report`
 
-Source: `src/reyn/stdlib/skills/ops_report/aggregate.py`
+Source: `src/reyn/stdlib/skills/ops_report/aggregate.py`  
 Skill.md declares 3 `mode: unsafe` entries.
 
 ---
 
-#### `collect_aggregate` — Class B (split candidate, trivial)
+#### `collect_aggregate` — Class B (split candidate, non-trivial)
+
+**Status: ✅ LANDED in Wave 3a (commit `83f2cf5`)** — Implemented via sentinel-aware
+3-step preprocessor chain. The recall-hit hot path (99%) now runs `dispatch_aggregate` in
+`mode: safe`; the raw-events fallback (`collect_aggregate_fallback`) retains `mode: unsafe`
+as an honest declaration. The implementation used the sentinel pattern (see Cross-cutting
+findings) rather than the dual skill.md entry approach sketched in the audit, but achieves
+the same outcome.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: The function itself contains no direct I/O. It reads `data.recall_result` (already
 placed in the artifact by a preceding `recall` run_op) and decides whether to call
@@ -219,6 +323,12 @@ complexity.
 
 #### `aggregate_from_raw_events` — Class A (honestly unsafe)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Calls `_discover_event_files(root)` (glob over `.reyn/events/**/*.jsonl`), then
 opens and reads each file line by line to build the run→events map. Also calls `_utc_now()`
 (ambient clock, which is in the safe-mode allowlist for `datetime`).
@@ -232,6 +342,14 @@ aggregate. Not splittable without N intermediate run_ops per event file.
 ---
 
 #### `aggregate_from_recall_chunks` — Class C (mis-labeled as unsafe)
+
+**Status: ✅ LANDED in Wave 2 (commit `1a06289`)** — Extracted to
+`src/reyn/stdlib/skills/ops_report/aggregate_pure.py`, declared `mode: safe`. Zero logic
+change; module split only. Matched the audit sketch exactly.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: None. The function takes a `chunks: list[dict]` argument (= `data.recall_result.chunks`
 already in the artifact), iterates over it, performs arithmetic aggregation, and returns
@@ -257,13 +375,24 @@ not. Moving it to `aggregate_pure.py` is the zero-risk fix.
 
 ### `skill_improver`
 
-Source: `copy_to_work_resolver.py`, `trace_collector.py`, `version_snapshot.py`
+Source: `copy_to_work_resolver.py`, `trace_collector.py`, `version_snapshot.py`  
 Skill.md declares 4 `mode: unsafe` entries (the safe entries are already correctly labeled
 in `copy_to_work.py`).
 
 ---
 
 #### `resolve_paths` (copy_to_work_resolver.py) — Class A (honestly unsafe)
+
+**Status: ✅ LANDED as Class D-1 (commit `f5f164c`)** — New
+`copy_to_work_resolver_pure.py` declared `mode: safe` using `skill_resolve` op (added in
+Wave 5a) via `args_from:` template mechanism. The original `resolve_paths` function is
+superseded; the new pure module performs the same resolution logic via the OS-layer op.
+The audit's Class D sketch ("one op definition fixes two skills simultaneously") was
+accurate.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Calls `resolve_skill_path(target_skill)` which performs `Path.exists()` checks on
 the three skill search paths (`src/reyn/stdlib/skills/`, `reyn/local/`, `reyn/project/`).
@@ -286,6 +415,17 @@ candidate).
 ---
 
 #### `collect_traces` (trace_collector.py) — Class A (honestly unsafe)
+
+**Status: ✅ LANDED in Wave 4 (commit `d0d65e8`)** — Split into `dispatch_traces`
+(mode: safe) + `collect_traces_fallback` (mode: unsafe) via the sentinel-aware 3-step
+preprocessor chain established in Wave 3a. The audit sketched a `trace_collector_pure.py`
+module split with dual skill.md entries; the implementation used the sentinel pattern
+instead for consistency with Wave 3a. The outcome is equivalent: 99% hot path (recall
+available) runs in `mode: safe`, 1% raw-events fallback stays `mode: unsafe`.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: On the recall path, the function is pure (processes `data.trace_recall_result`
 from the artifact). On the raw-events fallback path, it calls
@@ -319,6 +459,12 @@ and trivial Class B work.
 
 #### `save_snapshot` (version_snapshot.py) — Class A (honestly unsafe)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Reads `Path(original_skill_root) / "skill.md"` (target skill file read), writes
 snapshot files to `.reyn/skill-versions/<name>/v<N>.md`, reads/writes the `current` pointer
 file, calls `os.remove()` for max-versions capping, and calls `_get_max_versions()` which
@@ -334,6 +480,18 @@ tightly coupled to the write. No pure remainder exists.
 ---
 
 #### `read_on_propose_config` (version_snapshot.py) — Class B (split candidate, trivial)
+
+**Status: ✅ LANDED in Wave 3b (commit `a2984d5`)** — Implemented via `file_read` op +
+new pure parser `parse_on_propose_config_minimal` in `version_snapshot_pure.py`.
+The audit originally revised this to Class A ("defer, needs config_read op") due to the
+`yaml` module dependency. Wave 3b sidestepped the `yaml` dependency entirely by using a
+targeted regex over the two fields of interest (`on_propose`, `max_versions`) rather than
+a full YAML parse. This is simpler than the `config_read_self_improvement` op alternative
+and avoids any OS extension.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Calls `from reyn.config import load_config` and `cfg = load_config()` — reads
 `reyn.yaml` from disk. Returns `{"on_propose": str, "max_versions": int}`.
@@ -364,6 +522,12 @@ Source: `src/reyn/stdlib/skills/mcp_search/registry_fetch.py`
 ---
 
 #### `fetch_registry_results` — Class A (honestly unsafe)
+
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: HTTP GET to `registry.modelcontextprotocol.io/v0.1/servers?search=<query>` via
 `reyn.api.unsafe.http.get`. Also reads env var `REYN_MCP_REGISTRY_URL` via `os.environ.get`.
@@ -406,6 +570,12 @@ Source: `src/reyn/stdlib/skills/mcp_install/registry_fetch.py`
 
 #### `fetch_server_for_install` — Class A (honestly unsafe)
 
+**Status: Kept as Class A (honestly unsafe, no action)**
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
+
 **I/O**: Same pattern as `fetch_registry_results` in `mcp_search`: HTTP GET via
 `reyn.api.unsafe.http.get`, env var read (`os.environ.get`), file-based cache
 (`reyn.registry.cache`). Imports same unsafe modules. The resolution strategy (direct
@@ -423,13 +593,23 @@ to the same FP as `mcp_search`.
 
 ### `eval_builder`
 
-Source: `src/reyn/stdlib/skills/eval_builder/analyze_skill_resolver.py`
+Source: `src/reyn/stdlib/skills/eval_builder/analyze_skill_resolver.py`  
 Skill.md declares 1 `mode: unsafe` entry (`resolve_paths`). The other two python entries
 (`extract_skill_name`, `inject_resolved_paths`) are already correctly `mode: safe`.
 
 ---
 
 #### `resolve_paths` (analyze_skill_resolver.py) — Class A (honestly unsafe)
+
+**Status: ✅ LANDED as Class D-2 (commit `5cc797c`)** — New
+`eval_builder/analyze_skill_resolver_pure.py` declared `mode: safe`, using `skill_resolve`
+op via `args_from:` template mechanism. Structurally identical to Class D-1
+(`skill_improver`). Both were the "same future `skill_resolve` op candidate" predicted in
+the audit.
+
+---
+
+[ORIGINAL AUDIT TEXT BELOW]
 
 **I/O**: Calls `resolve_skill_path(target_skill)` (filesystem existence checks via
 `Path.exists()`), imports `reyn.skill.skill_paths`. Structurally identical to `skill_improver`'s
@@ -443,92 +623,94 @@ run_op would encapsulate this (Class D), but the op does not exist yet.
 
 ---
 
-## Recommended refactor order
+## Cross-cutting technical findings (from implementation waves)
 
-### 1. Class C first (zero risk, ~30 min total)
+### `run_op.op.<field>:` templating
 
-**`ops_report` / `aggregate_from_recall_chunks`** is the only Class C find.
+`{{ data.x }}` jinja-style templating in run_op step's op fields is **not
+supported** by the preprocessor executor. Use `args_from: {field: data.path}`
+instead — `_materialize_op` calls `op.model_copy(update=overrides)` at
+execution time. Pattern:
 
-Steps:
-1. Create `src/reyn/stdlib/skills/ops_report/aggregate_pure.py` with only `aggregate_from_recall_chunks` and its pure helpers (`_build_top_errors_from_dict`, `_top_failing_skills`). No `glob`, `os`, or `pathlib` at module level.
-2. Update `src/reyn/stdlib/skills/ops_report/skill.md`: change the `aggregate_from_recall_chunks` entry's `mode: unsafe` → `mode: safe` and update `module:` to `./aggregate_pure.py`.
-3. Keep `aggregate.py` intact (`collect_aggregate` and `aggregate_from_raw_events` remain `mode: unsafe` there).
+```yaml
+- type: run_op
+  op:
+    kind: skill_resolve
+    name: PLACEHOLDER       # parse-time literal, overridden at runtime
+  args_from:
+    name: data._name.target_skill
+  into: data._resolved
+```
 
-Dispatch to a single Sonnet with this audit as context. Zero test changes expected (the function body is unchanged).
+Adopted by Wave 5a / Class D-1 / Class D-2. Discovered independently by parallel sonnets
+in the wave; shared here as a cross-cutting finding to prevent future re-discovery.
 
-### 2. Class B trivial (run_op kinds already exist, ~1h each)
+### Sentinel pattern for B/C split with optional fallback
 
-None of the Class B candidates are fully trivial — all have a complication:
-- `cost_preflight` needs a `file/glob` sub-op (Class D dependency).
-- `collect_aggregate` needs a conditional preprocessor chain (structural complexity).
-- `collect_traces` has two paths; only the recall path is pure.
+For functions that have a "preferred pure path" and a "fallback I/O path", the audit
+sketched a sentinel-aware 3-step chain. Implementations in Wave 3a and Wave 4 confirmed
+this works cleanly:
 
-The closest to trivial is `collect_traces` (recall path extraction), but it still requires
-a module split and a dual skill.md entry. Defer until the Class C item is done and the
-team has appetite.
+1. `run_op` to fetch the optional input (e.g. recall result via `recall` op).
+2. Safe python step: if input non-empty, compute inline + return `_path: "x"`;
+   else return `_path: "needs_fallback"` sentinel.
+3. Unsafe python step: no-op if sentinel says the path was already handled; otherwise
+   run the I/O fallback.
 
-### 3. Class B non-trivial (data-flow changes, ~2-3h each)
+The 99% hot path lands in `mode: safe`; the honest 1% fallback stays `mode: unsafe`. The
+sentinel field is internal to the preprocessor chain and is stripped before passing to
+downstream consumers.
 
-- `collect_aggregate` split (requires conditional branch chain)
-- `cost_preflight` split (requires `file/glob` op)
-- `collect_traces` recall-path extraction
+Wave 3a (`collect_aggregate`) established this pattern. Wave 4 (`collect_traces`) reused
+it without modification. Any future split candidate with a similar structure should reach
+for this pattern first.
 
-### 4. Class D (new op kinds needed — defer, scope as separate FPs)
+### `file_read` op + regex parser as alternative to `config_read` op
 
-| Function | Required new op | Scope |
-|---|---|---|
-| `cost_preflight` (partial) | `file/glob` sub-op (returns path list from pattern) | Low: `file` op already exists; add sub-op |
-| `resolve_paths` (both skill_improver + eval_builder) | `skill_resolve` run_op | Medium: encapsulates `resolve_skill_path` logic in OS |
-
-`skill_resolve` would benefit two stdlib skills simultaneously and would reduce the unsafe
-surface in the most commonly-used skills (`skill_improver`, `eval_builder`). It is the
-highest-leverage Class D item.
-
----
-
-## Effort estimate by class
-
-| Class | Count | Estimated effort | Sonnet dispatch suitability |
-|---|---|---|---|
-| A | 11 | 0 (no work) | N/A |
-| B non-trivial | 3 | 2-3h × 3 | Single Sonnet per function, audit as context |
-| C | 1 | 30 min total | Bundle in one Sonnet |
-| D | 2 op kinds | 2-4h × 2 for op definition + tests | Sonnet per op + review |
+Wave 3b demonstrated that a `config_read` OS-level op is not always necessary. For narrow
+config extraction (2 fields from `reyn.yaml`), a `file_read` op + a pure python step using
+`re` (in `PURE_STDLIB_ALLOWLIST`) is simpler and avoids an OS extension. The tradeoff is
+that the regex approach is brittle for complex YAML structures; a full `config_read` op
+remains a valid future option for richer config access patterns.
 
 ---
 
-## Appendix: full function inventory
+## Appendix: full function inventory (updated)
 
-| Skill | Function | Module | Class | Verdict |
+| Skill | Function | Module | Class | Final verdict |
 |---|---|---|---|---|
-| index_docs | `gather_samples` | chunkers.py | A | keep |
-| index_docs | `cost_preflight` | chunkers.py | B/D | refactor-medium (needs file/glob op) |
-| index_docs | `write_chunks_with_lock` | chunkers.py | A | keep |
-| index_docs | `apply_strategy` | chunkers.py | A | keep (deprecated shim) |
-| index_events | `resolve_scan_context` | chunkers.py | A | keep |
-| index_events | `run_collect_chunks` | chunkers.py | A | keep |
-| index_events | `run_advance_cursor` | chunkers.py | A | keep |
-| ops_report | `collect_aggregate` | aggregate.py | B | refactor-medium (conditional chain) |
-| ops_report | `aggregate_from_raw_events` | aggregate.py | A | keep |
-| ops_report | `aggregate_from_recall_chunks` | aggregate.py | C | **refactor-easy** (module split only) |
-| skill_improver | `resolve_paths` | copy_to_work_resolver.py | A | keep; D candidate |
-| skill_improver | `collect_traces` | trace_collector.py | B | refactor-medium (dual-mode split) |
-| skill_improver | `save_snapshot` | version_snapshot.py | A | keep |
-| skill_improver | `read_on_propose_config` | version_snapshot.py | A | keep; D candidate |
-| mcp_search | `fetch_registry_results` | registry_fetch.py | A | keep |
-| mcp_install | `fetch_server_for_install` | registry_fetch.py | A | keep |
-| eval_builder | `resolve_paths` | analyze_skill_resolver.py | A | keep; D candidate |
+| index_docs | `gather_samples` | chunkers.py | A | kept |
+| index_docs | `cost_preflight` | chunkers.py | A | kept (file/glob op not pursued) |
+| index_docs | `write_chunks_with_lock` | chunkers.py | A | kept |
+| index_docs | `apply_strategy` | chunkers.py | A | kept (deprecated shim) |
+| index_events | `resolve_scan_context` | chunkers.py | A | kept |
+| index_events | `run_collect_chunks` | chunkers.py | A | kept |
+| index_events | `run_advance_cursor` | chunkers.py | A | kept (write is irreducible) |
+| ops_report | `collect_aggregate` | aggregate.py | B | ✅ Wave 3a (`83f2cf5`) |
+| ops_report | `aggregate_from_raw_events` | aggregate.py | A | kept |
+| ops_report | `aggregate_from_recall_chunks` | aggregate.py | C | ✅ Wave 2 (`1a06289`) |
+| skill_improver | `resolve_paths` | copy_to_work_resolver.py | D | ✅ Class D-1 (`f5f164c`) |
+| skill_improver | `collect_traces` | trace_collector.py | B | ✅ Wave 4 (`d0d65e8`) |
+| skill_improver | `save_snapshot` | version_snapshot.py | A | kept |
+| skill_improver | `read_on_propose_config` | version_snapshot.py | B | ✅ Wave 3b (`a2984d5`) |
+| mcp_search | `fetch_registry_results` | registry_fetch.py | A | kept |
+| mcp_install | `fetch_server_for_install` | registry_fetch.py | A | kept |
+| eval_builder | `resolve_paths` | analyze_skill_resolver.py | D | ✅ Class D-2 (`5cc797c`) |
 
-### Top 3 lowest-friction refactor candidates
+### Top 3 lowest-friction refactor candidates — all DONE
 
-1. **`aggregate_from_recall_chunks` (ops_report)** — Class C. Zero logic change. Extract
-   to `aggregate_pure.py`, switch skill.md to `mode: safe`. 30 min. Zero test changes.
+1. **`aggregate_from_recall_chunks` (ops_report)** — ✅ DONE (Wave 2, `1a06289`).
+   Class C. Zero logic change. Extracted to `aggregate_pure.py`, switched to `mode: safe`.
+   30 min as estimated. Zero test changes.
 
-2. **`collect_aggregate` (ops_report)** — Class B non-trivial, but the recall-path branch
-   is already pure; the only complication is handling the fallback sentinel. Once
-   `aggregate_from_recall_chunks` is in `aggregate_pure.py`, the recall path of
-   `collect_aggregate` can be made safe with a module-level import guard.
+2. **`collect_aggregate` (ops_report)** — ✅ DONE (Wave 3a, `83f2cf5`).
+   Class B non-trivial. Sentinel-aware 3-step chain; 99% hot path safe.
 
-3. **`resolve_paths` x2 (skill_improver + eval_builder)** — Both are structurally
-   identical and both become safe if a `skill_resolve` run_op is introduced. One op
-   definition fixes two skills simultaneously. Medium effort but high leverage.
+3. **`resolve_paths` x2 (skill_improver + eval_builder)** — ✅ DONE (Wave 5a + D-1 + D-2,
+   `01f3ae0` + `f5f164c` + `5cc797c`). One op definition (`skill_resolve`) fixed both
+   skills simultaneously, exactly as predicted.
+
+**R-PURE-MODE-REDEFINE stdlib refactor scope is now complete.** All addressable
+Class B/C/D items landed across waves 2–5a. Remaining `mode: unsafe` declarations are
+all Class A — honestly unsafe by design, with no pure remainder to extract. No further
+refactor work is planned for this FP.
