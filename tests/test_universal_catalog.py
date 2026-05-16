@@ -352,30 +352,21 @@ def test_visible_categories_drops_exec_when_sandbox_none() -> None:
     assert "exec" not in vis
 
 
-# ── 6. Stub handlers raise NotImplementedError pointing at PR-2 ───────────
+# ── 6. search_actions remains a stub until FP-0034 Phase 2 ────────────────
 
 
-@pytest.mark.parametrize(
-    "tool, expected_message_fragment",
-    [
-        (LIST_ACTIONS, "FP-0034 PR-2"),
-        (SEARCH_ACTIONS, "FP-0034 PR-2"),
-        (DESCRIBE_ACTION, "FP-0034 PR-2"),
-        (INVOKE_ACTION, "FP-0034 PR-2"),
-    ],
-)
-def test_stub_handlers_raise_with_pr2_pointer(
-    tool: ToolDefinition, expected_message_fragment: str,
-) -> None:
-    """Tier 2: stub handlers raise NotImplementedError pointing at PR-2.
+def test_search_actions_stub_raises_phase2_pointer() -> None:
+    """Tier 2: search_actions raises NotImplementedError pointing at Phase 2.
 
-    PR-1 establishes the type surface but not the runtime dispatch.
-    Each handler must raise a clear message identifying when the
-    real implementation will land.
+    Per FP-0034 §D14, search_actions visibility is gated by an
+    embedding configuration. PR-3a wires list/describe/invoke; the
+    semantic search backend lands in Phase 2. The stub message must
+    explicitly identify Phase 2 so calling sites can give a sensible
+    error if the handler is reached before that phase lands.
     """
     ctx = _make_minimal_ctx()
-    with pytest.raises(NotImplementedError, match=expected_message_fragment):
-        asyncio.run(tool.handler({}, ctx))
+    with pytest.raises(NotImplementedError, match="Phase 2"):
+        asyncio.run(SEARCH_ACTIONS.handler({"query": "x"}, ctx))
 
 
 def _make_minimal_ctx() -> ToolContext:

@@ -1,4 +1,4 @@
-"""Universal catalog wrappers — FP-0034 Phase 1 foundation.
+"""Universal catalog wrappers — FP-0034 Phase 1 foundation + PR-3a wiring.
 
 This module defines the 4 universal wrapper ToolDefinitions
 (``list_actions`` / ``search_actions`` / ``describe_action`` /
@@ -13,22 +13,22 @@ etc.) with 4 wrappers that cover all 13 categories uniformly. Per
 arbitrary characters (including ``.``) are allowed, so MCP tools
 like ``mcp.tool__brave.search`` round-trip correctly.
 
-PR-1 scope (this file):
-  - Category enum constants + helper predicates
-  - Qualified-name parse / build / validate
-  - 4 ToolDefinitions with production-ready schemas
-  - Stub handlers that raise NotImplementedError until PR-2 lands the
-    dispatcher (= ``universal_dispatch.py``)
-  - D14 visibility-gating helpers (= ``is_search_available`` /
-    ``is_exec_available``); the actual schema-level gating happens
-    at the integration layer (= router_tools.py in PR-3)
+PR-1 (landed): type surface only — 4 ToolDefinitions with stub
+handlers, qualified-name parse / build / validate, 13-category enum,
+D14 visibility-gating helpers.
 
-PR-2 (next): qualified-name → handler routing across all 13 categories,
-single-source ``rag.corpus`` curry (= D19 resource invoke), error-with-
-suggestions response (= D12).
+PR-2 (landed): pure routing layer — ``universal_dispatch.py`` with
+resolve_invoke_action / resolve_describe_action / suggest_similar_names.
 
-PR-3 (later): router integration — tools= placement, SP refactor
-(category-only description), ``__init__.py`` registration.
+PR-3a (this commit): wire real handlers — list_actions /
+describe_action / invoke_action handlers delegate via the PR-2 routing
++ the unified ToolRegistry. ``search_actions`` remains a stub (= depends
+on Phase 2 embedding index). The 4 wrappers are NOT yet added to the
+router's tools= (= that lands in PR-3b). Registry registration is
+landed so any caller iterating the registry sees the wrappers.
+
+PR-3b (later): router tools= placement + SP refactor (D9
+category-only description); build_tools() shape change.
 
 PR-4 (later): new op ``mcp.operation__drop_server`` for the destructor
 side of MCP server CRUD (D23).
@@ -38,9 +38,16 @@ verification 1-9.
 """
 from __future__ import annotations
 
-from typing import Any, Final, Mapping
+from typing import Any, Final, Mapping, TYPE_CHECKING
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+
+# Lazy-imported at function-body level to break the circular dependency
+# with universal_dispatch.py (which imports CATEGORIES + split_qualified_name
+# from this module). The handlers below import the dispatch symbols inside
+# their function bodies; this typing-time alias is for type checkers only.
+if TYPE_CHECKING:
+    from reyn.tools.universal_dispatch import UnknownActionError
 
 
 # ── Canonical 13-category enum (FP-0034 §D18 master taxonomy) ──────────────
@@ -338,54 +345,418 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
 }
 
 
-# ── Stub handlers (PR-2 will land the real dispatcher) ─────────────────────
-#
-# Each stub raises NotImplementedError with a clear pointer at the PR
-# that will land the implementation. This lets PR-1 land the schema
-# surface (= type-checkable, registry-shaped, ready for downstream
-# consumers) without changing any runtime behavior. The 4 ToolDefinitions
-# are NOT registered in get_default_registry() until PR-3.
+# ── Handler implementation helpers ────────────────────────────────────────
+
+
+_MAX_SHORT_DESC: Final[int] = 200
+
+
+def _truncate_short_description(desc: str | None) -> str:
+    """Trim long descriptions for the list_actions / search_actions output.
+
+    list_actions returns ``short_description``, distinct from
+    describe_action's full description. The cap keeps the LLM-visible
+    payload small even when target ToolDefinitions ship verbose docs.
+    """
+    if not desc:
+        return ""
+    if len(desc) <= _MAX_SHORT_DESC:
+        return desc
+    return desc[: _MAX_SHORT_DESC - 1].rstrip() + "…"
+
+
+def _build_error_response(exc: "UnknownActionError") -> dict[str, Any]:
+    """Format an UnknownActionError into the §D12 LLM-facing response shape.
+
+    FP-0034 §D12 specifies the LLM sees an ``error`` message, the
+    offending ``action_name``, a list of ``suggestions``, and a ``hint``
+    pointing at the recovery path (= list_actions / describe_action).
+    PR-3a returns this verbatim so the LLM can recover in 1 turn.
+    """
+    return {
+        "error": str(exc),
+        "action_name": exc.action_name,
+        "reason": exc.reason,
+        "suggestions": list(exc.suggestions),
+        "hint": (
+            "Use list_actions(category=...) to discover available "
+            "actions, then describe_action(action_name) to fetch the "
+            "input schema."
+        ),
+    }
+
+
+def _missing_action_name_error() -> dict[str, Any]:
+    """Error response when caller omits action_name (= required field)."""
+    return {
+        "error": "action_name is required",
+        "action_name": None,
+        "reason": "action_name parameter was not provided",
+        "suggestions": [],
+        "hint": (
+            "Provide action_name (qualified, e.g. 'skill__code_review') "
+            "from list_actions or search_actions output."
+        ),
+    }
+
+
+def _enumerate_static_category(category: str) -> list[dict[str, str]]:
+    """Enumerate qualified names for a STATIC operation category.
+
+    Static categories (file / web / memory.operation / reyn.source /
+    rag.operation) have known qualified names declared in
+    universal_dispatch._OPERATION_RULES. Their short_description comes
+    from the target ToolDefinition in the registry.
+
+    Resource categories (skill / agent.peer / mcp.{server,tool} /
+    memory.entry / rag.corpus) are NOT handled here — they need caller
+    state (= ctx.router_state.available_*). See _enumerate_category.
+    """
+    # Lazy imports to avoid circular dependency (universal_dispatch imports
+    # CATEGORIES + split_qualified_name from THIS module).
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError,
+        known_qualified_name_for_category,
+        resolve_describe_action,
+    )
+
+    registry = get_default_registry()
+    out: list[dict[str, str]] = []
+    for qualified_name in known_qualified_name_for_category(category):
+        try:
+            resolved = resolve_describe_action(qualified_name)
+        except UnknownActionError:
+            continue
+        target = registry.lookup(resolved.target_tool_name)
+        short = _truncate_short_description(
+            target.description if target is not None else "",
+        )
+        out.append({
+            "qualified_name": qualified_name,
+            "short_description": short,
+        })
+    return out
+
+
+def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]:
+    """Enumerate qualified names for ``category`` consulting caller state.
+
+    Dispatch by category kind:
+      - Static operation categories → _enumerate_static_category
+      - Resource categories → consult ctx.router_state (skills /
+        agents / mcp_servers / mcp_servers[*].tools / list_memory_fn)
+      - Categories without state-binding yet (rag.corpus / exec /
+        mcp.operation) → empty list (PR-3b / PR-4 will populate)
+
+    The output items each carry ``qualified_name`` (= what
+    invoke_action / describe_action expects) and ``short_description``
+    (= LLM-facing summary, truncated per _MAX_SHORT_DESC).
+    """
+    rs = ctx.router_state
+
+    if category in (
+        "file", "web", "memory.operation", "reyn.source", "rag.operation",
+    ):
+        return _enumerate_static_category(category)
+
+    if category == "skill":
+        if rs is None or not rs.available_skills:
+            return []
+        return [
+            {
+                "qualified_name": build_qualified_name("skill", s["name"]),
+                "short_description": _truncate_short_description(
+                    s.get("description", ""),
+                ),
+            }
+            for s in rs.available_skills
+            if isinstance(s, Mapping) and "name" in s
+        ]
+
+    if category == "agent.peer":
+        if rs is None or not rs.available_agents:
+            return []
+        return [
+            {
+                "qualified_name": build_qualified_name("agent.peer", a["name"]),
+                "short_description": _truncate_short_description(
+                    a.get("role") or a.get("description", ""),
+                ),
+            }
+            for a in rs.available_agents
+            if isinstance(a, Mapping) and "name" in a
+        ]
+
+    if category == "mcp.server":
+        if rs is None or not rs.mcp_servers:
+            return []
+        return [
+            {
+                "qualified_name": build_qualified_name("mcp.server", s["name"]),
+                "short_description": _truncate_short_description(
+                    s.get("description", ""),
+                ),
+            }
+            for s in rs.mcp_servers
+            if isinstance(s, Mapping) and "name" in s
+        ]
+
+    if category == "mcp.tool":
+        if rs is None or not rs.mcp_servers:
+            return []
+        out: list[dict[str, str]] = []
+        for srv in rs.mcp_servers:
+            if not isinstance(srv, Mapping):
+                continue
+            srv_name = srv.get("name")
+            if not srv_name:
+                continue
+            tools = srv.get("tools") or []
+            for tool in tools:
+                if not isinstance(tool, Mapping):
+                    continue
+                tool_name = tool.get("name")
+                if not tool_name:
+                    continue
+                qn = build_qualified_name(
+                    "mcp.tool", f"{srv_name}.{tool_name}",
+                )
+                out.append({
+                    "qualified_name": qn,
+                    "short_description": _truncate_short_description(
+                        tool.get("description", ""),
+                    ),
+                })
+        return out
+
+    if category == "memory.entry":
+        if rs is None or rs.list_memory_fn is None:
+            return []
+        try:
+            entries = rs.list_memory_fn("") or []
+        except Exception:
+            return []
+        out2: list[dict[str, str]] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                continue
+            name = entry.get("name")
+            if not name:
+                continue
+            out2.append({
+                "qualified_name": build_qualified_name("memory.entry", name),
+                "short_description": _truncate_short_description(
+                    entry.get("description", ""),
+                ),
+            })
+        return out2
+
+    # rag.corpus / exec / mcp.operation — PR-3b / PR-4 will populate
+    return []
+
+
+# ── Real handlers (PR-3a) ─────────────────────────────────────────────────
 
 
 async def _handle_list_actions(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Stub for list_actions; PR-2 lands the real dispatcher."""
-    raise NotImplementedError(
-        "list_actions dispatcher is wired in FP-0034 PR-2 "
-        "(universal_dispatch.py). PR-1 establishes the ToolDefinition "
-        "surface only."
-    )
+    """list_actions handler — alphabetical browse with filter + pagination.
+
+    Per FP-0034 §D11, returns:
+      ``{items: [{qualified_name, short_description}, ...], total: int}``
+
+    Sort is alphabetical by qualified_name (= pagination stability).
+    The ``filter`` substring matches case-insensitively against
+    qualified_name AND short_description. Pagination uses offset+limit
+    REST conventions.
+    """
+    # Resolve category filter — empty / unset = all visible categories
+    category_filter = args.get("category") or []
+    if isinstance(category_filter, str):
+        category_filter = [category_filter]
+    if category_filter:
+        categories = [c for c in category_filter if c in CATEGORIES]
+    else:
+        categories = list(CATEGORIES)
+
+    text_filter = (args.get("filter") or "").lower()
+    offset = max(0, int(args.get("offset", 0) or 0))
+    limit = max(1, int(args.get("limit", 20) or 20))
+
+    items: list[dict[str, str]] = []
+    for cat in categories:
+        items.extend(_enumerate_category(cat, ctx))
+
+    if text_filter:
+        items = [
+            it for it in items
+            if text_filter in it["qualified_name"].lower()
+            or text_filter in it["short_description"].lower()
+        ]
+
+    # Alphabetical sort for pagination stability (§D11)
+    items.sort(key=lambda it: it["qualified_name"])
+    total = len(items)
+    page = items[offset:offset + limit]
+
+    return {"items": page, "total": total}
 
 
 async def _handle_search_actions(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Stub for search_actions; PR-2 lands the real dispatcher."""
+    """search_actions handler — STUB until FP-0034 Phase 2 lands embedding.
+
+    Per §D14, search_actions is visible only when embedding is
+    configured. The visibility gate lives at the integration layer
+    (= router_tools.py in PR-3b). When the handler is reached without
+    embedding wired, it raises NotImplementedError pointing at Phase 2.
+    """
     raise NotImplementedError(
-        "search_actions dispatcher is wired in FP-0034 PR-2 "
-        "(ActionEmbeddingIndex landing is FP-0034 Phase 2)."
+        "search_actions semantic search lands in FP-0034 Phase 2 "
+        "(ActionEmbeddingIndex + embedding-based ranking). PR-3a wires "
+        "list_actions / describe_action / invoke_action only."
     )
 
 
 async def _handle_describe_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Stub for describe_action; PR-2 lands the real dispatcher."""
-    raise NotImplementedError(
-        "describe_action dispatcher is wired in FP-0034 PR-2 "
-        "(universal_dispatch.py qualified-name routing)."
+    """describe_action handler — return target's description + input_schema.
+
+    Per FP-0034 §D11, returns ``{long_description?, input_schema,
+    metadata?}``. PR-3a maps to the target ToolDefinition's fields:
+      - description (= the target's LLM-facing description)
+      - input_schema (= the target's parameters dict)
+      - metadata (= qualified_name + target_tool_name + category + purity)
+
+    For unknown qualified_name, returns the §D12 error-with-suggestions
+    response.
+    """
+    qualified_name = args.get("action_name")
+    if not qualified_name:
+        return _missing_action_name_error()
+
+    # Lazy imports for circular-dep safety
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError,
+        resolve_describe_action,
     )
+
+    try:
+        resolved = resolve_describe_action(qualified_name)
+    except UnknownActionError as exc:
+        # Augment suggestions with router_state-aware candidates
+        return _build_error_response(_augment_suggestions(exc, ctx))
+
+    registry = get_default_registry()
+    target = registry.lookup(resolved.target_tool_name)
+    if target is None:
+        return _build_error_response(UnknownActionError(
+            qualified_name,
+            f"target tool {resolved.target_tool_name!r} is not in the "
+            f"registry (PR-3a wires the canonical surface; if you see "
+            f"this in production, the target may be a future-PR op)",
+        ))
+
+    return {
+        "qualified_name": qualified_name,
+        "description": target.description,
+        "input_schema": dict(target.parameters),
+        "metadata": {
+            "target_tool_name": resolved.target_tool_name,
+            "category": target.category,
+            "purity": target.purity,
+        },
+    }
 
 
 async def _handle_invoke_action(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """Stub for invoke_action; PR-2 lands the real dispatcher."""
-    raise NotImplementedError(
-        "invoke_action dispatcher is wired in FP-0034 PR-2 "
-        "(universal_dispatch.py qualified-name routing + D19 resource "
-        "invoke canonical semantic)."
+    """invoke_action handler — delegate to target via PR-2 routing.
+
+    PR-3a wiring:
+      1. Resolve qualified_name → target_tool_name + transformed_args
+         via universal_dispatch.resolve_invoke_action.
+      2. Look up target ToolDefinition in the unified registry.
+      3. Invoke target.handler(transformed_args, ctx).
+
+    The ToolContext is forwarded verbatim so router_state callbacks
+    (= run_skill_fn / spawn_skill_fn / send_to_agent / op_context_factory
+    / list_memory_fn / etc.) reach the target handler as if the caller
+    had invoked it directly. This is what makes invoke_action a
+    transparent wrapper rather than a separate execution path.
+
+    Unknown qualified_name → §D12 error-with-suggestions response.
+    """
+    qualified_name = args.get("action_name")
+    if not qualified_name:
+        return _missing_action_name_error()
+
+    inner_args = args.get("args") or {}
+
+    # Lazy imports for circular-dep safety
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError,
+        resolve_invoke_action,
+    )
+
+    try:
+        resolved = resolve_invoke_action(qualified_name, inner_args)
+    except UnknownActionError as exc:
+        return _build_error_response(_augment_suggestions(exc, ctx))
+
+    registry = get_default_registry()
+    target = registry.lookup(resolved.target_tool_name)
+    if target is None:
+        return _build_error_response(UnknownActionError(
+            qualified_name,
+            f"target tool {resolved.target_tool_name!r} is not in the "
+            f"registry (PR-3a wires the canonical surface; if you see "
+            f"this in production, the target may be a future-PR op)",
+        ))
+
+    # Forward ctx verbatim — target handlers consume their slice of
+    # router_state / phase_state via the typed sub-objects.
+    return await target.handler(resolved.target_args, ctx)
+
+
+def _augment_suggestions(
+    exc: "UnknownActionError", ctx: ToolContext,
+) -> "UnknownActionError":
+    """Re-suggest using router_state-aware candidates when available.
+
+    The PR-2 default suggestion pool is the static catalogue
+    (= KNOWN_STATIC_QUALIFIED_NAMES, 13 names). When ``ctx.router_state``
+    is populated, we widen the pool with dynamic items (= skills /
+    agents / mcp.tool / mcp.server / memory.entry) so the suggestion
+    surfaces names the LLM can actually invoke. Falls back to the
+    original exception unchanged when no dynamic items exist.
+    """
+    # Lazy import for circular-dep safety
+    from reyn.tools.universal_dispatch import (
+        UnknownActionError as _UnknownActionError,
+        suggest_similar_names,
+    )
+
+    candidates: list[str] = []
+    for cat in CATEGORIES:
+        for item in _enumerate_category(cat, ctx):
+            candidates.append(item["qualified_name"])
+
+    if not candidates:
+        return exc
+
+    new_suggestions = suggest_similar_names(
+        exc.action_name, candidates=candidates,
+    )
+    return _UnknownActionError(
+        exc.action_name, exc.reason, suggestions=new_suggestions,
     )
 
 
