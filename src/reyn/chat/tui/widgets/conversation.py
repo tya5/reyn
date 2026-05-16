@@ -451,6 +451,11 @@ class ConversationView(Widget):
         skill_name: str = "",
     ) -> ErrorBox:
         self._consume_empty_hint()
+        # Hide any sticky "thinking…" — the turn is over (it failed).
+        # Otherwise the elapsed counter keeps incrementing forever next
+        # to a stale message, e.g. "⟳ thinking · 87.4s" while the
+        # ErrorBox below already shows "router failed".
+        self.hide_status()
         box = ErrorBox(
             message=message,
             details=details,
@@ -490,6 +495,9 @@ class ConversationView(Widget):
         iv_id: str = "",
     ) -> InterventionWidget:
         self._consume_empty_hint()
+        # The run is now blocked on the user's answer; "thinking…" is no
+        # longer accurate, hide the live counter while we wait.
+        self.hide_status()
         widget = InterventionWidget(
             question=question,
             choices=choices,
