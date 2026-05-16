@@ -54,12 +54,15 @@ SCENARIOS = {
 }
 
 
-def run_chat(prompt: str, trace_file: Path, cwd: Path, timeout: int = 180) -> dict:
-    """Pipe a single user turn through `reyn chat --cui`."""
+def run_chat(prompt: str, trace_file: Path, cwd: Path, agent_name: str | None = None, timeout: int = 180) -> dict:
+    """Pipe a single user turn through `reyn chat --cui [<agent_name>]`."""
     env = {**os.environ, "REYN_LLM_TRACE_DUMP": str(trace_file)}
+    cmd = ["reyn", "chat", "--cui"]
+    if agent_name:
+        cmd.append(agent_name)
     start = time.time()
     proc = subprocess.run(
-        ["reyn", "chat", "--cui"],
+        cmd,
         input=f"{prompt}\n",
         capture_output=True,
         text=True,
@@ -224,6 +227,8 @@ def main() -> int:
     ap.add_argument("scenario", choices=list(SCENARIOS))
     ap.add_argument("--trace-dir", default="/tmp/reyn_b23")
     ap.add_argument("--cwd", default=".")
+    ap.add_argument("--agent-name", default=None,
+                    help="reyn agent name to attach to; auto-created if missing")
     ap.add_argument("--timeout", type=int, default=180)
     args = ap.parse_args()
 
@@ -237,10 +242,23 @@ def main() -> int:
 
     print(f"[{args.scenario}] {sc['name']}", file=sys.stderr)
     print(f"  cwd:    {cwd}", file=sys.stderr)
+    print(f"  agent:  {args.agent_name or '(default)'}", file=sys.stderr)
     print(f"  trace:  {trace_file}", file=sys.stderr)
     print(f"  prompt: {sc['prompt']}", file=sys.stderr)
 
-    chat = run_chat(sc["prompt"], trace_file, cwd, timeout=args.timeout)
+    # Auto-create agent in this cwd if a name is given and the profile dir is absent.
+    if args.agent_name:
+        agent_dir = cwd / ".reyn" / "agents" / args.agent_name
+        if not agent_dir.exists():
+            subprocess.run(
+                ["reyn", "agent", "new", args.agent_name],
+                cwd=str(cwd),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+    chat = run_chat(sc["prompt"], trace_file, cwd, agent_name=args.agent_name, timeout=args.timeout)
     parse = parse_trace(trace_file)
     events_root = cwd / ".reyn" / "events"
     events = grep_routing_decided(events_root)
