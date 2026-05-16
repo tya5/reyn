@@ -103,6 +103,24 @@ def test_list_actions_memory_operation_static_category() -> None:
     }
 
 
+def test_list_actions_mcp_operation_static_category() -> None:
+    """Tier 2: list_actions(category=['mcp.operation']) returns drop_server.
+
+    PR-4 landed ``mcp.operation__drop_server`` routing rules, and PR-3c
+    wired ``mcp.operation`` into the static-category enumeration list.
+    Without this fix the LLM cannot discover the drop_server op via the
+    universal catalog even though invoke_action would route it.
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["mcp.operation"]}, _make_ctx(),
+    ))
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert qns == {"mcp.operation__drop_server"}, (
+        f"mcp.operation enumeration drifted: got {qns}, "
+        f"expected {{'mcp.operation__drop_server'}}"
+    )
+
+
 def test_list_actions_short_description_present() -> None:
     """Tier 2: list_actions items carry a short_description string."""
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _make_ctx()))

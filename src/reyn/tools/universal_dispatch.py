@@ -45,7 +45,6 @@ from reyn.tools.universal_catalog import (
     split_qualified_name,
 )
 
-
 # ── Routing result + errors ────────────────────────────────────────────────
 
 
@@ -434,9 +433,10 @@ def known_qualified_name_for_category(category: str) -> tuple[str, ...]:
 
     Operation categories (file / web / memory.operation / reyn.source /
     rag.operation / mcp.operation / exec) return the qualified names
-    PR-2 has routing rules for. Note ``mcp.operation`` returns ()
-    because ``drop_server`` lands in PR-4; ``exec`` returns () because
-    ``sandboxed_exec`` integration is a future PR.
+    this module has routing rules for. ``mcp.operation`` returns
+    ``("mcp.operation__drop_server",)`` (= PR-4 landed). ``exec``
+    returns ``()`` because ``sandboxed_exec`` enumeration is a future
+    Phase 2 task (= depends on sandbox-backend introspection).
     """
     if category not in CATEGORIES:
         raise ValueError(

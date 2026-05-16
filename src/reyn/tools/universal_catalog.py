@@ -38,7 +38,7 @@ verification 1-9.
 """
 from __future__ import annotations
 
-from typing import Any, Final, Mapping, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Final, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
@@ -443,11 +443,15 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
     """Enumerate qualified names for ``category`` consulting caller state.
 
     Dispatch by category kind:
-      - Static operation categories → _enumerate_static_category
+      - Static operation categories (file / web / memory.operation /
+        reyn.source / rag.operation / mcp.operation) →
+        _enumerate_static_category (= populated via universal_dispatch's
+        ``_OPERATION_RULES`` table)
       - Resource categories → consult ctx.router_state (skills /
         agents / mcp_servers / mcp_servers[*].tools / list_memory_fn)
-      - Categories without state-binding yet (rag.corpus / exec /
-        mcp.operation) → empty list (PR-3b / PR-4 will populate)
+      - Categories without state-binding yet (rag.corpus / exec) →
+        empty list (Phase 2 will populate via embedding-backed index
+        and sandbox-backed exec enumeration)
 
     The output items each carry ``qualified_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
@@ -457,6 +461,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
 
     if category in (
         "file", "web", "memory.operation", "reyn.source", "rag.operation",
+        "mcp.operation",
     ):
         return _enumerate_static_category(category)
 
@@ -552,7 +557,8 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             })
         return out2
 
-    # rag.corpus / exec / mcp.operation — PR-3b / PR-4 will populate
+    # rag.corpus / exec — Phase 2 will populate (embedding-backed
+    # corpus list + sandbox-backed exec enumeration).
     return []
 
 
@@ -741,6 +747,8 @@ def _augment_suggestions(
     # Lazy import for circular-dep safety
     from reyn.tools.universal_dispatch import (
         UnknownActionError as _UnknownActionError,
+    )
+    from reyn.tools.universal_dispatch import (
         suggest_similar_names,
     )
 
