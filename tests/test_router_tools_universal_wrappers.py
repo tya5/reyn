@@ -169,6 +169,32 @@ def test_get_dispatch_kind_resolves_universal_wrappers() -> None:
 # ── 5. Wrapper inclusion is independent of file/mcp/agent state ──────────
 
 
+def test_wrappers_are_in_router_loop_dispatch_set() -> None:
+    """Tier 2: drift invariant — the 4 wrappers are wired for dispatch.
+
+    Prevents the regression that landed initially in PR-3b-i: wrappers
+    were added to ``tools=`` and registered in the unified registry,
+    but the RouterLoop dispatch set (``_REGISTRY_DISPATCH_TOOLS``) was
+    not extended, so when the LLM actually called list_actions /
+    describe_action / invoke_action the router returned
+    ``{"error": "unhandled tool: <name>"}`` to the LLM.
+
+    This invariant ensures any future wrapper added to the universal
+    catalog also lands in the dispatch set, or the next maintainer
+    sees this test fail immediately.
+    """
+    from reyn.chat.router_loop import RouterLoop
+    for wrapper in (
+        "list_actions", "search_actions",
+        "describe_action", "invoke_action",
+    ):
+        assert wrapper in RouterLoop._REGISTRY_DISPATCH_TOOLS, (
+            f"Universal wrapper {wrapper!r} is in get_default_registry() "
+            f"but not in RouterLoop._REGISTRY_DISPATCH_TOOLS. The LLM "
+            f"would see 'unhandled tool: {wrapper}' on every call."
+        )
+
+
 def test_flag_on_wrappers_present_even_with_empty_skills_agents() -> None:
     """Tier 2: wrappers appear with empty skill / agent lists.
 

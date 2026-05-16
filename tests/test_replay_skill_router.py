@@ -702,6 +702,53 @@ async def test_named_skill_direct_invoke_without_list_skills():
 
 
 @pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/list_actions_discovery.jsonl"
+)
+@pytest.mark.asyncio
+async def test_list_actions_discovery_then_invoke():
+    """Tier 3a: LLM uses ``list_actions`` to discover then invokes a skill.
+
+    The prompt explicitly asks the LLM to **first browse available
+    actions** before deciding what to invoke.  This exercises the
+    discovery → invoke chain of the universal catalog rather than the
+    direct legacy path.  We assert structural invariants only (= a skill
+    eventually gets invoked) so the fixture stays stable across LLM
+    drift.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+            {
+                "name": "translator",
+                "description": "Translates text between languages.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host, max_iterations=8)
+
+    await loop.run(
+        "First use list_actions to see what skills are available, "
+        "then use the most appropriate one to summarise this text: "
+        "The quick brown fox jumps over the lazy dog.",
+        [],
+    )
+
+    # Invariant: some skill ran.
+    assert len(host.skill_calls) >= 1, (
+        f"Expected a skill call after discovery; got: {host.skill_calls}"
+    )
+    # Invariant: final outbox is an agent reply.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
+
+
+@pytest.mark.replay(
     "fixtures/llm/router/universal_wrappers/invoke_skill_with_wrappers.jsonl"
 )
 @pytest.mark.asyncio

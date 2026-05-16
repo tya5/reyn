@@ -806,6 +806,17 @@ class RouterLoop:
         # (= host.make_router_op_context) so the permission resolver and
         # intervention_bus are present for the index_drop gate.
         "recall", "drop_source",
+        # FP-0034 Phase 1: universal catalog wrappers.  Handlers in
+        # src/reyn/tools/universal_catalog.py — list_actions enumerates
+        # via ctx.router_state, describe_action / invoke_action route
+        # via universal_dispatch.  search_actions stays included for
+        # registry-completeness even though router_tools.build_tools
+        # currently excludes it from the LLM-visible tools= list
+        # (= Phase 2 wires the §D14 visibility gate + the real handler;
+        # listing it here is harmless because the catalog already
+        # filters it out before the LLM can call it).
+        "list_actions", "search_actions",
+        "describe_action", "invoke_action",
     })
 
     def _build_router_caller_state(self) -> Any:
