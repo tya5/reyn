@@ -60,21 +60,6 @@ _REMEMBER_SHARED_DESCRIPTION = (
     "that benefit all agents."
 )
 
-# Assertive WHAT/WHEN/WHEN_NOT variant used when hide_legacy_tools=True.
-# (B23-PRE-1 SP role-separation: multilingual triggers moved from SP
-# disambiguation table to this description.)
-# _REMEMBER_SHARED_DESCRIPTION stays byte-identical for LLMReplay fixture stability.
-_REMEMBER_SHARED_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Persist a fact / preference / context as shared memory "
-    "(visible across agents in this network). "
-    "WHEN: Use when user explicitly expresses intent to remember / save / "
-    "persist information for future reference. Multilingual — triggers include "
-    "\"remember\", \"save\", \"from now on\", \"treat as\", \"覚えて\", "
-    "\"メモして\", \"記録して\", \"保存して\", \"忘れないで\". "
-    "WHEN NOT: For agent-scoped (private) memory, use remember_agent. "
-    "For temporary conversation state, no tool needed."
-)
-
 _REMEMBER_AGENT_DESCRIPTION = (
     "Persist a durable fact to this agent's private memory. "
     "Use for agent-specific preferences, feedback, or context "
@@ -86,17 +71,6 @@ _FORGET_MEMORY_DESCRIPTION = (
     "'forget' or the memory turned out wrong."
 )
 
-# Assertive WHAT/WHEN/WHEN_NOT variant used when hide_legacy_tools=True.
-# (B23-PRE-1 SP role-separation: multilingual triggers moved from SP
-# disambiguation table to this description.)
-# _FORGET_MEMORY_DESCRIPTION stays byte-identical for LLMReplay fixture stability.
-_FORGET_MEMORY_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Delete a memory entry by name. "
-    "WHEN: Use when user explicitly expresses intent to forget / delete / "
-    "remove a stored memory entry. Multilingual — triggers include "
-    "\"forget\", \"delete\", \"remove\", \"忘れて\", \"削除して\", \"消して\". "
-    "Only when the user explicitly says 'forget' or the memory turned out wrong."
-)
 
 
 # ── Parameter schemas — byte-identical to router_tools.py ToolSpec literals ────

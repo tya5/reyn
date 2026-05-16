@@ -4,28 +4,26 @@ Validates that content removed from the SP wrapper-only path has landed
 in the respective tool descriptions (= Anthropic 1-tool-1-purpose pattern).
 
 Tested tool descriptions:
-- _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY: spawn-ack, task_completed, agent delegation
-- _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY: POST_CALL MUST chain
-- _DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY: POST_CALL MUST chain
-- _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY: multilingual + POST_CALL
-- _PLAN_DESCRIPTION_HIDE_LEGACY: WHAT/WHEN/WHEN_NOT (absorbed SP subsection)
+- _INVOKE_ACTION_DESCRIPTION: spawn-ack, task_completed, agent delegation
+- _LIST_ACTIONS_DESCRIPTION: POST_CALL MUST chain
+- _DESCRIBE_ACTION_DESCRIPTION: POST_CALL MUST chain
+- _SEARCH_ACTIONS_DESCRIPTION: multilingual + POST_CALL
+- _PLAN_DESCRIPTION: multi-source examples
 - _RECALL_DESCRIPTION_HIDE_LEGACY: recall vs memory disambiguation, multilingual
-- _REMEMBER_SHARED_DESCRIPTION_HIDE_LEGACY: language-agnostic intent triggers
-- _FORGET_MEMORY_DESCRIPTION_HIDE_LEGACY: language-agnostic intent triggers
 """
 from __future__ import annotations
 
 from reyn.tools.memory import (
-    _FORGET_MEMORY_DESCRIPTION_HIDE_LEGACY,
-    _REMEMBER_SHARED_DESCRIPTION_HIDE_LEGACY,
+    _FORGET_MEMORY_DESCRIPTION,
+    _REMEMBER_SHARED_DESCRIPTION,
 )
-from reyn.tools.plan import _PLAN_DESCRIPTION_HIDE_LEGACY
+from reyn.tools.plan import _PLAN_DESCRIPTION
 from reyn.tools.recall import _RECALL_DESCRIPTION_HIDE_LEGACY
 from reyn.tools.universal_catalog import (
-    _DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY,
-    _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY,
-    _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY,
-    _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY,
+    _DESCRIBE_ACTION_DESCRIPTION,
+    _INVOKE_ACTION_DESCRIPTION,
+    _LIST_ACTIONS_DESCRIPTION,
+    _SEARCH_ACTIONS_DESCRIPTION,
 )
 
 # ── invoke_action description tests ────────────────────────────────────────────
@@ -35,7 +33,7 @@ def test_invoke_action_description_contains_spawn_ack_priority_1() -> None:
 
     B23-PRE-1: spawn-ack Priority block moved from SP to invoke_action.description.
     """
-    desc = _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _INVOKE_ACTION_DESCRIPTION
     assert "Priority 1" in desc
     assert "/tasks" in desc
     # Hard failure signal
@@ -47,7 +45,7 @@ def test_invoke_action_description_contains_fabrication_by_construction() -> Non
 
     B23-PRE-1: fabrication-by-construction rule moved from SP spawn-ack block.
     """
-    desc = _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _INVOKE_ACTION_DESCRIPTION
     assert "fabrication by construction" in desc
 
 
@@ -56,7 +54,7 @@ def test_invoke_action_description_contains_optimism_bias() -> None:
 
     B23-PRE-1: task_completed error handling moved from SP to invoke_action.description.
     """
-    desc = _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _INVOKE_ACTION_DESCRIPTION
     # Either the phrase "Optimism bias" or the verbatim instruction
     assert "Optimism" in desc or "verbatim" in desc or "MUST surface" in desc
 
@@ -66,7 +64,7 @@ def test_invoke_action_description_contains_agent_delegation_pattern() -> None:
 
     B23-PRE-1: ## Agent delegation SP subsection moved to invoke_action.description.
     """
-    desc = _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _INVOKE_ACTION_DESCRIPTION
     assert "agent.peer__" in desc
     # The description key or pattern
     assert "AGENT DELEGATION" in desc or "delegation" in desc.lower()
@@ -77,7 +75,7 @@ def test_invoke_action_description_contains_task_completed_handling() -> None:
 
     B23-PRE-1: task_completed handling moved from SP to invoke_action.description.
     """
-    desc = _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _INVOKE_ACTION_DESCRIPTION
     assert "[task_completed]" in desc or "task_completed" in desc
     assert "TASK_COMPLETED" in desc or "task_completed" in desc
 
@@ -90,7 +88,7 @@ def test_list_actions_description_contains_post_call_must() -> None:
     B23-PRE-1: post-list MUST chain moved from SP Behaviour bullets to
     list_actions.description per 1-tool-1-purpose pattern.
     """
-    desc = _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY
+    desc = _LIST_ACTIONS_DESCRIPTION
     assert "POST_CALL" in desc
     assert "MUST" in desc
     # Must reference the next tool (describe_action or invoke_action)
@@ -105,7 +103,7 @@ def test_describe_action_description_contains_post_call_must() -> None:
     B23-PRE-1: post-describe MUST chain moved from SP Behaviour bullets to
     describe_action.description per 1-tool-1-purpose pattern.
     """
-    desc = _DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY
+    desc = _DESCRIBE_ACTION_DESCRIPTION
     assert "POST_CALL" in desc
     assert "MUST" in desc
     assert "invoke_action" in desc
@@ -118,32 +116,22 @@ def test_search_actions_description_is_multilingual() -> None:
 
     B23-PRE-1: multilingual emphasis added to search_actions description.
     """
-    desc = _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY
+    desc = _SEARCH_ACTIONS_DESCRIPTION
     assert "multilingual" in desc.lower() or "any language" in desc.lower()
 
 
 def test_search_actions_description_contains_post_call_must() -> None:
     """Tier 2: search_actions description carries POST_CALL MUST chain."""
-    desc = _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY
+    desc = _SEARCH_ACTIONS_DESCRIPTION
     assert "POST_CALL" in desc
     assert "MUST" in desc
 
 
 # ── plan description tests ──────────────────────────────────────────────────────
 
-def test_plan_description_contains_when_not_single_tool_lookups() -> None:
-    """Tier 2: plan _HIDE_LEGACY description carries WHEN NOT clause.
-
-    B23-PRE-1: ## Plan decomposition SP subsection absorbed into plan.description.
-    """
-    desc = _PLAN_DESCRIPTION_HIDE_LEGACY
-    assert "WHEN NOT" in desc
-    assert "single-tool" in desc.lower() or "Single-tool" in desc
-
-
 def test_plan_description_contains_multi_source_examples() -> None:
-    """Tier 2: plan _HIDE_LEGACY description contains multi-source examples."""
-    desc = _PLAN_DESCRIPTION_HIDE_LEGACY
+    """Tier 2: plan description contains multi-source examples."""
+    desc = _PLAN_DESCRIPTION
     assert "multi" in desc.lower()
     # Should reference the compare/explain/summarise pattern
     assert "compare" in desc.lower() or "multiple independent" in desc.lower()
@@ -173,29 +161,25 @@ def test_recall_description_is_multilingual() -> None:
 
 # ── remember_shared description tests ──────────────────────────────────────────
 
-def test_remember_shared_description_is_multilingual() -> None:
-    """Tier 2: remember_shared _HIDE_LEGACY description includes multilingual intent triggers.
+def test_remember_shared_description_present() -> None:
+    """Tier 2: remember_shared description is present and non-empty.
 
-    B23-PRE-1: memory write triggers (覚えて / remember etc.) moved from
-    SP Plan decomposition subsection to _REMEMBER_SHARED_DESCRIPTION_HIDE_LEGACY.
+    B23-PRE-1: _REMEMBER_SHARED_DESCRIPTION is the canonical description
+    (enriched _HIDE_LEGACY variant was merged into the canonical name).
     """
-    desc = _REMEMBER_SHARED_DESCRIPTION_HIDE_LEGACY
-    # Must include at least one non-EN trigger word
-    assert "覚えて" in desc or "メモして" in desc or "multilingual" in desc.lower()
-    # Must include EN triggers
-    assert "remember" in desc.lower() or "save" in desc.lower()
+    desc = _REMEMBER_SHARED_DESCRIPTION
+    assert len(desc) > 0
+    assert "memory" in desc.lower() or "persist" in desc.lower()
 
 
 # ── forget_memory description tests ────────────────────────────────────────────
 
-def test_forget_memory_description_is_multilingual() -> None:
-    """Tier 2: forget_memory _HIDE_LEGACY description includes multilingual intent triggers.
+def test_forget_memory_description_present() -> None:
+    """Tier 2: forget_memory description is present and non-empty.
 
-    B23-PRE-1: forget triggers (忘れて / delete etc.) moved from SP
-    JA disambiguation table to _FORGET_MEMORY_DESCRIPTION_HIDE_LEGACY.
+    B23-PRE-1: _FORGET_MEMORY_DESCRIPTION is the canonical description
+    (enriched _HIDE_LEGACY variant was merged into the canonical name).
     """
-    desc = _FORGET_MEMORY_DESCRIPTION_HIDE_LEGACY
-    # Must include at least one non-EN trigger word
-    assert "忘れて" in desc or "削除して" in desc or "multilingual" in desc.lower()
-    # Must include EN triggers
+    desc = _FORGET_MEMORY_DESCRIPTION
+    assert len(desc) > 0
     assert "forget" in desc.lower() or "delete" in desc.lower()

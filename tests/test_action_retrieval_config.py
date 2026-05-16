@@ -1,7 +1,7 @@
 """Tier 2: FP-0034 PR-3b-ii ActionRetrievalConfig + parser contract.
 
 Tests for the new ``action_retrieval:`` config block:
-  - Default config has the safe defaults (= flag off, no embedding,
+  - Default config has the safe defaults (= wrappers enabled, no embedding,
     mode='default', hot_list_n=10).
   - Parser accepts each field independently, validates types, and
     raises on bad values.
@@ -9,6 +9,9 @@ Tests for the new ``action_retrieval:`` config block:
     merged yaml.
   - Unknown keys in the action_retrieval block are silently ignored
     (= forward compat with Phase 2 additions).
+
+Note: hide_legacy_tools was removed in FP-0034 Phase 6 (wrapper-only is
+now the sole path). Tests for that field have been deleted.
 
 No mocks; uses real load_config with a yaml file written to tmp_path.
 """
@@ -30,20 +33,16 @@ from reyn.config import (
 
 
 def test_default_action_retrieval_config_is_on() -> None:
-    """Tier 2: out-of-the-box config has universal wrappers ENABLED
-    and legacy tools HIDDEN (= wrapper-only as production default).
+    """Tier 2: out-of-the-box config has universal wrappers ENABLED (wrapper-only path).
 
     PR-3b-iv flipped universal_wrappers_enabled from False to True.
-    Phase 5 (post-B26 milestone) flipped hide_legacy_tools from
-    False to True. Operators who need the legacy tools= shape can
-    set ``hide_legacy_tools: false`` in reyn.yaml.
+    FP-0034 Phase 6 removed hide_legacy_tools (wrapper-only is the sole path).
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class is None
     assert cfg.hot_list_n == 10  # §D24 balanced
     assert cfg.mode == "default"
-    assert cfg.hide_legacy_tools is True  # Phase 5 default flip
 
 
 def test_reyn_config_carries_action_retrieval_default() -> None:
@@ -119,32 +118,18 @@ def test_parser_mode_performance() -> None:
     assert cfg.mode == "performance"
 
 
-def test_parser_hide_legacy_tools_true() -> None:
-    """Tier 2: hide_legacy_tools=true (Phase 2 prep) flows through."""
-    cfg = _build_action_retrieval_config({"hide_legacy_tools": True})
-    assert cfg.hide_legacy_tools is True
-
-
-def test_parser_hide_legacy_tools_false() -> None:
-    """Tier 2: explicit hide_legacy_tools=false matches default."""
-    cfg = _build_action_retrieval_config({"hide_legacy_tools": False})
-    assert cfg.hide_legacy_tools is False
-
-
 def test_parser_all_fields_at_once() -> None:
-    """Tier 2: all 5 fields can be set together."""
+    """Tier 2: all supported fields can be set together."""
     cfg = _build_action_retrieval_config({
         "universal_wrappers_enabled": True,
         "embedding_class": "voyage_multi",
         "hot_list_n": 15,
         "mode": "performance",
-        "hide_legacy_tools": True,
     })
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class == "voyage_multi"
     assert cfg.hot_list_n == 15
     assert cfg.mode == "performance"
-    assert cfg.hide_legacy_tools is True
 
 
 # ── 3. Parser — validation errors ─────────────────────────────────────────
@@ -184,12 +169,6 @@ def test_parser_rejects_non_string_mode() -> None:
     """Tier 2: mode with non-string raises."""
     with pytest.raises(ValueError, match="mode"):
         _build_action_retrieval_config({"mode": 42})
-
-
-def test_parser_rejects_non_bool_hide_legacy_tools() -> None:
-    """Tier 2: hide_legacy_tools with non-bool raises."""
-    with pytest.raises(ValueError, match="hide_legacy_tools"):
-        _build_action_retrieval_config({"hide_legacy_tools": "yes"})
 
 
 def test_parser_ignores_unknown_keys() -> None:

@@ -13,19 +13,22 @@ grew, the LLM-facing tool list grew linearly: each new resource kind cost
 the LLM a fresh tool to learn.
 
 The **universal action catalog** (FP-0034) replaces N per-kind discover /
-describe / invoke tools with **3 wrappers that cover every category
+describe / invoke tools with **4 wrappers that cover every category
 uniformly**. Every action — a skill, a peer agent, an MCP tool, a memory
 entry, a file op, an indexed corpus, … — is addressed by a single
 qualified name (`<category>__<entry>`) and dispatched through
 `invoke_action`. Discovery happens through `list_actions` and detail
-introspection through `describe_action`.
+introspection through `describe_action`; semantic / natural-language
+discovery uses `search_actions` (embedding-backed).
 
-The wrappers are flag-gated through `action_retrieval` in
-[`reyn.yaml`](../reference/config/reyn-yaml.md#action_retrieval-block) and
-ON by default. Existing LLMReplay fixtures stay valid because the legacy
-tools (`invoke_skill` / `delegate_to_agent` / `call_mcp_tool` / …) still
-exist and the wrappers simply re-route through them — no handler was
-re-implemented, only re-addressed.
+Since Phase 6 (2026-05-16), the wrapper-only path is the **sole
+production behaviour**: legacy per-kind tools no longer appear in the
+LLM-visible `tools=`. The handlers (`invoke_skill` /
+`delegate_to_agent` / `call_mcp_tool` / …) remain in the registry as
+**backing implementations** of the universal wrappers — `invoke_action`
+dispatches to them through `universal_dispatch.py`. Validation:
+dogfood batch 26 N=5 stability (= 32/35 = 91.4% verified, Brier 0.177,
+hallucination 0/35).
 
 ## Why a single catalog
 

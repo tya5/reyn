@@ -818,7 +818,6 @@ class ChatSession:
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
-            hide_legacy_tools=self._action_retrieval.hide_legacy_tools,
             action_embedding_index=self._action_embedding_index,
             embedding_provider=self._embedding_provider,
             embedding_model_class=self._embedding_model_class,

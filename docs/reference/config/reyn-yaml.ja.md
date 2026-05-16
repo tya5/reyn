@@ -291,18 +291,24 @@ action_retrieval:
   embedding_class: null               # search_actions 用の embedding.classes 名
   hot_list_n: 10                      # Phase 2 — top-N freq+recency 投影
   mode: default                       # default | minimal | performance (§D24)
-  hide_legacy_tools: false            # Phase 2 prep — legacy per-kind tools 除去 (opt-in)
 ```
+
+> **Phase 6 cleanup (2026-05-16)**: `hide_legacy_tools` flag は完全削除。
+> wrapper-only path が production 既定 (= 4 universal wrappers + hot
+> list aliases、 legacy per-kind tool は `tools=` に出ない)。 dogfood
+> batch 26 N=5 で validated (= 32/35 = 91.4% verified、 Brier 0.177、
+> hallucination 0/35)。 legacy handler は wrapper の backing
+> implementation として registry 残存 (= `invoke_action` が
+> `universal_dispatch.py` 経由で dispatch)。
 
 ### `action_retrieval` フィールド
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | `true` (PR-3b-iv 以降デフォルト) の時、 Router の `tools=` 末尾に 3 つのユニバーサル wrapper (`list_actions` / `describe_action` / `invoke_action`) を追加。 本フェーズではカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` 等) は併存し、 後続 FP-0034 フェーズで system prompt のリファクタリングと冗長サーフェスの削減を行う。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 FP-0034 以前のバイト単位互換の tools= shape を保持したい場合は `false` を設定。 |
-| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 action-retrieval index は FP-0034 Phase 2 でランディング予定。 現時点では no-op。 |
-| `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 Phase 2 配線用の予約フィールド。 今日設定しても影響なし。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
-| `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 Phase 2 予約; 今日の値は情報のみ。 |
-| `hide_legacy_tools` | bool | `false` | **Phase 2 prep** — exclusive-wrapper モード。 `true` かつ `universal_wrappers_enabled` も `true` の場合、 legacy per-kind tool (`invoke_skill` / `list_skills` / `describe_skill` / `list_agents` / `describe_agent` / `delegate_to_agent` / `list_mcp_*` / `call_mcp_tool` / `describe_mcp_tool` / `list_memory` / `read_memory_body` / `remember_*` / `forget_memory` / `recall` / `drop_source` / `read_file` / `write_file` / `delete_file` / `list_directory` / `web_search` / `web_fetch` / `reyn_src_*` / `plan`) を `tools=` から除去し、 LLM は 3 wrapper 経由でのみアクションをアドレッシングする。 安全ガード: `universal_wrappers_enabled=false` の場合この flag は no-op (= wrapper なしで legacy を除去すると LLM のアドレッシング手段がなくなる)。 デフォルト `false` で Phase 1 の加算的共存 shape を維持。 |
+| `universal_wrappers_enabled` | bool | `true` | `true` (PR-3b-iv 以降デフォルト) の時、 Router の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) は LLM に surface されず、 wrapper の backing handler として registry に残存。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 `false` 設定で wrapper surface 自体を無効化 (= catalog routing なし、 legacy のみ — fixture-stability test 用)。 |
+| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 設定すると cold-start session で [eager embedding build](#reyn-chat---eager-embedding-build) を発動し Turn-1 hallucination を回避。 |
+| `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
+| `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
 
 ### クイックスタート — オプトアウト
 

@@ -298,18 +298,24 @@ action_retrieval:
   embedding_class: null               # name in embedding.classes for search_actions
   hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
   mode: default                       # default | minimal | performance (§D24)
-  hide_legacy_tools: false            # Phase 2 prep — strip legacy per-kind tools (opt-in)
 ```
+
+> **Phase 6 cleanup (2026-05-16)**: the `hide_legacy_tools` flag was
+> removed and the wrapper-only path is now the sole production
+> behaviour (universal wrappers + hot-list aliases, no legacy per-kind
+> tools in `tools=`). The flip was validated by dogfood batch 26 N=5
+> (verified 32/35 = 91.4%, Brier 0.177, hallucination 0/35). Legacy
+> handlers remain in the registry as backing implementations of the
+> 4 wrappers (`invoke_action` dispatches via `universal_dispatch.py`).
 
 ### `action_retrieval` fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), appends 3 universal wrappers (`list_actions`, `describe_action`, `invoke_action`) at the end of the router's `tools=`.  Existing per-category tools (`invoke_skill`, `call_mcp_tool`, etc.) remain present in this phase; subsequent FP-0034 phases will refactor the system prompt and prune redundant surfaces.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to preserve the byte-identical pre-FP-0034 tools= shape. |
-| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  No-op until the action-retrieval index lands in FP-0034 Phase 2. |
-| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24).  Field is reserved for Phase 2 wiring; setting it today is harmless.  Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
-| `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top.  Reserved for Phase 2; today's value is informational only. |
-| `hide_legacy_tools` | bool | `false` | **Phase 2 prep** — exclusive-wrapper mode.  When `true` AND `universal_wrappers_enabled` is also `true`, the legacy per-kind tools (`invoke_skill`, `list_skills`, `describe_skill`, `list_agents`, `describe_agent`, `delegate_to_agent`, `list_mcp_*`, `call_mcp_tool`, `describe_mcp_tool`, `list_memory`, `read_memory_body`, `remember_*`, `forget_memory`, `recall`, `drop_source`, `read_file` / `write_file` / `delete_file` / `list_directory`, `web_search` / `web_fetch`, `reyn_src_*`, `plan`) are stripped from `tools=` so the LLM addresses every action exclusively through the 3 wrappers.  Safety guard: when `universal_wrappers_enabled=false`, this flag is a no-op (= stripping legacy without wrappers would leave the LLM with no addressing surface).  Default `false` keeps the additive Phase 1 coexistence shape. |
+| `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain in the registry as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to disable the wrapper surface entirely (= no catalog routing; legacy tools become the only addressing path again — primarily for fixture-stability tests). |
+| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled. Setting this also enables [eager embedding build](#reyn-chat---eager-embedding-build) on cold-start sessions to avoid Turn-1 hallucinations. |
+| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24). Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
+| `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
 
 ### Quick-start — opt out
 

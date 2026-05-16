@@ -110,9 +110,6 @@ class _FakeRouterHost:
     def get_universal_wrappers_enabled(self) -> bool:
         return self._universal_wrappers_enabled
 
-    def get_hide_legacy_tools(self) -> bool:
-        return False
-
     def get_action_usage_tracker(self) -> "ActionUsageTracker | None":
         return self._tracker
 

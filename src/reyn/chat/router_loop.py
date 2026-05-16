@@ -173,17 +173,6 @@ class RouterLoopHost(Protocol):
         from reyn.yaml. Default False preserves the prior tools= shape."""
         ...
 
-    def get_hide_legacy_tools(self) -> bool:
-        """Return whether legacy per-kind tools should be stripped from tools=.
-
-        FP-0034 Phase 2 prep.  Mirrors
-        ``action_retrieval.hide_legacy_tools`` from reyn.yaml.  Only
-        takes effect when ``get_universal_wrappers_enabled()`` is also
-        True (= the LLM needs *some* addressing path).  Default False
-        keeps the additive Phase 1 coexistence shape.
-        """
-        ...
-
     def get_action_embedding_index(self) -> Any:
         """Return the session-scoped ActionEmbeddingIndex, or None.
 
@@ -507,15 +496,6 @@ class RouterLoop:
             host, "get_universal_wrappers_enabled", None,
         )
         _univ_enabled = bool(_univ_enabled_getter()) if _univ_enabled_getter else False
-        # FP-0034 Phase 2 prep: hide_legacy_tools opt-in.  Same getattr-
-        # fallback pattern as universal_wrappers_enabled — direct callers
-        # / FakeRouterHost get False so the additive coexistence shape
-        # is preserved.  Only takes effect when wrappers are also on
-        # (= build_tools enforces the combined gate).
-        _hide_legacy_getter = getattr(
-            host, "get_hide_legacy_tools", None,
-        )
-        _hide_legacy = bool(_hide_legacy_getter()) if _hide_legacy_getter else False
         # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
         # Only show search_actions when (a) wrappers are on, (b) the
         # operator configured an embedding model class, AND (c) the
@@ -613,7 +593,6 @@ class RouterLoop:
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
             universal_wrappers_enabled=_univ_enabled,
-            hide_legacy_tools=_hide_legacy,
             search_actions_visible=_search_visible,
             hot_list_aliases=_hot_list_aliases,
         )
@@ -651,9 +630,6 @@ class RouterLoop:
                 # in LLMReplay tests) default to False so SP byte content stays
                 # unchanged for cached fixtures.
                 universal_wrappers_enabled=_univ_enabled,
-                # B23-PRE-1: hide_legacy_tools SP rendering (Phase 4 preview).
-                # Default False = legacy path byte-identical, 0 fixture re-records.
-                hide_legacy_tools=_hide_legacy,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

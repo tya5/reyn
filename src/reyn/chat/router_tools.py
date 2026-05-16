@@ -232,7 +232,6 @@ def build_tools(
     web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
-    hide_legacy_tools: bool = False,            # FP-0034 Phase 2 prep: exclusive-wrapper mode
     search_actions_visible: bool = False,       # FP-0034 Phase 2 step 1: D14 visibility gate
     hot_list_aliases: list[dict] | None = None,  # FP-0034 Phase 2 step 3: hot list direct aliases
 ) -> list[dict]:
@@ -866,16 +865,13 @@ def build_tools(
                 dispatch_kind=_wrapper_def.dispatch_kind,
             ))
 
-    # ── J. Phase 2 prep: hide_legacy_tools exclusive-wrapper mode ─────────────
+    # ── J. Exclusive-wrapper mode: strip legacy per-kind tools when wrappers on ──
     #
-    # When both flags are true, strip all legacy per-kind tools so the LLM
-    # surface is the 3 wrappers only.  Safety: only takes effect when the
-    # wrappers are also enabled (= the LLM still has *some* addressing path).
-    # When only hide_legacy_tools=True with universal_wrappers_enabled=False,
-    # this branch is a no-op — the operator misconfigured, but stripping
-    # all addressing surfaces would leave the LLM tool-less.  Future Phase 2
-    # may raise on this combination once the wrapper surface is dogfood-stable.
-    if hide_legacy_tools and universal_wrappers_enabled:
+    # When universal_wrappers_enabled=True, strip all legacy per-kind tools so
+    # the LLM surface is the universal wrappers only.  Safety: only takes effect
+    # when the wrappers are also enabled (= the LLM still has *some* addressing
+    # path).
+    if universal_wrappers_enabled:
         _LEGACY_TOOL_NAMES = frozenset({
             "list_skills", "describe_skill",
             "invoke_skill",

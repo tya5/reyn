@@ -539,15 +539,18 @@ async def test_validator_anchor_unchanged():
         mcp_servers=host.get_mcp_servers(),
     )
 
-    # The analytics category with 2 skills must appear
-    assert "analytics (2)" in prompt, (
-        f"Expected 'analytics (2)' in system prompt.\nPrompt: {prompt[:500]}"
-    )
-    # A phantom category must not appear
+    # Wrapper-only SP: no per-category skill enumeration; phantom must not appear
     assert "phantom" not in prompt, (
         "Phantom skill category must not appear in system prompt"
     )
-    # When no skills exist for a category, it's absent from the prompt
+    # Wrapper-only SP uses invoke_action routing (not category counts)
+    assert "invoke_action" in prompt, (
+        "Wrapper-only SP must reference invoke_action"
+    )
+    assert "ROUTING RULE (ABSOLUTE)" in prompt, (
+        "Wrapper-only SP must have ROUTING RULE (ABSOLUTE)"
+    )
+    # When no skills exist, SP structure is still valid
     host_no_skills = FakeRouterHost(skills=[])
     prompt_empty = build_system_prompt(
         agent_name=host_no_skills.agent_name,
@@ -558,8 +561,8 @@ async def test_validator_anchor_unchanged():
         file_permissions=None,
         mcp_servers=None,
     )
-    assert "(none)" in prompt_empty, (
-        "Empty skill list must render '(none)' in system prompt"
+    assert "invoke_action" in prompt_empty, (
+        "Empty skill list: invoke_action routing must still be in SP"
     )
 
 

@@ -142,13 +142,21 @@ def test_flag_on_mentions_three_wrappers() -> None:
         assert name in prompt
 
 
-def test_flag_on_mentions_unknown_name_error_suggestions() -> None:
-    """Tier 2: section notes §D12 error-with-suggestions recovery path."""
+def test_flag_on_mentions_similar_name_suggestions() -> None:
+    """Tier 2: section notes §D12 error-with-suggestions recovery path.
+
+    The invoke_action description says "returns an error with similar-name
+    suggestions" on unknown action_name. The SP section notes discovery via
+    list_actions. Both signals together guide the LLM to recover from typos.
+    """
     prompt = build_system_prompt(
         **_BASE_KWARGS, universal_wrappers_enabled=True,
     )
-    assert "suggestions" in prompt
+    # Discovery path must be mentioned
     assert "list_actions" in prompt  # the recovery hint references it
+    # The invoke_action description carries the "similar-name suggestions"
+    # phrase (tested in test_tool_description_role_separation.py).
+    # SP section need only confirm list_actions is the recovery tool.
 
 
 # ── 3. Section placement ──────────────────────────────────────────────────
@@ -176,12 +184,21 @@ def test_section_placed_between_capabilities_and_behaviour() -> None:
 # ── 4. Flag on does not break the other sections ─────────────────────────
 
 
-def test_flag_on_preserves_skills_section() -> None:
-    """Tier 2: existing ## Skills section still present when flag on."""
+def test_flag_on_preserves_behaviour_and_capabilities_sections() -> None:
+    """Tier 2: ## Capabilities and ## Behaviour sections remain when flag on.
+
+    Phase 6 cleanup: ## Skills section removed from SP (wrapper-only path
+    routes skill discovery via list_actions at runtime). ## Capabilities
+    and ## Behaviour remain as the SP routing structure.
+    """
     prompt = build_system_prompt(
         **_BASE_KWARGS, universal_wrappers_enabled=True,
     )
-    assert "## Skills" in prompt
+    # ## Skills section is gone in wrapper-only path
+    assert "## Skills" not in prompt
+    # Core structure still present
+    assert "## Capabilities (routing guide)" in prompt
+    assert "## Behaviour" in prompt
 
 
 def test_flag_on_preserves_behaviour_section() -> None:

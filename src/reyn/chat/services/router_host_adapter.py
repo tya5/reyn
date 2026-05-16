@@ -146,12 +146,6 @@ class RouterHostAdapter:
         # adapters by hand) preserve the prior tools= shape and don't
         # accidentally activate wrappers without intent.
         universal_wrappers_enabled: bool = False,
-        # FP-0034 Phase 2 prep: exclusive-wrapper surface.  When True
-        # (and universal_wrappers_enabled is also True), legacy per-kind
-        # tools are removed from tools= so the LLM addresses everything
-        # through the 3 wrappers.  Default False keeps the additive
-        # Phase 1 coexistence behavior.
-        hide_legacy_tools: bool = False,
         # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
         # for search_actions.  When all three are set (= operator configured
         # ``action_retrieval.embedding_class`` AND ChatSession built a
@@ -217,8 +211,6 @@ class RouterHostAdapter:
         self._agent_replies_tracker = agent_replies_tracker
         # FP-0034 PR-3b-iii
         self._universal_wrappers_enabled = universal_wrappers_enabled
-        # FP-0034 Phase 2 prep
-        self._hide_legacy_tools = hide_legacy_tools
         # B25-S5-1
         self._eager_embedding_build = eager_embedding_build
         # FP-0034 Phase 2 step 1
@@ -358,22 +350,6 @@ class RouterHostAdapter:
         Default False preserves the prior lazy background-build behavior.
         """
         return self._eager_embedding_build
-
-    def get_hide_legacy_tools(self) -> bool:
-        """Return whether legacy per-kind tools should be hidden from tools=.
-
-        FP-0034 Phase 2 prep.  Mirror of the
-        ``action_retrieval.hide_legacy_tools`` flag from reyn.yaml.
-        Only takes effect when universal wrappers are also enabled
-        (= the LLM still needs *some* way to address actions).  When
-        True, ``build_tools`` strips the legacy invoke_skill /
-        list_skills / describe_skill / list_agents / describe_agent /
-        delegate_to_agent / list_mcp_* / call_mcp_tool /
-        describe_mcp_tool / list_memory / read_memory_body /
-        remember_* / forget_memory / recall / drop_source surface and
-        the LLM addresses everything through the 3 universal wrappers.
-        """
-        return self._hide_legacy_tools
 
     def get_sandbox_backend(self) -> str | None:
         """Return the configured sandbox backend name, or None.

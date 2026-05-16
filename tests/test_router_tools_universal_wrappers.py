@@ -150,23 +150,23 @@ def test_flag_on_wrappers_at_end_of_tools_list() -> None:
     assert names[-3:] == ["list_actions", "describe_action", "invoke_action"]
 
 
-def test_flag_on_existing_tools_unchanged() -> None:
-    """Tier 2: flag=True adds wrappers WITHOUT removing or reordering
-    any existing tool from the flag=False output."""
-    base_names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=False,
-    ))
+def test_flag_on_strips_legacy_and_adds_wrappers() -> None:
+    """Tier 2: flag=True strips legacy per-kind tools and adds wrappers.
+
+    Phase 6: universal_wrappers_enabled=True is now the exclusive-wrapper mode.
+    Legacy per-kind tools (invoke_skill, delegate_to_agent, etc.) are stripped
+    and only the universal wrappers remain as the addressing surface.
+    """
     on_names = _tool_names(build_tools(
         _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     ))
-    # Every base tool appears in the enabled list at the same index
-    for i, name in enumerate(base_names):
-        assert on_names[i] == name, (
-            f"flag=True must preserve existing tools order; base[{i}]={name!r}"
-            f" but enabled[{i}]={on_names[i]!r}"
-        )
-    # Length difference = exactly 3 (PR-3b-i wrappers; search_actions excluded)
-    assert len(on_names) - len(base_names) == 3
+    # Wrappers present
+    assert "list_actions" in on_names
+    assert "describe_action" in on_names
+    assert "invoke_action" in on_names
+    # Legacy tools stripped
+    assert "invoke_skill" not in on_names
+    assert "delegate_to_agent" not in on_names
 
 
 # ── 3. Wrapper schemas pass OpenAI tool[] contract ───────────────────────
@@ -257,94 +257,41 @@ def test_flag_on_wrappers_present_even_with_empty_skills_agents() -> None:
     assert "invoke_action" in names
 
 
-# ── 6. hide_legacy_tools exclusive-wrapper mode (FP-0034 Phase 2 prep) ────
+# ── 6. Exclusive-wrapper mode: legacy tools stripped when wrappers ON ─────
+#
+# FP-0034 Phase 6: hide_legacy_tools flag removed. universal_wrappers_enabled=True
+# is now the unconditional exclusive-wrapper mode (legacy per-kind tools always
+# stripped). Tests for the removed hide_legacy_tools kwarg are deleted.
 
 
-def test_hide_legacy_alone_is_noop() -> None:
-    """Tier 2: hide_legacy_tools=True without wrappers is a no-op.
+def test_wrappers_on_strips_all_legacy_tools() -> None:
+    """Tier 2: universal_wrappers_enabled=True strips all legacy per-kind tools.
 
-    Safety guard: if the operator hides legacy tools but doesn't also
-    enable wrappers, the LLM would have no addressing surface at all.
-    build_tools refuses to strip legacy in that misconfiguration —
-    the additive (legacy-only) shape stays.
-    """
-    a = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=False, hide_legacy_tools=True,
-    ))
-    b = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=False, hide_legacy_tools=False,
-    ))
-    assert a == b, (
-        "hide_legacy_tools=True without wrappers must not strip "
-        "legacy — the LLM would have no addressing surface left"
-    )
-    # Legacy tools still present
-    assert "invoke_skill" in a
-    assert "delegate_to_agent" in a
-
-
-def test_hide_legacy_with_wrappers_strips_legacy() -> None:
-    """Tier 2: wrappers ON + hide_legacy_tools ON → only wrappers visible.
-
-    Phase 2 exclusive-wrapper mode: the LLM sees only list_actions /
-    describe_action / invoke_action and addresses everything through
-    qualified names.  The legacy per-kind surface is gone.
+    Phase 6: the hide_legacy_tools flag was removed. Stripping legacy tools
+    is now unconditional when universal_wrappers_enabled=True — the LLM
+    addresses everything through the universal wrappers only.
     """
     names = _tool_names(build_tools(
         _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=True, hide_legacy_tools=True,
+        universal_wrappers_enabled=True,
     ))
     # Wrappers present
     assert "list_actions" in names
     assert "describe_action" in names
     assert "invoke_action" in names
-    # All legacy stripped
+    # Legacy stripped unconditionally
     for legacy in (
         "list_skills", "describe_skill", "invoke_skill",
         "list_agents", "describe_agent", "delegate_to_agent",
         "list_memory", "read_memory_body",
-        "remember_shared", "remember_agent", "forget_memory",
         "read_file", "write_file", "delete_file", "list_directory",
         "web_search", "web_fetch",
         "reyn_src_list", "reyn_src_read",
         "plan",
     ):
         assert legacy not in names, (
-            f"Legacy tool {legacy!r} must be stripped when "
-            f"hide_legacy_tools=True + wrappers ON"
+            f"Legacy tool {legacy!r} must be stripped when universal_wrappers_enabled=True"
         )
-
-
-def test_hide_legacy_default_off_preserves_coexistence() -> None:
-    """Tier 2: default hide_legacy_tools=False keeps additive shape.
-
-    Default behavior of Phase 1: wrappers ON + legacy ON simultaneously.
-    The LLM can pick either path; this is the steady state until
-    production-confirmed.
-    """
-    names = _tool_names(build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=True,
-        # hide_legacy_tools omitted → default False
-    ))
-    # Wrappers AND legacy both present
-    assert "list_actions" in names
-    assert "invoke_skill" in names
-
-
-def test_hide_legacy_byte_identical_to_explicit_false() -> None:
-    """Tier 2: omitting kwarg matches explicit False."""
-    a = build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=True,
-    )
-    b = build_tools(
-        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
-        universal_wrappers_enabled=True, hide_legacy_tools=False,
-    )
-    assert a == b
 
 
 # ── 7. hot_list_aliases injected by build_tools (FP-0034 Phase 2 step 5) ──

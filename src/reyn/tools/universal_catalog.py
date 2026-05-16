@@ -209,16 +209,6 @@ def visible_categories(
 
 
 _LIST_ACTIONS_DESCRIPTION = (
-    "Browse available actions in alphabetical order with optional "
-    "category and text filter, paginated. Returns "
-    "{items: [{qualified_name, short_description}, ...], total: int}. "
-    "Use this to enumerate what is available; for semantic relevance "
-    "search use search_actions (when available)."
-)
-
-# Assertive 4-part description used when hide_legacy_tools=True.
-# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
-_LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Browse the catalog of available actions in alphabetical order. "
     "Two independent filters: `category=[...]` array (enum-restricted, "
     "exact category match) and `filter='...'` string (free-text substring). "
@@ -284,17 +274,6 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
 
 
 _SEARCH_ACTIONS_DESCRIPTION = (
-    "Semantic search across available actions (multilingual, "
-    "embedding-based). Returns relevance-ranked top results "
-    "{items: [{qualified_name, short_description}, ...]}. Available "
-    "only when an embedding class is configured for action retrieval "
-    "(reyn.yaml action_retrieval.embedding_class). For alphabetical "
-    "browse or text-substring filter, use list_actions."
-)
-
-# Assertive 4-part description used when hide_legacy_tools=True.
-# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
-_SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Semantic search across available actions — multilingual, "
     "embedding-based, relevance-ranked. "
     "Returns {items: [{qualified_name, short_description, score}, ...]}. "
@@ -343,15 +322,6 @@ _SEARCH_ACTIONS_PARAMETERS: dict[str, Any] = {
 
 
 _DESCRIBE_ACTION_DESCRIPTION = (
-    "Get the long description, input schema, and metadata for one "
-    "action or resource. Use the qualified_name returned by "
-    "list_actions or search_actions. On unknown action_name, returns "
-    "an error response with similar-name suggestions."
-)
-
-# Assertive 4-part description used when hide_legacy_tools=True.
-# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
-_DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Get the full description, input schema, and metadata for one action "
     "or resource. Returns {description, input_schema, metadata}. "
     "WHEN: Use this before invoke_action when you need to know the exact "
@@ -384,18 +354,6 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
 
 
 _INVOKE_ACTION_DESCRIPTION = (
-    "Invoke an action or resource using its canonical default semantic. "
-    "Resources (mcp.server, rag.corpus, memory.entry, mcp.tool, skill, "
-    "agent.peer) support invocation with their canonical operation "
-    "(e.g. rag.corpus__meetings with `query` runs recall against that "
-    "single source). Use describe_action(action_name) first to discover "
-    "the expected input_schema. On unknown action_name, returns an error "
-    "response with similar-name suggestions."
-)
-
-# Assertive 4-part description used when hide_legacy_tools=True.
-# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
-_INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Execute an action by qualified name (<category>__<entry>). "
     "Executes the action's default semantic operation. "
     "WHEN: Call this whenever you intend to run any action — skill, MCP tool, "
@@ -1045,12 +1003,11 @@ __all__ = [
     "SEARCH_ACTIONS",
     "DESCRIBE_ACTION",
     "INVOKE_ACTION",
-    # Assertive WHAT/WHEN/WHEN NOT/PREFERRED OVER variants (Lever C).
-    # Used by router_tools.build_tools() when hide_legacy_tools=True.
-    "_LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY",
-    "_SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY",
-    "_DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY",
-    "_INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY",
+    # Assertive WHAT/WHEN/WHEN NOT/PREFERRED OVER description constants (Lever C).
+    "_LIST_ACTIONS_DESCRIPTION",
+    "_SEARCH_ACTIONS_DESCRIPTION",
+    "_DESCRIBE_ACTION_DESCRIPTION",
+    "_INVOKE_ACTION_DESCRIPTION",
     "split_qualified_name",
     "build_qualified_name",
     "is_valid_qualified_name",

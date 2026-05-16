@@ -369,12 +369,11 @@ def test_list_mcp_tools_omits_input_schema():
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_renders_flat_mcp_tool_list():
-    """Tier 2: system prompt contains '## MCP servers and tools' section with
-    flat dotted-form tool listing when mcp_servers carry tool info.
+def test_system_prompt_mcp_section_absent_in_wrapper_only_path():
+    """Tier 2: wrapper-only SP does not enumerate MCP servers or tools.
 
-    Mirrors the 'Available skills' flat list pattern — provides the LLM with
-    context layer alongside the schema-layer enum constraint.
+    Phase 6 cleanup: ## MCP servers section removed from SP. Discovery goes
+    through list_actions(category=['mcp.server','mcp.tool']) at runtime.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -384,26 +383,18 @@ def test_system_prompt_renders_flat_mcp_tool_list():
         memory_index=_EMPTY_MEMORY,
         mcp_servers=_MCP_SERVERS_WITH_TOOLS,
     )
-    assert "## MCP servers and tools" in prompt, (
-        "SP must contain '## MCP servers and tools' section header"
+    assert "## MCP servers" not in prompt, (
+        "SP must not contain ## MCP servers section in wrapper-only path"
     )
-    # Dotted form tool names must appear in the flat list
-    assert "brave.search" in prompt, (
-        "'brave.search' dotted tool name must appear in SP MCP flat list"
-    )
-    assert "brave.news" in prompt, (
-        "'brave.news' dotted tool name must appear in SP MCP flat list"
-    )
-    assert "github.create_issue" in prompt, (
-        "'github.create_issue' dotted tool name must appear in SP MCP flat list"
-    )
+    # Dotted tool names should not appear inline in SP (runtime discovery)
+    assert "brave.search" not in prompt
+    assert "brave.news" not in prompt
 
 
-def test_system_prompt_mcp_section_fallback_when_no_tool_list():
-    """Tier 2: when mcp_servers have no 'tools' list, SP shows server-level entry
-    with hint to use list_mcp_tools to discover mcp_tools.
+def test_system_prompt_mcp_section_absent_when_no_tool_list():
+    """Tier 2: wrapper-only SP omits MCP section even with no tool list.
 
-    Graceful fallback: server is still surfaced; hint replaces the flat list.
+    Phase 6 cleanup: MCP section fully removed from wrapper-only path SP.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -413,13 +404,11 @@ def test_system_prompt_mcp_section_fallback_when_no_tool_list():
         memory_index=_EMPTY_MEMORY,
         mcp_servers=_MCP_SERVERS_NO_TOOLS,
     )
-    assert "## MCP servers and tools" in prompt, (
-        "SP must still show MCP section even when no tool listings available"
+    assert "## MCP servers" not in prompt, (
+        "SP must not contain ## MCP servers section in wrapper-only path"
     )
-    assert "brave" in prompt, "'brave' server name must appear in SP MCP section"
-    assert "list_mcp_tools" in prompt, (
-        "SP must hint 'list_mcp_tools' when mcp_tools are not pre-listed"
-    )
+    # Wrapper-only SP has invoke_action routing
+    assert "invoke_action" in prompt
 
 
 # ---------------------------------------------------------------------------

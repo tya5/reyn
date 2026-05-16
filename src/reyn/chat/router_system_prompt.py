@@ -29,7 +29,6 @@ def build_system_prompt(
     project_context: str = "",
     indexed_sources_section: str | None = None,
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
-    hide_legacy_tools: bool = False,  # FP-0034 B23-PRE-1 (Phase 4 preview)
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -63,26 +62,8 @@ def build_system_prompt(
             When None (default), no Indexed sources section is emitted
             (= backward compat for callers that have not yet wired up
             the manifest, e.g. tests and non-chat execution paths).
-        hide_legacy_tools: B23-PRE-1 / Phase 4 preview. When True, render
-            the SP for wrapper-only e2e: drop per-kind tool enumerations
-            (list_skills / invoke_skill / read_file / delegate_to_agent /
-            etc.), simplify Capabilities to point at universal wrappers,
-            collapse intent axes (Memory access / Save / Forget) into
-            invoke_action paths, remove the ``## Skills`` / ``## Agents``
-            catalog sections (Action categories now covers them), and
-            rewrite Agent delegation + spawn-ack + ABSOLUTE rule wording
-            to ``invoke_action`` / ``<action_name>``. Default False keeps
-            the legacy SP byte-identical (= 0 LLMReplay fixture re-records,
-            17 hard string pins preserved verbatim). Only meaningful when
-            ``universal_wrappers_enabled`` is also True (= the LLM must
-            have the wrapper tools available); when False, the legacy
-            per-kind tools must remain in tools= so this flag is ignored.
     """
-    skill_section = _render_skills(available_skills)
-    agent_section = _render_agents(available_agents)
-    memory_section = _render_memory(memory_index)
-    file_section = _render_files(file_permissions)
-    mcp_section = _render_mcp(mcp_servers, hide_legacy_tools=hide_legacy_tools)
+    mcp_section = _render_mcp(mcp_servers)
 
     parts: list[str] = []
 
@@ -96,89 +77,27 @@ def build_system_prompt(
 
     # ── 1. OS-level identity preamble ──────────────────────────────────────
     #
-    # Without this, an agent with an empty `role:` falls back to the
-    # underlying LLM's baseline identity ("I am a large language model
-    # trained by Google", etc.) when asked "tell me about yourself" — a
-    # devastating first-touch experience that breaks the Reyn brand.
-    # This preamble is OS-provided (not user-editable, distinct from
-    # `project_context` / REYN.md which is operator-owned) and tells the
-    # agent what Reyn is so identity questions get a meaningful reply.
-    #
-    # Wording-strength note: weak LLMs (= gemini-2.5-flash-lite class)
-    # have a strong "tell me about yourself" attractor toward
-    # vendor-of-origin replies even with a Reyn-identity preamble in
-    # front. The explicit MUST NOT lines below are the empirical
-    # mitigation that pushes the rate from ~50% leak to near-zero on
-    # this attractor. Keep the imperative form; soft phrasing
-    # ("you are Reyn — not the vendor") was insufficient.
-    if hide_legacy_tools:
-        # Wrapper-only Identity (= radical simplification):
-        # The 3-paragraph Reyn explanation that lives in the legacy preamble
-        # is content the LLM can fetch via reyn.source__read on demand;
-        # baking it into the SP for every turn is wasteful. Keep only the
-        # empirically-mitigated parts (vendor identity leak ~50% → near 0)
-        # and a single pointer to where the full content lives.
-        parts.append(
-            "# Identity"
-            "\n\n"
-            "You are a Reyn agent (open-source LLM workflow OS). "
-            "For details: invoke_action(action_name=\"reyn.source__read\", "
-            "args={\"path\": \"README.md\"})."
-            "\n\n"
-            "**Identity rules (always apply):**"
-            "\n"
-            "- Lead self-descriptions with \"I am a Reyn agent\"."
-            "\n"
-            "- MUST NOT identify as Google, OpenAI, Anthropic, or any LLM vendor."
-            "\n"
-            "- MUST NOT begin with \"I am a large language model\"."
-        )
-    else:
-        parts.append(
-            "# Identity"
-            "\n\n"
-            "You are a Reyn agent — running on the Reyn agent OS, an "
-            "open-source LLM workflow runtime that constrains the model with "
-            "explicit phase graphs, JSON-schema-validated outputs, and per-"
-            "skill permission scopes. Reyn's design value is predictability: "
-            "every run is replayable from an append-only event log, every "
-            "decision goes through a typed contract. The user is talking to "
-            "you via Reyn's chat interface."
-            "\n\n"
-            "**Identity rules (always apply):**"
-            "\n"
-            "- When the user asks who you are or what you are, you ARE a Reyn "
-            "agent. Lead the answer with that fact."
-            "\n"
-            "- You MUST NOT identify yourself as a model from Google, OpenAI, "
-            "Anthropic, or any other LLM vendor. The underlying model is an "
-            "implementation detail; the user is not asking about it."
-            "\n"
-            "- You MUST NOT begin a self-description with phrases like "
-            "\"I am a large language model\" — start with \"I am a Reyn "
-            "agent\" instead."
-            "\n\n"
-            "**Explaining Reyn (deep-dive entry point):**"
-            "\n"
-            "- When the user asks how Reyn works or wants to understand any "
-            "part of Reyn's design / concepts / implementation: FIRST check "
-            "the 'Indexed sources' section below. If an indexed source's "
-            "description mentions concepts / design / docs / architecture / "
-            "Reyn, use the `recall` tool with that source — semantic search "
-            "across indexed chunks is the right answer for 'what is X?', "
-            "'explain X', 'how does X work?' style questions when an indexed "
-            "source covers the topic."
-            "\n"
-            "- ONLY if no indexed source covers Reyn (= the 'Indexed sources' "
-            "section is absent / empty / unrelated topics): fall back to "
-            "`reyn_src_read('README.md')` for an overview and curated map of "
-            "paths under `reyn_src_*` (architecture, skill DSL, source code, "
-            "ADRs)."
-            "\n"
-            "- Do NOT reach for `web_search` to learn about Reyn — `recall` "
-            "(when indexed) or `reyn_src_*` (otherwise) is the authoritative "
-            "source. Web search is for things outside Reyn."
-        )
+    # Wrapper-only Identity (= radical simplification):
+    # The 3-paragraph Reyn explanation that lives in the legacy preamble
+    # is content the LLM can fetch via reyn.source__read on demand;
+    # baking it into the SP for every turn is wasteful. Keep only the
+    # empirically-mitigated parts (vendor identity leak ~50% → near 0)
+    # and a single pointer to where the full content lives.
+    parts.append(
+        "# Identity"
+        "\n\n"
+        "You are a Reyn agent (open-source LLM workflow OS). "
+        "For details: invoke_action(action_name=\"reyn.source__read\", "
+        "args={\"path\": \"README.md\"})."
+        "\n\n"
+        "**Identity rules (always apply):**"
+        "\n"
+        "- Lead self-descriptions with \"I am a Reyn agent\"."
+        "\n"
+        "- MUST NOT identify as Google, OpenAI, Anthropic, or any LLM vendor."
+        "\n"
+        "- MUST NOT begin with \"I am a large language model\"."
+    )
     parts.append("")
 
     # ── 2. Role ─────────────────────────────────────────────────────────────
@@ -191,98 +110,23 @@ def build_system_prompt(
     # Merges the old "## What you can do (intent axis)" (internal routing
     # labels) and "## When asked what you can do" (user-facing) into one
     # section with a clear internal-vs-user-facing split.
-    # Risk mitigated: internal labels leaking into user replies is prevented
-    # by the explicit "do NOT use these labels in user replies" directive.
-    # The user_capabilities list is still built dynamically below (section 13)
-    # and referenced here so the prompt stays consistent.
-    has_file_read = bool(
-        file_permissions and file_permissions.get("read")
-    )
-    has_file_write = bool(
-        file_permissions and file_permissions.get("write")
-    )
-    has_mcp = bool(mcp_servers)
-
     parts.append("## Capabilities (routing guide)")
     parts.append("")
-    if hide_legacy_tools:
-        # B23-PRE-1 wrapper-only path: tools= contains only the 4 universal
-        # wrappers + hot list direct aliases + plan + ask_user. All
-        # per-kind tools (list_skills / read_file / web_search / etc.)
-        # are routed via invoke_action(action_name="<category>__<entry>").
-        # The "## Action categories" section below covers the 13-category
-        # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
-        # is binary Action / Reply.
-        parts.extend([
-            "4 universal wrappers: list_actions / search_actions / describe_action"
-            " / invoke_action. Frequent actions also appear as direct aliases in"
-            " tools list — call them directly when you know the exact qualified name.",
-            "",
-            "For chitchat or self-questions, reply without tools.",
-            "",
-        ])
-    else:
-        parts.append(
-            "Internal routing axes — do NOT use these labels in user replies:"
-        )
-        parts.append("- Action — run external work")
-        parts.append(
-            "           skills:  list_skills / describe_skill / invoke_skill"
-        )
-        parts.append(
-            "           agents:  list_agents / describe_agent / delegate_to_agent"
-        )
-        if has_file_read:
-            parts.append(
-                "           files:   list_directory / read_file"
-            )
-        # `reyn_src_*` is always present — it serves Reyn's own source/docs,
-        # not user files, and so has no permission-protected content. Used
-        # for "explain how Reyn works" / "summarize Reyn's README" queries.
-        parts.append(
-            "           reyn:    reyn_src_list / reyn_src_read"
-        )
-        # FP-0022: web_fetch is now always in the catalog; approval via 4-layer
-        # PermissionResolver at handler level. web_search is Tier 1 read-only.
-        parts.append(
-            "           web:     web_search / web_fetch"
-        )
-        if has_mcp:
-            parts.append(
-                "           mcp:     list_mcp_servers / list_mcp_tools / call_mcp_tool / describe_mcp_tool"
-            )
-        # NOTE: renamed from "Recall" to "Memory access" (B17-S5-3 fix) to avoid
-        # vocabulary collision with the `recall` indexed-search tool (ADR-0033).
-        # The word "recall" in user input must map to the `recall` tool, not here.
-        parts.append("- Memory access — read persisted facts (= memory, NOT indexed sources)")
-        parts.append("           tools: list_memory / read_memory_body")
-        parts.append("- Save — persist new facts")
-        if has_file_write:
-            parts.append(
-                "         tools: remember_shared / remember_agent / write_file"
-            )
-        else:
-            parts.append("         tools: remember_shared / remember_agent")
-        parts.append("- Forget — delete persisted facts")
-        if has_file_write:
-            parts.append("           tools: forget_memory / delete_file")
-        else:
-            parts.append("           tools: forget_memory")
-        parts.append("- Reply — answer directly (no tool)")
-        parts.append("")
-        parts.append(
-            "When a user asks what you can do, answer in plain user-facing terms —"
-        )
-        parts.append(
-            "never with the routing labels (Action / Memory access / Save / Forget / Reply)."
-        )
-        parts.append(
-            'Honest answer: "I can run skills, search your documents, remember things."'
-        )
-        parts.append(
-            "Do NOT say \"Your intent is Action\" or use any routing label in replies."
-        )
-        parts.append("")
+    # B23-PRE-1 wrapper-only path: tools= contains only the 4 universal
+    # wrappers + hot list direct aliases + plan + ask_user. All
+    # per-kind tools (list_skills / read_file / web_search / etc.)
+    # are routed via invoke_action(action_name="<category>__<entry>").
+    # The "## Action categories" section below covers the 13-category
+    # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
+    # is binary Action / Reply.
+    parts.extend([
+        "4 universal wrappers: list_actions / search_actions / describe_action"
+        " / invoke_action. Frequent actions also appear as direct aliases in"
+        " tools list — call them directly when you know the exact qualified name.",
+        "",
+        "For chitchat or self-questions, reply without tools.",
+        "",
+    ])
 
     # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
     # When the operator has enabled the universal catalog (= reyn.yaml
@@ -345,388 +189,72 @@ def build_system_prompt(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
         parts.append("")
-        if not hide_legacy_tools:
-            parts.append(
-                "Unknown action_name returns an error with suggestions — "
-                "use list_actions(category=[...]) to discover the correct name."
-            )
-            parts.append("")
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
     # sections) to maximise cache prefix coverage. The two dynamic conditional
     # blocks (output_language, indexed_sources_section) are emitted later,
     # after the dynamic resource sections, since they vary per session/config.
-    #
-    # Audit result (FP-0023 Change 1 pre-check):
-    #   Truly static: intent-decision rule, skill routing bullets 1–4,
-    #   memory-access rule, spawn-ack block, task_completed narration,
-    #   parallel/sequential tool_calls rule, never-invent rule,
-    #   memory-writes rule, delegate_to_agent rule (Change 4, new),
-    #   plan decomposition rule (FP-0025 D, new), ABSOLUTE ROUTING RULE.
-    #   Catalog-dependent (must stay dynamic / after dynamic):
-    #     - output_language conditional
-    #     - indexed_sources_section conditional (recall disambiguation + JA
-    #       examples from Change 5)
     parts.append("## Behaviour")
-    if hide_legacy_tools:
-        # Wrapper-only: 5 cross-cutting policies (B23-PRE-1 confirmed policy).
-        # Per-tool flow details (post-list MUST, post-describe MUST, spawn-ack,
-        # task_completed, agent delegation, plan WHAT/WHEN_NOT) live in each
-        # tool's description — Anthropic 1-tool-1-purpose pattern.
-        # Policies 1-5 are encoded here as SP cross-cutting rules that apply
-        # regardless of which tool was most recently called.
-        parts.extend([
-            # Policy 1: 3-way intent routing (Action / Plan / Reply)
-            "  - Domain task → invoke_action (single tool) OR plan (multi-source"
-            " synthesis). Chitchat → Reply.",
-            # Policy 2: plan routing signal (multi-source)
-            "  - Use plan when the query combines info from multiple independent"
-            " sources (e.g. \"compare A and B from two docs\", \"explain X with"
-            " code refs from N files\", \"summarise across these sources\")."
-            " Use invoke_action for single-tool tasks.",
-        ])
-    else:
-        parts.append(
-            "  - First decide intent (Action / Memory access / Save / Forget / Reply),"
-        )
-        parts.append("    then pick tools from that group.")
-    # Behaviour rules — re-balanced from B5-H1 partial revert of e90c0f2.
-    # History: F3+F9 (batch 1) added reply restriction + explicit-skill hint;
-    # B2-H1 (batch 2) added post-describe_skill commit obligation;
-    # B3-H1+M3 (batch 3) added post-list_skills commit obligation.
-    # e90c0f2 over-consolidated to 2 rules; weak LLM (gemini-2.5-flash-lite)
-    # de-prioritised multi-sentence MUSTs inside a single bullet → B5-H1
-    # regression (specialist empty reply after list_skills).
-    # Fix: restore individual bullets (1 bullet = 1 MUST) per feedback_prompt_design.
-    # "engage the skill ecosystem" jargon removed; duplicate list+invoke hints merged.
-    #
-    # B9-NEW-3 / B10-NEW-2 fix (B11-R3): text-reply non-determinism.
-    # Root cause: weak LLM classified Japanese multi-verb input ("review して改善案を出して")
-    # as "requires clarification" (Reply intent) instead of Action, even when the
-    # skill name is explicitly visible in the Available skills list above.
-    # Structural fix (per feedback_reyn_care_boundary: pre-call structural environment):
-    #   1. When skill name is in Available skills, allow direct invoke_skill (skip list_skills).
-    #      The mandatory list_skills hop created an extra decision round that weak LLMs
-    #      exploited to fall through to Reply intent.
-    #   2. Explicit rule: additional entity names in the message are skill inputs, not
-    #      clarification triggers. Prevents the "but I need more info" text-reply escape.
-    #   3. Tighten Reply restriction: "clarifications back to the user" is permitted ONLY
-    #      when no skill name from the Available skills list appears in the user message.
-    #
-    # B23-PRE-1 SP role-separation: wrapper-only path emits only the 5 cross-
-    # cutting policies. Per-tool routing bullets (post-list MUST, post-describe
-    # MUST, direct-invoke hint, memory-access rule) moved to tool descriptions.
-    if not hide_legacy_tools:
-        # Bullet 1 (F3+F9 — chitchat restriction, domain → Action):
-        parts.append(
-            "  - Reply directly only for chitchat and questions about yourself."
-        )
-        parts.append(
-            "    Domain tasks → Action. Do NOT ask clarifying questions if the user"
-        )
-        parts.append(
-            "    message contains a skill name (= valid invoke_skill enum value)."
-        )
-        # Bullet 2 (F3+F9+B3-H1+M3+B11-R3 — explicit-skill direct path):
-        # Post category-only retry (2026-05-07): inline skill list removed,
-        # now refers to `invoke_skill.name` enum which is the structural source
-        # of truth. LLM sees the enum in the tool schema.
-        parts.append(
-            "  - If the user names a skill (= matches invoke_skill's name enum),"
-        )
-        parts.append(
-            "    call invoke_skill directly (skip list_skills). Any other entities"
-        )
-        parts.append(
-            "    in the user message are inputs to the skill, NOT reasons to clarify."
-        )
-        # Bullet 2b (discovery path when skill name is unknown):
-        parts.append(
-            "  - If the user describes a domain task without naming a skill,"
-        )
-        parts.append(
-            "    call list_skills(path) first to discover, then invoke_skill."
-        )
-        # Bullet 3 (B3-H1+M3 — post-list_skills MUST):
-        parts.append(
-            "  - After list_skills reveals at least one matching skill, you MUST"
-        )
-        parts.append(
-            "    call describe_skill or invoke_skill. Do NOT reply directly."
-        )
-        # Bullet 4 (B2-H1 — post-describe_skill MUST):
-        parts.append(
-            "  - After describe_skill, you MUST call invoke_skill or explain in text"
-        )
-        parts.append("    why not; never stop silently after investigation.")
-        parts.append(
-            "  - For Memory access, answer from the Memory section's inlined descriptions;"
-        )
-        parts.append(
-            "    use read_memory_body only when a description is too vague."
-        )
-        parts.append(
-            "  - (list_memory is available for hierarchical browsing if needed.)"
-        )
-    # ── invoke_skill: spawn-ack + completion narration (FP-0012) ───────────────
-    # Skills now run asynchronously in the background. invoke_skill returns
-    # ``{status: "spawned", run_id, chain_id, note}`` IMMEDIATELY (= the task
-    # is running but the result isn't here yet). When the skill finishes the
-    # OS injects a ``[task_completed]`` user message into the conversation
-    # carrying the structured result; that's the LLM's cue to narrate.
-    #
-    # The anti-optimism rule (originally FP-0011 Component B) is preserved on
-    # the completion side: errors MUST be surfaced verbatim, never narrated
-    # as success.
-    #
-    # FP-0023 Change 3: Numbered priority block replaces flat MUST list.
-    # Dogfood shows /tasks compliance was most fragile with flat listing.
-    # Explicit Priority 1 / Priority 2 / ... concentrates LLM attention on
-    # the non-negotiable constraint (= /tasks link) before the secondary ones.
-    #
-    # 2026-05-11 N=10 retest findings (= R-SP-TASKS-POINTER-MUST +
-    # R-SP-NO-FABRICATE-AT-SPAWN-ACK):
-    #   - Soft "Mention /tasks" wording produced only 3/60 (= 5%) compliance.
-    #     Strengthened to MUST so the LLM cannot omit it from the spawn-ack
-    #     reply — `/tasks` is the user's only affordance to inspect in-flight
-    #     work, so omitting it strands them.
-    #   - 1/10 mcp-search shots fabricated server details (names + URLs) AT
-    #     spawn-ack time, before the skill had executed. Added a peer
-    #     anti-fabrication rule to the existing anti-optimism rule below:
-    #     the spawn-ack carries no skill output, so any field that would come
-    #     from the skill's result is by definition fabricated if the LLM emits
-    #     it now.
-    #
-    # B23-PRE-1 SP role-separation: spawn-ack Priority 1-4 block and
-    # task_completed narration have been moved to invoke_action.description
-    # (SPAWN-ACK HANDLING / TASK_COMPLETED HANDLING sections) per Anthropic
-    # 1-tool-1-purpose pattern. The SP Behaviour cross-cutting policy for
-    # errors survives as policy 5 ("Errors must surface verbatim").
-    if hide_legacy_tools:
-        # Wrapper-only: spawn-ack / task_completed live in invoke_action.description.
-        # Only the cross-cutting errors policy remains (= Behaviour policy 5).
-        parts.extend([
-            "  - Errors MUST surface verbatim. Never narrate an error as success.",
-            "    Optimism bias on errors is the single largest router-narration"
-            " failure mode.",
-        ])
-    else:
-        parts.append(
-            "  - When invoke_skill returns {status: \"spawned\", chain_id, run_id, note}:"
-        )
-        parts.append("    the skill is running in the background.")
-        parts.append("")
-        parts.append(
-            "    Priority 1 (non-negotiable): Your reply MUST include `/tasks` as the"
-        )
-        parts.append(
-            "      user's way to check progress. This is non-negotiable — the user has no"
-        )
-        parts.append(
-            "      other way to track in-flight tasks. Omitting `/tasks` from the"
-        )
-        parts.append(
-            "      spawn-ack reply is a hard failure."
-        )
-        parts.append(
-            "    Priority 2: Keep your reply to 1–2 sentences. You MUST NOT pre-fill"
-        )
-        parts.append(
-            "      the user with information the skill is supposed to produce."
-        )
-        parts.append(
-            "      The spawn-ack envelope carries ONLY {status, run_id, chain_id, note} —"
-        )
-        parts.append(
-            "      no results, no names, no URLs, no scores, no fields from the skill's"
-        )
-        parts.append(
-            "      output schema. Any such content in the spawn-ack reply is"
-        )
-        parts.append(
-            "      fabrication by construction (the skill has not executed)."
-        )
-        parts.append(
-            "    Priority 3: Do NOT call invoke_skill again for the same request (it's already"
-        )
-        parts.append("      running).")
-        parts.append(
-            "    Priority 4: Do NOT ask follow-up questions while the skill is running;"
-        )
-        parts.append("      wait for the [task_completed] message.")
-        parts.append("")
-        parts.append(
-            "  - When you see a user message starting with [task_completed]: a"
-        )
-        parts.append(
-            "    background skill finished. Read the `status` and `result` fields"
-        )
-        parts.append(
-            "    from that message and narrate in 1-2 sentences. Extract the"
-        )
-        parts.append(
-            "    user-relevant fields — do not echo the raw JSON. Status guidance:"
-        )
-        parts.append(
-            '      * "finished"             — confirm completion; if applicable, hint at the next step.'
-        )
-        parts.append(
-            '      * "loop_limit_exceeded"  — say the skill ran out of phase budget; suggest re-running'
-        )
-        parts.append(
-            "        with higher safety.loop.max_phase_visits."
-        )
-        parts.append(
-            '      * "error" / any non-"finished" status, OR result.error is present —'
-        )
-        parts.append(
-            "        your reply MUST surface the specific error verbatim. Do NOT"
-        )
-        parts.append(
-            "        narrate as success. Quote the error message in user-friendly"
-        )
-        parts.append(
-            "        form (translate to output_language if set, but keep the failure"
-        )
-        parts.append(
-            "        signal explicit) and suggest the most likely fix. Optimism bias"
-        )
-        parts.append(
-            "        on errors is the single largest router-narration failure mode."
-        )
-    # ── FP-0023 Change 4 — delegate_to_agent Behaviour rule ─────────────────
-    # delegate_to_agent appeared in the tool list but had no Behaviour rule.
-    # Vendor prompt-writing guides (Anthropic, OpenAI) advise placing usage
-    # guidance in the SP, not only in the tool schema. Added here alongside
-    # the invoke_skill rules so delegation has the same structural support.
-    #
-    # B23-PRE-1 SP role-separation: ## Agent delegation subsection moved to
-    # invoke_action.description (AGENT DELEGATION section). Legacy path
-    # preserved byte-identical.
-    parts.append("")
-    if not hide_legacy_tools:
-        parts.append("  ## Agent delegation")
-        parts.append("")
-        parts.append("  When a user task requires a peer agent (not a skill):")
-        parts.append(
-            "    call delegate_to_agent(to=<agent_name>, request=<user_query>)"
-        )
-        parts.append("")
-        parts.append("  Use this when:")
-        parts.append(
-            "    - The task is outside available skills but matches a peer agent's role"
-        )
-        parts.append("    - The user explicitly addresses a named agent")
-        parts.append("")
-        parts.append(
-            "  Do NOT delegate tasks that can be solved with available skills."
-        )
-        parts.append(
-            "  Acknowledge the delegation in 1 sentence."
-        )
+    # Wrapper-only: 5 cross-cutting policies (B23-PRE-1 confirmed policy).
+    # Per-tool flow details (post-list MUST, post-describe MUST, spawn-ack,
+    # task_completed, agent delegation, plan WHAT/WHEN_NOT) live in each
+    # tool's description — Anthropic 1-tool-1-purpose pattern.
+    # Policies 1-5 are encoded here as SP cross-cutting rules that apply
+    # regardless of which tool was most recently called.
+    parts.extend([
+        # Policy 1: 3-way intent routing (Action / Plan / Reply)
+        "  - Domain task → invoke_action (single tool) OR plan (multi-source"
+        " synthesis). Chitchat → Reply.",
+        # Policy 2: plan routing signal (multi-source)
+        "  - Use plan when the query combines info from multiple independent"
+        " sources (e.g. \"compare A and B from two docs\", \"explain X with"
+        " code refs from N files\", \"summarise across these sources\")."
+        " Use invoke_action for single-tool tasks.",
+    ])
+
+    # B23-PRE-1 SP role-separation: spawn-ack / task_completed live in invoke_action.description.
+    # Only the cross-cutting errors policy remains (= Behaviour policy 5).
+    parts.extend([
+        "  - Errors MUST surface verbatim. Never narrate an error as success.",
+        "    Optimism bias on errors is the single largest router-narration"
+        " failure mode.",
+    ])
+
     # ── FP-0025 D — Plan decomposition Behaviour rule ─────────────────────────
-    # plan tool previously relied solely on its schema description for when-to-use
-    # guidance. No Behaviour rule reinforced or constrained this, unlike
-    # invoke_skill and delegate_to_agent. Added here for parity.
-    #
     # B23-PRE-1 SP role-separation: ## Plan decomposition subsection (detail)
     # moved to plan.description. The 2-line intent routing already in the
     # wrapper-only Behaviour header (Action/Plan/Reply 3-way) is the SP
-    # cross-cutting policy — sufficient. Legacy path preserved byte-identical.
+    # cross-cutting policy — sufficient.
     parts.append("")
-    if hide_legacy_tools:
-        # Wrapper-only: plan intent routing already encoded in the 3-way
-        # header lines above ("Domain task → invoke_action OR plan ...").
-        # Also add "never invent action names" (= cross-cutting policy 3).
-        parts.extend([
-            "  - Never invent action names; only use those returned by",
-            "    list_actions or search_actions.",
-            "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
-            "「something for X」 「similar to」), USE search_actions(query=...).",
-            "    For exact category enumeration or substring lookup of a known",
-            "    keyword, USE list_actions(category=[...]) or"
-            " list_actions(filter='...').",
-        ])
-    else:
-        parts.append("  ## Plan decomposition")
-        parts.append("")
-        parts.append(
-            "  Use the `plan` tool when the query requires combining information from"
-        )
-        parts.append(
-            "  multiple independent sources (e.g. \"compare A and B from two docs\","
-        )
-        parts.append(
-            "  \"explain X with code references from N files\", \"summarise across these"
-        )
-        parts.append(
-            "  sources\"). Each step should gather one piece of information; the OS"
-        )
-        parts.append("  synthesises the final reply.")
-        parts.append("")
-        parts.append("  Do NOT use `plan` for:")
-        parts.append("    - Single-tool lookups or single-source narrations")
-        parts.append("    - Chitchat or conversational replies")
-        parts.append("    - Queries that invoke_skill handles end-to-end")
-        parts.append("    - Queries answerable in one router reply without tools")
-        parts.append("")
-        parts.append(
-            "  - Use parallel tool_calls when discovery / fetches are independent."
-        )
-        parts.append(
-            "  - For sequential dependencies, one tool_call per round."
-        )
-        parts.append(
-            "  - Never invent skill / agent / slug names; only use those returned"
-        )
-        parts.append("    by list_*.")
-        parts.append(
-            '  - Memory writes (Save) via remember_*. Triggers: "remember", "覚えて",'
-        )
-        parts.append('    "save", "from now on", "treat as".')
-    # B12-R2 / B13-R3 V3 wording fix (ABSOLUTE rule + JA examples):
-    # Baseline (R3 fix only): 40-50% text-reply non-compliance.
-    # V3 combined (ABSOLUTE keyword + JA examples): ~5% (1/20, N=20 measurement).
-    # Mechanism: (1) ABSOLUTE keyword raises implicit weight above LLM's
-    # clarification-seeking instinct; (2) JA examples reduce translation
-    # ambiguity for JA-input users; (3) explicit NEVER list closes the
-    # "I need more info" text-reply escape hatch.
-    # P7 compliance: examples use <skill_name> placeholder, not hardcoded names.
+    # Wrapper-only: plan intent routing already encoded in the 3-way
+    # header lines above ("Domain task → invoke_action OR plan ...").
+    # Also add "never invent action names" (= cross-cutting policy 3).
+    parts.extend([
+        "  - Never invent action names; only use those returned by",
+        "    list_actions or search_actions.",
+        "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
+        "「something for X」 「similar to」), USE search_actions(query=...).",
+        "    For exact category enumeration or substring lookup of a known",
+        "    keyword, USE list_actions(category=[...]) or"
+        " list_actions(filter='...').",
+    ])
+
+    # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
+    # JA examples dropped — per B23-PRE-1 SP simplification policy).
+    # P7-compliant placeholder: <action_name> (= qualified name format).
     parts.append("")
-    if hide_legacy_tools:
-        # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
-        # JA examples dropped — per B23-PRE-1 SP simplification policy).
-        # P7-compliant placeholder: <action_name> (= qualified name format).
-        parts.extend([
-            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-            " name (= valid invoke_action action_name, e.g. skill__code_review),"
-            " call invoke_action immediately. NO clarifying questions. NO text replies.",
-            "",
-        ])
-    else:
-        parts.append(
-            "  ROUTING RULE (ABSOLUTE): When the user message contains a skill"
-        )
-        parts.append(
-            "  name (= valid invoke_skill enum value), call invoke_skill"
-        )
-        parts.append(
-            "  immediately. NO clarifying questions. NO text replies. Examples:"
-        )
-        parts.append(
-            "    「<skill_name> で <target> を review して」 → invoke_skill(name=<skill_name>)"
-        )
-        parts.append(
-            "    「<skill_name> で <X> を作って」 → invoke_skill(name=<skill_name>)"
-        )
-        parts.append("")
+    parts.extend([
+        "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+        " name (= valid invoke_action action_name, e.g. skill__code_review),"
+        " call invoke_action immediately. NO clarifying questions. NO text replies.",
+        "",
+    ])
 
     # ==========================================================================
     # DYNAMIC — varies per session / configuration
-    # Sections 6–13: project_context, Skills, Agents, Memory, Indexed sources,
-    # Files, MCP, + dynamic Behaviour conditionals (output_language,
-    # indexed_sources disambiguation + JA examples).
+    # Sections 6–13: project_context, Memory, Indexed sources,
+    # + dynamic Behaviour conditionals (output_language).
     # ==========================================================================
 
     # ── 6. Project context (REYN.md) ────────────────────────────────────────
@@ -749,93 +277,30 @@ def build_system_prompt(
         )
         parts.append("")
 
-    # ── 7. Skills catalog ────────────────────────────────────────────────────
-    # category-only catalog (= O(1) SP scaling、 industry-aligned per
-    # Anthropic Tool Search Tool / OpenAI namespaces / MCP-Zero hierarchical
-    # patterns). The previous design inlined skill names + truncated
-    # descriptions for hallucination defense (RETRO-H1+H2)、 but this scaled
-    # O(N_skills) and was duplicate of the `invoke_skill.name` enum
-    # constraint already in tool schema (= structural defense at build_tools).
-    # Now: SP describes only the **category catalog** (= what kinds of
-    # resources exist)、 actual names lazy-fetched via list_skills.
-    # Hallucination defense: schema enum (= invoke_skill rejects unknown
-    # name) + Behaviour rule "Never invent names; only use those returned by
-    # list_*". Verified by 2026-05-07 N=10 dogfood post-G12-envelope-fix.
-    skill_count = len(available_skills)
-    if hide_legacy_tools:
-        # Wrapper-only path: skill / agent are 2 of the 13 categories
-        # listed in the "## Action categories" section above. Dedicated
-        # sections would impose a per-category special-case structure
-        # that contradicts FP-0034's uniform-invoke design — so they
-        # are omitted here. Resource discovery goes through
-        # list_actions(category=[...]).
-        pass
-    else:
-        if skill_count > 0:
-            parts.append(
-                f"## Skills ({skill_count} available) — categories: {skill_section}"
-            )
-            parts.append(
-                "  Call list_skills(path) to browse names + descriptions, then"
-            )
-            parts.append(
-                "  describe_skill(name) for full schema or invoke_skill(name, input)"
-            )
-            parts.append("  to run. Skill names are validated by schema enum.")
-        else:
-            parts.append("## Skills — (none available in this session)")
-        parts.append("")
-
-        # ── 8. Agents catalog ────────────────────────────────────────────────────
-        parts.append("## Agents (resource axis, clusters)")
-        parts.append(f"  {agent_section}")
-        parts.append("")
+    # ── 7 & 8. Skills / Agents catalog ──────────────────────────────────────
+    # Wrapper-only path: skill / agent are 2 of the 13 categories
+    # listed in the "## Action categories" section above. Dedicated
+    # sections would impose a per-category special-case structure
+    # that contradicts FP-0034's uniform-invoke design — so they
+    # are omitted here. Resource discovery goes through
+    # list_actions(category=[...]).
 
     # ── 9. Memory ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Memory inline section is dropped in the
     # wrapper-only path. Memory discovery goes through
     # list_actions(category=['memory.entry']) at runtime.
-    if hide_legacy_tools:
-        # Wrapper-only: Memory section omitted — list_actions discovers entries.
-        pass
-    else:
-        parts.append(
-            "## Memory (entries inlined — answer recall queries from these "
-            "descriptions; use read_memory_body for full content if vague)"
-        )
-        for line in memory_section:
-            parts.append(f"  {line}")
-        parts.append("")
 
     # ── 10. Indexed sources (ADR-0033 UX gap fix A) ──────────────────────────
-    # Injected verbatim from SourceManifest.format_for_prompt() which already
-    # renders the empty-state getting-started hint when 0 sources exist.
-    # Placed after Memory (conceptually similar recall stores) and before
-    # Files / MCP (distinct resource axes). When None, the section is omitted
-    # entirely for backward compat (tests + non-chat paths).
     # B23-PRE-1 SP role-separation: ## Indexed sources omitted in wrapper-only
     # path — list_actions(category=['rag.corpus']) discovers at runtime.
-    if not hide_legacy_tools and indexed_sources_section is not None:
-        parts.append(indexed_sources_section)
-        parts.append("")
 
     # ── 11. Files ────────────────────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## Files section omitted in wrapper-only
     # path — permission scope communicated via file.* category at runtime.
-    if not hide_legacy_tools and file_section:
-        parts.append("## Files (resource axis — permission-scoped)")
-        for line in file_section:
-            parts.append(f"  {line}")
-        parts.append("")
 
     # ── 12. MCP servers and tools ────────────────────────────────────────────
     # B23-PRE-1 SP role-separation: ## MCP servers section omitted in wrapper-
     # only path — list_actions(category=['mcp.server','mcp.tool']) discovers.
-    if not hide_legacy_tools and mcp_section:
-        parts.append("## MCP servers and tools (resource axis)")
-        for line in mcp_section:
-            parts.append(f"  {line}")
-        parts.append("")
 
     # ── 13. Dynamic Behaviour conditionals ───────────────────────────────────
     # These vary per session config (output_language) or per-request state
@@ -853,117 +318,6 @@ def build_system_prompt(
         parts.append(
             f"  - Always reply in language: {output_language}."
             "  Do NOT switch language even for error messages or clarifying questions."
-        )
-
-    # ── Vocabulary disambiguation rules (B17-S1-1 + B17-S5-3 fix) ──────────
-    # Two collisions fixed here:
-    #   1. "recall" in user input → LLM mapped to "Recall" (memory) intent.
-    #      Fix: renamed intent to "Memory access"; add explicit rule that
-    #      "recall" word → indexed-search tool, not memory.
-    #   2. "data sources" in user input → LLM mapped to memory layers only,
-    #      ignoring the Indexed sources section.
-    #      Fix: explicit rule to list BOTH memory AND indexed sources.
-    # These rules are only relevant when RAG (indexed sources) is wired up.
-    # Without indexed_sources_section, the `recall` tool is not available and
-    # the disambiguation rules would reference a non-existent section.
-    #
-    # B23-PRE-1 SP role-separation: the dynamic disambiguation block
-    # (recall/data sources rules + JA table) is moved to per-tool
-    # descriptions (rag.operation__recall.description, remember_shared
-    # .description). Wrapper-only path skips it entirely.
-    if not hide_legacy_tools and indexed_sources_section is not None:
-        parts.append(
-            "  - The word 'recall' in user input refers to the `recall` tool"
-        )
-        parts.append(
-            "    (= indexed document search). Do NOT map it to list_memory or"
-        )
-        parts.append(
-            "    read_memory_body. For memory retrieval, the intent label is"
-        )
-        parts.append(
-            "    'Memory access', not 'Recall'."
-        )
-        parts.append(
-            "  - When user asks about 'data sources', 'available information',"
-        )
-        parts.append(
-            "    or 'what can I search', list BOTH memory entries (Memory section)"
-        )
-        parts.append(
-            "    AND indexed sources (Indexed sources section). They are different"
-        )
-        parts.append(
-            "    storage layers. Do NOT report only memory as 'your data sources'."
-        )
-        parts.append(
-            "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
-        )
-        parts.append(
-            "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
-        )
-        parts.append(
-            "    for these queries."
-        )
-        # NOTE (batch 19 self-audit, post `1c5856d` revert): a previous
-        # iteration added "for 'how is X implemented?' prefer recall over
-        # reyn_src_read" guidance here, motivated by S6 batch-18 0/3 refuted.
-        # The fix was reverted because the scenario design itself was the
-        # flaw: "How is recall implemented?" is a code-reading query (= the
-        # answer lives in source files, NOT in the indexed concept docs),
-        # and reyn_src_read's description claims this exact use case
-        # ("how does Reyn / how does Reyn's X work?"). Adding generic
-        # "prefer recall" guidance here actively conflicted with that
-        # specialised tool description and was the wrong layer to fix.
-        # Real R-RAG-srcread evidence requires a scenario where indexed
-        # docs semantically cover the prompt topic; until then, treat
-        # affordance-bias as hypothesis only. See
-        # docs/deep-dives/journal/dogfood/2026-05-10-batch-19-rag-attractor-fix-retest/
-        # retrospective.md for the full audit.
-        # ── Empty-state indexed sources guidance (B17-S1-1 fix) ─────────────
-        # When 0 indexed sources are available, the LLM must actively tell the
-        # user how to add them instead of silently defaulting to memory.
-        parts.append(
-            "  - If 0 indexed sources are available AND the user asks about data"
-        )
-        parts.append(
-            "    sources or what they can do: explicitly tell them to run"
-        )
-        parts.append(
-            "    `reyn run index_docs '{\"source\":\"<name>\",\"path\":\"<glob>\""
-            ",\"description\":\"<text>\"}'`"
-        )
-        parts.append(
-            "    to enable indexed retrieval. Do NOT answer with memory-only."
-        )
-        # ── FP-0023 Change 5 — JA recall/memory disambiguation examples ──────
-        # Extends the EN disambiguation block above with JA-specific examples.
-        # Dogfood measurement (B12-R2) showed JA examples reduced non-compliance
-        # from ~50% to ~5% for routing rules. Same technique applied here.
-        # Placed inside the indexed_sources_section guard because these examples
-        # reference recall/remember_* which are only meaningful when RAG is live.
-        parts.append("")
-        parts.append("  Japanese input disambiguation:")
-        parts.append(
-            "    - 「思い出して」「前回の話」「あのとき言ってた〜」"
-        )
-        parts.append(
-            "        → recall (indexed search) — if indexed sources exist"
-        )
-        parts.append(
-            "        → list_memory / read_memory_body — if no indexed sources"
-        )
-        parts.append(
-            "    - 「覚えて」「メモして」「記録して」「保存して」「忘れないで」"
-        )
-        parts.append(
-            "        → remember_shared or remember_agent (memory write)"
-        )
-        parts.append(
-            "    - 「忘れて」「削除して」「消して」(about a memory entry)"
-        )
-        parts.append(
-            "        → forget_memory"
         )
 
     return "\n".join(parts)
@@ -1068,8 +422,6 @@ def _render_files(file_permissions: dict | None) -> list[str]:
 
 def _render_mcp(
     mcp_servers: list[dict] | None,
-    *,
-    hide_legacy_tools: bool = False,
 ) -> list[str]:
     """Return lines for the MCP servers and tools section, or [] when nothing to render.
 
@@ -1077,17 +429,13 @@ def _render_mcp(
     <server>.<tool>) alongside each server, mirroring the "Available skills"
     flat list pattern. When a server's ``tools`` list is absent (= not yet
     async-enumerated), falls back to the prior server-only line with a hint
-    to use list_mcp_tools (legacy) or list_actions(category=['mcp.tool'])
-    (wrapper-only).
+    to use list_actions(category=['mcp.tool']) (wrapper-only).
     """
     if not mcp_servers:
         return []
-    if hide_legacy_tools:
-        discovery_hint = (
-            "(use list_actions(category=['mcp.tool']) to discover tools)"
-        )
-    else:
-        discovery_hint = "(use list_mcp_tools to see mcp_tools)"
+    discovery_hint = (
+        "(use list_actions(category=['mcp.tool']) to discover tools)"
+    )
     lines: list[str] = []
     for server in mcp_servers:
         name = server.get("name", "(unnamed)")

@@ -56,24 +56,6 @@ _PLAN_DESCRIPTION = (
     "complete."
 )
 
-# Assertive WHAT/WHEN/WHEN_NOT description used when hide_legacy_tools=True.
-# (B23-PRE-1 SP role-separation: ## Plan decomposition SP subsection
-# moves here; SP Behaviour retains only the 2-line multi-source routing
-# policy as a cross-cutting rule.)
-_PLAN_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Decompose a multi-source query into discrete steps the OS executes "
-    "sequentially, then synthesize the final reply. "
-    "WHEN: When the query combines info from multiple independent sources "
-    "(e.g. 'compare A and B from two docs', 'explain X with code refs from N "
-    "files', 'summarise across these sources'). Each step gathers one piece; "
-    "OS synthesizes. "
-    "WHEN NOT: "
-    "- Single-tool lookups or single-source narrations. "
-    "- Chitchat or conversational replies. "
-    "- Queries that invoke_action handles end-to-end. "
-    "- Queries answerable in one router reply without tools."
-)
-
 # Parameters schema must be byte-identical to router_tools.py line
 # 700–748.  Copied verbatim (steps_json description includes the full
 # inline example).

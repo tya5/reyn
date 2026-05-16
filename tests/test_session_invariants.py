@@ -67,7 +67,7 @@ def _text_result(text: str) -> LLMToolCallResult:
 
 
 def _delegate_result(to: str, request: str) -> LLMToolCallResult:
-    """LLMToolCallResult that makes RouterLoop call delegate_to_agent."""
+    """LLMToolCallResult that makes RouterLoop call delegate_to_agent via invoke_action wrapper."""
     return LLMToolCallResult(
         content=None,
         tool_calls=[
@@ -75,8 +75,11 @@ def _delegate_result(to: str, request: str) -> LLMToolCallResult:
                 "id": "tc_delegate_001",
                 "type": "function",
                 "function": {
-                    "name": "delegate_to_agent",
-                    "arguments": json.dumps({"to": to, "request": request}),
+                    "name": "invoke_action",
+                    "arguments": json.dumps({
+                        "action_name": f"agent.peer__{to}",
+                        "args": {"request": request},
+                    }),
                 },
             }
         ],
@@ -128,15 +131,7 @@ def _make_session(
     chain_timeout_seconds: float = 60.0,
     registry: _FakeRegistry | None = None,
 ) -> ChatSession:
-    """Build a ChatSession with WAL + per-test snapshot path via public kwargs.
-
-    Phase 5 default flip note: these invariant tests exercise legacy
-    invoke_skill / delegate_to_agent dispatch via mocked LLM responses.
-    Explicitly disable hide_legacy_tools so the legacy tool dispatch
-    path remains available under test (the new default is True since
-    Phase 5).
-    """
-    from reyn.config import ActionRetrievalConfig
+    """Build a ChatSession with WAL + per-test snapshot path via public kwargs."""
     safety = SafetyConfig(timeout=TimeoutConfig(chain_seconds=chain_timeout_seconds))
     return ChatSession(
         agent_name=agent_name,
@@ -144,7 +139,6 @@ def _make_session(
         safety=safety,
         registry=registry,
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
-        action_retrieval_config=ActionRetrievalConfig(hide_legacy_tools=False),
     )
 
 
