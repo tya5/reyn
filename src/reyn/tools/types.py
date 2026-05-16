@@ -140,6 +140,14 @@ class RouterCallerState:
     remember_fn: Callable[..., Awaitable[Any]] | None = None
     forget_fn: Callable[[str, str], Awaitable[Any]] | None = None
 
+    # FP-0032: MCP server list for enum injection into call_mcp_tool /
+    # describe_mcp_tool. Shape: [{name, description, tools?: [{name, ...}]}, ...]
+    # Matches the ``mcp_servers`` arg passed to build_tools() and
+    # build_system_prompt().  Populated by RouterLoop when building the
+    # RouterCallerState for MCP tool dispatch.  When None, enum injection
+    # is skipped and the schema falls back to plain string (graceful empty case).
+    mcp_servers: list[Mapping[str, Any]] | None = None
+
 
 @dataclass
 class PhaseCallerState:
