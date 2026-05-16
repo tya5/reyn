@@ -31,6 +31,7 @@ models:
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択と非対応プラットフォームポリシー。以下参照。 |
+| `action_retrieval` | マップ | FP-0034 ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 
@@ -279,6 +280,51 @@ sandbox:
 | `on_unsupported` | 文字列 | `warn` | 要求バックエンドがこのプラットフォームで利用不可の場合のポリシー。`warn` は WARNING をログに記録して `noop` にフォールバック。`error` は `RuntimeError` を発生（強制が必須な本番環境のフェイルファスト）。`ignore` はサイレントにフォールバック。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
+
+## `action_retrieval` ブロック
+
+FP-0034 ユニバーサルカタログの可視化 + 検索設定。 チャット Router を **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) にオプトインさせ、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供する。 無効時 (デフォルト) は Router がカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` / `read_file` 等) を直接公開し、 既存挙動はバイト単位で保持される。
+
+```yaml
+action_retrieval:
+  universal_wrappers_enabled: false   # デフォルト; true でオプトイン
+  embedding_class: null               # search_actions 用の embedding.classes 名
+  hot_list_n: 10                      # Phase 2 — top-N freq+recency 投影
+  mode: default                       # default | minimal | performance (§D24)
+```
+
+### `action_retrieval` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-----|------|---------|-------------|
+| `universal_wrappers_enabled` | bool | `false` | `true` の時、 Router の `tools=` 末尾に 3 つのユニバーサル wrapper (`list_actions` / `describe_action` / `invoke_action`) を追加。 本フェーズではカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` 等) は併存し、 後続 FP-0034 フェーズで system prompt のリファクタリングと冗長サーフェスの削減を行う。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 |
+| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 action-retrieval index は FP-0034 Phase 2 でランディング予定。 現時点では no-op。 |
+| `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 Phase 2 配線用の予約フィールド。 今日設定しても影響なし。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
+| `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 Phase 2 予約; 今日の値は情報のみ。 |
+
+### クイックスタート — ユニバーサル wrapper をオプトイン
+
+```yaml
+# reyn.yaml — 最小オプトイン
+action_retrieval:
+  universal_wrappers_enabled: true
+```
+
+再起動後、 チャット Router の `tools=` 末尾に 3 wrapper が含まれる。 LLM は以下を呼び出し可能:
+
+- `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__code_review`) で利用可能 skill を列挙
+- `describe_action(action_name="skill__code_review")` → input schema を取得
+- `invoke_action(action_name="skill__code_review", args={...})` → 既存 handler 経由で実行
+
+リソースカテゴリ (`mcp.server`, `rag.corpus`, `memory.entry`, …) も canonical default semantic で `invoke_action` をサポート (FP-0034 §D19)。
+
+不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラー応答を返し、 LLM は 1 turn で復帰可能 (FP-0034 §D12)。
+
+### 互換性ノート
+
+デフォルト `false` で既存のチャット挙動と LLMReplay fixture をバイト単位で保持する。 後続 FP-0034 フェーズ (Router 側 system prompt のリファクタリング、 embedding-driven hot list、 デフォルト反転) は別リリースでランディング。 各 dogfood 検証で確認するまでオプトイン継続。
+
+ツールレジストリ / dispatch の背景は [`docs/concepts/architecture.md`](../../concepts/architecture.md) を参照。
 
 ## `permissions` ブロック
 

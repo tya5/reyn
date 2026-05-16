@@ -31,6 +31,7 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
+| `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -286,6 +287,51 @@ sandbox:
 | `on_unsupported` | string | `warn` | Policy when the requested backend is unavailable on this platform. `warn` logs a WARNING and falls back to `noop`. `error` raises `RuntimeError` (fail-fast for production environments that require enforcement). `ignore` silently falls back. |
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
+
+## `action_retrieval` block
+
+FP-0034 universal catalog visibility + retrieval settings.  Opts the chat router into the **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  When disabled (default), the router exposes the per-category tools directly (e.g. `invoke_skill`, `call_mcp_tool`, `read_file`, …) — the prior behaviour is preserved byte-for-byte.
+
+```yaml
+action_retrieval:
+  universal_wrappers_enabled: false   # default; flip to true to opt-in
+  embedding_class: null               # name in embedding.classes for search_actions
+  hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
+  mode: default                       # default | minimal | performance (§D24)
+```
+
+### `action_retrieval` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `universal_wrappers_enabled` | bool | `false` | When `true`, appends 3 universal wrappers (`list_actions`, `describe_action`, `invoke_action`) at the end of the router's `tools=`.  Existing per-category tools (`invoke_skill`, `call_mcp_tool`, etc.) remain present in this phase; subsequent FP-0034 phases will refactor the system prompt and prune redundant surfaces.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14). |
+| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  No-op until the action-retrieval index lands in FP-0034 Phase 2. |
+| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24).  Field is reserved for Phase 2 wiring; setting it today is harmless.  Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
+| `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top.  Reserved for Phase 2; today's value is informational only. |
+
+### Quick-start — opt in to universal wrappers
+
+```yaml
+# reyn.yaml — minimal opt-in
+action_retrieval:
+  universal_wrappers_enabled: true
+```
+
+After restart, the chat router's `tools=` includes the 3 wrappers at the tail.  The LLM can call:
+
+- `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__code_review`)
+- `describe_action(action_name="skill__code_review")` → fetch the input schema
+- `invoke_action(action_name="skill__code_review", args={...})` → execute via the existing handler
+
+Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action` with the canonical default semantic (FP-0034 §D19).
+
+Unknown action names return a structured error response with `suggestions` ranked by string similarity, so the LLM recovers in one turn (FP-0034 §D12).
+
+### Compatibility note
+
+Default `false` preserves byte-identical chat behaviour and LLMReplay fixtures.  Subsequent FP-0034 phases (= router-side system-prompt refactor, embedding-driven hot list, default flip) land in separate releases — each opt-in until verified via dogfood.
+
+See [`docs/concepts/architecture.md`](../../concepts/architecture.md) for the tool registry / dispatch background.
 
 ## `permissions` block
 
