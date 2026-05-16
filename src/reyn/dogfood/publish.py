@@ -39,6 +39,16 @@ _DEFAULT_TEMPLATE_PATH = (
     / "dogfood-discussion-template.md"
 )
 
+# GitHub Discussion body hard limit (= 65,536 characters per body / comment).
+_GITHUB_DISCUSSION_BODY_LIMIT = 65_536
+
+_OUTCOME_MARKERS: dict[str, str] = {
+    "verified": "✓",
+    "inconclusive": "?",
+    "refuted": "✗",
+    "blocked": "!",
+}
+
 
 @dataclass
 class PublishConfig:
@@ -204,6 +214,176 @@ def render_body(summary: dict, template_path: Path) -> str:
         result = result.replace(old, new)
 
     return result
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate *text* to *limit* chars, appending an ellipsis when cut."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "...(truncated)"
+
+
+def _load_scenario_records(storage_dir: Path) -> list[dict]:
+    """Return per-scenario output.json records in stable id order.
+
+    Returns an empty list if the run directory has no scenarios/ subdir
+    (= older runs or aggregate-only summary).
+    """
+    scenarios_dir = storage_dir / "scenarios"
+    if not scenarios_dir.exists():
+        return []
+
+    records: list[dict] = []
+    for output_path in sorted(scenarios_dir.glob("*/output.json")):
+        try:
+            data = json.loads(output_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Skipping unreadable scenario record %s: %s", output_path, exc,
+            )
+            continue
+
+        # Pull the originating scenario YAML input from sibling input.json if
+        # present (= future-proofing) or from the events log preamble. Most
+        # runs today only carry reply_text + verdicts in output.json, so the
+        # transcript section falls back to "(input not recorded)".
+        events_path = output_path.parent / "events.jsonl"
+        event_types: list[str] = []
+        if events_path.exists():
+            for line in events_path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = ev.get("type") or ev.get("event")
+                if t:
+                    event_types.append(str(t))
+
+        records.append({
+            "scenario_id": data.get("scenario_id", output_path.parent.name),
+            "reply_text": data.get("reply_text", ""),
+            "reply_outcome": data.get("reply_outcome", "inconclusive"),
+            "events_outcome": data.get("events_outcome", "inconclusive"),
+            "artifacts_outcome": data.get("artifacts_outcome", "inconclusive"),
+            "overall_outcome": data.get("overall_outcome", "inconclusive"),
+            "detail": data.get("detail", {}),
+            "event_types": event_types,
+        })
+    return records
+
+
+def _load_scenario_inputs(set_path: Path | None) -> dict[str, str]:
+    """Read the scenario set YAML and return ``{scenario_id: input_or_prompts}``.
+
+    Returns an empty dict if *set_path* is unreadable or absent. The dict
+    is consulted lazily by ``build_transcripts_section`` to fill the
+    ``Input`` field per scenario block.
+    """
+    if set_path is None or not set_path.exists():
+        return {}
+
+    try:
+        import yaml  # type: ignore[import]
+        raw = yaml.safe_load(set_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001 — auxiliary surface
+        logger.warning("Could not load scenario set %s: %s", set_path, exc)
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    scenarios = raw.get("scenarios") or []
+    out: dict[str, str] = {}
+    for entry in scenarios:
+        if not isinstance(entry, dict):
+            continue
+        sid = entry.get("id")
+        if not sid:
+            continue
+        text = entry.get("input") or entry.get("user_prompt")
+        if text is None and entry.get("prompts"):
+            text = "\n".join(str(p) for p in entry["prompts"])
+        if text is not None:
+            out[str(sid)] = str(text)
+    return out
+
+
+def build_transcripts_section(
+    storage_dir: Path,
+    *,
+    scenario_set_path: Path | None = None,
+    reply_truncate: int = 800,
+) -> str:
+    """Render the per-scenario folding markdown block.
+
+    Returns an empty string when the run carries no scenario records.
+
+    Each scenario produces a single ``<details>`` block containing:
+      * scenario input (from the YAML, single-turn or joined multi-turn)
+      * reply text (truncated to *reply_truncate* chars)
+      * 3-line interpretation (if recorded via ``--with-interpretation``)
+      * verifier verdicts table
+
+    The summary line carries the outcome marker (``✓`` / ``?`` / ``✗`` / ``!``)
+    so the unopened list is still scannable.
+    """
+    records = _load_scenario_records(storage_dir)
+    if not records:
+        return ""
+
+    inputs = _load_scenario_inputs(scenario_set_path)
+
+    blocks: list[str] = ["", "---", "", "## Scenarios", ""]
+    for rec in records:
+        sid = rec["scenario_id"]
+        overall = rec["overall_outcome"]
+        marker = _OUTCOME_MARKERS.get(overall, "?")
+        input_text = inputs.get(sid) or "(input not recorded)"
+        reply_text = _truncate(rec["reply_text"] or "(empty reply)", reply_truncate)
+        interp = rec["detail"].get("interpretation") if isinstance(rec.get("detail"), dict) else None
+
+        block_lines: list[str] = []
+        block_lines.append("<details>")
+        block_lines.append(
+            f"<summary>{marker} <code>{sid}</code> — {overall}</summary>"
+        )
+        block_lines.append("")
+        block_lines.append("**Input**")
+        block_lines.append("")
+        block_lines.append("```")
+        block_lines.append(input_text)
+        block_lines.append("```")
+        block_lines.append("")
+        block_lines.append("**Reply**")
+        block_lines.append("")
+        block_lines.append("```")
+        block_lines.append(reply_text)
+        block_lines.append("```")
+        block_lines.append("")
+        if interp:
+            block_lines.append("**Interpretation**")
+            block_lines.append("")
+            for line in interp.splitlines():
+                line = line.strip()
+                if line:
+                    block_lines.append(f"> {line}")
+            block_lines.append("")
+        block_lines.append("**Verifiers**")
+        block_lines.append("")
+        block_lines.append("| Surface | Verdict |")
+        block_lines.append("|---|---|")
+        block_lines.append(f"| reply | {rec['reply_outcome']} |")
+        block_lines.append(f"| events | {rec['events_outcome']} |")
+        block_lines.append(f"| artifacts | {rec['artifacts_outcome']} |")
+        block_lines.append("</details>")
+        block_lines.append("")
+
+        blocks.append("\n".join(block_lines))
+
+    return "\n".join(blocks)
 
 
 def _graphql_request(
@@ -445,6 +625,8 @@ def publish_run(
     batch_id: int | str | None = None,
     topic: str | None = None,
     http_client: Any = None,
+    with_transcripts: bool = False,
+    scenario_set_path: Path | None = None,
 ) -> dict:
     """Top-level: read summary, render body, create discussion.
 
@@ -468,6 +650,15 @@ def publish_run(
         Override for summary.json's ``topic`` field.
     http_client:
         Injectable httpx.Client for testing (= MockTransport pattern).
+    with_transcripts:
+        When True, append a per-scenario folding markdown section to the
+        Discussion body (input + truncated reply + interpretation +
+        verifier verdicts). Falls back gracefully when the run has no
+        ``scenarios/`` subdirectory.
+    scenario_set_path:
+        Path to the source ``dogfood/scenarios/*.yaml`` set, consulted to
+        fill the ``Input`` field per scenario. If omitted, the field shows
+        ``"(input not recorded)"``.
     """
     summary_path = storage_dir / "summary.json"
     if not summary_path.exists():
@@ -486,6 +677,22 @@ def publish_run(
 
     title = build_title(summary)
     body = render_body(summary, config.template_path)
+
+    if with_transcripts:
+        transcripts = build_transcripts_section(
+            storage_dir, scenario_set_path=scenario_set_path,
+        )
+        if transcripts:
+            candidate = body.rstrip() + "\n\n" + transcripts
+            if len(candidate) > _GITHUB_DISCUSSION_BODY_LIMIT:
+                logger.warning(
+                    "Transcripts section pushes body to %s chars (limit %s). "
+                    "Truncating per-scenario blocks may be needed; for now "
+                    "the full transcripts section is kept and GitHub may "
+                    "reject the create call.",
+                    len(candidate), _GITHUB_DISCUSSION_BODY_LIMIT,
+                )
+            body = candidate
 
     if dry_run:
         return {

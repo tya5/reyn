@@ -31,7 +31,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from reyn.dogfood.scenarios import Scenario, ScenarioSet
@@ -253,6 +253,8 @@ async def run_scenario_set(
     n: int = 1,
     replay_fixture_dir: Path | None = None,
     runner_fn: RunnerFn | None = None,
+    with_interpretation: bool = False,
+    interpretation_model: str | None = None,
 ) -> RunResult:
     """Run every scenario in *scenario_set*, repeat N times for stability,
     write results under *storage_dir*.
@@ -279,6 +281,15 @@ async def run_scenario_set(
         Injectable async callable ``(Scenario) -> ScenarioRunResult``. If
         omitted, defaults to ``_default_runner_fn`` (returns inconclusive).
         The CLI populates this with the real headless chat-router path.
+    with_interpretation:
+        When True, after the verifier finishes, invoke
+        ``reyn.dogfood.interpretation.generate_interpretation`` for every
+        scenario and store the resulting 3-line summary in
+        ``result.detail["interpretation"]``. Adds one cheap LLM call per
+        scenario (~$0.0005 at flash-lite tier).
+    interpretation_model:
+        Override the LiteLLM model id used for interpretation. Defaults to
+        ``reyn.dogfood.interpretation.DEFAULT_MODEL``.
 
     Returns
     -------
@@ -343,6 +354,26 @@ async def run_scenario_set(
         else:
             worst = min(results, key=lambda r: _outcome_rank(r.overall_outcome))
             merged.append(worst)
+
+    # Optional interpretation pass — one cheap LLM call per scenario summarising
+    # whether the run matched expectations. Failures are isolated to the
+    # auxiliary detail field and never abort the run.
+    if with_interpretation:
+        from reyn.dogfood.interpretation import (
+            DEFAULT_MODEL,
+            generate_interpretation,
+        )
+
+        model = interpretation_model or DEFAULT_MODEL
+        scenario_index = {s.id: s for s in scenario_set.scenarios}
+        for result in merged:
+            scenario = scenario_index.get(result.scenario_id)
+            if scenario is None:
+                continue
+            summary = await generate_interpretation(
+                scenario, result, model=model
+            )
+            result.detail["interpretation"] = summary
 
     # Persist per-scenario results
     for result in merged:

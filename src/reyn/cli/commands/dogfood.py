@@ -66,6 +66,18 @@ def register(sub) -> None:
                        ))
     run_p.add_argument("--run-id", metavar="RUN_ID",
                        help="Explicit run ID (UUID generated if omitted).")
+    run_p.add_argument("--with-interpretation", action="store_true",
+                       help=(
+                           "After verifier scoring, generate a 3-line LLM "
+                           "interpretation per scenario summarising whether "
+                           "the run matched expectations. Adds ~$0.0005 / "
+                           "scenario at flash-lite tier."
+                       ))
+    run_p.add_argument("--interpretation-model", metavar="MODEL", default=None,
+                       help=(
+                           "Override the LiteLLM model id used for "
+                           "interpretation (default: openai/gemini-2.5-flash-lite)."
+                       ))
     run_p.set_defaults(func=run_run)
 
     # --- coverage ---
@@ -149,7 +161,11 @@ def register(sub) -> None:
     bl_p.set_defaults(func=run_baseline)
 
     # --- publish ---
-    from reyn.dogfood.publish import DEFAULT_REPO, DEFAULT_CATEGORY_SLUG, _DEFAULT_TEMPLATE_PATH  # noqa: E402
+    from reyn.dogfood.publish import (  # noqa: E402
+        _DEFAULT_TEMPLATE_PATH,
+        DEFAULT_CATEGORY_SLUG,
+        DEFAULT_REPO,
+    )
     pub_p = dsub.add_parser(
         "publish",
         help="Create a GitHub Discussion thread from a stored run",
@@ -193,6 +209,20 @@ def register(sub) -> None:
                         help=(
                             "Short topic description. Required if summary.json "
                             "does not carry a 'topic' field."
+                        ))
+    pub_p.add_argument("--with-transcripts", action="store_true",
+                        help=(
+                            "Append a per-scenario folding markdown section "
+                            "to the Discussion body (input + truncated reply "
+                            "+ interpretation + verifier verdicts). "
+                            "Reads scenarios/<id>/output.json from the run "
+                            "directory."
+                        ))
+    pub_p.add_argument("--scenario-set", metavar="PATH", default=None,
+                        help=(
+                            "Path to the source scenario set YAML, used to "
+                            "fill the per-scenario Input field when "
+                            "--with-transcripts is set."
                         ))
     pub_p.set_defaults(func=run_publish)
 
@@ -286,6 +316,8 @@ def run_run(args: argparse.Namespace) -> None:
             n=args.n,
             replay_fixture_dir=replay_dir,
             runner_fn=live_runner_fn if not replay_dir else None,
+            with_interpretation=getattr(args, "with_interpretation", False),
+            interpretation_model=getattr(args, "interpretation_model", None),
         )
     )
 
@@ -446,8 +478,8 @@ def run_compare(args: argparse.Namespace) -> None:
     candidate_dir = _resolve_run_dir(args.candidate_run_id)
 
     try:
-        from reyn.dogfood.runner import load_run_result_from_storage
         from reyn.dogfood.compare import compare_runs
+        from reyn.dogfood.runner import load_run_result_from_storage
     except ImportError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         sys.exit(2)
@@ -547,10 +579,10 @@ def run_publish(args: argparse.Namespace) -> None:
     """Create a GitHub Discussion thread from a stored run's summary.json."""
     try:
         from reyn.dogfood.publish import (
-            PublishConfig,
             _DEFAULT_TEMPLATE_PATH,
-            DEFAULT_REPO,
             DEFAULT_CATEGORY_SLUG,
+            DEFAULT_REPO,
+            PublishConfig,
             detect_repo_from_git,
             get_token,
             publish_run,
@@ -592,6 +624,12 @@ def run_publish(args: argparse.Namespace) -> None:
         token=token,
     )
 
+    scenario_set_path = (
+        Path(args.scenario_set)
+        if getattr(args, "scenario_set", None)
+        else None
+    )
+
     try:
         result = publish_run(
             args.run_id,
@@ -600,6 +638,8 @@ def run_publish(args: argparse.Namespace) -> None:
             dry_run=args.dry_run,
             batch_id=args.batch_id,
             topic=args.topic,
+            with_transcripts=getattr(args, "with_transcripts", False),
+            scenario_set_path=scenario_set_path,
         )
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
