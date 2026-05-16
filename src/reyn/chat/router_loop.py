@@ -354,6 +354,18 @@ class RouterLoopHost(Protocol):
 # FP-0034 Phase 2 step 5: hot list alias builder
 # ---------------------------------------------------------------------------
 
+# Universal wrapper tool names that are already added by section I of
+# build_tools().  Filtering them here prevents duplicate function
+# declarations when ActionUsageTracker.get_top_n() returns a wrapper name
+# that was recorded as usage (B27-C1).
+_UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
+    "list_actions",
+    "search_actions",
+    "describe_action",
+    "invoke_action",
+})
+
+
 def _build_hot_list_aliases(
     names: list[str],
     short_description_lookup: "dict[str, str] | None" = None,
@@ -372,7 +384,15 @@ def _build_hot_list_aliases(
     When ``short_description_lookup`` is None or the name is absent from
     the map, falls back to the prior generic description so callers that
     don't supply the lookup stay unaffected.
+
+    Universal wrapper names (``list_actions``, ``search_actions``,
+    ``describe_action``, ``invoke_action``) are filtered out defensively:
+    build_tools() already adds them in section I, so including them here
+    would produce duplicate function declarations that Gemini rejects.
     """
+    # Defensive filter: drop universal wrapper names before alias construction
+    # so that any call site (present or future) cannot introduce duplicates.
+    names = [n for n in names if n not in _UNIVERSAL_WRAPPER_NAMES]
     result = []
     lookup = short_description_lookup or {}
     for name in names:
