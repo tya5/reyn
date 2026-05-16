@@ -7,10 +7,13 @@ Design decision:
     at all times — the picker is a passive renderer driven from here.
 
 Keybindings (handled here):
-  Enter         → If picker has matches: insert "/cmdname " (confirm).
-                  Otherwise: submit the message.
+  Enter         → If picker has matches: splice in the highlighted command
+                  ("/cmdname") and submit in one keypress.
+                  Otherwise: submit the message as typed.
   Ctrl+J        → Insert a newline.
-  Tab           → Same as confirm-from-picker (no-op when picker is closed).
+  Tab           → Confirm-without-submit: insert "/cmdname " and keep
+                  focus so the user can type args. No-op when picker
+                  is closed.
   Up / Down     → Picker selection when picker visible; otherwise input
                   history when the cursor is on the first/last row.
   Escape        → Hide picker (keep the typed text).
@@ -166,14 +169,26 @@ class InputBar(Widget):
     # ── action handlers (priority-bound keys) ────────────────────────────────
 
     def action_submit_or_confirm(self) -> None:
-        """Enter — confirm picker if visible, else submit the message."""
+        """Enter — submit the message, expanding the picker selection in
+        one keypress when the picker is open.
+
+        Previously Enter only confirmed (inserted) the picker selection, so
+        the user had to press Enter twice to actually send a slash command.
+        Now: with the picker open we splice in the highlighted match and
+        submit immediately. Tab still does insert-without-submit, so users
+        who want to type args after the command name can use it.
+        """
         picker = self._picker()
         ta = self._textarea()
         if ta is None:
             return
         if picker is not None and picker.visible_ and picker.has_matches:
-            self._confirm_picker(picker, ta)
-            return
+            cmd = picker.selected_command()
+            if cmd is not None:
+                ta.load_text(f"/{cmd.name}")
+                picker.hide()
+                self._submit(ta)
+                return
         self._submit(ta)
 
     def action_confirm_picker(self) -> None:
