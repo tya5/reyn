@@ -36,9 +36,11 @@ from pathlib import Path
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__read",
+    "file__list",
     # file__grep / file__glob / file__edit deferred — FP-0034 §D20 file-ops
     # extension is not yet implemented as ToolDefinitions; seeding them here
     # would surface UnknownActionError to the LLM.
+    "reyn.source__list",
     "web__search",
     "web__fetch",
     "memory.operation__remember_shared",
