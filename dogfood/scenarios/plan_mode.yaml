@@ -1,0 +1,127 @@
+---
+type: dogfood_scenario_set
+name: plan_mode
+description: >
+  Plan-mode (chat router) regression suite covering multi-source synthesis
+  queries that should trigger the `plan` tool. Verifiers assert that plan
+  lifecycle events fire (plan_emitted → plan_step_started ×N →
+  plan_step_completed ×N → plan_aggregated) and that the final reply
+  reports concrete evidence rather than a hand-wave summary. 3 scenarios
+  spanning the canonical patterns named in `_PLAN_DESCRIPTION`:
+  "explain X with code references", "compare A vs B from multiple docs",
+  "build a summary across these N files".
+covers:
+  - cli/reyn-chat
+  - config/plan
+  - os-core/event-system-p6
+
+scenarios:
+
+  # ── 1. Multi-source synthesis — compare two concept docs ───────────────────
+  - id: plan_compare_two_concepts
+    covers:
+      - cli/reyn-chat
+      - config/plan
+    input: >
+      docs/concepts/permission-model.md と docs/concepts/workspace.md を
+      読み比べて、 P5 (Workspace) と Permission model の関係を 3-5 個の
+      具体的なポイントで整理してください。 各ポイントには両ドキュメントの
+      該当箇所 (header 名や行番号など) を含めること。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply references content from BOTH permission-model.md AND workspace.md
+          - reply lists at least 3 concrete points (not a single paragraph)
+          - reply cites specific evidence — header names, line numbers, or short quotes
+          - reply does NOT fabricate file content (= must align with actual docs)
+      events:
+        must_emit:
+          - { type: plan_emitted, count: ">=1" }
+          - { type: plan_step_started, count: ">=2" }
+          - { type: plan_step_completed, count: ">=2" }
+          - { type: plan_aggregated, count: ">=1" }
+        must_not_emit:
+          - { type: plan_run_interrupted }
+          - { type: plan_step_failed }
+        sequence: []
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      # plan-mode trigger relies on LLM routing decision; flash-lite may
+      # reply directly without plan. Expectation distribution reflects
+      # both happy paths.
+      verified: 0.45
+      inconclusive: 0.35
+      refuted: 0.15
+      blocked: 0.05
+
+  # ── 2. Explain X with code references ─────────────────────────────────────
+  - id: plan_explain_with_code_references
+    covers:
+      - cli/reyn-chat
+      - config/plan
+    input: >
+      Reyn の plan ツール (= src/reyn/tools/plan.py と
+      src/reyn/chat/planner.py) について、 (1) どのような場合に LLM が
+      これを発火させるべきか、 (2) plan に渡された step がどう実行されるか、
+      の 2 点を、 該当する関数名や行番号を引きながら説明してください。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply references plan.py AND planner.py (or content from each)
+          - reply names at least one specific function or class (e.g. parse_and_validate_plan, execute_plan, _PLAN_DESCRIPTION)
+          - reply explains BOTH (1) when to invoke plan and (2) how steps are executed
+          - reply does NOT fabricate code that does not exist in the repo
+      events:
+        must_emit:
+          - { type: plan_emitted, count: ">=1" }
+          - { type: plan_step_started, count: ">=2" }
+          - { type: plan_step_completed, count: ">=2" }
+        must_not_emit:
+          - { type: plan_step_failed }
+        sequence: []
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.40
+      inconclusive: 0.35
+      refuted: 0.20
+      blocked: 0.05
+
+  # ── 3. Build a summary across N files ─────────────────────────────────────
+  - id: plan_summary_across_n_files
+    covers:
+      - cli/reyn-chat
+      - config/plan
+    input: >
+      docs/concepts/ ディレクトリの 3 つの主要 concept ドキュメント
+      (principles.md, architecture.md, workspace.md) を読み、
+      Reyn の設計原則を「OS が constant、 skills が変化する」 という
+      角度から 4-6 個の柱として整理してください。 各柱には出典
+      ドキュメント名と簡潔な根拠を付けること。
+    expected:
+      reply:
+        kind: judge
+        rubric:
+          - reply references content from all three files (principles, architecture, workspace) OR explicitly states which are missing and why
+          - reply lists at least 4 distinct pillars (not a single narrative)
+          - each pillar cites a source doc name or specific concept (P1-P8, layered architecture, etc.)
+          - reply does NOT fabricate concepts that contradict the actual docs
+      events:
+        must_emit:
+          - { type: plan_emitted, count: ">=1" }
+          - { type: plan_step_started, count: ">=3" }
+          - { type: plan_step_completed, count: ">=2" }
+          - { type: plan_aggregated, count: ">=1" }
+        must_not_emit:
+          - { type: plan_run_interrupted }
+        sequence: []
+      artifacts:
+        - { present: true }
+    outcome_prediction:
+      verified: 0.35
+      inconclusive: 0.40
+      refuted: 0.20
+      blocked: 0.05
