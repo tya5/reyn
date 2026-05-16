@@ -12,7 +12,9 @@ Tests for ``src/reyn/tools/universal_catalog.py`` covering:
   5. D14 visibility gating predicates (is_search_available /
      is_exec_available / visible_categories) behave per §D14 /
      §D14-ext.
-  6. Stub handlers raise NotImplementedError pointing at PR-2.
+  6. search_actions handler degrades gracefully when no router_state
+     (= real impl since Phase 2 step 1; deeper invariants in
+     test_universal_handlers.py).
 
 No mocks. No private-state assertions.
 """
@@ -352,21 +354,25 @@ def test_visible_categories_drops_exec_when_sandbox_none() -> None:
     assert "exec" not in vis
 
 
-# ── 6. search_actions remains a stub until FP-0034 Phase 2 ────────────────
+# ── 6. search_actions Phase 2 step 1 — handler is real, not a stub ───────
 
 
-def test_search_actions_stub_raises_phase2_pointer() -> None:
-    """Tier 2: search_actions raises NotImplementedError pointing at Phase 2.
+def test_search_actions_no_router_state_returns_empty() -> None:
+    """Tier 2: search_actions degrades to empty when no router_state.
 
-    Per FP-0034 §D14, search_actions visibility is gated by an
-    embedding configuration. PR-3a wires list/describe/invoke; the
-    semantic search backend lands in Phase 2. The stub message must
-    explicitly identify Phase 2 so calling sites can give a sensible
-    error if the handler is reached before that phase lands.
+    Phase 2 step 1 replaced the NotImplementedError stub with a real
+    handler that consults ``ctx.router_state.action_embedding_index``.
+    When router_state is None (= narrow test contexts / pre-Phase-2
+    invocation paths), the handler returns ``{items: [], total: 0}``
+    instead of raising — gracefully degrading per §D14.
+
+    The deeper handler invariants (query routing, ranking, category
+    filter) live in tests/test_universal_handlers.py with a real
+    ActionEmbeddingIndex + fake EmbeddingProvider.
     """
     ctx = _make_minimal_ctx()
-    with pytest.raises(NotImplementedError, match="Phase 2"):
-        asyncio.run(SEARCH_ACTIONS.handler({"query": "x"}, ctx))
+    result = asyncio.run(SEARCH_ACTIONS.handler({"query": "x"}, ctx))
+    assert result == {"items": [], "total": 0}
 
 
 def _make_minimal_ctx() -> ToolContext:
