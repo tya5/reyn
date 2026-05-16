@@ -236,12 +236,42 @@ def test_missing_fields_in_jsonl_skipped(tmp_path: Path) -> None:
 # ── 8. DEFAULT_HOT_LIST_SEED ──────────────────────────────────────────────────
 
 
-def test_default_seed_has_ten_items() -> None:
-    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 10 entries."""
-    assert len(DEFAULT_HOT_LIST_SEED) == 10
+def test_default_seed_has_nine_items() -> None:
+    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 9 entries.
+
+    file__grep was removed (B27-M2) because FP-0034 §D20 file-ops
+    (edit / glob / grep) are not yet implemented as ToolDefinitions.
+    """
+    assert len(DEFAULT_HOT_LIST_SEED) == 9
 
 
 def test_default_seed_items_are_strings() -> None:
     """Tier 2: all DEFAULT_HOT_LIST_SEED entries are non-empty strings."""
     for item in DEFAULT_HOT_LIST_SEED:
         assert isinstance(item, str) and item
+
+
+def test_hot_list_seed_static_entries_have_routing_rules() -> None:
+    """Tier 2: every static-category name in DEFAULT_HOT_LIST_SEED is
+    routable via _OPERATION_RULES (= consistency invariant). A static
+    name in the seed without a routing rule would surface
+    UnknownActionError to the LLM as soon as the alias is invoked.
+    """
+    from reyn.tools.universal_dispatch import _OPERATION_RULES
+
+    static_prefixes = (
+        "file__",
+        "web__",
+        "memory.operation__",
+        "reyn.source__",
+        "rag.operation__",
+        "mcp.operation__",
+        "exec__",
+    )
+    for name in DEFAULT_HOT_LIST_SEED:
+        if name.startswith(static_prefixes):
+            assert name in _OPERATION_RULES, (
+                f"DEFAULT_HOT_LIST_SEED entry {name!r} has no routing rule "
+                f"in _OPERATION_RULES. Either add the rule or remove from "
+                f"the seed."
+            )
