@@ -527,9 +527,26 @@ class RouterLoop:
             _idx_getter = getattr(host, "get_action_embedding_index", None)
             _provider_getter = getattr(host, "get_embedding_provider", None)
             _model_getter = getattr(host, "get_embedding_model_class", None)
+            _eager_getter = getattr(host, "get_eager_embedding_build", None)
             _idx = _idx_getter() if _idx_getter else None
             _provider = _provider_getter() if _provider_getter else None
             _model_class = _model_getter() if _model_getter else None
+            _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
+            # B25-S5-1: when eager flag is set, await the build synchronously
+            # before computing _search_visible. This pays the build cost on
+            # the first turn (= once per session; subsequent turns see
+            # is_ready() True via SQLite cache) but eliminates the cold-start
+            # race where search_actions is hidden from the LLM on Turn 1.
+            if (
+                _eager_embedding_build
+                and _idx is not None
+                and _provider is not None
+                and _model_class
+                and not getattr(_idx, "is_ready", lambda: False)()
+            ):
+                await self._build_action_embedding_index_background(
+                    _idx, _provider, _model_class,
+                )
             if (
                 _idx is not None
                 and _model_class

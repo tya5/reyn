@@ -496,6 +496,7 @@ class ChatSession:
         sandbox_config: "SandboxConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
         embedding_config: "EmbeddingConfig | None" = None,
+        eager_embedding_build: bool = False,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -519,6 +520,11 @@ class ChatSession:
         # constructs an off-flag ActionRetrievalConfig so existing chat
         # behaviour is preserved when callers don't pass one.
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
+        # B25-S5-1 fix: when True, RouterLoop awaits the embedding index build
+        # synchronously on the first turn (= Turn 1 blocks for ~2-5s) so the
+        # search_actions wrapper is visible to the LLM from the very first
+        # call. Default False keeps the existing lazy background-build path.
+        self._eager_embedding_build = eager_embedding_build
         # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
         # EmbeddingProvider once per session when the operator has
         # configured ``action_retrieval.embedding_class``.  Both stay
@@ -825,6 +831,9 @@ class ChatSession:
                 self._sandbox_config.backend if self._sandbox_config is not None
                 else None
             ),
+            # B25-S5-1: thread eager-build flag so RouterLoop awaits build
+            # before computing _search_visible on the first turn.
+            eager_embedding_build=self._eager_embedding_build,
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.

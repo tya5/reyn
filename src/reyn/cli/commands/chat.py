@@ -75,6 +75,19 @@ def register(sub) -> None:
             "focus on daily use."
         ),
     )
+    # B25-S5-1: eager embedding-index build flag.
+    p.add_argument(
+        "--eager-embedding-build",
+        action="store_true",
+        default=False,
+        help=(
+            "Await the action embedding index build synchronously on the "
+            "first turn (pays ~2-5s once) so search_actions is visible to "
+            "the LLM from the very first call. Default lazy background "
+            "build leaves search_actions hidden until Turn 2. Recommended "
+            "for dogfood / scripted runs against fresh .reyn/ workspaces."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -204,6 +217,7 @@ def run(args: argparse.Namespace) -> None:
             sandbox_config=session_cfg.config.sandbox,
             action_retrieval_config=session_cfg.config.action_retrieval,
             embedding_config=session_cfg.config.embedding,
+            eager_embedding_build=getattr(args, "eager_embedding_build", False),
         )
         s.load_history()
         return s

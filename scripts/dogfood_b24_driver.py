@@ -82,10 +82,19 @@ SCENARIOS = {
 }
 
 
-def run_chat(prompt: str, trace_file: Path, cwd: Path, agent_name: str | None = None, timeout: int = 180) -> dict:
+def run_chat(
+    prompt: str,
+    trace_file: Path,
+    cwd: Path,
+    agent_name: str | None = None,
+    timeout: int = 180,
+    eager_embedding_build: bool = False,
+) -> dict:
     """Pipe a single user turn through `reyn chat --cui [<agent_name>]`."""
     env = {**os.environ, "REYN_LLM_TRACE_DUMP": str(trace_file)}
     cmd = ["reyn", "chat", "--cui"]
+    if eager_embedding_build:
+        cmd.append("--eager-embedding-build")
     if agent_name:
         cmd.append(agent_name)
     start = time.time()
@@ -262,7 +271,10 @@ def verdict_s1a(parse: dict) -> tuple[str, str]:
     if parallel_dispatch:
         # Parallel is accepted only if the reply surfaces the error/resolution.
         final_reply = parse.get("final_reply", "").lower()
-        error_surface_keywords = ["error", "エラー", "not found", "見つかり", "失敗", "could not", "unknown"]
+        error_surface_keywords = [
+            "error", "エラー", "not found", "見つかり", "失敗", "could not", "unknown",
+            "存在しません", "存在しない", "ありません",  # B24-S1A-1 keyword expansion
+        ]
         error_surfaced = any(kw in final_reply for kw in error_surface_keywords)
         if error_surfaced:
             return "verified", "parallel_dispatch_with_error_surface = verified (list+invoke same turn, error in reply)"
@@ -504,6 +516,13 @@ def main() -> int:
     ap.add_argument("--agent-name", default=None,
                     help="reyn agent name to attach to; auto-created if missing")
     ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--eager-embedding-build", action="store_true",
+                    default=False,
+                    help=(
+                        "Pass --eager-embedding-build to `reyn chat` so the "
+                        "action embedding index is built synchronously on "
+                        "Turn 1 (search_actions visible from the first call)."
+                    ))
     args = ap.parse_args()
 
     sc = SCENARIOS[args.scenario]
@@ -532,7 +551,14 @@ def main() -> int:
                 text=True,
             )
 
-    chat = run_chat(sc["prompt"], trace_file, cwd, agent_name=args.agent_name, timeout=args.timeout)
+    chat = run_chat(
+        sc["prompt"],
+        trace_file,
+        cwd,
+        agent_name=args.agent_name,
+        timeout=args.timeout,
+        eager_embedding_build=args.eager_embedding_build,
+    )
     parse = parse_trace(trace_file)
     events_root = cwd / ".reyn" / "events"
     events = grep_routing_decided(events_root)

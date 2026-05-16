@@ -219,11 +219,15 @@ _LIST_ACTIONS_DESCRIPTION = (
 # Assertive 4-part description used when hide_legacy_tools=True.
 # (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
 _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Browse the catalog of available actions in alphabetical order with "
-    "optional category filter and text filter, paginated. "
+    "WHAT: Browse the catalog of available actions in alphabetical order. "
+    "Two independent filters: `category=[...]` array (enum-restricted, "
+    "exact category match) and `filter='...'` string (free-text substring). "
     "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
+    "An empty items array means no actions match — report this honestly. "
     "WHEN: Use this FIRST when you do not know the exact action name — returns "
     "the authoritative catalog with qualified names ready for invoke_action. "
+    "For known-category filtering (e.g. 'exec', 'skill', 'memory.entry'), "
+    "ALWAYS pass `category=['exec']` array, NEVER `filter='exec'` string. "
     "WHEN NOT: If you already know the action name, skip this and call "
     "invoke_action directly. For semantic/natural-language search, use "
     "search_actions (when available) instead. "
@@ -232,7 +236,8 @@ _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "and describe_action expect. "
     "POST_CALL: After list_actions reveals at least one matching action, you "
     "MUST follow with describe_action or invoke_action. Do NOT reply directly "
-    "— silent stop after enumeration is a failure mode."
+    "— silent stop after enumeration is a failure mode. When items is empty, "
+    "honestly tell the user no matching actions are available."
 )
 
 
@@ -243,17 +248,20 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string", "enum": list(CATEGORIES)},
             "description": (
-                "One or more categories to enumerate. Omit or pass an "
-                "empty list to include all categories. Categories: "
-                + ", ".join(CATEGORIES)
-                + "."
+                "PREFERRED for category-based filtering. Pass an array of "
+                "category names (e.g. category=['exec'], category=['skill', "
+                "'file']). Do NOT pass a category name to the `filter` param "
+                "— use this array. Omit or pass [] to include all categories. "
+                "Categories: " + ", ".join(CATEGORIES) + "."
             ),
         },
         "filter": {
             "type": "string",
             "description": (
-                "Optional substring match (case-insensitive) against "
-                "qualified_name and short_description."
+                "Free-text substring match (case-insensitive) against "
+                "qualified_name and short_description. ONLY for free-text "
+                "keyword search across descriptions — do NOT pass category "
+                "names here (use `category=['name']` array instead)."
             ),
         },
         "offset": {

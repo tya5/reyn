@@ -174,6 +174,10 @@ class RouterHostAdapter:
         # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
         # hot_list_seed.  ChatSession passes its config; None → default.
         action_retrieval_config: Any = None,
+        # B25-S5-1: when True, RouterLoop awaits the action embedding index
+        # build synchronously on the first turn before computing the D14
+        # search_actions visibility gate. Off by default (= lazy bg build).
+        eager_embedding_build: bool = False,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -215,6 +219,8 @@ class RouterHostAdapter:
         self._universal_wrappers_enabled = universal_wrappers_enabled
         # FP-0034 Phase 2 prep
         self._hide_legacy_tools = hide_legacy_tools
+        # B25-S5-1
+        self._eager_embedding_build = eager_embedding_build
         # FP-0034 Phase 2 step 1
         self._action_embedding_index = action_embedding_index
         self._embedding_provider = embedding_provider
@@ -339,6 +345,19 @@ class RouterHostAdapter:
         ``embedding_model_class`` field on ``RouterCallerState``.
         """
         return self._embedding_model_class
+
+    def get_eager_embedding_build(self) -> bool:
+        """Return True if RouterLoop should await the action embedding
+        index build synchronously before computing the search_actions
+        visibility gate on the first turn.
+
+        B25-S5-1 fix for the cold-start race where ``is_ready()`` is False
+        on Turn 1 because the background build hasn't finished, hiding
+        ``search_actions`` from the LLM and inviting tool-name
+        hallucinations (= B24 dogfood evidence: 2/3 hallucinated calls).
+        Default False preserves the prior lazy background-build behavior.
+        """
+        return self._eager_embedding_build
 
     def get_hide_legacy_tools(self) -> bool:
         """Return whether legacy per-kind tools should be hidden from tools=.
