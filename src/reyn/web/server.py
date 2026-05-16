@@ -93,6 +93,11 @@ except ImportError:  # pragma: no cover — `[mcp]` extra not installed
 # impl as MCP (send_to_agent_impl), different wire protocol.
 app.include_router(_a2a_router.router)
 
+# A2A async task lifecycle registry: process-singleton attached to
+# app.state so that get_run_registry(request) can retrieve it.
+from reyn.web.run_registry import RunRegistry  # noqa: E402
+app.state.run_registry = RunRegistry()
+
 
 # ── WebSocket routes ────────────────────────────────────────────────────────
 

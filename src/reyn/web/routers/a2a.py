@@ -11,16 +11,21 @@ Sister to ``reyn.web.routers.mcp`` — same backing implementation
     Discovery happens via Agent Cards; conversation happens via
     JSON-RPC 2.0 ``message/send``.
 
-MVP surface (this PR):
+Surface (FP-0001 + MVP):
 
   - ``GET /a2a/agents`` — list all Reyn agents (server-level discovery).
   - ``GET /a2a/agents/{name}/.well-known/agent-card.json`` — A2A Agent
     Card per agent (the canonical discovery URL in the A2A spec).
   - ``POST /a2a/agents/{name}`` — JSON-RPC 2.0 endpoint per agent.
-    Method: ``message/send`` only (= synchronous, returns final reply
-    as an A2A Message). ``message/stream``, task lifecycle (``tasks/get``
-    / ``tasks/cancel``), push notifications, and authentication are
-    out of scope for v1 and tracked as follow-ups.
+    Method: ``message/send``. Three operating modes:
+    1. **Answer injection** (``params.task_id`` present): deliver an
+       answer to a pending ask_user intervention on a running async task.
+    2. **Async mode** (``params.async_mode=true`` OR ``params.webhook_url``
+       set): spawn a background task, return A2A Task envelope immediately.
+    3. **Synchronous** (default): return final reply as A2A Message.
+  - ``GET /a2a/tasks/{run_id}`` — poll async task status.
+  - ``POST /a2a/tasks/{run_id}/cancel`` — cancel a running task.
+  - ``GET /a2a/tasks/{run_id}/events`` — SSE stream of task history.
 
 P7: this module contains no skill-specific strings. Each Reyn agent's
 ``role`` text flows through opaquely into the Agent Card description;
@@ -31,6 +36,7 @@ Spec reference: https://google.github.io/A2A/
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -38,7 +44,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from reyn.mcp_server import DEFAULT_SEND_TIMEOUT_SECONDS, send_to_agent_impl
-from reyn.web.deps import get_registry
+from reyn.web.deps import get_registry, get_run_registry
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +93,9 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
       * ``name`` — the Reyn agent name (= addressable identity).
       * ``description`` — the agent's ``role`` text from profile.yaml.
       * ``url`` — the JSON-RPC endpoint to POST to.
-      * ``capabilities`` — what we DON'T support (= streaming etc.) is
-        reported as ``false`` so peers don't try.
+      * ``capabilities`` — streaming and pushNotifications are now True
+        (= FP-0001 adds async task lifecycle + SSE + webhook support).
+        ``stateTransitionHistory`` remains False (= no plans to implement).
       * ``skills`` — A2A's ``skill`` is an outward-facing capability,
         not Reyn's internal skill graph. We expose a single coarse-
         grained skill (``chat``) since each Reyn agent's actual
@@ -103,8 +110,8 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
         "version": _REYN_A2A_VERSION,
         "protocolVersion": _A2A_PROTOCOL_VERSION,
         "capabilities": {
-            "streaming": False,
-            "pushNotifications": False,
+            "streaming": True,
+            "pushNotifications": True,
             "stateTransitionHistory": False,
         },
         "defaultInputModes": ["text/plain"],
@@ -233,26 +240,28 @@ async def get_agent_card(
 
 @router.post("/a2a/agents/{agent_name}")
 async def a2a_jsonrpc(
-    agent_name: str, request: Request, registry=Depends(get_registry),
+    agent_name: str,
+    request: Request,
+    registry=Depends(get_registry),
+    run_registry=Depends(get_run_registry),
 ) -> dict:
     """JSON-RPC 2.0 endpoint for one Reyn agent.
 
-    Supported methods (MVP):
+    Supported method: ``message/send``. Three modes:
 
-      - ``message/send`` — submit a single user message, await the
-        agent's final reply, return as an A2A Message envelope.
+    1. **Answer injection** (``params.task_id`` present): deliver an
+       answer to a pending ask_user intervention on a running async task.
+       Returns ``{"task_id": ..., "answered": True/False}``.
 
-    Unsupported methods return JSON-RPC ``-32601 Method not found`` so a
-    peer can capability-fall-back gracefully. Streaming / task lifecycle
-    methods land here too (they're real method names in the A2A spec)
-    and so receive the same -32601 — peers should consult the Agent
-    Card's ``capabilities`` first, but a polite error is the next-best
-    thing.
+    2. **Async mode** (``params.async_mode=true`` OR ``params.webhook_url``
+       set): spawn a background task and return an A2A Task envelope
+       immediately. Poll ``GET /a2a/tasks/{run_id}`` for status.
 
-    JSON-RPC framing follows spec strictly: parse / shape errors get
-    pre-canonical error codes, business errors (unknown agent, etc.)
-    are reported via the ``error`` field rather than HTTP status, since
-    HTTP 200 with JSON-RPC error is the accepted convention.
+    3. **Synchronous** (default — existing behaviour): submit a user
+       message, await the agent's final reply, return as an A2A Message
+       envelope.
+
+    Unsupported methods return JSON-RPC ``-32601 Method not found``.
     """
     # Parse body. JSON parse errors are -32700; anything else short of a
     # well-formed envelope is -32600.
@@ -274,7 +283,9 @@ async def a2a_jsonrpc(
 
     # Route to handlers.
     if method == "message/send":
-        return await _handle_message_send(req_id, body.get("params") or {}, agent_name, registry)
+        return await _handle_message_send(
+            req_id, body.get("params") or {}, agent_name, registry, run_registry,
+        )
 
     return _jsonrpc_error(
         req_id,
@@ -284,13 +295,31 @@ async def a2a_jsonrpc(
 
 
 async def _handle_message_send(
-    req_id: Any, params: dict, agent_name: str, registry,
+    req_id: Any,
+    params: dict,
+    agent_name: str,
+    registry,
+    run_registry,
 ) -> dict:
-    """Backing for ``message/send``: extract text → send_to_agent_impl
-    → wrap reply as A2A Message."""
+    """Backing for ``message/send``.
+
+    Three modes (checked in priority order):
+
+    1. **Answer injection** — ``params.task_id`` non-empty: resolve a
+       pending ask_user on an existing async run.
+    2. **Async mode** — ``params.async_mode is True`` OR
+       ``params.webhook_url`` set: spawn background task, return Task.
+    3. **Synchronous** (default): blocking send, return Message.
+    """
     if not isinstance(params, dict):
         return _jsonrpc_error(req_id, _INVALID_PARAMS, "params must be an object")
 
+    # ── Mode 1: answer injection ──────────────────────────────────────────
+    task_id = params.get("task_id")
+    if task_id and isinstance(task_id, str):
+        return await _handle_answer_injection(req_id, task_id, params, run_registry)
+
+    # ── Shared: extract text from message parts ───────────────────────────
     message = params.get("message")
     if not isinstance(message, dict):
         return _jsonrpc_error(req_id, _INVALID_PARAMS, "params.message is required")
@@ -310,6 +339,15 @@ async def _handle_message_send(
             "(Non-text parts are not yet supported by this Reyn endpoint.)",
         )
 
+    # ── Mode 2: async mode ────────────────────────────────────────────────
+    async_mode = params.get("async_mode")
+    webhook_url = params.get("webhook_url") or None
+    if async_mode is True or webhook_url:
+        return await _handle_async_mode(
+            req_id, text, agent_name, registry, run_registry, webhook_url,
+        )
+
+    # ── Mode 3: synchronous (default) ────────────────────────────────────
     try:
         result = await send_to_agent_impl(
             registry,
@@ -330,6 +368,184 @@ async def _handle_message_send(
         partial=bool(result.get("partial", False)),
     )
     return _jsonrpc_result(req_id, reply_msg)
+
+
+async def _handle_answer_injection(
+    req_id: Any,
+    task_id: str,
+    params: dict,
+    run_registry,
+) -> dict:
+    """Deliver an answer to a pending ask_user intervention on an async task.
+
+    Extracts text from ``params.message.parts`` (same as normal send),
+    then calls ``run_registry.answer_intervention``.
+    """
+    from reyn.user_intervention import InterventionAnswer  # noqa: PLC0415
+
+    # Extract answer text from message parts (if provided).
+    message = params.get("message")
+    answer_text = ""
+    if isinstance(message, dict):
+        parts = message.get("parts") or []
+        if isinstance(parts, list):
+            answer_text = _extract_text_from_parts(parts)
+
+    answer = InterventionAnswer(text=answer_text)
+    delivered = run_registry.answer_intervention(task_id, answer)
+
+    if delivered:
+        result = {"task_id": task_id, "answered": True}
+    else:
+        entry = run_registry.get(task_id)
+        if entry is None:
+            reason = "not found"
+        else:
+            reason = "already answered or no pending intervention"
+        result = {"task_id": task_id, "answered": False, "reason": reason}
+
+    return _jsonrpc_result(req_id, result)
+
+
+async def _handle_async_mode(
+    req_id: Any,
+    text: str,
+    agent_name: str,
+    registry,
+    run_registry,
+    webhook_url: str | None,
+) -> dict:
+    """Spawn a background asyncio task and return an A2A Task envelope."""
+    from reyn.chat.session import _new_chain_id  # noqa: PLC0415
+    from reyn.web.a2a_intervention import A2AInterventionBus  # noqa: PLC0415
+
+    chain_id = _new_chain_id()
+    entry = run_registry.create(
+        agent_name=agent_name,
+        chain_id=chain_id,
+        webhook_url=webhook_url,
+    )
+    run_id = entry.run_id
+
+    bus = A2AInterventionBus(run_id, run_registry)
+
+    async def _run() -> None:
+        try:
+            result = await send_to_agent_impl(
+                registry,
+                agent_name=agent_name,
+                message=text,
+                timeout=DEFAULT_SEND_TIMEOUT_SECONDS,
+                intervention_override=bus,
+            )
+            run_registry.update(
+                run_id,
+                status="completed",
+                result=result.get("reply", ""),
+            )
+            if webhook_url:
+                from reyn.web.notifications import post_webhook  # noqa: PLC0415
+                await post_webhook(
+                    webhook_url,
+                    {
+                        "run_id": run_id,
+                        "status": "completed",
+                        "result": result.get("reply", ""),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("a2a async task %r raised", run_id)
+            run_registry.update(run_id, status="failed", error=str(exc))
+            if webhook_url:
+                from reyn.web.notifications import post_webhook  # noqa: PLC0415
+                await post_webhook(
+                    webhook_url,
+                    {"run_id": run_id, "status": "failed", "error": str(exc)},
+                )
+
+    task = asyncio.create_task(_run())
+    run_registry.attach_task(run_id, task)
+
+    return _jsonrpc_result(
+        req_id,
+        {
+            "kind": "task",
+            "id": run_id,
+            "status": "running",
+            "agent_name": agent_name,
+        },
+    )
+
+
+# ── GET /a2a/tasks/{run_id} — poll task status ───────────────────────────────
+
+
+@router.get("/a2a/tasks/{run_id}")
+async def get_task(
+    run_id: str,
+    run_registry=Depends(get_run_registry),
+) -> dict:
+    """Poll a task's status. Returns RunEntry.to_public_dict()."""
+    entry = run_registry.get(run_id)
+    if entry is None:
+        raise HTTPException(404, f"Task {run_id!r} not found")
+    return entry.to_public_dict()
+
+
+# ── POST /a2a/tasks/{run_id}/cancel — cancel a running task ─────────────────
+
+
+@router.post("/a2a/tasks/{run_id}/cancel")
+async def cancel_task(
+    run_id: str,
+    run_registry=Depends(get_run_registry),
+) -> dict:
+    """Cancel a running task. Idempotent for already-terminal tasks."""
+    if not run_registry.cancel(run_id):
+        raise HTTPException(404, f"Task {run_id!r} not found")
+    entry = run_registry.get(run_id)
+    return entry.to_public_dict() if entry else {"run_id": run_id, "status": "cancelled"}
+
+
+# ── GET /a2a/tasks/{run_id}/events — SSE stream ──────────────────────────────
+
+
+@router.get("/a2a/tasks/{run_id}/events")
+async def stream_task_events(
+    run_id: str,
+    run_registry=Depends(get_run_registry),
+):
+    """SSE stream of the task's history_events.
+
+    Replays already-buffered events on connect; then polls for new
+    events every 0.5s until the task reaches a terminal status
+    (completed / failed / cancelled). Returns FastAPI StreamingResponse
+    with media_type='text/event-stream'.
+    """
+    import json  # noqa: PLC0415
+
+    from fastapi.responses import StreamingResponse  # noqa: PLC0415
+
+    async def gen():
+        if run_registry.get(run_id) is None:
+            yield 'event: error\ndata: {"error": "not_found"}\n\n'
+            return
+        seen = 0
+        terminal = {"completed", "failed", "cancelled"}
+        while True:
+            entry = run_registry.get(run_id)
+            if entry is None:
+                yield 'event: error\ndata: {"error": "gone"}\n\n'
+                return
+            for ev in entry.history_events[seen:]:
+                yield f"data: {json.dumps(ev)}\n\n"
+            seen = len(entry.history_events)
+            if entry.status in terminal:
+                yield f"event: end\ndata: {json.dumps(entry.to_public_dict())}\n\n"
+                return
+            await asyncio.sleep(0.5)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 __all__ = ["router"]

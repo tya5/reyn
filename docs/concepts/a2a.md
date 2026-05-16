@@ -87,6 +87,90 @@ For Reyn this is mostly a wire-format choice; the underlying engine
 is the same. Pick MCP when the outer system is an LLM with tool
 calling. Pick A2A when the outer system is itself an agent.
 
+## Task lifecycle and async execution (FP-0001)
+
+A2A peers can now interact with skills that emit `ask_user` mid-execution.
+Earlier versions could only run synchronously — `message/send` returned
+either a finished reply or a timeout placeholder, with no path to inject
+a mid-run answer.
+
+### Async mode
+
+Submit a request with `params.async_mode: true` (or with a `params.webhook_url`
+set) to spawn a background task instead of waiting synchronously:
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1, "method": "message/send",
+  "params": {
+    "message": {"parts": [{"kind": "text", "text": "review the PR"}]},
+    "async_mode": true
+  }
+}
+```
+
+Response (= A2A Task envelope):
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1,
+  "result": {"kind": "task", "id": "<run_id>", "status": "running", "agent_name": "..."}
+}
+```
+
+### Polling
+
+`GET /a2a/tasks/{run_id}` returns the current state:
+
+```json
+{"run_id": "...", "status": "running" | "input-required" | "completed" | "failed" | "cancelled",
+ "question": "...", "result": "...", "error": "..."}
+```
+
+### Mid-run ask_user
+
+When the running skill fires `ask_user`, the task transitions to
+`input-required` and the prompt text is exposed as `question`. To answer:
+
+```json
+{
+  "jsonrpc": "2.0", "id": 2, "method": "message/send",
+  "params": {
+    "task_id": "<run_id>",
+    "message": {"parts": [{"kind": "text", "text": "yes proceed"}]}
+  }
+}
+```
+
+The skill resumes; subsequent polls show `status: "running"` again, or
+the next `input-required`, until terminal.
+
+### SSE streaming
+
+`GET /a2a/tasks/{run_id}/events` returns a `text/event-stream` of the
+task's emitted events. Closes when the task reaches a terminal status.
+
+### Push notifications
+
+If `params.webhook_url` is set on the initial `message/send`, Reyn POSTs
+JSON payloads to the URL on each status transition (`running` →
+`input-required` → `running` → `completed`/`failed`/`cancelled`).
+Errors talking to the webhook are logged, not raised — the task
+progresses regardless.
+
+### Cancellation
+
+`POST /a2a/tasks/{run_id}/cancel` cancels the underlying asyncio.Task.
+Idempotent for tasks already in terminal status.
+
+### Agent Card capabilities
+
+The Agent Card now advertises:
+
+```json
+{"capabilities": {"streaming": true, "pushNotifications": true, "stateTransitionHistory": false}}
+```
+
 ## See also
 
 - [MCP integration](mcp.md) — the symmetric case

@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
+    from reyn.user_intervention import InterventionBus
 
 
 # Default time the server blocks waiting for the agent to finish a turn
@@ -169,6 +170,7 @@ async def send_to_agent_impl(
     agent_name: str,
     message: str,
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
+    intervention_override: "InterventionBus | None" = None,
 ) -> dict:
     """Backing implementation of the ``send_to_agent`` tool.
 
@@ -208,13 +210,19 @@ async def send_to_agent_impl(
     async with _get_agent_lock(agent_name):
         baseline = len(session.history)
         bus = MessageBus()
-        replies = await bus.request(
-            session,
-            kind="user",
-            payload={"text": message, "chain_id": chain_id},
-            reply_to=McpRef(request_id=req_id),
-            timeout=timeout,
-        )
+        if intervention_override is not None:
+            session.register_intervention_override(chain_id, intervention_override)
+        try:
+            replies = await bus.request(
+                session,
+                kind="user",
+                payload={"text": message, "chain_id": chain_id},
+                reply_to=McpRef(request_id=req_id),
+                timeout=timeout,
+            )
+        finally:
+            if intervention_override is not None:
+                session.unregister_intervention_override(chain_id)
         new_replies = _new_agent_history_entries(
             session, baseline, chain_id=chain_id,
         )

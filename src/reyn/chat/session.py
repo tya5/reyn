@@ -884,6 +884,12 @@ class ChatSession:
         # Hybrid design (案 C): A2AHandler owns agent-side logic; transport-side
         # routing handled by FP-0013 RoutingLayer via send_request_callback /
         # send_response_callback injection.
+        # FP-0001: chain_id-scoped intervention bus overrides.
+        # Allows A2A async-mode tasks to redirect ask_user prompts to
+        # their RunRegistry-backed A2AInterventionBus while the agent's
+        # default ChatInterventionBus continues to serve chat-mode interactions.
+        self._intervention_overrides: dict[str, "InterventionBus"] = {}
+
         self._a2a_handler = A2AHandler(
             event_log=self._chat_events,
             chain_manager=self._chains,
@@ -1741,6 +1747,16 @@ class ChatSession:
         """Thin wrapper → InterventionHandler.announce."""
         await self._intervention_handler.announce(iv)
 
+    def register_intervention_override(self, chain_id: str, bus: "InterventionBus") -> None:
+        """Register an InterventionBus for ask_user prompts emitted by
+        skills spawned under this chain_id. Caller must pair with
+        unregister_intervention_override in a try/finally."""
+        self._intervention_overrides[chain_id] = bus
+
+    def unregister_intervention_override(self, chain_id: str) -> None:
+        """Remove an override. Idempotent."""
+        self._intervention_overrides.pop(chain_id, None)
+
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
         """Thin wrapper → InterventionHandler.dispatch.
 
@@ -1748,6 +1764,14 @@ class ChatSession:
         _ask_budget_extension all call this method directly; keeping it
         as a session-level entry keeps those call sites stable.
         """
+        # FP-0001: chain_id-scoped override path (A2A async tasks).
+        if iv.run_id is not None and self._intervention_overrides:
+            chain_id = self.running_skills_chain.get(iv.run_id)
+            if chain_id is not None:
+                override = self._intervention_overrides.get(chain_id)
+                if override is not None:
+                    return await override.request(iv)
+        # Default: route through the regular InterventionHandler.
         return await self._intervention_handler.dispatch(iv)
 
     async def _ask_budget_extension(
