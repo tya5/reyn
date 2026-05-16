@@ -28,7 +28,6 @@ from typing import Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 
-
 _MCP_DROP_SERVER_DESCRIPTION = (
     "Remove a configured MCP server. "
     "Counter-op to mcp_install — deletes the server entry from "

@@ -229,7 +229,10 @@ _LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "search_actions (when available) instead. "
     "PREFERRED OVER: Guessing action names — list_actions returns the "
     "canonical qualified names (e.g. skill__code_review) that invoke_action "
-    "and describe_action expect."
+    "and describe_action expect. "
+    "POST_CALL: After list_actions reveals at least one matching action, you "
+    "MUST follow with describe_action or invoke_action. Do NOT reply directly "
+    "— silent stop after enumeration is a failure mode."
 )
 
 
@@ -286,6 +289,7 @@ _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "Returns {items: [{qualified_name, short_description, score}, ...]}. "
     "WHEN: Use this when you have a natural-language description of what you "
     "need and want the closest matching actions by meaning, not by name. "
+    "Multilingual — works in any language (Japanese, English, etc.). "
     "Should be called whenever the task intent is clear but the exact action "
     "name is unknown. "
     "WHEN NOT: If the action name is already known, call invoke_action directly. "
@@ -293,7 +297,10 @@ _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "Available only when an embedding class is configured (reyn.yaml "
     "action_retrieval.embedding_class). "
     "PREFERRED OVER: list_actions — when query is a semantic description rather "
-    "than a category or substring."
+    "than a category or substring. "
+    "POST_CALL: After search_actions reveals at least one matching action, you "
+    "MUST follow with describe_action or invoke_action. Do NOT reply directly "
+    "— silent stop after semantic search is a failure mode."
 )
 
 
@@ -339,7 +346,9 @@ _DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY = (
     "the action takes no args), skip this and call invoke_action directly. "
     "PREFERRED OVER: Guessing argument names — describe_action returns the "
     "authoritative input_schema. On unknown action_name, returns an error "
-    "with similar-name suggestions."
+    "with similar-name suggestions. "
+    "POST_CALL: After describe_action, you MUST follow with invoke_action or "
+    "explain in text why not. Never stop silently after investigation."
 )
 
 
@@ -372,19 +381,43 @@ _INVOKE_ACTION_DESCRIPTION = (
 # Assertive 4-part description used when hide_legacy_tools=True.
 # (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
 _INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY = (
-    "WHAT: Invoke an action or resource using its canonical qualified name "
-    "and optional args. Executes the action's default semantic operation. "
-    "WHEN: Use this to execute any action whose name you know — skills, "
-    "MCP tools, RAG corpora, file ops, web ops, memory ops, agent delegation. "
-    "Should be called whenever a user task maps to a known action. "
-    "Examples: invoke_action(action_name='skill__code_review', args={...}), "
-    "invoke_action(action_name='rag.corpus__meetings', args={'query': '...'}) "
-    "runs recall against that single source. "
-    "WHEN NOT: If the action name is unknown, call list_actions or search_actions "
-    "first. If the input schema is unclear, call describe_action first. "
+    "WHAT: Execute an action by qualified name (<category>__<entry>). "
+    "Executes the action's default semantic operation. "
+    "WHEN: Call this whenever you intend to run any action — skill, MCP tool, "
+    "file operation, web search, memory write, recall, etc. All catalog actions "
+    "are invoked through this single entry point. "
+    "WHEN NOT: For chitchat or self-questions, reply without tools. "
     "PREFERRED OVER: Legacy per-kind tools (invoke_skill, call_mcp_tool, etc.) — "
-    "invoke_action covers all 13 action categories uniformly. On unknown "
-    "action_name, returns an error with similar-name suggestions."
+    "invoke_action covers all 13 action categories uniformly. "
+    "On unknown action_name, returns an error with similar-name suggestions. "
+    ""
+    "SPAWN-ACK HANDLING (when result is {status:'spawned', chain_id, run_id, note}): "
+    "the action is running in the background. "
+    "Priority 1 (non-negotiable): Your reply MUST include `/tasks` — the user's "
+    "only way to track in-flight work. Omitting `/tasks` is a hard failure. "
+    "Priority 2: Keep reply to 1-2 sentences. MUST NOT pre-fill information "
+    "the action will produce — the envelope carries no results, names, URLs, or "
+    "scores. Such content is fabrication by construction (the action has not executed). "
+    "Priority 3: Do NOT call invoke_action again for the same request. "
+    "Priority 4: Do NOT ask follow-up questions while running; wait for "
+    "[task_completed] message. "
+    ""
+    "TASK_COMPLETED HANDLING (user message starting with [task_completed]): "
+    "read status + result fields, narrate in 1-2 sentences. Extract user-"
+    "relevant fields, do not echo raw JSON. "
+    "- 'finished' — confirm completion; hint at next step if applicable. "
+    "- 'loop_limit_exceeded' — say budget exhausted; suggest raising "
+    "safety.loop.max_phase_visits. "
+    "- 'error' / non-'finished' / result.error present — MUST surface "
+    "the error verbatim. Do NOT narrate as success. Quote in user-friendly "
+    "form (translate to output_language if set, keep failure signal explicit), "
+    "suggest the most likely fix. "
+    ""
+    "AGENT DELEGATION: For peer agent delegation, use "
+    "action_name='agent.peer__<agent_name>' with args={'message': <user_query>}. "
+    "Use when task is outside available actions but matches a peer agent's role, "
+    "or when user explicitly addresses a named agent. "
+    "Acknowledge delegation in 1 sentence."
 )
 
 

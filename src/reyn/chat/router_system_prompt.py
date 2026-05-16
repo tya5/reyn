@@ -121,24 +121,17 @@ def build_system_prompt(
         parts.append(
             "# Identity"
             "\n\n"
-            "You are a Reyn agent. Reyn is an open-source LLM workflow "
-            "runtime — phase graphs, schema-validated outputs, per-skill "
-            "permission scopes. For details on how Reyn works, call "
-            "invoke_action(action_name=\"reyn.source__read\", "
-            "args={\"path\": \"README.md\"}) — or "
-            "invoke_action(action_name=\"rag.operation__recall\", ...) "
-            "against an indexed source if one covers Reyn's docs."
+            "You are a Reyn agent (open-source LLM workflow OS). "
+            "For details: invoke_action(action_name=\"reyn.source__read\", "
+            "args={\"path\": \"README.md\"})."
             "\n\n"
             "**Identity rules (always apply):**"
             "\n"
-            "- You ARE a Reyn agent. Lead self-descriptions with \"I am a "
-            "Reyn agent\"."
+            "- Lead self-descriptions with \"I am a Reyn agent\"."
             "\n"
-            "- You MUST NOT identify yourself as a model from Google, "
-            "OpenAI, Anthropic, or any other LLM vendor."
+            "- MUST NOT identify as Google, OpenAI, Anthropic, or any LLM vendor."
             "\n"
-            "- You MUST NOT begin a self-description with \"I am a large "
-            "language model\"."
+            "- MUST NOT begin with \"I am a large language model\"."
         )
     else:
         parts.append(
@@ -221,19 +214,11 @@ def build_system_prompt(
         # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
         # is binary Action / Reply.
         parts.extend([
-            "You have 4 universal wrappers for actions:",
-            "- list_actions(category=[...]) — browse the catalog",
-            "- search_actions(query=...) — semantic search (when embedding configured)",
-            "- describe_action(action_name=...) — get input schema",
-            "- invoke_action(action_name=..., args={...}) — execute",
+            "4 universal wrappers: list_actions / search_actions / describe_action"
+            " / invoke_action. Frequent actions also appear as direct aliases in"
+            " tools list — call them directly when you know the exact qualified name.",
             "",
-            "Frequent actions appear as direct alias shortcuts in your tools list",
-            "(qualified names like skill__code_review, web__search). Call them",
-            "directly when you know the exact name.",
-            "",
-            "For chitchat or self-questions, reply without tools. When asked what",
-            'you can do, answer in plain terms ("I can run skills, search your',
-            'documents, remember things") — do NOT enumerate tool names or labels.',
+            "For chitchat or self-questions, reply without tools.",
             "",
         ])
     else:
@@ -360,11 +345,12 @@ def build_system_prompt(
             "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
         )
         parts.append("")
-        parts.append(
-            "Unknown action_name returns an error with suggestions — "
-            "use list_actions(category=[...]) to discover the correct name."
-        )
-        parts.append("")
+        if not hide_legacy_tools:
+            parts.append(
+                "Unknown action_name returns an error with suggestions — "
+                "use list_actions(category=[...]) to discover the correct name."
+            )
+            parts.append("")
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
@@ -384,12 +370,22 @@ def build_system_prompt(
     #       examples from Change 5)
     parts.append("## Behaviour")
     if hide_legacy_tools:
-        # Wrapper-only: 2-axis (Action / Reply). Memory access / Save /
-        # Forget collapsed into Action via memory.* qualified names.
-        # The "Reply directly only for chitchat..." bullet below already
-        # encodes the Action vs Reply split, so no separate intent rule
-        # is needed (consolidation from the legacy 5-axis pattern).
-        pass
+        # Wrapper-only: 5 cross-cutting policies (B23-PRE-1 confirmed policy).
+        # Per-tool flow details (post-list MUST, post-describe MUST, spawn-ack,
+        # task_completed, agent delegation, plan WHAT/WHEN_NOT) live in each
+        # tool's description — Anthropic 1-tool-1-purpose pattern.
+        # Policies 1-5 are encoded here as SP cross-cutting rules that apply
+        # regardless of which tool was most recently called.
+        parts.extend([
+            # Policy 1: 3-way intent routing (Action / Plan / Reply)
+            "  - Domain task → invoke_action (single tool) OR plan (multi-source"
+            " synthesis). Chitchat → Reply.",
+            # Policy 2: plan routing signal (multi-source)
+            "  - Use plan when the query combines info from multiple independent"
+            " sources (e.g. \"compare A and B from two docs\", \"explain X with"
+            " code refs from N files\", \"summarise across these sources\")."
+            " Use invoke_action for single-tool tasks.",
+        ])
     else:
         parts.append(
             "  - First decide intent (Action / Memory access / Save / Forget / Reply),"
@@ -418,33 +414,14 @@ def build_system_prompt(
     #   3. Tighten Reply restriction: "clarifications back to the user" is permitted ONLY
     #      when no skill name from the Available skills list appears in the user message.
     #
-    # Bullet 1 (F3+F9 — chitchat restriction, domain → Action):
-    parts.append(
-        "  - Reply directly only for chitchat and questions about yourself."
-    )
-    if hide_legacy_tools:
-        # Wrapper-only path: name vocabulary is action_name (= qualified
-        # name like "skill__code_review"), not skill name. Mitigations
-        # preserved (B11-R3 direct-invoke + B3-H1 post-list MUST +
-        # B2-H1 post-describe MUST) — re-encoded with wrapper verbs.
-        # Memory access / list_memory rules collapse into invoke_action
-        # paths (memory.entry / memory.operation categories); no separate
-        # bullet — the Action route covers it via list_actions / invoke_action.
-        parts.extend([
-            "    Domain tasks → Action. Do NOT ask clarifying questions if the user",
-            "    message contains an action name (= valid invoke_action action_name,",
-            "    e.g. skill__code_review).",
-            "  - If the user names an action (= matches a known action_name),",
-            "    call invoke_action directly (skip list_actions). Any other entities",
-            "    in the user message are inputs to the action, NOT reasons to clarify.",
-            "  - If the user describes a domain task without naming an action,",
-            "    call list_actions(category=[...]) first to discover, then invoke_action.",
-            "  - After list_actions reveals at least one matching action, you MUST",
-            "    call describe_action or invoke_action. Do NOT reply directly.",
-            "  - After describe_action, you MUST call invoke_action or explain in text",
-            "    why not; never stop silently after investigation.",
-        ])
-    else:
+    # B23-PRE-1 SP role-separation: wrapper-only path emits only the 5 cross-
+    # cutting policies. Per-tool routing bullets (post-list MUST, post-describe
+    # MUST, direct-invoke hint, memory-access rule) moved to tool descriptions.
+    if not hide_legacy_tools:
+        # Bullet 1 (F3+F9 — chitchat restriction, domain → Action):
+        parts.append(
+            "  - Reply directly only for chitchat and questions about yourself."
+        )
         parts.append(
             "    Domain tasks → Action. Do NOT ask clarifying questions if the user"
         )
@@ -520,42 +497,19 @@ def build_system_prompt(
     #     the spawn-ack carries no skill output, so any field that would come
     #     from the skill's result is by definition fabricated if the LLM emits
     #     it now.
+    #
+    # B23-PRE-1 SP role-separation: spawn-ack Priority 1-4 block and
+    # task_completed narration have been moved to invoke_action.description
+    # (SPAWN-ACK HANDLING / TASK_COMPLETED HANDLING sections) per Anthropic
+    # 1-tool-1-purpose pattern. The SP Behaviour cross-cutting policy for
+    # errors survives as policy 5 ("Errors must surface verbatim").
     if hide_legacy_tools:
-        # Spawn-ack rules — wrapper vocab ("the action" / invoke_action).
-        # FP-0011 / FP-0012 attractor mitigations (/tasks MUST, anti-
-        # fabrication, anti-optimism, Optimism bias verbatim) preserved.
+        # Wrapper-only: spawn-ack / task_completed live in invoke_action.description.
+        # Only the cross-cutting errors policy remains (= Behaviour policy 5).
         parts.extend([
-            "  - When invoke_action returns {status: \"spawned\", chain_id, run_id, note}:",
-            "    the action is running in the background.",
-            "",
-            "    Priority 1 (non-negotiable): Your reply MUST include `/tasks` as the",
-            "      user's way to check progress. This is non-negotiable — the user has no",
-            "      other way to track in-flight tasks. Omitting `/tasks` from the",
-            "      spawn-ack reply is a hard failure.",
-            "    Priority 2: Keep your reply to 1–2 sentences. You MUST NOT pre-fill",
-            "      the user with information the action is supposed to produce.",
-            "      The spawn-ack envelope carries ONLY {status, run_id, chain_id, note} —",
-            "      no results, no names, no URLs, no scores, no fields from the action's",
-            "      output schema. Any such content in the spawn-ack reply is",
-            "      fabrication by construction (the action has not executed).",
-            "    Priority 3: Do NOT call invoke_action again for the same request (it's already",
-            "      running).",
-            "    Priority 4: Do NOT ask follow-up questions while the action is running;",
-            "      wait for the [task_completed] message.",
-            "",
-            "  - When you see a user message starting with [task_completed]: a",
-            "    background action finished. Read the `status` and `result` fields",
-            "    from that message and narrate in 1-2 sentences. Extract the",
-            "    user-relevant fields — do not echo the raw JSON. Status guidance:",
-            '      * "finished"             — confirm completion; if applicable, hint at the next step.',
-            '      * "loop_limit_exceeded"  — say the action ran out of phase budget; suggest re-running',
-            "        with higher safety.loop.max_phase_visits.",
-            '      * "error" / any non-"finished" status, OR result.error is present —',
-            "        your reply MUST surface the specific error verbatim. Do NOT",
-            "        narrate as success. Quote the error message in user-friendly",
-            "        form (translate to output_language if set, but keep the failure",
-            "        signal explicit) and suggest the most likely fix. Optimism bias",
-            "        on errors is the single largest router-narration failure mode.",
+            "  - Errors MUST surface verbatim. Never narrate an error as success.",
+            "    Optimism bias on errors is the single largest router-narration"
+            " failure mode.",
         ])
     else:
         parts.append(
@@ -646,26 +600,12 @@ def build_system_prompt(
     # Vendor prompt-writing guides (Anthropic, OpenAI) advise placing usage
     # guidance in the SP, not only in the tool schema. Added here alongside
     # the invoke_skill rules so delegation has the same structural support.
+    #
+    # B23-PRE-1 SP role-separation: ## Agent delegation subsection moved to
+    # invoke_action.description (AGENT DELEGATION section). Legacy path
+    # preserved byte-identical.
     parts.append("")
-    if hide_legacy_tools:
-        # Wrapper-only path: delegate_to_agent is not in tools=. Peer-agent
-        # delegation routes through invoke_action with the agent.peer
-        # category — the message field is the canonical default arg.
-        parts.extend([
-            "  ## Agent delegation",
-            "",
-            "  When a user task requires a peer agent (not handled by an action):",
-            '    call invoke_action(action_name="agent.peer__<agent_name>",',
-            '                       args={"message": <user_query>})',
-            "",
-            "  Use this when:",
-            "    - The task is outside available actions but matches a peer agent's role",
-            "    - The user explicitly addresses a named agent",
-            "",
-            "  Do NOT delegate tasks already covered by available actions.",
-            "  Acknowledge the delegation in 1 sentence.",
-        ])
-    else:
+    if not hide_legacy_tools:
         parts.append("  ## Agent delegation")
         parts.append("")
         parts.append("  When a user task requires a peer agent (not a skill):")
@@ -689,39 +629,40 @@ def build_system_prompt(
     # plan tool previously relied solely on its schema description for when-to-use
     # guidance. No Behaviour rule reinforced or constrained this, unlike
     # invoke_skill and delegate_to_agent. Added here for parity.
+    #
+    # B23-PRE-1 SP role-separation: ## Plan decomposition subsection (detail)
+    # moved to plan.description. The 2-line intent routing already in the
+    # wrapper-only Behaviour header (Action/Plan/Reply 3-way) is the SP
+    # cross-cutting policy — sufficient. Legacy path preserved byte-identical.
     parts.append("")
-    parts.append("  ## Plan decomposition")
-    parts.append("")
-    parts.append(
-        "  Use the `plan` tool when the query requires combining information from"
-    )
-    parts.append(
-        "  multiple independent sources (e.g. \"compare A and B from two docs\","
-    )
-    parts.append(
-        "  \"explain X with code references from N files\", \"summarise across these"
-    )
-    parts.append(
-        "  sources\"). Each step should gather one piece of information; the OS"
-    )
-    parts.append("  synthesises the final reply.")
-    parts.append("")
-    parts.append("  Do NOT use `plan` for:")
-    parts.append("    - Single-tool lookups or single-source narrations")
-    parts.append("    - Chitchat or conversational replies")
     if hide_legacy_tools:
+        # Wrapper-only: plan intent routing already encoded in the 3-way
+        # header lines above ("Domain task → invoke_action OR plan ...").
+        # Also add "never invent action names" (= cross-cutting policy 3).
         parts.extend([
-            "    - Queries that invoke_action handles end-to-end",
-            "    - Queries answerable in one router reply without tools",
-            "",
-            "  - Use parallel tool_calls when discovery / fetches are independent.",
-            "  - For sequential dependencies, one tool_call per round.",
             "  - Never invent action names; only use those returned by",
             "    list_actions or search_actions.",
-            '  - Memory writes (Save) via invoke_action(action_name="memory.operation__remember_shared", ...).',
-            '    Triggers: "remember", "覚えて", "save", "from now on", "treat as".',
         ])
     else:
+        parts.append("  ## Plan decomposition")
+        parts.append("")
+        parts.append(
+            "  Use the `plan` tool when the query requires combining information from"
+        )
+        parts.append(
+            "  multiple independent sources (e.g. \"compare A and B from two docs\","
+        )
+        parts.append(
+            "  \"explain X with code references from N files\", \"summarise across these"
+        )
+        parts.append(
+            "  sources\"). Each step should gather one piece of information; the OS"
+        )
+        parts.append("  synthesises the final reply.")
+        parts.append("")
+        parts.append("  Do NOT use `plan` for:")
+        parts.append("    - Single-tool lookups or single-source narrations")
+        parts.append("    - Chitchat or conversational replies")
         parts.append("    - Queries that invoke_skill handles end-to-end")
         parts.append("    - Queries answerable in one router reply without tools")
         parts.append("")
@@ -749,15 +690,13 @@ def build_system_prompt(
     # P7 compliance: examples use <skill_name> placeholder, not hardcoded names.
     parts.append("")
     if hide_legacy_tools:
-        # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab.
+        # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
+        # JA examples dropped — per B23-PRE-1 SP simplification policy).
         # P7-compliant placeholder: <action_name> (= qualified name format).
         parts.extend([
-            "  ROUTING RULE (ABSOLUTE): When the user message contains an action",
-            "  name (= valid invoke_action action_name, e.g. skill__code_review),",
-            "  call invoke_action immediately. NO clarifying questions. NO text replies.",
-            "  Examples:",
-            "    「<action_name> で <target> を review して」 → invoke_action(action_name=<action_name>, args={...})",
-            "    「<action_name> で <X> を作って」 → invoke_action(action_name=<action_name>, args={...})",
+            "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
+            " name (= valid invoke_action action_name, e.g. skill__code_review),"
+            " call invoke_action immediately. NO clarifying questions. NO text replies.",
             "",
         ])
     else:
@@ -848,20 +787,20 @@ def build_system_prompt(
         parts.append("")
 
     # ── 9. Memory ────────────────────────────────────────────────────────────
+    # B23-PRE-1 SP role-separation: ## Memory inline section is dropped in the
+    # wrapper-only path. Memory discovery goes through
+    # list_actions(category=['memory.entry']) at runtime.
     if hide_legacy_tools:
-        parts.append(
-            "## Memory (entries inlined — answer recall queries from these "
-            "descriptions; use invoke_action(action_name=\"memory.entry__<name>\") "
-            "to read full content if vague)"
-        )
+        # Wrapper-only: Memory section omitted — list_actions discovers entries.
+        pass
     else:
         parts.append(
             "## Memory (entries inlined — answer recall queries from these "
             "descriptions; use read_memory_body for full content if vague)"
         )
-    for line in memory_section:
-        parts.append(f"  {line}")
-    parts.append("")
+        for line in memory_section:
+            parts.append(f"  {line}")
+        parts.append("")
 
     # ── 10. Indexed sources (ADR-0033 UX gap fix A) ──────────────────────────
     # Injected verbatim from SourceManifest.format_for_prompt() which already
@@ -869,19 +808,25 @@ def build_system_prompt(
     # Placed after Memory (conceptually similar recall stores) and before
     # Files / MCP (distinct resource axes). When None, the section is omitted
     # entirely for backward compat (tests + non-chat paths).
-    if indexed_sources_section is not None:
+    # B23-PRE-1 SP role-separation: ## Indexed sources omitted in wrapper-only
+    # path — list_actions(category=['rag.corpus']) discovers at runtime.
+    if not hide_legacy_tools and indexed_sources_section is not None:
         parts.append(indexed_sources_section)
         parts.append("")
 
     # ── 11. Files ────────────────────────────────────────────────────────────
-    if file_section:
+    # B23-PRE-1 SP role-separation: ## Files section omitted in wrapper-only
+    # path — permission scope communicated via file.* category at runtime.
+    if not hide_legacy_tools and file_section:
         parts.append("## Files (resource axis — permission-scoped)")
         for line in file_section:
             parts.append(f"  {line}")
         parts.append("")
 
     # ── 12. MCP servers and tools ────────────────────────────────────────────
-    if mcp_section:
+    # B23-PRE-1 SP role-separation: ## MCP servers section omitted in wrapper-
+    # only path — list_actions(category=['mcp.server','mcp.tool']) discovers.
+    if not hide_legacy_tools and mcp_section:
         parts.append("## MCP servers and tools (resource axis)")
         for line in mcp_section:
             parts.append(f"  {line}")
@@ -916,56 +861,45 @@ def build_system_prompt(
     # These rules are only relevant when RAG (indexed sources) is wired up.
     # Without indexed_sources_section, the `recall` tool is not available and
     # the disambiguation rules would reference a non-existent section.
-    if indexed_sources_section is not None:
-        if hide_legacy_tools:
-            parts.extend([
-                "  - The word 'recall' in user input refers to invoke_action(",
-                "    action_name=\"rag.operation__recall\", ...) (= indexed",
-                "    document search). Do NOT map it to memory.entry / memory.operation",
-                "    actions. For memory retrieval, the intent label is",
-                "    'Memory access', not 'Recall'.",
-                "  - When user asks about 'data sources', 'available information',",
-                "    or 'what can I search', list BOTH memory entries (Memory section)",
-                "    AND indexed sources (Indexed sources section). They are different",
-                "    storage layers. Do NOT report only memory as 'your data sources'.",
-                "  - When user says 'search', 'find in docs', 'lookup', use",
-                "    invoke_action(action_name=\"rag.operation__recall\", ...) to",
-                "    query indexed sources. Do NOT use memory.* actions for these queries.",
-            ])
-        else:
-            parts.append(
-                "  - The word 'recall' in user input refers to the `recall` tool"
-            )
-            parts.append(
-                "    (= indexed document search). Do NOT map it to list_memory or"
-            )
-            parts.append(
-                "    read_memory_body. For memory retrieval, the intent label is"
-            )
-            parts.append(
-                "    'Memory access', not 'Recall'."
-            )
-            parts.append(
-                "  - When user asks about 'data sources', 'available information',"
-            )
-            parts.append(
-                "    or 'what can I search', list BOTH memory entries (Memory section)"
-            )
-            parts.append(
-                "    AND indexed sources (Indexed sources section). They are different"
-            )
-            parts.append(
-                "    storage layers. Do NOT report only memory as 'your data sources'."
-            )
-            parts.append(
-                "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
-            )
-            parts.append(
-                "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
-            )
-            parts.append(
-                "    for these queries."
-            )
+    #
+    # B23-PRE-1 SP role-separation: the dynamic disambiguation block
+    # (recall/data sources rules + JA table) is moved to per-tool
+    # descriptions (rag.operation__recall.description, remember_shared
+    # .description). Wrapper-only path skips it entirely.
+    if not hide_legacy_tools and indexed_sources_section is not None:
+        parts.append(
+            "  - The word 'recall' in user input refers to the `recall` tool"
+        )
+        parts.append(
+            "    (= indexed document search). Do NOT map it to list_memory or"
+        )
+        parts.append(
+            "    read_memory_body. For memory retrieval, the intent label is"
+        )
+        parts.append(
+            "    'Memory access', not 'Recall'."
+        )
+        parts.append(
+            "  - When user asks about 'data sources', 'available information',"
+        )
+        parts.append(
+            "    or 'what can I search', list BOTH memory entries (Memory section)"
+        )
+        parts.append(
+            "    AND indexed sources (Indexed sources section). They are different"
+        )
+        parts.append(
+            "    storage layers. Do NOT report only memory as 'your data sources'."
+        )
+        parts.append(
+            "  - When user says 'search', 'find in docs', 'lookup', use the `recall`"
+        )
+        parts.append(
+            "    tool to query indexed sources. Do NOT use list_memory / read_memory_body"
+        )
+        parts.append(
+            "    for these queries."
+        )
         # NOTE (batch 19 self-audit, post `1c5856d` revert): a previous
         # iteration added "for 'how is X implemented?' prefer recall over
         # reyn_src_read" guidance here, motivated by S6 batch-18 0/3 refuted.
@@ -1004,40 +938,28 @@ def build_system_prompt(
         # Placed inside the indexed_sources_section guard because these examples
         # reference recall/remember_* which are only meaningful when RAG is live.
         parts.append("")
-        if hide_legacy_tools:
-            parts.extend([
-                "  Japanese input disambiguation:",
-                "    - 「思い出して」「前回の話」「あのとき言ってた〜」",
-                "        → invoke_action(action_name=\"rag.operation__recall\", ...) — if indexed sources exist",
-                "        → invoke_action(action_name=\"memory.entry__<name>\") — if no indexed sources",
-                "    - 「覚えて」「メモして」「記録して」「保存して」「忘れないで」",
-                "        → invoke_action(action_name=\"memory.operation__remember_shared\", ...) (memory write)",
-                "    - 「忘れて」「削除して」「消して」(about a memory entry)",
-                "        → invoke_action(action_name=\"memory.operation__forget\", ...)",
-            ])
-        else:
-            parts.append("  Japanese input disambiguation:")
-            parts.append(
-                "    - 「思い出して」「前回の話」「あのとき言ってた〜」"
-            )
-            parts.append(
-                "        → recall (indexed search) — if indexed sources exist"
-            )
-            parts.append(
-                "        → list_memory / read_memory_body — if no indexed sources"
-            )
-            parts.append(
-                "    - 「覚えて」「メモして」「記録して」「保存して」「忘れないで」"
-            )
-            parts.append(
-                "        → remember_shared or remember_agent (memory write)"
-            )
-            parts.append(
-                "    - 「忘れて」「削除して」「消して」(about a memory entry)"
-            )
-            parts.append(
-                "        → forget_memory"
-            )
+        parts.append("  Japanese input disambiguation:")
+        parts.append(
+            "    - 「思い出して」「前回の話」「あのとき言ってた〜」"
+        )
+        parts.append(
+            "        → recall (indexed search) — if indexed sources exist"
+        )
+        parts.append(
+            "        → list_memory / read_memory_body — if no indexed sources"
+        )
+        parts.append(
+            "    - 「覚えて」「メモして」「記録して」「保存して」「忘れないで」"
+        )
+        parts.append(
+            "        → remember_shared or remember_agent (memory write)"
+        )
+        parts.append(
+            "    - 「忘れて」「削除して」「消して」(about a memory entry)"
+        )
+        parts.append(
+            "        → forget_memory"
+        )
 
     return "\n".join(parts)
 

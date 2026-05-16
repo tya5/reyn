@@ -4,9 +4,13 @@ Wrapper-only e2e prerequisite. Validates:
 1. Default False is byte-identical to the legacy SP (= 0 LLMReplay fixture re-records).
 2. True renders the SP without legacy per-kind tool literals in actionable
    instructions (= LLM cannot be steered toward a tool that is not in tools=).
-3. The 8 attractor mitigations from batch 5–22 are preserved in wrapper
-   vocabulary (post-list MUST, post-describe MUST, ABSOLUTE rule, /tasks MUST,
-   anti-fabrication, anti-optimism, static section ordering, Memory-not-Recall).
+3. The 5 cross-cutting Behaviour policies are present in wrapper vocabulary:
+   (Action/Plan/Reply 3-way, plan multi-source, never-invent, ABSOLUTE rule,
+   errors verbatim). Per-tool flow details (spawn-ack, agent delegation, plan
+   WHAT/WHEN_NOT) are absent from SP (= migrated to tool descriptions).
+4. Dropped sections: ## Memory inline, ## MCP servers, ## Indexed sources,
+   ## Files, ## Agent delegation subsection, ## Plan decomposition subsection,
+   spawn-ack Priority block, JA disambiguation table.
 """
 from __future__ import annotations
 
@@ -97,19 +101,37 @@ def test_wrapper_only_with_indexed_sources_excludes_legacy_tool_literals() -> No
 def test_wrapper_only_capabilities_has_universal_wrappers() -> None:
     """Tier 2: Capabilities section routes Action via the 4 universal wrappers."""
     sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    assert "list_actions(category=" in sp
+    # All four wrapper names appear in the Capabilities section
+    assert "list_actions" in sp
     assert "search_actions" in sp
     assert "describe_action" in sp
-    assert "invoke_action(action_name=" in sp
+    assert "invoke_action" in sp
 
 
 def test_wrapper_only_omits_skills_and_agents_dedicated_sections() -> None:
-    """Tier 2: ## Skills and ## Agents are absent in wrapper-only mode
-    (= skill / agent.peer are 2 of 13 categories, not special-cased)."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    """Tier 2: ## Skills, ## Agents, ## Memory, ## MCP, ## Files, ## Indexed
+    sources are absent in wrapper-only mode — discovery via list_actions."""
+    kwargs = dict(
+        agent_name="default",
+        agent_role="generalist",
+        available_skills=[{"name": "code_review", "description": "review code"}],
+        available_agents=[{"name": "alice", "role": "helper"}],
+        memory_index={"status": "ok", "shared": [], "agent": []},
+        file_permissions={"read": ["*"], "write": ["*"]},
+        mcp_servers=[{"name": "brave", "description": "web search"}],
+        universal_wrappers_enabled=True,
+    )
+    sp = build_system_prompt(
+        **kwargs,
+        hide_legacy_tools=True,
+        indexed_sources_section="## Indexed sources\n  meetings",
+    )
     assert "## Skills (" not in sp
     assert "## Agents (resource axis" not in sp
-    # Legacy mode still has them (separate test below).
+    assert "## Memory (entries inlined" not in sp
+    assert "## MCP servers and tools" not in sp
+    assert "## Files (resource axis" not in sp
+    assert "## Indexed sources" not in sp
 
 
 def test_legacy_mode_keeps_skills_and_agents_sections() -> None:
@@ -126,55 +148,8 @@ def test_wrapper_only_preserves_routing_rule_absolute_pin() -> None:
     assert "ROUTING RULE (ABSOLUTE)" in sp
     assert "NO clarifying questions" in sp
     assert "NO text replies" in sp
-    # JA placeholder example, wrapper version
-    assert "<action_name>" in sp
     # Legacy <skill_name> placeholder must not appear in wrapper mode
     assert "<skill_name>" not in sp
-
-
-def test_wrapper_only_preserves_spawn_ack_pins() -> None:
-    """Tier 2: FP-0011/FP-0012 spawn-ack mitigations preserved."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    # /tasks pointer MUST
-    assert "MUST include `/tasks`" in sp
-    assert "non-negotiable" in sp
-    # Anti-fabrication
-    assert "fabrication by construction" in sp
-    assert "MUST NOT pre-fill" in sp
-    # Anti-optimism
-    assert "Optimism bias" in sp
-    # Spawn-ack uses wrapper vocab
-    assert "invoke_action returns {status:" in sp
-    assert "the action is running" in sp
-    assert "background action finished" in sp
-
-
-def test_wrapper_only_preserves_post_describe_and_post_list_must_bullets() -> None:
-    """Tier 2: B2-H1 / B3-H1+M3 / B5-H1 attractor mitigations preserved."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    # post-describe MUST
-    assert "After describe_action" in sp
-    assert "MUST call invoke_action" in sp
-    # post-list MUST
-    assert "After list_actions" in sp
-    assert "Do NOT reply directly" in sp
-    # B11-R3 direct-invoke when name visible
-    assert "skip list_actions" in sp
-
-
-def test_wrapper_only_agent_delegation_uses_invoke_action() -> None:
-    """Tier 2: ## Agent delegation rewritten to invoke_action(agent.peer__)."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    assert "## Agent delegation" in sp
-    assert "agent.peer__" in sp
-    assert 'invoke_action(action_name="agent.peer__' in sp
-
-
-def test_wrapper_only_memory_header_uses_invoke_action() -> None:
-    """Tier 2: ## Memory header references invoke_action for memory.entry."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    # Wrapper memory header references qualified name pattern
-    assert 'memory.entry__' in sp
 
 
 def test_wrapper_only_preserves_static_section_ordering() -> None:
@@ -187,35 +162,183 @@ def test_wrapper_only_preserves_static_section_ordering() -> None:
     assert cap_pos < cat_pos < beh_pos
 
 
-def test_wrapper_only_preserves_memory_not_recall_naming() -> None:
-    """Tier 2: B17-S5-3 Memory-vs-Recall vocab collision avoidance."""
-    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    # The 'Memory access' axis renames (vs 'Recall') applies only to the
-    # legacy intent-axis enumeration which the wrapper path collapses
-    # away. What we must ensure: the ## Memory section header still uses
-    # 'Memory' (not 'Recall') for the entries listing.
-    assert "## Memory (entries inlined" in sp
-
-
-def test_wrapper_only_with_indexed_sources_uses_qualified_recall() -> None:
-    """Tier 2: indexed_sources disambiguation block uses
-    invoke_action(action_name='rag.operation__recall', ...) in wrapper mode."""
-    sp = build_system_prompt(
-        **_BASE_KWARGS,
-        hide_legacy_tools=True,
-        indexed_sources_section="## Indexed sources\n  meetings (= notes)",
-    )
-    assert 'invoke_action(action_name="rag.operation__recall"' in sp
-    # JA disambiguation block uses qualified names too
-    assert 'memory.operation__remember_shared' in sp
-    assert 'memory.operation__forget' in sp
-
-
 def test_wrapper_only_size_smaller_than_legacy() -> None:
-    """Tier 2: structural simplification removes per-category enumerations,
-    so wrapper-only SP is shorter than legacy."""
+    """Tier 2: wrapper-only SP is < 3000 chars (legacy is ~9500 chars)."""
     sp_legacy = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=False)
     sp_wrapper = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
     assert len(sp_wrapper) < len(sp_legacy), (
         f"Wrapper-only SP not smaller: wrapper={len(sp_wrapper)} legacy={len(sp_legacy)}"
     )
+    assert len(sp_wrapper) < 3000, (
+        f"Wrapper-only SP exceeds 3000-char target: {len(sp_wrapper)}"
+    )
+
+
+def test_wrapper_only_sp_behaviour_contains_plan_intent_routing() -> None:
+    """Tier 2: ## Behaviour section contains plan routing (multi-source guidance).
+
+    The user amendment (B23-PRE-1 policy) requires that plan's 'when to use'
+    decision lives in the SP Behaviour section as a cross-cutting policy, not
+    only inside the plan tool description.  Verified: 'plan' + 'multi-source'
+    (or 'multiple independent sources') appear in the ## Behaviour section.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    beh_start = sp.index("## Behaviour")
+    # find next top-level ## after Behaviour (= About this project or end)
+    next_section = sp.find("\n## ", beh_start + 1)
+    beh_section = sp[beh_start:next_section] if next_section != -1 else sp[beh_start:]
+    assert "plan" in beh_section, (
+        "## Behaviour must reference plan routing (policy: 'plan' absent)"
+    )
+    assert (
+        "multi-source" in beh_section
+        or "multiple independent sources" in beh_section
+    ), (
+        "## Behaviour must include plan's multi-source guidance "
+        "('multi-source' or 'multiple independent sources' absent)"
+    )
+
+
+def test_wrapper_only_sp_intent_routing_is_3_way() -> None:
+    """Tier 2: ## Behaviour encodes 3-way intent routing (Action / Plan / Reply).
+
+    The user amendment requires top-level intent routing to be 3-way so the
+    LLM knows to choose plan for multi-source queries, not just Action or Reply.
+    Verified: all three routing axes appear in the ## Behaviour section text.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    beh_start = sp.index("## Behaviour")
+    next_section = sp.find("\n## ", beh_start + 1)
+    beh_section = sp[beh_start:next_section] if next_section != -1 else sp[beh_start:]
+    assert "invoke_action" in beh_section, (
+        "## Behaviour must mention Action axis (invoke_action)"
+    )
+    assert "plan" in beh_section, (
+        "## Behaviour must mention Plan axis"
+    )
+    # Reply axis: either 'Chitchat → Reply' from the 3-way routing line,
+    # or the legacy 'Reply directly only for chitchat' bullet.
+    assert "Reply" in beh_section or "chitchat" in beh_section, (
+        "## Behaviour must mention Reply axis"
+    )
+
+
+def test_wrapper_only_sp_behaviour_contains_errors_verbatim_policy() -> None:
+    """Tier 2: ## Behaviour contains errors verbatim policy (cross-cutting policy 5).
+
+    B23-PRE-1: Optimism bias / errors verbatim rule stays in SP as a cross-cutting
+    policy. Per-tool handling (spawn-ack, task_completed) moves to invoke_action
+    description but the cross-cutting 'errors MUST surface verbatim' rule stays.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    beh_start = sp.index("## Behaviour")
+    next_section = sp.find("\n## ", beh_start + 1)
+    beh_section = sp[beh_start:next_section] if next_section != -1 else sp[beh_start:]
+    assert "verbatim" in beh_section or "Optimism bias" in beh_section, (
+        "## Behaviour must include errors-verbatim / Optimism bias policy"
+    )
+
+
+def test_wrapper_only_sp_does_not_contain_spawn_ack_priority() -> None:
+    """Tier 2: spawn-ack Priority 1-4 block absent from wrapper-only SP.
+
+    B23-PRE-1: spawn-ack handling moved to invoke_action.description.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    assert "Priority 1 (non-negotiable)" not in sp
+    assert "Priority 2:" not in sp
+    assert "Priority 3:" not in sp
+    assert "Priority 4:" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_agent_delegation_subsection() -> None:
+    """Tier 2: ## Agent delegation subsection absent from wrapper-only SP.
+
+    B23-PRE-1: agent delegation moved to invoke_action.description.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    assert "## Agent delegation" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_plan_decomposition_subsection() -> None:
+    """Tier 2: ## Plan decomposition subsection absent from wrapper-only SP.
+
+    B23-PRE-1: plan WHAT/WHEN_NOT moved to plan.description. The 2-line
+    multi-source routing policy stays in ## Behaviour.
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    assert "## Plan decomposition" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_memory_inline_section() -> None:
+    """Tier 2: ## Memory inline section absent from wrapper-only SP.
+
+    B23-PRE-1: memory discovery via list_actions(category=['memory.entry']).
+    """
+    sp = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
+    assert "## Memory (entries inlined" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_mcp_section() -> None:
+    """Tier 2: ## MCP servers and tools section absent from wrapper-only SP.
+
+    B23-PRE-1: MCP discovery via list_actions(category=['mcp.server','mcp.tool']).
+    """
+    kwargs_with_mcp = dict(
+        agent_name="default",
+        agent_role="generalist",
+        available_skills=[],
+        available_agents=[],
+        memory_index={"status": "ok", "shared": [], "agent": []},
+        mcp_servers=[{"name": "brave", "description": "web search"}],
+        universal_wrappers_enabled=True,
+    )
+    sp = build_system_prompt(**kwargs_with_mcp, hide_legacy_tools=True)
+    assert "## MCP servers and tools" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_files_section() -> None:
+    """Tier 2: ## Files section absent from wrapper-only SP.
+
+    B23-PRE-1: Files permission scope communicated via file.* category at runtime.
+    """
+    kwargs_with_files = dict(
+        agent_name="default",
+        agent_role="generalist",
+        available_skills=[],
+        available_agents=[],
+        memory_index={"status": "ok", "shared": [], "agent": []},
+        file_permissions={"read": ["*"], "write": ["*"]},
+        universal_wrappers_enabled=True,
+    )
+    sp = build_system_prompt(**kwargs_with_files, hide_legacy_tools=True)
+    assert "## Files (resource axis" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_indexed_sources_section() -> None:
+    """Tier 2: ## Indexed sources section absent from wrapper-only SP.
+
+    B23-PRE-1: indexed source discovery via list_actions(category=['rag.corpus']).
+    """
+    sp = build_system_prompt(
+        **_BASE_KWARGS,
+        hide_legacy_tools=True,
+        indexed_sources_section="## Indexed sources\n  meetings (= notes)",
+    )
+    assert "## Indexed sources" not in sp
+
+
+def test_wrapper_only_sp_does_not_contain_japanese_disambiguation_table() -> None:
+    """Tier 2: JA disambiguation table absent from wrapper-only SP.
+
+    B23-PRE-1: multilingual disambiguation moved to per-tool descriptions
+    (rag.operation__recall, memory.operation__remember_shared).
+    """
+    sp = build_system_prompt(
+        **_BASE_KWARGS,
+        hide_legacy_tools=True,
+        indexed_sources_section="## Indexed sources\n  meetings (= notes)",
+    )
+    assert "Japanese input disambiguation" not in sp
+    assert "覚えて" not in sp
+    assert "思い出して" not in sp

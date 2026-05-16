@@ -37,7 +37,6 @@ from reyn.schemas.models import MCPDropServerIROp
 from . import register
 from .context import OpContext
 
-
 # ---------------------------------------------------------------------------
 # helpers (yaml read/write — mirror mcp_install for parity)
 # ---------------------------------------------------------------------------

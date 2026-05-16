@@ -41,7 +41,6 @@ from reyn.tools.universal_catalog import (
     visible_categories,
 )
 
-
 # ── 1. CATEGORIES taxonomy ────────────────────────────────────────────────
 
 

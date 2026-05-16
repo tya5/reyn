@@ -31,7 +31,6 @@ from reyn.tools.action_index import (
     compute_catalog_hash,
 )
 
-
 # ── Fake EmbeddingProvider ────────────────────────────────────────────────
 
 
