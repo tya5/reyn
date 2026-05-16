@@ -130,7 +130,7 @@ The categories are:
 
 The list of record is
 [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py).
-A project may extend it via `permissions.python.allowed_modules` in
+A project may extend it via `python.allowed_modules` in
 `reyn.yaml`; the same "ambient sources only" property is the bar for any
 extension.
 
@@ -207,7 +207,7 @@ ambient sources. Everything else is a `run_op`.**
 
 ## See also
 
-- [Concept: permission model](permission-model.md) — the broader `python.pure` / `python.trusted` permission keys and the `mode: safe` auto-allow rules
+- [Concept: permission model](permission-model.md) — the broader `python.safe` / `python.unsafe` permission keys and the `mode: safe` auto-allow rules
 - [Concept: care boundary](care-boundary.md) — what Reyn cares about vs. observes only
 - [Reference: preprocessor DSL](../reference/dsl/preprocessor.md) — declaring `python` steps
 - [Reference: postprocessor DSL](../reference/dsl/postprocessor.md) — same DSL on the finish side

@@ -124,7 +124,7 @@ The permission model handles meta-improvement and stdlib protection without any 
 
 **Meta-improvement is auto-禁止 by default.** `src/reyn/stdlib/` is outside the default write zone. Attempting to improve `skill_improver` itself — or any other stdlib skill — results in a `PermissionError` at the `write_file` op dispatch stage, with no special check required in the OS layer (P7 compliant).
 
-**Stdlib rollback is refused by the CLI itself.** `reyn skill rollback` only operates on `reyn/project/` and `reyn/local/` skills. Stdlib skills (`src/reyn/stdlib/skills/`) are ship-bundled and immutable. Users who want to customise a stdlib skill should copy it to `reyn/project/<name>/` first — the skill resolution order (`reyn/project/` > `reyn/local/` > `src/stdlib/skills/`) ensures the project copy takes precedence.
+**Stdlib rollback is refused by the CLI itself.** `reyn skill rollback` only operates on `reyn/project/` and `reyn/local/` skills. Stdlib skills (`src/reyn/stdlib/skills/`) are ship-bundled and immutable. Users who want to customise a stdlib skill should copy it to `reyn/project/<name>/` first — the skill resolution order (`reyn/project/` > `reyn/local/` > `src/reyn/stdlib/skills/`) ensures the project copy takes precedence.
 
 **`on_propose: auto` requires operator trust.** The default `ask_user` mode is appropriate for interactive use. Switch to `auto` only in environments where the operator has reviewed the improvement pipeline and accepts autonomous writes — for example, a nightly CI job that runs `skill_improver` after evaluating a week of traces.
 

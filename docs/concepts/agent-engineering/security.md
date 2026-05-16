@@ -35,7 +35,7 @@ Approvals are keyed by skill, not by user. If skill A is granted `file.write:/tm
 `python` preprocessor steps run in one of two modes:
 
 - **`safe`** — AST-validated against an allowlist (no `open`, `eval`, `exec`, `__import__`, `compile`, `subprocess`, etc.). Imports limited to a curated allowlist (`math`, `statistics`, `json`, `re`, `random`, `time`, `datetime`, …), extensible via `reyn.yaml`. Restricted `__builtins__`. Executes in a subprocess with a wall-clock timeout for crash isolation.
-- **`unsafe`** — no AST checks, full Python. Requires both `--allow-untrusted-python` at runtime AND a `python.unsafe: allow` permission grant. Used only when `safe` blocks something genuinely needed.
+- **`unsafe`** — no AST checks, full Python. Requires `--allow-unsafe-python` at runtime and a `permissions.python` entry with `mode: unsafe` in `skill.md`. Used only when `safe` blocks something genuinely needed.
 
 Skill authors are nudged toward `safe`; reaching for `unsafe` is a deliberate choice that the linter can flag.
 

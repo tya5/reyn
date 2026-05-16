@@ -54,7 +54,7 @@ Never both a skill AND an agent in the same decision — pick one branch.
 
 ## Source
 
-[`src/stdlib/skills/skill_router/`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_router/)
+[`src/reyn/chat/session.py`](https://github.com/tya5/reyn/blob/main/src/reyn/chat/session.py) — implemented as a built-in system skill, not a regular skill directory
 
 ## See also
 

@@ -69,7 +69,7 @@ Output:
 
 ═══════════════════════════════════════════════════
  ✓ 3/3 cases passed
- Results → .reyn/eval_reports/my_explainer/<timestamp>.json
+ Results → .reyn/eval-results/my_explainer/<timestamp>.json
 ═══════════════════════════════════════════════════
 ```
 
@@ -80,7 +80,7 @@ Output:
 If a criterion is "passing on bad output," it's not specific enough. Look at the failing case:
 
 ```bash
-cat .reyn/eval_reports/my_explainer/<timestamp>.json
+cat .reyn/eval-results/my_explainer/<timestamp>.json
 ```
 
 For each failed criterion, the report includes the judge's reasoning. Use it to rewrite the criterion to be more specific, then re-run.

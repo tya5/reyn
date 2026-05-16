@@ -50,7 +50,7 @@ class Phase(BaseModel):
 
 ---
 
-## P2 — Skill declares graph and final_output_schema
+## P2 — Skill declares graph and final_output
 
 **What it means**: Phase connections (who can transition to whom) live in the Skill, not in any Phase.
 
@@ -58,7 +58,7 @@ class Phase(BaseModel):
 
 `schemas/models.py` — `SkillGraph` holds `transitions: dict[str, list[str]]` and `can_finish_phases: list[str]`.
 
-`compiler/linter.py` — `_find_cycle()` performs a DFS on the transition graph and raises `LintError` if a cycle exists. It also checks that `entry_phase` is reachable in the graph.
+`compiler/linter.py` — `_find_cycle()` performs a DFS on the transition graph and raises `LintError` if a cycle exists. It also checks that `entry` is reachable in the graph.
 
 `kernel/runtime.py` — at transition time, `OSRuntime` checks `next_phase in skill.graph.transitions[current_phase]` before accepting the LLM's choice.
 

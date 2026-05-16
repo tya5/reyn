@@ -39,10 +39,10 @@ By default, reyn validates only the top level — nested required fields are not
 
 ## Cross-skill artifacts (stdlib)
 
-Artifacts under `src/stdlib/artifacts/*.yaml` are available to every skill. The most common is `user_message`:
+Artifacts under `src/reyn/stdlib/artifacts/*.yaml` are available to every skill. The most common is `user_message`:
 
 ```yaml
-# src/stdlib/artifacts/user_message.yaml
+# src/reyn/stdlib/artifacts/user_message.yaml
 type: object
 required: [text]
 properties:

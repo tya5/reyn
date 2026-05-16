@@ -2,7 +2,7 @@
 type: reference
 topic: config
 audience: [human, agent]
-applies_to: [reyn.yaml, .reyn/config.yaml]
+applies_to: [reyn.yaml]
 ---
 
 # Budget and cost tracking
@@ -31,21 +31,10 @@ cost:
     hard_limit: 2.00     # refuse after $2.00 spent by one agent
     warn_ratio: 0.8
 
-  # Per-chain per-skill caps — in-memory, cleared when chain resolves
-  per_chain_skill_calls:
-    hard_limit: 5        # refuse if the same skill is spawned >5 times per chain
-  per_chain_skill_tokens:
-    hard_limit: 100000   # refuse if one skill accumulates >100k tokens in a chain
-
   # Per-model rate limit (hard cap, calls per 60-second window)
   rate_limit_per_minute:
     openai/gpt-4o: 60
   rate_limit_warn_ratio: 0.8   # warn at 80% of rate limit (default: 0.8)
-
-  # Router loop guard — max skill_router invocations per user turn
-  # Prevents runaway re-routing loops (e.g. 16 invocations / 245k prompt
-  # tokens for one paste, observed in S4 dogfood). 0 disables the cap.
-  router_invocations_per_turn: 3   # default: 3
 
   # Daily / monthly quotas — persistent across process restarts (PR25)
   # Stored in .reyn/state/budget_ledger.jsonl; auto-reset at midnight /
@@ -61,17 +50,16 @@ cost:
     hard_limit: 50.00    # refuse after $50.00 this month
 ```
 
+> **Migration note**: `per_chain_skill_calls`, `per_chain_skill_tokens`, and `router_invocations_per_turn` were moved from `cost:` to `safety.loop` in FP-0004/0005. Use `safety.loop.skill_calls_per_chain`, `safety.loop.skill_tokens_per_chain`, and `safety.loop.max_router_calls_per_turn` instead. See [Reference: `reyn.yaml` — `safety` block](reyn-yaml.md#safety-block).
+
 ### Field reference
 
 | Field | Scope | Persists | Resets |
 |---|---|---|---|
 | `per_agent_tokens` | per agent | in-memory | `/budget reset` or restart |
 | `per_agent_cost_usd` | per agent | in-memory | `/budget reset` or restart |
-| `per_chain_skill_calls` | per chain+skill pair | in-memory | chain resolves or `/budget reset` |
-| `per_chain_skill_tokens` | per chain+skill pair | in-memory | chain resolves or `/budget reset` |
 | `rate_limit_per_minute` | per model | in-memory (60s window) | automatic sliding window |
 | `rate_limit_warn_ratio` | global | — | — |
-| `router_invocations_per_turn` | per user turn | in-memory | each new user turn |
 | `daily_tokens` | process-global | ledger file | midnight (local time) |
 | `daily_cost_usd` | process-global | ledger file | midnight (local time) |
 | `monthly_tokens` | process-global | ledger file | 1st of month (local time) |
@@ -181,7 +169,7 @@ dimension, and three recovery actions:
 The next LLM call has been refused.
 
 What you can do:
-  • Raise the limit in `.reyn/config.yaml` (cost: section)
+  • Raise the limit in `reyn.yaml` or `reyn.local.yaml` (cost: section)
   • Reset counters with `/budget reset`
   • Restart `reyn chat` (limits are per-process)
   • See current usage with `/budget`
@@ -195,7 +183,7 @@ throttle — the user or calling code must retry).
 
 | Event | When emitted |
 |---|---|
-| `router_retry_exhausted` | `router_invocations_per_turn` cap is reached; carries `count`, `cap`, `last_reason` |
+| `router_retry_exhausted` | `safety.loop.max_router_calls_per_turn` cap is reached; carries `count`, `cap`, `last_reason` |
 | `budget_reset` | `/budget reset` is executed; carries `before` snapshot of counters |
 
 Warning and refusal events are surfaced as outbox messages to the user rather
@@ -239,7 +227,7 @@ process first, or wait for the period rollover).
 Be aware of the following limitations:
 
 - **Persistent per-agent / per-chain counters across restarts** — `per_agent_tokens`,
-  `per_agent_cost_usd`, `per_chain_skill_calls`, and `per_chain_skill_tokens` are
+  `per_agent_cost_usd`, `safety.loop.skill_calls_per_chain`, and `safety.loop.skill_tokens_per_chain` are
   in-memory only. A process restart or `/budget reset` zeroes them out. Only the
   daily / monthly quotas survive restarts via the ledger.
 - **Auto-throttle** — when a rate limit is hit, Reyn refuses the call rather than

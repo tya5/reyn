@@ -81,7 +81,7 @@ mcp:
 
 ## ソース
 
-[`src/stdlib/skills/read_local_files/`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/read_local_files/)
+[`src/reyn/stdlib/skills/read_local_files/`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/read_local_files/)
 
 ## 関連情報
 

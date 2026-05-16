@@ -49,4 +49,4 @@ To recall indexed events from a skill or phase:
 
 ## Source
 
-[`src/stdlib/skills/index_events/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/index_events/skill.md)
+[`src/reyn/stdlib/skills/index_events/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/index_events/skill.md)

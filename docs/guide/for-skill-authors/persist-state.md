@@ -17,8 +17,8 @@ applies_to: [.reyn/, reyn.yaml]
 |------|---------|--------------------|
 | `.reyn/approvals.yaml` | Saved permission approvals | gitignore |
 | `.reyn/events/` | Per-run event JSONL logs | gitignore |
-| `.reyn/chats/` | Chat session histories | gitignore |
-| `.reyn/eval_reports/` | Eval results per skill | gitignore |
+| `.reyn/agents/` | Per-agent profiles, chat history, state | gitignore |
+| `.reyn/eval-results/` | Eval results per skill | gitignore |
 | `.reyn/memory/` | Project-scoped memory | depends on the team |
 | `.reyn/state/` | WAL + budget ledger (crash recovery) | gitignore |
 
@@ -65,8 +65,8 @@ Or per-run via `--state-dir` (when supported by the subcommand) — generally th
 | Path | Safe to delete? | Notes |
 |------|-----------------|-------|
 | `.reyn/events/` | Yes | Just logs. You lose replay data. |
-| `.reyn/eval_reports/` | Yes | Regenerable. |
-| `.reyn/chats/` | Yes | You lose the ability to resume sessions. |
+| `.reyn/eval-results/` | Yes | Regenerable. |
+| `.reyn/agents/` | Yes | You lose agent profiles, chat history, and skill-resume checkpoints. |
 | `.reyn/approvals.yaml` | Yes | You'll be re-prompted on the next run. |
 | `.reyn/memory/` | Maybe | You lose persisted facts. Export first: `reyn memory export --out memory.json`. |
 

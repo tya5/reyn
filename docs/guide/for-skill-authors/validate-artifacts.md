@@ -63,7 +63,7 @@ The LLM reads it under whatever key you set in `into`. Phase instructions refere
 You don't need a `validate` step for either of these — the OS does it:
 
 - **Transition validation.** Every artifact is validated against the next phase's `input` schema before the transition.
-- **Final output validation.** The terminating artifact is validated against the skill's `final_output_schema`.
+- **Final output validation.** The terminating artifact is validated against the skill's `final_output` declaration.
 
 Use `validate` only when you want validation **inside** the phase, before the LLM call.
 

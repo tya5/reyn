@@ -19,7 +19,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 
 | Name | Description |
 |------|-------------|
-| `SKILL` | Skill name. Resolved in order: `reyn/project/<name>` → `reyn/local/<name>` → `src/stdlib/skills/<name>`. |
+| `SKILL` | Skill name. Resolved in order: `reyn/project/<name>` → `reyn/local/<name>` → `src/reyn/stdlib/skills/<name>`. |
 | `INPUT` | Initial input. JSON string is used as-is (must be a valid artifact). Natural-language string is auto-wrapped as `{"type": "user_message", "data": {"text": "..."}}`. Reads stdin when omitted. |
 
 ## Options
@@ -28,14 +28,14 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 |------|-------------|
 | `--skill-path DIR` | Path to a skill directory (overrides name resolution). |
 | `--module MODULE` | Python module path exposing a `skill` object. |
-| `--dsl-root DIR` | Root of the DSL tree for shared artifact/phase resolution. |
+| `--skill-root DIR` | Root of the skill tree for shared artifact/phase resolution. Inferred automatically when using `--skill-path`; override when the inferred root is wrong. |
 | `--model MODEL` | Model class (`light` / `standard` / `strong`) or LiteLLM model string. Resolved via `reyn.yaml`'s `models` map. |
 | `--output-language LANG` | Output language code. Default from `reyn.yaml`. |
 | `--max-phase-visits N` | Cap on single-phase revisits per run. `0` = unlimited. Default `25`. |
 | `--events` | Print the full event log after execution. |
 | `--strict` | Enforce required fields at every nesting depth (default: top-level only). |
 | `--allow-shell` | Enable the `shell` Control IR op. Off by default. |
-| `--allow-untrusted-python` | Enable unsafe-mode Python preprocessor steps (no AST sandbox). |
+| `--allow-unsafe-python` | Enable unsafe-mode Python preprocessor steps (no AST sandbox). `--allow-untrusted-python` is a legacy alias for backwards compatibility. |
 
 ## Examples
 

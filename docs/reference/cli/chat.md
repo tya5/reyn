@@ -21,11 +21,18 @@ reyn chat [agent_name] [OPTIONS]
 
 ## Options
 
-| Flag | Description |
-|------|-------------|
-| `--model MODEL` | Model class or LiteLLM model string for this session. Default from `reyn.yaml`. |
-| `--output-language LANG` | Output language code. Default from `reyn.yaml`. |
-| `--max-phase-visits N` | Cap on single-phase revisits per turn. `0` = unlimited. |
+Common runtime flags (`--model`, `--output-language`, `--max-phase-visits`, `--phase-budget`, `--llm-timeout`, `--llm-max-retries`) are shared with `reyn run` and `reyn eval`. See [Common flags](common-flags.md).
+
+Chat-specific flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--cui` | off | Use plain console output (no TUI). Useful for piping output, debugging, or headless environments. |
+| `--no-restore` | off | Skip restoring in-flight skill state from disk this run. Useful for debugging or starting a clean session. |
+| `--reset` | off | Wipe in-flight skill state (snapshots + WAL) before starting. Audit logs in `.reyn/events/` are preserved. |
+| `--banner` | off | Show the ASCII-art startup banner (gradient REYN logo + agent / model info). |
+| `--eager-embedding-build` | off | Await action embedding index build synchronously on the first turn (pays ~2–5 s once so `search_actions` is immediately available). |
+| `--allow-unsafe-python` | off | Enable `mode: unsafe` Python preprocessor steps. `--allow-untrusted-python` is a legacy alias. |
 
 ## Agent workspace
 
@@ -105,7 +112,7 @@ reyn chat --model strong
 - [Reference: topology CLI](topology.md) — `reyn topology` to declare communication structure
 - [Reference: skill_router](../stdlib/skill_router.md)
 - [Reference: profile-yaml](../dsl/profile-yaml.md)
-- [Reference: multi-agent config](../config/multi-agent.md) — `multi_agent.max_hop_depth`
+- [Reference: multi-agent config](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [Reference: state-dir](../config/state-dir.md) — `agents/` location
 - [Concepts: multi-agent](../../concepts/multi-agent.md)
 - [Concepts: memory](../../concepts/memory.md)

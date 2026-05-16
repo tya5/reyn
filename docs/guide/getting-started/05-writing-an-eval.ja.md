@@ -69,7 +69,7 @@ reyn eval reyn/local/my_explainer/eval.md
 
 ═══════════════════════════════════════════════════
  ✓ 3/3 cases passed
- Results → .reyn/eval_reports/my_explainer/<timestamp>.json
+ Results → .reyn/eval-results/my_explainer/<timestamp>.json
 ═══════════════════════════════════════════════════
 ```
 
@@ -80,7 +80,7 @@ reyn eval reyn/local/my_explainer/eval.md
 基準が「不正な出力でも通過する」場合、十分に具体的ではありません。失敗したケースを確認します:
 
 ```bash
-cat .reyn/eval_reports/my_explainer/<timestamp>.json
+cat .reyn/eval-results/my_explainer/<timestamp>.json
 ```
 
 失敗した各基準について、レポートには judge の推論が含まれます。それを使って基準をより具体的に書き直し、再実行します。

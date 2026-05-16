@@ -17,8 +17,8 @@ applies_to: [.reyn/, reyn.yaml]
 |------|---------|--------------------|
 | `.reyn/approvals.yaml` | 保存された Permission 承認 | gitignore |
 | `.reyn/events/` | ランごとのイベント JSONL ログ | gitignore |
-| `.reyn/chats/` | chat セッション履歴 | gitignore |
-| `.reyn/eval_reports/` | Skill ごとの eval 結果 | gitignore |
+| `.reyn/agents/` | agent ごとのプロファイル・チャット履歴・状態 | gitignore |
+| `.reyn/eval-results/` | Skill ごとの eval 結果 | gitignore |
 | `.reyn/memory/` | プロジェクトスコープの Memory | チームによる |
 | `.reyn/state/` | WAL + バジェット台帳（クラッシュリカバリー） | gitignore |
 
@@ -65,8 +65,8 @@ state_dir: /var/lib/reyn/<project>
 | パス | 削除しても安全? | 備考 |
 |------|-----------------|-------|
 | `.reyn/events/` | Yes | ただのログ。リプレイデータが失われます。 |
-| `.reyn/eval_reports/` | Yes | 再生成可能。 |
-| `.reyn/chats/` | Yes | セッションを再開する能力が失われます。 |
+| `.reyn/eval-results/` | Yes | 再生成可能。 |
+| `.reyn/agents/` | Yes | agent プロファイル・チャット履歴・スキル再開チェックポイントが失われます。 |
 | `.reyn/approvals.yaml` | Yes | 次回の実行時に再プロンプトされます。 |
 | `.reyn/memory/` | 場合による | 永続化されたファクトが失われます。先にエクスポートします: `reyn memory export --out memory.json`。 |
 

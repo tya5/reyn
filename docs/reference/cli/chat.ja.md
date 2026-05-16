@@ -21,11 +21,18 @@ reyn chat [agent_name] [OPTIONS]
 
 ## オプション
 
-| フラグ | 説明 |
-|------|-------------|
-| `--model MODEL` | このセッションのモデルクラスまたは LiteLLM モデル文字列。デフォルトは `reyn.yaml` から。 |
-| `--output-language LANG` | 出力言語コード。デフォルトは `reyn.yaml` から。 |
-| `--max-phase-visits N` | ターンごとの単一 Phase 再訪問の上限。`0` = 無制限。 |
+共通ランタイムフラグ（`--model`、`--output-language`、`--max-phase-visits`、`--phase-budget`、`--llm-timeout`、`--llm-max-retries`）は `reyn run` / `reyn eval` と共有です。[共通フラグ](common-flags.md) を参照してください。
+
+chat 固有のフラグ:
+
+| フラグ | デフォルト | 説明 |
+|------|---------|-------------|
+| `--cui` | オフ | プレーンコンソール出力（TUI なし）を使用。パイプ、デバッグ、ヘッドレス環境に便利。 |
+| `--no-restore` | オフ | 起動時にディスクからの進行中 Skill ステートの復元をスキップ。デバッグやクリーンなセッション開始に便利。 |
+| `--reset` | オフ | 起動前に進行中 Skill ステート（スナップショット + WAL）を消去。`.reyn/events/` の監査ログは保持されます。 |
+| `--banner` | オフ | ASCII アートの起動バナー（グラデーション REYN ロゴ + agent/モデル情報）を表示。 |
+| `--eager-embedding-build` | オフ | 初回ターンでアクション埋め込みインデックスのビルドを同期的に待機（1 回のみ約 2〜5 秒）。`search_actions` を即時利用可能にする。 |
+| `--allow-unsafe-python` | オフ | `mode: unsafe` の Python preprocessor ステップを有効化。`--allow-untrusted-python` はレガシーエイリアス。 |
 
 ## agent Workspace
 
@@ -105,7 +112,7 @@ reyn chat --model strong
 - [リファレンス: topology CLI](topology.md) — `reyn topology` で通信構造を宣言
 - [リファレンス: skill_router](../stdlib/skill_router.md)
 - [リファレンス: profile-yaml](../dsl/profile-yaml.md)
-- [リファレンス: multi-agent 設定](../config/multi-agent.md) — `multi_agent.max_hop_depth`
+- [リファレンス: multi-agent 設定](../config/multi-agent.md) — `safety.loop.max_agent_hops`
 - [リファレンス: state-dir](../config/state-dir.md) — `agents/` の場所
 - [コンセプト: multi-agent](../../concepts/multi-agent.md)
 - [コンセプト: memory](../../concepts/memory.md)

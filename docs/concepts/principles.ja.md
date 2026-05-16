@@ -16,7 +16,7 @@ Phase は `input` artifact 型と instructions だけを宣言します。Phase 
 - 自分の output schema が何か
 - どの skill に属するか
 
-出力の形は外部から決まります。遷移時は `next_phase.input_schema` が、finish 時は skill の `final_output_schema` が output schema を規定します。Phase 自身は output schema を宣言せず、参照もしません。
+出力の形は外部から決まります。遷移時は遷移先 phase の `input` スキーマが、finish 時は skill の `final_output` が output schema を規定します。Phase 自身は output schema を宣言せず、参照もしません。
 
 **理由：** `revise` のような phase は draft を生成する任意の skill から drop-in で使えるべきです。Phase が「次の phase」フィールドを持ったり output schema を重複して持つと、特定のワークフローと結合し再利用可能性を失います。また二重宣言は drift の原因になります。次の phase が input を変えたとき、output schema をハードコードしていた Phase はサイレントに陳腐化します。output shape を外部の関心事にすることで、このクラスのバグを根絶できます。
 
@@ -27,7 +27,7 @@ Phase は `input` artifact 型と instructions だけを宣言します。Phase 
 
 ## P2. Skill が構造を所有し最終出力を定義
 
-Skill は `entry_phase`、`graph`（phase 間の遷移）、`final_output_schema` を宣言します。Phase の接続を Phase ファイル内で定義することは **絶対にしない**。LLM が finish を返したとき、OS は `final_output_schema` に対して最終 artifact を検証します。これが Skill と外部世界との契約です。
+Skill は `entry`、`graph`（phase 間の遷移）、`final_output` を宣言します。Phase の接続を Phase ファイル内で定義することは **絶対にしない**。LLM が finish を返したとき、OS は `final_output` に対して最終 artifact を検証します。これが Skill と外部世界との契約です。
 
 **理由：** 構造は Skill レベルの関心事です。Phase に混ぜると再利用できなくなり、ワークフロー変更のたびに Phase を書き直す羽目になります。「この skill は何を返すのか？」も Skill レベルの契約であり、Phase の決定事項ではありません。final output が phase に分散すると、グラフをリファクタしたときに戻り値の型がサイレントに変わるリスクがあります。
 
@@ -35,7 +35,7 @@ Skill は `entry_phase`、`graph`（phase 間の遷移）、`final_output_schema
 
 - `skill.md` に `final_output` がない → OS が finish 検証の根拠を持てない。
 - skill graph にエッジが欠けている → LLM が提示する遷移を OS が拒否する。
-- `can_finish: true` の phase があるのに skill の `final_output_schema` がない → OS が finish を拒否する。
+- `can_finish: true` の phase があるのに skill の `final_output` がない → OS が finish を拒否する。
 
 ## P3. OS が実行を制御
 

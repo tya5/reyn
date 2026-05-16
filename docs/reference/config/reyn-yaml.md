@@ -27,16 +27,29 @@ models:
 | `models` | map | Class name → LiteLLM model string **or** dict (see below). |
 | `output_language` | string | Default output language code (e.g. `en`, `ja`). Override with `--output-language`. |
 | `safety` | map | Runtime stop conditions: loop-detection caps, timeouts, on-limit policy. See below. |
+| `cost` | map | Budget caps and rate limits (per-agent, daily, monthly). See below. |
 | `plan` | map | Plan-mode step budget and retry tuning. See below. |
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
 | `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
+| `embedding` | map | RAG embedding model classes and batch settings (ADR-0033). See below. |
+| `chat` | map | Chat-session compaction (head/body/tail) settings. See below. |
+| `voice` | map | Voice input (Whisper) settings for the chat TUI. See below. |
+| `events` | map | Audit-log rotation policy for chat-session event files. See below. |
+| `skill_search` | map | BM25 skill pre-filter settings (FP-0024 Component A). See below. |
+| `skill_resume` | map | Resume policy for ambiguous steps on restart. See below. |
+| `self_improvement` | map | `skill_improver` apply-gate and version cap (FP-0006). See below. |
+| `mcp` | map | MCP server definitions and `search_threshold`. See below. |
+| `python` | map | Python preprocessor additional allowed-modules. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
 | `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
 | `cron` | map | Scheduled skill executions (FP-0009 Component B). See below. |
-| `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
+| `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
+| `prompt_cache_enabled` | bool | Attach Anthropic prompt-cache markers to system prompts. Default `true`. |
+| `project_context_path` | string | Markdown file injected into every phase system prompt. Default `REYN.md`. |
+| `api_base` | string | LiteLLM proxy base URL. Typically set in `reyn.local.yaml` (gitignored). |
 
 ## `models` block
 
@@ -191,6 +204,8 @@ safety:
 | `safety.loop.max_act_turns_per_phase` | int | `10` | — | LLM ↔ op volleys allowed inside one phase visit. `0` = unlimited. |
 | `safety.loop.max_router_calls_per_turn` | int | `3` | — | Chat-router invocations per user turn. `0` = unlimited. |
 | `safety.loop.max_agent_hops` | int | `3` | — | Maximum delegation depth (user → A → B → C = 3 hops). |
+| `safety.loop.skill_calls_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) spawn cap. `hard_limit` + `warn_ratio` sub-fields. Hybrid: loop-detection semantics, budget-style user approval on hit. |
+| `safety.loop.skill_tokens_per_chain` | map | `{}` (unlimited) | — | Per-(chain, skill) token cap. `hard_limit` + `warn_ratio` sub-fields. |
 
 ### `safety.timeout` fields
 
@@ -458,7 +473,7 @@ permissions:
     write: [".reyn/state/", "reyn/local/"]
   python:
     safe:    allow      # default for safe-mode python steps
-    unsafe:  deny       # unsafe mode also requires --allow-untrusted-python
+    unsafe:  deny       # unsafe mode also requires --allow-unsafe-python
     allowed_modules:
       - math
       - statistics
@@ -580,12 +595,6 @@ cost:
   per_agent_cost_usd:
     hard_limit: 2.00     # refuse after $2.00 spent by one agent
 
-  # Per-chain per-skill caps (in-memory)
-  per_chain_skill_calls:
-    hard_limit: 5        # refuse if the same skill is spawned > 5 times per chain
-  per_chain_skill_tokens:
-    hard_limit: 100000   # refuse if one skill accumulates > 100k tokens in a chain
-
   # Per-model rate limit (calls per minute)
   rate_limit_per_minute:
     openai/gpt-4o: 60
@@ -604,12 +613,12 @@ cost:
     hard_limit: 50.00    # refuse after $50.00 this month
 ```
 
+> **Note**: Per-chain skill spawn and token caps (`skill_calls_per_chain`, `skill_tokens_per_chain`) and the router call cap (`max_router_calls_per_turn`) were moved to `safety.loop` in FP-0004/0005. See the [`safety` block](#safety-block) above.
+
 | Field | Scope | Persists | Reset |
 |---|---|---|---|
 | `per_agent_tokens` | per agent | in-memory | `/budget reset` or restart |
 | `per_agent_cost_usd` | per agent | in-memory | `/budget reset` or restart |
-| `per_chain_skill_calls` | per chain+skill | in-memory | chain resolves or `/budget reset` |
-| `per_chain_skill_tokens` | per chain+skill | in-memory | chain resolves or `/budget reset` |
 | `rate_limit_per_minute` | per model | in-memory (60s window) | automatic (sliding window) |
 | `daily_tokens` | process-global | ledger file | midnight (local time) |
 | `daily_cost_usd` | process-global | ledger file | midnight (local time) |
@@ -668,7 +677,238 @@ Servers are merged across config sources: `~/.reyn/config.yaml` ⊕ `reyn.yaml` 
 
 The MCP runtime is an optional dependency: install with `pip install -e ".[mcp]"` to pull in the official `mcp` Python SDK. Without the extra, configured servers are still parsed but any `mcp` op fails at dispatch.
 
+### `mcp.search_threshold`
+
+When the total number of MCP tools (across all connected servers) reaches this threshold, `build_tools()` switches from inlining all MCP tool schemas to using Anthropic's `tool_search_tool` (deferred-loading mode). Default `30`. Set `0` to disable.
+
+```yaml
+mcp:
+  search_threshold: 30   # default; set 0 to always inline schemas
+  servers:
+    ...
+```
+
 See [Concepts: MCP](../../concepts/mcp.md) for the protocol overview and [How-to: use an MCP server](../../guide/for-skill-authors/use-an-mcp-server.md) for the end-to-end quickstart.
+
+## `embedding` block
+
+RAG embedding model classes and batch settings (ADR-0033). Built-in defaults cover the OpenAI path — no `reyn.yaml` changes are required for a fresh install with `OPENAI_API_KEY`.
+
+```yaml
+embedding:
+  default_class: standard         # class to use when no class is specified
+  batch_size: 100                 # texts per embedding API call (1–2048)
+  max_concurrent_batches: 1       # parallel batch calls in flight (1–10)
+  max_retries: 3                  # transient-error retries (0–10)
+  retry_backoff: exponential      # exponential | linear
+  tokenizer: cl100k_base          # tiktoken encoding for chunk-size estimation
+  cost_warn_threshold: 10000      # ask_user gate fires above this estimated chunk count
+  classes:
+    light:
+      model: openai/text-embedding-3-small
+    standard:
+      model: openai/text-embedding-3-small
+    strong:
+      model: openai/text-embedding-3-large
+    # custom class with non-default API endpoint
+    private:
+      model: openai/text-embedding-3-small
+      api_base: ${EMBEDDING_API_BASE}
+```
+
+### `embedding` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `default_class` | string | `standard` | Class used when embedding ops don't specify one. Must be a key in `classes`. |
+| `batch_size` | int | `100` | Texts per embedding API call. Valid range: 1–2048. |
+| `max_concurrent_batches` | int | `1` | Parallel batch calls in flight. Valid range: 1–10. Values > 1 are accepted but log a warning until concurrent support lands. |
+| `max_retries` | int | `3` | Transient-error retries per batch call. Valid range: 0–10. |
+| `retry_backoff` | string | `exponential` | Backoff strategy: `exponential` or `linear`. |
+| `tokenizer` | string | `cl100k_base` | tiktoken encoding used for chunk-size estimation. |
+| `cost_warn_threshold` | int | `10000` | Estimated chunk count above which the `ask_user` gate fires before indexing. |
+
+### `embedding.classes` entries
+
+Each key under `embedding.classes` is a class name. Built-in defaults (`light`, `standard`, `strong`) are pre-loaded; user entries override them and can add new ones.
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `model` | yes | LiteLLM model string (e.g. `openai/text-embedding-3-small`). |
+| `api_base` | no | Override endpoint URL. Supports `${VAR}` interpolation. |
+| `extra_body` | no | Provider-specific payload passed through to the API. |
+| `extends` | no | Inherit from another class in the same `classes` dict and override specific fields. |
+
+Built-in classes (active when `classes:` is empty or absent):
+
+| Class | Model |
+|-------|-------|
+| `light` | `openai/text-embedding-3-small` |
+| `standard` | `openai/text-embedding-3-small` |
+| `strong` | `openai/text-embedding-3-large` |
+
+## `chat` block
+
+Chat-session compaction — head/body/tail token budgets that keep context concise without losing recent turns.
+
+```yaml
+chat:
+  compaction:
+    trigger_total_tokens: 30000   # compact when uncovered middle exceeds this
+    head_size: 12                  # first N user/agent turns kept raw
+    tail_size: 12                  # last N user/agent turns kept raw
+    body_token_cap: 1500           # total token cap across all body summary sections
+    min_compact_batch: 5           # skip compaction when fewer than N turns to absorb
+    section_token_caps:
+      topic_arc: 200
+      decisions: 400
+      pending: 400
+      session_user_facts: 200
+      artifacts_referenced: 300
+```
+
+### `chat.compaction` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `trigger_total_tokens` | int | `30000` | Compact when the uncovered middle of the conversation exceeds this token count. |
+| `head_size` | int | `12` | Number of earliest user/agent turns kept verbatim (never summarised). |
+| `tail_size` | int | `12` | Number of most-recent user/agent turns kept verbatim. |
+| `body_token_cap` | int | `1500` | Total token budget for all body summary sections combined. |
+| `min_compact_batch` | int | `5` | Skip compaction when fewer than this many turns would be absorbed (avoids tiny compactions). |
+
+### `chat.compaction.section_token_caps` fields
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `topic_arc` | `200` | Token cap for the topic-arc summary section. |
+| `decisions` | `400` | Token cap for the decisions section. |
+| `pending` | `400` | Token cap for the pending-items section. |
+| `session_user_facts` | `200` | Token cap for user-facts carried across compactions. |
+| `artifacts_referenced` | `300` | Token cap for artifact reference listings. |
+
+## `events` block
+
+Audit-log rotation policy for chat-session event files (PR20). Skill-run events use one file per run and are not affected by this setting.
+
+```yaml
+events:
+  max_bytes: 10485760       # rotate at 10 MB (default)
+  max_age_seconds: 86400    # rotate after 1 day (default)
+  cleanup_period_days: null # null = no automatic deletion (default)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `max_bytes` | int | `10485760` (10 MB) | Rotate the active event file when it exceeds this size. `0` = no size-based rotation. |
+| `max_age_seconds` | int | `86400` (1 day) | Rotate the active event file when it exceeds this age in seconds. `0` = no age-based rotation. |
+| `cleanup_period_days` | int \| null | `null` | How long closed event files are kept before `reyn events purge` may delete them. `null` disables automatic deletion. `0` is rejected — use `null` to disable. |
+
+Setting both `max_bytes` and `max_age_seconds` to `0` disables rotation entirely.
+
+## `voice` block
+
+Voice-input (Whisper) settings for the chat TUI (Ctrl+R to record). Optional — requires `pip install 'reyn[voice]'` (`sounddevice` + `faster-whisper`). The block is lazy-loaded; a missing `[voice]` extra silently disables the record key.
+
+```yaml
+voice:
+  enabled: true           # set false to disable Ctrl+R even if deps are installed
+  model: small            # tiny | base | small | medium | large-v3
+  language: ja            # ISO 639-1 code; "" or null = auto-detect
+  device: cpu             # cpu | cuda
+  compute_type: int8      # int8 | float16 | float32
+  sample_rate: 16000      # Whisper expects 16 kHz mono
+  cpu_threads: 4          # 0 = OpenMP default
+  num_workers: 1          # parallel transcription streams
+  max_duration_s: 300.0   # auto-cancel recordings longer than this (seconds)
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | Set `false` to hard-disable Ctrl+R even when deps are installed. |
+| `model` | string | `small` | Whisper model size: `tiny` / `base` / `small` / `medium` / `large-v3`. |
+| `language` | string \| null | `ja` | ISO 639-1 language code. `""` or `null` enables auto-detection (less reliable for short clips). |
+| `device` | string | `cpu` | Inference device: `cpu` or `cuda`. `auto` is not supported — it picks the wrong device on some Mac setups. |
+| `compute_type` | string | `int8` | Quantisation: `int8` / `float16` / `float32`. |
+| `sample_rate` | int | `16000` | Sample rate (Hz). Whisper expects 16 kHz mono — do not change. |
+| `cpu_threads` | int | `4` | CPU threads for faster-whisper. `0` = OpenMP default. Pinning to 4 avoids OpenMP/Python-threading deadlocks on Apple Silicon. |
+| `num_workers` | int | `1` | Parallel transcription streams. `1` keeps memory + thread usage low. |
+| `max_duration_s` | float | `300.0` | Auto-cancel recordings longer than this (seconds). Prevents runaway memory growth from unattended recordings. |
+
+## `skill_search` block
+
+BM25 skill pre-filter settings (FP-0024 Component A). When the catalogue exceeds `threshold` skills, the router narrows the available skill enum to the top `top_k` BM25 keyword matches before building `tools=`. Falls through to the full enum when BM25 returns zero results — no skill is ever silently hidden.
+
+```yaml
+skill_search:
+  threshold: 20    # catalogue size at which BM25 activates; 0 = always filter
+  top_k: 5         # number of skills returned by BM25
+  backend: bm25    # bm25 (default); embedding / hybrid reserved for future phases
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `threshold` | int | `20` | Catalogue size at which BM25 pre-filtering activates. Set `0` to always pre-filter; set a high number to effectively disable. |
+| `top_k` | int | `5` | Number of best-matching skills returned by BM25. Minimum `1`. |
+| `backend` | string | `bm25` | Search backend. `bm25` is the only active backend; `embedding` and `hybrid` are reserved for future phases. |
+
+## `skill_resume` block
+
+Resume policy for skill runs interrupted mid-step. An *ambiguous step* is one whose `step_started` WAL event has no matching `step_completed` / `step_failed` — the op may have committed externally.
+
+```yaml
+skill_resume:
+  default: retry            # retry | skip | discard_skill | prompt
+  per_skill:
+    my_idempotent_skill: retry
+    my_side_effect_skill: discard_skill
+```
+
+| Policy | Description |
+|--------|-------------|
+| `retry` (default) | Re-execute the ambiguous step. Safe for read-only ops and skills the operator trusts to be idempotent. Risk: duplicate side effects. |
+| `skip` | Synthesise an empty/default completion and continue. Risk: missing data downstream. |
+| `discard_skill` | Abort the entire skill run, drop the checkpoint, and surface a failure to the originating chain. |
+| `prompt` | Legacy/no-op. Retained for config compatibility; treated as `retry` by the auto-resume runtime (no interactive prompt is shown). |
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `default` | string | `retry` | Default resume policy for all skills. |
+| `per_skill` | map | `{}` | Per-skill policy overrides. Key is the skill name; value is one of the policies above. |
+
+## `self_improvement` block
+
+`skill_improver` behavior knobs (FP-0006). Controls how the skill improver applies proposed changes back to the skill source.
+
+```yaml
+self_improvement:
+  on_propose: ask_user   # ask_user | auto | disabled
+  max_versions: 10       # max v<N>.md snapshots kept; 0 = no pruning
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `on_propose` | string | `ask_user` | What `skill_improver` does when about to apply improvements. `ask_user` — pause and prompt the user via the InterventionBus (safe default). `auto` — skip the prompt and apply directly (for CI / unattended runs). `disabled` — log a `skill_improvement_dry_run` event and do NOT apply changes. |
+| `max_versions` | int | `10` | Maximum `v<N>.md` snapshots kept under `.reyn/skill-versions/<name>/`. Oldest version is deleted when the cap is exceeded (the current version is never deleted). `0` = disable pruning. |
+
+## `python` block
+
+Python preprocessor settings. Extends the built-in safe-mode allowlist of importable modules.
+
+```yaml
+python:
+  allowed_modules:
+    - math
+    - statistics
+    - json
+    - re
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `allowed_modules` | list[string] | `[]` | Additional module names that safe-mode Python preprocessor steps may import, on top of the built-in stdlib allowlist. Libraries with internal I/O (e.g. `pandas`, `requests`) defeat safe-mode sandboxing — curate carefully. |
+
+> Unsafe Python steps (`mode: unsafe` in the preprocessor frontmatter) are not restricted by this list and also require `--allow-unsafe-python` at runtime. See [Reference: permissions](permissions.md) for the full permission grammar.
 
 ## See also
 

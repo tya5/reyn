@@ -41,4 +41,4 @@ Invoke via `run_skill` in an eval skill's preprocessor, not from the CLI. The in
 
 ## Source
 
-[`src/stdlib/skills/judge_phase/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/judge_phase/skill.md)
+[`src/reyn/stdlib/skills/judge_phase/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/judge_phase/skill.md)

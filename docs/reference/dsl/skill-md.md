@@ -67,33 +67,37 @@ imported_revision: <git-sha>
 
 ```yaml
 permissions:
-  shell: deny                 # deny | allow; default deny
-  file.read: allow            # allow read access to workspace files
-  file.write: allow           # allow write access to workspace files
-  mcp:
-    - server: github
-      ops: [read]             # allowlist of op kinds for this MCP server
-    - server: jira
-      ops: [read, write]
+  shell: true                 # false (default) | true; enables shell ops
+  file.read:                  # paths outside CWD that the skill may read
+    - path: ~/notes
+      scope: recursive
+  file.write:                 # paths outside default write zone (.reyn/, reyn/)
+    - path: /tmp/output
+      scope: just_path
+  mcp: [github, jira]         # list of MCP server names the skill may call
   python:
     - module: stats           # module name (no .py extension)
       function: compute
       mode: safe              # safe | unsafe
     - module: rendering
       function: to_html
-      mode: unsafe            # requires --allow-untrusted-python flag
-  tool:
-    - name: web_search        # Control IR tool name
-      allow: true
+      mode: unsafe            # requires --allow-unsafe-python flag
+  tool: [web_search]          # list of named Control IR tool names
+  mcp_install: true           # allow mcp_install ops (optional; default false)
+  index_drop: true            # allow index_drop ops (optional; default false)
+  mcp_drop_server: true       # allow mcp_drop_server ops (optional; default false)
 ```
 
 ### Key fields
 
-- **`shell`** — `allow` or `deny` (default `deny`). Governs whether Control IR `shell` ops are accepted.
-- **`file.read`** / **`file.write`** — workspace file access. Default: `file.read: allow`, `file.write: deny`.
-- **`mcp`** — list of MCP server entries. Each entry names a server and an `ops` allowlist. Ops not in the list are rejected at dispatch.
-- **`python`** — list of Python function entries allowed in preprocessor and postprocessor `python` steps. Each entry must match the `module` + `function` pair used in a step. `mode: safe` runs sandboxed; `mode: unsafe` requires `--allow-untrusted-python` at the CLI.
-- **`tool`** — list of named Control IR tools the skill may invoke.
+- **`shell`** — `true` or `false` (default `false`). Governs whether Control IR `shell` ops are accepted. Also requires `--allow-shell` at the CLI.
+- **`file.read`** / **`file.write`** — paths outside the default zones. Each entry: `path` (absolute or CWD-relative; `~` expanded) and `scope` (`just_path` or `recursive`). `file.write` also covers `edit` and `delete` ops. Omit to stay within defaults (read: CWD; write: `.reyn/`, `reyn/`).
+- **`mcp`** — list of MCP server names the skill may call. Just the server keys as defined in `reyn.yaml`'s `mcp.servers`.
+- **`python`** — list of Python function entries allowed in preprocessor/postprocessor `python` steps. Each entry must match the `module` + `function` pair used in a step. `mode: safe` runs sandboxed; `mode: unsafe` requires `--allow-unsafe-python` at the CLI.
+- **`tool`** — list of named Control IR tool names (e.g. `web_search`, `web_fetch`) the skill may invoke.
+- **`mcp_install`** — `true` to allow `mcp_install` Control IR ops (default `false`).
+- **`index_drop`** — `true` to allow `index_drop` Control IR ops (default `false`).
+- **`mcp_drop_server`** — `true` to allow `mcp_drop_server` Control IR ops (default `false`).
 
 The `permissions` block is the upper-bound gate: even if a phase's `allowed_ops` would permit an op, the op is rejected at dispatch if it falls outside `skill.permissions`. See [permission-model.md](../../concepts/permission-model.md) for the layered enforcement model.
 
@@ -121,17 +125,15 @@ Every `run_skill` invocation emits a `sub_skill_credential_scope` event with the
 ```yaml
 ---
 name: pr-reviewer
-entry_phase: review
+entry: review
 required_credentials:
   - github_token
 permissions:
   mcp: [github]
-  file:
-    read: [.]
-phases:
-  review:
-    artifact: review_output
-final_output_schema: { ... }
+  file.read:
+    - path: .
+      scope: recursive
+final_output: review_output
 ---
 ```
 

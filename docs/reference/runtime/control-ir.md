@@ -22,6 +22,13 @@ Control IR is the list of side-effect operations the LLM may emit alongside its 
 | `web_fetch` | Fetch a single URL and return extracted text | Tier 1 — default allow; `web.fetch: deny` in `reyn.yaml` blocks |
 | `mcp` | Call a tool on a configured MCP server | `permissions.mcp: [server_name]` in skill frontmatter |
 | `mcp_install` | Install an MCP server from the registry into the project config | `permissions.mcp_install: true` in skill frontmatter |
+| `embed` | Embed texts or artifact chunks via a LiteLLM embedding model | none (embedding API cost) |
+| `index_write` | Write embedded chunks to an index backend (SQLite) | none |
+| `index_query` | Semantic vector search over one indexed source | none |
+| `recall` | Macro: embed → index_query per source → merge top-K | none |
+| `index_drop` | Remove an indexed source entirely (destructive) | `permissions.index_drop: ask` in skill frontmatter |
+| `judge_output` | LLM scorer: rubric + threshold + `on_fail` policy | none (LLM cost) |
+| `skill_resolve` | Resolve a skill name to its on-disk path (read-only) | none |
 
 ## Common envelope
 
@@ -39,7 +46,7 @@ The OS validates the op against its kind's schema, executes it, and returns a re
 
 ## `file`
 
-Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`.
+Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`, `regenerate_index`.
 
 ```json
 {"kind": "file", "op": "read", "path": "src/foo.py"}
@@ -55,7 +62,22 @@ Sub-operations: `read`, `write`, `edit`, `delete`, `glob`, `grep`.
 
 {"kind": "file", "op": "grep", "path": "src", "pattern": "def \\w+",
  "glob": "**/*.py", "output_mode": "content"}
+
+{"kind": "file", "op": "regenerate_index",
+ "path": ".reyn/memory",
+ "output_path": ".reyn/memory/MEMORY.md",
+ "entry_template": "- [{name}]({slug}.md) — {description}",
+ "header": "# Memory Index\n\n"}
 ```
+
+**`regenerate_index`** rebuilds a Markdown index from the YAML frontmatter of every `*.md` file under `path`. Fields:
+
+- `path` (required) — source directory to scan.
+- `output_path` (required) — path for the generated index file (excluded from scan).
+- `entry_template` (required) — format string with `{key}` placeholders drawn from each file's frontmatter plus `{slug}` (filename without `.md`).
+- `header` (optional) — preamble prepended before the generated entries.
+
+Used by `reyn memory` (post-mutation sync) and any memory skill that manages an index file.
 
 Permission scopes are configured per-op kind. See `reference/config/permissions.md`.
 
@@ -235,6 +257,151 @@ Handler lifecycle:
 5. Writes `mcp.servers.<name>` to the target scope config file
 6. Emits `mcp_server_installed` event (P6) — key names only, no values
 
+## `embed`
+
+Embeds texts (or a JSONL artifact) into vectors using a LiteLLM-backed embedding model (ADR-0033). Two input forms:
+
+**Form A — inline** (small payload, e.g. recall query):
+```json
+{
+  "kind": "embed",
+  "texts": ["What is the capital of France?"],
+  "model": "standard"
+}
+```
+
+**Form B — artifact reference** (large payload, e.g. indexing many chunks):
+```json
+{
+  "kind": "embed",
+  "input_artifact": "chunks.jsonl",
+  "text_field": "text",
+  "output_artifact": "embedded_chunks.jsonl",
+  "model": "standard"
+}
+```
+
+Exactly one of `texts` / `input_artifact` must be provided. Fields:
+
+- `texts` (list[str], Form A) — inline texts to embed.
+- `input_artifact` (str, Form B) — workspace-relative JSONL path; each line must have a `text_field` key.
+- `text_field` (str, default `"text"`) — field name to embed in Form B.
+- `output_artifact` (str, Form B) — workspace-relative JSONL path for output vectors. Idempotent: lines whose `content_hash` already exists are skipped.
+- `model` (str, default `"standard"`) — model class or LiteLLM string, resolved via `reyn.yaml embedding.classes`.
+
+Returns: Form A → `{"kind": "embed", "vectors": [[float, ...]]}`. Form B → `{"kind": "embed", "status": "ok", "embedded": int, "skipped": int}`.
+
+Events: `embed_progress` (Form B only, per batch — `embedded`, `skipped` cumulative counts).
+
+## `index_write`
+
+Writes embedded chunks to a named SQLite index backend (ADR-0033). Two input forms:
+
+**Form A — inline**:
+```json
+{
+  "kind": "index_write",
+  "source": "project_docs",
+  "chunks": [
+    {"text": "...", "vector": [0.1, 0.2, ...], "metadata": {"path": "README.md"}}
+  ],
+  "mode": "append"
+}
+```
+
+**Form B — artifact reference**:
+```json
+{
+  "kind": "index_write",
+  "source": "project_docs",
+  "input_artifact": "embedded_chunks.jsonl",
+  "mode": "replace",
+  "description": "Project documentation index",
+  "path": "docs/**/*.md"
+}
+```
+
+Fields:
+
+- `source` (str, required) — logical source name. Maps to `.reyn/index/<source>/index.db`.
+- `chunks` (list[dict], Form A) — inline list of `{text, vector, metadata}` objects.
+- `input_artifact` (str, Form B) — workspace-relative JSONL path.
+- `mode` (`"append" | "replace"`, default `"append"`) — `"replace"` drops the source first.
+- `embedding_model` (str, optional) — override the embedding model recorded in chunk metadata.
+- `description` (str, optional) — human-readable description stored in source manifest (shown in router system prompt).
+- `path` (str, optional) — original glob or path stored in source manifest.
+
+Returns: `{"kind": "index_write", "source": str, "chunks_written": int, "chunks_skipped": int}`.
+
+## `index_query`
+
+Semantic similarity search over a single indexed source (ADR-0033).
+
+```json
+{
+  "kind": "index_query",
+  "source": "project_docs",
+  "query_vector": [0.1, 0.2, ...],
+  "top_k": 5,
+  "filters": {"path": "docs/concepts"}
+}
+```
+
+Fields:
+
+- `source` (str, required) — logical source name.
+- `query_vector` (list[float], optional) — pre-computed embedding. If `null`, falls back to catalog enumeration (up to `fallback_size_cap` tokens).
+- `top_k` (int, default `5`) — number of results to return.
+- `filters` (dict[str, str], optional) — metadata key/value filters applied before ranking.
+- `fallback_size_cap` (int, default `4096`) — token cap for enumerate fallback when `query_vector` is `null`.
+
+Returns: `{"kind": "index_query", "source": str, "results": [{"text": str, "score": float, "metadata": dict}]}`.
+
+## `recall`
+
+Macro op: embed a query → call `index_query` per source → merge and return top-K results globally (ADR-0033). The preferred high-level op for RAG retrieval.
+
+```json
+{
+  "kind": "recall",
+  "query": "How does crash recovery work?",
+  "sources": ["project_docs", "api_reference"],
+  "top_k": 5,
+  "embedding_model": "standard"
+}
+```
+
+Fields:
+
+- `query` (str, required) — natural-language query to embed and search.
+- `sources` (list[str], required) — logical source names to search. Must not be empty.
+- `top_k` (int, default `5`) — number of results returned after global merge.
+- `filters` (dict[str, str], optional) — forwarded to each `index_query` sub-op.
+- `embedding_model` (str, default `"standard"`) — model class forwarded to the `embed` sub-op.
+
+Returns: `{"kind": "recall", "results": [{"text": str, "score": float, "source": str, "metadata": dict}]}`.
+
+Events: `recall_embed_failed` if the embed sub-op fails (query, error).
+
+## `index_drop`
+
+Removes an indexed source entirely — deletes its SQLite backend and manifest entry. **Destructive and irreversible.** Requires `permissions.index_drop: ask` (or explicit `allow`) in skill frontmatter, and triggers a user-approval gate by default (ADR-0029).
+
+```json
+{
+  "kind": "index_drop",
+  "source": "project_docs"
+}
+```
+
+Fields:
+
+- `source` (str, required) — logical source name to drop.
+
+Returns: `{"kind": "index_drop", "source": str, "chunks_dropped": int}`.
+
+Events: `index_dropped` (`source`, `chunks_dropped`).
+
 ## `judge_output`
 
 LLM-based output scorer for in-phase evaluation loops (FP-0007 Component D). Resolves a `target` dot-path to a value, calls an LLM with the caller-supplied `rubric`, and returns a score (0.0–1.0) plus a pass/fail flag.
@@ -306,6 +473,6 @@ The OS injects available ops into every context frame as `available_control_ops`
 
 ## See also
 
-- [run.md](../cli/run.md) — `--allow-shell`, `--allow-untrusted-python`
+- [run.md](../cli/run.md) — `--allow-shell`, `--allow-unsafe-python`
 - [events.md](events.md) — events emitted per op kind
 - [Concepts: principles P8](../../concepts/principles.md#p8-phase-instructions-contain-only-domain-logic)

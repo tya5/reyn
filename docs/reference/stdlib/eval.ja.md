@@ -34,7 +34,7 @@ LLM-as-judge として `judge_phase` を使用して、ターゲット Skill を
    permissions:
      python:
        safe: allow
-       unsafe: allow   # --allow-untrusted-python も必要
+       unsafe: allow   # --allow-unsafe-python も必要
    ```
 
 事前承認がない場合、ターゲットのランは失敗し、ケースは未完了として報告されます。
@@ -45,4 +45,4 @@ LLM-as-judge として `judge_phase` を使用して、ターゲット Skill を
 
 ## ソース
 
-[`src/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/eval/skill.md)
+[`src/reyn/stdlib/skills/eval/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/eval/skill.md)

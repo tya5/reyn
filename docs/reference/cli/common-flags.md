@@ -32,13 +32,13 @@ All limits are read from `reyn.yaml`'s `safety:` block by default and can be ove
 | `--llm-timeout SECONDS` | `safety.timeout.llm_call_seconds` (or `60`) | Per-call HTTP timeout passed to LiteLLM. |
 | `--llm-max-retries N` | `safety.timeout.llm_max_retries` (or `3`) | Transient-error retries per LLM call (LiteLLM exponential backoff). |
 
-## Permission gating (`reyn run` only)
+## Permission gating
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--allow-shell` | off | Enable the `shell` Control IR op. Required for skills that invoke sub-processes. |
-| `--allow-untrusted-python` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. |
-| `--strict` | off | Validate required fields at every nesting depth (default: top level only). |
+| Flag | Available on | Default | Description |
+|------|--------------|---------|-------------|
+| `--allow-shell` | `run` | off | Enable the `shell` Control IR op. Required for skills that invoke sub-processes. |
+| `--allow-unsafe-python` | `run`, `chat` | off | Allow `mode: unsafe` Python preprocessor steps (no AST sandbox). Safe-mode steps run without this. `--allow-untrusted-python` is a legacy alias. |
+| `--strict` | `run` | off | Validate required fields at every nesting depth (default: top level only). |
 
 ## Diagnostics
 

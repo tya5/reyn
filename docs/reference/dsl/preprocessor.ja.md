@@ -95,14 +95,14 @@ preprocessor:
 ### モード: `safe`
 
 - 実行前に Reyn が AST 検証します: `open`、`eval`、`exec`、`__import__`、`compile`、`globals`、`locals`、`subprocess` およびその他の危険なモジュールを禁止。
-- インポートはキュレートされた allowlist に制限されます（`math`、`statistics`、`json`、`re`、`random`、`time`、`datetime`、...）。プロジェクトは `reyn.yaml` の `permissions.python.allowed_modules` で拡張できます。
+- インポートはキュレートされた allowlist に制限されます（`math`、`statistics`、`json`、`re`、`random`、`time`、`datetime`、...）。プロジェクトは `reyn.yaml` の `python.allowed_modules` で拡張できます。
 - 制限された `__builtins__`。
 - クラッシュ分離とタイムアウトのためにサブプロセスで実行されます。
 
 ### モード: `unsafe`
 
 - AST バリデーションなし。完全な Python。
-- `--allow-untrusted-python` AND `python.unsafe: allow` Permission 付与の両方が必要です。
+- CLI で `--allow-unsafe-python` が必要、かつ `skill.md` の `permissions.python` エントリーに `mode: unsafe` の指定が必要です。
 - safe モードが禁止するケイパビリティ（ファイル I/O、カスタムパッケージ）を必要とするステップにのみ使用します。
 
 ### `output_schema`

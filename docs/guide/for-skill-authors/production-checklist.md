@@ -78,7 +78,7 @@ Work through each section in order. Each item names the failure mode it prevents
 
 ## Budget
 
-- [ ] **A `cost:` block is present in `reyn.yaml` (or `.reyn/config.yaml`).**
+- [ ] **A `cost:` block is present in `reyn.yaml` (or `reyn.local.yaml`).**
 
   Without it, a runaway skill or routing loop has no cap. A conservative
   starting point for most skills:
@@ -88,16 +88,18 @@ Work through each section in order. Each item names the failure mode it prevents
     per_agent_cost_usd:
       hard_limit: 2.00
       warn_ratio: 0.8
-    per_chain_skill_tokens:
-      hard_limit: 100000
     daily_cost_usd:
       hard_limit: 10.00
+  safety:
+    loop:
+      skill_tokens_per_chain:
+        hard_limit: 100000
   ```
 
   Check `/budget` after the first production run to see whether the limits
   are realistic. See [Budget reference](../../reference/config/budget.md) for all dimensions.
 
-- [ ] **`router_invocations_per_turn` is set if the skill can re-invoke the router.**
+- [ ] **`safety.loop.max_router_calls_per_turn` is set if the skill can re-invoke the router.**
 
   The default is `3`. If your skill composes other skills via `run_skill`,
   confirm that limit is appropriate — too low causes premature abort; too high

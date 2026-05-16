@@ -38,4 +38,4 @@ reyn run chat_compactor '{"type":"history_chunk_to_compact","data":{...}}'
 
 ## Source
 
-[`src/stdlib/skills/chat_compactor/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/chat_compactor/skill.md)
+[`src/reyn/stdlib/skills/chat_compactor/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/chat_compactor/skill.md)

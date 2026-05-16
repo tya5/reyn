@@ -52,7 +52,7 @@ reyn run skill_improver "improve <name>" --allow-shell
 
 - [ ] `reyn lint <name>` がクリーン。
 - [ ] 少なくとも 1 つのハッピーパス eval ケースが通過。
-- [ ] `final_output_schema` が呼び出し元が実際に必要とするものと一致している。
+- [ ] `final_output` artifact が呼び出し元が実際に必要とするものと一致している。
 - [ ] Phase の指示が P8 に従っている（スキーマの列挙なし、Control IR 構文なし）。
 
 ## 関連情報

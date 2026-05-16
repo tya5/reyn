@@ -15,8 +15,8 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 │  defaults (read-only project)│
 └──────────────────────────────┘
              ↓ if skill needs more
-┌──────────────────────────────┐  declare in phase frontmatter; user approves
-│  phase declarations          │  approval persists to .reyn/approvals.yaml
+┌──────────────────────────────┐  declare in skill.md frontmatter; user approves
+│  skill declarations          │  approval persists to .reyn/approvals.yaml
 └──────────────────────────────┘
              ↓ if you trust the project broadly
 ┌──────────────────────────────┐  reyn.yaml: permissions.<key>: allow
@@ -28,9 +28,9 @@ reyn's permission system gates four kinds of capability: file paths, shell, MCP 
 
 Read/glob/grep anywhere under the project root. Write/edit/delete only under `.reyn/` or `reyn/`. No shell, no MCP, no Python.
 
-### Layer 2: phase declarations
+### Layer 2: skill declarations
 
-A phase that needs something outside the defaults declares it in its frontmatter. At skill startup, the runtime shows a single approval prompt:
+A skill that needs something outside the defaults declares it in its `skill.md` frontmatter. At skill startup, the runtime shows a single approval prompt:
 
 ```
 [approval] my_skill/file.write needs:
@@ -53,8 +53,8 @@ permissions:
   shell: allow
   file.write: allow
   python:
-    pure: allow
-    trusted: allow
+    safe: allow
+    unsafe: allow
 ```
 
 Use sparingly — `allow` removes the prompt entirely.
@@ -76,8 +76,8 @@ permissions:
   file:
     read: allow
   python:
-    pure: allow
-    trusted: allow
+    safe: allow
+    unsafe: allow
 ```
 
 This grants project-wide pre-approval for the local environment without affecting
@@ -234,8 +234,8 @@ The `python` permission has two levels:
 
 | Level | Config key | What it allows |
 |-------|-----------|----------------|
-| `safe` | `python.pure: allow` (legacy key) | Steps that import only from `PURE_STDLIB_ALLOWLIST` — clock, entropy, pure compute, and `__future__` (compiler directive). No filesystem, network, or process access. |
-| `unsafe` | `python.trusted: allow` | Steps that may import any module, including filesystem and network. |
+| `safe` | `python.safe: allow` | Steps that import only from `PURE_STDLIB_ALLOWLIST` — clock, entropy, pure compute, and `__future__` (compiler directive). No filesystem, network, or process access. |
+| `unsafe` | `python.unsafe: allow` | Steps that may import any module, including filesystem and network. |
 
 `PURE_STDLIB_ALLOWLIST` is defined in `src/reyn/kernel/_python_allowlist.py`. `__future__` is in the list as a compiler directive — it carries no runtime capability.
 

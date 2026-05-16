@@ -13,13 +13,31 @@ Per-project state. Default location: `<project_root>/.reyn/`. Override via `reyn
 
 ```
 .reyn/
-├── approvals.yaml       # persistent permission approvals
-├── events/              # event JSONL logs, one file per run
-│   └── <run_id>.jsonl
-├── chats/               # chat session state (one file per session)
-│   └── <session_id>.json
-├── state/               # WAL and budget ledger (crash recovery)
-└── memory/              # project-scope memory
+├── approvals.yaml                          # persistent permission approvals
+├── events/                                 # all event JSONL logs
+│   ├── direct/                             # skill runs from `reyn run`
+│   │   └── skill_runs/<YYYY-MM>/
+│   │       └── <ts>_<skill>.jsonl
+│   └── agents/<name>/                      # skill runs + chat events from an agent
+│       ├── skill_runs/<YYYY-MM>/
+│       │   └── <ts>_<skill>.jsonl
+│       └── chat/<YYYY-MM>/                 # chat session events (rotated by size/age)
+│           └── <ts>.jsonl
+├── agents/<name>/                          # per-agent workspace (one dir per agent)
+│   ├── profile.yaml                        # agent name, role, allowed_skills
+│   ├── history.jsonl                       # append-only conversation log
+│   ├── memory/                             # agent-scoped memory
+│   │   ├── MEMORY.md
+│   │   └── <name>.md
+│   └── state/                              # WAL skill-run snapshots
+│       └── skills/<run_id>.snapshot.json
+├── skill-versions/<name>/                  # skill version snapshots (FP-0006)
+│   └── v<N>.md
+├── eval-results/<skill>/                   # `reyn eval run` result files
+│   └── <timestamp>.jsonl
+├── state/                                  # process-global persistent state
+│   └── budget_ledger.jsonl                 # daily/monthly token + USD ledger
+└── memory/                                 # project-scope memory
     ├── MEMORY.md
     └── <name>.md
 ```
@@ -40,13 +58,36 @@ my_skill/shell: allow
 
 Inspect with `reyn permissions list`. Remove with `reyn permissions revoke <key>`.
 
-### `events/<run_id>.jsonl`
+### `events/`
 
-JSONL log of all events emitted during a run. Replayable with `reyn events <file>`. See [events reference](../runtime/events.md).
+All event JSONL logs. Organized by caller and log type:
 
-### `chats/<session_id>.json`
+- `direct/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — events from `reyn run` (non-agent skill runs)
+- `agents/<name>/skill_runs/<YYYY-MM>/<ts>_<skill>.jsonl` — skill run events spawned by a named agent
+- `agents/<name>/chat/<YYYY-MM>/<ts>.jsonl` — chat-session events (rotated by `events.max_bytes` / `events.max_age_seconds`)
 
-State for a `reyn chat` session: history, persisted memory recall results, etc.
+JSONL files are replayable with `reyn events <file>`. See [events reference](../runtime/events.md).
+
+### `agents/<name>/`
+
+Per-agent workspace. One directory per named agent (created by `reyn agent new`). The `default` agent always exists.
+
+- `profile.yaml` — agent identity: name, role, optional `allowed_skills`. See [profile-yaml reference](../dsl/profile-yaml.md).
+- `history.jsonl` — append-only conversation log (user + assistant turns; cross-agent messages include `chain_id` for tracing).
+- `memory/` — agent-scoped memory (`MEMORY.md` index + body files). Recalled and written automatically during the router phase.
+- `state/skills/<run_id>.snapshot.json` — WAL snapshots for crash recovery of in-flight skill runs.
+
+### `skill-versions/<name>/`
+
+Skill version snapshots written by `skill_improver` (FP-0006). Each `v<N>.md` is a timestamped snapshot of `skill.md` at the time a proposal was applied. Pruned to `self_improvement.max_versions` snapshots. Inspect with `reyn skill versions <name>`.
+
+### `eval-results/<skill>/`
+
+One JSONL file per `reyn eval run` execution. Each line records a single case result: input, expected, actual `final_output`, score, passed flag, and `skill_version_hash`. Used by `reyn eval report` and `reyn eval compare`.
+
+### `state/budget_ledger.jsonl`
+
+Persistent daily and monthly token + USD usage records. Append-only with fsync. Reset automatically at midnight (daily) or the 1st of the month (monthly). Inspect with `/budget` in `reyn chat`. Not affected by `/budget reset` (which only clears in-memory counters).
 
 ### `memory/`
 

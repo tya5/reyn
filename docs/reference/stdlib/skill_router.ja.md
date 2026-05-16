@@ -54,7 +54,7 @@ ChatSession は空でない配列をそれぞれディスパッチします。`r
 
 ## ソース
 
-[`src/stdlib/skills/skill_router/`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_router/)
+[`src/reyn/chat/session.py`](https://github.com/tya5/reyn/blob/main/src/reyn/chat/session.py) — 通常の skill ディレクトリではなく、組み込みシステム skill として実装されています
 
 ## 関連情報
 

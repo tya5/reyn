@@ -32,7 +32,7 @@ See [Concepts: multi-agent](../../concepts/multi-agent.md) — "Agent ID propaga
 
 | Kind | When | Key payload |
 |------|------|-------------|
-| `workflow_started` | First phase enters | `entry_phase`, `input_artifact_type` |
+| `workflow_started` | First phase enters | `entry_phase`, `input_type`, `default_model` |
 | `workflow_finished` | Skill completes cleanly | `phase`, `reason`, `confidence`, `total_phase_count`, `final_output_keys` |
 | `phase_started` | Each phase visit begins | `phase`, `visit_count` |
 | `phase_completed` | Each phase visit ends | `phase`, `next_phase`, `decision` |
@@ -55,11 +55,17 @@ Each Control IR op kind emits its own event:
 
 | Kind | When |
 |------|------|
-| `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep` | `file` op variants |
+| `read_file`, `write_file`, `edit_file`, `delete_file`, `glob_files`, `grep`, `regenerate_index` | `file` op variants — all via `tool_executed` with `op=<sub_op>` |
 | `shell_started`, `shell` (completed), `shell_timeout`, `shell_not_allowed` | `shell` op |
+| `sandboxed_exec_started`, `sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`, `backend`; `completed`: `argv`, `backend`, `returncode` |
 | `run_skill_started`, `skill_run_spawned`, `skill_run_failed` | `run_skill` op — `run_skill_started` carries `skill_version_hash: str` (sha256 hex of `skill.md` content at execution time; `"unknown"` if `skill.md` is absent) |
 | `mcp_called`, `mcp_completed`, `mcp_failed` | MCP tool ops |
+| `mcp_server_installed` | `mcp_install` op — `name`, key names only (no values) |
 | `web_search_started`, `web_search_completed`, `web_search_failed`, `web_fetch_started` | search ops |
+| `embed_progress` | `embed` op (Form B artifact reference only) — `embedded: int`, `skipped: int` cumulative per batch |
+| `recall_embed_failed` | `recall` op — emitted when the embed sub-op fails; `query`, `error` |
+| `index_dropped` | `index_drop` op — `source`, `chunks_dropped: int` |
+| `skill_resolve_completed` | `skill_resolve` op — `name`, `resolved: bool`, `source: "local"\|"project"\|"stdlib"\|null` |
 | `control_ir_skipped`, `control_ir_failed`, `control_ir_validation_error` | dispatch failures (`control_ir_skipped` reasons include `shell_not_allowed`, `handler_not_implemented`, `not_allowed_in_phase`) |
 | `permission_denied` | When an op is denied by the resolver |
 
@@ -107,8 +113,8 @@ See also: [Concepts: secret handling](../../concepts/secret-handling.md) — OAu
 | `agent_message_sent` | `_send_to_agent` or `_send_agent_response` delivered a payload | `kind=agent_request\|agent_response`, `from_agent`, `to_agent`, `depth`, `chain_id` |
 | `agent_request_received` | Receiving agent pulled an `agent_request` from its inbox | `from_agent`, `depth`, `chain_id` |
 | `agent_response_received` | Originating agent pulled an `agent_response` from its inbox | `from_agent`, `depth`, `chain_id` |
-| `agent_message_refused` | A send was refused (e.g. exceeded `multi_agent.max_hop_depth`) | `reason`, `to_agent`, `depth`, `chain_id` |
-| `chain_timeout` | A pending chain exceeded `multi_agent.chain_timeout_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
+| `agent_message_refused` | A send was refused (e.g. exceeded `safety.loop.max_agent_hops`) | `reason`, `to_agent`, `depth`, `chain_id` |
+| `chain_timeout` | A pending chain exceeded `safety.timeout.chain_seconds` and was force-resolved with a synthetic error response upstream | `chain_id`, `waiting_on` (sorted list of agents that hadn't replied), `timeout_seconds`, `origin_agent` |
 
 `chain_id` is uuid4 hex; one per top-level user submission, propagated unchanged across every hop. Cross-agent reconstruction is `grep <chain_id>` over each agent's `events.jsonl` plus `history.jsonl`.
 

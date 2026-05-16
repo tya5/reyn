@@ -30,14 +30,13 @@ Iteratively improve an existing skill by running it under eval, planning DSL cha
 ## Requirements
 
 - Target skill must have an `eval.md` spec.
-- `--allow-shell` may be needed if the improver invokes sub-processes for evaluation.
 
 ## Example
 
 ```bash
-reyn run skill_improver "improve my_explainer" --allow-shell
+reyn run skill_improver "improve my_explainer"
 ```
 
 ## Source
 
-[`src/stdlib/skills/skill_improver/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/skill_improver/skill.md)
+[`src/reyn/stdlib/skills/skill_improver/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/skill_improver/skill.md)

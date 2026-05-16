@@ -19,7 +19,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 
 | 名前 | 説明 |
 |------|-------------|
-| `SKILL` | Skill 名。順番に解決されます: `reyn/project/<name>` → `reyn/local/<name>` → `src/stdlib/skills/<name>`。 |
+| `SKILL` | Skill 名。順番に解決されます: `reyn/project/<name>` → `reyn/local/<name>` → `src/reyn/stdlib/skills/<name>`。 |
 | `INPUT` | 初期入力。JSON 文字列はそのまま使用されます（有効な artifact でなければなりません）。自然言語の文字列は `{"type": "user_message", "data": {"text": "..."}}` として自動ラップされます。省略した場合は stdin から読み取ります。 |
 
 ## オプション
@@ -28,14 +28,14 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 |------|-------------|
 | `--skill-path DIR` | Skill ディレクトリへのパス（名前解決をオーバーライド）。 |
 | `--module MODULE` | `skill` オブジェクトを公開する Python モジュールパス。 |
-| `--dsl-root DIR` | 共有 artifact/Phase 解決のための DSL ツリーのルート。 |
+| `--skill-root DIR` | 共有 artifact/Phase 解決のための Skill ツリーのルート。`--skill-path` 使用時は自動推論されます。推論が誤っている場合にオーバーライドしてください。 |
 | `--model MODEL` | モデルクラス（`light` / `standard` / `strong`）または LiteLLM モデル文字列。`reyn.yaml` の `models` マップを通じて解決されます。 |
 | `--output-language LANG` | 出力言語コード。デフォルトは `reyn.yaml` から。 |
 | `--max-phase-visits N` | ランごとの単一 Phase 再訪問の上限。`0` = 無制限。デフォルト `25`。 |
 | `--events` | 実行後に完全なイベントログを表示。 |
 | `--strict` | すべてのネスト深さで必須フィールドを強制します（デフォルト: トップレベルのみ）。 |
 | `--allow-shell` | `shell` Control IR op を有効にする。デフォルトはオフ。 |
-| `--allow-untrusted-python` | unsafe モードの Python preprocessor ステップを有効にする（AST サンドボックスなし）。 |
+| `--allow-unsafe-python` | unsafe モードの Python preprocessor ステップを有効にする（AST サンドボックスなし）。`--allow-untrusted-python` は後方互換性のためのレガシーエイリアスです。 |
 
 ## 例
 

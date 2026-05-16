@@ -32,7 +32,7 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 | `chain_id` | チェイン ID | uuid4 hex minted by `submit_user_text`; propagated through every inbox payload, history meta, and event in the same chain. |
 | Pending Chain | ペンディングチェイン | State held in a delegating agent while it waits for delegate responses (deferred reply). Cleared when `waiting_on` becomes empty. |
 | `allowed_skills` | 許可スキル一覧 | Optional `list[str] \| None` in profile.yaml. `None` = unrestricted, `[]` = router-only, `[a, b]` = allowlist. stdlib router/compactor are not subject. (FP-0011 removed `skill_narrator`; the router LLM narrates inline.) |
-| Hop Depth | ホップ深度 | Number of agent-to-agent forwards from the original user request. Bounded by `multi_agent.max_hop_depth`. |
+| Hop Depth | ホップ深度 | Number of agent-to-agent forwards from the original user request. Bounded by `safety.loop.max_agent_hops`. |
 
 ## Execution
 
@@ -43,7 +43,7 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 | Preprocessor | プリプロセッサ | Deterministic pre-LLM steps a phase may declare (`run_skill`, `iterate`, `validate`, `python`). |
 | Decision | 決定 | OS-level value: `continue` / `finish` / `abort`. Never skill-specific. |
 | Transition | 遷移 | A move from one phase to another, validated against the skill graph. |
-| Final Output | 最終出力 | The artifact produced when a skill finishes; validated against `final_output_schema`. |
+| Final Output | 最終出力 | The artifact produced when a skill finishes; validated against the skill's `final_output` declaration. |
 | Visit Count | 訪問回数 | Number of times a single phase has been entered in the current run. |
 
 ## DSL files
@@ -68,8 +68,8 @@ Authoritative names for reyn concepts. Use these terms verbatim in skill DSL fil
 
 | Mode | Where | Meaning |
 |------|-------|---------|
-| pure | Python preprocessor | AST-validated, sandboxed builtins, allowed-modules-only imports. |
-| trusted | Python preprocessor | Free Python; requires `--allow-untrusted-python` plus permission grant for **user skills** (`reyn/local/`, `reyn/project/`). **Stdlib skills are auto-trusted** — the flag is not required (the skill is vendored with reyn, not user-supplied). |
+| `safe` | Python preprocessor | AST-validated, sandboxed builtins, allowed-modules-only imports. No extra flag needed. |
+| `unsafe` | Python preprocessor | Free Python; requires `--allow-unsafe-python` at the CLI plus a `permissions.python` entry with `mode: unsafe` in `skill.md`. **Stdlib skills in `mode: unsafe` are auto-trusted** — the flag is still required but no approval prompt fires (the skill is vendored with reyn, not user-supplied). |
 
 ## DO NOT confuse
 

@@ -71,7 +71,7 @@ For paths outside the default zones. Each entry has:
 Per-(module, function) declarations for `python` preprocessor steps. See [`reference/dsl/preprocessor.md`](../dsl/preprocessor.md).
 
 - `module`, `function` — must match the corresponding preprocessor step.
-- `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-untrusted-python`).
+- `mode` — `safe` (sandboxed) or `unsafe` (no AST sandbox; needs `--allow-unsafe-python` at runtime).
 - `timeout` — wall-clock seconds before the parent SIGKILLs the child. Default `30`.
 
 ## Web ops (Tier 1 — default allow)
@@ -113,7 +113,7 @@ permissions:
   file.write: allow         # grants ALL write-class ops for ALL skills
   python:
     safe: allow             # auto-approve all safe-mode python steps
-    unsafe: allow           # also requires --allow-untrusted-python at runtime
+    unsafe: allow           # also requires --allow-unsafe-python at runtime
     allowed_modules:
       - math
       - statistics

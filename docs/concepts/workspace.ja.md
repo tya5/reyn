@@ -16,7 +16,7 @@ Workspace は、Reyn がランの実行中に生成するすべてのもの（ar
 | `file.write` Control IR op が書き込んだファイル | Skill が指定した Workspace ルート配下 |
 | サブ Skill の出力（`run_skill` op から） | 呼び出し元 Phase の入力の名前付きスロットに束縛 |
 | イベントログ | `.reyn/events/<run_id>.jsonl` |
-| Eval レポート | `.reyn/eval_reports/<skill>/<timestamp>.json` |
+| Eval レポート | `.reyn/eval-results/<skill>/<timestamp>.json` |
 
 ## 単一ソースである理由
 

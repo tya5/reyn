@@ -63,7 +63,7 @@ LLM は `into` で設定したキーの下でそれを読み取ります。Phase
 以下のいずれかには `validate` ステップは不要です。OS が行います:
 
 - **トランジション検証。** すべての artifact はトランジション前に次の Phase の `input` スキーマに対して検証されます。
-- **最終出力の検証。** 終了 artifact は Skill の `final_output_schema` に対して検証されます。
+- **最終出力の検証。** 終了 artifact は Skill の `final_output` 宣言に対して検証されます。
 
 `validate` は LLM 呼び出しの前、Phase の**内部**で検証したい場合にのみ使用します。
 

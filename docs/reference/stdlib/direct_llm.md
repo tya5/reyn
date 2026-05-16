@@ -38,4 +38,4 @@ reyn run direct_llm '{"type":"user_message","data":{"text":"What does idempotent
 
 ## Source
 
-[`src/stdlib/skills/direct_llm/skill.md`](https://github.com/tya5/reyn/blob/main/src/stdlib/skills/direct_llm/skill.md)
+[`src/reyn/stdlib/skills/direct_llm/skill.md`](https://github.com/tya5/reyn/blob/main/src/reyn/stdlib/skills/direct_llm/skill.md)

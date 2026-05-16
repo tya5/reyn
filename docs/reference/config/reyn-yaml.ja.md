@@ -27,16 +27,29 @@ models:
 | `models` | マップ | クラス名 → LiteLLM モデル文字列 **または** dict（以下参照）。 |
 | `output_language` | 文字列 | デフォルトの出力言語コード（例: `en`、`ja`）。`--output-language` でオーバーライド。 |
 | `safety` | マップ | ランタイムの停止条件: ループ検出上限、タイムアウト、上限超過時ポリシー。以下参照。 |
+| `cost` | マップ | バジェット上限とレート制限（エージェントごと、日次、月次）。以下参照。 |
 | `plan` | マップ | プランモードのステップバジェットとリトライ設定。以下参照。 |
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択と非対応プラットフォームポリシー。以下参照。 |
 | `action_retrieval` | マップ | FP-0034 ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
+| `embedding` | マップ | RAG 埋め込みモデルクラスとバッチ設定（ADR-0033）。以下参照。 |
+| `chat` | マップ | チャットセッションの Head/Body/Tail 圧縮設定。以下参照。 |
+| `voice` | マップ | チャット TUI の音声入力（Whisper）設定。以下参照。 |
+| `events` | マップ | チャットセッションイベントファイルの監査ログローテーションポリシー。以下参照。 |
+| `skill_search` | マップ | BM25 Skill 事前フィルター設定（FP-0024 Component A）。以下参照。 |
+| `skill_resume` | マップ | 再起動時の曖昧なステップに対するレジューム ポリシー。以下参照。 |
+| `self_improvement` | マップ | `skill_improver` の適用ゲートとバージョン上限（FP-0006）。以下参照。 |
+| `mcp` | マップ | MCP サーバー定義と `search_threshold`。以下参照。 |
+| `python` | マップ | Python preprocessor の追加許可モジュール。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
 | `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
 | `cron` | マップ | スケジュール付きスキル実行 (FP-0009 Component B)。以下参照。 |
-| `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
+| `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
+| `prompt_cache_enabled` | bool | システムプロンプトに Anthropic プロンプトキャッシュマーカーを付与。デフォルト `true`。 |
+| `project_context_path` | 文字列 | すべての Phase システムプロンプトに注入する Markdown ファイル。デフォルト `REYN.md`。 |
+| `api_base` | 文字列 | LiteLLM プロキシベース URL。通常は `reyn.local.yaml`（gitignored）に設定。 |
 
 ## `models` ブロック
 
@@ -448,7 +461,7 @@ permissions:
     write: [".reyn/state/", "reyn/local/"]
   python:
     safe:    allow      # safe モードの python ステップのデフォルト
-    unsafe:  deny       # unsafe モードには --allow-untrusted-python も必要
+    unsafe:  deny       # unsafe モードには --allow-unsafe-python も必要
     allowed_modules:
       - math
       - statistics
@@ -566,12 +579,6 @@ cost:
   per_agent_cost_usd:
     hard_limit: 2.00     # 1 エージェントが $2.00 消費した後に拒否
 
-  # チェーン + Skill ごとの上限（メモリ内）
-  per_chain_skill_calls:
-    hard_limit: 5        # 同じ Skill がチェーンで 5 回以上起動されると拒否
-  per_chain_skill_tokens:
-    hard_limit: 100000   # 1 つの Skill がチェーンで 100k トークン以上蓄積すると拒否
-
   # モデルごとのレートリミット（1 分あたりの呼び出し数）
   rate_limit_per_minute:
     openai/gpt-4o: 60
@@ -594,13 +601,13 @@ cost:
 |---|---|---|---|
 | `per_agent_tokens` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
 | `per_agent_cost_usd` | エージェントごと | メモリ内 | `/budget reset` または再起動 |
-| `per_chain_skill_calls` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
-| `per_chain_skill_tokens` | チェーン+Skill ごと | メモリ内 | チェーン解決または `/budget reset` |
 | `rate_limit_per_minute` | モデルごと | メモリ内（60 秒ウィンドウ） | 自動（スライディングウィンドウ） |
 | `daily_tokens` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `daily_cost_usd` | プロセスグローバル | 台帳ファイル | 午前 0 時（現地時間） |
 | `monthly_tokens` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
 | `monthly_cost_usd` | プロセスグローバル | 台帳ファイル | 月初（現地時間） |
+
+> **注意**: チェーンごとの Skill スポーン・トークン上限（`skill_calls_per_chain`、`skill_tokens_per_chain`）とルーター呼び出し上限（`max_router_calls_per_turn`）は FP-0004/0005 で `safety.loop` に移動しました。上記の [`safety` ブロック](#safety-ブロック) を参照してください。
 
 **上限の動作:** ハード上限を超えると、LLM の呼び出しが行われる前に拒否されます。現在の使用状況を見るには `/budget`、メモリ内カウンターをクリアするには `/budget reset` を使用します（日次/月次は reset の影響を受けません。永続台帳に基づいています）。
 
@@ -652,7 +659,238 @@ mcp:
 
 MCP ランタイムはオプション依存です。公式の `mcp` Python SDK を取り込むには `pip install -e ".[mcp]"` でインストールします。
 
+### `mcp.search_threshold`
+
+すべての接続済みサーバーにわたる MCP ツールの総数がこの閾値に達すると、`build_tools()` が全 MCP ツールスキーマのインライン展開から Anthropic の `tool_search_tool`（遅延ロードモード）に切り替わります。デフォルト `30`。`0` で無効化。
+
+```yaml
+mcp:
+  search_threshold: 30   # デフォルト; スキーマを常にインライン化するには 0 に設定
+  servers:
+    ...
+```
+
 [コンセプト: MCP](../../concepts/mcp.md) でプロトコル概要、[How-to: MCP サーバーを使う](../../guide/for-skill-authors/use-an-mcp-server.md) でエンドツーエンドのクイックスタートを参照してください。
+
+## `embedding` ブロック
+
+RAG 埋め込みモデルクラスとバッチ設定（ADR-0033）。組み込みデフォルトが OpenAI パスをカバーしているため、`OPENAI_API_KEY` を設定した新規インストールでは `reyn.yaml` の変更は不要です。
+
+```yaml
+embedding:
+  default_class: standard         # クラス未指定時に使用するクラス
+  batch_size: 100                 # 埋め込み API 呼び出しごとのテキスト数（1–2048）
+  max_concurrent_batches: 1       # 並列バッチ呼び出し数（1–10）
+  max_retries: 3                  # 一時的エラーのリトライ数（0–10）
+  retry_backoff: exponential      # exponential | linear
+  tokenizer: cl100k_base          # チャンクサイズ推定用 tiktoken エンコーディング
+  cost_warn_threshold: 10000      # 推定チャンク数がこれを超えると ask_user ゲートが起動
+  classes:
+    light:
+      model: openai/text-embedding-3-small
+    standard:
+      model: openai/text-embedding-3-small
+    strong:
+      model: openai/text-embedding-3-large
+    # 非デフォルト API エンドポイントを使用するカスタムクラス
+    private:
+      model: openai/text-embedding-3-small
+      api_base: ${EMBEDDING_API_BASE}
+```
+
+### `embedding` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `default_class` | 文字列 | `standard` | 埋め込み op でクラス未指定時に使用するクラス。`classes` のキーである必要があります。 |
+| `batch_size` | int | `100` | 埋め込み API 呼び出しごとのテキスト数。有効範囲: 1–2048。 |
+| `max_concurrent_batches` | int | `1` | 並列バッチ呼び出し数。有効範囲: 1–10。1 より大きい値は受け入れますが、並列パスが有効になるまで警告ログが出ます。 |
+| `max_retries` | int | `3` | バッチ呼び出しごとの一時的エラーリトライ数。有効範囲: 0–10。 |
+| `retry_backoff` | 文字列 | `exponential` | バックオフ戦略: `exponential` または `linear`。 |
+| `tokenizer` | 文字列 | `cl100k_base` | チャンクサイズ推定に使用する tiktoken エンコーディング。 |
+| `cost_warn_threshold` | int | `10000` | インデックス作成前に `ask_user` ゲートが起動する推定チャンク数の閾値。 |
+
+### `embedding.classes` エントリ
+
+`embedding.classes` の各キーはクラス名です。組み込みデフォルト（`light`、`standard`、`strong`）があらかじめ読み込まれ、ユーザーエントリで上書きや追加ができます。
+
+| フィールド | 必須 | 説明 |
+|-------|----------|-------------|
+| `model` | はい | LiteLLM モデル文字列（例: `openai/text-embedding-3-small`）。 |
+| `api_base` | いいえ | エンドポイント URL のオーバーライド。`${VAR}` interpolation に対応。 |
+| `extra_body` | いいえ | API にそのまま渡すプロバイダー固有のペイロード。 |
+| `extends` | いいえ | 同じ `classes` dict の別クラスから継承して特定フィールドをオーバーライド。 |
+
+組み込みクラス（`classes:` が空または省略時に有効）:
+
+| クラス | モデル |
+|-------|-------|
+| `light` | `openai/text-embedding-3-small` |
+| `standard` | `openai/text-embedding-3-small` |
+| `strong` | `openai/text-embedding-3-large` |
+
+## `chat` ブロック
+
+チャットセッションの圧縮設定 — 最近のターンを失わずにコンテキストを簡潔に保つ Head/Body/Tail トークンバジェット。
+
+```yaml
+chat:
+  compaction:
+    trigger_total_tokens: 30000   # カバーされない中間部がこれを超えると圧縮
+    head_size: 12                  # 最初の N ユーザー/エージェントターンを生のまま保持
+    tail_size: 12                  # 最後の N ユーザー/エージェントターンを生のまま保持
+    body_token_cap: 1500           # 全 body サマリーセクションの合計トークン上限
+    min_compact_batch: 5           # N ターン未満の圧縮はスキップ
+    section_token_caps:
+      topic_arc: 200
+      decisions: 400
+      pending: 400
+      session_user_facts: 200
+      artifacts_referenced: 300
+```
+
+### `chat.compaction` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `trigger_total_tokens` | int | `30000` | 会話のカバーされない中間部がこのトークン数を超えると圧縮を実行。 |
+| `head_size` | int | `12` | 生のまま保持する最初のユーザー/エージェントターン数（要約対象外）。 |
+| `tail_size` | int | `12` | 生のまま保持する最新のユーザー/エージェントターン数。 |
+| `body_token_cap` | int | `1500` | 全 body サマリーセクション合計のトークンバジェット。 |
+| `min_compact_batch` | int | `5` | 吸収するターン数がこれ未満の場合は圧縮をスキップ（小さな圧縮を回避）。 |
+
+### `chat.compaction.section_token_caps` フィールド
+
+| フィールド | デフォルト | 説明 |
+|-------|---------|-------------|
+| `topic_arc` | `200` | トピックアークサマリーセクションのトークン上限。 |
+| `decisions` | `400` | 決定事項セクションのトークン上限。 |
+| `pending` | `400` | 保留項目セクションのトークン上限。 |
+| `session_user_facts` | `200` | 圧縮をまたいで引き継ぐユーザーファクトのトークン上限。 |
+| `artifacts_referenced` | `300` | アーティファクト参照一覧のトークン上限。 |
+
+## `events` ブロック
+
+チャットセッションイベントファイルの監査ログローテーションポリシー（PR20）。Skill 実行イベントはラン 1 つにつき 1 ファイルを使用し、この設定の影響を受けません。
+
+```yaml
+events:
+  max_bytes: 10485760       # 10 MB でローテーション（デフォルト）
+  max_age_seconds: 86400    # 1 日後にローテーション（デフォルト）
+  cleanup_period_days: null # null = 自動削除なし（デフォルト）
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `max_bytes` | int | `10485760`（10 MB） | アクティブイベントファイルがこのサイズを超えるとローテーション。`0` = サイズベースのローテーションなし。 |
+| `max_age_seconds` | int | `86400`（1 日） | アクティブイベントファイルがこの秒数を経過するとローテーション。`0` = 経過時間ベースのローテーションなし。 |
+| `cleanup_period_days` | int \| null | `null` | クローズされたイベントファイルを `reyn events purge` が削除できるまでの保持期間（日）。`null` で自動削除を無効化。`0` は拒否されます — 無効化するには `null` を使用。 |
+
+`max_bytes` と `max_age_seconds` の両方を `0` に設定するとローテーションを完全に無効化します。
+
+## `voice` ブロック
+
+チャット TUI の音声入力（Whisper）設定（Ctrl+R で録音）。オプション機能 — `pip install 'reyn[voice]'`（`sounddevice` + `faster-whisper`）が必要です。ブロックは遅延ロードされるため、`[voice]` extra がない場合は録音キーが自動的に無効化されます。
+
+```yaml
+voice:
+  enabled: true           # deps がインストールされていても Ctrl+R を無効化するには false
+  model: small            # tiny | base | small | medium | large-v3
+  language: ja            # ISO 639-1 コード; "" または null = 自動検出
+  device: cpu             # cpu | cuda
+  compute_type: int8      # int8 | float16 | float32
+  sample_rate: 16000      # Whisper は 16 kHz モノラルを期待
+  cpu_threads: 4          # 0 = OpenMP デフォルト
+  num_workers: 1          # 並列転写ストリーム数
+  max_duration_s: 300.0   # これ（秒）を超える録音は自動キャンセル
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `enabled` | bool | `true` | deps がインストールされていても Ctrl+R を完全に無効化するには `false`。 |
+| `model` | 文字列 | `small` | Whisper モデルサイズ: `tiny` / `base` / `small` / `medium` / `large-v3`。 |
+| `language` | 文字列 \| null | `ja` | ISO 639-1 言語コード。`""` または `null` で自動検出（短いクリップでは信頼性が低い）。 |
+| `device` | 文字列 | `cpu` | 推論デバイス: `cpu` または `cuda`。`auto` は一部の Mac 環境で誤ったデバイスを選択するため非対応。 |
+| `compute_type` | 文字列 | `int8` | 量子化精度: `int8` / `float16` / `float32`。 |
+| `sample_rate` | int | `16000` | サンプルレート（Hz）。Whisper は 16 kHz モノラルを期待 — 変更しないでください。 |
+| `cpu_threads` | int | `4` | faster-whisper の CPU スレッド数。`0` = OpenMP デフォルト。Apple Silicon での OpenMP/Python スレッドデッドロックを避けるため 4 に固定しています。 |
+| `num_workers` | int | `1` | 並列転写ストリーム数。`1` でメモリとスレッド使用量を低く保ちます。 |
+| `max_duration_s` | float | `300.0` | この秒数を超える録音を自動キャンセル。放置録音によるメモリ増大を防ぎます。 |
+
+## `skill_search` ブロック
+
+BM25 Skill 事前フィルター設定（FP-0024 Component A）。カタログが `threshold` を超える Skill 数になると、ルーターは `tools=` を構築する前に上位 `top_k` の BM25 キーワードマッチに利用可能 Skill の列挙を絞り込みます。BM25 が 0 件を返した場合は全列挙にフォールバック — Skill が見えなくなることはありません。
+
+```yaml
+skill_search:
+  threshold: 20    # BM25 が有効化されるカタログサイズ; 0 = 常にフィルター
+  top_k: 5         # BM25 が返す Skill 数
+  backend: bm25    # bm25（デフォルト）; embedding / hybrid は将来のフェーズ向けに予約
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `threshold` | int | `20` | BM25 事前フィルタリングが有効化されるカタログサイズ。`0` で常にフィルタリング; 大きな数値で実質的に無効化。 |
+| `top_k` | int | `5` | BM25 が返す最良マッチ Skill 数。最小値 `1`。 |
+| `backend` | 文字列 | `bm25` | 検索バックエンド。`bm25` が唯一のアクティブバックエンド。`embedding` と `hybrid` は将来のフェーズ向けに予約。 |
+
+## `skill_resume` ブロック
+
+ステップ途中で中断された Skill 実行のレジューム ポリシー。*曖昧なステップ* とは `step_started` WAL イベントに対応する `step_completed` / `step_failed` がないもので、op が外部で確定している可能性があります。
+
+```yaml
+skill_resume:
+  default: retry            # retry | skip | discard_skill | prompt
+  per_skill:
+    my_idempotent_skill: retry
+    my_side_effect_skill: discard_skill
+```
+
+| ポリシー | 説明 |
+|--------|-------------|
+| `retry`（デフォルト） | 曖昧なステップを再実行。読み取り専用 op や冪等性が信頼できる Skill に安全。リスク: 副作用の重複。 |
+| `skip` | 空/デフォルト完了を合成して続行。リスク: 下流でのデータ欠損。 |
+| `discard_skill` | Skill 実行全体を中止し、チェックポイントを破棄して発生元チェーンに失敗を通知。 |
+| `prompt` | レガシー/no-op。設定互換性のために保持。自動レジューム ランタイムでは `retry` として扱われます（インタラクティブプロンプトは表示されません）。 |
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `default` | 文字列 | `retry` | 全 Skill のデフォルトレジューム ポリシー。 |
+| `per_skill` | マップ | `{}` | Skill ごとのポリシーオーバーライド。キーは Skill 名、値は上記ポリシーのいずれか。 |
+
+## `self_improvement` ブロック
+
+`skill_improver` の動作設定（FP-0006）。Skill 改善提案をソースに適用する方法を制御します。
+
+```yaml
+self_improvement:
+  on_propose: ask_user   # ask_user | auto | disabled
+  max_versions: 10       # 保持する v<N>.md スナップショットの上限; 0 = 制限なし
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `on_propose` | 文字列 | `ask_user` | 改善を適用しようとする際の動作。`ask_user` — InterventionBus 経由でユーザーに確認（安全なデフォルト）。`auto` — プロンプトをスキップして直接適用（CI / 無人実行向け）。`disabled` — `skill_improvement_dry_run` イベントをログに記録し変更を適用しない。 |
+| `max_versions` | int | `10` | `.reyn/skill-versions/<name>/` に保持する `v<N>.md` スナップショットの上限。上限を超えると最古バージョンが削除されます（current バージョンは削除されません）。`0` でプルーニングを無効化。 |
+
+## `python` ブロック
+
+Python preprocessor 設定。セーフモードでインポートできるモジュールの組み込み許可リストを拡張します。
+
+```yaml
+python:
+  allowed_modules:
+    - math
+    - statistics
+    - json
+    - re
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+|-------|------|---------|-------------|
+| `allowed_modules` | list[string] | `[]` | セーフモード Python preprocessor ステップが組み込み stdlib 許可リストに加えてインポートできる追加モジュール名。内部で I/O を行うライブラリ（例: `pandas`、`requests`）はセーフモードのサンドボックスを無効化します — 慎重に管理してください。 |
+
+> unsafe Python ステップ（preprocessor フロントマターの `mode: unsafe`）はこのリストで制限されず、ランタイムで `--allow-unsafe-python` も必要です。完全な Permission 文法は [Reference: permissions](permissions.md) を参照してください。
 
 ## 関連情報
 

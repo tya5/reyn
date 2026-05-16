@@ -32,7 +32,7 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 
 | 種類 | タイミング | 主要なペイロード |
 |------|------|-------------|
-| `workflow_started` | 最初の Phase が入ったとき | `entry_phase`、`input_artifact_type` |
+| `workflow_started` | 最初の Phase が入ったとき | `entry_phase`、`input_type`、`default_model` |
 | `workflow_finished` | Skill がクリーンに完了したとき | `phase`、`reason`、`confidence`、`total_phase_count`、`final_output_keys` |
 | `phase_started` | 各 Phase 訪問の開始時 | `phase`、`visit_count` |
 | `phase_completed` | 各 Phase 訪問の終了時 | `phase`、`next_phase`、`decision` |
@@ -55,11 +55,17 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 
 | 種類 | タイミング |
 |------|------|
-| `read_file`、`write_file`、`edit_file`、`delete_file`、`glob_files`、`grep` | `file` op のバリアント |
+| `read_file`、`write_file`、`edit_file`、`delete_file`、`glob_files`、`grep`、`regenerate_index` | `file` op のバリアント — すべて `tool_executed`（`op=<sub_op>`）経由 |
 | `shell_started`、`shell`（完了）、`shell_timeout`、`shell_not_allowed` | `shell` op |
+| `sandboxed_exec_started`、`sandboxed_exec_completed` | `sandboxed_exec` op — `started`: `argv`、`backend`; `completed`: `argv`、`backend`、`returncode` |
 | `run_skill_started`、`skill_run_spawned`、`skill_run_failed` | `run_skill` op — `run_skill_started` は `skill_version_hash: str`（実行時の `skill.md` 内容の sha256 hex。`skill.md` が存在しない場合は `"unknown"`）を持つ |
 | `mcp_called`、`mcp_completed`、`mcp_failed` | MCP ツール op |
+| `mcp_server_installed` | `mcp_install` op — `name`、キー名のみ（値は含まない） |
 | `web_search_started`、`web_search_completed`、`web_search_failed`、`web_fetch_started` | 検索 op |
+| `embed_progress` | `embed` op（Form B artifact 参照のみ）— バッチごとの `embedded: int`、`skipped: int` 累積カウント |
+| `recall_embed_failed` | `recall` op — embed サブ op が失敗したとき: `query`、`error` |
+| `index_dropped` | `index_drop` op — `source`、`chunks_dropped: int` |
+| `skill_resolve_completed` | `skill_resolve` op — `name`、`resolved: bool`、`source: "local"\|"project"\|"stdlib"\|null` |
 | `control_ir_skipped`、`control_ir_failed`、`control_ir_validation_error` | ディスパッチ失敗（`control_ir_skipped` の理由は `shell_not_allowed`、`handler_not_implemented`、`not_allowed_in_phase` を含む） |
 | `permission_denied` | op がリゾルバーに拒否されたとき |
 
@@ -107,8 +113,8 @@ Reyn はすべての状態変化に対して構造化イベントを発行しま
 | `agent_message_sent` | `_send_to_agent` または `_send_agent_response` がペイロードを届けたとき | `kind=agent_request\|agent_response`、`from_agent`、`to_agent`、`depth`、`chain_id` |
 | `agent_request_received` | 受信 agent が受信トレイから `agent_request` を取り出したとき | `from_agent`、`depth`、`chain_id` |
 | `agent_response_received` | 発信元 agent が受信トレイから `agent_response` を取り出したとき | `from_agent`、`depth`、`chain_id` |
-| `agent_message_refused` | 送信が拒否されたとき（例: `multi_agent.max_hop_depth` を超えた） | `reason`、`to_agent`、`depth`、`chain_id` |
-| `chain_timeout` | 保留中のチェーンが `multi_agent.chain_timeout_seconds` を超え、上流の合成エラーレスポンスで強制解決されたとき | `chain_id`、`waiting_on`（返信していなかった agent のソート済みリスト）、`timeout_seconds`、`origin_agent` |
+| `agent_message_refused` | 送信が拒否されたとき（例: `safety.loop.max_agent_hops` を超えた） | `reason`、`to_agent`、`depth`、`chain_id` |
+| `chain_timeout` | 保留中のチェーンが `safety.timeout.chain_seconds` を超え、上流の合成エラーレスポンスで強制解決されたとき | `chain_id`、`waiting_on`（返信していなかった agent のソート済みリスト）、`timeout_seconds`、`origin_agent` |
 
 `chain_id` は uuid4 hex。トップレベルのユーザー送信ごとに 1 つ、すべてのホップを通じて変更されずに伝播します。クロス agent の再構築は各 agent の `events.jsonl` と `history.jsonl` に対する `grep <chain_id>` です。
 

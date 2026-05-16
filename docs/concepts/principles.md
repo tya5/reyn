@@ -16,7 +16,7 @@ A Phase declares only its `input` artifact type and instructions. It does NOT kn
 - what its output schema looks like
 - which skill it belongs to
 
-Output shape is determined externally — by `next_phase.input_schema` (on a transition) or by the skill's `final_output_schema` (on a finish). The Phase itself never declares or sees the output schema.
+Output shape is determined externally — by the next phase's `input` schema (on a transition) or by the skill's `final_output` (on a finish). The Phase itself never declares or sees the output schema.
 
 **Why:** a Phase like `revise` should be drop-in usable from any skill that produces a draft. If Phase carried a "next phase" field or duplicated an output schema, it would couple to a specific workflow and stop being reusable. Double-declaration also causes drift: when the next phase changes its input, any Phase that had hardcoded the output shape would silently go stale. Making output shape an external concern eliminates that class of bug entirely.
 
@@ -27,7 +27,7 @@ Output shape is determined externally — by `next_phase.input_schema` (on a tra
 
 ## P2. Skill defines structure and owns final output
 
-A Skill declares `entry_phase`, `graph` (allowed transitions between phases), and `final_output_schema`. Phase connections are **never** defined inside Phase files. The OS validates the LLM's final artifact against `final_output_schema` at finish time — this is the Skill's contract with the outside world.
+A Skill declares `entry`, `graph` (allowed transitions between phases), and `final_output`. Phase connections are **never** defined inside Phase files. The OS validates the LLM's final artifact against `final_output` at finish time — this is the Skill's contract with the outside world.
 
 **Why:** structure is a Skill-level concern. Mixing it into Phase would prevent reuse and force every Phase rewrite when the workflow changes. Similarly, "what does this skill return?" is a Skill-level contract, not a Phase decision. If final output were spread across phases, refactoring the graph would risk silently changing the return type seen by callers.
 
@@ -35,7 +35,7 @@ A Skill declares `entry_phase`, `graph` (allowed transitions between phases), an
 
 - `final_output` missing from `skill.md` → the OS has nothing to validate finish against.
 - Skill graph missing an edge → the LLM offers a transition the OS will reject.
-- A phase declaring `can_finish: true` without a matching `final_output_schema` in the skill → the OS will reject the finish.
+- A phase declaring `can_finish: true` without a `final_output` declared in the skill → the OS will reject the finish.
 
 ## P3. OS controls execution
 

@@ -15,8 +15,8 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 │  デフォルト（読み取り専用プロジェクト）│
 └──────────────────────────────┘
              ↓ Skill がさらに必要とする場合
-┌──────────────────────────────┐  Phase frontmatter で宣言。ユーザーが承認
-│  Phase 宣言                  │  承認は .reyn/approvals.yaml に永続化
+┌──────────────────────────────┐  skill.md frontmatter で宣言。ユーザーが承認
+│  Skill 宣言                  │  承認は .reyn/approvals.yaml に永続化
 └──────────────────────────────┘
              ↓ プロジェクトを広く信頼する場合
 ┌──────────────────────────────┐  reyn.yaml: permissions.<key>: allow
@@ -28,9 +28,9 @@ reyn のパーミッションシステムは 4 種類のケイパビリティを
 
 プロジェクトルート配下のどこでも読み取り/glob/grep。書き込み/編集/削除は `.reyn/` または `reyn/` 配下のみ。シェル、MCP、Python は不可。
 
-### レイヤー 2：Phase 宣言
+### レイヤー 2：Skill 宣言
 
-デフォルト外のものが必要な Phase は frontmatter でそれを宣言します。Skill の起動時、ランタイムは単一の承認プロンプトを表示します：
+デフォルト外のものが必要な Skill は `skill.md` frontmatter でパーミッションを宣言します。Skill の起動時、ランタイムは単一の承認プロンプトを表示します：
 
 ```
 [approval] my_skill/file.write needs:
@@ -213,8 +213,8 @@ web:
 
 | 段階 | 設定キー | 許可する内容 |
 |-------|-----------|----------------|
-| `safe` | `python.pure: allow`（旧キー） | `PURE_STDLIB_ALLOWLIST` に含まれるモジュールのみ import 可能なステップ — clock、entropy、純粋計算、および `__future__`（コンパイラディレクティブ）。ファイルシステム・ネットワーク・プロセスへのアクセス不可。 |
-| `unsafe` | `python.trusted: allow` | ファイルシステム・ネットワークを含む任意モジュールの import が可能なステップ。 |
+| `safe` | `python.safe: allow` | `PURE_STDLIB_ALLOWLIST` に含まれるモジュールのみ import 可能なステップ — clock、entropy、純粋計算、および `__future__`（コンパイラディレクティブ）。ファイルシステム・ネットワーク・プロセスへのアクセス不可。 |
+| `unsafe` | `python.unsafe: allow` | ファイルシステム・ネットワークを含む任意モジュールの import が可能なステップ。 |
 
 `PURE_STDLIB_ALLOWLIST` は `src/reyn/kernel/_python_allowlist.py` で定義されています。`__future__` はコンパイラディレクティブとして一覧に含まれており、ランタイムのケイパビリティを持ちません。
 
