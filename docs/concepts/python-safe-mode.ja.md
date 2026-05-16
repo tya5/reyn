@@ -130,7 +130,7 @@ state ではないために残されています。
 
 正本リストは
 [`src/reyn/kernel/_python_allowlist.py`](https://github.com/tya5/reyn/blob/main/src/reyn/kernel/_python_allowlist.py)
-です。 プロジェクトは `reyn.yaml` の `permissions.python.allowed_modules`
+です。 プロジェクトは `reyn.yaml` の `python.allowed_modules`
 で拡張できますが、拡張の基準は同じ「ambient sources only」性質です。
 
 ## stdlib 自動許可の契約
@@ -206,7 +206,7 @@ preprocessor / postprocessor チェーンで `type: run_op` を使います。
 
 ## 参考
 
-- [コンセプト: パーミッションモデル](permission-model.ja.md) — `python.pure` / `python.trusted` パーミッションキーと `mode: safe` 自動許可ルール
+- [コンセプト: パーミッションモデル](permission-model.ja.md) — `python.safe` / `python.unsafe` パーミッションキーと `mode: safe` 自動許可ルール
 - [コンセプト: care 境界](care-boundary.ja.md) — Reyn が care する範囲と観察のみの範囲
 - [Reference: preprocessor DSL](../reference/dsl/preprocessor.md) — `python` ステップの宣言
 - [Reference: postprocessor DSL](../reference/dsl/postprocessor.md) — finish 側の同じ DSL
