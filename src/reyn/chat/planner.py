@@ -44,6 +44,7 @@ import logging
 import sys
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from reyn.chat.router_loop import RouterLoop, RouterLoopHost
@@ -342,6 +343,7 @@ def build_plan_step_system_prompt(
     prior_results: dict[str, str],
     *,
     output_language: str | None = None,
+    cwd: str | None = None,
 ) -> str:
     """Construct the narrow system prompt for one plan step.
 
@@ -359,11 +361,18 @@ def build_plan_step_system_prompt(
     ``output_language``: when set, prepends a language directive so the
     step LLM replies in the user's language (= Component A fix for the
     JA-user bug where plan step LLMs ignored the session output_language).
+
+    ``cwd``: project root / working directory to inject so step LLMs can
+    anchor relative file paths correctly (= B28-MED-3 fix). When None,
+    ``Path.cwd()`` is used at call time.
     """
+    effective_cwd = cwd if cwd is not None else str(Path.cwd())
     parts: list[str] = []
     if output_language:
         parts.append(f"Respond in {output_language}.")
         parts.append("")
+    parts.append(f"You are at project root: {effective_cwd}")
+    parts.append("")
     parts.append(
         "You are a Reyn agent executing one step of a multi-step plan. "
         "Use the tools provided (if any) to gather information, then "
