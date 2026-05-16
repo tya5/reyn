@@ -30,19 +30,20 @@ from reyn.config import (
 
 
 def test_default_action_retrieval_config_is_on() -> None:
-    """Tier 2: out-of-the-box config has universal wrappers ENABLED.
+    """Tier 2: out-of-the-box config has universal wrappers ENABLED
+    and legacy tools HIDDEN (= wrapper-only as production default).
 
-    PR-3b-iv flipped the default from False to True. Operators who
-    want to opt out can set ``universal_wrappers_enabled: false`` in
-    reyn.yaml. The remaining defaults (embedding_class / hot_list_n
-    / mode) are unchanged.
+    PR-3b-iv flipped universal_wrappers_enabled from False to True.
+    Phase 5 (post-B26 milestone) flipped hide_legacy_tools from
+    False to True. Operators who need the legacy tools= shape can
+    set ``hide_legacy_tools: false`` in reyn.yaml.
     """
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class is None
     assert cfg.hot_list_n == 10  # §D24 balanced
     assert cfg.mode == "default"
-    assert cfg.hide_legacy_tools is False  # Phase 2 prep, opt-in
+    assert cfg.hide_legacy_tools is True  # Phase 5 default flip
 
 
 def test_reyn_config_carries_action_retrieval_default() -> None:

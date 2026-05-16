@@ -52,7 +52,16 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 
 
 def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(agent_name="test_agent")
+    # Phase 5 default flip (hide_legacy_tools=True) changes the tools=
+    # shape so legacy invoke_skill / delegate_to_agent are hidden. These
+    # tests exercise the legacy dispatch path via mocked LLM responses,
+    # so explicitly preserve the prior default (False) to test the
+    # legacy code path without rewriting the assertions.
+    from reyn.config import ActionRetrievalConfig
+    return ChatSession(
+        agent_name="test_agent",
+        action_retrieval_config=ActionRetrievalConfig(hide_legacy_tools=False),
+    )
 
 
 def _drain_outbox(session: ChatSession) -> list:
@@ -201,7 +210,14 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     registry.get_or_load.return_value = target_session
     registry.ensure_running = AsyncMock()
 
-    session = ChatSession(agent_name="test_agent", registry=registry)
+    # Phase 5 default flip: explicitly disable hide_legacy_tools so the
+    # legacy delegate_to_agent dispatch path under test is exercised.
+    from reyn.config import ActionRetrievalConfig
+    session = ChatSession(
+        agent_name="test_agent",
+        registry=registry,
+        action_retrieval_config=ActionRetrievalConfig(hide_legacy_tools=False),
+    )
     session.is_attached = True
 
     rounds = [

@@ -876,18 +876,32 @@ class ActionRetrievalConfig:
     embedding_class: str | None = None
     hot_list_n: int = 10
     mode: str = "default"
-    # FP-0034 Phase 2 prep — exclusive-wrapper surface.  When True (and
-    # universal_wrappers_enabled is also True), legacy per-kind tools
-    # (invoke_skill / list_skills / describe_skill / list_agents /
-    # describe_agent / delegate_to_agent / list_mcp_servers /
-    # list_mcp_tools / call_mcp_tool / describe_mcp_tool /
-    # list_memory / read_memory_body / remember_shared /
-    # remember_agent / forget_memory / recall / drop_source) are
-    # removed from the LLM-visible tools= list — the LLM must address
-    # everything through the 3 universal wrappers.  Default False so
-    # the additive Phase 1 behavior remains the steady state until
-    # production-confirmed.  Read by build_tools() in router_tools.py.
-    hide_legacy_tools: bool = False
+    # FP-0034 Phase 5 — exclusive-wrapper surface as the production
+    # default.  When True (and universal_wrappers_enabled is also
+    # True), legacy per-kind tools (invoke_skill / list_skills /
+    # describe_skill / list_agents / describe_agent /
+    # delegate_to_agent / list_mcp_servers / list_mcp_tools /
+    # call_mcp_tool / describe_mcp_tool / list_memory /
+    # read_memory_body / remember_shared / remember_agent /
+    # forget_memory / recall / drop_source) are removed from the
+    # LLM-visible tools= list — the LLM addresses everything through
+    # the 4 universal wrappers (list_actions / search_actions /
+    # describe_action / invoke_action).
+    #
+    # Flipped from False to True in Phase 5 after batch 26 N=5
+    # stability validated the wrapper-only path
+    # (= 32/35 = 91.4% verified, Brier 0.177, hallucination 0/35).
+    # Operators who need the legacy tools= shape (= backwards-compat
+    # for fixed prompts) can set ``action_retrieval.hide_legacy_tools:
+    # false`` in reyn.yaml.
+    #
+    # Test suite remains safe via the same FakeRouterHost insulation
+    # used for ``universal_wrappers_enabled``: LLMReplay fixtures
+    # + AsyncMock-based tests do NOT implement
+    # ``get_hide_legacy_tools`` so RouterLoop's getattr fallback keeps
+    # tools= shape stable (= legacy tools visible) for the recorded
+    # fixtures.  Read by build_tools() in router_tools.py.
+    hide_legacy_tools: bool = True
     # FP-0034 §D16: seed qualified names for initial hot list (before freq
     # accumulates). "default" means the OS-defined 10-item seed (5 universal
     # + 5 Reyn flagship). [] means no seed. Explicit list overrides the
