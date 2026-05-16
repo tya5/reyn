@@ -34,6 +34,7 @@ models:
 | `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
 | `agent` | map | Agent identity for P6 event audit trail and outgoing HTTP header. See below. |
 | `auth` | map | OAuth provider configurations for `reyn auth login`. See below. |
+| `cron` | map | Scheduled skill executions (FP-0009 Component B). See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -405,6 +406,45 @@ See also:
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — `reyn auth login/list/revoke` commands
 - [Concepts: secret handling](../../concepts/secret-handling.md) — OAuth lifecycle and credential scoping
 - [Concepts: multi-agent](../../concepts/multi-agent.md) — agent identity propagation
+
+## `cron:` block (FP-0009 Component B)
+
+Schedule recurring skill executions. The scheduler runs as part of
+`reyn web` (= started in the FastAPI lifespan) or as a foreground
+process via `reyn cron run`.
+
+```yaml
+cron:
+  jobs:
+    - name: index_events_hourly
+      skill: index_events
+      schedule: "0 */6 * * *"   # every 6 hours
+      input: {}
+      enabled: true
+
+    - name: weekly_ops_report
+      skill: ops_report
+      schedule: "0 9 * * MON"   # Monday 09:00
+      input:
+        since_days: 7
+      enabled: true
+```
+
+### Fields
+
+- **`name`** (required) — job identifier, unique within the schedule
+- **`skill`** (required) — stdlib or project skill name to invoke
+- **`schedule`** (required) — 5-field cron expression
+  (minute / hour / day-of-month / month / day-of-week)
+- **`input`** (optional, default `{}`) — input artifact passed to the skill
+- **`enabled`** (optional, default `true`) — `false` keeps the entry in
+  configuration but skips scheduling
+
+### Cross-references
+
+- `docs/reference/cli/cron.md` — `reyn cron run/list/status`
+- `docs/concepts/operational-intelligence.md` — `index_events` /
+  `ops_report` use-cases
 
 ## `permissions` block
 

@@ -1031,6 +1031,98 @@ class ActionRetrievalConfig:
     hot_list_seed: list[str] | str = "default"
 
 
+@dataclass
+class CronJobConfig:
+    """One ``cron.jobs[]`` entry (FP-0009 Component B).
+
+    Maps directly onto ``CronJob`` consumed by ``CronScheduler``; this
+    config-side dataclass exists to keep the reyn.yaml parsing layer
+    independent of the runtime layer.
+    """
+
+    name: str
+    skill: str
+    schedule: str   # 5-field cron expression
+    input: dict = field(default_factory=dict)
+    enabled: bool = True
+
+
+@dataclass
+class CronConfig:
+    """``cron:`` — scheduled skill execution (FP-0009 Component B).
+
+    Each entry under ``cron.jobs`` triggers a stdlib or project skill
+    on a cron schedule via ``CronScheduler`` (= attached to
+    ``app.state.cron_scheduler`` in web mode, or run foreground via
+    ``reyn cron run``).
+    """
+
+    jobs: list[CronJobConfig] = field(default_factory=list)
+
+
+def _build_cron_config(raw: object) -> CronConfig:
+    """Parse the ``cron:`` section from reyn.yaml.
+
+    Shape::
+
+        cron:
+          jobs:
+            - name: index_events_hourly
+              skill: index_events
+              schedule: "0 */6 * * *"
+              input: {}
+              enabled: true
+
+    ``None`` / missing block / empty dict → ``CronConfig(jobs=[])``.
+    Validates ``name``, ``skill``, and ``schedule`` are non-empty strings;
+    raises ``ValueError`` naming the offending entry on validation failure.
+    Unknown extra fields are ignored (= forward-compatible).
+    """
+    if raw is None:
+        return CronConfig()
+    if not isinstance(raw, dict):
+        return CronConfig()
+    raw_jobs = raw.get("jobs") or []
+    if not isinstance(raw_jobs, list):
+        return CronConfig()
+    jobs: list[CronJobConfig] = []
+    for i, entry in enumerate(raw_jobs):
+        if not isinstance(entry, dict):
+            raise ValueError(
+                f"cron.jobs[{i}] must be a mapping, got {type(entry).__name__}"
+            )
+        name = entry.get("name")
+        if not name or not isinstance(name, str):
+            raise ValueError(
+                f"cron.jobs[{i}]: 'name' must be a non-empty string "
+                f"(got {name!r})"
+            )
+        skill = entry.get("skill")
+        if not skill or not isinstance(skill, str):
+            raise ValueError(
+                f"cron.jobs[{i}] (name={name!r}): 'skill' must be a non-empty string "
+                f"(got {skill!r})"
+            )
+        schedule = entry.get("schedule")
+        if not schedule or not isinstance(schedule, str):
+            raise ValueError(
+                f"cron.jobs[{i}] (name={name!r}): 'schedule' must be a non-empty string "
+                f"(got {schedule!r})"
+            )
+        raw_input = entry.get("input") or {}
+        if not isinstance(raw_input, dict):
+            raw_input = {}
+        enabled = bool(entry.get("enabled", True))
+        jobs.append(CronJobConfig(
+            name=name,
+            skill=skill,
+            schedule=schedule,
+            input=dict(raw_input),
+            enabled=enabled,
+        ))
+    return CronConfig(jobs=jobs)
+
+
 def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
     """Parse ``action_retrieval:`` from reyn.yaml.
 
@@ -1239,6 +1331,9 @@ class ReynConfig:
     action_retrieval: "ActionRetrievalConfig" = field(
         default_factory=lambda: ActionRetrievalConfig(),
     )
+    # FP-0009 Component B — cron-driven scheduled skill execution.
+    # Empty by default; operator declares jobs in reyn.yaml ``cron.jobs``.
+    cron: CronConfig = field(default_factory=CronConfig)
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1503,6 +1598,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
         action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
+        cron=_build_cron_config(merged.get("cron")),
     )
 
 

@@ -130,6 +130,7 @@ nav:
           - reference/cli/mcp.md
           - reference/cli/secret.md
           - reference/cli/auth.md
+          - reference/cli/cron.md
           - reference/cli/source.md
           - reference/cli/agent.md
           - reference/cli/topology.md
