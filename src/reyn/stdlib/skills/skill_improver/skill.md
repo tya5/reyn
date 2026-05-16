@@ -1,7 +1,7 @@
 ---
 type: skill
 name: skill_improver
-description: Iteratively improve an existing skill by working on a temp copy, running eval, planning DSL changes, applying them, and re-evaluating until a score threshold is met. Only copies changes back to the original on success.
+description: "Iterate a skill to improve it: repeatedly run eval, plan DSL changes, apply them, and re-evaluate until a score threshold is met. Output: revised skill version. Does NOT just score — modifies the skill."
 entry: prepare
 final_output: improvement_result
 final_output_description: |

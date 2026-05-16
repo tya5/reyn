@@ -35,8 +35,9 @@ from reyn.testing.replay import REPLAY_DATETIME
 MODEL = "gemini-2.5-flash-lite"
 SKILL_NAME = "skill_improver"
 SKILL_DESC = (
-    "Iteratively improve an existing skill by working on a temp copy, running eval, "
-    "planning DSL changes, applying them, and re-evaluating until a score threshold is met."
+    "Iterate a skill to improve it: repeatedly run eval, plan DSL changes, apply them, "
+    "and re-evaluate until a score threshold is met. Output: revised skill version. "
+    "Does NOT just score — modifies the skill."
 )
 
 
