@@ -21,12 +21,16 @@ models:
 # Set to "" or a non-existent path to disable.
 # project_context_path: REYN.md
 
-# Pre-approve pure-mode Python preprocessor steps. The stdlib skill_router
-# uses one (`slice_chat_history`) to slice the chat history; pure mode is
+# Pre-approve safe-mode Python preprocessor steps. The stdlib skill_router
+# uses one (`slice_chat_history`) to slice the chat history; safe mode is
 # sandboxed (no file I/O, no untrusted imports) so auto-allow is safe.
-# Trusted-mode steps still require --allow-untrusted-python.
+# Unsafe-mode steps still require --allow-unsafe-python.
+#
+# FP-0014 renamed python.pure → python.safe and python.trusted → python.unsafe.
+# The implementation only honours the post-rename keys; legacy python.pure
+# entries are silently ignored.
 permissions:
-  python.pure: allow
+  python.safe: allow
 
 # Chat session settings. The compaction policy implements the Head/Body/Tail
 # strategy: first head_size and last tail_size user/agent turns are kept raw,
