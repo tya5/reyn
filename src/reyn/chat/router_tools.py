@@ -825,19 +825,20 @@ def build_tools(
     else:
         _mcp_search_tool_raw = []
 
-    # ── I. Universal catalog wrappers (FP-0034 PR-3b-i, opt-in) ──────────────
+    # ── I. Universal catalog wrappers (FP-0034 PR-3b-iv default-on) ──────────
     #
-    # When universal_wrappers_enabled=True, append the 4 universal wrappers
-    # (list_actions / search_actions / describe_action / invoke_action) at
-    # the END of the specs list per §D21.  The default is OFF so the byte
-    # output of build_tools() is unchanged for existing callers + cached
-    # LLMReplay fixtures.  Once PR-3b-iii (= flip the default) lands +
-    # fixtures are re-recorded, this gate disappears.
+    # When universal_wrappers_enabled=True (= production default since
+    # PR-3b-iv flipped ActionRetrievalConfig), append the 3 universal
+    # wrappers (list_actions / describe_action / invoke_action) at the
+    # END of the specs list per §D21.  The flag stays False for direct
+    # callers that don't pass an ActionRetrievalConfig (= LLMReplay
+    # fixture-safe path).
     #
-    # search_actions is gated separately by D14 (= embedding configured);
-    # PR-3b-i conservatively excludes it because no embedding plumbing
-    # exists yet.  PR-3b-ii adds the action_retrieval config + decides
-    # when search_actions appears.
+    # search_actions is gated separately by §D14 (= embedding configured).
+    # Phase 1 keeps it OFF unconditionally because (a) the handler is a
+    # NotImplementedError stub awaiting Phase 2's ActionEmbeddingIndex,
+    # and (b) embedding_class plumbing through RouterHostAdapter is also
+    # a Phase 2 task — visibility + handler must land together.
     if universal_wrappers_enabled:
         for _wrapper_name in ("list_actions", "describe_action", "invoke_action"):
             _wrapper_def = _registry.lookup(_wrapper_name)

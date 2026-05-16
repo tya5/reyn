@@ -1,21 +1,21 @@
-"""Tier 2: FP-0034 PR-3b-i universal_wrappers_enabled flag in build_tools.
+"""Tier 2: FP-0034 universal_wrappers_enabled flag in build_tools.
 
-Verifies the new opt-in flag that appends the 4 universal catalog
-wrappers (list_actions / describe_action / invoke_action;
-search_actions deferred to PR-3b-ii) at the END of the tools= list.
+Verifies the flag-gated 3 universal catalog wrappers (list_actions /
+describe_action / invoke_action) appended at the END of the tools=
+list. ``search_actions`` is deferred to Phase 2 — visibility (§D14
+embedding gate) + handler (ActionEmbeddingIndex) land together.
 
 Contract:
-  - universal_wrappers_enabled=False (default) → byte-identical to prior
-    build_tools output (no new tools appended).
+  - universal_wrappers_enabled=False (= direct callers / fixture-safe
+    path) → byte-identical to prior build_tools output (no new tools
+    appended).
   - universal_wrappers_enabled=True → existing tools unchanged + the
     3 wrappers appended in canonical order (= list_actions,
     describe_action, invoke_action).
-  - search_actions is NOT included even when flag=True (= PR-3b-ii adds
-    it once embedding gating lands).
+  - search_actions is NOT included even when flag=True (Phase 2).
 
-No mocks. No LLMReplay (= PR-3b-iii re-records fixtures when the
-default flips). Pure list-of-dicts contract tests on the build_tools
-return value.
+No mocks. No LLMReplay. Pure list-of-dicts contract tests on the
+build_tools return value.
 """
 
 from __future__ import annotations
@@ -68,8 +68,9 @@ def test_flag_on_appends_three_wrappers_in_order() -> None:
     """Tier 2: flag=True appends list_actions / describe_action /
     invoke_action in §D21 canonical order at the end of tools=.
 
-    search_actions is intentionally absent in PR-3b-i (= D14 embedding
-    gating lands in PR-3b-ii).
+    search_actions is intentionally absent through all of Phase 1
+    (= §D14 embedding gating + the search handler land together in
+    Phase 2 / ActionEmbeddingIndex).
     """
     names = _tool_names(build_tools(
         _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
@@ -78,7 +79,7 @@ def test_flag_on_appends_three_wrappers_in_order() -> None:
     assert "list_actions" in names
     assert "describe_action" in names
     assert "invoke_action" in names
-    # search_actions still absent (PR-3b-ii territory)
+    # search_actions still absent (= Phase 2 territory)
     assert "search_actions" not in names
 
     # Canonical relative order: list_actions < describe_action < invoke_action
