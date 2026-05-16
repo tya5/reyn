@@ -61,6 +61,90 @@ MCP と A2A は、どちらも「外部 LLM が Reyn と通信する」という
 
 Reyn にとってこれは主にワイヤーフォーマットの選択であり、基盤となるエンジンは同じです。外部システムがツール呼び出しを持つ LLM であれば MCP を選択してください。外部システム自体が agent であれば A2A を選択してください。
 
+## タスクライフサイクルと非同期実行 (FP-0001)
+
+A2A ピアは実行中に `ask_user` を発する skill と対話できるようになりました。
+以前のバージョンは同期実行のみをサポートしており、`message/send` は
+最終返信またはタイムアウトのプレースホルダーを返すだけで、実行中の回答を
+注入する経路がありませんでした。
+
+### 非同期モード
+
+`params.async_mode: true`（または `params.webhook_url` の設定）でリクエストを
+送信すると、同期待機ではなくバックグラウンドタスクとして実行されます：
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1, "method": "message/send",
+  "params": {
+    "message": {"parts": [{"kind": "text", "text": "PR をレビューして"}]},
+    "async_mode": true
+  }
+}
+```
+
+レスポンス（= A2A Task エンベロープ）：
+
+```json
+{
+  "jsonrpc": "2.0", "id": 1,
+  "result": {"kind": "task", "id": "<run_id>", "status": "running", "agent_name": "..."}
+}
+```
+
+### ポーリング
+
+`GET /a2a/tasks/{run_id}` で現在の状態を取得します：
+
+```json
+{"run_id": "...", "status": "running" | "input-required" | "completed" | "failed" | "cancelled",
+ "question": "...", "result": "...", "error": "..."}
+```
+
+### 実行中の ask_user
+
+実行中の skill が `ask_user` を発すると、タスクは `input-required` に
+遷移し、プロンプトテキストが `question` として公開されます。回答するには：
+
+```json
+{
+  "jsonrpc": "2.0", "id": 2, "method": "message/send",
+  "params": {
+    "task_id": "<run_id>",
+    "message": {"parts": [{"kind": "text", "text": "はい、進めてください"}]}
+  }
+}
+```
+
+skill が再開され、その後のポーリングでは再度 `status: "running"` が返されるか、
+次の `input-required`、または最終状態が返されます。
+
+### SSE ストリーミング
+
+`GET /a2a/tasks/{run_id}/events` はタスクが発した events の `text/event-stream`
+を返します。タスクが終端状態に達するとクローズされます。
+
+### プッシュ通知
+
+最初の `message/send` に `params.webhook_url` が設定されている場合、Reyn は
+各ステータス遷移（`running` → `input-required` → `running` →
+`completed`/`failed`/`cancelled`）時に JSON ペイロードを URL に POST します。
+webhook への通信エラーはログに記録されますが、例外は raise されません — タスクは
+問わず進行します。
+
+### キャンセル
+
+`POST /a2a/tasks/{run_id}/cancel` で基盤となる asyncio.Task をキャンセルします。
+すでに終端状態にあるタスクに対してはべき等です。
+
+### Agent Card capabilities
+
+Agent Card は以下の capabilities を広告するようになりました：
+
+```json
+{"capabilities": {"streaming": true, "pushNotifications": true, "stateTransitionHistory": false}}
+```
+
 ## 参考
 
 - [MCP integration](mcp.md) — 対称的なケース

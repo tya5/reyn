@@ -24,9 +24,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Request
+
+if TYPE_CHECKING:
+    from reyn.web.run_registry import RunRegistry
 
 # ---------------------------------------------------------------------------
 # project_root discovery
@@ -210,6 +213,19 @@ def get_registry():
     return _get_registry()
 
 
+# ---------------------------------------------------------------------------
+# RunRegistry  (process-singleton — attached to app.state.run_registry)
+# ---------------------------------------------------------------------------
+
+
+def get_run_registry(request: Request) -> "RunRegistry":
+    """FastAPI dependency: return the process-singleton RunRegistry.
+
+    Attached to ``app.state.run_registry`` by ``reyn.web.server``.
+    """
+    return request.app.state.run_registry
+
+
 __all__ = [
     "get_project_root",
     "get_reyn_config",
@@ -217,5 +233,6 @@ __all__ = [
     "get_budget_tracker",
     "get_perm_resolver",
     "get_registry",
+    "get_run_registry",
     "ProjectRoot",
 ]

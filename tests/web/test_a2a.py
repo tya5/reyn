@@ -136,7 +136,8 @@ def test_a2a_routes_mounted() -> None:
 def test_agent_card_returns_canonical_shape(tmp_path):
     """Tier 2: GET /a2a/agents/{name}/.well-known/agent-card.json
     returns an A2A-compliant Agent Card with the agent's role as
-    description and the JSON-RPC endpoint URL.
+    description and the JSON-RPC endpoint URL, and FP-0001 capabilities
+    (streaming=True, pushNotifications=True).
     """
     client, _ = _client_with_registry(tmp_path, [("default", "general assistant")])
     try:
@@ -151,10 +152,10 @@ def test_agent_card_returns_canonical_shape(tmp_path):
         # Endpoint URL points at the JSON-RPC handler for THIS agent.
         assert card["url"].endswith("/a2a/agents/default")
 
-        # Capabilities advertised: streaming / tasks / push are off in MVP.
+        # Capabilities advertised: streaming + push are True (FP-0001).
         caps = card["capabilities"]
-        assert caps["streaming"] is False
-        assert caps["pushNotifications"] is False
+        assert caps["streaming"] is True
+        assert caps["pushNotifications"] is True
 
         # Modes + skills shape (peers parse these to capability-negotiate).
         assert "text/plain" in card["defaultInputModes"]
