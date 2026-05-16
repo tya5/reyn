@@ -28,6 +28,7 @@ def build_system_prompt(
     output_language: str | None = None,
     project_context: str = "",
     indexed_sources_section: str | None = None,
+    universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -227,6 +228,73 @@ def build_system_prompt(
         "Do NOT say \"Your intent is Action\" or use any routing label in replies."
     )
     parts.append("")
+
+    # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
+    # When the operator has enabled the universal catalog (= reyn.yaml
+    # action_retrieval.universal_wrappers_enabled, default True since
+    # PR-3b-iv), prepend a category overview so the LLM knows what
+    # qualified names list_actions / describe_action / invoke_action
+    # produce and consume.
+    #
+    # Wrapped in a flag check so LLMReplay tests + callers that don't
+    # plumb the flag through keep the legacy SP byte content (= fixture
+    # keys stay valid).  Production runtime passes the flag from
+    # ChatSession → RouterHostAdapter → RouterLoop → here.
+    if universal_wrappers_enabled:
+        parts.append("## Action categories")
+        parts.append("")
+        parts.append(
+            "Actions are addressed by qualified name (<category>__<entry>). "
+            "Discover via list_actions(category=[...]); describe via "
+            "describe_action(action_name=...); execute via "
+            "invoke_action(action_name=..., args={...})."
+        )
+        parts.append("")
+        parts.append(
+            "- **skill** — project-defined workflows (e.g. skill__code_review)."
+        )
+        parts.append(
+            "- **agent.peer** — peer agents in this network (e.g. agent.peer__alice)."
+        )
+        parts.append(
+            "- **mcp.server** — MCP server resources; invoke to list this server's tools."
+        )
+        parts.append(
+            "- **mcp.tool** — individual MCP tools (mcp.tool__<server>.<tool>)."
+        )
+        parts.append(
+            "- **mcp.operation** — MCP server management ops (e.g. drop_server)."
+        )
+        parts.append(
+            "- **file** — workspace file ops (read/write/delete/list)."
+        )
+        parts.append(
+            "- **web** — web search and content fetch."
+        )
+        parts.append(
+            "- **memory.entry** — persistent memory records; invoke to read body."
+        )
+        parts.append(
+            "- **memory.operation** — memory CRUD (remember_shared / remember_agent / forget)."
+        )
+        parts.append(
+            "- **reyn.source** — Reyn source/docs (read-only)."
+        )
+        parts.append(
+            "- **rag.corpus** — indexed corpora; invoke with `query` for single-source recall."
+        )
+        parts.append(
+            "- **rag.operation** — RAG management (multi-source recall, drop_source)."
+        )
+        parts.append(
+            "- **exec** — sandboxed argv execution (only when sandbox backend is enabled)."
+        )
+        parts.append("")
+        parts.append(
+            "Unknown action_name returns an error with suggestions — "
+            "use list_actions(category=[...]) to discover the correct name."
+        )
+        parts.append("")
 
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic

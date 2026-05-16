@@ -431,6 +431,11 @@ class RouterLoop:
                 output_language=host.output_language,
                 project_context=host.get_project_context(),
                 indexed_sources_section=indexed_sources,
+                # FP-0034 PR-3b-v: same getattr-fallback pattern as build_tools.
+                # Hosts without get_universal_wrappers_enabled (= FakeRouterHost
+                # in LLMReplay tests) default to False so SP byte content stays
+                # unchanged for cached fixtures.
+                universal_wrappers_enabled=_univ_enabled,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
