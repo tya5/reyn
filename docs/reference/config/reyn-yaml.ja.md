@@ -34,6 +34,7 @@ models:
 | `action_retrieval` | マップ | FP-0034 ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `agent` | マップ | P6 イベント監査証跡と送信 HTTP ヘッダー用のエージェント識別子。以下参照。 |
 | `auth` | マップ | `reyn auth login` 用の OAuth プロバイダー設定。以下参照。 |
+| `cron` | マップ | スケジュール付きスキル実行 (FP-0009 Component B)。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 
@@ -398,6 +399,42 @@ auth:
 - [Reference: `reyn auth`](../../reference/cli/auth.md) — `reyn auth login/list/revoke` コマンド
 - [コンセプト: シークレット管理](../../concepts/secret-handling.md) — OAuth ライフサイクルと認証情報スコープ
 - [コンセプト: マルチエージェント](../../concepts/multi-agent.md) — エージェント識別子伝播
+
+## `cron:` ブロック (FP-0009 Component B)
+
+定期的なスキル実行をスケジュールします。スケジューラーは `reyn web` の一部（= FastAPI lifespan で起動）として、または `reyn cron run` 経由のフォアグラウンドプロセスとして実行されます。
+
+```yaml
+cron:
+  jobs:
+    - name: index_events_hourly
+      skill: index_events
+      schedule: "0 */6 * * *"   # 6時間ごと
+      input: {}
+      enabled: true
+
+    - name: weekly_ops_report
+      skill: ops_report
+      schedule: "0 9 * * MON"   # 月曜 09:00
+      input:
+        since_days: 7
+      enabled: true
+```
+
+### フィールド
+
+- **`name`** (必須) — ジョブ識別子。スケジュール内で一意である必要があります
+- **`skill`** (必須) — 呼び出す stdlib またはプロジェクトスキルの名前
+- **`schedule`** (必須) — 5 フィールドの cron 式
+  （分 / 時 / 日 / 月 / 曜日）
+- **`input`** (省略可、デフォルト `{}`) — スキルに渡す入力アーティファクト
+- **`enabled`** (省略可、デフォルト `true`) — `false` にすると設定にエントリを保持したままスケジューリングをスキップします
+
+### 関連情報
+
+- `docs/reference/cli/cron.md` — `reyn cron run/list/status`
+- `docs/concepts/operational-intelligence.md` — `index_events` /
+  `ops_report` のユースケース
 
 ## `permissions` ブロック
 

@@ -128,6 +128,52 @@ reyn run ops_report --input '{"period_days": 30}'
 | インクリメンタル | ファイルハッシュの変化 | タイムスタンプカーソル（`.reyn/index/events_cursor`） |
 | バックエンド | `SqliteIndexBackend`（共有） | `SqliteIndexBackend`（共有） |
 
+## スケジューリング (FP-0009 Component B)
+
+`index_events` と `ops_report` はオンデマンド実行よりもスケジュール実行の方が効果的です。定期実行することで、最新の運用履歴を手動起動なしにクエリ可能な状態に保てます。
+
+### 設定
+
+reyn.yaml で定期実行を設定します:
+
+```yaml
+cron:
+  jobs:
+    - name: index_events_hourly
+      skill: index_events
+      schedule: "0 */6 * * *"   # 6時間ごと
+      input: {}
+      enabled: true
+
+    - name: weekly_ops_report
+      skill: ops_report
+      schedule: "0 9 * * MON"   # 月曜 09:00
+      input:
+        since_days: 7
+```
+
+### 実行モード
+
+2 種類の実行モードがあります:
+
+- **`reyn web` に組み込む** — スケジューラは FastAPI のライフスパンの一部として起動します。Web サーバーを停止するとスケジューラも停止します。
+- **フォアグラウンド実行** — `reyn cron run` は reyn.yaml を読み込み、スケジューラを長期実行フォアグラウンドプロセスとして起動します。Reyn Web ゲートウェイを使わないシステムに適しています。
+
+### 状態確認
+
+- `reyn cron list` — 設定済みジョブと次回実行タイムスタンプを表示
+- `reyn cron status` — 直近の実行情報を表示（= スケジューラ起動中のみ有効; v1 は永続化なし）
+
+### 脅威モデル
+
+スケジュールされたスキルは `reyn run <skill>` と同一の権限で実行されます（= 昇格した権限はありません）。cron エントリの `skill` と `input` はオペレーターが reyn.yaml で管理します。スキル単位のクレデンシャルスコーピング（FP-0016 D）も引き続き適用されます。スケジューラはパーミッションシステムを迂回しません。
+
+### 関連リファレンス
+
+- `docs/reference/cli/cron.md` — `reyn cron` CLI リファレンス
+- `docs/reference/config/reyn-yaml.md` — `cron:` ブロックスキーマ
+- `docs/concepts/a2a.md` — `RunRegistry` パターン（= 兄弟ライフサイクル抽象）
+
 ## 関連情報
 
 - [FP-0009: Operational Intelligence](../deep-dives/proposals/0009-operational-intelligence.ja.md) — 設計の詳細

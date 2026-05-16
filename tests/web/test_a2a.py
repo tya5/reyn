@@ -89,16 +89,21 @@ def _build_registry(tmp_path: Path, agents: list[tuple[str, str]]) -> AgentRegis
 def _client_with_registry(tmp_path: Path, agents: list[tuple[str, str]]):
     """Construct a TestClient that uses a tmp_path-backed registry.
 
-    Overrides the ``get_registry`` dependency so we don't touch the
-    process-wide singleton from ``deps.py``.
+    Overrides the ``get_registry`` and ``get_run_registry`` dependencies
+    so we don't touch the process-wide singletons from ``deps.py``
+    (= FP-0009 B moved RunRegistry init into the FastAPI lifespan;
+    TestClient without ``with ...`` doesn't fire lifespan).
     """
     from fastapi.testclient import TestClient
 
-    from reyn.web.deps import get_registry
+    from reyn.web.deps import get_registry, get_run_registry
+    from reyn.web.run_registry import RunRegistry
     from reyn.web.server import app
 
     registry = _build_registry(tmp_path, agents)
+    run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
+    app.dependency_overrides[get_run_registry] = lambda: run_registry
     client = TestClient(app, raise_server_exceptions=False)
     return client, registry
 

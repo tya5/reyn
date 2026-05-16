@@ -47,6 +47,7 @@ dependencies = [
     "ddgs>=8.0",
     "textual>=0.50",         # default TUI mode (PR-cli-2)
     "numpy>=1.24",           # RAG index backend cosine similarity (ADR-0033)
+    "croniter>=2.0",         # cron expression parsing for FP-0009 Component B
 ]
 
 [project.urls]

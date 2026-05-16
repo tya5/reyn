@@ -128,6 +128,52 @@ When `index_events` has not been run, `ops_report` falls back to a direct read o
 | Incremental | File hash changes | Timestamp cursor (`.reyn/index/events_cursor`) |
 | Backend | `SqliteIndexBackend` (shared) | `SqliteIndexBackend` (shared) |
 
+## Scheduling (FP-0009 Component B)
+
+`index_events` and `ops_report` benefit from running on a schedule rather than on-demand — recent operational history stays queryable without manual invocations.
+
+### Configuration
+
+Schedule recurring runs via reyn.yaml:
+
+```yaml
+cron:
+  jobs:
+    - name: index_events_hourly
+      skill: index_events
+      schedule: "0 */6 * * *"   # every 6 hours
+      input: {}
+      enabled: true
+
+    - name: weekly_ops_report
+      skill: ops_report
+      schedule: "0 9 * * MON"   # Monday 09:00
+      input:
+        since_days: 7
+```
+
+### Running
+
+Two modes:
+
+- **Embedded in `reyn web`** — the scheduler starts as part of the FastAPI lifespan. Stop it by stopping the web server.
+- **Foreground** — `reyn cron run` reads reyn.yaml and runs the scheduler as a long-lived foreground process. Suitable for systems that don't run the Reyn web gateway.
+
+### Inspection
+
+- `reyn cron list` — show configured jobs and their next-run timestamps
+- `reyn cron status` — show last-run info (= only meaningful while the scheduler is up; v1 has no persistence)
+
+### Threat model
+
+Scheduled skills run with the same permissions as `reyn run <skill>` would (= no elevated privilege). The cron entry's `skill` and `input` are operator-controlled via reyn.yaml; per-skill credential scoping (FP-0016 D) still applies. The scheduler does NOT bypass the permission system.
+
+### Cross-references
+
+- `docs/reference/cli/cron.md` — `reyn cron` CLI reference
+- `docs/reference/config/reyn-yaml.md` — `cron:` block schema
+- `docs/concepts/a2a.md` — `RunRegistry` pattern (= sibling lifecycle abstraction)
+
 ## See also
 
 - [FP-0009: Operational Intelligence](../deep-dives/proposals/0009-operational-intelligence.md) — full design rationale

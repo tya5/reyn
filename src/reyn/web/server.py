@@ -14,12 +14,119 @@ passes through as opaque JSON payloads.
 """
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
+logger = logging.getLogger(__name__)
+
+
+def _make_cron_runner():
+    """Return an async callable that executes a CronJob headlessly.
+
+    Resolves the skill by name (project → local → stdlib lookup) and runs
+    it through Agent.run with sane defaults drawn from load_config().
+
+    TODO: wire full headless-run options (shell_allowed, output_language,
+    permission_resolver, mcp_servers, etc.) mirroring cli/commands/run.py
+    once cron-specific config surface is defined (FP-0009 follow-up).
+    """
+    async def _runner(job) -> str:
+        from pathlib import Path as _Path
+
+        from reyn.agent import Agent
+        from reyn.compiler import load_dsl_skill
+        from reyn.config import _find_project_root, load_config, load_project_context
+        from reyn.permissions.permissions import PermissionResolver
+        from reyn.skill.skill_paths import resolve_skill_path
+
+        cfg = load_config()
+        project_root = _find_project_root(_Path.cwd())
+        project_context = load_project_context(cfg, project_root)
+
+        # resolve_skill_path returns (skill_dir, skill_root); load_dsl_skill
+        # takes the skill.md path (= skill_dir / "skill.md").
+        skill_dir, skill_root = resolve_skill_path(job.skill)
+        skill = load_dsl_skill(skill_dir / "skill.md", skill_root=skill_root)
+
+        perm_resolver = PermissionResolver(
+            config_permissions=dict(cfg.permissions),
+            project_root=project_root,
+            interactive=False,
+        )
+
+        agent = Agent(
+            model=cfg.model,
+            permission_resolver=perm_resolver,
+            mcp_servers=cfg.mcp,
+            python_allowed_modules=list(cfg.python.allowed_modules),
+            prompt_cache_enabled=cfg.prompt_cache_enabled,
+            project_context=project_context,
+            caller="cron",
+            sandbox_config=cfg.sandbox,
+        )
+
+        result = await agent.run(skill, dict(job.input))
+        return "ok" if result.ok else "error"
+
+    return _runner
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # ── Startup ──
+
+    # FP-0001: RunRegistry singleton — process-wide task lifecycle tracking.
+    from reyn.web.run_registry import RunRegistry
+    app.state.run_registry = RunRegistry()
+
+    # FP-0009 B: cron scheduler — start only if reyn.yaml has any enabled
+    # cron jobs.  Failures are caught so a misconfigured cron block does
+    # not prevent the web gateway from booting.
+    app.state.cron_scheduler = None  # default — overwritten below if needed
+    try:
+        from reyn.config import load_config
+        from reyn.cron import CronJob, CronScheduler
+        cfg = load_config()
+        cron_jobs = [
+            CronJob(
+                name=j.name,
+                skill=j.skill,
+                schedule=j.schedule,
+                input=dict(j.input),
+                enabled=j.enabled,
+            )
+            for j in cfg.cron.jobs
+        ]
+        if any(j.enabled for j in cron_jobs):
+            scheduler = CronScheduler(cron_jobs)
+            scheduler.set_runner(_make_cron_runner())
+            await scheduler.start()
+            app.state.cron_scheduler = scheduler
+            logger.info(
+                "Started cron scheduler with %d enabled job(s)",
+                sum(1 for j in cron_jobs if j.enabled),
+            )
+    except Exception as exc:  # noqa: BLE001 — defensive boot
+        logger.warning(
+            "Cron scheduler failed to start: %s. Continuing without scheduler.", exc
+        )
+
+    yield  # ── App runs ──
+
+    # ── Shutdown ──
+    sched = getattr(app.state, "cron_scheduler", None)
+    if sched is not None:
+        try:
+            await sched.stop()
+        except Exception as exc:  # noqa: BLE001 — defensive shutdown
+            logger.warning("Cron scheduler stop failed: %s", exc)
+
 
 app = FastAPI(
     title="Reyn Web Gateway",
@@ -29,6 +136,7 @@ app = FastAPI(
         "decides which vocabulary to expose."
     ),
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 # ── CORS: localhost only (dev). Tighten before production. ──────────────────
@@ -92,12 +200,6 @@ except ImportError:  # pragma: no cover — `[mcp]` extra not installed
 # and converse via JSON-RPC 2.0 POST /a2a/agents/<name>. Same backing
 # impl as MCP (send_to_agent_impl), different wire protocol.
 app.include_router(_a2a_router.router)
-
-# A2A async task lifecycle registry: process-singleton attached to
-# app.state so that get_run_registry(request) can retrieve it.
-from reyn.web.run_registry import RunRegistry  # noqa: E402
-app.state.run_registry = RunRegistry()
-
 
 # ── WebSocket routes ────────────────────────────────────────────────────────
 

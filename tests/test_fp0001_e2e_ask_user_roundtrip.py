@@ -425,11 +425,17 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     from fastapi.testclient import TestClient
-    from reyn.web.deps import get_registry
+    from reyn.web.deps import get_registry, get_run_registry
+    from reyn.web.run_registry import RunRegistry
     from reyn.web.server import app
 
     registry = _build_registry_for_test(tmp_path)
+    # FP-0009 B: RunRegistry now lives in the FastAPI lifespan startup.
+    # TestClient constructed without ``with ...`` doesn't fire the lifespan,
+    # so override the dependency with a real instance for this test.
+    run_registry = RunRegistry()
     app.dependency_overrides[get_registry] = lambda: registry
+    app.dependency_overrides[get_run_registry] = lambda: run_registry
     client = TestClient(app, raise_server_exceptions=False)
 
     try:
