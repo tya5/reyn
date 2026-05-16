@@ -1,15 +1,20 @@
-"""ActionEmbeddingIndex — in-memory semantic index for FP-0034 search_actions.
+"""ActionEmbeddingIndex — in-memory + SQLite-WAL semantic index for FP-0034.
 
-FP-0034 §D13 / §D15 spec — Phase 2 step 1 (in-memory only; SQLite-WAL
-persistence per ADR-0033 lands in step 2).
+FP-0034 §D13 / §D15 spec — Phase 2 step 2 adds SQLite-WAL persistence so
+that re-embedding is skipped across process restarts when the catalog has
+not changed.
 
 Lifecycle:
   1. Construction: empty index, ``is_ready() == False``.
+     Pass ``persist_dir`` to enable SQLite persistence (Phase 2 step 2).
   2. ``await build(items, provider, model_class)`` — embeds each item's
      ``"{qualified_name}: {short_description}"`` text via the
      ``EmbeddingProvider``, stores the vectors keyed by qualified_name,
      and records a catalog snapshot hash. On completion ``is_ready()``
      returns True.
+     Disk shortcut: when ``persist_dir`` is set and the on-disk DB already
+     contains the same catalog hash, the embed call is skipped and vectors
+     are loaded from SQLite (= process-restart cache hit).
   3. ``await query(text, provider, model_class, top_k=10)`` — embeds
      the query once, ranks all stored vectors by cosine similarity,
      and returns the top-K items with their ``score``. When the index
@@ -20,8 +25,7 @@ Catalog hash semantics:
   - Hash is over the SORTED tuple of qualified_names.
   - When ``build()`` is called with the same hash, it is a no-op
     (= idempotent reload guard).
-  - Different hash → rebuild (Phase 2 step 2 will diff for incremental
-    updates; step 1 rebuilds the whole vector set).
+  - Different hash → rebuild (full re-embed + persist).
 
 Concurrency:
   - ``_build_lock`` serialises concurrent ``build()`` calls; the second
@@ -32,17 +36,26 @@ Concurrency:
     is bounded by ``is_ready()`` being False so production callers
     skip ``query()`` while a build is in flight.
 
-Not yet implemented (= Phase 2 step 2+):
-  - SQLite-WAL persistence under ``.reyn/action_index/``
-  - Stale-detection via catalog snapshot on disk + content hash for skill files
-  - Incremental rebuild (diff between catalog hashes)
+SQLite persistence (= Phase 2 step 2, active when ``persist_dir`` is set):
+  - DB path: ``<persist_dir>/index.db`` with WAL mode.
+  - Schema: ``meta(key, value)`` for catalog_hash; ``vectors(qualified_name,
+    item_json, vector_blob)`` for per-item state.
+  - Vectors stored as raw ``struct.pack`` double blobs (fast, no JSON float
+    round-trip loss).
+  - Persistence failures are swallowed — the in-memory state is always
+    authoritative; disk is an optimistic write-through cache.
+
+Not yet implemented (= Phase 2 step 3+):
   - ``ActionUsageTracker`` for hot-list ranking
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import math
+import struct
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
@@ -92,26 +105,127 @@ def compute_catalog_hash(items: list[Mapping[str, Any]]) -> str:
 
 
 class ActionEmbeddingIndex:
-    """In-memory semantic index over action catalog items.
+    """In-memory + SQLite-WAL semantic index over action catalog items.
 
     Holds one embedding vector per qualified_name.  The query path
     embeds the query string once and ranks all stored vectors by
     cosine similarity, returning the top-K items.
 
-    Production wiring (= Phase 2 step 1):
+    Production wiring (= Phase 2 step 2):
       - One instance per ChatSession (= router-scoped).
       - RouterLoop bootstraps an async ``build()`` task on first turn
         when ``action_retrieval.embedding_class`` is configured.
       - ``search_actions`` handler delegates to ``query()`` when
         ``is_ready()`` returns True; otherwise returns an empty result.
+      - ``persist_dir`` points to ``.reyn/action_index/``; pass None
+        to stay fully in-memory (= Phase 2 step 1 behaviour, tests).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, persist_dir: Path | None = None) -> None:
         self._vectors: dict[str, list[float]] = {}
         self._items: dict[str, dict[str, Any]] = {}
         self._catalog_hash: str | None = None
         self._build_lock = asyncio.Lock()
         self._building = False
+        self._persist_dir = persist_dir
+
+    # ── SQLite persistence helpers (Phase 2 step 2) ───────────────────────
+
+    @property
+    def _db_path(self) -> Path | None:
+        if self._persist_dir is None:
+            return None
+        return self._persist_dir / "index.db"
+
+    def _try_load_from_disk(self, expected_hash: str) -> bool:
+        """Load vectors from SQLite if the on-disk catalog hash matches.
+
+        Returns True and populates ``_vectors`` / ``_items`` /
+        ``_catalog_hash`` when the disk state is fresh.  Returns False
+        (without mutating state) when the DB is absent, unreadable, or
+        has a different hash.  Any exception is swallowed — disk load
+        failure is non-fatal; the caller falls through to re-embedding.
+
+        Caller MUST hold ``_build_lock``.
+        """
+        db_path = self._db_path
+        if db_path is None or not db_path.exists():
+            return False
+        try:
+            import sqlite3
+            con = sqlite3.connect(str(db_path))
+            con.execute("PRAGMA journal_mode=WAL")
+            try:
+                row = con.execute(
+                    "SELECT value FROM meta WHERE key='catalog_hash'"
+                ).fetchone()
+                if row is None or row[0] != expected_hash:
+                    return False
+                rows = con.execute(
+                    "SELECT qualified_name, item_json, vector_blob FROM vectors"
+                ).fetchall()
+            finally:
+                con.close()
+            vectors: dict[str, list[float]] = {}
+            items: dict[str, dict[str, Any]] = {}
+            for qn, item_json, vec_blob in rows:
+                n = len(vec_blob) // 8
+                vec = list(struct.unpack(f"{n}d", vec_blob))
+                vectors[qn] = vec
+                items[qn] = json.loads(item_json)
+            self._vectors = vectors
+            self._items = items
+            self._catalog_hash = expected_hash
+            return True
+        except Exception:
+            return False
+
+    def _save_to_disk(self) -> None:
+        """Write current in-memory state to SQLite (write-through cache).
+
+        No-op when ``persist_dir`` is None or no catalog hash is recorded.
+        Persistence failures are swallowed — in-memory state is always
+        authoritative; a failed write is retried on the next build.
+
+        Caller MUST hold ``_build_lock``.
+        """
+        db_path = self._db_path
+        if db_path is None or self._catalog_hash is None:
+            return
+        try:
+            import sqlite3
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            con = sqlite3.connect(str(db_path))
+            con.execute("PRAGMA journal_mode=WAL")
+            try:
+                con.execute(
+                    "CREATE TABLE IF NOT EXISTS meta "
+                    "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+                )
+                con.execute(
+                    "CREATE TABLE IF NOT EXISTS vectors "
+                    "(qualified_name TEXT PRIMARY KEY, "
+                    "item_json TEXT NOT NULL, vector_blob BLOB NOT NULL)"
+                )
+                con.execute("DELETE FROM vectors")
+                con.execute(
+                    "INSERT OR REPLACE INTO meta VALUES ('catalog_hash', ?)",
+                    (self._catalog_hash,),
+                )
+                rows_to_insert = []
+                for qn, vec in self._vectors.items():
+                    blob = struct.pack(f"{len(vec)}d", *vec)
+                    item_j = json.dumps(self._items[qn], ensure_ascii=False)
+                    rows_to_insert.append((qn, item_j, blob))
+                con.executemany(
+                    "INSERT OR REPLACE INTO vectors VALUES (?, ?, ?)",
+                    rows_to_insert,
+                )
+                con.commit()
+            finally:
+                con.close()
+        except Exception:
+            pass  # disk failure must not crash the caller
 
     def is_ready(self) -> bool:
         """Return True iff the index has a completed build available.
@@ -152,7 +266,11 @@ class ActionEmbeddingIndex:
         async with self._build_lock:
             new_hash = compute_catalog_hash(list(items))
             if new_hash == self._catalog_hash:
-                return  # idempotent
+                return  # idempotent (in-memory match)
+
+            # Phase 2 step 2: try loading from disk before embedding.
+            if self._try_load_from_disk(new_hash):
+                return  # cache hit — skip embed call
 
             # Filter out items missing qualified_name once; embed each
             # remaining one.  Keep the items list ordered by sorted
@@ -162,10 +280,11 @@ class ActionEmbeddingIndex:
                 key=lambda it: str(it["qualified_name"]),
             )
             if not valid_items:
-                # Empty catalog — record the empty hash and return.
+                # Empty catalog — record the empty hash and persist.
                 self._vectors = {}
                 self._items = {}
                 self._catalog_hash = new_hash
+                self._save_to_disk()
                 return
 
             texts = [
@@ -174,6 +293,7 @@ class ActionEmbeddingIndex:
             ]
 
             self._building = True
+            _built_ok = False
             try:
                 result = await provider.embed(texts, model_class)
                 vectors = list(result["vectors"])
@@ -195,8 +315,11 @@ class ActionEmbeddingIndex:
                     for it in valid_items
                 }
                 self._catalog_hash = new_hash
+                _built_ok = True
             finally:
                 self._building = False
+            if _built_ok:
+                self._save_to_disk()
 
     async def query(
         self,

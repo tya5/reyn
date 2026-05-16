@@ -531,7 +531,9 @@ class ChatSession:
                 from reyn.tools.action_index import ActionEmbeddingIndex
                 self._embedding_provider = _get_provider("litellm", embedding_config)
                 self._embedding_model_class = self._action_retrieval.embedding_class
-                self._action_embedding_index = ActionEmbeddingIndex()
+                self._action_embedding_index = ActionEmbeddingIndex(
+                    persist_dir=Path(".reyn") / "action_index",
+                )
             except Exception:
                 # If provider construction fails for any reason (= missing
                 # dependency / malformed config), fall through to "no index"
