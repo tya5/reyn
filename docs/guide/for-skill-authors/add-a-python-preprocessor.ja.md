@@ -105,7 +105,7 @@ permissions:
 - `subprocess` やその他の危険なモジュール
 - キュレートされた allowlist（`math`、`statistics`、`json`、`re`、`random`、`time`、`datetime` など）以外のインポート
 
-allowlist は `reyn.yaml` の `permissions.python.allowed_modules` で拡張できます。
+allowlist は `reyn.yaml` の `python.allowed_modules` で拡張できます。
 
 ## 関連情報
 

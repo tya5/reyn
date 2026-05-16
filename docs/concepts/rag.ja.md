@@ -113,9 +113,9 @@ phases:
 
 postprocessor:
   steps:
-    - kind: python
+    - type: python
       module: reyn.project.index_python_src.ast_chunkers
-      fn: apply_strategy
+      function: apply_strategy
 ```
 
 `ast_chunkers.py` モジュールは strategy artifact とファイルパス glob を受け取り、chunk のリストを返します。残りのパイプライン（embed → index_write）は変わりません。

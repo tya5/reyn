@@ -115,9 +115,9 @@ phases:
 
 postprocessor:
   steps:
-    - kind: python
+    - type: python
       module: reyn.project.index_python_src.ast_chunkers
-      fn: apply_strategy
+      function: apply_strategy
 ```
 
 Your `ast_chunkers.py` module receives the strategy artifact and the file path glob, and returns a list of chunks. The rest of the pipeline (embed → index_write) is unchanged.
