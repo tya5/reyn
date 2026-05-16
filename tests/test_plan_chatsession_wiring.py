@@ -251,7 +251,7 @@ async def test_spawn_plan_task_emits_plan_summary_before_execution(
         try:
             msg = session.outbox.get_nowait()
             if (
-                msg.kind == "status"
+                msg.kind == "system"
                 and msg.meta.get("source") == "plan_summary"
             ):
                 summary_msgs.append(msg)

@@ -70,7 +70,7 @@ async def test_skill_list_shows_active_runs(tmp_path, monkeypatch):
     assert consumed is True
 
     msgs = _drain_outbox(session)
-    status_texts = [m.text for m in msgs if m.kind == "status"]
+    status_texts = [m.text for m in msgs if m.kind == "system"]
     combined = "\n".join(status_texts)
     assert "run_A" in combined
     assert "blog_writer" in combined
