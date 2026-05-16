@@ -464,6 +464,41 @@ def test_plan_status_text_uses_step_description_not_id():
     assert truncated_empty == fallback_id  # empty falls back to step id
 
 
+# ── B28-MED-3: project root injection in step system prompt ─────────────────
+
+
+def test_step_system_prompt_includes_project_root_cwd_line():
+    """Tier 2: B28-MED-3 — build_plan_step_system_prompt injects a
+    "You are at project root: <cwd>" line so step LLMs can anchor
+    relative file paths to the actual working directory.
+
+    Verifies both: (a) the line is present with the supplied cwd value,
+    and (b) when no cwd is supplied, the line reflects Path.cwd() at
+    call time (same value, since the test process does not change cwd).
+    """
+    from pathlib import Path
+
+    plan = Plan(
+        goal="multi-source synthesis on Reyn architecture",
+        steps=(
+            PlanStep(id="s1", description="read principles.md", tools=("reyn_src_read",)),
+            PlanStep(id="s2", description="synthesise", tools=(), depends_on=("s1",)),
+        ),
+    )
+
+    # (a) explicit cwd supplied — prompt must contain it
+    explicit_root = "/home/user/my-project"
+    prompt_explicit = build_plan_step_system_prompt(
+        plan, plan.steps[0], {}, cwd=explicit_root,
+    )
+    assert f"You are at project root: {explicit_root}" in prompt_explicit
+
+    # (b) no cwd supplied — defaults to Path.cwd() at call time
+    expected_cwd = str(Path.cwd())
+    prompt_default = build_plan_step_system_prompt(plan, plan.steps[0], {})
+    assert f"You are at project root: {expected_cwd}" in prompt_default
+
+
 # ── FP-0029: plan step iteration budget default = 5 ─────────────────────────
 
 
