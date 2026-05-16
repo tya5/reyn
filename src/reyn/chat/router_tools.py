@@ -885,7 +885,6 @@ def build_tools(
             "read_file", "write_file", "delete_file", "list_directory",
             "web_search", "web_fetch",
             "reyn_src_list", "reyn_src_read",
-            "plan",
         })
         specs = [s for s in specs if s.name not in _LEGACY_TOOL_NAMES]
 

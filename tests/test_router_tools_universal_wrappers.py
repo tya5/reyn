@@ -287,11 +287,52 @@ def test_wrappers_on_strips_all_legacy_tools() -> None:
         "read_file", "write_file", "delete_file", "list_directory",
         "web_search", "web_fetch",
         "reyn_src_list", "reyn_src_read",
-        "plan",
     ):
         assert legacy not in names, (
             f"Legacy tool {legacy!r} must be stripped when universal_wrappers_enabled=True"
         )
+
+
+# ── 6b. Universal top-level fixed tools survive exclusive-wrapper mode ────
+#
+# FP-0034 design (issue #36): `plan` and `ask_user` are NOT legacy tools.
+# They are universal top-level fixed tools (category-外) and must remain
+# visible when universal_wrappers_enabled=True.  Commit 2376e7d accidentally
+# included `plan` in _LEGACY_TOOL_NAMES (B27-H1 regression).
+
+
+def test_plan_present_when_wrappers_enabled() -> None:
+    """Tier 2: plan is a universal top-level fixed tool, not a legacy per-kind tool.
+
+    FP-0034 design (issue #36) explicitly designates plan as a universal
+    top-level fixed tool that lives outside the category surface and must
+    remain visible when universal_wrappers_enabled=True.
+
+    Regression guard for B27-H1: plan was accidentally added to
+    _LEGACY_TOOL_NAMES in commit 2376e7d, causing plan-mode to fail under
+    the default config (LLM hallucinated invoke_action instead of calling plan;
+    no plan_emitted events fired in 3/3 plan-mode scenarios verified by batch 27
+    worker 6).
+
+    Note: ask_user is also a universal top-level fixed tool per FP-0034 design,
+    but has gates.router="deny" so it is correctly absent from build_tools output
+    (which serves the router context). ask_user's absence from _LEGACY_TOOL_NAMES
+    was always correct — it was never stripped, just gated at the definition level.
+    """
+    names = set(_tool_names(build_tools(
+        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        universal_wrappers_enabled=True,
+    )))
+    assert "plan" in names, (
+        "'plan' must be present when universal_wrappers_enabled=True "
+        "(FP-0034 issue #36: plan is a universal top-level fixed tool, not a legacy tool)"
+    )
+    # ask_user: gated to phase-only (gates.router='deny') so correctly absent
+    # from router tools. Its absence from _LEGACY_TOOL_NAMES was always correct.
+    assert "ask_user" not in names, (
+        "'ask_user' must NOT appear in router build_tools output — "
+        "it is phase-only (gates.router='deny'). If this fails, the gate has changed."
+    )
 
 
 # ── 7. hot_list_aliases injected by build_tools (FP-0034 Phase 2 step 5) ──
