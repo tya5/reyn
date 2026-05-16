@@ -141,6 +141,11 @@ class PermissionDecl:
     # ADR-0033: index_drop gating. False = skill/agent did not declare drop
     # intent; require_index_drop() will reject immediately without prompting.
     index_drop: bool = False
+    # FP-0034 §D23: drop-time gating for MCP servers. Counter-op to
+    # mcp_install; declared separately so install-only skills cannot
+    # tear down user-configured servers. False = skill/agent did not
+    # declare drop intent; require_mcp_drop_server() rejects immediately.
+    mcp_drop_server: bool = False
 
     @staticmethod
     def _parse_path_list(raw: object) -> list[dict]:
@@ -197,6 +202,7 @@ class PermissionDecl:
             python=cls._parse_python_list(d.get("python")),
             mcp_install=bool(d.get("mcp_install", False)),
             index_drop=bool(d.get("index_drop", False)),
+            mcp_drop_server=bool(d.get("mcp_drop_server", False)),
         )
 
 
@@ -768,6 +774,53 @@ class PermissionResolver:
         ):
             raise PermissionError(
                 f"Index drop of '{source}' denied by user."
+            )
+
+    async def require_mcp_drop_server(
+        self, decl: PermissionDecl, server: str, bus: InterventionBus,
+    ) -> None:
+        """Gate MCP server drop (FP-0034 §D23, mirrors require_mcp_install).
+
+        Three-step resolution:
+        1. Skill/agent must declare `mcp_drop_server: true` in its
+           permissions block. If not declared, raise immediately —
+           install intent (`mcp_install`) is NOT enough by design.
+        2. Config (any scope tier) may hard-allow or hard-deny.
+        3. Interactive prompt (or auto-approve via
+           REYN_MCP_DROP_SERVER_AUTO_APPROVE). Approval key
+           `mcp_drop_server:<server>` is persisted to approvals.yaml.
+        """
+        import os
+
+        # Step 1 — decl guard
+        if not decl.mcp_drop_server:
+            raise PermissionError(
+                f"MCP server drop of {server!r} not declared in skill "
+                f"permissions. Add `permissions:\\n  mcp_drop_server: true` "
+                f"to the skill.md frontmatter."
+            )
+
+        # Step 2 — config deny/allow
+        if self._is_config_denied("mcp_drop_server"):
+            raise PermissionError(
+                f"MCP server drop of {server!r} denied by config "
+                f"(permissions.mcp_drop_server: deny)."
+            )
+        if self._is_config_approved("mcp_drop_server"):
+            return
+
+        # Step 3 — CI escape hatch or interactive prompt
+        approval_key = f"mcp_drop_server:{server}"
+
+        if os.environ.get("REYN_MCP_DROP_SERVER_AUTO_APPROVE") == "1":
+            self._persist(approval_key, True)
+            return
+
+        if not await self._approve(
+            approval_key, f"remove MCP server: {server!r}", bus,
+        ):
+            raise PermissionError(
+                f"MCP server drop of {server!r} denied by user."
             )
 
     async def require_python(

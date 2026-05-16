@@ -329,6 +329,37 @@ class MCPInstallIROp(BaseModel):
     extra_args: list[str] | None = None
 
 
+class MCPDropServerIROp(BaseModel):
+    """Remove an MCP server from configuration (FP-0034 §D23).
+
+    Counter-op to MCPInstallIROp:
+      - install adds an entry to `mcp.servers.<short>`
+      - drop_server removes that entry, optionally cleans secrets
+
+    The op is purely mechanical (= LLM reasoning not needed) and lives
+    in the universal catalog under ``mcp.operation__drop_server``. Per
+    FP-0034 §D23, it parallels the existing ``reyn mcp remove`` CLI
+    and emits a P6 ``mcp_server_removed`` event for audit.
+
+    Permission gating mirrors mcp_install at the policy level but uses
+    a distinct decl field (``mcp_drop_server``) so a skill must
+    explicitly declare drop intent — install intent alone is
+    insufficient. This prevents an install-only skill from
+    accidentally tearing down user-configured servers.
+    """
+    kind: Literal["mcp_drop_server"]
+    server: str                                # short config key (e.g. "filesystem")
+    # When None, auto-detect by walking local → project → user scope
+    # tiers and removing from the first that contains ``server``.
+    scope: Literal["local", "project", "user"] | None = None
+    # When True (default), also remove the corresponding `${KEY}=value`
+    # entries from ~/.reyn/secrets.env keyed by the server's env block
+    # at the time of removal. LLM-driven cleanup is more thorough than
+    # the CLI default (which leaves secrets behind for safety; the LLM
+    # has a clearer pruning intent).
+    clear_secrets: bool = True
+
+
 # ---------------------------------------------------------------------------
 # RAG-extensible OS (ADR-0033) — embed / index_* / recall ops + ChunkMetadata
 # ---------------------------------------------------------------------------

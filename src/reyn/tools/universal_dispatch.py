@@ -256,11 +256,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "rag.operation__recall":      ("recall",       _passthrough_args),
     "rag.operation__drop_source": ("drop_source",  _passthrough_args),
 
-    # mcp.operation category — drop_server lands in PR-4.
-    # The route is declared with a sentinel target so describe_action
-    # surfaces "available" (= the qualified name is known) while invoke
-    # raises NotImplementedError pointing at PR-4 (handled by router).
-    # PR-2 omits the route; PR-4 will add it.
+    # mcp.operation category — drop_server (PR-4)
+    # Counter-op to mcp_install (which stays a skill due to multi-step
+    # registry/permission/secret flow). drop_server is mechanical:
+    # yaml edit + secrets cleanup + P6 event, dispatched via the
+    # mcp_drop_server op_runtime handler.
+    "mcp.operation__drop_server": ("mcp_drop_server", _passthrough_args),
 
     # exec category — sandboxed_exec lands in a future PR
     # (= FP-0017 op_runtime integration). PR-2 omits the route.

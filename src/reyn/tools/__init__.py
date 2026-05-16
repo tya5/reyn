@@ -60,6 +60,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_MCP_TOOLS,
         MCP_OP,
     )
+    from reyn.tools.mcp_drop import MCP_DROP_SERVER_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.memory import (
         FORGET_MEMORY,
@@ -131,6 +132,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(MCP_OP)
     registry.register(RUN_SKILL_OP)
     registry.register(MCP_INSTALL_OP)
+    # FP-0034 §D23: mcp_drop_server is router+phase callable (= dual gate).
+    # Reachable via universal_action ``mcp.operation__drop_server`` AND
+    # as a phase Control IR op kind="mcp_drop_server".
+    registry.register(MCP_DROP_SERVER_OP)
     # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
     # PR-3a registers them in the registry; PR-3b will add them to
     # build_tools() output and refactor the SP. Handlers wire through

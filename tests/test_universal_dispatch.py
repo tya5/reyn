@@ -359,15 +359,26 @@ def test_known_static_names_excludes_resource_categories() -> None:
         )
 
 
-def test_known_static_names_excludes_pr4_pending_categories() -> None:
-    """Tier 2: mcp.operation and exec have no static entries yet (PR-4+)."""
+def test_known_static_names_includes_mcp_operation_drop_server() -> None:
+    """Tier 2: PR-4 added mcp.operation__drop_server to the static catalogue.
+
+    Counter-op to mcp_install; declared with the per-name route so
+    describe / invoke flow through the mcp_drop_server op_runtime handler.
+    """
+    assert "mcp.operation__drop_server" in KNOWN_STATIC_QUALIFIED_NAMES
+
+
+def test_known_static_names_excludes_exec_pending_category() -> None:
+    """Tier 2: exec has no static entries yet (= sandboxed_exec PR pending).
+
+    mcp.operation is no longer excluded after PR-4 landed drop_server.
+    """
     names = set(KNOWN_STATIC_QUALIFIED_NAMES)
-    for prefix in ("mcp.operation__", "exec__"):
-        matches = [n for n in names if n.startswith(prefix)]
-        assert matches == [], (
-            f"prefix {prefix!r} should have no static entries until "
-            f"later PR; found {matches}"
-        )
+    matches = [n for n in names if n.startswith("exec__")]
+    assert matches == [], (
+        f"exec__ should have no static entries until sandboxed_exec "
+        f"integration lands; found {matches}"
+    )
 
 
 def test_known_qualified_name_for_category() -> None:
@@ -378,9 +389,12 @@ def test_known_qualified_name_for_category() -> None:
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()
-    # PR-4-pending categories return empty
+    # exec is still pending (= future PR)
     assert known_qualified_name_for_category("exec") == ()
-    assert known_qualified_name_for_category("mcp.operation") == ()
+    # mcp.operation now has drop_server (PR-4)
+    assert known_qualified_name_for_category("mcp.operation") == (
+        "mcp.operation__drop_server",
+    )
 
 
 def test_known_qualified_name_for_unknown_category_raises() -> None:

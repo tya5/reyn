@@ -123,6 +123,7 @@ from . import index_write as _index_write  # noqa: F401, E402
 from . import judge_output as _judge_output  # noqa: F401, E402
 from . import lint as _lint  # noqa: F401, E402
 from . import mcp as _mcp  # noqa: F401, E402
+from . import mcp_drop_server as _mcp_drop_server  # noqa: F401, E402
 from . import mcp_install as _mcp_install  # noqa: F401, E402
 from . import recall as _recall  # noqa: F401, E402
 from . import run_skill as _run_skill  # noqa: F401, E402
