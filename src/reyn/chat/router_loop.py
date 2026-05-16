@@ -840,7 +840,7 @@ class RouterLoop:
         "describe_action", "invoke_action",
     })
 
-    def _build_router_caller_state(self) -> Any:
+    async def _build_router_caller_state(self) -> Any:
         """Build a RouterCallerState populated with bound callbacks.
 
         Bindings follow the wiring contract documented in
@@ -898,6 +898,32 @@ class RouterLoop:
                 available_tool_names=set(self._tool_names) - {"plan"},
             )
 
+        # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
+        # universal catalog's rag.corpus enumeration. SourceManifest
+        # caches the parsed YAML in-process so this is O(1) when the
+        # cache is warm (= when the system-prompt path already loaded
+        # the manifest earlier in this turn). Failures (= missing file,
+        # malformed YAML) degrade to an empty list — the catalog
+        # handler then reports zero corpora rather than crashing.
+        _rag_sources: list[Mapping[str, Any]] | None = None
+        try:
+            _manifest = get_source_manifest(Path.cwd())
+            _entries = await _manifest.get_all()
+            _rag_sources = [
+                {
+                    "name": e.name,
+                    "description": e.description,
+                    "backend": e.backend,
+                    "chunk_count": e.chunk_count,
+                }
+                for e in _entries.values()
+            ]
+        except Exception:
+            # Manifest unavailable (= no workspace, no .reyn/index/
+            # sources.yaml, transient I/O). Treat as empty catalogue
+            # rather than failing the entire tool dispatch.
+            _rag_sources = None
+
         return RouterCallerState(
             # Catalog access (= activated handlers)
             list_skills_fn=self._list_skills,
@@ -943,6 +969,8 @@ class RouterLoop:
             # mcp_call_tool`` directly to preserve the session-level
             # MCPClient cache (= no per-call re-handshake).
             host=self.host,
+            # FP-0034 Phase 2 prep: rag.corpus enumeration snapshot.
+            available_rag_sources=_rag_sources,
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
@@ -964,7 +992,7 @@ class RouterLoop:
         from reyn.tools.dispatch import invoke_tool
         from reyn.tools.types import ToolContext
 
-        rs = self._build_router_caller_state()
+        rs = await self._build_router_caller_state()
         tool_ctx = ToolContext(
             events=self.host.events,
             permission_resolver=getattr(self.host, "permission_resolver", None),

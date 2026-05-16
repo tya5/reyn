@@ -224,6 +224,56 @@ def test_list_actions_mcp_tool_category_enumerates_per_server() -> None:
     }
 
 
+def test_list_actions_rag_corpus_category_uses_router_state() -> None:
+    """Tier 2: rag.corpus category enumerates from rs.available_rag_sources.
+
+    Phase 2 prep wiring: RouterLoop populates ``available_rag_sources``
+    from ``SourceManifest.get_all()`` so ``list_actions(category=
+    ["rag.corpus"])`` returns the configured corpora as
+    ``rag.corpus__<name>`` qualified names.  Previously rag.corpus
+    always returned [] (= deferred branch); this test pins the new
+    enumeration behavior.
+    """
+    rs = RouterCallerState(
+        available_rag_sources=[
+            {
+                "name": "meetings",
+                "description": "Q3 meeting minutes",
+                "backend": "sqlite",
+                "chunk_count": 124,
+            },
+            {
+                "name": "design_docs",
+                "description": "Architecture design documents",
+                "backend": "sqlite",
+                "chunk_count": 38,
+            },
+        ],
+    )
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["rag.corpus"]}, _make_ctx(rs),
+    ))
+    qns = {it["qualified_name"] for it in result["items"]}
+    assert qns == {"rag.corpus__meetings", "rag.corpus__design_docs"}
+    # Short description carries the corpus description, not internals.
+    desc_by_name = {it["qualified_name"]: it["short_description"] for it in result["items"]}
+    assert "Q3 meeting minutes" in desc_by_name["rag.corpus__meetings"]
+
+
+def test_list_actions_rag_corpus_empty_when_state_absent() -> None:
+    """Tier 2: rag.corpus returns empty list when router didn't snapshot manifest.
+
+    Plan-mode hosts / test sites without a SourceManifest available
+    leave ``available_rag_sources=None`` — the handler must treat
+    that identically to an empty list rather than crashing.
+    """
+    result = _run(LIST_ACTIONS.handler(
+        {"category": ["rag.corpus"]}, _make_ctx(None),
+    ))
+    assert result["items"] == []
+    assert result["total"] == 0
+
+
 def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
     """Tier 2: dynamic categories return empty without router_state."""
     result = _run(LIST_ACTIONS.handler(

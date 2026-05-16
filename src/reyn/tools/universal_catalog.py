@@ -448,10 +448,11 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
         _enumerate_static_category (= populated via universal_dispatch's
         ``_OPERATION_RULES`` table)
       - Resource categories → consult ctx.router_state (skills /
-        agents / mcp_servers / mcp_servers[*].tools / list_memory_fn)
-      - Categories without state-binding yet (rag.corpus / exec) →
-        empty list (Phase 2 will populate via embedding-backed index
-        and sandbox-backed exec enumeration)
+        agents / mcp_servers / mcp_servers[*].tools / list_memory_fn /
+        available_rag_sources)
+      - Categories without state-binding yet (exec) →
+        empty list (Phase 2 will populate via sandbox-backed exec
+        enumeration once the introspection API lands)
 
     The output items each carry ``qualified_name`` (= what
     invoke_action / describe_action expects) and ``short_description``
@@ -535,6 +536,24 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
                 })
         return out
 
+    if category == "rag.corpus":
+        # FP-0034 Phase 2 prep: enumerate indexed RAG corpora from the
+        # router caller state snapshot.  RouterLoop populates this from
+        # ``SourceManifest.get_all()`` once per loop iteration; the
+        # handler reads it without a fresh manifest round-trip.
+        if rs is None or not rs.available_rag_sources:
+            return []
+        return [
+            {
+                "qualified_name": build_qualified_name("rag.corpus", c["name"]),
+                "short_description": _truncate_short_description(
+                    c.get("description", ""),
+                ),
+            }
+            for c in rs.available_rag_sources
+            if isinstance(c, Mapping) and "name" in c
+        ]
+
     if category == "memory.entry":
         if rs is None or rs.list_memory_fn is None:
             return []
@@ -557,8 +576,7 @@ def _enumerate_category(category: str, ctx: ToolContext) -> list[dict[str, str]]
             })
         return out2
 
-    # rag.corpus / exec — Phase 2 will populate (embedding-backed
-    # corpus list + sandbox-backed exec enumeration).
+    # exec — Phase 2 will populate via sandbox-backed introspection.
     return []
 
 
