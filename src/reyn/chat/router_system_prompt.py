@@ -642,6 +642,11 @@ def build_system_prompt(
         parts.extend([
             "  - Never invent action names; only use those returned by",
             "    list_actions or search_actions.",
+            "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
+            "「something for X」 「similar to」), USE search_actions(query=...).",
+            "    For exact category enumeration or substring lookup of a known",
+            "    keyword, USE list_actions(category=[...]) or"
+            " list_actions(filter='...').",
         ])
     else:
         parts.append("  ## Plan decomposition")

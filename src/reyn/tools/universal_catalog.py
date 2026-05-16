@@ -259,9 +259,12 @@ _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Free-text substring match (case-insensitive) against "
-                "qualified_name and short_description. ONLY for free-text "
-                "keyword search across descriptions — do NOT pass category "
-                "names here (use `category=['name']` array instead)."
+                "qualified_name and short_description. ONLY for EXACT "
+                "keyword / substring lookup — pass a literal token to "
+                "match against names. Do NOT pass category names here "
+                "(use `category=['name']` array instead). Do NOT pass "
+                "semantic / natural-language descriptions (use "
+                "search_actions(query=...) for those)."
             ),
         },
         "offset": {
@@ -295,20 +298,24 @@ _SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
     "WHAT: Semantic search across available actions — multilingual, "
     "embedding-based, relevance-ranked. "
     "Returns {items: [{qualified_name, short_description, score}, ...]}. "
-    "WHEN: Use this when you have a natural-language description of what you "
-    "need and want the closest matching actions by meaning, not by name. "
+    "WHEN: PREFERRED for natural-language / semantic queries — when the user "
+    "asks to 探す / 探したい / 関連 / similar to / something for X / "
+    "actions about Y / find ... related to Z. Use this whenever the intent "
+    "is to discover by meaning rather than exact name match. "
     "Multilingual — works in any language (Japanese, English, etc.). "
-    "Should be called whenever the task intent is clear but the exact action "
-    "name is unknown. "
-    "WHEN NOT: If the action name is already known, call invoke_action directly. "
-    "If you need alphabetical browse or text-substring filter, use list_actions. "
+    "WHEN NOT: If the action name is already known, call invoke_action "
+    "directly. For exact category enumeration (e.g. 「skill カテゴリの一覧」), "
+    "use list_actions(category=[...]). For exact substring lookup of a "
+    "known keyword (e.g. 「'http' を含む action」), use list_actions(filter=...). "
     "Available only when an embedding class is configured (reyn.yaml "
     "action_retrieval.embedding_class). "
-    "PREFERRED OVER: list_actions — when query is a semantic description rather "
-    "than a category or substring. "
-    "POST_CALL: After search_actions reveals at least one matching action, you "
-    "MUST follow with describe_action or invoke_action. Do NOT reply directly "
-    "— silent stop after semantic search is a failure mode."
+    "PREFERRED OVER: list_actions — when query is a semantic description "
+    "rather than a category or exact substring. The keywords 探したい / "
+    "関連 / similar / find ... about / find ... related are STRONG signals "
+    "to use this tool, NOT list_actions(filter=...). "
+    "POST_CALL: After search_actions reveals at least one matching action, "
+    "you MUST follow with describe_action or invoke_action. Do NOT reply "
+    "directly — silent stop after semantic search is a failure mode."
 )
 
 
