@@ -792,6 +792,45 @@ class RouterLoop:
                         else:
                             # hot list direct alias or other tool
                             _tracker.record(_tc_name)
+                # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
+                # Emitted independently of tracker (tracker=None is valid when
+                # hot_list_n=0, but P6 audit must fire whenever catalog routing
+                # actually happened). Guard: only when universal wrappers are on,
+                # which is the only condition under which catalog routing occurs.
+                if _univ_enabled:
+                    for tc, r in zip(tool_calls, tool_results):
+                        _rd_name = tc.get("function", {}).get("name", "")
+                        if _rd_name == "invoke_action":
+                            _rd_args = tc.get("function", {}).get("arguments", {})
+                            if isinstance(_rd_args, str):
+                                try:
+                                    import json as _json_rd
+                                    _rd_args = _json_rd.loads(_rd_args)
+                                except Exception:  # noqa: BLE001
+                                    _rd_args = {}
+                            _rd_action = (
+                                _rd_args.get("action_name", "")
+                                if isinstance(_rd_args, dict) else ""
+                            )
+                            _rd_source = "invoke_action"
+                        elif "__" in _rd_name:
+                            _rd_action = _rd_name
+                            _rd_source = "hot_list_alias"
+                        else:
+                            continue  # non-catalog tool — skip
+                        if not _rd_action:
+                            continue
+                        _rd_outcome = "error" if (
+                            isinstance(r, dict)
+                            and ("error" in r or r.get("status") == "error")
+                        ) else "success"
+                        host.events.emit(
+                            "routing_decided",
+                            action_name=_rd_action,
+                            source=_rd_source,
+                            outcome=_rd_outcome,
+                            chain_id=self.chain_id,
+                        )
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
