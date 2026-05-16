@@ -2,12 +2,13 @@
 
 Three capabilities are registered here:
 
-  CALL_MCP_TOOL   — gates.router=allow, gates.phase=allow
+  CALL_MCP_TOOL    — gates.router=allow, gates.phase=allow
   LIST_MCP_SERVERS — gates.router=allow, gates.phase=allow  (Type C closure)
-  LIST_MCP_TOOLS  — gates.router=allow, gates.phase=allow  (Type C closure)
+  LIST_MCP_TOOLS   — gates.router=allow, gates.phase=allow  (Type C closure)
+  DESCRIBE_MCP_TOOL — gates.router=allow, gates.phase=allow (FP-0032 D4)
 
 Per ADR-0026 Open Q #6, router-side fine-grained names are canonical:
-call_mcp_tool / list_mcp_servers / list_mcp_tools.
+call_mcp_tool / list_mcp_servers / list_mcp_tools / describe_mcp_tool.
 
 ## Phase-side dispatch status (M3 metadata-only)
 
@@ -43,9 +44,13 @@ is handled by the caller per ADR-0026 M3 wave pattern.
 """
 from __future__ import annotations
 
-from typing import Any, Mapping
+import copy
+from typing import TYPE_CHECKING, Any, Mapping
 
 from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
+
+if TYPE_CHECKING:
+    from reyn.tools.types import RouterCallerState
 
 # ── Description constants (byte-identical to router_tools.py D1/D2/D3) ────────
 
@@ -60,8 +65,14 @@ _LIST_MCP_TOOLS_DESCRIPTION = (
 )
 
 _CALL_MCP_TOOL_DESCRIPTION = (
-    "Invoke an MCP server tool. Construct args matching "
-    "the tool's input schema (see list_mcp_tools)."
+    "Invoke a mcp_tool on an MCP server. Construct args matching "
+    "the mcp_tool's input schema (see describe_mcp_tool)."
+)
+
+_DESCRIBE_MCP_TOOL_DESCRIPTION = (
+    "Get the input schema for one mcp_tool registered on an MCP server. "
+    "Call this before call_mcp_tool if you're unsure how to "
+    "construct the args."
 )
 
 
@@ -84,11 +95,38 @@ _LIST_MCP_TOOLS_PARAMETERS: dict[str, Any] = {
 _CALL_MCP_TOOL_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "server": {"type": "string"},
-        "tool": {"type": "string"},
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "mcp_tool_name": {
+            "type": "string",
+            "description": (
+                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
+                "the enum. Use describe_mcp_tool for the full input schema."
+            ),
+        },
         "args": {"type": "object"},
     },
-    "required": ["server", "tool", "args"],
+    "required": ["server", "mcp_tool_name", "args"],
+}
+
+_DESCRIBE_MCP_TOOL_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "server": {
+            "type": "string",
+            "description": "MCP server name — choose from the enum (verbatim).",
+        },
+        "mcp_tool_name": {
+            "type": "string",
+            "description": (
+                "Dotted mcp_tool identifier: <server>.<tool> — choose from "
+                "the enum."
+            ),
+        },
+    },
+    "required": ["server", "mcp_tool_name"],
 }
 
 
@@ -129,12 +167,24 @@ async def _handle_list_mcp_tools(
     Router path: delegates to host.mcp_list_tools(server) via ctx.router_state.
     Phase path: registered with gates.phase=allow (Type C metadata closure),
     but phase-side Control IR executor wiring is deferred to M4.
+
+    FP-0032: returns ``mcp_tools`` key (not ``tools``) to avoid structural
+    collision with OpenAI tool-definition shape. Each entry is trimmed to
+    ``{name, description}`` only — ``inputSchema`` is omitted so the LLM
+    cannot mistake an mcp_tool for a top-level callable. Full schema is
+    available via ``describe_mcp_tool``.
     """
     if ctx.caller_kind == "router":
         host = _require_host(ctx)
         server = str(args["server"])
         result = await host.mcp_list_tools(server)
-        return {"tools": result}
+        # Strip inputSchema from each entry so the shape does not resemble
+        # an OpenAI tool definition (FP-0032 root-cause fix).
+        trimmed = [
+            {k: v for k, v in t.items() if k != "inputSchema"}
+            for t in (result or [])
+        ]
+        return {"mcp_tools": trimmed}
 
     return {
         "error": (
@@ -165,9 +215,12 @@ async def _handle_call_mcp_tool(
     if ctx.caller_kind == "router":
         host = _require_host(ctx)
         server = str(args["server"])
-        tool = str(args["tool"])
+        mcp_tool_name = str(args["mcp_tool_name"])
+        # Dotted form "server.tool_name" → extract the bare tool name for MCPClient.
+        # If the caller passed a bare name (no dot), use it as-is for compatibility.
+        bare_tool = mcp_tool_name.split(".", 1)[-1] if "." in mcp_tool_name else mcp_tool_name
         tool_args = dict(args.get("args") or {})
-        return await host.mcp_call_tool(server, tool, tool_args)
+        return await host.mcp_call_tool(server, bare_tool, tool_args)
 
     # Phase path: build MCPIROp and dispatch through op_runtime.
     # Lazy import to avoid circular dependency at registry-init time.
@@ -177,7 +230,9 @@ async def _handle_call_mcp_tool(
     from reyn.schemas.models import MCPIROp
 
     server = str(args["server"])
-    tool = str(args["tool"])
+    mcp_tool_name = str(args["mcp_tool_name"])
+    # Dotted form → extract bare tool name for MCPIROp.
+    tool = mcp_tool_name.split(".", 1)[-1] if "." in mcp_tool_name else mcp_tool_name
     tool_args = dict(args.get("args") or {})
 
     op = MCPIROp(kind="mcp", server=server, tool=tool, args=tool_args)
@@ -258,6 +313,93 @@ def _require_host(ctx: ToolContext) -> Any:
     )
 
 
+# ── FP-0032: Schema enricher for call_mcp_tool / describe_mcp_tool ───────────
+
+
+def _enrich_router_schema(rendered: dict, state: "RouterCallerState") -> dict:
+    """Inject server + mcp_tool_name enums from currently-configured MCP servers.
+
+    The enum lists are dynamic: they depend on which MCP servers are wired into
+    the current chat session (= reyn.yaml `mcp` config + per-server tool listings).
+    Without these enums, the LLM could emit arbitrary string values for
+    ``server`` and ``mcp_tool_name``, leading to runtime "unknown server" errors
+    or the FP-0032 bug (LLM emits a bare mcp_tool_name as if it were a
+    top-level tool call).
+
+    ``mcp_servers`` entries: [{name, description, ...}, ...] — may optionally
+    carry a ``tools`` list [{name, ...}, ...] for tool-level enum injection.
+    When ``tools`` is absent (common: tool listing requires async enumeration),
+    the mcp_tool_name enum is omitted and the field stays a plain string.
+
+    Returns a NEW dict — does not mutate the input.
+    """
+    mcp_servers = state.mcp_servers or []
+    server_names = [str(s["name"]) for s in mcp_servers if "name" in s]
+    mcp_tool_names = [
+        f"{s['name']}.{t['name']}"
+        for s in mcp_servers
+        for t in s.get("tools", [])
+        if "name" in s and "name" in t
+    ]
+    new = copy.deepcopy(rendered)
+    props = new["function"]["parameters"]["properties"]
+    server_prop = props.get("server")
+    mcp_tool_prop = props.get("mcp_tool_name")
+    if server_prop is not None:
+        if server_names:
+            server_prop["enum"] = server_names
+        else:
+            server_prop.pop("enum", None)
+    if mcp_tool_prop is not None:
+        if mcp_tool_names:
+            mcp_tool_prop["enum"] = mcp_tool_names
+        else:
+            mcp_tool_prop.pop("enum", None)
+    return new
+
+
+# ── FP-0032 D4: describe_mcp_tool handler ────────────────────────────────────
+
+
+async def _handle_describe_mcp_tool(
+    args: Mapping[str, Any], ctx: ToolContext
+) -> ToolResult:
+    """Return {name, description, input_schema} for the requested mcp_tool.
+
+    Router path: calls host.mcp_list_tools(server) to get the tool listing,
+    then filters to the requested mcp_tool_name. The dotted form
+    ``<server>.<tool>`` is resolved to the bare tool name for the lookup.
+
+    Phase path: deferred to M4 (metadata closure only — same as list_mcp_tools).
+    """
+    if ctx.caller_kind == "router":
+        host = _require_host(ctx)
+        server = str(args["server"])
+        mcp_tool_name = str(args["mcp_tool_name"])
+        bare_tool = mcp_tool_name.split(".", 1)[-1] if "." in mcp_tool_name else mcp_tool_name
+        all_tools = await host.mcp_list_tools(server) or []
+        for t in all_tools:
+            if str(t.get("name", "")) == bare_tool:
+                return {
+                    "name": t.get("name"),
+                    "description": t.get("description", ""),
+                    "input_schema": t.get("inputSchema", {}),
+                }
+        return {
+            "error": (
+                f"mcp_tool {mcp_tool_name!r} not found on server {server!r}. "
+                "Use list_mcp_tools to see available mcp_tools."
+            )
+        }
+
+    return {
+        "error": (
+            "describe_mcp_tool phase-side dispatch not yet wired "
+            "(M4 task). ToolDefinition registered for metadata closure only."
+        )
+    }
+
+
 # ── ToolDefinitions ───────────────────────────────────────────────────────────
 
 LIST_MCP_SERVERS = ToolDefinition(
@@ -288,6 +430,18 @@ CALL_MCP_TOOL = ToolDefinition(
     handler=_handle_call_mcp_tool,
     category="discovery",
     purity="side_effect",  # call_mcp_tool has arbitrary side effects
+    schema_enricher=_enrich_router_schema,
+)
+
+DESCRIBE_MCP_TOOL = ToolDefinition(
+    name="describe_mcp_tool",
+    description=_DESCRIBE_MCP_TOOL_DESCRIPTION,
+    parameters=_DESCRIBE_MCP_TOOL_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_describe_mcp_tool,
+    category="discovery",
+    purity="read_only",
+    schema_enricher=_enrich_router_schema,
 )
 
 
