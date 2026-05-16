@@ -184,6 +184,30 @@ class RouterLoopHost(Protocol):
         """
         ...
 
+    def get_action_embedding_index(self) -> Any:
+        """Return the session-scoped ActionEmbeddingIndex, or None.
+
+        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        has configured ``action_retrieval.embedding_class``.
+        """
+        ...
+
+    def get_embedding_provider(self) -> Any:
+        """Return the session's EmbeddingProvider instance, or None.
+
+        FP-0034 Phase 2 step 1.  Used together with the
+        ActionEmbeddingIndex to power search_actions semantic search.
+        """
+        ...
+
+    def get_embedding_model_class(self) -> str | None:
+        """Return the configured embedding model class name, or None.
+
+        FP-0034 Phase 2 step 1.  Mirror of
+        ``action_retrieval.embedding_class`` from reyn.yaml.
+        """
+        ...
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
@@ -365,6 +389,13 @@ class RouterLoop:
         # compare" produced 3 plan invocations because step LLMs saw plan
         # in their tool catalog and self-decomposed.
         self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
+        # FP-0034 Phase 2 step 1: action embedding index background
+        # build task handle.  None until the first turn that finds the
+        # index configured + not ready, then asyncio.Task while
+        # building.  Stays set after completion so we don't re-spawn
+        # (the build itself is idempotent via catalog hash, but we
+        # avoid the extra Task overhead).
+        self._action_index_build_task: "asyncio.Task[None] | None" = None
         # ADR-0025: optional sub-loop LLM call memoization. When set,
         # ``call_llm_tools`` invocations consult the provider before
         # invoking — args_hash hit returns the recorded LLMToolCallResult
@@ -414,6 +445,44 @@ class RouterLoop:
             host, "get_hide_legacy_tools", None,
         )
         _hide_legacy = bool(_hide_legacy_getter()) if _hide_legacy_getter else False
+        # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
+        # Only show search_actions when (a) wrappers are on, (b) the
+        # operator configured an embedding model class, AND (c) the
+        # session has an ActionEmbeddingIndex that is_ready().  Any
+        # missing signal degrades to "hide" so the LLM does not see a
+        # tool whose query would return empty results.
+        _search_visible = False
+        if _univ_enabled:
+            _idx_getter = getattr(host, "get_action_embedding_index", None)
+            _provider_getter = getattr(host, "get_embedding_provider", None)
+            _model_getter = getattr(host, "get_embedding_model_class", None)
+            _idx = _idx_getter() if _idx_getter else None
+            _provider = _provider_getter() if _provider_getter else None
+            _model_class = _model_getter() if _model_getter else None
+            if (
+                _idx is not None
+                and _model_class
+                and getattr(_idx, "is_ready", lambda: False)()
+            ):
+                _search_visible = True
+            # FP-0034 Phase 2 step 1: kick off the background build
+            # when the index is configured but not yet ready.  The
+            # build is idempotent (= same catalog hash → no-op) and
+            # serialised by the index's internal lock.  Only spawned
+            # once per RouterLoop (= per chain) via the
+            # ``_action_index_build_task`` flag below.
+            if (
+                _idx is not None
+                and _provider is not None
+                and _model_class
+                and not getattr(_idx, "is_ready", lambda: False)()
+                and getattr(self, "_action_index_build_task", None) is None
+            ):
+                self._action_index_build_task = asyncio.create_task(
+                    self._build_action_embedding_index_background(
+                        _idx, _provider, _model_class,
+                    )
+                )
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
@@ -422,6 +491,7 @@ class RouterLoop:
             web_fetch_allowed=host.get_web_fetch_allowed(),
             universal_wrappers_enabled=_univ_enabled,
             hide_legacy_tools=_hide_legacy,
+            search_actions_visible=_search_visible,
         )
         if self._exclude_tools:
             tools = [
@@ -840,6 +910,49 @@ class RouterLoop:
         "describe_action", "invoke_action",
     })
 
+    async def _build_action_embedding_index_background(
+        self, idx: Any, provider: Any, model_class: str,
+    ) -> None:
+        """FP-0034 Phase 2 step 1: background ActionEmbeddingIndex build.
+
+        Enumerates the catalog via ``LIST_ACTIONS`` against a fresh
+        ``RouterCallerState`` snapshot and feeds the items into
+        ``idx.build()``.  The build is idempotent (= same catalog
+        hash skipped) and serialised by the index's internal lock,
+        so concurrent calls are safe.
+
+        Errors are swallowed and logged via ``host.events`` so a
+        misconfigured embedding provider does not crash the chat
+        session — the next turn finds ``is_ready()`` False and
+        keeps ``search_actions`` hidden.
+        """
+        from reyn.tools import get_default_registry
+        from reyn.tools.types import ToolContext
+        try:
+            rs = await self._build_router_caller_state()
+            tool_ctx = ToolContext(
+                events=self.host.events,
+                permission_resolver=getattr(self.host, "permission_resolver", None),
+                workspace=getattr(self.host, "workspace", None),
+                caller_kind="router",
+                router_state=rs,
+            )
+            list_actions_def = get_default_registry().lookup("list_actions")
+            if list_actions_def is None:
+                return
+            result = await list_actions_def.handler({}, tool_ctx)
+            items = result.get("items", []) if isinstance(result, dict) else []
+            await idx.build(items, provider, model_class)
+        except Exception as exc:
+            try:
+                self.host.events.emit(
+                    "action_index_build_failed",
+                    error=repr(exc),
+                    model_class=model_class,
+                )
+            except Exception:
+                pass
+
     async def _build_router_caller_state(self) -> Any:
         """Build a RouterCallerState populated with bound callbacks.
 
@@ -971,6 +1084,19 @@ class RouterLoop:
             host=self.host,
             # FP-0034 Phase 2 prep: rag.corpus enumeration snapshot.
             available_rag_sources=_rag_sources,
+            # FP-0034 Phase 2 step 1: search_actions wiring.  All
+            # three resolve via getattr fallback so narrow hosts
+            # (= plan-step host, FakeRouterHost) get None and
+            # search_actions degrades gracefully.
+            action_embedding_index=(
+                getattr(self.host, "get_action_embedding_index", lambda: None)()
+            ),
+            embedding_provider=(
+                getattr(self.host, "get_embedding_provider", lambda: None)()
+            ),
+            embedding_model_class=(
+                getattr(self.host, "get_embedding_model_class", lambda: None)()
+            ),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:

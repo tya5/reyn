@@ -382,6 +382,7 @@ def run_serve(args: argparse.Namespace) -> None:
             state_log=state_log,
             budget_tracker=budget_tracker,
             action_retrieval_config=session_cfg.config.action_retrieval,
+            embedding_config=session_cfg.config.embedding,
         )
         s.load_history()
         return s

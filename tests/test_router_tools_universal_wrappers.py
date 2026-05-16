@@ -65,26 +65,72 @@ def test_default_flag_off_byte_identical_to_explicit_false() -> None:
 
 
 def test_flag_on_appends_three_wrappers_in_order() -> None:
-    """Tier 2: flag=True appends list_actions / describe_action /
-    invoke_action in §D21 canonical order at the end of tools=.
+    """Tier 2: flag=True (without search visibility) appends 3 wrappers.
 
-    search_actions is intentionally absent through all of Phase 1
-    (= §D14 embedding gating + the search handler land together in
-    Phase 2 / ActionEmbeddingIndex).
+    search_actions stays out of tools= when ``search_actions_visible``
+    is False (= no embedding configured / index not ready), per §D14.
+    Phase 2 step 1 lifts the absolute exclusion: when the visibility
+    flag is True, search_actions appears (see
+    ``test_flag_on_with_search_visible_appends_four_wrappers``).
     """
     names = _tool_names(build_tools(
         _SAMPLE_SKILLS, _SAMPLE_AGENTS, universal_wrappers_enabled=True,
     ))
-    # All 3 wrappers present
+    # All 3 wrappers present (search_actions gated separately)
     assert "list_actions" in names
     assert "describe_action" in names
     assert "invoke_action" in names
-    # search_actions still absent (= Phase 2 territory)
     assert "search_actions" not in names
 
     # Canonical relative order: list_actions < describe_action < invoke_action
     assert names.index("list_actions") < names.index("describe_action")
     assert names.index("describe_action") < names.index("invoke_action")
+
+
+def test_flag_on_with_search_visible_appends_four_wrappers() -> None:
+    """Tier 2: §D14 visibility gate — search_actions joins when visible.
+
+    Phase 2 step 1: when ``search_actions_visible=True`` (= operator
+    configured embedding_class AND ActionEmbeddingIndex.is_ready()),
+    build_tools includes the 4th wrapper at the appropriate position
+    in the canonical order.
+    """
+    names = _tool_names(build_tools(
+        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        universal_wrappers_enabled=True,
+        search_actions_visible=True,
+    ))
+    # All 4 wrappers present
+    assert "list_actions" in names
+    assert "search_actions" in names
+    assert "describe_action" in names
+    assert "invoke_action" in names
+
+    # Canonical order: list < search < describe < invoke
+    assert names.index("list_actions") < names.index("search_actions")
+    assert names.index("search_actions") < names.index("describe_action")
+    assert names.index("describe_action") < names.index("invoke_action")
+
+
+def test_search_visible_alone_does_not_inject_wrappers() -> None:
+    """Tier 2: search_actions_visible=True without wrappers=True is a no-op.
+
+    Safety: the search visibility gate is meaningful ONLY when the
+    universal wrappers are themselves enabled.  Setting
+    ``search_actions_visible=True`` while ``universal_wrappers_enabled``
+    stays False keeps the legacy tools= shape unchanged.
+    """
+    a = _tool_names(build_tools(
+        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        universal_wrappers_enabled=False,
+        search_actions_visible=True,
+    ))
+    b = _tool_names(build_tools(
+        _SAMPLE_SKILLS, _SAMPLE_AGENTS,
+        universal_wrappers_enabled=False,
+    ))
+    assert a == b
+    assert "search_actions" not in a
 
 
 def test_flag_on_wrappers_at_end_of_tools_list() -> None:

@@ -203,6 +203,7 @@ def run(args: argparse.Namespace) -> None:
             budget_tracker=budget_tracker,
             sandbox_config=session_cfg.config.sandbox,
             action_retrieval_config=session_cfg.config.action_retrieval,
+            embedding_config=session_cfg.config.embedding,
         )
         s.load_history()
         return s

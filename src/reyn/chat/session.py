@@ -39,7 +39,7 @@ from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import ActionRetrievalConfig, EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
+from reyn.config import ActionRetrievalConfig, EmbeddingConfig, EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -488,6 +488,7 @@ class ChatSession:
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
         action_retrieval_config: "ActionRetrievalConfig | None" = None,
+        embedding_config: "EmbeddingConfig | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -511,6 +512,34 @@ class ChatSession:
         # constructs an off-flag ActionRetrievalConfig so existing chat
         # behaviour is preserved when callers don't pass one.
         self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
+        # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
+        # EmbeddingProvider once per session when the operator has
+        # configured ``action_retrieval.embedding_class``.  Both stay
+        # None when embedding is not configured, in which case the
+        # ``search_actions`` wrapper is hidden by ``build_tools`` and
+        # the handler degrades to an empty-result response.
+        self._action_embedding_index: Any = None
+        self._embedding_provider: Any = None
+        self._embedding_model_class: str | None = None
+        if (
+            self._action_retrieval.universal_wrappers_enabled
+            and self._action_retrieval.embedding_class
+            and embedding_config is not None
+        ):
+            try:
+                from reyn.embedding import get_provider as _get_provider
+                from reyn.tools.action_index import ActionEmbeddingIndex
+                self._embedding_provider = _get_provider("litellm", embedding_config)
+                self._embedding_model_class = self._action_retrieval.embedding_class
+                self._action_embedding_index = ActionEmbeddingIndex()
+            except Exception:
+                # If provider construction fails for any reason (= missing
+                # dependency / malformed config), fall through to "no index"
+                # so the rest of the session continues without
+                # search_actions rather than refusing to start.
+                self._embedding_provider = None
+                self._action_embedding_index = None
+                self._embedding_model_class = None
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -761,6 +790,9 @@ class ChatSession:
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
             hide_legacy_tools=self._action_retrieval.hide_legacy_tools,
+            action_embedding_index=self._action_embedding_index,
+            embedding_provider=self._embedding_provider,
+            embedding_model_class=self._embedding_model_class,
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.

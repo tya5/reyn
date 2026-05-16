@@ -233,6 +233,7 @@ def build_tools(
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
     hide_legacy_tools: bool = False,            # FP-0034 Phase 2 prep: exclusive-wrapper mode
+    search_actions_visible: bool = False,       # FP-0034 Phase 2 step 1: D14 visibility gate
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -841,7 +842,18 @@ def build_tools(
     # and (b) embedding_class plumbing through RouterHostAdapter is also
     # a Phase 2 task — visibility + handler must land together.
     if universal_wrappers_enabled:
-        for _wrapper_name in ("list_actions", "describe_action", "invoke_action"):
+        # Default 3 wrappers always exposed when the flag is on.
+        # search_actions is added conditionally per §D14 only when the
+        # session has an ActionEmbeddingIndex ready AND the operator
+        # configured ``action_retrieval.embedding_class``.  Callers
+        # (= RouterLoop) compute ``search_actions_visible`` from both
+        # signals before invoking ``build_tools``.
+        _wrapper_names: tuple[str, ...] = (
+            ("list_actions", "search_actions", "describe_action", "invoke_action")
+            if search_actions_visible
+            else ("list_actions", "describe_action", "invoke_action")
+        )
+        for _wrapper_name in _wrapper_names:
             _wrapper_def = _registry.lookup(_wrapper_name)
             if _wrapper_def is None or _wrapper_def.gates.router != "allow":
                 continue

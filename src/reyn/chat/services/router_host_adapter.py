@@ -152,6 +152,15 @@ class RouterHostAdapter:
         # through the 3 wrappers.  Default False keeps the additive
         # Phase 1 coexistence behavior.
         hide_legacy_tools: bool = False,
+        # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
+        # for search_actions.  When all three are set (= operator configured
+        # ``action_retrieval.embedding_class`` AND ChatSession built a
+        # provider AND the index has been initialized), search_actions
+        # appears in tools= and routes to the index.  When any is None
+        # the wrapper stays out of tools= (= D14 visibility gate).
+        action_embedding_index: Any = None,
+        embedding_provider: Any = None,
+        embedding_model_class: str | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -193,6 +202,10 @@ class RouterHostAdapter:
         self._universal_wrappers_enabled = universal_wrappers_enabled
         # FP-0034 Phase 2 prep
         self._hide_legacy_tools = hide_legacy_tools
+        # FP-0034 Phase 2 step 1
+        self._action_embedding_index = action_embedding_index
+        self._embedding_provider = embedding_provider
+        self._embedding_model_class = embedding_model_class
 
     # --- RouterLoopHost identity attributes ---
 
@@ -280,6 +293,34 @@ class RouterHostAdapter:
         tools= shape.
         """
         return self._universal_wrappers_enabled
+
+    def get_action_embedding_index(self) -> Any:
+        """Return the ActionEmbeddingIndex instance, or None.
+
+        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        has configured ``action_retrieval.embedding_class``.  RouterLoop
+        forwards into ``RouterCallerState.action_embedding_index`` so
+        the ``search_actions`` handler can call ``query()``.
+        """
+        return self._action_embedding_index
+
+    def get_embedding_provider(self) -> Any:
+        """Return the session's EmbeddingProvider instance, or None.
+
+        FP-0034 Phase 2 step 1.  Used together with
+        ``get_action_embedding_index()`` to power search_actions.
+        """
+        return self._embedding_provider
+
+    def get_embedding_model_class(self) -> str | None:
+        """Return the configured embedding model class name, or None.
+
+        FP-0034 Phase 2 step 1.  Mirror of
+        ``action_retrieval.embedding_class`` from reyn.yaml.  Used by
+        ``RouterLoop._build_router_caller_state`` to bind the
+        ``embedding_model_class`` field on ``RouterCallerState``.
+        """
+        return self._embedding_model_class
 
     def get_hide_legacy_tools(self) -> bool:
         """Return whether legacy per-kind tools should be hidden from tools=.
