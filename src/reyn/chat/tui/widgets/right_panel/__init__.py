@@ -1251,15 +1251,15 @@ class RightPanel(Widget):
 
     def _panel_header_markup(self) -> str:
         if self._panel_type == "keys":
-            return f"[bold {_CORAL}]Key Bindings[/]"
+            return f"[bold {_CORAL}]Key Bindings[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "agents":
-            return f"[bold {_CORAL}]Agents[/]"
+            return f"[bold {_CORAL}]Agents[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "memory":
-            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓  k↑  space=open[/]"
+            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓ k↑ space=open[/]"
         if self._panel_type == "cost":
-            return f"[bold {_CORAL}]Cost[/]"
+            return f"[bold {_CORAL}]Cost[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "docs":
-            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓  k↑  space=open[/]"
+            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓ k↑ space=open[/]"
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
             tail = _TAIL_CYCLE[self._event_tail_idx]
