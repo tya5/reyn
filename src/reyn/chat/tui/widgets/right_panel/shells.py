@@ -95,12 +95,9 @@ class _PanelTop(Widget):
         height: 1fr;
         layout: vertical;
         border-left: solid #2a2a2a;
-        border-top: solid transparent;
-        border-right: solid transparent;
-        border-bottom: solid transparent;
     }
     _PanelTop.x-focused {
-        border: solid $primary;
+        border-left: solid $primary;
     }
     """
 
@@ -141,8 +138,6 @@ class _PreviewPane(Widget):
         height: 1fr;
         border-top: solid #2a2a2a;
         border-left: solid #2a2a2a;
-        border-right: solid transparent;
-        border-bottom: solid transparent;
         layout: vertical;
     }
     _PreviewPane.preview-visible {
@@ -155,7 +150,8 @@ class _PreviewPane(Widget):
         padding: 0 1;
     }
     _PreviewPane:focus {
-        border: solid $primary;
+        border-top: solid $primary;
+        border-left: solid $primary;
     }
     _PreviewPane:focus #preview-header {
         color: $primary;
