@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.message import Message
 from textual.widget import Widget
@@ -66,7 +67,21 @@ class _PanelContent(Static):
 
     def render(self) -> RenderResult:
         try:
-            return self._panel._panel_markup()
+            markup = self._panel._panel_markup()
+            if not isinstance(markup, str):
+                return markup
+            width = self.content_region.width
+            if width <= 0:
+                return Text.from_markup(markup)
+            # Truncate each line independently so long values
+            # (event types, file names, …) don't wrap into multiple
+            # rows and split words mid-line.
+            parts: list[Text] = []
+            for line_markup in markup.split("\n"):
+                line_t = Text.from_markup(line_markup)
+                line_t.truncate(width, overflow="ellipsis")
+                parts.append(line_t)
+            return Text("\n").join(parts)
         except Exception as exc:
             logger.warning("right_panel content render failed: %s", exc)
             return ""
