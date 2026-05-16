@@ -23,6 +23,11 @@ from reyn.tools.types import ToolContext, ToolDefinition, ToolGates, ToolResult
 # route here when an indexed source covers the topic — without coupling
 # the description to specific source names (= per A4 constraint, the SP
 # carries the source list, this description must be source-agnostic).
+#
+# B23-PRE-1 SP role-separation note: recall vs memory disambiguation that
+# previously lived in the SP disambiguation block is now in
+# _RECALL_DESCRIPTION_HIDE_LEGACY below. _RECALL_DESCRIPTION remains
+# byte-identical to preserve LLMReplay fixture stability.
 _RECALL_DESCRIPTION = (
     "Search indexed sources by natural-language query. Returns top-K "
     "relevant chunks with text + metadata. Use this when the user's "
@@ -31,6 +36,31 @@ _RECALL_DESCRIPTION = (
     "Pick sources from the 'Indexed sources' section in the system "
     "prompt; each source's description tells you what topics it covers. "
     "Prefer this over `reyn_src_read` / file_read when an indexed source "
+    "description matches the question's topic — semantic search across "
+    "indexed chunks is more reliable than guessing a file path."
+)
+
+# B23-PRE-1 SP role-separation: enriched WHAT/WHEN/WHEN_NOT variant for
+# wrapper-only path. Carries the recall vs memory disambiguation that
+# previously lived in the SP disambiguation block. _RECALL_DESCRIPTION
+# (above) stays byte-identical for LLMReplay fixture stability.
+# Tests check this constant; describe_action in wrapper mode can expose it.
+_RECALL_DESCRIPTION_HIDE_LEGACY = (
+    "WHAT: Semantic search over indexed corpora (= RAG retrieval). "
+    "Returns top-K relevant chunks with text + metadata. "
+    "WHEN: Use when user asks 'search', 'find in docs', 'lookup', or any "
+    "'what is X?' / 'explain X' / 'how does X work?' style question when "
+    "an indexed source covers the topic. Multilingual — works across languages. "
+    "WHEN NOT: "
+    "For personal memory retrieval, use invoke_action(action_name="
+    "'memory.entry__<name>'). recall is for indexed corpora, NOT memory. "
+    "The word 'recall' in user input refers to THIS tool — never map it "
+    "to memory.entry / memory.operation actions. "
+    "PREFERRED OVER: memory.entry actions when content is indexed (source-"
+    "level), not personal memory. "
+    "Pick sources from the 'Indexed sources' section in the system prompt; "
+    "each source's description tells you what topics it covers. "
+    "Prefer this over reyn_src_read / file_read when an indexed source "
     "description matches the question's topic — semantic search across "
     "indexed chunks is more reliable than guessing a file path."
 )

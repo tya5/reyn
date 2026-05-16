@@ -194,12 +194,12 @@ def test_system_prompt_does_not_inline_skill_names():
     )
 
 
-def test_system_prompt_has_skills_pointer_section():
-    """Tier 2: system prompt has a `## Skills` pointer section + count.
+def test_system_prompt_uses_invoke_action_routing():
+    """Tier 2: wrapper-only SP routes via invoke_action, not per-kind tools.
 
-    Replaces the old `## Available skills (N)` inline enumeration. The
-    new section tells the LLM (i) how many skills exist, (ii) how to
-    browse them via list_skills, (iii) that names are validated by enum.
+    Phase 6 cleanup: ## Skills section removed from SP. Discovery goes through
+    list_actions(category=['skill']) at runtime via the universal catalog.
+    SP uses invoke_action routing vocabulary.
     """
     prompt = build_system_prompt(
         agent_name="chat",
@@ -208,22 +208,20 @@ def test_system_prompt_has_skills_pointer_section():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    # Count visible
-    assert "## Skills (3 available)" in prompt, (
-        "SP must show '## Skills (N available)' header with skill count"
-    )
-    # list_skills is the canonical browse path
-    assert "list_skills" in prompt, (
-        "SP must point to list_skills for skill discovery"
-    )
-    # describe_skill / invoke_skill are the canonical drill-in / run paths
-    assert "describe_skill" in prompt and "invoke_skill" in prompt, (
-        "SP must reference describe_skill and invoke_skill"
-    )
+    # Wrapper-only path: no ## Skills section
+    assert "## Skills" not in prompt
+    # invoke_action is the single entry point
+    assert "invoke_action" in prompt
+    # ROUTING RULE (ABSOLUTE) present
+    assert "ROUTING RULE (ABSOLUTE)" in prompt
 
 
-def test_system_prompt_no_skills_shows_none_message():
-    """Tier 2: no-skill case shows an explicit none message."""
+def test_system_prompt_no_skills_no_skills_section():
+    """Tier 2: no-skill case has no ## Skills section in wrapper-only path.
+
+    Phase 6 cleanup: ## Skills section removed. SP is O(1) regardless of
+    skill count — skills are not enumerated or section-counted in the SP.
+    """
     prompt = build_system_prompt(
         agent_name="chat",
         agent_role="assistant",
@@ -231,12 +229,10 @@ def test_system_prompt_no_skills_shows_none_message():
         available_agents=[],
         memory_index=_EMPTY_MEMORY,
     )
-    assert "## Skills" in prompt, (
-        "SP must still have a '## Skills' header even when none available"
-    )
-    assert "none available" in prompt, (
-        "SP must indicate 'none available' when no skills are registered"
-    )
+    assert "## Skills" not in prompt
+    # Basic SP structure still present
+    assert "## Capabilities (routing guide)" in prompt
+    assert "## Behaviour" in prompt
 
 
 def test_system_prompt_size_is_o1_in_skill_count():

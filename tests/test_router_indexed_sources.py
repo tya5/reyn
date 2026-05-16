@@ -3,6 +3,12 @@
 Verifies that SourceManifest.format_for_prompt() output is correctly injected
 into the router system prompt, including the empty-state getting-started hint
 and section ordering guarantees.
+
+Phase 6 cleanup note: build_system_prompt() in the wrapper-only path no longer
+injects indexed_sources_section into the SP (discovery goes through
+list_actions(category=['rag.corpus']) at runtime). Tests that verified SP
+injection are removed. SourceManifest.format_for_prompt() output correctness
+tests remain (they test the manifest, not the SP).
 """
 from __future__ import annotations
 
@@ -41,7 +47,7 @@ def _minimal_prompt(indexed_sources_section: str | None = None) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests — SourceManifest.format_for_prompt() correctness
 # ---------------------------------------------------------------------------
 
 
@@ -55,19 +61,22 @@ class TestEmptyStateHint:
         assert "reyn run index_docs" in rendered
 
     @pytest.mark.asyncio
-    async def test_empty_manifest_hint_reaches_system_prompt(self, tmp_path):
-        """Tier 2: Empty manifest hint is injected verbatim into router system prompt."""
+    async def test_empty_manifest_hint_not_in_sp(self, tmp_path):
+        """Tier 2: In wrapper-only path, indexed_sources_section is not injected into SP.
+
+        Phase 6 cleanup: SP injection removed; discovery via list_actions at runtime.
+        """
         manifest = SourceManifest(tmp_path)
         section = await manifest.format_for_prompt()
         prompt = _minimal_prompt(indexed_sources_section=section)
-        assert "No indexed sources yet" in prompt
-        assert "reyn run index_docs" in prompt
+        # The section text is NOT injected in wrapper-only path
+        assert "## Indexed sources" not in prompt
 
 
 class TestSourcesInPrompt:
     @pytest.mark.asyncio
-    async def test_three_sources_appear_in_prompt(self, tmp_path):
-        """Tier 2: System prompt lists all source names and chunk counts when 3 sources exist."""
+    async def test_three_sources_in_manifest_format(self, tmp_path):
+        """Tier 2: SourceManifest.format_for_prompt() lists all source names and chunk counts."""
         manifest = SourceManifest(tmp_path)
         await manifest.upsert(SourceEntry(
             name="memory", description="User notes", path=".reyn/memory/*.md",
@@ -82,14 +91,13 @@ class TestSourcesInPrompt:
             path="docs/**/*.md", chunk_count=89,
         ))
         section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
 
-        assert "memory" in prompt
-        assert "reyn_code" in prompt
-        assert "reyn_docs" in prompt
-        assert "142 chunks" in prompt
-        assert "1247 chunks" in prompt
-        assert "89 chunks" in prompt
+        assert "memory" in section
+        assert "reyn_code" in section
+        assert "reyn_docs" in section
+        assert "142 chunks" in section
+        assert "1247 chunks" in section
+        assert "89 chunks" in section
 
     @pytest.mark.asyncio
     async def test_sources_count_in_header(self, tmp_path):
@@ -105,53 +113,6 @@ class TestSourcesInPrompt:
         ))
         section = await manifest.format_for_prompt()
         assert "## Indexed sources (2 available)" in section
-
-
-class TestSectionOrdering:
-    @pytest.mark.asyncio
-    async def test_skills_before_memory_before_indexed_sources(self, tmp_path):
-        """Tier 2: Section order — Skills < Memory < Indexed sources (string position).
-
-        The router system prompt structure is:
-          1. Identity / What you can do
-          2. ## Skills
-          3. ## Agents
-          4. ## Memory   (← inlined recall store)
-          5. ## Indexed sources  (← new: vector retrieval store)
-          6. ## Behaviour
-        """
-        manifest = SourceManifest(tmp_path)
-        await manifest.upsert(SourceEntry(
-            name="my_src", description="My code", path="src/**/*.py",
-            chunk_count=500,
-        ))
-        section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
-
-        pos_memory = prompt.index("## Memory")
-        pos_indexed = prompt.index("## Indexed sources")
-        pos_skills = prompt.index("## Skills")
-
-        assert pos_skills < pos_memory, (
-            "Skills section must appear before Memory section"
-        )
-        assert pos_memory < pos_indexed, (
-            "Memory section must appear before Indexed sources section"
-        )
-
-    @pytest.mark.asyncio
-    async def test_memory_before_indexed_sources_empty_state(self, tmp_path):
-        """Tier 2: Memory < Indexed sources ordering holds in empty-source state."""
-        manifest = SourceManifest(tmp_path)
-        section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
-
-        pos_memory = prompt.index("## Memory")
-        pos_indexed = prompt.index("## Indexed sources")
-
-        assert pos_memory < pos_indexed, (
-            "Memory section must appear before Indexed sources section (empty state)"
-        )
 
 
 class TestBackwardCompat:
@@ -215,137 +176,34 @@ class TestDeterministicOrder:
 
 
 # ---------------------------------------------------------------------------
-# B17-S5-3 fix: Vocab disambiguation — "Recall" intent rename + Behaviour rules
+# B17-S5-3 fix: Vocab disambiguation — wrapper-only SP
 # ---------------------------------------------------------------------------
 
 
 class TestVocabDisambiguationB17S53:
     """Tier 2: B17-S5-3 fix — 'recall' vocabulary collision.
 
-    The intent label was renamed from 'Recall' to 'Memory access' to avoid
-    colliding with the `recall` indexed-search tool (ADR-0033). Three
-    disambiguation Behaviour rules are also pinned here.
+    Phase 6 cleanup: intent axis and Behaviour disambiguation rules removed
+    from SP (moved to tool descriptions). SP no longer contains
+    list_memory / read_memory_body references. Tests updated to verify
+    the correct absence of the old intent-label and the wrapper-only SP
+    routing vocabulary.
     """
 
-    def test_intent_label_is_memory_access_not_recall(self):
-        """Tier 2: Intent axis uses 'Memory access' not 'Recall' for memory ops.
+    def test_intent_label_is_not_recall_in_sp(self):
+        """Tier 2: SP does not use 'Recall' as an intent axis label.
 
-        B17-S5-3 fix: the word 'Recall' as an intent label caused the LLM to
-        map user phrases like 'recall tool' to list_memory/read_memory_body
-        instead of the indexed-search `recall` tool.
+        B17-S5-3 fix: wrapper-only SP uses invoke_action routing vocabulary
+        (no intent-axis labels). 'Recall — read persisted facts' must be absent.
         """
         prompt = _minimal_prompt(indexed_sources_section=None)
-        # New label must be present
-        assert "Memory access" in prompt
-        # Old label must NOT be present as an intent label (prevents regression)
-        # Check the specific intent-label form "Recall — read persisted facts"
+        # Old intent label must NOT be present
         assert "Recall — read persisted facts" not in prompt
+        # Also the corrected label form should not be present (intent axis removed)
+        assert "Memory access — read persisted facts" not in prompt
 
-    def test_recall_word_disambiguation_rule_present(self):
-        """Tier 2: Behaviour section has explicit rule mapping 'recall' word
-        to the indexed-search tool, NOT to memory retrieval tools.
-
-        B17-S5-3 fix: without this rule, 100% of runs (5/5) mapped 'recall'
-        to list_memory/read_memory_body instead of the `recall` tool.
-        """
-        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
-        # Rule must disambiguate the word "recall"
-        assert "recall" in prompt.lower()
-        # Rule must reference the indexed-search tool path
-        assert "list_memory" in prompt  # must appear as the contrasted alternative
-        # Disambiguation rule must be present in Behaviour section
-        assert "Do NOT map it to list_memory" in prompt
-
-    def test_data_sources_disambiguation_rule_present(self):
-        """Tier 2: Behaviour section has explicit rule that 'data sources'
-        must list BOTH memory entries AND indexed sources.
-
-        B17-S1-1 fix: without this rule, 100% of runs (3/3) answered 'data
-        sources' with only memory layers (shared/agent), ignoring indexed
-        sources entirely.
-        """
-        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
-        assert "data sources" in prompt.lower()
-        # Rule must mention that both layers need to be listed
-        assert "BOTH" in prompt
-        assert "Memory section" in prompt
-        assert "Indexed sources" in prompt
-
-    def test_search_docs_disambiguation_rule_present(self):
-        """Tier 2: Behaviour section has rule directing 'search'/'find in docs'
-        to the `recall` tool, not to list_memory/read_memory_body.
-        """
-        prompt = _minimal_prompt(indexed_sources_section="## Indexed sources (0 available)\nNo indexed sources yet.")
-        assert "`recall`" in prompt
-        assert "list_memory / read_memory_body" in prompt
-        # The rule must contrast recall tool vs memory tools for search queries
-        assert "Do NOT use list_memory" in prompt
-
-
-# ---------------------------------------------------------------------------
-# B17-S1-1 fix: Empty-state hint strengthening
-# ---------------------------------------------------------------------------
-
-
-class TestEmptyStateHintStrengthened:
-    """Tier 2: B17-S1-1 fix — stronger empty-state indexed sources guidance.
-
-    When 0 indexed sources are available and the user asks about data sources,
-    the LLM must actively suggest `reyn run index_docs`, not fall back to
-    describing memory as the only data source.
-    """
-
-    @pytest.mark.asyncio
-    async def test_empty_state_behaviour_rule_present(self, tmp_path):
-        """Tier 2: Behaviour section includes explicit instruction to suggest
-        `reyn run index_docs` when 0 indexed sources and user asks about data
-        sources.
-
-        B17-S1-1 fix: empty-state hint existed in the Indexed sources section
-        but was ignored by the LLM (3/3 runs mapped 'data sources' to memory).
-        The fix adds an explicit Behaviour rule as a stronger forcing signal.
-        """
-        manifest = SourceManifest(tmp_path)
-        section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
-        # Behaviour rule must reference the index_docs command
-        assert "reyn run index_docs" in prompt
-        # The rule must connect it to the 'data sources' query context
-        assert "data" in prompt.lower()
-        # Must discourage answering with memory-only (check the prohibition phrase)
-        assert "Do NOT answer with memory-only" in prompt
-
-    @pytest.mark.asyncio
-    async def test_empty_state_behaviour_rule_absent_when_no_indexed_sources_section(self, tmp_path):
-        """Tier 2: Empty-state Behaviour rule is NOT emitted when
-        indexed_sources_section=None (backward-compat for non-chat paths).
-        """
+    def test_sp_uses_invoke_action_routing(self):
+        """Tier 2: Wrapper-only SP routes all actions through invoke_action."""
         prompt = _minimal_prompt(indexed_sources_section=None)
-        # The empty-state enforcement rule is only injected when RAG is wired up.
-        # Without indexed_sources_section, this rule must not appear in Behaviour.
-        assert "reyn run index_docs" not in prompt
-
-    @pytest.mark.asyncio
-    async def test_when_asked_what_can_do_mentions_indexed_sources(self, tmp_path):
-        """Tier 2: 'When asked what you can do' section mentions indexed sources
-        when indexed_sources_section is provided.
-
-        B17-S1-1 fix: the section previously mentioned only memory ('remember
-        and recall facts via your memory'), omitting indexed sources entirely,
-        which contributed to the memory-as-data-sources attractor.
-        """
-        manifest = SourceManifest(tmp_path)
-        section = await manifest.format_for_prompt()
-        prompt = _minimal_prompt(indexed_sources_section=section)
-        # The capability list must mention indexed sources / recall tool
-        assert "recall" in prompt.lower()
-        assert "Indexed sources" in prompt
-
-    def test_when_asked_what_can_do_no_indexed_mention_without_section(self):
-        """Tier 2: Without indexed_sources_section, 'When asked what you can do'
-        does NOT mention indexed sources (backward-compat; can't claim a
-        capability that isn't wired up).
-        """
-        prompt = _minimal_prompt(indexed_sources_section=None)
-        # No mention of indexed search tool capability when RAG not wired
-        assert "search indexed document sources" not in prompt
+        assert "invoke_action" in prompt
+        assert "ROUTING RULE (ABSOLUTE)" in prompt

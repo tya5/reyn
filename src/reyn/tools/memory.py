@@ -67,10 +67,10 @@ _REMEMBER_AGENT_DESCRIPTION = (
 )
 
 _FORGET_MEMORY_DESCRIPTION = (
-    "Delete a memory entry. "
-    "Only when the user explicitly says 'forget' or "
-    "the memory turned out wrong."
+    "Delete a memory entry. Only when the user explicitly says "
+    "'forget' or the memory turned out wrong."
 )
+
 
 
 # ── Parameter schemas — byte-identical to router_tools.py ToolSpec literals ────

@@ -60,6 +60,7 @@ def get_default_registry() -> ToolRegistry:
         LIST_MCP_TOOLS,
         MCP_OP,
     )
+    from reyn.tools.mcp_drop import MCP_DROP_SERVER_OP
     from reyn.tools.mcp_install import MCP_INSTALL_OP
     from reyn.tools.memory import (
         FORGET_MEMORY,
@@ -71,7 +72,17 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.plan import PLAN
     from reyn.tools.recall import RECALL
     from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
+    from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.shell import SHELL
+
+    # FP-0034 PR-3a: universal catalog wrappers (registered in registry;
+    # not yet added to router build_tools() — that lands in PR-3b).
+    from reyn.tools.universal_catalog import (
+        DESCRIBE_ACTION,
+        INVOKE_ACTION,
+        LIST_ACTIONS,
+        SEARCH_ACTIONS,
+    )
     from reyn.tools.web_fetch import WEB_FETCH
     from reyn.tools.web_search import WEB_SEARCH
 
@@ -106,6 +117,7 @@ def get_default_registry() -> ToolRegistry:
     registry.register(LIST_AGENTS)
     registry.register(DESCRIBE_AGENT)
     # ── Phase-only capabilities (gates.router=deny, gates.phase=allow) ──
+    registry.register(SANDBOXED_EXEC)
     registry.register(SHELL)
     registry.register(LINT)
     registry.register(ASK_USER)
@@ -123,4 +135,17 @@ def get_default_registry() -> ToolRegistry:
     registry.register(MCP_OP)
     registry.register(RUN_SKILL_OP)
     registry.register(MCP_INSTALL_OP)
+    # FP-0034 §D23: mcp_drop_server is router+phase callable (= dual gate).
+    # Reachable via universal_action ``mcp.operation__drop_server`` AND
+    # as a phase Control IR op kind="mcp_drop_server".
+    registry.register(MCP_DROP_SERVER_OP)
+    # ── FP-0034 universal catalog wrappers (router-only) ─────────────────
+    # PR-3a registers them in the registry; PR-3b will add them to
+    # build_tools() output and refactor the SP. Handlers wire through
+    # universal_dispatch.py routing back into THIS registry to invoke
+    # the canonical target ToolDefinition.
+    registry.register(LIST_ACTIONS)
+    registry.register(SEARCH_ACTIONS)
+    registry.register(DESCRIBE_ACTION)
+    registry.register(INVOKE_ACTION)
     return registry

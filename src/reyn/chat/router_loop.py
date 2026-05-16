@@ -167,6 +167,50 @@ class RouterLoopHost(Protocol):
         project-specific context."""
         ...
 
+    def get_universal_wrappers_enabled(self) -> bool:
+        """Return whether the FP-0034 universal catalog wrappers should
+        appear in tools=. Mirrors ``action_retrieval.universal_wrappers_enabled``
+        from reyn.yaml. Default False preserves the prior tools= shape."""
+        ...
+
+    def get_action_embedding_index(self) -> Any:
+        """Return the session-scoped ActionEmbeddingIndex, or None.
+
+        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        has configured ``action_retrieval.embedding_class``.
+        """
+        ...
+
+    def get_embedding_provider(self) -> Any:
+        """Return the session's EmbeddingProvider instance, or None.
+
+        FP-0034 Phase 2 step 1.  Used together with the
+        ActionEmbeddingIndex to power search_actions semantic search.
+        """
+        ...
+
+    def get_embedding_model_class(self) -> str | None:
+        """Return the configured embedding model class name, or None.
+
+        FP-0034 Phase 2 step 1.  Mirror of
+        ``action_retrieval.embedding_class`` from reyn.yaml.
+        """
+        ...
+
+    def get_sandbox_backend(self) -> "str | None":
+        """Return the configured sandbox backend name, or None.
+
+        FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
+        (resolved from ``session._sandbox_config.backend``).  RouterLoop
+        forwards this into ``RouterCallerState.sandbox_backend`` so the
+        ``exec`` category D14 visibility gate in
+        ``universal_catalog._enumerate_category`` can decide whether to
+        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        hide the category; any other value (``"seatbelt"`` /
+        ``"landlock"`` / ``"auto"``) makes it visible.
+        """
+        ...
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
@@ -307,6 +351,59 @@ class RouterLoopHost(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# FP-0034 Phase 2 step 5: hot list alias builder
+# ---------------------------------------------------------------------------
+
+def _build_hot_list_aliases(
+    names: list[str],
+    short_description_lookup: "dict[str, str] | None" = None,
+) -> list[dict]:
+    """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
+
+    Each alias has additionalProperties=True so any args pass through.
+    The dispatcher routes these via invoke_action semantics (same path).
+
+    Lever D (B23-PRE-1): when ``short_description_lookup`` is provided,
+    embeds the target action's ``short_description`` in the alias
+    description with an assertive directive. This surfaces the action's
+    purpose directly in the tool listing so the LLM can pick the alias
+    without a list_actions / describe_action round-trip.
+
+    When ``short_description_lookup`` is None or the name is absent from
+    the map, falls back to the prior generic description so callers that
+    don't supply the lookup stay unaffected.
+    """
+    result = []
+    lookup = short_description_lookup or {}
+    for name in names:
+        short_desc = lookup.get(name, "")
+        if short_desc:
+            description = (
+                f"{short_desc}. "
+                f"Use this direct alias to invoke {name} without going "
+                "through invoke_action."
+            )
+        else:
+            description = (
+                f"Direct alias for {name}. "
+                "Use invoke_action for schema details."
+            )
+        result.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": True,
+                },
+            },
+        })
+    return result
+
+
+# ---------------------------------------------------------------------------
 # RouterLoop
 # ---------------------------------------------------------------------------
 
@@ -348,6 +445,13 @@ class RouterLoop:
         # compare" produced 3 plan invocations because step LLMs saw plan
         # in their tool catalog and self-decomposed.
         self._exclude_tools: frozenset[str] = frozenset(exclude_tools or set())
+        # FP-0034 Phase 2 step 1: action embedding index background
+        # build task handle.  None until the first turn that finds the
+        # index configured + not ready, then asyncio.Task while
+        # building.  Stays set after completion so we don't re-spawn
+        # (the build itself is idempotent via catalog hash, but we
+        # avoid the extra Task overhead).
+        self._action_index_build_task: "asyncio.Task[None] | None" = None
         # ADR-0025: optional sub-loop LLM call memoization. When set,
         # ``call_llm_tools`` invocations consult the provider before
         # invoking — args_hash hit returns the recorded LLMToolCallResult
@@ -380,12 +484,117 @@ class RouterLoop:
         # catalogue exceeds the threshold. Falls through to full enum on
         # 0 BM25 results so no skill can become invisible (Fallback safety).
         skills_for_tools = self._apply_skill_search(all_skills, user_text)
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list recording.
+        # Resolved once per run() so recording below can reuse without re-fetching.
+        _tracker_getter = getattr(host, "get_action_usage_tracker", None)
+        _tracker = _tracker_getter() if _tracker_getter else None
+        # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
+        # getattr fallback so narrow hosts (= plan-mode sub-host) that
+        # don't implement the method default to off (= preserve prior
+        # plan-step tools= shape).
+        _univ_enabled_getter = getattr(
+            host, "get_universal_wrappers_enabled", None,
+        )
+        _univ_enabled = bool(_univ_enabled_getter()) if _univ_enabled_getter else False
+        # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
+        # Only show search_actions when (a) wrappers are on, (b) the
+        # operator configured an embedding model class, AND (c) the
+        # session has an ActionEmbeddingIndex that is_ready().  Any
+        # missing signal degrades to "hide" so the LLM does not see a
+        # tool whose query would return empty results.
+        _search_visible = False
+        if _univ_enabled:
+            _idx_getter = getattr(host, "get_action_embedding_index", None)
+            _provider_getter = getattr(host, "get_embedding_provider", None)
+            _model_getter = getattr(host, "get_embedding_model_class", None)
+            _eager_getter = getattr(host, "get_eager_embedding_build", None)
+            _idx = _idx_getter() if _idx_getter else None
+            _provider = _provider_getter() if _provider_getter else None
+            _model_class = _model_getter() if _model_getter else None
+            _eager_embedding_build = bool(_eager_getter()) if _eager_getter else False
+            # B25-S5-1: when eager flag is set, await the build synchronously
+            # before computing _search_visible. This pays the build cost on
+            # the first turn (= once per session; subsequent turns see
+            # is_ready() True via SQLite cache) but eliminates the cold-start
+            # race where search_actions is hidden from the LLM on Turn 1.
+            if (
+                _eager_embedding_build
+                and _idx is not None
+                and _provider is not None
+                and _model_class
+                and not getattr(_idx, "is_ready", lambda: False)()
+            ):
+                await self._build_action_embedding_index_background(
+                    _idx, _provider, _model_class,
+                )
+            if (
+                _idx is not None
+                and _model_class
+                and getattr(_idx, "is_ready", lambda: False)()
+            ):
+                _search_visible = True
+            # FP-0034 Phase 2 step 1: kick off the background build
+            # when the index is configured but not yet ready.  The
+            # build is idempotent (= same catalog hash → no-op) and
+            # serialised by the index's internal lock.  Only spawned
+            # once per RouterLoop (= per chain) via the
+            # ``_action_index_build_task`` flag below.
+            if (
+                _idx is not None
+                and _provider is not None
+                and _model_class
+                and not getattr(_idx, "is_ready", lambda: False)()
+                and getattr(self, "_action_index_build_task", None) is None
+            ):
+                self._action_index_build_task = asyncio.create_task(
+                    self._build_action_embedding_index_background(
+                        _idx, _provider, _model_class,
+                    )
+                )
+        # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
+        # Build only when universal wrappers are on and a tracker is present.
+        _hot_list_aliases: list[dict] | None = None
+        if _univ_enabled and _tracker is not None:
+            from reyn.config import ActionRetrievalConfig as _ARC
+            _ar_cfg_getter = getattr(host, "get_action_retrieval_config", None)
+            _ar_cfg = _ar_cfg_getter() if _ar_cfg_getter else None
+            if _ar_cfg is None:
+                _ar_cfg = _ARC()
+            _n = _ar_cfg.hot_list_n
+            if _n > 0:
+                from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
+                _seed_cfg = _ar_cfg.hot_list_seed
+                _seed: list[str] = (
+                    list(DEFAULT_HOT_LIST_SEED)
+                    if _seed_cfg == "default"
+                    else (list(_seed_cfg) if isinstance(_seed_cfg, list) else [])
+                )
+                _top_names = _tracker.get_top_n(_n, _seed)
+                if _top_names:
+                    # Lever D (B23-PRE-1): build short_description map from
+                    # available skills so aliases embed the target's purpose.
+                    # Skills are the dominant hot-list category; others fall
+                    # back to the generic description gracefully.
+                    _short_desc_map: dict[str, str] = {}
+                    for _s in host.list_available_skills():
+                        if isinstance(_s, dict) and "name" in _s:
+                            _qn = f"skill__{_s['name']}"
+                            _sd = _s.get("description") or _s.get("short_description") or ""
+                            if _sd:
+                                _short_desc_map[_qn] = str(_sd)
+                    _hot_list_aliases = _build_hot_list_aliases(
+                        _top_names,
+                        short_description_lookup=_short_desc_map or None,
+                    )
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=_univ_enabled,
+            search_actions_visible=_search_visible,
+            hot_list_aliases=_hot_list_aliases,
         )
         if self._exclude_tools:
             tools = [
@@ -416,6 +625,11 @@ class RouterLoop:
                 output_language=host.output_language,
                 project_context=host.get_project_context(),
                 indexed_sources_section=indexed_sources,
+                # FP-0034 PR-3b-v: same getattr-fallback pattern as build_tools.
+                # Hosts without get_universal_wrappers_enabled (= FakeRouterHost
+                # in LLMReplay tests) default to False so SP byte content stays
+                # unchanged for cached fixtures.
+                universal_wrappers_enabled=_univ_enabled,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
@@ -584,6 +798,72 @@ class RouterLoop:
                         )
                         return self._total_usage
 
+                # FP-0034 Phase 2 step 5: record tool calls for hot list freq+recency.
+                # Done before message accumulation so recording happens even on
+                # subsequent iterations. invoke_action calls record the target
+                # action_name; hot list alias calls record the alias name directly.
+                if _tracker is not None:
+                    for tc in tool_calls:
+                        _tc_name = tc.get("function", {}).get("name", "")
+                        if not _tc_name:
+                            continue
+                        if _tc_name == "invoke_action":
+                            _tc_args = tc.get("function", {}).get("arguments", {})
+                            if isinstance(_tc_args, str):
+                                try:
+                                    import json as _json_inner
+                                    _tc_args = _json_inner.loads(_tc_args)
+                                except Exception:
+                                    _tc_args = {}
+                            _target = (
+                                _tc_args.get("action_name", "")
+                                if isinstance(_tc_args, dict)
+                                else ""
+                            )
+                            if _target:
+                                _tracker.record(_target)
+                        else:
+                            # hot list direct alias or other tool
+                            _tracker.record(_tc_name)
+                # FP-0034 Phase 3: routing_decided P6 event for catalog dispatch audit.
+                # Emitted independently of tracker (tracker=None is valid when
+                # hot_list_n=0, but P6 audit must fire whenever catalog routing
+                # actually happened). Guard: only when universal wrappers are on,
+                # which is the only condition under which catalog routing occurs.
+                if _univ_enabled:
+                    for tc, r in zip(tool_calls, tool_results):
+                        _rd_name = tc.get("function", {}).get("name", "")
+                        if _rd_name == "invoke_action":
+                            _rd_args = tc.get("function", {}).get("arguments", {})
+                            if isinstance(_rd_args, str):
+                                try:
+                                    import json as _json_rd
+                                    _rd_args = _json_rd.loads(_rd_args)
+                                except Exception:  # noqa: BLE001
+                                    _rd_args = {}
+                            _rd_action = (
+                                _rd_args.get("action_name", "")
+                                if isinstance(_rd_args, dict) else ""
+                            )
+                            _rd_source = "invoke_action"
+                        elif "__" in _rd_name:
+                            _rd_action = _rd_name
+                            _rd_source = "hot_list_alias"
+                        else:
+                            continue  # non-catalog tool — skip
+                        if not _rd_action:
+                            continue
+                        _rd_outcome = "error" if (
+                            isinstance(r, dict)
+                            and ("error" in r or r.get("status") == "error")
+                        ) else "success"
+                        host.events.emit(
+                            "routing_decided",
+                            action_name=_rd_action,
+                            source=_rd_source,
+                            outcome=_rd_outcome,
+                            chain_id=self.chain_id,
+                        )
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
@@ -786,9 +1066,63 @@ class RouterLoop:
         # (= host.make_router_op_context) so the permission resolver and
         # intervention_bus are present for the index_drop gate.
         "recall", "drop_source",
+        # FP-0034 Phase 1: universal catalog wrappers.  Handlers in
+        # src/reyn/tools/universal_catalog.py — list_actions enumerates
+        # via ctx.router_state, describe_action / invoke_action route
+        # via universal_dispatch.  search_actions stays included for
+        # registry-completeness even though router_tools.build_tools
+        # currently excludes it from the LLM-visible tools= list
+        # (= Phase 2 wires the §D14 visibility gate + the real handler;
+        # listing it here is harmless because the catalog already
+        # filters it out before the LLM can call it).
+        "list_actions", "search_actions",
+        "describe_action", "invoke_action",
     })
 
-    def _build_router_caller_state(self) -> Any:
+    async def _build_action_embedding_index_background(
+        self, idx: Any, provider: Any, model_class: str,
+    ) -> None:
+        """FP-0034 Phase 2 step 1: background ActionEmbeddingIndex build.
+
+        Enumerates the catalog via ``LIST_ACTIONS`` against a fresh
+        ``RouterCallerState`` snapshot and feeds the items into
+        ``idx.build()``.  The build is idempotent (= same catalog
+        hash skipped) and serialised by the index's internal lock,
+        so concurrent calls are safe.
+
+        Errors are swallowed and logged via ``host.events`` so a
+        misconfigured embedding provider does not crash the chat
+        session — the next turn finds ``is_ready()`` False and
+        keeps ``search_actions`` hidden.
+        """
+        from reyn.tools import get_default_registry
+        from reyn.tools.types import ToolContext
+        try:
+            rs = await self._build_router_caller_state()
+            tool_ctx = ToolContext(
+                events=self.host.events,
+                permission_resolver=getattr(self.host, "permission_resolver", None),
+                workspace=getattr(self.host, "workspace", None),
+                caller_kind="router",
+                router_state=rs,
+            )
+            list_actions_def = get_default_registry().lookup("list_actions")
+            if list_actions_def is None:
+                return
+            result = await list_actions_def.handler({}, tool_ctx)
+            items = result.get("items", []) if isinstance(result, dict) else []
+            await idx.build(items, provider, model_class)
+        except Exception as exc:
+            try:
+                self.host.events.emit(
+                    "action_index_build_failed",
+                    error=repr(exc),
+                    model_class=model_class,
+                )
+            except Exception:
+                pass
+
+    async def _build_router_caller_state(self) -> Any:
         """Build a RouterCallerState populated with bound callbacks.
 
         Bindings follow the wiring contract documented in
@@ -846,6 +1180,32 @@ class RouterLoop:
                 available_tool_names=set(self._tool_names) - {"plan"},
             )
 
+        # FP-0034 Phase 2 prep: snapshot indexed RAG corpora for the
+        # universal catalog's rag.corpus enumeration. SourceManifest
+        # caches the parsed YAML in-process so this is O(1) when the
+        # cache is warm (= when the system-prompt path already loaded
+        # the manifest earlier in this turn). Failures (= missing file,
+        # malformed YAML) degrade to an empty list — the catalog
+        # handler then reports zero corpora rather than crashing.
+        _rag_sources: list[Mapping[str, Any]] | None = None
+        try:
+            _manifest = get_source_manifest(Path.cwd())
+            _entries = await _manifest.get_all()
+            _rag_sources = [
+                {
+                    "name": e.name,
+                    "description": e.description,
+                    "backend": e.backend,
+                    "chunk_count": e.chunk_count,
+                }
+                for e in _entries.values()
+            ]
+        except Exception:
+            # Manifest unavailable (= no workspace, no .reyn/index/
+            # sources.yaml, transient I/O). Treat as empty catalogue
+            # rather than failing the entire tool dispatch.
+            _rag_sources = None
+
         return RouterCallerState(
             # Catalog access (= activated handlers)
             list_skills_fn=self._list_skills,
@@ -891,6 +1251,27 @@ class RouterLoop:
             # mcp_call_tool`` directly to preserve the session-level
             # MCPClient cache (= no per-call re-handshake).
             host=self.host,
+            # FP-0034 Phase 2 prep: rag.corpus enumeration snapshot.
+            available_rag_sources=_rag_sources,
+            # FP-0034 Phase 2 step 1: search_actions wiring.  All
+            # three resolve via getattr fallback so narrow hosts
+            # (= plan-step host, FakeRouterHost) get None and
+            # search_actions degrades gracefully.
+            action_embedding_index=(
+                getattr(self.host, "get_action_embedding_index", lambda: None)()
+            ),
+            embedding_provider=(
+                getattr(self.host, "get_embedding_provider", lambda: None)()
+            ),
+            embedding_model_class=(
+                getattr(self.host, "get_embedding_model_class", lambda: None)()
+            ),
+            # FP-0034 Phase 2: sandbox backend name for exec D14 gate.
+            # getattr fallback so narrow hosts (= FakeRouterHost, plan-step
+            # host) without this method default to None, hiding exec category.
+            sandbox_backend=(
+                getattr(self.host, "get_sandbox_backend", lambda: None)()
+            ),
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
@@ -912,7 +1293,7 @@ class RouterLoop:
         from reyn.tools.dispatch import invoke_tool
         from reyn.tools.types import ToolContext
 
-        rs = self._build_router_caller_state()
+        rs = await self._build_router_caller_state()
         tool_ctx = ToolContext(
             events=self.host.events,
             permission_resolver=getattr(self.host, "permission_resolver", None),
@@ -985,6 +1366,16 @@ class RouterLoop:
         # per-tool review.  When that review surfaces a new cluster /
         # capability not yet in the dispatch set, the new branch lands
         # here as the legacy stop-gap until the adapter migrates.
+
+        # FP-0034 Phase 2 step 5: hot list direct alias dispatch.
+        # Qualified names (containing "__") not in the static dispatch set
+        # are hot list aliases. Route them as invoke_action so the catalog
+        # dispatch handles them correctly.
+        if "__" in name:
+            return await self._invoke_via_registry(
+                "invoke_action",
+                {"action_name": name, "args": args or {}},
+            )
 
         # Should not be reached if catalog is correct — dispatch_tool already
         # validated name is in catalog. Return error for safety.

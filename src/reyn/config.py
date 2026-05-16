@@ -819,6 +819,152 @@ class SkillResumeConfig:
 
 
 @dataclass
+class ActionRetrievalConfig:
+    """`action_retrieval:` — FP-0034 universal catalog + retrieval settings.
+
+    Phase 1 of FP-0034. The 4 universal wrappers (list_actions /
+    search_actions / describe_action / invoke_action) plus the
+    qualified-name dispatcher land across PR-1 through PR-3b-iv.
+    Subsequent phases extend with hot list / cold start /
+    search_actions enablement.
+
+    Fields:
+        universal_wrappers_enabled:
+            When True (= **default since PR-3b-iv**), ``build_tools()``
+            appends the 3 universal wrappers (list_actions /
+            describe_action / invoke_action) at the end of tools=.
+            ``search_actions`` is gated separately via
+            ``embedding_class`` per §D14.
+
+            The flip from False (= PR-3b-i through iii) to True
+            happens here in PR-3b-iv. Operators who want to opt out
+            (= preserve the prior tools= shape) can set
+            ``action_retrieval.universal_wrappers_enabled: false``
+            in reyn.yaml.
+
+            Test suite verified safe via FakeRouterHost insulation:
+            all LLMReplay fixtures + AsyncMock-based E2E tests do
+            NOT implement ``get_universal_wrappers_enabled`` so the
+            RouterLoop's getattr fallback keeps tools= shape stable
+            for the recorded fixtures. The flip affects production
+            runtime only.
+
+        embedding_class:
+            Name of the entry in ``embedding.classes`` to use for
+            action retrieval semantic search (= §D13). When None or
+            empty, ``search_actions`` is excluded from tools= even if
+            ``universal_wrappers_enabled`` is True (§D14 gating).
+
+            Phase 1 leaves the embedding index unbuilt; PR-3b+ may
+            add it. Setting this field today is harmless (= no
+            consumers).
+
+        hot_list_n:
+            Hot list size for top-N freq+recency projection (§D2).
+            Phase 2 wiring; the field lives here so reyn.yaml shape
+            stabilises early. Default 10 matches §D24 balanced mode.
+
+        mode:
+            Operational mode label (§D24): ``"minimal"`` /
+            ``"default"`` / ``"performance"``. Stored as a free-form
+            string so callers can layer interpretations on top
+            without further config breaking changes. Default
+            ``"default"`` is the §D24 balanced setting.
+    """
+
+    universal_wrappers_enabled: bool = True
+    embedding_class: str | None = None
+    hot_list_n: int = 10
+    mode: str = "default"
+    # FP-0034 §D16: seed qualified names for initial hot list (before freq
+    # accumulates). "default" means the OS-defined 10-item seed (5 universal
+    # + 5 Reyn flagship). [] means no seed. Explicit list overrides the
+    # default. Parsed by _build_action_retrieval_config.
+    hot_list_seed: list[str] | str = "default"
+
+
+def _build_action_retrieval_config(raw: object) -> ActionRetrievalConfig:
+    """Parse ``action_retrieval:`` from reyn.yaml.
+
+    Accepts a dict with any subset of fields; unknown keys are
+    ignored (= forward-compatible with future Phase 2 additions).
+    Validates types and clamps numeric ranges to non-negative.
+
+    Raises:
+        ValueError: when a recognised field has an invalid type
+            (= explicit type mismatch; missing fields fall back to
+            defaults).
+    """
+    if raw is None:
+        return ActionRetrievalConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"action_retrieval must be a mapping, got {type(raw).__name__}"
+        )
+
+    cfg = ActionRetrievalConfig()
+
+    if "universal_wrappers_enabled" in raw:
+        val = raw["universal_wrappers_enabled"]
+        if not isinstance(val, bool):
+            raise ValueError(
+                "action_retrieval.universal_wrappers_enabled must be a bool, "
+                f"got {type(val).__name__}"
+            )
+        cfg.universal_wrappers_enabled = val
+
+    if "embedding_class" in raw:
+        val = raw["embedding_class"]
+        if val is not None and not isinstance(val, str):
+            raise ValueError(
+                "action_retrieval.embedding_class must be a string or null, "
+                f"got {type(val).__name__}"
+            )
+        cfg.embedding_class = val or None
+
+    if "hot_list_n" in raw:
+        val = raw["hot_list_n"]
+        if not isinstance(val, int) or isinstance(val, bool):
+            raise ValueError(
+                "action_retrieval.hot_list_n must be an integer, "
+                f"got {type(val).__name__}"
+            )
+        if val < 0:
+            raise ValueError(
+                f"action_retrieval.hot_list_n must be >= 0, got {val}"
+            )
+        cfg.hot_list_n = val
+
+    if "mode" in raw:
+        val = raw["mode"]
+        if not isinstance(val, str):
+            raise ValueError(
+                f"action_retrieval.mode must be a string, got {type(val).__name__}"
+            )
+        cfg.mode = val
+
+    if "hot_list_seed" in raw:
+        val = raw["hot_list_seed"]
+        if val == "default":
+            cfg.hot_list_seed = "default"
+        elif isinstance(val, list):
+            for item in val:
+                if not isinstance(item, str):
+                    raise ValueError(
+                        "action_retrieval.hot_list_seed list items must be "
+                        f"strings, got {type(item).__name__}"
+                    )
+            cfg.hot_list_seed = list(val)
+        else:
+            raise ValueError(
+                "action_retrieval.hot_list_seed must be \"default\" or a "
+                f"list of strings, got {type(val).__name__!r}"
+            )
+
+    return cfg
+
+
+@dataclass
 class ReynConfig:
     model: str = "standard"
     # Optional. None = user did not configure; downstream callers decide
@@ -929,6 +1075,13 @@ class ReynConfig:
     sandbox: SandboxConfig = field(default_factory=SandboxConfig)
     # FP-0006 B+D: skill_improver behavior knobs (on_propose gate + max_versions cap).
     self_improvement: SelfImprovementConfig = field(default_factory=SelfImprovementConfig)
+    # FP-0034: universal catalog gating + action retrieval (D13 / D14).
+    # Default-off so existing chat behaviour is byte-identical until the
+    # operator explicitly opts in; will flip in PR-3b-iii after LLMReplay
+    # fixtures are re-recorded.
+    action_retrieval: "ActionRetrievalConfig" = field(
+        default_factory=lambda: ActionRetrievalConfig(),
+    )
 
 
 def _load_yaml(path: Path) -> dict:
@@ -1190,6 +1343,7 @@ def load_config(cwd: Path | None = None) -> ReynConfig:
         eval=_build_eval_config(merged.get("eval")),
         sandbox=_build_sandbox_config(merged.get("sandbox")),
         self_improvement=_build_self_improvement_config(merged.get("self_improvement")),
+        action_retrieval=_build_action_retrieval_config(merged.get("action_retrieval")),
     )
 
 

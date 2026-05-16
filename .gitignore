@@ -54,3 +54,8 @@ artifacts/
 # G4 spike runtime output
 spike_results/
 .spike_*/
+
+# Session handoff notes between Claude Code instances (= migration
+# between Desktop / CLI / different sessions).  Git-ignored so private
+# session context does not leak into repo history.
+.handoff/

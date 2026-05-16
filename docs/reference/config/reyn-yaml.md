@@ -31,6 +31,7 @@ models:
 | `web` | map | SSL settings for `web_fetch` and MCP registry calls. See below. |
 | `eval` | map | Trace exporter backends for `reyn eval`. See below. |
 | `sandbox` | map | Sandboxed-exec backend selection and unsupported-platform policy. See below. |
+| `action_retrieval` | map | FP-0034 universal catalog visibility + retrieval settings. See below. |
 | `state_dir` | path | Where reyn writes events, approvals, memory. Default `.reyn/`. |
 | `permissions` | map | Default permission policy. See below. |
 
@@ -286,6 +287,61 @@ sandbox:
 | `on_unsupported` | string | `warn` | Policy when the requested backend is unavailable on this platform. `warn` logs a WARNING and falls back to `noop`. `error` raises `RuntimeError` (fail-fast for production environments that require enforcement). `ignore` silently falls back. |
 
 See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) for the op schema and backend selection details.
+
+## `action_retrieval` block
+
+FP-0034 universal catalog visibility + retrieval settings.  Provides the chat router with **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  Default ON since PR-3b-iv — operators who want the prior tools= shape can opt out with `universal_wrappers_enabled: false`.
+
+```yaml
+action_retrieval:
+  universal_wrappers_enabled: true    # default since PR-3b-iv; set false to opt out
+  embedding_class: null               # name in embedding.classes for search_actions
+  hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
+  mode: default                       # default | minimal | performance (§D24)
+```
+
+> **Phase 6 cleanup (2026-05-16)**: the `hide_legacy_tools` flag was
+> removed and the wrapper-only path is now the sole production
+> behaviour (universal wrappers + hot-list aliases, no legacy per-kind
+> tools in `tools=`). The flip was validated by dogfood batch 26 N=5
+> (verified 32/35 = 91.4%, Brier 0.177, hallucination 0/35). Legacy
+> handlers remain in the registry as backing implementations of the
+> 4 wrappers (`invoke_action` dispatches via `universal_dispatch.py`).
+
+### `action_retrieval` fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), the router's `tools=` exposes only the 4 universal wrappers (`list_actions`, `search_actions`, `describe_action`, `invoke_action`) plus hot-list direct aliases.  Legacy per-kind tools (`invoke_skill`, `call_mcp_tool`, etc.) are no longer surfaced to the LLM but remain in the registry as wrapper backing handlers.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to disable the wrapper surface entirely (= no catalog routing; legacy tools become the only addressing path again — primarily for fixture-stability tests). |
+| `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled. Setting this also enables [eager embedding build](#reyn-chat---eager-embedding-build) on cold-start sessions to avoid Turn-1 hallucinations. |
+| `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24). Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
+| `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top. |
+
+### Quick-start — opt out
+
+```yaml
+# reyn.yaml — preserve pre-FP-0034 tools= shape
+action_retrieval:
+  universal_wrappers_enabled: false
+```
+
+After restart, the chat router's `tools=` includes the 3 wrappers at the tail (when enabled — default).  The LLM can call:
+
+- `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__code_review`)
+- `describe_action(action_name="skill__code_review")` → fetch the input schema
+- `invoke_action(action_name="skill__code_review", args={...})` → execute via the existing handler
+
+Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action` with the canonical default semantic (FP-0034 §D19).
+
+Unknown action names return a structured error response with `suggestions` ranked by string similarity, so the LLM recovers in one turn (FP-0034 §D12).
+
+### Compatibility note
+
+Default `true` since PR-3b-iv. The test suite is structurally insulated from the flip (= LLMReplay tests use `FakeRouterHost` without the new accessor → `getattr` fallback returns False → recorded fixtures stay valid). The flip affects production runtime tools= shape only; operators can opt out with `universal_wrappers_enabled: false` to preserve the pre-FP-0034 byte-identical chat behaviour.
+
+Subsequent FP-0034 phases (= system-prompt refactor for category-only listing per §D9, embedding-driven hot list and `search_actions` activation, redundant tool pruning) land in separate releases — each opt-in until verified via dogfood.
+
+See [`docs/concepts/architecture.md`](../../concepts/architecture.md) for the tool registry / dispatch background.
 
 ## `permissions` block
 

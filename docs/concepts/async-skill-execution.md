@@ -34,6 +34,15 @@ skill's result inline to feed the next step's LLM).
 
 ## How chat-mode invoke_skill works now
 
+> **FP-0034 Phase 6 (2026-05-16) routing note**: since the
+> wrapper-only path is the default, the LLM addresses skills via
+> `invoke_action(action_name="skill__<name>", args={"input": ...})`
+> instead of the legacy `invoke_skill(name, input)` directly.
+> `universal_dispatch.py` routes the wrapper call to the same
+> `invoke_skill` handler shown below — the spawn-ack mechanism is
+> unchanged. The diagram below uses the legacy tool name for
+> readability; the production LLM-visible surface is `invoke_action`.
+
 ```
 User: "skill_builder で string_length を作って"
   └─ RouterLoop: invoke_skill(name="skill_builder", input={...})

@@ -39,7 +39,14 @@ from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
+from reyn.config import (  # noqa: F401
+    ActionRetrievalConfig,
+    EmbeddingConfig,
+    EventsConfig,
+    OnLimitConfig,
+    SafetyConfig,
+    SandboxConfig,
+)
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -487,6 +494,9 @@ class ChatSession:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
+        action_retrieval_config: "ActionRetrievalConfig | None" = None,
+        embedding_config: "EmbeddingConfig | None" = None,
+        eager_embedding_build: bool = False,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -505,6 +515,60 @@ class ChatSession:
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
         self._sandbox_config = sandbox_config
+        # FP-0034 PR-3b-iii: action_retrieval config — drives whether the
+        # universal catalog wrappers appear in the router tools=. Default
+        # constructs an off-flag ActionRetrievalConfig so existing chat
+        # behaviour is preserved when callers don't pass one.
+        self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
+        # B25-S5-1 fix: when True, RouterLoop awaits the embedding index build
+        # synchronously on the first turn (= Turn 1 blocks for ~2-5s) so the
+        # search_actions wrapper is visible to the LLM from the very first
+        # call. Default False keeps the existing lazy background-build path.
+        self._eager_embedding_build = eager_embedding_build
+        # FP-0034 Phase 2 step 1: build the ActionEmbeddingIndex +
+        # EmbeddingProvider once per session when the operator has
+        # configured ``action_retrieval.embedding_class``.  Both stay
+        # None when embedding is not configured, in which case the
+        # ``search_actions`` wrapper is hidden by ``build_tools`` and
+        # the handler degrades to an empty-result response.
+        self._action_embedding_index: Any = None
+        self._embedding_provider: Any = None
+        self._embedding_model_class: str | None = None
+        if (
+            self._action_retrieval.universal_wrappers_enabled
+            and self._action_retrieval.embedding_class
+            and embedding_config is not None
+        ):
+            try:
+                from reyn.embedding import get_provider as _get_provider
+                from reyn.tools.action_index import ActionEmbeddingIndex
+                self._embedding_provider = _get_provider("litellm", embedding_config)
+                self._embedding_model_class = self._action_retrieval.embedding_class
+                self._action_embedding_index = ActionEmbeddingIndex(
+                    persist_dir=Path(".reyn") / "action_index",
+                )
+            except Exception:
+                # If provider construction fails for any reason (= missing
+                # dependency / malformed config), fall through to "no index"
+                # so the rest of the session continues without
+                # search_actions rather than refusing to start.
+                self._embedding_provider = None
+                self._action_embedding_index = None
+                self._embedding_model_class = None
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
+        # Created when universal_wrappers_enabled=True and hot_list_n > 0.
+        self._action_usage_tracker: Any = None
+        if (
+            self._action_retrieval.universal_wrappers_enabled
+            and self._action_retrieval.hot_list_n > 0
+        ):
+            try:
+                from reyn.tools.action_usage_tracker import ActionUsageTracker
+                self._action_usage_tracker = ActionUsageTracker(
+                    persist_path=Path(".reyn") / "state" / "action_usage.jsonl",
+                )
+            except Exception:
+                self._action_usage_tracker = None
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -753,6 +817,22 @@ class ChatSession:
             spawn_plan_task=self.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
+            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
+            action_embedding_index=self._action_embedding_index,
+            embedding_provider=self._embedding_provider,
+            embedding_model_class=self._embedding_model_class,
+            # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list.
+            action_usage_tracker=self._action_usage_tracker,
+            action_retrieval_config=self._action_retrieval,
+            # FP-0034 Phase 2: sandbox backend for exec D14 visibility gate.
+            # None when sandbox_config is None (= noop assumed).
+            sandbox_backend=(
+                self._sandbox_config.backend if self._sandbox_config is not None
+                else None
+            ),
+            # B25-S5-1: thread eager-build flag so RouterLoop awaits build
+            # before computing _search_visible on the first turn.
+            eager_embedding_build=self._eager_embedding_build,
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.

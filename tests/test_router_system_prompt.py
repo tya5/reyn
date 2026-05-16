@@ -25,19 +25,6 @@ def _make_agent(name: str, cluster: str | None = None) -> dict:
 
 _EMPTY_MEMORY: dict = {"status": "not_found", "content": ""}
 
-_SYNTHETIC_MEMORY_CONTENT = """\
-# Memory Index (shared)
-- [User role](user_role.md) — describes user's role
-- [Project x](project_x.md) — main project context
-- [Feedback y](feedback_y.md) — past feedback entry
-
-# Memory Index (agent: chat_20240101)
-- [User pref](user_pref.md) — user preference
-- [Reference doc](reference_doc.md) — a reference
-"""
-
-_SYNTHETIC_MEMORY: dict = {"status": "ok", "content": _SYNTHETIC_MEMORY_CONTENT}
-
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -56,112 +43,10 @@ class TestEmptyStateRenders:
         assert len(prompt) > 0
         # Header must be present
         assert "Role: chat router for agent chat" in prompt
-        # Intent axis always present
-        assert "Action" in prompt
-        assert "Memory access" in prompt
-        # No real category lines — shows (none) placeholders
-        assert "(none)" in prompt
-
-
-class TestCategoriesGroupedCorrectly:
-    def test_categories_grouped(self):
-        skills = [
-            _make_skill("s1", "general"),
-            _make_skill("s2", "write"),
-            _make_skill("s3", "write"),
-        ]
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=skills,
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        assert "general (1)" in prompt
-        assert "write (2)" in prompt
-        # analyze and read must not appear AS CATEGORIES (no skills in those
-        # categories). Bare verbs may appear in the Behaviour section's
-        # domain-verb list — use the "(N)" suffix to assert category-form.
-        assert "analyze (" not in prompt
-        assert "read (0)" not in prompt
-
-    def test_missing_category_defaults_to_general(self):
-        skills = [_make_skill("no_cat_skill")]  # no category key
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=skills,
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        assert "general (1)" in prompt
-
-
-class TestMemoryEntriesInlined:
-    """PR36b: Memory descriptions are inlined so LLM can answer recall
-    queries directly. Previously only counts were shown, defeating the
-    point of having memory."""
-
-    def test_memory_entries_with_descriptions_inlined(self):
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[],
-            available_agents=[],
-            memory_index=_SYNTHETIC_MEMORY,
-        )
-        # Slugs from _SYNTHETIC_MEMORY (shared layer) should appear in the prompt
-        assert "user_role" in prompt
-        assert "project_x" in prompt
-        assert "feedback_y" in prompt
-        # Slugs from agent layer also visible
-        assert "user_pref" in prompt
-        assert "reference_doc" in prompt
-        # Description fragments visible (so LLM can answer recall queries)
-        assert "describes user's role" in prompt
-        assert "main project context" in prompt
-
-    def test_memory_layers_separately_rendered(self):
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[],
-            available_agents=[],
-            memory_index=_SYNTHETIC_MEMORY,
-        )
-        # The Memory section should have "shared:" and "agent:" subheads.
-        assert "shared:" in prompt
-        assert "agent:" in prompt
-
-    def test_memory_not_found_shows_no_entries(self):
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[],
-            available_agents=[],
-            memory_index={"status": "not_found", "content": ""},
-        )
-        # No old "(empty)" / count format; new format says "(no entries)"
-        assert "(no entries)" in prompt
-
-
-class TestIntentAxisSectionAlwaysPresent:
-    @pytest.mark.parametrize("intent_fragment", [
-        "Action — run external work",
-        "Memory access —",
-        "Save —",
-        "Forget —",
-        "Reply —",
-    ])
-    def test_intent_axis_always_present(self, intent_fragment: str):
-        prompt = build_system_prompt(
-            agent_name="bot",
-            agent_role="test role",
-            available_skills=[],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        assert intent_fragment in prompt
+        # Routing guide section present
+        assert "## Capabilities (routing guide)" in prompt
+        # Behaviour section present
+        assert "## Behaviour" in prompt
 
 
 class TestSizeIsConstantInItems:
@@ -200,9 +85,8 @@ class TestSizeIsConstantInItems:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        # SP size differs at most by count digits + category breakdown line
-        # (e.g. "general (3)" vs "general (30)" = +1 char, both in count
-        # tag and in category line).
+        # In wrapper-only path the SP has no skill enumeration at all;
+        # size must be identical regardless of skill count.
         size_diff = abs(len(prompt_30) - len(prompt_3))
         assert size_diff <= 5, (
             f"Expected SP to be O(1) in skill count under category-only retry; "
@@ -226,7 +110,7 @@ class TestJapaneseInRolePreserved:
 
 
 # ---------------------------------------------------------------------------
-# New tests: Files section
+# Files section: omitted in wrapper-only path
 # ---------------------------------------------------------------------------
 
 class TestFilesSection:
@@ -241,39 +125,41 @@ class TestFilesSection:
         )
 
     def test_files_section_omitted_when_no_permissions(self):
+        """Tier 2: ## Files section absent in wrapper-only path (no file_permissions)."""
         prompt = self._base_prompt()
         assert "## Files" not in prompt
 
     def test_files_section_omitted_when_none(self):
+        """Tier 2: ## Files section absent in wrapper-only path (file_permissions=None)."""
         prompt = self._base_prompt(file_permissions=None)
         assert "## Files" not in prompt
 
     def test_files_section_omitted_when_both_empty(self):
+        """Tier 2: ## Files section absent in wrapper-only path (empty permissions)."""
         prompt = self._base_prompt(file_permissions={"read": [], "write": []})
         assert "## Files" not in prompt
 
-    def test_files_section_with_read_only(self):
+    def test_files_section_omitted_even_with_read_permissions(self):
+        """Tier 2: ## Files section absent in wrapper-only path even when permissions set.
+
+        Phase 6 cleanup: files section removed from SP — discovery goes through
+        list_actions(category=['file']) at runtime.
+        """
         prompt = self._base_prompt(
             file_permissions={"read": ["src", "docs"], "write": []}
         )
-        assert "## Files" in prompt
-        assert "read scope:" in prompt
-        assert "src" in prompt
-        assert "docs" in prompt
-        assert "write scope:" not in prompt
+        assert "## Files" not in prompt
 
-    def test_files_section_with_full_scope(self):
+    def test_files_section_omitted_with_full_scope(self):
+        """Tier 2: ## Files section absent in wrapper-only path with full scope."""
         prompt = self._base_prompt(
             file_permissions={"read": ["src", "docs"], "write": ["output"]}
         )
-        assert "## Files" in prompt
-        assert "read scope:" in prompt
-        assert "write scope:" in prompt
-        assert "output" in prompt
+        assert "## Files" not in prompt
 
 
 # ---------------------------------------------------------------------------
-# New tests: MCP servers section
+# MCP servers section: omitted in wrapper-only path
 # ---------------------------------------------------------------------------
 
 class TestMCPSection:
@@ -288,59 +174,37 @@ class TestMCPSection:
         )
 
     def test_mcp_section_omitted_when_no_servers(self):
+        """Tier 2: ## MCP servers section absent in wrapper-only path."""
         prompt = self._base_prompt()
         assert "## MCP servers" not in prompt
 
     def test_mcp_section_omitted_when_none(self):
+        """Tier 2: ## MCP servers section absent in wrapper-only path (None)."""
         prompt = self._base_prompt(mcp_servers=None)
         assert "## MCP servers" not in prompt
 
     def test_mcp_section_omitted_when_empty_list(self):
+        """Tier 2: ## MCP servers section absent in wrapper-only path (empty list)."""
         prompt = self._base_prompt(mcp_servers=[])
         assert "## MCP servers" not in prompt
 
-    def test_mcp_section_with_servers(self):
+    def test_mcp_section_omitted_with_servers(self):
+        """Tier 2: ## MCP servers section absent in wrapper-only path even with servers.
+
+        Phase 6 cleanup: MCP section removed from SP — discovery goes through
+        list_actions(category=['mcp.server','mcp.tool']) at runtime.
+        """
         prompt = self._base_prompt(
             mcp_servers=[
                 {"name": "fs", "description": "filesystem"},
                 {"name": "fetch", "description": "web fetch"},
             ]
         )
-        assert "## MCP servers" in prompt
-        assert "- fs: filesystem" in prompt
-        assert "- fetch: web fetch" in prompt
-        assert "list_mcp_tools" in prompt
-
-    def test_mcp_server_no_description_uses_placeholder(self):
-        prompt = self._base_prompt(
-            mcp_servers=[{"name": "bare"}]
-        )
-        assert "## MCP servers" in prompt
-        assert "bare" in prompt
-        assert "(no description)" in prompt
-
-    def test_size_growth_constant_in_mcp_servers(self):
-        """MCP section grows linearly with server count (expected, not O(n²))."""
-        server_1 = [{"name": "srv", "description": "a server"}]
-        server_30 = [{"name": f"srv_{i}", "description": "a server"} for i in range(30)]
-
-        prompt_1 = self._base_prompt(mcp_servers=server_1)
-        prompt_30 = self._base_prompt(mcp_servers=server_30)
-
-        size_1 = len(prompt_1)
-        size_30 = len(prompt_30)
-        # 30 servers should be larger than 1 server (linear growth is fine)
-        assert size_30 > size_1
-        # But growth should be strictly linear — not O(n²).
-        # Each extra server adds roughly the same chars as one server entry.
-        per_server_cost = size_30 - size_1  # chars added by 29 extra servers
-        # Adding another 29 servers would not add more than 2× what 29 added
-        # (i.e., growth is bounded linearly, not quadratically).
-        assert per_server_cost < size_1 * 10  # sanity: not absurdly large
+        assert "## MCP servers" not in prompt
 
 
 # ---------------------------------------------------------------------------
-# New tests: Dynamic intent axis (PR36 Layer 2)
+# Dynamic tool names: absent in wrapper-only path
 # ---------------------------------------------------------------------------
 
 def _base_prompt(**kwargs) -> str:
@@ -357,110 +221,66 @@ def _base_prompt(**kwargs) -> str:
 class TestIntentAxisDynamic:
     def test_no_file_tool_names_when_no_file_permissions(self):
         """Tier 2: file-class tools absent from the prompt without an
-        explicit `file.*` declaration. The `reyn_src_*` family covers
-        the "explain Reyn" use case without the file-perm gate.
+        explicit `file.*` declaration.
+
+        Phase 6 cleanup: per-tool SP sections removed; discovery via
+        list_actions(category=['file']) replaces SP enumeration.
         """
         prompt = _base_prompt(file_permissions=None)
         assert "read_file" not in prompt
         assert "write_file" not in prompt
         assert "delete_file" not in prompt
         assert "list_directory" not in prompt
-        # reyn_src_* DO appear (= unconditional).
-        assert "reyn_src_list" in prompt
-        assert "reyn_src_read" in prompt
 
     def test_no_mcp_tool_names_when_no_mcp_servers(self):
+        """Tier 2: MCP tools absent from wrapper-only path SP."""
         prompt = _base_prompt(mcp_servers=[])
         assert "list_mcp_servers" not in prompt
         assert "list_mcp_tools" not in prompt
         assert "call_mcp_tool" not in prompt
 
     def test_no_mcp_tool_names_when_mcp_servers_none(self):
+        """Tier 2: MCP tools absent from wrapper-only path SP (None)."""
         prompt = _base_prompt(mcp_servers=None)
         assert "list_mcp_servers" not in prompt
         assert "list_mcp_tools" not in prompt
         assert "call_mcp_tool" not in prompt
 
     def test_no_when_clause_annotations(self):
+        """Tier 2: no conditional annotations in wrapper-only SP."""
         prompt = _base_prompt()
         assert "(when file scope set)" not in prompt
         assert "(when mcp configured)" not in prompt
         assert "(when file write scope set)" not in prompt
 
-    def test_write_file_only_when_write_scope(self):
-        prompt = _base_prompt(
-            file_permissions={"read": ["src"], "write": []}
-        )
-        assert "read_file" in prompt
-        assert "list_directory" in prompt
-        assert "write_file" not in prompt
-        assert "delete_file" not in prompt
-
-    def test_full_file_scope_shows_all_file_tools(self):
-        prompt = _base_prompt(
-            file_permissions={"read": ["src"], "write": ["output"]}
-        )
-        assert "read_file" in prompt
-        assert "list_directory" in prompt
-        assert "write_file" in prompt
-        assert "delete_file" in prompt
-
-    def test_mcp_tools_when_servers_configured(self):
-        prompt = _base_prompt(mcp_servers=[{"name": "fs"}])
-        assert "list_mcp_servers" in prompt
-        assert "list_mcp_tools" in prompt
-        assert "call_mcp_tool" in prompt
-
     def test_intent_axis_still_renders_without_permissions(self):
-        """Core intent rows must remain even with no permissions."""
+        """Tier 2: Core routing rules remain even with no permissions.
+
+        Phase 6 cleanup: intent-axis row format removed; routing intent
+        encoded in Behaviour section via invoke_action vocabulary.
+        """
         prompt = _base_prompt()
-        assert "Action — run external work" in prompt
-        assert "skills:  list_skills / describe_skill / invoke_skill" in prompt
-        assert "agents:  list_agents / describe_agent / delegate_to_agent" in prompt
-        assert "Memory access — read persisted facts" in prompt
-        assert "Save — persist new facts" in prompt
-        assert "Forget — delete persisted facts" in prompt
-        assert "Reply — answer directly (no tool)" in prompt
+        assert "ROUTING RULE (ABSOLUTE)" in prompt
+        assert "invoke_action" in prompt
+        assert "NO clarifying questions" in prompt
+        assert "NO text replies" in prompt
 
 
 # ---------------------------------------------------------------------------
-# F3 + F9 fix (PR-router-fix): Behaviour rules tighten the routing decision
+# Behaviour rules (F3 + F9 fix): still present under invoke_action vocab
 # ---------------------------------------------------------------------------
 
 class TestBehaviourRulesAfterF3F9Fix:
-    """Tier 2: pin the Behaviour rules added to address 0/3 routing
-    failures observed in dogfood batch 1 (findings F3 + F9). The rules
-    are intentionally minimal — they're concrete disambiguation hints
-    for weaker models, not a complete fix. (For consistent routing on
-    weak models like gemini-2.5-flash-lite, a stronger router model is
-    the structural fix; the prompt rules are best-effort.)"""
+    """Tier 2: pin the Behaviour rules that remain after Phase 6 SP simplification.
 
-    def test_explicit_skill_name_directs_to_invoke(self):
-        """Tier 2: prompt instructs LLM that user-named skills go directly to
-        invoke_skill (not list_skills first, not a text Reply).
-
-        B11-R3 fix: previously required list_skills first + stated
-        'paraphrasing the request as Reply' is wrong. Changed to direct
-        invoke_skill path when skill name is in Available skills list, which
-        closes the 'clarification text-reply' escape hatch for weak LLMs.
-        """
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="",
-            available_skills=[_make_skill("read_local_files", "general")],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # Named skill → direct invoke_skill (B11-R3 fix: skip list_skills when
-        # skill name is already in the Available skills list)
-        assert "If the user names a skill" in prompt
-        assert "invoke_skill directly" in prompt
-        # Additional entities in user message are inputs, NOT clarification reasons
-        assert "inputs to the skill" in prompt or "NOT reasons to clarify" in prompt
+    B23-PRE-1 SP role-separation moved per-tool flow details (post-list MUST,
+    post-describe MUST, spawn-ack, task_completed, delegation) to tool
+    descriptions. The SP Behaviour section retains only cross-cutting policies.
+    """
 
     def test_reply_directly_restricted_to_chitchat(self):
-        """Tier 2: 'Reply directly' rule restricted — only chitchat,
-        self-questions, clarifications. Domain tasks must go to Action."""
+        """Tier 2: 'Reply directly' rule restricted — only chitchat.
+        Domain tasks must go to invoke_action."""
         prompt = build_system_prompt(
             agent_name="chat",
             agent_role="",
@@ -468,70 +288,13 @@ class TestBehaviourRulesAfterF3F9Fix:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        assert "Reply directly only for chitchat" in prompt
-        assert "Domain tasks" in prompt
-        assert "Action" in prompt
-        # The old too-permissive phrasing must be gone
-        assert "stable knowledge" not in prompt
-
-    def test_post_describe_commit_or_explain(self):
-        """B2-H1 fix: after describe_skill, the LLM must commit by calling
-        invoke_skill or explicitly explain in text — never stop silently
-        mid-investigation. Without this rule, gemini-2.5-flash-lite enters
-        a 'research complete, synthesise' state after describe_skill and
-        emits an empty text turn, which triggers the F6 _no_reply_marker
-        upstream and surfaces no value to the user.
-        B5-H1 re-balance: rule is now an individual bullet with its own MUST
-        so weak LLMs treat it as a first-class obligation (1 bullet = 1 MUST).
-        """
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[{"name": "summarize", "category": "general"}],
-            available_agents=[],
-            memory_index={"status": "not_found", "content": ""},
-        )
-        # Rule must be its own bullet with MUST signal.
-        assert "After describe_skill" in prompt
-        assert "you MUST call invoke_skill" in prompt
-        # The "or explain" half must be present too.
-        assert "explain" in prompt.lower()
-
-    def test_post_list_skills_must_invoke_or_describe(self):
-        """Tier 2: B3-H1 + B3-M3 fix — after list_skills reveals a matching
-        skill, the LLM must commit to describe_skill or invoke_skill and must
-        not reply directly.  Both bugs share the same attractor: list_skills
-        result ignored.  The rule targets the obligation post list_skills,
-        complementing the B2-H1 post-describe_skill rule.
-        B5-H1 re-balance: rule is its own bullet with MUST; "engage the skill
-        ecosystem" jargon removed (too abstract for weak LLMs)."""
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[{"name": "text_summarizer", "category": "general"}],
-            available_agents=[],
-            memory_index={"status": "not_found", "content": ""},
-        )
-        # Rule must reference the trigger (list_skills reveals a skill)
-        assert "After list_skills" in prompt
-        # Must be its own bullet with MUST signal (1 bullet = 1 MUST)
-        assert "you MUST" in prompt
-        # Must mention both commitment paths
-        assert "describe_skill" in prompt
-        assert "invoke_skill" in prompt
-        # Must prohibit direct reply when a skill is available
-        assert "Do NOT reply" in prompt
-        # "skill ecosystem" jargon removed — too abstract for weak LLMs
-        assert "skill ecosystem" not in prompt
+        assert "Chitchat" in prompt
+        assert "invoke_action" in prompt
+        assert "Domain task" in prompt
 
     def test_v3_absolute_routing_rule_present(self):
         """Tier 2: B13-R3 V3 wording — ABSOLUTE routing rule block is present
         in the Behaviour section with the required components.
-
-        B12-R2 N=20 measurement: combined ABSOLUTE keyword + JA examples
-        drops text-reply rate from 40-50% → ~5% (1/20).
-        This test pins the structural contract (rule block present + key
-        phrases), not the exact wording.
         """
         prompt = build_system_prompt(
             agent_name="chat",
@@ -542,76 +305,27 @@ class TestBehaviourRulesAfterF3F9Fix:
         )
         # ABSOLUTE rule framing must be present
         assert "ROUTING RULE (ABSOLUTE)" in prompt
-        # Core imperative: call invoke_skill immediately
-        assert "invoke_skill" in prompt
+        # Core imperative: call invoke_action immediately
+        assert "invoke_action" in prompt
         # Explicit prohibitions
         assert "NO clarifying questions" in prompt
         assert "NO text replies" in prompt
-        # JA examples must be present (placeholder form, P7-compliant)
-        assert "<skill_name>" in prompt
 
 
 class TestPostInvokeSkillNarrationGuidance:
-    """Tier 2: FP-0011 Component B + FP-0012 Component C — invoke_skill
-    spawn-ack and completion-narration rules are wired into the Behaviour
-    section.
+    """Tier 2: FP-0034 B23-PRE-1 — spawn-ack and completion-narration content
+    moved from SP to invoke_action.description. The SP Behaviour section retains
+    only the cross-cutting errors/optimism-bias policy.
 
-    Replaces the coverage previously provided by the narrator skill tests
-    (test_replay_narrator + test_narrator_drift). FP-0011 removed the
-    dedicated skill_narrator; FP-0012 then made invoke_skill non-blocking
-    so the router LLM now has TWO narration moments per skill run:
-
-    1. spawn ack — when invoke_skill returns ``{status: "spawned", ...}``,
-       the LLM acknowledges and tells the user about ``/tasks``.
-    2. completion narration — when a ``[task_completed]`` user message
-       arrives, the LLM extracts result fields and narrates in 1-2
-       sentences, with an anti-optimism rule for errors.
+    The per-tool content (Priority 1 /tasks MUST, task_completed handling,
+    anti-fabrication) is validated in test_tool_description_role_separation.py.
     """
 
-    def test_spawned_ack_guidance_present(self):
-        """Tier 2: SP teaches the LLM how to handle the spawn ack from invoke_skill (FP-0012)."""
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[_make_skill("any_skill", "general")],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # The spawn-ack branch must reference the literal status the
-        # router sees so the LLM matches structurally.
-        assert '{status: "spawned"' in prompt
-        # The user-facing affordance for inspecting in-flight tasks.
-        assert "/tasks" in prompt
-        # Anti-double-dispatch guard — LLM must not call invoke_skill twice
-        # for the same request.
-        assert "Do NOT call" in prompt and "invoke_skill again" in prompt
+    def test_anti_optimism_cross_cutting_policy_present(self):
+        """Tier 2: SP Behaviour has cross-cutting anti-optimism policy.
 
-    def test_completion_narration_guidance_present(self):
-        """Tier 2: SP teaches the LLM how to handle the [task_completed] user message (FP-0012)."""
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[_make_skill("any_skill", "general")],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # The completion message header the LLM should match.
-        assert "[task_completed]" in prompt
-        # 1-2 sentence target + extract-from-data signal.
-        assert "1-2 sentences" in prompt
-        assert "do not echo the raw JSON" in prompt
-        # Status guidance covers the three buckets the proposal calls out.
-        assert '"finished"' in prompt
-        assert '"loop_limit_exceeded"' in prompt
-
-    def test_anti_optimism_rule_for_error_status(self):
-        """Tier 2: SP enforces anti-optimism — error status MUST be surfaced.
-
-        The 2026-05-10 G4 spike observed the strong (flash) tier router
-        narrating success even when status == "error" and a `result.error`
-        field was populated. The strengthened anti-optimism rule (FP-0011
-        Component B, retained verbatim under FP-0012 Component C) pins
-        the structural contract.
+        Errors MUST surface verbatim is a cross-cutting rule that applies
+        regardless of which tool was most recently called.
         """
         prompt = build_system_prompt(
             agent_name="chat",
@@ -620,77 +334,5 @@ class TestPostInvokeSkillNarrationGuidance:
             available_agents=[],
             memory_index=_EMPTY_MEMORY,
         )
-        # The error/non-finished branch must be present.
-        assert '"error"' in prompt
-        # The result.error reference (= post-FP-0012 wording — completion
-        # message exposes the field as ``result.error`` in the [task_completed]
-        # block, vs FP-0011's ``data.error`` in the inline tool_result).
-        assert "result.error" in prompt
-        # Imperative MUST + ban on success-narration.
-        assert "MUST surface" in prompt
-        assert "Do NOT" in prompt and "narrate as success" in prompt
-        # The optimism-bias warning is the load-bearing phrase.
+        assert "Errors MUST surface verbatim" in prompt
         assert "Optimism bias" in prompt
-
-    def test_tasks_pointer_is_must_level(self):
-        """Tier 2: R-SP-TASKS-POINTER-MUST — the `/tasks` pointer is a MUST,
-        not a soft hint.
-
-        2026-05-10 N=10 retest observed only 3/60 (= 5%) compliance with the
-        soft "Mention /tasks if the user wants to inspect progress" wording.
-        The pointer is the user's ONLY affordance to inspect in-flight work,
-        so it must be MUST-level. This test pins the strengthened wording
-        so a future soft-revert doesn't silently reintroduce the gap.
-        """
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[_make_skill("any_skill", "general")],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # The pointer is present.
-        assert "/tasks" in prompt
-        # MUST-level imperative — not "Mention" / "you can mention" / "should".
-        # The literal "MUST include `/tasks`" phrase pins the strengthening.
-        assert "MUST include `/tasks`" in prompt
-        # Non-negotiable framing — closes the "soft hint" escape hatch.
-        assert "non-negotiable" in prompt
-        # The MUST rule must live in the spawn-ack block, not orphaned
-        # elsewhere. The spawn-ack envelope literal is the anchor.
-        spawn_idx = prompt.index('{status: "spawned"')
-        tasks_idx = prompt.index("MUST include `/tasks`")
-        # task_completed is the start of the next sub-block; the MUST rule
-        # must precede it (= still inside the spawn-ack block).
-        completion_idx = prompt.index("[task_completed]")
-        assert spawn_idx < tasks_idx < completion_idx
-
-    def test_anti_fabrication_at_spawn_ack(self):
-        """Tier 2: R-SP-NO-FABRICATE-AT-SPAWN-ACK — explicit rule that the
-        spawn-ack reply must not pre-fill skill output fields.
-
-        2026-05-10 N=10 retest observed 1/10 mcp-search shots fabricating
-        server names + URLs at spawn-ack time, before the skill executed.
-        The spawn-ack envelope structurally cannot contain skill results
-        (status / run_id / chain_id / note only), so any such content is
-        fabrication by construction. This test pins the explicit
-        anti-fabrication rule as a peer to the existing anti-optimism rule
-        (which guards the completion-narration stage).
-        """
-        prompt = build_system_prompt(
-            agent_name="chat",
-            agent_role="assistant",
-            available_skills=[_make_skill("any_skill", "general")],
-            available_agents=[],
-            memory_index=_EMPTY_MEMORY,
-        )
-        # Imperative MUST NOT against pre-filling skill output.
-        assert "MUST NOT pre-fill" in prompt
-        # The "skill has not executed" rationale is load-bearing — it makes
-        # the rule structural ("by construction") rather than stylistic.
-        assert "fabrication by construction" in prompt
-        # Must live inside the spawn-ack block, not orphaned.
-        spawn_idx = prompt.index('{status: "spawned"')
-        fabricate_idx = prompt.index("MUST NOT pre-fill")
-        completion_idx = prompt.index("[task_completed]")
-        assert spawn_idx < fabricate_idx < completion_idx

@@ -52,7 +52,9 @@ def _tool_result(calls: list[dict]) -> LLMToolCallResult:
 
 
 def _make_session(tmp_path: Path) -> ChatSession:
-    return ChatSession(agent_name="test_agent")
+    return ChatSession(
+        agent_name="test_agent",
+    )
 
 
 def _drain_outbox(session: ChatSession) -> list:
@@ -138,9 +140,9 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     spawn_called = {"called": False}
 
     rounds = [
-        _tool_result([{"name": "invoke_skill", "args": {
-            "name": "some_skill",
-            "input": {"type": "test", "data": {}},
+        _tool_result([{"name": "invoke_action", "args": {
+            "action_name": "skill__some_skill",
+            "args": {"input": {"type": "test", "data": {}}},
         }}]),
         _text_result("Started some_skill — I'll let you know when it finishes."),
     ]
@@ -201,13 +203,16 @@ def test_delegate_registers_pending_chain(tmp_path, monkeypatch):
     registry.get_or_load.return_value = target_session
     registry.ensure_running = AsyncMock()
 
-    session = ChatSession(agent_name="test_agent", registry=registry)
+    session = ChatSession(
+        agent_name="test_agent",
+        registry=registry,
+    )
     session.is_attached = True
 
     rounds = [
-        _tool_result([{"name": "delegate_to_agent", "args": {
-            "to": "peer_agent",
-            "request": "process the data please",
+        _tool_result([{"name": "invoke_action", "args": {
+            "action_name": "agent.peer__peer_agent",
+            "args": {"request": "process the data please"},
         }}]),
         _text_result("Delegated."),
     ]

@@ -39,6 +39,15 @@ Reyn does not have a single multi-agent feature. It has four distinct compositio
 | 3 | `delegate_to_agent` | runtime + topology | same-process | specialist hand-off ("research agent → writer agent") | [topology.md](topology.md) |
 | 4 | `reyn mcp serve` | runtime | external client | exposing agent fleet to Claude Code, Cursor, or any MCP-aware client | [mcp.md](mcp.md) |
 
+> **FP-0034 Phase 6 (2026-05-16) routing note**: Layer 3
+> `delegate_to_agent` and Layer 2 `run_skill` keep their handler names
+> for the diagrams and Control IR. The LLM-visible surface is the
+> universal `invoke_action(action_name="agent.peer__<name>", args={...})`
+> for delegations and `invoke_action(action_name="skill__<name>",
+> args={...})` for skill invocations — `universal_dispatch.py` routes
+> these to the same handlers. Permissions, events, and chain semantics
+> are unchanged.
+
 ### What stays the same across all four layers
 
 - **P4 — constrained candidate set.** At every layer the LLM picks from an OS-curated set: skills it owns, agents reachable via topology, or tools the MCP server exposes. No layer lets the LLM invent agents or skills not already in the catalogue.

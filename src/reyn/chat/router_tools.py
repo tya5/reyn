@@ -231,6 +231,9 @@ def build_tools(
     mcp_servers: list[dict] | None = None,  # [{"name": ..., "description": ...}, ...]
     web_fetch_allowed: bool = True,         # FP-0022: always-on; parameter kept for backward compat
     mcp_search_threshold: int = MCP_SEARCH_THRESHOLD,  # FP-0024: override via config
+    universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-i: opt-in catalog wrappers
+    search_actions_visible: bool = False,       # FP-0034 Phase 2 step 1: D14 visibility gate
+    hot_list_aliases: list[dict] | None = None,  # FP-0034 Phase 2 step 3: hot list direct aliases
 ) -> list[dict]:
     """Build the tools= argument for litellm.acompletion.
 
@@ -824,10 +827,87 @@ def build_tools(
     else:
         _mcp_search_tool_raw = []
 
+    # ── I. Universal catalog wrappers (FP-0034 PR-3b-iv default-on) ──────────
+    #
+    # When universal_wrappers_enabled=True (= production default since
+    # PR-3b-iv flipped ActionRetrievalConfig), append the 3 universal
+    # wrappers (list_actions / describe_action / invoke_action) at the
+    # END of the specs list per §D21.  The flag stays False for direct
+    # callers that don't pass an ActionRetrievalConfig (= LLMReplay
+    # fixture-safe path).
+    #
+    # search_actions is gated separately by §D14 (= embedding configured).
+    # Phase 1 keeps it OFF unconditionally because (a) the handler is a
+    # NotImplementedError stub awaiting Phase 2's ActionEmbeddingIndex,
+    # and (b) embedding_class plumbing through RouterHostAdapter is also
+    # a Phase 2 task — visibility + handler must land together.
+    if universal_wrappers_enabled:
+        # Default 3 wrappers always exposed when the flag is on.
+        # search_actions is added conditionally per §D14 only when the
+        # session has an ActionEmbeddingIndex ready AND the operator
+        # configured ``action_retrieval.embedding_class``.  Callers
+        # (= RouterLoop) compute ``search_actions_visible`` from both
+        # signals before invoking ``build_tools``.
+        _wrapper_names: tuple[str, ...] = (
+            ("list_actions", "search_actions", "describe_action", "invoke_action")
+            if search_actions_visible
+            else ("list_actions", "describe_action", "invoke_action")
+        )
+        for _wrapper_name in _wrapper_names:
+            _wrapper_def = _registry.lookup(_wrapper_name)
+            if _wrapper_def is None or _wrapper_def.gates.router != "allow":
+                continue
+            _wrapper_rendered = _wrapper_def.render_for_router()
+            specs.append(ToolSpec(
+                name=_wrapper_rendered["function"]["name"],
+                description=_wrapper_rendered["function"]["description"],
+                parameters=_wrapper_rendered["function"]["parameters"],
+                dispatch_kind=_wrapper_def.dispatch_kind,
+            ))
+
+    # ── J. Exclusive-wrapper mode: strip legacy per-kind tools when wrappers on ──
+    #
+    # When universal_wrappers_enabled=True, strip all legacy per-kind tools so
+    # the LLM surface is the universal wrappers only.  Safety: only takes effect
+    # when the wrappers are also enabled (= the LLM still has *some* addressing
+    # path).
+    if universal_wrappers_enabled:
+        _LEGACY_TOOL_NAMES = frozenset({
+            "list_skills", "describe_skill",
+            "invoke_skill",
+            "list_agents", "describe_agent",
+            "delegate_to_agent",
+            "list_mcp_servers", "list_mcp_tools",
+            "call_mcp_tool", "describe_mcp_tool",
+            "list_memory", "read_memory_body",
+            "remember_shared", "remember_agent", "forget_memory",
+            "recall", "drop_source",
+            "read_file", "write_file", "delete_file", "list_directory",
+            "web_search", "web_fetch",
+            "reyn_src_list", "reyn_src_read",
+            "plan",
+        })
+        specs = [s for s in specs if s.name not in _LEGACY_TOOL_NAMES]
+
+    # ── K. Hot list direct aliases (FP-0034 Phase 2 step 3) ─────────────────
+    #
+    # When universal_wrappers_enabled=True and hot_list_aliases is a non-empty
+    # list, append the alias dicts at the end of the tools list (after the
+    # universal wrappers).  Each alias is already in OpenAI dict shape
+    # {"type": "function", "function": {"name": ..., "description": ...,
+    # "parameters": ...}} — RouterLoop constructs them from the catalog.
+    # args are passed through to invoke_action dispatch unchanged.
+    #
+    # None / empty list → no-op (= Phase 2 step 2 callers unchanged).
+    _hot_list_raw: list[dict] = []
+    if universal_wrappers_enabled and hot_list_aliases:
+        _hot_list_raw = list(hot_list_aliases)
+
     # Convert ToolSpec list → OpenAI dict list (backward-compat return type).
     # Append tool_search_tool raw dict last (D-S deferred mode only; empty
     # list otherwise — no-op for the inline path).
-    return [spec.to_openai_dict() for spec in specs] + _mcp_search_tool_raw
+    # Hot list aliases follow MCP search tool (= ephemeral, session-specific).
+    return [spec.to_openai_dict() for spec in specs] + _mcp_search_tool_raw + _hot_list_raw
 
 
 def _build_tools_via_registry(registry) -> list[dict]:

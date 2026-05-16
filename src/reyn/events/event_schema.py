@@ -31,4 +31,11 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # mcp_tool_loaded: a specific MCP tool was loaded from a search result.
     "mcp_search_invoked": frozenset({"query", "result_count"}),
     "mcp_tool_loaded": frozenset({"tool_name", "server_name"}),
+    # FP-0034 Phase 3: Universal catalog routing decision (Self-improvement Loop)
+    # Emitted by RouterLoop when invoke_action or a hot list alias is executed.
+    # action_name: the resolved qualified_name (e.g. "skill__code_review")
+    # source: how the routing happened ("invoke_action" | "hot_list_alias")
+    # outcome: "success" | "error" based on the tool result status
+    # chain_id: for cross-agent tracing (P6)
+    "routing_decided": frozenset({"action_name", "source", "outcome", "chain_id"}),
 }

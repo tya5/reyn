@@ -555,7 +555,7 @@ Automated detection of three attractor patterns in a dogfood workspace:
 3. **Tool name hallucination**: the LLM called a tool by a name not in the tools schema
 
 ```bash
-python scripts/detect_attractor.py --root .reyn/
+python scripts/detect_attractor.py --trace <jsonl_path>
 ```
 
 Run this after every dogfood batch to catch attractor patterns that might not be visible in the high-level scenario outcome. A scenario can "complete" (produce a final output) while containing one or more attractor events at intermediate phases.
@@ -623,6 +623,12 @@ The reply is the agent's final synthesised text — exactly what the TUI would r
 **When to reach for `dogfood_trace.py` / `llm_replay.py` instead.** The A2A endpoint exercises the full chat path including routing, skill spawn, and multi-turn synthesis. If you only want to inspect or replay the LLM payload of a single phase, the trace/replay tools are more surgical. Use A2A when the question is "what does the user see end-to-end"; use trace/replay when the question is "what did the LLM see, and what does it produce on a different prompt."
 
 **Why this is easy to forget.** The web server isn't part of the dogfood batch driver scripts (those drive `reyn chat --cui` via subprocess for parity with real users). The A2A endpoint is the operator's hand-driven debug tool; reach for it when piping into `reyn chat --cui` is awkward (TUI buffering issues, missing terminal, etc.).
+
+### scripts/dogfood_sp_render.py
+
+A CLI for verifying system prompt rendering. Preview the wrapper-only or legacy SP and get size-delta stats in one command, without writing a throwaway script each time you want to confirm what the LLM will receive.
+
+Full reference: [docs/reference/dogfood-sp-render.md](../../reference/dogfood-sp-render.md)
 
 ### Adapting to other LLM-driven systems
 
@@ -706,7 +712,7 @@ The attractor detector (`scripts/detect_attractor.py`) is useful for plan-mode t
 
 ```bash
 REYN_LLM_TRACE_DUMP=plan_trace.jsonl reyn chat
-python scripts/detect_attractor.py --root .reyn/  # catches step-level attractors
+python scripts/detect_attractor.py --trace plan_trace.jsonl  # catches step-level attractors
 ```
 
 ---

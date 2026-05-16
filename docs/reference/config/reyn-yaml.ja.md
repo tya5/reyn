@@ -31,6 +31,7 @@ models:
 | `web` | マップ | `web_fetch` と MCP レジストリ呼び出しの SSL 設定。以下参照。 |
 | `eval` | マップ | `reyn eval` のトレース exporter バックエンド。以下参照。 |
 | `sandbox` | マップ | `sandboxed_exec` のバックエンド選択と非対応プラットフォームポリシー。以下参照。 |
+| `action_retrieval` | マップ | FP-0034 ユニバーサルカタログの可視化 + 検索設定。以下参照。 |
 | `state_dir` | パス | Reyn がイベント、承認、Memory を書き込む場所。デフォルト `.reyn/`。 |
 | `permissions` | マップ | デフォルトの Permission ポリシー。以下参照。 |
 
@@ -279,6 +280,61 @@ sandbox:
 | `on_unsupported` | 文字列 | `warn` | 要求バックエンドがこのプラットフォームで利用不可の場合のポリシー。`warn` は WARNING をログに記録して `noop` にフォールバック。`error` は `RuntimeError` を発生（強制が必須な本番環境のフェイルファスト）。`ignore` はサイレントにフォールバック。 |
 
 [リファレンス: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandboxed_exec) で op スキーマとバックエンド選択の詳細を参照してください。
+
+## `action_retrieval` ブロック
+
+FP-0034 ユニバーサルカタログの可視化 + 検索設定。 チャット Router に **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) を提供し、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を実現する。 PR-3b-iv 以降デフォルト ON — 既存の tools= shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
+
+```yaml
+action_retrieval:
+  universal_wrappers_enabled: true    # PR-3b-iv 以降デフォルト; false でオプトアウト
+  embedding_class: null               # search_actions 用の embedding.classes 名
+  hot_list_n: 10                      # Phase 2 — top-N freq+recency 投影
+  mode: default                       # default | minimal | performance (§D24)
+```
+
+> **Phase 6 cleanup (2026-05-16)**: `hide_legacy_tools` flag は完全削除。
+> wrapper-only path が production 既定 (= 4 universal wrappers + hot
+> list aliases、 legacy per-kind tool は `tools=` に出ない)。 dogfood
+> batch 26 N=5 で validated (= 32/35 = 91.4% verified、 Brier 0.177、
+> hallucination 0/35)。 legacy handler は wrapper の backing
+> implementation として registry 残存 (= `invoke_action` が
+> `universal_dispatch.py` 経由で dispatch)。
+
+### `action_retrieval` フィールド
+
+| フィールド | 型 | デフォルト | 説明 |
+|-----|------|---------|-------------|
+| `universal_wrappers_enabled` | bool | `true` | `true` (PR-3b-iv 以降デフォルト) の時、 Router の `tools=` は 4 universal wrappers (`list_actions` / `search_actions` / `describe_action` / `invoke_action`) + hot list direct aliases のみ。 legacy per-kind tool (`invoke_skill` / `call_mcp_tool` 等) は LLM に surface されず、 wrapper の backing handler として registry に残存。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 `false` 設定で wrapper surface 自体を無効化 (= catalog routing なし、 legacy のみ — fixture-stability test 用)。 |
+| `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 設定すると cold-start session で [eager embedding build](#reyn-chat---eager-embedding-build) を発動し Turn-1 hallucination を回避。 |
+| `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
+| `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 |
+
+### クイックスタート — オプトアウト
+
+```yaml
+# reyn.yaml — FP-0034 以前の tools= shape を保持
+action_retrieval:
+  universal_wrappers_enabled: false
+```
+
+再起動後、 チャット Router の `tools=` 末尾に 3 wrapper が含まれる (有効時 — デフォルト)。 LLM は以下を呼び出し可能:
+
+- `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__code_review`) で利用可能 skill を列挙
+- `describe_action(action_name="skill__code_review")` → input schema を取得
+- `invoke_action(action_name="skill__code_review", args={...})` → 既存 handler 経由で実行
+
+リソースカテゴリ (`mcp.server`, `rag.corpus`, `memory.entry`, …) も canonical default semantic で `invoke_action` をサポート (FP-0034 §D19)。
+
+不明な action 名は文字列類似度でランクされた `suggestions` を含む構造化エラー応答を返し、 LLM は 1 turn で復帰可能 (FP-0034 §D12)。
+
+### 互換性ノート
+
+PR-3b-iv 以降デフォルト `true`。 テストスイートはフリップに対し構造的に絶縁されている (= LLMReplay テストは新 accessor を実装しない `FakeRouterHost` を使用 → `getattr` フォールバックで False → 録画済 fixture は引き続き有効)。 フリップは production runtime の tools= shape のみに影響。 operator は `universal_wrappers_enabled: false` でオプトアウトし FP-0034 以前のバイト単位互換のチャット挙動を保持できる。
+
+後続 FP-0034 フェーズ (§D9 カテゴリのみ表示への system prompt リファクタリング、 embedding-driven hot list と `search_actions` 有効化、 冗長 tool の削減) は別リリースでランディング。 各 dogfood 検証で確認するまでオプトイン継続。
+
+ツールレジストリ / dispatch の背景は [`docs/concepts/architecture.md`](../../concepts/architecture.md) を参照。
 
 ## `permissions` ブロック
 

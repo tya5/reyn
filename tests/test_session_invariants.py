@@ -67,7 +67,7 @@ def _text_result(text: str) -> LLMToolCallResult:
 
 
 def _delegate_result(to: str, request: str) -> LLMToolCallResult:
-    """LLMToolCallResult that makes RouterLoop call delegate_to_agent."""
+    """LLMToolCallResult that makes RouterLoop call delegate_to_agent via invoke_action wrapper."""
     return LLMToolCallResult(
         content=None,
         tool_calls=[
@@ -75,8 +75,11 @@ def _delegate_result(to: str, request: str) -> LLMToolCallResult:
                 "id": "tc_delegate_001",
                 "type": "function",
                 "function": {
-                    "name": "delegate_to_agent",
-                    "arguments": json.dumps({"to": to, "request": request}),
+                    "name": "invoke_action",
+                    "arguments": json.dumps({
+                        "action_name": f"agent.peer__{to}",
+                        "args": {"request": request},
+                    }),
                 },
             }
         ],

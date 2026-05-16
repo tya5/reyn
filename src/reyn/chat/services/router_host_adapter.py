@@ -138,6 +138,40 @@ class RouterHostAdapter:
         # Tracker getters (return mutable list or None)
         delegation_tracker: Callable[[], "list[dict] | None"],
         agent_replies_tracker: Callable[[], "list[str] | None"],
+        # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
+        # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
+        # ChatSession passes True by default since PR-3b-iv flipped the
+        # ActionRetrievalConfig default; this constructor parameter
+        # still defaults to False so direct callers (= tests that build
+        # adapters by hand) preserve the prior tools= shape and don't
+        # accidentally activate wrappers without intent.
+        universal_wrappers_enabled: bool = False,
+        # FP-0034 Phase 2 step 1: ActionEmbeddingIndex + EmbeddingProvider
+        # for search_actions.  When all three are set (= operator configured
+        # ``action_retrieval.embedding_class`` AND ChatSession built a
+        # provider AND the index has been initialized), search_actions
+        # appears in tools= and routes to the index.  When any is None
+        # the wrapper stays out of tools= (= D14 visibility gate).
+        action_embedding_index: Any = None,
+        embedding_provider: Any = None,
+        embedding_model_class: str | None = None,
+        # FP-0034 Phase 2: sandbox backend name for exec D14 visibility
+        # gate. Passed from ``session._sandbox_config.backend`` so the
+        # universal catalog ``_enumerate_category("exec")`` can decide
+        # whether to expose ``exec__sandboxed_exec``. Default None hides
+        # the exec category (= noop / no sandbox configured).
+        sandbox_backend: str | None = None,
+        # FP-0034 Phase 2 step 5: ActionUsageTracker for hot list freq+recency.
+        # ChatSession passes the session-scoped tracker; None when wrappers are
+        # off or hot_list_n == 0.
+        action_usage_tracker: Any = None,
+        # FP-0034 Phase 2 step 5: ActionRetrievalConfig for hot_list_n /
+        # hot_list_seed.  ChatSession passes its config; None → default.
+        action_retrieval_config: Any = None,
+        # B25-S5-1: when True, RouterLoop awaits the action embedding index
+        # build synchronously on the first turn before computing the D14
+        # search_actions visibility gate. Off by default (= lazy bg build).
+        eager_embedding_build: bool = False,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -175,6 +209,19 @@ class RouterHostAdapter:
         # Tracker getters
         self._delegation_tracker = delegation_tracker
         self._agent_replies_tracker = agent_replies_tracker
+        # FP-0034 PR-3b-iii
+        self._universal_wrappers_enabled = universal_wrappers_enabled
+        # B25-S5-1
+        self._eager_embedding_build = eager_embedding_build
+        # FP-0034 Phase 2 step 1
+        self._action_embedding_index = action_embedding_index
+        self._embedding_provider = embedding_provider
+        self._embedding_model_class = embedding_model_class
+        # FP-0034 Phase 2
+        self._sandbox_backend = sandbox_backend
+        # FP-0034 Phase 2 step 5
+        self._action_usage_tracker = action_usage_tracker
+        self._action_retrieval_config = action_retrieval_config
 
     # --- RouterLoopHost identity attributes ---
 
@@ -250,6 +297,92 @@ class RouterHostAdapter:
         the operator's project context. Empty string when not configured.
         """
         return self._project_context or ""
+
+    def get_universal_wrappers_enabled(self) -> bool:
+        """Return whether FP-0034 universal catalog wrappers are enabled.
+
+        Mirror of the ``action_retrieval.universal_wrappers_enabled`` flag
+        from reyn.yaml. RouterLoop calls this when building tools= so the
+        4 wrappers (list_actions / describe_action / invoke_action;
+        search_actions gated separately by §D14) appear in the LLM's
+        function-calling catalog. Default False preserves the prior
+        tools= shape.
+        """
+        return self._universal_wrappers_enabled
+
+    def get_action_embedding_index(self) -> Any:
+        """Return the ActionEmbeddingIndex instance, or None.
+
+        FP-0034 Phase 2 step 1.  Bound by ChatSession when the operator
+        has configured ``action_retrieval.embedding_class``.  RouterLoop
+        forwards into ``RouterCallerState.action_embedding_index`` so
+        the ``search_actions`` handler can call ``query()``.
+        """
+        return self._action_embedding_index
+
+    def get_embedding_provider(self) -> Any:
+        """Return the session's EmbeddingProvider instance, or None.
+
+        FP-0034 Phase 2 step 1.  Used together with
+        ``get_action_embedding_index()`` to power search_actions.
+        """
+        return self._embedding_provider
+
+    def get_embedding_model_class(self) -> str | None:
+        """Return the configured embedding model class name, or None.
+
+        FP-0034 Phase 2 step 1.  Mirror of
+        ``action_retrieval.embedding_class`` from reyn.yaml.  Used by
+        ``RouterLoop._build_router_caller_state`` to bind the
+        ``embedding_model_class`` field on ``RouterCallerState``.
+        """
+        return self._embedding_model_class
+
+    def get_eager_embedding_build(self) -> bool:
+        """Return True if RouterLoop should await the action embedding
+        index build synchronously before computing the search_actions
+        visibility gate on the first turn.
+
+        B25-S5-1 fix for the cold-start race where ``is_ready()`` is False
+        on Turn 1 because the background build hasn't finished, hiding
+        ``search_actions`` from the LLM and inviting tool-name
+        hallucinations (= B24 dogfood evidence: 2/3 hallucinated calls).
+        Default False preserves the prior lazy background-build behavior.
+        """
+        return self._eager_embedding_build
+
+    def get_sandbox_backend(self) -> str | None:
+        """Return the configured sandbox backend name, or None.
+
+        FP-0034 Phase 2.  Mirror of ``sandbox.backend`` from reyn.yaml
+        (resolved via ``session._sandbox_config.backend``).  RouterLoop
+        forwards this into ``RouterCallerState.sandbox_backend`` so the
+        exec category D14 visibility gate in
+        ``universal_catalog._enumerate_category`` can decide whether to
+        expose ``exec__sandboxed_exec``.  ``None`` and ``"noop"`` both
+        hide the exec category; any other value (``"seatbelt"`` /
+        ``"landlock"`` / ``"auto"``) makes it visible.
+        """
+        return self._sandbox_backend
+
+    def get_action_usage_tracker(self) -> Any:
+        """Return the ActionUsageTracker for hot list freq+recency, or None.
+
+        FP-0034 Phase 2 step 5.  RouterLoop reads this to record successful
+        tool calls and to build hot_list_aliases for build_tools.  None when
+        universal wrappers are off or hot_list_n == 0.
+        """
+        return self._action_usage_tracker
+
+    def get_action_retrieval_config(self) -> Any:
+        """Return the ActionRetrievalConfig for hot_list_n / hot_list_seed.
+
+        FP-0034 Phase 2 step 5.  RouterLoop reads this to determine how many
+        hot list aliases to generate and which seed to apply when freq history
+        is sparse.  Returns None when not set; RouterLoop falls back to a
+        default-constructed ActionRetrievalConfig.
+        """
+        return self._action_retrieval_config
 
     # --- Web ops ---
 

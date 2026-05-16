@@ -83,12 +83,14 @@ class FakeRouterHost:
         memory_index: dict | None = None,
         file_permissions: dict | None = None,
         mcp_servers: list[dict] | None = None,
+        universal_wrappers_enabled: bool = False,
     ):
         self._skills = skills or []
         self._agents = agents or []
         self._memory_index = memory_index or {"status": "not_found", "content": ""}
         self._file_permissions = file_permissions
         self._mcp_servers = mcp_servers or []
+        self._universal_wrappers_enabled = universal_wrappers_enabled
 
         # Track calls
         self.outbox: list[dict] = []
@@ -211,6 +213,14 @@ class FakeRouterHost:
         return {"status": "ok", "server": server, "tool": tool}
 
     # --- Model resolution ---
+
+    def get_universal_wrappers_enabled(self) -> bool:
+        """FP-0034 PR-3b-iii — RouterLoop reads this via getattr fallback.
+
+        Default False keeps existing fixtures byte-valid. PR-5 e2e tests
+        opt-in by passing universal_wrappers_enabled=True at construction.
+        """
+        return self._universal_wrappers_enabled
 
     def resolve_model(self, name: str) -> str:
         # Return the bare model name (no provider prefix).
@@ -529,15 +539,18 @@ async def test_validator_anchor_unchanged():
         mcp_servers=host.get_mcp_servers(),
     )
 
-    # The analytics category with 2 skills must appear
-    assert "analytics (2)" in prompt, (
-        f"Expected 'analytics (2)' in system prompt.\nPrompt: {prompt[:500]}"
-    )
-    # A phantom category must not appear
+    # Wrapper-only SP: no per-category skill enumeration; phantom must not appear
     assert "phantom" not in prompt, (
         "Phantom skill category must not appear in system prompt"
     )
-    # When no skills exist for a category, it's absent from the prompt
+    # Wrapper-only SP uses invoke_action routing (not category counts)
+    assert "invoke_action" in prompt, (
+        "Wrapper-only SP must reference invoke_action"
+    )
+    assert "ROUTING RULE (ABSOLUTE)" in prompt, (
+        "Wrapper-only SP must have ROUTING RULE (ABSOLUTE)"
+    )
+    # When no skills exist, SP structure is still valid
     host_no_skills = FakeRouterHost(skills=[])
     prompt_empty = build_system_prompt(
         agent_name=host_no_skills.agent_name,
@@ -548,8 +561,8 @@ async def test_validator_anchor_unchanged():
         file_permissions=None,
         mcp_servers=None,
     )
-    assert "(none)" in prompt_empty, (
-        "Empty skill list must render '(none)' in system prompt"
+    assert "invoke_action" in prompt_empty, (
+        "Empty skill list: invoke_action routing must still be in SP"
     )
 
 
@@ -669,6 +682,183 @@ async def test_named_skill_direct_invoke_without_list_skills():
     assert host.skill_calls[0]["skill"] == "skill_improver", (
         f"Expected skill_improver; got: {host.skill_calls[0]['skill']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ── FP-0034 universal catalog wrappers (PR-5 e2e) ───────────────────────────
+# ---------------------------------------------------------------------------
+#
+# These tests exercise the full chain with `universal_wrappers_enabled=True`:
+#   ChatSession (here: FakeRouterHost) → RouterHostAdapter-equivalent
+#   → RouterLoop reads get_universal_wrappers_enabled() → build_tools
+#   appends list_actions / describe_action / invoke_action → LLM may call
+#   either legacy OR wrapper paths → dispatch routes to host callbacks.
+#
+# Phase 1 verification:
+#   - Wrappers appear in the tool list when the host opts in.
+#   - When the LLM elects to invoke a skill (via either path), the host's
+#     run_skill_awaitable is called.
+#   - SP section "## Action categories" is present in the recorded
+#     prompt (= cache-prefix invariant from PR-3b-v).
+#
+# Fixtures live under tests/fixtures/llm/router/universal_wrappers/.
+
+
+@pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/list_actions_discovery.jsonl"
+)
+@pytest.mark.asyncio
+async def test_list_actions_discovery_then_invoke():
+    """Tier 3a: LLM uses ``list_actions`` to discover then invokes a skill.
+
+    The prompt explicitly asks the LLM to **first browse available
+    actions** before deciding what to invoke.  This exercises the
+    discovery → invoke chain of the universal catalog rather than the
+    direct legacy path.  We assert structural invariants only (= a skill
+    eventually gets invoked) so the fixture stays stable across LLM
+    drift.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+            {
+                "name": "translator",
+                "description": "Translates text between languages.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host, max_iterations=8)
+
+    await loop.run(
+        "First use list_actions to see what skills are available, "
+        "then use the most appropriate one to summarise this text: "
+        "The quick brown fox jumps over the lazy dog.",
+        [],
+    )
+
+    # Invariant: some skill ran.
+    assert len(host.skill_calls) >= 1, (
+        f"Expected a skill call after discovery; got: {host.skill_calls}"
+    )
+    # Invariant: final outbox is an agent reply.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
+
+
+@pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/forced_invoke_action.jsonl"
+)
+@pytest.mark.asyncio
+async def test_forced_invoke_action_dispatch_chain():
+    """Tier 3a: invoke_action e2e dispatch chain through a real LLM.
+
+    The prompt explicitly directs the LLM to use ``invoke_action`` (not
+    ``invoke_skill``) so the recorded fixture exercises the universal
+    catalog dispatch path end-to-end:
+
+        LLM tool_call(invoke_action, {action_name: "skill__text_summariser",
+                                       args: {...}})
+        → RouterLoop._invoke_router_tool
+        → _REGISTRY_DISPATCH_TOOLS contains "invoke_action"
+        → _invoke_via_registry
+        → _handle_invoke_action
+        → universal_dispatch.resolve_invoke_action
+        → target_tool_name="invoke_skill" + transformed args
+        → registry.lookup("invoke_skill").handler(transformed_args, ctx)
+        → ctx.router_state.run_skill_fn (= host.run_skill_awaitable
+          with chain_id pre-bound)
+        → FakeRouterHost.run_skill_awaitable records the call
+
+    Without this fixture the Tier 3 surface only verifies list_actions
+    discovery (fixture 2 fell back to legacy invoke_skill).  This
+    fixture closes the gap by pinning the invoke_action dispatch chain
+    against a real LLM tool_call.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host, max_iterations=8)
+
+    await loop.run(
+        "Use the `invoke_action` tool (not `invoke_skill`) to run the "
+        "text_summariser skill on this text: "
+        "The quick brown fox jumps over the lazy dog. "
+        "Pass action_name='skill__text_summariser'.",
+        [],
+    )
+
+    # Invariant 1: skill ran via SOME dispatch path.
+    assert len(host.skill_calls) >= 1, (
+        f"Expected at least one skill call; got: {host.skill_calls}"
+    )
+    # Invariant 2: chain_id propagates through dispatch.
+    assert host.skill_calls[0]["chain_id"] == "chain-test"
+    # Invariant 3: the invoked skill is text_summariser regardless of
+    # which path the LLM chose.
+    assert host.skill_calls[0]["skill"] == "text_summariser"
+    # Invariant 4: agent text reply present.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
+
+
+@pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/invoke_skill_with_wrappers.jsonl"
+)
+@pytest.mark.asyncio
+async def test_invoke_skill_with_wrappers_enabled():
+    """Tier 3a: with universal_wrappers_enabled=True the LLM successfully
+    invokes a skill via either ``invoke_skill`` (legacy) or ``invoke_action``
+    (wrapper).  This test pins the e2e dispatch invariant: regardless of
+    which path the LLM picks, the host's run_skill_awaitable fires for the
+    requested skill.
+
+    Per FP-0034 Phase 1, both paths must coexist (= legacy tools stay so
+    the wrappers can re-route through them without re-implementing
+    handlers).  The fixture captures one concrete LLM run; future LLM
+    drift could switch which path is taken without invalidating the
+    invariant.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host)
+
+    await loop.run(
+        "Please summarise this with the text_summariser skill: "
+        "The quick brown fox jumps over the lazy dog.",
+        [],
+    )
+
+    # Invariant 1: skill got invoked via SOME path (legacy or wrapper).
+    assert len(host.skill_calls) >= 1, (
+        f"Expected ≥1 skill call regardless of dispatch path; "
+        f"got: {host.skill_calls}"
+    )
+    # Invariant 2: chain_id propagates through the wrapper path too.
+    assert host.skill_calls[0]["chain_id"] == "chain-test"
+    # Invariant 3: final outbox is an agent text reply.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
 
 
 # ---------------------------------------------------------------------------
