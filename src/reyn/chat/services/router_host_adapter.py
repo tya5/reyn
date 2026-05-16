@@ -138,9 +138,13 @@ class RouterHostAdapter:
         # Tracker getters (return mutable list or None)
         delegation_tracker: Callable[[], "list[dict] | None"],
         agent_replies_tracker: Callable[[], "list[str] | None"],
-        # FP-0034 PR-3b-iii: universal catalog wrapper visibility (= reyn.yaml
-        # action_retrieval.universal_wrappers_enabled). Defaults to False so
-        # callers that don't pass it preserve the prior tools= shape.
+        # FP-0034 PR-3b-iii/iv: universal catalog wrapper visibility
+        # (= reyn.yaml action_retrieval.universal_wrappers_enabled).
+        # ChatSession passes True by default since PR-3b-iv flipped the
+        # ActionRetrievalConfig default; this constructor parameter
+        # still defaults to False so direct callers (= tests that build
+        # adapters by hand) preserve the prior tools= shape and don't
+        # accidentally activate wrappers without intent.
         universal_wrappers_enabled: bool = False,
     ) -> None:
         self._agent_name = agent_name

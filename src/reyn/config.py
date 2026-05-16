@@ -822,20 +822,32 @@ class SkillResumeConfig:
 class ActionRetrievalConfig:
     """`action_retrieval:` — FP-0034 universal catalog + retrieval settings.
 
-    Phase 1 surface (= PR-3b-ii lands the schema; PR-3b-iii wires it
-    into router_loop and flips defaults). Subsequent phases extend
-    with hot list / cold start / search_actions enablement.
+    Phase 1 of FP-0034. The 4 universal wrappers (list_actions /
+    search_actions / describe_action / invoke_action) plus the
+    qualified-name dispatcher land across PR-1 through PR-3b-iv.
+    Subsequent phases extend with hot list / cold start /
+    search_actions enablement.
 
     Fields:
         universal_wrappers_enabled:
-            When True, ``build_tools()`` appends the 3 universal
-            wrappers (list_actions / describe_action / invoke_action)
-            at the end of tools=. ``search_actions`` is gated
-            separately via ``embedding_class`` per §D14.
+            When True (= **default since PR-3b-iv**), ``build_tools()``
+            appends the 3 universal wrappers (list_actions /
+            describe_action / invoke_action) at the end of tools=.
+            ``search_actions`` is gated separately via
+            ``embedding_class`` per §D14.
 
-            Default ``False`` so existing chat behaviour is preserved
-            until PR-3b-iii re-records LLMReplay fixtures + flips
-            the default.
+            The flip from False (= PR-3b-i through iii) to True
+            happens here in PR-3b-iv. Operators who want to opt out
+            (= preserve the prior tools= shape) can set
+            ``action_retrieval.universal_wrappers_enabled: false``
+            in reyn.yaml.
+
+            Test suite verified safe via FakeRouterHost insulation:
+            all LLMReplay fixtures + AsyncMock-based E2E tests do
+            NOT implement ``get_universal_wrappers_enabled`` so the
+            RouterLoop's getattr fallback keeps tools= shape stable
+            for the recorded fixtures. The flip affects production
+            runtime only.
 
         embedding_class:
             Name of the entry in ``embedding.classes`` to use for
@@ -860,7 +872,7 @@ class ActionRetrievalConfig:
             ``"default"`` is the §D24 balanced setting.
     """
 
-    universal_wrappers_enabled: bool = False
+    universal_wrappers_enabled: bool = True
     embedding_class: str | None = None
     hot_list_n: int = 10
     mode: str = "default"

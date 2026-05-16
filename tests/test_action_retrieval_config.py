@@ -30,25 +30,29 @@ from reyn.config import (
 # ── 1. Default values ─────────────────────────────────────────────────────
 
 
-def test_default_action_retrieval_config_is_off() -> None:
-    """Tier 2: out-of-the-box config keeps universal wrappers DISABLED.
+def test_default_action_retrieval_config_is_on() -> None:
+    """Tier 2: out-of-the-box config has universal wrappers ENABLED.
 
-    PR-3b-i appended the wrappers behind a flag with default False;
-    PR-3b-ii's config keeps the default off so existing chat
-    behaviour is byte-identical until PR-3b-iii flips it.
+    PR-3b-iv flipped the default from False to True. Operators who
+    want to opt out can set ``universal_wrappers_enabled: false`` in
+    reyn.yaml. The remaining defaults (embedding_class / hot_list_n
+    / mode) are unchanged.
     """
     cfg = ActionRetrievalConfig()
-    assert cfg.universal_wrappers_enabled is False
+    assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class is None
     assert cfg.hot_list_n == 10  # §D24 balanced
     assert cfg.mode == "default"
 
 
 def test_reyn_config_carries_action_retrieval_default() -> None:
-    """Tier 2: ReynConfig default-constructs with an ActionRetrievalConfig."""
+    """Tier 2: ReynConfig default-constructs with an ActionRetrievalConfig.
+
+    Default flag is True since PR-3b-iv.
+    """
     cfg = ReynConfig()
     assert isinstance(cfg.action_retrieval, ActionRetrievalConfig)
-    assert cfg.action_retrieval.universal_wrappers_enabled is False
+    assert cfg.action_retrieval.universal_wrappers_enabled is True
 
 
 # ── 2. Parser — happy path ────────────────────────────────────────────────
@@ -213,14 +217,37 @@ action_retrieval:
 
 
 def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> None:
-    """Tier 2: omitting action_retrieval: keeps defaults (= flag still off)."""
+    """Tier 2: omitting action_retrieval: keeps defaults.
+
+    Since PR-3b-iv flipped the default, an empty config gives
+    operators the universal wrappers automatically. Opt-out via
+    ``universal_wrappers_enabled: false`` in reyn.yaml.
+    """
     (tmp_path / "reyn.yaml").write_text(
         "model: standard\n",
         encoding="utf-8",
     )
 
     cfg = load_config(cwd=tmp_path)
-    assert cfg.action_retrieval.universal_wrappers_enabled is False
+    assert cfg.action_retrieval.universal_wrappers_enabled is True
     assert cfg.action_retrieval.embedding_class is None
     assert cfg.action_retrieval.hot_list_n == 10
     assert cfg.action_retrieval.mode == "default"
+
+
+def test_load_config_with_explicit_opt_out(tmp_path: Path) -> None:
+    """Tier 2: explicit `universal_wrappers_enabled: false` opt-out flows through.
+
+    Operators who don't want the wrappers can disable them via
+    reyn.yaml. This path must keep working after the default flip.
+    """
+    (tmp_path / "reyn.yaml").write_text(
+        """
+action_retrieval:
+  universal_wrappers_enabled: false
+""",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(cwd=tmp_path)
+    assert cfg.action_retrieval.universal_wrappers_enabled is False

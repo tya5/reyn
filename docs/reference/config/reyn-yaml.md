@@ -290,11 +290,11 @@ See [Reference: control-ir — `sandboxed_exec`](../runtime/control-ir.md#sandbo
 
 ## `action_retrieval` block
 
-FP-0034 universal catalog visibility + retrieval settings.  Opts the chat router into the **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  When disabled (default), the router exposes the per-category tools directly (e.g. `invoke_skill`, `call_mcp_tool`, `read_file`, …) — the prior behaviour is preserved byte-for-byte.
+FP-0034 universal catalog visibility + retrieval settings.  Provides the chat router with **universal catalog wrappers** (`list_actions` / `describe_action` / `invoke_action`) for uniform browse / describe / invoke across all skill / agent / MCP / file / memory / RAG categories.  Default ON since PR-3b-iv — operators who want the prior tools= shape can opt out with `universal_wrappers_enabled: false`.
 
 ```yaml
 action_retrieval:
-  universal_wrappers_enabled: false   # default; flip to true to opt-in
+  universal_wrappers_enabled: true    # default since PR-3b-iv; set false to opt out
   embedding_class: null               # name in embedding.classes for search_actions
   hot_list_n: 10                      # Phase 2 — top-N freq+recency projection
   mode: default                       # default | minimal | performance (§D24)
@@ -304,20 +304,20 @@ action_retrieval:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `false` | When `true`, appends 3 universal wrappers (`list_actions`, `describe_action`, `invoke_action`) at the end of the router's `tools=`.  Existing per-category tools (`invoke_skill`, `call_mcp_tool`, etc.) remain present in this phase; subsequent FP-0034 phases will refactor the system prompt and prune redundant surfaces.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14). |
+| `universal_wrappers_enabled` | bool | `true` | When `true` (default since PR-3b-iv), appends 3 universal wrappers (`list_actions`, `describe_action`, `invoke_action`) at the end of the router's `tools=`.  Existing per-category tools (`invoke_skill`, `call_mcp_tool`, etc.) remain present in this phase; subsequent FP-0034 phases will refactor the system prompt and prune redundant surfaces.  `search_actions` is gated separately by `embedding_class` (FP-0034 §D14).  Set `false` to preserve the byte-identical pre-FP-0034 tools= shape. |
 | `embedding_class` | string \| null | `null` | Name of an entry in [`embedding.classes`](../../concepts/rag.md) to use for action-retrieval semantic search (FP-0034 §D13).  When `null` or empty, `search_actions` is excluded from `tools=` even when wrappers are enabled.  No-op until the action-retrieval index lands in FP-0034 Phase 2. |
 | `hot_list_n` | int | `10` | Hot-list projection size for top-N `freq+recency` direct aliases (FP-0034 §D2 / §D24).  Field is reserved for Phase 2 wiring; setting it today is harmless.  Must be ≥ 0. `0` opts out entirely (= §D24 minimal mode). |
 | `mode` | string | `"default"` | Operational mode label per §D24: `"minimal"` (max cache stability, no hot list) / `"default"` (balanced) / `"performance"` (large hot list).  Free-form string; callers layer semantics on top.  Reserved for Phase 2; today's value is informational only. |
 
-### Quick-start — opt in to universal wrappers
+### Quick-start — opt out
 
 ```yaml
-# reyn.yaml — minimal opt-in
+# reyn.yaml — preserve pre-FP-0034 tools= shape
 action_retrieval:
-  universal_wrappers_enabled: true
+  universal_wrappers_enabled: false
 ```
 
-After restart, the chat router's `tools=` includes the 3 wrappers at the tail.  The LLM can call:
+After restart, the chat router's `tools=` includes the 3 wrappers at the tail (when enabled — default).  The LLM can call:
 
 - `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__code_review`)
 - `describe_action(action_name="skill__code_review")` → fetch the input schema
@@ -329,7 +329,9 @@ Unknown action names return a structured error response with `suggestions` ranke
 
 ### Compatibility note
 
-Default `false` preserves byte-identical chat behaviour and LLMReplay fixtures.  Subsequent FP-0034 phases (= router-side system-prompt refactor, embedding-driven hot list, default flip) land in separate releases — each opt-in until verified via dogfood.
+Default `true` since PR-3b-iv. The test suite is structurally insulated from the flip (= LLMReplay tests use `FakeRouterHost` without the new accessor → `getattr` fallback returns False → recorded fixtures stay valid). The flip affects production runtime tools= shape only; operators can opt out with `universal_wrappers_enabled: false` to preserve the pre-FP-0034 byte-identical chat behaviour.
+
+Subsequent FP-0034 phases (= system-prompt refactor for category-only listing per §D9, embedding-driven hot list and `search_actions` activation, redundant tool pruning) land in separate releases — each opt-in until verified via dogfood.
 
 See [`docs/concepts/architecture.md`](../../concepts/architecture.md) for the tool registry / dispatch background.
 

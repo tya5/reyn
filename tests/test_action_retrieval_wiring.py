@@ -162,14 +162,15 @@ action_retrieval:
     assert cfg.action_retrieval.universal_wrappers_enabled is True
 
 
-def test_default_reyn_config_flag_remains_off() -> None:
-    """Tier 2: A freshly-defaulted ReynConfig keeps wrappers off.
+def test_default_reyn_config_flag_is_on() -> None:
+    """Tier 2: A freshly-defaulted ReynConfig has wrappers ON (since PR-3b-iv).
 
-    Defense against accidentally flipping the default before the
-    operator has opted in or fixtures are re-recorded.
+    PR-3b-iv flipped the default after verifying the test suite is
+    insulated from the change (= FakeRouterHost fallback / mocked
+    call_llm_tools).  Operators can opt out via reyn.yaml.
     """
     cfg = ReynConfig()
-    assert cfg.action_retrieval.universal_wrappers_enabled is False
+    assert cfg.action_retrieval.universal_wrappers_enabled is True
 
 
 # ── 5. RouterLoopHost protocol exposes the new method ────────────────────

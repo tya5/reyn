@@ -283,11 +283,11 @@ sandbox:
 
 ## `action_retrieval` ブロック
 
-FP-0034 ユニバーサルカタログの可視化 + 検索設定。 チャット Router を **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) にオプトインさせ、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を提供する。 無効時 (デフォルト) は Router がカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` / `read_file` 等) を直接公開し、 既存挙動はバイト単位で保持される。
+FP-0034 ユニバーサルカタログの可視化 + 検索設定。 チャット Router に **ユニバーサル wrapper** (`list_actions` / `describe_action` / `invoke_action`) を提供し、 全 skill / agent / MCP / file / memory / RAG カテゴリで統一の browse / describe / invoke を実現する。 PR-3b-iv 以降デフォルト ON — 既存の tools= shape を保持したい operator は `universal_wrappers_enabled: false` でオプトアウト可能。
 
 ```yaml
 action_retrieval:
-  universal_wrappers_enabled: false   # デフォルト; true でオプトイン
+  universal_wrappers_enabled: true    # PR-3b-iv 以降デフォルト; false でオプトアウト
   embedding_class: null               # search_actions 用の embedding.classes 名
   hot_list_n: 10                      # Phase 2 — top-N freq+recency 投影
   mode: default                       # default | minimal | performance (§D24)
@@ -297,20 +297,20 @@ action_retrieval:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-----|------|---------|-------------|
-| `universal_wrappers_enabled` | bool | `false` | `true` の時、 Router の `tools=` 末尾に 3 つのユニバーサル wrapper (`list_actions` / `describe_action` / `invoke_action`) を追加。 本フェーズではカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` 等) は併存し、 後続 FP-0034 フェーズで system prompt のリファクタリングと冗長サーフェスの削減を行う。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 |
+| `universal_wrappers_enabled` | bool | `true` | `true` (PR-3b-iv 以降デフォルト) の時、 Router の `tools=` 末尾に 3 つのユニバーサル wrapper (`list_actions` / `describe_action` / `invoke_action`) を追加。 本フェーズではカテゴリ別 tool (`invoke_skill` / `call_mcp_tool` 等) は併存し、 後続 FP-0034 フェーズで system prompt のリファクタリングと冗長サーフェスの削減を行う。 `search_actions` は `embedding_class` で別途ゲート (FP-0034 §D14)。 FP-0034 以前のバイト単位互換の tools= shape を保持したい場合は `false` を設定。 |
 | `embedding_class` | string \| null | `null` | action-retrieval の semantic 検索 (FP-0034 §D13) に使用する [`embedding.classes`](../../concepts/rag.md) のエントリ名。 `null` または空の場合、 wrapper が有効でも `search_actions` は `tools=` から除外される。 action-retrieval index は FP-0034 Phase 2 でランディング予定。 現時点では no-op。 |
 | `hot_list_n` | int | `10` | top-N `freq+recency` direct alias のホットリスト投影サイズ (FP-0034 §D2 / §D24)。 Phase 2 配線用の予約フィールド。 今日設定しても影響なし。 `0` 以上必須。 `0` で完全オプトアウト (= §D24 minimal モード)。 |
 | `mode` | string | `"default"` | §D24 の運用モードラベル: `"minimal"` (キャッシュ安定性最大、 ホットリストなし) / `"default"` (バランス) / `"performance"` (大規模ホットリスト)。 自由文字列で、 呼び出し側がセマンティクスを上乗せ。 Phase 2 予約; 今日の値は情報のみ。 |
 
-### クイックスタート — ユニバーサル wrapper をオプトイン
+### クイックスタート — オプトアウト
 
 ```yaml
-# reyn.yaml — 最小オプトイン
+# reyn.yaml — FP-0034 以前の tools= shape を保持
 action_retrieval:
-  universal_wrappers_enabled: true
+  universal_wrappers_enabled: false
 ```
 
-再起動後、 チャット Router の `tools=` 末尾に 3 wrapper が含まれる。 LLM は以下を呼び出し可能:
+再起動後、 チャット Router の `tools=` 末尾に 3 wrapper が含まれる (有効時 — デフォルト)。 LLM は以下を呼び出し可能:
 
 - `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__code_review`) で利用可能 skill を列挙
 - `describe_action(action_name="skill__code_review")` → input schema を取得
@@ -322,7 +322,9 @@ action_retrieval:
 
 ### 互換性ノート
 
-デフォルト `false` で既存のチャット挙動と LLMReplay fixture をバイト単位で保持する。 後続 FP-0034 フェーズ (Router 側 system prompt のリファクタリング、 embedding-driven hot list、 デフォルト反転) は別リリースでランディング。 各 dogfood 検証で確認するまでオプトイン継続。
+PR-3b-iv 以降デフォルト `true`。 テストスイートはフリップに対し構造的に絶縁されている (= LLMReplay テストは新 accessor を実装しない `FakeRouterHost` を使用 → `getattr` フォールバックで False → 録画済 fixture は引き続き有効)。 フリップは production runtime の tools= shape のみに影響。 operator は `universal_wrappers_enabled: false` でオプトアウトし FP-0034 以前のバイト単位互換のチャット挙動を保持できる。
+
+後続 FP-0034 フェーズ (§D9 カテゴリのみ表示への system prompt リファクタリング、 embedding-driven hot list と `search_actions` 有効化、 冗長 tool の削減) は別リリースでランディング。 各 dogfood 検証で確認するまでオプトイン継続。
 
 ツールレジストリ / dispatch の背景は [`docs/concepts/architecture.md`](../../concepts/architecture.md) を参照。
 
