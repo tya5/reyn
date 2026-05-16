@@ -20,7 +20,6 @@ import pytest
 
 from reyn.web.notifications import _DEFAULT_TIMEOUT, post_webhook
 
-
 # ── helpers ────────────────────────────────────────────────────────────────────
 
 

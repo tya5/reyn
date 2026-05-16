@@ -27,7 +27,6 @@ from reyn.compiler.ir import ArtifactDef, PhaseDef, SkillDef
 from reyn.compiler.parser import parse_skill
 from reyn.schemas.models import Skill
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

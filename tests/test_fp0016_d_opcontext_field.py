@@ -19,7 +19,6 @@ from reyn.op_runtime.context import OpContext
 from reyn.permissions.permissions import PermissionDecl
 from reyn.workspace.workspace import Workspace
 
-
 # ---------------------------------------------------------------------------
 # Stub: stand-in for reyn.secrets.store.ScopedSecretStore until D1 lands.
 # If D1 has already landed, the real class is used in test 2 instead.

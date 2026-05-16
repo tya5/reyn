@@ -275,7 +275,7 @@ async def test_compare_runs_detects_regression(tmp_path: Path):
 async def test_coverage_finds_covers_tags(tmp_path: Path):
     """Tier 2c: compute_coverage maps scenario covers: tags to feature-map paths."""
     try:
-        from reyn.dogfood.coverage import compute_coverage, CoverageMatrix
+        from reyn.dogfood.coverage import CoverageMatrix, compute_coverage
     except ImportError as exc:
         pytest.skip(f"F4 (reyn.dogfood.coverage) not yet available: {exc}")
 
@@ -336,7 +336,7 @@ async def test_replay_fixture_round_trip(tmp_path: Path):
     fixture by writing the file manually between the two context calls.
     """
     try:
-        from reyn.dogfood.replay import scenario_replay_context, fixture_path_for
+        from reyn.dogfood.replay import fixture_path_for, scenario_replay_context
     except ImportError as exc:
         pytest.skip(f"F5 (reyn.dogfood.replay) not yet available: {exc}")
 

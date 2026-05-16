@@ -6,13 +6,12 @@ Docstrings declare tier on first line per policy.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import pytest
 
 from reyn.cron import CronJob, CronScheduler
-
 
 # ---------------------------------------------------------------------------
 # Helpers

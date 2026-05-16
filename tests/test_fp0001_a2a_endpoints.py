@@ -36,7 +36,6 @@ pytest.importorskip("httpx", reason="httpx not installed (needed by TestClient)"
 
 from reyn.web.run_registry import RunRegistry  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -206,15 +205,15 @@ def test_stream_task_events_returns_not_found_for_missing_run() -> None:
 def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> None:
     """Tier 2: FP-0001 flips Agent Card capabilities to streaming=True and
     pushNotifications=True. stateTransitionHistory stays False."""
+    from fastapi.testclient import TestClient
+
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.events.state_log import StateLog
     from reyn.web.deps import get_registry
-
     from reyn.web.server import app
-    from fastapi.testclient import TestClient
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -268,6 +267,8 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     We populate a pending intervention by hand (using UserIntervention +
     asyncio.Future) without going through the full async stack.
     """
+    from fastapi.testclient import TestClient
+
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
@@ -275,9 +276,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
     from reyn.events.state_log import StateLog
     from reyn.user_intervention import UserIntervention
     from reyn.web.deps import get_registry, get_run_registry
-
     from reyn.web.server import app
-    from fastapi.testclient import TestClient
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 
@@ -321,7 +320,7 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
         client = TestClient(app, raise_server_exceptions=False)
         try:
             r = client.post(
-                f"/a2a/agents/demo",
+                "/a2a/agents/demo",
                 json={
                     "jsonrpc": "2.0",
                     "id": "ans-1",
@@ -356,15 +355,15 @@ def test_answer_injection_delivers_to_pending_intervention(tmp_path) -> None:
 def test_answer_injection_returns_answered_false_for_unknown_task(tmp_path) -> None:
     """Tier 2: POST /a2a/agents/{name} with params.task_id for a run that
     doesn't exist returns {"answered": False, "reason": "not found"}."""
+    from fastapi.testclient import TestClient
+
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import AgentRegistry
     from reyn.chat.session import ChatSession
     from reyn.events.state_log import StateLog
     from reyn.web.deps import get_registry, get_run_registry
-
     from reyn.web.server import app
-    from fastapi.testclient import TestClient
 
     state_log = StateLog(tmp_path / ".reyn" / "state" / "wal.jsonl")
 

@@ -34,7 +34,6 @@ from reyn.events.state_log import StateLog
 from reyn.mcp_server import send_to_agent_impl
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 
-
 # ---------------------------------------------------------------------------
 # In-file _CaptureBus — no MagicMock; plain class implementing the
 # InterventionBus protocol.

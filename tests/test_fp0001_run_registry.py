@@ -19,7 +19,6 @@ import pytest
 from reyn.user_intervention import InterventionAnswer, UserIntervention
 from reyn.web.run_registry import RunEntry, RunRegistry
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

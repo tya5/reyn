@@ -41,7 +41,6 @@ from reyn.schemas.models import RunSkillIROp
 from reyn.secrets.store import CredentialScopeError, ScopedSecretStore
 from reyn.workspace.workspace import Workspace
 
-
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------

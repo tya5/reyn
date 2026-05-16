@@ -17,10 +17,10 @@ import httpx
 import pytest
 
 from reyn.dogfood.publish import (
+    _DEFAULT_TEMPLATE_PATH,
     DEFAULT_CATEGORY_SLUG,
     DEFAULT_REPO,
     PublishConfig,
-    _DEFAULT_TEMPLATE_PATH,
     _split_repo,
     build_title,
     create_discussion,
@@ -31,7 +31,6 @@ from reyn.dogfood.publish import (
     resolve_category_id,
     resolve_repo_id,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

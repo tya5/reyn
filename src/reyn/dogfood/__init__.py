@@ -9,15 +9,15 @@ Components:
   compare     — baseline vs candidate regression compare (F2, this slice)
 """
 from .scenarios import (
-    ScenarioSet,
-    Scenario,
-    ExpectedReply,
-    ExpectedEvents,
+    ArtifactAssertion,
     EventAssertion,
     ExpectedArtifacts,
-    ArtifactAssertion,
+    ExpectedEvents,
+    ExpectedReply,
     OutcomePrediction,
+    Scenario,
     ScenarioLoadError,
+    ScenarioSet,
     load_scenario_set,
 )
 

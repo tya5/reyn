@@ -292,12 +292,12 @@ def test_chat_session_intervention_override_is_used():
     default ChatInterventionBus.  Uses a minimal scripted stub bus (real
     callable, no MagicMock) to observe the routing.
     """
+    import tempfile
+
     from reyn.budget.budget import BudgetTracker, CostConfig
     from reyn.chat.session import ChatSession, _new_chain_id
     from reyn.events.state_log import StateLog
     from reyn.user_intervention import InterventionAnswer, InterventionBus, UserIntervention
-
-    import tempfile
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td)
         state_log = StateLog(tmp / "wal.jsonl")
@@ -425,6 +425,7 @@ def test_async_mode_message_send_returns_task_envelope(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     from fastapi.testclient import TestClient
+
     from reyn.web.deps import get_registry, get_run_registry
     from reyn.web.run_registry import RunRegistry
     from reyn.web.server import app
@@ -476,6 +477,7 @@ def test_get_task_returns_run_entry(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     from fastapi.testclient import TestClient
+
     from reyn.web.deps import get_registry, get_run_registry
     from reyn.web.run_registry import RunRegistry
     from reyn.web.server import app

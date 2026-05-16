@@ -48,8 +48,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, AsyncGenerator
 
 if TYPE_CHECKING:
-    from reyn.dogfood.scenarios import Scenario
     from reyn.dogfood.runner import ScenarioRunResult
+    from reyn.dogfood.scenarios import Scenario
     from reyn.testing.replay import LLMReplay
 
 logger = logging.getLogger(__name__)
@@ -189,9 +189,8 @@ async def replay_run(
         The execution result.  In the MVP, always ``inconclusive``.
         When the live runner is wired in, this carries real verdicts.
     """
-    from reyn.testing.replay import MissingFixture
-
     from reyn.dogfood.runner import ScenarioRunResult
+    from reyn.testing.replay import MissingFixture
 
     async with scenario_replay_context(fixture_dir, set_name, scenario.id) as _replay:
         # Execution stub: LLMReplay is now active — any litellm call in this

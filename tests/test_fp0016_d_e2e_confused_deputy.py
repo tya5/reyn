@@ -36,7 +36,6 @@ import pytest
 
 from reyn.secrets import CredentialScopeError, ScopedSecretStore
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

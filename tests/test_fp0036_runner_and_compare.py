@@ -18,6 +18,11 @@ from pathlib import Path
 
 import pytest
 
+from reyn.dogfood.compare import (
+    CompareReport,
+    ScenarioDelta,
+    compare_runs,
+)
 from reyn.dogfood.runner import (
     OUTCOME_ORDER,
     RunResult,
@@ -27,16 +32,10 @@ from reyn.dogfood.runner import (
     load_run_result_from_storage,
     run_scenario_set,
 )
-from reyn.dogfood.compare import (
-    CompareReport,
-    ScenarioDelta,
-    compare_runs,
-)
 from reyn.dogfood.scenarios import (
     Scenario,
     ScenarioSet,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

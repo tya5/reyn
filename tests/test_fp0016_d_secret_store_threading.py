@@ -30,7 +30,6 @@ from reyn.schemas.models import Phase, Skill, SkillGraph
 from reyn.secrets.store import ScopedSecretStore
 from reyn.workspace.workspace import Workspace
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

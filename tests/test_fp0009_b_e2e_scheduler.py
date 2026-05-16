@@ -18,9 +18,9 @@ from typing import Any
 import pytest
 import yaml
 
-from reyn.config import CronJobConfig, CronConfig, _build_cron_config, load_config
-from reyn.cron import CronJob as CronJobRuntime, CronScheduler
-
+from reyn.config import CronConfig, CronJobConfig, _build_cron_config, load_config
+from reyn.cron import CronJob as CronJobRuntime
+from reyn.cron import CronScheduler
 
 # ---------------------------------------------------------------------------
 # Recording runner — real async callable, no mocks
