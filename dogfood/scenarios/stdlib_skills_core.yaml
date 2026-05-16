@@ -49,6 +49,7 @@ scenarios:
           - reply does not claim an error occurred
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, status: success }
           - { type: phase_started, count: ">=1" }
@@ -78,6 +79,7 @@ scenarios:
           - reply does not fabricate contents; if the MCP server is unavailable it says so
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, count: ">=1" }
           - { type: phase_started, count: ">=1" }
@@ -108,6 +110,7 @@ scenarios:
           - reply does not claim a permission error unless MCP is actually unavailable
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, count: ">=1" }
         must_not_emit:
@@ -139,6 +142,7 @@ scenarios:
           - reply does not claim total failure without a concrete error reason
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, count: ">=1" }
           - { type: phase_started, count: ">=1" }
@@ -169,6 +173,7 @@ scenarios:
           - statistics are consistent with the input text length
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, status: success }
           - { type: phase_started, count: ">=1" }
@@ -203,6 +208,7 @@ scenarios:
           - reply references the precomputed statistics rather than estimating them
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, status: success }
         must_not_emit:
@@ -236,6 +242,7 @@ scenarios:
           - reply does not fabricate a score without running eval
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, count: ">=1" }
           - { type: phase_started, count: ">=1" }
@@ -326,6 +333,7 @@ scenarios:
           - reply does not report a generic error without a concrete reason
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, count: ">=1" }
           - { type: phase_started, count: ">=1" }

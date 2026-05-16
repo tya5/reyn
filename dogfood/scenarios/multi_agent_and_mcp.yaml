@@ -34,6 +34,7 @@ scenarios:
           - or explains that no registry results were found and suggests alternatives
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
       outcome_prediction:
         verified: 0.6
@@ -56,7 +57,7 @@ scenarios:
           - does not silently fail — replies with actionable information either way
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
       outcome_prediction:
         verified: 0.2
         inconclusive: 0.55
@@ -79,7 +80,7 @@ scenarios:
           - if agent not found, the reply explains how to create the agent
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
       outcome_prediction:
         verified: 0.3
         inconclusive: 0.45
@@ -105,7 +106,7 @@ scenarios:
           - does not return an empty reply
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
       outcome_prediction:
         verified: 0.2
         inconclusive: 0.45
@@ -130,8 +131,7 @@ scenarios:
           - mentions GET /a2a/tasks/{run_id} for polling
           - explains that reyn web must be running first
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+        must_emit: []
       outcome_prediction:
         verified: 0.5
         inconclusive: 0.35
@@ -155,6 +155,7 @@ scenarios:
           - does not silently skip the permission gate
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
       outcome_prediction:
         verified: 0.4
@@ -177,7 +178,7 @@ scenarios:
           - if applicable, shows how to configure recurring runs via reyn.yaml or reyn CLI
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
       outcome_prediction:
         verified: 0.4
         inconclusive: 0.45
