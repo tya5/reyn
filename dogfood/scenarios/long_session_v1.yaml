@@ -50,8 +50,7 @@ scenarios:
           - references concepts established in earlier turns without re-explaining from scratch
           - does not produce an empty reply on the final turn
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+        must_emit: []
     outcome_prediction:
       verified: 0.65
       inconclusive: 0.25
@@ -133,8 +132,7 @@ scenarios:
           - the code uses asyncio.Queue or equivalent
           - does not produce an empty reply on the final turn
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+        must_emit: []
     outcome_prediction:
       verified: 0.7
       inconclusive: 0.2

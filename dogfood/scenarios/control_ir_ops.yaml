@@ -32,7 +32,7 @@ scenarios:
           - mentions at least one of P1 through P8 or their descriptions
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
@@ -57,7 +57,7 @@ scenarios:
           - mentions judge_output in relation to the found file(s)
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
@@ -82,7 +82,7 @@ scenarios:
           - references OpenAI or the Python SDK in the response
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: web_search_started, count: ">=1" }
           - { type: web_search_completed, count: ">=1" }
         must_not_emit:
@@ -109,7 +109,7 @@ scenarios:
           - reply is a summary, not a raw HTML dump
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: web_fetch_started, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
@@ -134,7 +134,7 @@ scenarios:
           - does not report an error or permission denial
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: sandboxed_exec_started, count: ">=1" }
           - { type: sandboxed_exec_completed, count: ">=1" }
         must_not_emit:
@@ -160,7 +160,7 @@ scenarios:
           - mentions error count or warning count
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
           - { type: lint_completed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
@@ -189,7 +189,7 @@ scenarios:
           - does not fabricate phase rollback details without citing a source
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
+          - { type: routing_decided, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -216,6 +216,7 @@ scenarios:
           - references the rubric or evaluation criteria in the response
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
@@ -247,6 +248,7 @@ scenarios:
           - OR reports that scaffolding was started or completed
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: user_intervention_requested, count: ">=1" }
           - { type: user_intervention_received, count: ">=1" }

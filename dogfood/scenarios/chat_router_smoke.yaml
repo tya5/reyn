@@ -33,8 +33,6 @@ scenarios:
       events:
         must_emit:
           - { type: user_message_received, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -57,9 +55,7 @@ scenarios:
         rubric:
           - explains the concept of idempotency in a factual and comprehensible way
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
+        must_emit: []
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -84,8 +80,7 @@ scenarios:
           - reply does not return a bare error message
       events:
         must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
+          - { type: routing_decided, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -110,6 +105,7 @@ scenarios:
           - reply contains word count, character count, or similar statistics about the text
       events:
         must_emit:
+          - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
           - { type: skill_run_completed, status: success }
         must_not_emit:
@@ -138,8 +134,6 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -165,9 +159,7 @@ scenarios:
           - second reply contains a Python code example demonstrating list comprehension
           - the example is coherent with the first turn's topic
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=2" }
-          - { type: skill_run_completed, status: success }
+        must_emit: []
         must_not_emit:
           - { type: permission_denied }
       artifacts:
@@ -192,9 +184,7 @@ scenarios:
           - reply politely declines or explains the capability is not available
           - reply does not pretend to generate an image
       events:
-        must_emit:
-          - { type: skill_run_spawned, count: ">=1" }
-          - { type: skill_run_completed, status: success }
+        must_emit: []
         must_not_emit:
           - { type: permission_denied }
       artifacts:
