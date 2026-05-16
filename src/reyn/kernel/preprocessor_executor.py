@@ -152,6 +152,10 @@ class PreprocessorExecutor:
             # FP-0021: thread the OSRuntime run_id into every OpContext
             # so event emit helpers can stamp the correct run scope.
             run_id=self._run_id,
+            # FP-0016 E: pick up agent_id from the EventLog (= populated
+            # at session level) so X-Reyn-Agent-Id is added to outgoing
+            # MCP HTTP calls dispatched from preprocessor ops.
+            agent_id=getattr(self._events, "agent_id", None),
         )
 
     async def run(

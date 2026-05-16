@@ -53,7 +53,12 @@ class MCPClient:
         await client.close()
     """
 
-    def __init__(self, config: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: dict[str, Any],
+        *,
+        agent_id: str | None = None,
+    ) -> None:
         if not isinstance(config, dict):
             raise ValueError(f"MCP server config must be a dict, got {type(config).__name__}")
         srv_type = config.get("type")
@@ -64,6 +69,12 @@ class MCPClient:
             )
         self._config: dict[str, Any] = dict(config)
         self._type: str = srv_type
+        # FP-0016 Component E: agent_id is injected as the
+        # ``X-Reyn-Agent-Id`` header on every outgoing HTTP request so
+        # downstream MCP servers can attribute calls to a specific Reyn
+        # agent. None preserves prior behaviour for direct callers (= the
+        # session factory passes ReynConfig.agent.id; tests can omit).
+        self._agent_id: str | None = agent_id
         self._stack: AsyncExitStack | None = None
         self._session: Any = None  # mcp.ClientSession when initialized
         self._initialized = False
@@ -200,6 +211,14 @@ class MCPClient:
         headers = {
             str(k): str(v) for k, v in (self._config.get("headers") or {}).items()
         }
+        # FP-0016 Component E: inject the agent_id as X-Reyn-Agent-Id so
+        # downstream MCP servers can attribute requests to a specific
+        # Reyn agent (= RBAC + audit trail requirement per the issue
+        # シナリオ 5 Enterprise Agent ID pattern). Explicit operator
+        # headers win when they already set the field — operators may
+        # need to spoof in tests or proxy in production.
+        if self._agent_id and "X-Reyn-Agent-Id" not in headers:
+            headers["X-Reyn-Agent-Id"] = self._agent_id
         timeout = self._config.get("timeout", 30)
         return streamablehttp_client(url, headers=headers, timeout=timeout)
 

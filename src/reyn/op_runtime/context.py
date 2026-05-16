@@ -54,6 +54,12 @@ class OpContext:
     mcp_servers: dict = field(default_factory=dict)
     # Mutable cache for MCP HTTP clients keyed by server name
     mcp_clients: dict = field(default_factory=dict)
+    # FP-0016 Component E: agent identity for X-Reyn-Agent-Id header on
+    # outgoing MCP / external HTTP calls. Plumbed from ChatSession's
+    # ReynConfig.agent.id (= `reyn/<hostname>` by default). None
+    # preserves prior behaviour for direct OpContext construction (e.g.
+    # tests that don't simulate a multi-agent identity).
+    agent_id: str | None = None
 
     # User interventions (ask_user, permission prompts in PR7)
     intervention_bus: "InterventionBus | None" = None
