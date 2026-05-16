@@ -167,6 +167,12 @@ class RouterLoopHost(Protocol):
         project-specific context."""
         ...
 
+    def get_universal_wrappers_enabled(self) -> bool:
+        """Return whether the FP-0034 universal catalog wrappers should
+        appear in tools=. Mirrors ``action_retrieval.universal_wrappers_enabled``
+        from reyn.yaml. Default False preserves the prior tools= shape."""
+        ...
+
     async def web_search(self, *, query: str, max_results: int) -> dict:
         """RouterLoopHost: invoke the OS-native web/search op (DuckDuckGo)."""
         ...
@@ -380,12 +386,21 @@ class RouterLoop:
         # catalogue exceeds the threshold. Falls through to full enum on
         # 0 BM25 results so no skill can become invisible (Fallback safety).
         skills_for_tools = self._apply_skill_search(all_skills, user_text)
+        # FP-0034 PR-3b-iii: read universal wrapper visibility from host.
+        # getattr fallback so narrow hosts (= plan-mode sub-host) that
+        # don't implement the method default to off (= preserve prior
+        # plan-step tools= shape).
+        _univ_enabled_getter = getattr(
+            host, "get_universal_wrappers_enabled", None,
+        )
+        _univ_enabled = bool(_univ_enabled_getter()) if _univ_enabled_getter else False
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
             file_permissions=host.get_file_permissions(),
             mcp_servers=host.get_mcp_servers(),
             web_fetch_allowed=host.get_web_fetch_allowed(),
+            universal_wrappers_enabled=_univ_enabled,
         )
         if self._exclude_tools:
             tools = [

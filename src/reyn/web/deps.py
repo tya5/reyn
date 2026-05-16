@@ -189,6 +189,7 @@ def _get_registry():
                 events_config=config.events,
                 state_log=state_log,
                 budget_tracker=budget_tracker,
+                action_retrieval_config=config.action_retrieval,
             )
             s.load_history()
             return s

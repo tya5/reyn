@@ -202,6 +202,7 @@ def run(args: argparse.Namespace) -> None:
             state_log=state_log,
             budget_tracker=budget_tracker,
             sandbox_config=session_cfg.config.sandbox,
+            action_retrieval_config=session_cfg.config.action_retrieval,
         )
         s.load_history()
         return s

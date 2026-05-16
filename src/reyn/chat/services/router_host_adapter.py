@@ -138,6 +138,10 @@ class RouterHostAdapter:
         # Tracker getters (return mutable list or None)
         delegation_tracker: Callable[[], "list[dict] | None"],
         agent_replies_tracker: Callable[[], "list[str] | None"],
+        # FP-0034 PR-3b-iii: universal catalog wrapper visibility (= reyn.yaml
+        # action_retrieval.universal_wrappers_enabled). Defaults to False so
+        # callers that don't pass it preserve the prior tools= shape.
+        universal_wrappers_enabled: bool = False,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -175,6 +179,8 @@ class RouterHostAdapter:
         # Tracker getters
         self._delegation_tracker = delegation_tracker
         self._agent_replies_tracker = agent_replies_tracker
+        # FP-0034 PR-3b-iii
+        self._universal_wrappers_enabled = universal_wrappers_enabled
 
     # --- RouterLoopHost identity attributes ---
 
@@ -250,6 +256,18 @@ class RouterHostAdapter:
         the operator's project context. Empty string when not configured.
         """
         return self._project_context or ""
+
+    def get_universal_wrappers_enabled(self) -> bool:
+        """Return whether FP-0034 universal catalog wrappers are enabled.
+
+        Mirror of the ``action_retrieval.universal_wrappers_enabled`` flag
+        from reyn.yaml. RouterLoop calls this when building tools= so the
+        4 wrappers (list_actions / describe_action / invoke_action;
+        search_actions gated separately by §D14) appear in the LLM's
+        function-calling catalog. Default False preserves the prior
+        tools= shape.
+        """
+        return self._universal_wrappers_enabled
 
     # --- Web ops ---
 

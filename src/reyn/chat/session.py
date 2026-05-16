@@ -39,7 +39,7 @@ from reyn.chat.services.chain_manager import _PendingChain
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.compiler import load_dsl_skill
 from reyn.compiler.parser import _split_frontmatter
-from reyn.config import EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
+from reyn.config import ActionRetrievalConfig, EventsConfig, OnLimitConfig, SafetyConfig, SandboxConfig  # noqa: F401
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.event_store import EventStore
 from reyn.events.events import EventLog
@@ -487,6 +487,7 @@ class ChatSession:
         budget_tracker: BudgetTracker | None = None,
         snapshot_path: "Path | None" = None,
         sandbox_config: "SandboxConfig | None" = None,
+        action_retrieval_config: "ActionRetrievalConfig | None" = None,
     ) -> None:
         """
         snapshot_path: optional override for the per-agent snapshot file
@@ -505,6 +506,11 @@ class ChatSession:
         # Plumbed through to spawned Agents so sandboxed_exec backend selection
         # honors the operator's declared policy.
         self._sandbox_config = sandbox_config
+        # FP-0034 PR-3b-iii: action_retrieval config — drives whether the
+        # universal catalog wrappers appear in the router tools=. Default
+        # constructs an off-flag ActionRetrievalConfig so existing chat
+        # behaviour is preserved when callers don't pass one.
+        self._action_retrieval = action_retrieval_config or ActionRetrievalConfig()
         self._mcp_servers = mcp_servers
         self.output_language = output_language
         self._prompt_cache_enabled = prompt_cache_enabled
@@ -753,6 +759,7 @@ class ChatSession:
             spawn_plan_task=self.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
+            universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.
