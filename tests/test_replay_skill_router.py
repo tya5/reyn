@@ -749,6 +749,69 @@ async def test_list_actions_discovery_then_invoke():
 
 
 @pytest.mark.replay(
+    "fixtures/llm/router/universal_wrappers/forced_invoke_action.jsonl"
+)
+@pytest.mark.asyncio
+async def test_forced_invoke_action_dispatch_chain():
+    """Tier 3a: invoke_action e2e dispatch chain through a real LLM.
+
+    The prompt explicitly directs the LLM to use ``invoke_action`` (not
+    ``invoke_skill``) so the recorded fixture exercises the universal
+    catalog dispatch path end-to-end:
+
+        LLM tool_call(invoke_action, {action_name: "skill__text_summariser",
+                                       args: {...}})
+        → RouterLoop._invoke_router_tool
+        → _REGISTRY_DISPATCH_TOOLS contains "invoke_action"
+        → _invoke_via_registry
+        → _handle_invoke_action
+        → universal_dispatch.resolve_invoke_action
+        → target_tool_name="invoke_skill" + transformed args
+        → registry.lookup("invoke_skill").handler(transformed_args, ctx)
+        → ctx.router_state.run_skill_fn (= host.run_skill_awaitable
+          with chain_id pre-bound)
+        → FakeRouterHost.run_skill_awaitable records the call
+
+    Without this fixture the Tier 3 surface only verifies list_actions
+    discovery (fixture 2 fell back to legacy invoke_skill).  This
+    fixture closes the gap by pinning the invoke_action dispatch chain
+    against a real LLM tool_call.
+    """
+    host = FakeRouterHost(
+        skills=[
+            {
+                "name": "text_summariser",
+                "description": "Summarises text.",
+                "category": "general",
+            },
+        ],
+        universal_wrappers_enabled=True,
+    )
+    loop = _make_loop(host, max_iterations=8)
+
+    await loop.run(
+        "Use the `invoke_action` tool (not `invoke_skill`) to run the "
+        "text_summariser skill on this text: "
+        "The quick brown fox jumps over the lazy dog. "
+        "Pass action_name='skill__text_summariser'.",
+        [],
+    )
+
+    # Invariant 1: skill ran via SOME dispatch path.
+    assert len(host.skill_calls) >= 1, (
+        f"Expected at least one skill call; got: {host.skill_calls}"
+    )
+    # Invariant 2: chain_id propagates through dispatch.
+    assert host.skill_calls[0]["chain_id"] == "chain-test"
+    # Invariant 3: the invoked skill is text_summariser regardless of
+    # which path the LLM chose.
+    assert host.skill_calls[0]["skill"] == "text_summariser"
+    # Invariant 4: agent text reply present.
+    assert len(host.outbox) >= 1
+    assert host.outbox[-1]["kind"] == "agent"
+
+
+@pytest.mark.replay(
     "fixtures/llm/router/universal_wrappers/invoke_skill_with_wrappers.jsonl"
 )
 @pytest.mark.asyncio
