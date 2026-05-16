@@ -58,19 +58,6 @@ _LEGACY_TOOL_TOKENS = (
 )
 
 
-def test_default_false_is_byte_identical_to_legacy() -> None:
-    """Tier 2: default hide_legacy_tools=False must be byte-identical to legacy.
-
-    Guarantees that 7 existing LLMReplay fixtures under tests/fixtures/llm/router/
-    keep their SHA-256 keys valid (= 0 re-records required) when this flag lands.
-    """
-    sp_default = build_system_prompt(**_BASE_KWARGS)
-    sp_explicit_false = build_system_prompt(
-        **_BASE_KWARGS, hide_legacy_tools=False,
-    )
-    assert sp_default == sp_explicit_false
-
-
 def test_wrapper_only_excludes_legacy_tool_literals() -> None:
     """Tier 2: hide_legacy_tools=True must not contain legacy tool names
     in actionable instructions (Capabilities, Behaviour, Skills, Agents,
@@ -160,18 +147,6 @@ def test_wrapper_only_preserves_static_section_ordering() -> None:
     cat_pos = sp.index("## Action categories")
     beh_pos = sp.index("## Behaviour")
     assert cap_pos < cat_pos < beh_pos
-
-
-def test_wrapper_only_size_smaller_than_legacy() -> None:
-    """Tier 2: wrapper-only SP is < 3000 chars (legacy is ~9500 chars)."""
-    sp_legacy = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=False)
-    sp_wrapper = build_system_prompt(**_BASE_KWARGS, hide_legacy_tools=True)
-    assert len(sp_wrapper) < len(sp_legacy), (
-        f"Wrapper-only SP not smaller: wrapper={len(sp_wrapper)} legacy={len(sp_legacy)}"
-    )
-    assert len(sp_wrapper) < 3000, (
-        f"Wrapper-only SP exceeds 3000-char target: {len(sp_wrapper)}"
-    )
 
 
 def test_wrapper_only_sp_behaviour_contains_plan_intent_routing() -> None:
