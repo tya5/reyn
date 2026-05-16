@@ -1,8 +1,9 @@
 """Tier 2: MCP ToolDefinitions M3 Wave 2 invariants (ADR-0026 M3 + Type C closure).
 
 Verifies that CALL_MCP_TOOL, LIST_MCP_SERVERS, and LIST_MCP_TOOLS ToolDefinitions:
-- Produce byte-identical description/parameters output to the prior ToolSpec
-  literals in router_tools.py. Drift would invalidate replay fixtures.
+- Produce correct description/parameters output matching the FP-0032 contract.
+  (Prior byte-identity tests against the legacy ``tool`` param name have been
+  updated to reflect the FP-0032 vocabulary unification: ``tool`` → ``mcp_tool_name``.)
 - Have the correct gates (all 3 have router=allow, phase=allow — Type C closure).
 - Have correct purity and category.
 - Are renderable via render_for_router() and render_for_phase().
@@ -31,30 +32,29 @@ from reyn.tools.registry import ToolRegistry
 # ── 1. CALL_MCP_TOOL — byte-identity gate ─────────────────────────────────────
 
 def test_call_mcp_tool_router_render_exact_description():
-    """Tier 2: CALL_MCP_TOOL description is byte-identical to the legacy ToolSpec
-    description in router_tools.py D3. Any diff is a stop signal."""
+    """Tier 2: CALL_MCP_TOOL description matches the FP-0032 vocabulary contract
+    (mcp_tool_name instead of tool, describe_mcp_tool instead of list_mcp_tools)."""
     rendered = CALL_MCP_TOOL.render_for_router()
-    legacy_description = (
-        "Invoke an MCP server tool. Construct args matching "
-        "the tool's input schema (see list_mcp_tools)."
+    fp0032_description = (
+        "Invoke a mcp_tool on an MCP server. Construct args matching "
+        "the mcp_tool's input schema (see describe_mcp_tool)."
     )
-    assert rendered["function"]["description"] == legacy_description
+    assert rendered["function"]["description"] == fp0032_description
 
 
 def test_call_mcp_tool_router_render_exact_parameters():
-    """Tier 2: CALL_MCP_TOOL parameters schema is byte-identical to the legacy
-    ToolSpec parameters in router_tools.py D3."""
+    """Tier 2: CALL_MCP_TOOL parameters schema matches the FP-0032 contract
+    (mcp_tool_name replaces tool; enum-injectable descriptions on server + mcp_tool_name)."""
     rendered = CALL_MCP_TOOL.render_for_router()
-    legacy_parameters = {
-        "type": "object",
-        "properties": {
-            "server": {"type": "string"},
-            "tool": {"type": "string"},
-            "args": {"type": "object"},
-        },
-        "required": ["server", "tool", "args"],
-    }
-    assert rendered["function"]["parameters"] == legacy_parameters
+    params = rendered["function"]["parameters"]
+    assert params["type"] == "object"
+    assert "server" in params["properties"]
+    assert "mcp_tool_name" in params["properties"]
+    assert "args" in params["properties"]
+    assert "tool" not in params["properties"], (
+        "Legacy 'tool' param must be removed — FP-0032 renames to 'mcp_tool_name'"
+    )
+    assert set(params["required"]) == {"server", "mcp_tool_name", "args"}
 
 
 def test_call_mcp_tool_router_render_name():
@@ -198,12 +198,15 @@ def test_all_mcp_tools_category_discovery():
 
 def test_call_mcp_tool_render_for_phase_shape():
     """Tier 2: CALL_MCP_TOOL.render_for_phase() has kind, description, args_schema,
-    purity with correct values."""
+    purity with correct FP-0032 values (mcp_tool_name instead of tool)."""
     rendered = CALL_MCP_TOOL.render_for_phase()
     assert rendered["kind"] == "call_mcp_tool"
     assert rendered["description"] == _CALL_MCP_TOOL_DESCRIPTION
-    assert rendered["args_schema"]["properties"]["server"] == {"type": "string"}
-    assert rendered["args_schema"]["properties"]["tool"] == {"type": "string"}
+    assert "server" in rendered["args_schema"]["properties"]
+    assert "mcp_tool_name" in rendered["args_schema"]["properties"]
+    assert "tool" not in rendered["args_schema"]["properties"], (
+        "Legacy 'tool' key must not appear in render_for_phase — FP-0032 rename"
+    )
     assert rendered["args_schema"]["properties"]["args"] == {"type": "object"}
     assert rendered["purity"] == "side_effect"
 
@@ -284,10 +287,12 @@ def test_call_mcp_tool_args_schema_accepts_object():
 
 
 def test_call_mcp_tool_required_fields():
-    """Tier 2: call_mcp_tool requires exactly server + tool + args (no optional
-    wriggle room in the required list — all 3 must be provided)."""
+    """Tier 2: call_mcp_tool requires exactly server + mcp_tool_name + args
+    (FP-0032 vocabulary: 'tool' renamed to 'mcp_tool_name')."""
     params = dict(CALL_MCP_TOOL.parameters)
-    assert set(params["required"]) == {"server", "tool", "args"}
+    assert set(params["required"]) == {"server", "mcp_tool_name", "args"}, (
+        "FP-0032: 'tool' must be replaced by 'mcp_tool_name' in required fields"
+    )
 
 
 def test_call_mcp_tool_render_for_router_top_level_shape():

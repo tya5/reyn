@@ -53,61 +53,73 @@ def _tool_names(tools: list[dict]) -> set[str]:
 
 
 def test_below_threshold_uses_inline_mcp_tools():
-    """Tier 2: build_tools() < threshold → inline D1–D3 MCP tools present; no search tool.
+    """Tier 2: build_tools() < explicit threshold → inline D1–D4 MCP tools present; no search tool.
 
     FP-0024 Component D backward-compat invariant: when MCP server count
     is strictly below mcp_search_threshold, behavior is identical to pre-FP-0024
-    (D1–D3 inline tools, no tool_search_tool entry in the catalog).
+    (D1–D4 inline tools, no tool_search_tool entry in the catalog).
+
+    FP-0032: MCP_SEARCH_THRESHOLD is now 0 (default-off for Anthropic-specific
+    tool_search_tool). This test uses an explicit threshold > 0 to test the
+    threshold gate logic.
     """
-    # Use threshold-1 servers to stay below the threshold.
-    below_count = max(1, MCP_SEARCH_THRESHOLD - 1)
+    # Use an explicit threshold to test the threshold-gate logic.
+    # FP-0032: MCP_SEARCH_THRESHOLD defaults to 0 (opt-in only); use 5 here.
+    _explicit_threshold = 5
+    below_count = max(1, _explicit_threshold - 1)
     servers = _make_mcp_servers(below_count)
 
     tools = build_tools(
         _SAMPLE_SKILLS,
         _SAMPLE_AGENTS,
         mcp_servers=servers,
-        mcp_search_threshold=MCP_SEARCH_THRESHOLD,
+        mcp_search_threshold=_explicit_threshold,
     )
     names = _tool_names(tools)
 
-    # All three inline MCP tools must be present.
-    missing = _INLINE_MCP_TOOL_NAMES - names
+    # All four inline MCP tools must be present (FP-0032 adds describe_mcp_tool).
+    _INLINE_MCP_TOOL_NAMES_FP0032 = _INLINE_MCP_TOOL_NAMES | {"describe_mcp_tool"}
+    missing = _INLINE_MCP_TOOL_NAMES_FP0032 - names
     assert not missing, (
         f"Inline MCP tools missing below threshold (count={below_count}, "
-        f"threshold={MCP_SEARCH_THRESHOLD}): {missing}. Got names: {names}"
+        f"threshold={_explicit_threshold}): {missing}. Got names: {names}"
     )
 
     # tool_search_tool must NOT be present.
     assert "tool_search" not in names, (
         f"tool_search unexpectedly present below threshold "
-        f"(count={below_count}, threshold={MCP_SEARCH_THRESHOLD})"
+        f"(count={below_count}, threshold={_explicit_threshold})"
     )
 
 
 def test_above_threshold_uses_search_tool():
-    """Tier 2: build_tools() >= threshold → tool_search_tool present; inline D1–D3 absent.
+    """Tier 2: build_tools() >= explicit threshold → tool_search_tool present; inline D1–D3 absent.
 
     FP-0024 Component D core invariant: when MCP server count meets or exceeds
-    mcp_search_threshold, the catalog contains exactly the tool_search_tool
+    an explicit mcp_search_threshold > 0, the catalog contains the tool_search_tool
     meta-tool and none of the individual D1–D3 MCP management tools.
+
+    FP-0032: MCP_SEARCH_THRESHOLD is now 0 (Anthropic tool_search_tool default-off).
+    Callers must opt in by passing mcp_search_threshold > 0. This test validates the
+    threshold gate still works when explicitly set.
     """
-    # Use threshold servers (>= threshold triggers the switch).
-    at_count = MCP_SEARCH_THRESHOLD
+    # Use an explicit threshold to test the threshold-gate logic.
+    _explicit_threshold = 5
+    at_count = _explicit_threshold
     servers = _make_mcp_servers(at_count)
 
     tools = build_tools(
         _SAMPLE_SKILLS,
         _SAMPLE_AGENTS,
         mcp_servers=servers,
-        mcp_search_threshold=MCP_SEARCH_THRESHOLD,
+        mcp_search_threshold=_explicit_threshold,
     )
     names = _tool_names(tools)
 
     # tool_search meta-tool must be present.
     assert "tool_search" in names, (
-        f"tool_search missing at threshold "
-        f"(count={at_count}, threshold={MCP_SEARCH_THRESHOLD}). Got names: {names}"
+        f"tool_search missing at explicit threshold "
+        f"(count={at_count}, threshold={_explicit_threshold}). Got names: {names}"
     )
 
     # Inline D1–D3 tools must NOT be present (schema-load savings require exclusion).

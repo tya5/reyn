@@ -268,9 +268,10 @@ def test_mcp_tools_present_when_servers_configured():
 
 def test_total_tool_count_with_full_permissions():
     """Full file + MCP permissions → 11 baseline + 4 file C1-C4
-    + 2 web E1+E2 (both always on since FP-0022) + 3 MCP D1-D3
+    + 2 web E1+E2 (both always on since FP-0022) + 4 MCP D1-D4
     + 2 reyn_src F1-F2 + 1 plan G1
-    + 2 RAG H1-H2 (recall + drop_source) = 25 tools total.
+    + 2 RAG H1-H2 (recall + drop_source) = 26 tools total.
+    FP-0032: D4 describe_mcp_tool added alongside D1-D3.
     web_fetch_allowed param is kept for backward compat but now a no-op.
     """
     tools = build_tools(
@@ -280,7 +281,7 @@ def test_total_tool_count_with_full_permissions():
         mcp_servers=SAMPLE_MCP_SERVERS,
         web_fetch_allowed=True,
     )
-    assert len(tools) == 25, f"Expected 25 tools with full permissions, got {len(tools)}"
+    assert len(tools) == 26, f"Expected 26 tools with full permissions, got {len(tools)}"
 
 
 # ── Gemini-safe schema checks apply to new tools too ──────────────────────────
