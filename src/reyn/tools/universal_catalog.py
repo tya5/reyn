@@ -631,18 +631,92 @@ async def _handle_list_actions(
 async def _handle_search_actions(
     args: Mapping[str, Any], ctx: ToolContext,
 ) -> ToolResult:
-    """search_actions handler — STUB until FP-0034 Phase 2 lands embedding.
+    """search_actions handler — Phase 2 step 1 semantic search.
 
-    Per §D14, search_actions is visible only when embedding is
-    configured. The visibility gate lives at the integration layer
-    (= router_tools.py in PR-3b). When the handler is reached without
-    embedding wired, it raises NotImplementedError pointing at Phase 2.
+    Per §D13 / §D14, semantic search routes through an
+    ``ActionEmbeddingIndex`` populated from the catalog enumeration.
+    RouterLoop builds the index on first turn when the operator has
+    configured ``action_retrieval.embedding_class`` and binds the
+    index + provider + model class into the ``RouterCallerState``.
+
+    Response shape per §D11:
+        ``{items: [{qualified_name, short_description, score}, ...]}``
+
+    Graceful degradation:
+      - ``ctx.router_state`` absent → empty result
+      - ``action_embedding_index`` absent → empty result
+      - index ``is_ready()`` False (= still building / never built)
+        → empty result
+      - missing ``query`` argument → §D12 missing-arg error
+      - provider / model class missing → empty result
+
+    Concrete: when the visibility gate (build_tools §D14) is honored,
+    the handler is only invoked when the index is configured.  The
+    None-checks above are defense-in-depth for narrow callers (= plan
+    steps / test sites) that bypass the gate.
     """
-    raise NotImplementedError(
-        "search_actions semantic search lands in FP-0034 Phase 2 "
-        "(ActionEmbeddingIndex + embedding-based ranking). PR-3a wires "
-        "list_actions / describe_action / invoke_action only."
+    query = args.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {
+            "error": "missing required argument 'query'",
+            "reason": (
+                "search_actions requires a non-empty string `query` "
+                "describing what to search for."
+            ),
+            "hint": (
+                "Call search_actions(query='...') with a natural-language "
+                "description of the action you need."
+            ),
+        }
+
+    rs = ctx.router_state
+    if rs is None:
+        return {"items": [], "total": 0}
+
+    idx = rs.action_embedding_index
+    provider = rs.embedding_provider
+    model_class = rs.embedding_model_class
+    if idx is None or provider is None or not model_class:
+        return {"items": [], "total": 0}
+
+    # Optional category restriction (§D14 schema), default = all.
+    category_filter = args.get("category") or []
+    if isinstance(category_filter, str):
+        category_filter = [category_filter]
+    category_set = (
+        {c for c in category_filter if c in CATEGORIES}
+        if category_filter
+        else None
     )
+
+    limit = args.get("limit", 10)
+    try:
+        limit = max(1, int(limit))
+    except (TypeError, ValueError):
+        limit = 10
+
+    # Over-fetch when filtering by category so we still return up to
+    # ``limit`` after the post-filter cut.
+    raw_top_k = limit * len(CATEGORIES) if category_set else limit
+    results = await idx.query(query, provider, model_class, top_k=raw_top_k)
+
+    if category_set:
+        from reyn.tools.universal_catalog import split_qualified_name
+        filtered: list[dict[str, Any]] = []
+        for it in results:
+            try:
+                cat, _ = split_qualified_name(str(it.get("qualified_name", "")))
+            except ValueError:
+                continue
+            if cat in category_set:
+                filtered.append(it)
+            if len(filtered) >= limit:
+                break
+        results = filtered[:limit]
+    else:
+        results = results[:limit]
+
+    return {"items": results, "total": len(results)}
 
 
 async def _handle_describe_action(

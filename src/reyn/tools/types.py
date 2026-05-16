@@ -159,6 +159,26 @@ class RouterCallerState:
     # the catalog handler treats this identically to an empty list.
     available_rag_sources: list[Mapping[str, Any]] | None = None
 
+    # FP-0034 Phase 2 step 1: ActionEmbeddingIndex for the
+    # ``search_actions`` semantic search wrapper.  RouterLoop owns the
+    # session-scoped instance and triggers a background build when
+    # ``action_retrieval.embedding_class`` is configured.  The
+    # search_actions handler calls ``query()`` via this reference when
+    # ``is_ready()`` returns True; otherwise it returns an empty result
+    # so the LLM gracefully sees "no semantic results" rather than a
+    # crash.  ``None`` = no index (= embedding not configured / fake
+    # caller path); search_actions returns an empty result.
+    action_embedding_index: Any = None
+
+    # FP-0034 Phase 2 step 1: embedding provider + model class for
+    # the search_actions query path.  RouterLoop binds these from the
+    # session's EmbeddingProvider + the configured
+    # ``action_retrieval.embedding_class`` so search_actions can embed
+    # the user's query and rank against the index.  ``None`` = not
+    # configured; handler returns an empty result.
+    embedding_provider: Any = None
+    embedding_model_class: str | None = None
+
 
 @dataclass
 class PhaseCallerState:

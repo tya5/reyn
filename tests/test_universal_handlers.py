@@ -274,6 +274,110 @@ def test_list_actions_rag_corpus_empty_when_state_absent() -> None:
     assert result["total"] == 0
 
 
+# ── search_actions handler (FP-0034 Phase 2 step 1) ──────────────────────
+
+
+class _StubProvider:
+    """Minimal EmbeddingProvider for handler-level Tier 2 tests."""
+    async def embed(self, texts, model):
+        # Deterministic per-text vector — the index test covers ranking math,
+        # here we only verify the handler-level shape.
+        return {
+            "vectors": [[float(len(t)), 1.0, 0.0, 0.0] for t in texts],
+            "model": model,
+            "total_tokens": len(texts),
+        }
+
+
+def _ready_index_with(items):
+    from reyn.tools.action_index import ActionEmbeddingIndex
+    idx = ActionEmbeddingIndex()
+    _run(idx.build(items, _StubProvider(), "standard"))
+    return idx
+
+
+def test_search_actions_missing_query_returns_d12_error() -> None:
+    """Tier 2: search_actions without query returns §D12 error shape."""
+    result = _run(SEARCH_ACTIONS.handler({}, _make_ctx()))
+    assert "error" in result
+    assert "query" in result["error"]
+    assert "hint" in result
+
+
+def test_search_actions_empty_query_returns_d12_error() -> None:
+    """Tier 2: whitespace-only query returns §D12 error."""
+    result = _run(SEARCH_ACTIONS.handler({"query": "   "}, _make_ctx()))
+    assert "error" in result
+
+
+def test_search_actions_no_router_state_returns_empty() -> None:
+    """Tier 2: handler degrades to empty when router_state is missing."""
+    result = _run(SEARCH_ACTIONS.handler({"query": "anything"}, _make_ctx()))
+    assert result == {"items": [], "total": 0}
+
+
+def test_search_actions_no_index_returns_empty() -> None:
+    """Tier 2: handler degrades to empty when index is None.
+
+    Production path: embedding_class not configured → RouterLoop
+    leaves ``action_embedding_index=None`` → handler reports empty.
+    """
+    rs = RouterCallerState(
+        embedding_provider=_StubProvider(),
+        embedding_model_class="standard",
+        action_embedding_index=None,
+    )
+    result = _run(SEARCH_ACTIONS.handler({"query": "foo"}, _make_ctx(rs)))
+    assert result == {"items": [], "total": 0}
+
+
+def test_search_actions_returns_ranked_items() -> None:
+    """Tier 2: handler returns ranked items with score from the index."""
+    items = [
+        {"qualified_name": "skill__alpha", "short_description": "Alpha skill"},
+        {"qualified_name": "skill__beta", "short_description": "Beta skill"},
+        {"qualified_name": "skill__gamma", "short_description": "Gamma skill"},
+    ]
+    idx = _ready_index_with(items)
+    rs = RouterCallerState(
+        action_embedding_index=idx,
+        embedding_provider=_StubProvider(),
+        embedding_model_class="standard",
+    )
+    result = _run(SEARCH_ACTIONS.handler(
+        {"query": "alpha", "limit": 2}, _make_ctx(rs),
+    ))
+    assert "items" in result
+    assert "total" in result
+    assert len(result["items"]) <= 2
+    for it in result["items"]:
+        assert "qualified_name" in it
+        assert "score" in it
+
+
+def test_search_actions_filters_by_category() -> None:
+    """Tier 2: category filter restricts to qualified_names in those categories."""
+    items = [
+        {"qualified_name": "skill__alpha", "short_description": "Alpha"},
+        {"qualified_name": "file__read", "short_description": "Read"},
+        {"qualified_name": "skill__beta", "short_description": "Beta"},
+        {"qualified_name": "file__write", "short_description": "Write"},
+    ]
+    idx = _ready_index_with(items)
+    rs = RouterCallerState(
+        action_embedding_index=idx,
+        embedding_provider=_StubProvider(),
+        embedding_model_class="standard",
+    )
+    result = _run(SEARCH_ACTIONS.handler(
+        {"query": "x", "category": ["skill"], "limit": 10}, _make_ctx(rs),
+    ))
+    qns = {it["qualified_name"] for it in result["items"]}
+    # Only skill__ qualified names; no file__ entries.
+    assert all(qn.startswith("skill__") for qn in qns)
+    assert qns == {"skill__alpha", "skill__beta"}
+
+
 def test_list_actions_dynamic_category_empty_when_state_absent() -> None:
     """Tier 2: dynamic categories return empty without router_state."""
     result = _run(LIST_ACTIONS.handler(
