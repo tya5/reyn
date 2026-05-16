@@ -769,7 +769,7 @@ class RouterLoop:
         # when the LLM repeatedly calls list_mcp_tools / call_mcp_tool).
         # _normalise_router_tool_result unwraps list_mcp_servers and
         # list_mcp_tools dict envelopes back to bare list shape.
-        "list_mcp_servers", "list_mcp_tools", "call_mcp_tool",
+        "list_mcp_servers", "list_mcp_tools", "call_mcp_tool", "describe_mcp_tool",
         # Phase 3.5-B-heavy — memory cluster.  Handlers delegate via
         # RouterCallerState.{list_memory_fn, read_memory_body_fn,
         # remember_fn, forget_fn} bound to RouterLoop's private helpers
@@ -951,8 +951,17 @@ class RouterLoop:
                 return result["servers"]
             return result
         if name == "list_mcp_tools":
-            if isinstance(result, dict) and "tools" in result:
-                return result["tools"]
+            # FP-0032: key renamed from "tools" to "mcp_tools"; handle both
+            # for backward-compat during transition.
+            if isinstance(result, dict):
+                if "mcp_tools" in result:
+                    return result["mcp_tools"]
+                if "tools" in result:
+                    return result["tools"]
+            return result
+        if name == "describe_mcp_tool":
+            # Return the full dict (= {name, description, input_schema}).
+            # No unwrapping needed — the LLM sees it as structured data.
             return result
         return result
 

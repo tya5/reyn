@@ -392,7 +392,7 @@ def build_plan_step_system_prompt(
 # Used by ``_PlanStepHost`` to decide whether a given host method should
 # return narrow data or be silenced (= return empty / None).
 _FILE_TOOL_NAMES = frozenset({"list_directory", "read_file", "write_file", "delete_file"})
-_MCP_TOOL_NAMES = frozenset({"list_mcp_servers", "list_mcp_tools", "call_mcp_tool"})
+_MCP_TOOL_NAMES = frozenset({"list_mcp_servers", "list_mcp_tools", "call_mcp_tool", "describe_mcp_tool"})
 _WEB_FETCH_TOOL_NAME = "web_fetch"
 _INVOKE_SKILL_TOOL_NAME = "invoke_skill"
 _DELEGATE_TOOL_NAME = "delegate_to_agent"
