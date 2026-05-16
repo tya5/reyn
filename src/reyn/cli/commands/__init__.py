@@ -11,6 +11,7 @@ from . import auth as auth
 from . import chat as chat
 from . import config as config
 from . import cron as cron
+from . import dogfood as dogfood
 from . import eval as eval
 from . import events as events
 from . import init as init
@@ -27,4 +28,4 @@ from . import topology as topology
 from . import web as web
 
 # Order is the order shown in `reyn --help`.
-ALL = [init, config, skills, skill, run, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, mcp, secret, source, cron]
+ALL = [init, config, skills, skill, run, chat, agent, topology, eval, lint, memory, permissions, auth, events, web, mcp, secret, source, cron, dogfood]
