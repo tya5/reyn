@@ -365,22 +365,45 @@ class RouterLoopHost(Protocol):
 # FP-0034 Phase 2 step 5: hot list alias builder
 # ---------------------------------------------------------------------------
 
-def _build_hot_list_aliases(names: list[str]) -> list[dict]:
+def _build_hot_list_aliases(
+    names: list[str],
+    short_description_lookup: "dict[str, str] | None" = None,
+) -> list[dict]:
     """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
 
     Each alias has additionalProperties=True so any args pass through.
     The dispatcher routes these via invoke_action semantics (same path).
+
+    Lever D (B23-PRE-1): when ``short_description_lookup`` is provided,
+    embeds the target action's ``short_description`` in the alias
+    description with an assertive directive. This surfaces the action's
+    purpose directly in the tool listing so the LLM can pick the alias
+    without a list_actions / describe_action round-trip.
+
+    When ``short_description_lookup`` is None or the name is absent from
+    the map, falls back to the prior generic description so callers that
+    don't supply the lookup stay unaffected.
     """
     result = []
+    lookup = short_description_lookup or {}
     for name in names:
+        short_desc = lookup.get(name, "")
+        if short_desc:
+            description = (
+                f"{short_desc}. "
+                f"Use this direct alias to invoke {name} without going "
+                "through invoke_action."
+            )
+        else:
+            description = (
+                f"Direct alias for {name}. "
+                "Use invoke_action for schema details."
+            )
         result.append({
             "type": "function",
             "function": {
                 "name": name,
-                "description": (
-                    f"Direct alias for {name}. "
-                    "Use invoke_action for schema details."
-                ),
+                "description": description,
                 "parameters": {
                     "type": "object",
                     "properties": {},
@@ -551,7 +574,21 @@ class RouterLoop:
                 )
                 _top_names = _tracker.get_top_n(_n, _seed)
                 if _top_names:
-                    _hot_list_aliases = _build_hot_list_aliases(_top_names)
+                    # Lever D (B23-PRE-1): build short_description map from
+                    # available skills so aliases embed the target's purpose.
+                    # Skills are the dominant hot-list category; others fall
+                    # back to the generic description gracefully.
+                    _short_desc_map: dict[str, str] = {}
+                    for _s in host.list_available_skills():
+                        if isinstance(_s, dict) and "name" in _s:
+                            _qn = f"skill__{_s['name']}"
+                            _sd = _s.get("description") or _s.get("short_description") or ""
+                            if _sd:
+                                _short_desc_map[_qn] = str(_sd)
+                    _hot_list_aliases = _build_hot_list_aliases(
+                        _top_names,
+                        short_description_lookup=_short_desc_map or None,
+                    )
         tools = build_tools(
             skills_for_tools,
             host.list_available_agents(),
@@ -597,6 +634,9 @@ class RouterLoop:
                 # in LLMReplay tests) default to False so SP byte content stays
                 # unchanged for cached fixtures.
                 universal_wrappers_enabled=_univ_enabled,
+                # B23-PRE-1: hide_legacy_tools SP rendering (Phase 4 preview).
+                # Default False = legacy path byte-identical, 0 fixture re-records.
+                hide_legacy_tools=_hide_legacy,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the

@@ -216,6 +216,22 @@ _LIST_ACTIONS_DESCRIPTION = (
     "search use search_actions (when available)."
 )
 
+# Assertive 4-part description used when hide_legacy_tools=True.
+# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
+_LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
+    "WHAT: Browse the catalog of available actions in alphabetical order with "
+    "optional category filter and text filter, paginated. "
+    "Returns {items: [{qualified_name, short_description}, ...], total: int}. "
+    "WHEN: Use this FIRST when you do not know the exact action name — returns "
+    "the authoritative catalog with qualified names ready for invoke_action. "
+    "WHEN NOT: If you already know the action name, skip this and call "
+    "invoke_action directly. For semantic/natural-language search, use "
+    "search_actions (when available) instead. "
+    "PREFERRED OVER: Guessing action names — list_actions returns the "
+    "canonical qualified names (e.g. skill__code_review) that invoke_action "
+    "and describe_action expect."
+)
+
 
 _LIST_ACTIONS_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -262,6 +278,24 @@ _SEARCH_ACTIONS_DESCRIPTION = (
     "browse or text-substring filter, use list_actions."
 )
 
+# Assertive 4-part description used when hide_legacy_tools=True.
+# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
+_SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY = (
+    "WHAT: Semantic search across available actions — multilingual, "
+    "embedding-based, relevance-ranked. "
+    "Returns {items: [{qualified_name, short_description, score}, ...]}. "
+    "WHEN: Use this when you have a natural-language description of what you "
+    "need and want the closest matching actions by meaning, not by name. "
+    "Should be called whenever the task intent is clear but the exact action "
+    "name is unknown. "
+    "WHEN NOT: If the action name is already known, call invoke_action directly. "
+    "If you need alphabetical browse or text-substring filter, use list_actions. "
+    "Available only when an embedding class is configured (reyn.yaml "
+    "action_retrieval.embedding_class). "
+    "PREFERRED OVER: list_actions — when query is a semantic description rather "
+    "than a category or substring."
+)
+
 
 _SEARCH_ACTIONS_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -293,6 +327,21 @@ _DESCRIBE_ACTION_DESCRIPTION = (
     "an error response with similar-name suggestions."
 )
 
+# Assertive 4-part description used when hide_legacy_tools=True.
+# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
+_DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY = (
+    "WHAT: Get the full description, input schema, and metadata for one action "
+    "or resource. Returns {description, input_schema, metadata}. "
+    "WHEN: Use this before invoke_action when you need to know the exact "
+    "argument shape of an action. Should be called whenever you have the "
+    "qualified_name but are unsure of the required args. "
+    "WHEN NOT: If you already know the input schema (from a previous call or "
+    "the action takes no args), skip this and call invoke_action directly. "
+    "PREFERRED OVER: Guessing argument names — describe_action returns the "
+    "authoritative input_schema. On unknown action_name, returns an error "
+    "with similar-name suggestions."
+)
+
 
 _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -318,6 +367,24 @@ _INVOKE_ACTION_DESCRIPTION = (
     "single source). Use describe_action(action_name) first to discover "
     "the expected input_schema. On unknown action_name, returns an error "
     "response with similar-name suggestions."
+)
+
+# Assertive 4-part description used when hide_legacy_tools=True.
+# (Lever C — B23-PRE-1 SP misalignment fix, Phase 4 preview.)
+_INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY = (
+    "WHAT: Invoke an action or resource using its canonical qualified name "
+    "and optional args. Executes the action's default semantic operation. "
+    "WHEN: Use this to execute any action whose name you know — skills, "
+    "MCP tools, RAG corpora, file ops, web ops, memory ops, agent delegation. "
+    "Should be called whenever a user task maps to a known action. "
+    "Examples: invoke_action(action_name='skill__code_review', args={...}), "
+    "invoke_action(action_name='rag.corpus__meetings', args={'query': '...'}) "
+    "runs recall against that single source. "
+    "WHEN NOT: If the action name is unknown, call list_actions or search_actions "
+    "first. If the input schema is unclear, call describe_action first. "
+    "PREFERRED OVER: Legacy per-kind tools (invoke_skill, call_mcp_tool, etc.) — "
+    "invoke_action covers all 13 action categories uniformly. On unknown "
+    "action_name, returns an error with similar-name suggestions."
 )
 
 
@@ -930,6 +997,12 @@ __all__ = [
     "SEARCH_ACTIONS",
     "DESCRIBE_ACTION",
     "INVOKE_ACTION",
+    # Assertive WHAT/WHEN/WHEN NOT/PREFERRED OVER variants (Lever C).
+    # Used by router_tools.build_tools() when hide_legacy_tools=True.
+    "_LIST_ACTIONS_DESCRIPTION_HIDE_LEGACY",
+    "_SEARCH_ACTIONS_DESCRIPTION_HIDE_LEGACY",
+    "_DESCRIBE_ACTION_DESCRIPTION_HIDE_LEGACY",
+    "_INVOKE_ACTION_DESCRIPTION_HIDE_LEGACY",
     "split_qualified_name",
     "build_qualified_name",
     "is_valid_qualified_name",
