@@ -169,6 +169,7 @@ nav:
       - concepts/sandbox.md
       - concepts/secret-handling.md
       - concepts/mcp.md
+      - concepts/universal-catalog.md
       - concepts/rag.md
       - concepts/operational-intelligence.md
       - concepts/skill-self-improvement.md
