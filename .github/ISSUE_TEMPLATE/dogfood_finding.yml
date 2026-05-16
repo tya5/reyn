@@ -1,0 +1,133 @@
+name: Dogfood finding
+description: Actionable finding from a dogfood batch regression run (FP-0036).
+title: "[dogfood B] <scenario_id>: "
+labels: ["dogfood-finding"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Spawned from a dogfood batch result thread in the
+        [Dogfood batches](https://github.com/tya5/reyn/discussions/categories/dogfood-batches)
+        category. Fill in the sections below; cross-link the originating
+        Discussion thread in the **Batch context** field.
+
+        Reporting guidance:
+        - `docs/deep-dives/contributing/dogfood-discipline.md` — methodology
+        - `docs/deep-dives/contributing/dogfood-regression-playbook.md` — Step 5 (triage) + Step 7 (report)
+        - `docs/deep-dives/contributing/dogfood-reporting.md` — title format + cross-link rules
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: |
+        Pick one. The corresponding `severity:*` label is applied manually
+        after submission (= GitHub Forms can't auto-apply labels yet).
+      options:
+        - CRITICAL — system non-functional
+        - HIGH — core user path blocked
+        - MED — degradation with workaround
+        - LOW — cosmetic / edge case
+    validations:
+      required: true
+
+  - type: input
+    id: batch_id
+    attributes:
+      label: Batch ID
+      description: Batch number this finding was observed in (e.g. `27`).
+      placeholder: "27"
+    validations:
+      required: true
+
+  - type: input
+    id: scenario_id
+    attributes:
+      label: Scenario ID
+      description: |
+        Scenario `id` from the `dogfood/scenarios/*.yaml` set that surfaced
+        this finding.
+      placeholder: "simple_capability_question"
+    validations:
+      required: true
+
+  - type: input
+    id: scenario_set
+    attributes:
+      label: Scenario set
+      description: Path to the scenario set YAML.
+      placeholder: "dogfood/scenarios/chat_router_smoke.yaml"
+    validations:
+      required: true
+
+  - type: input
+    id: batch_thread
+    attributes:
+      label: Batch discussion thread
+      description: |
+        URL of the batch Discussion thread in the Dogfood batches category.
+      placeholder: "https://github.com/tya5/reyn/discussions/N"
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed_vs_expected
+    attributes:
+      label: Observed vs expected
+      description: |
+        Verifier verdict (verified / inconclusive / refuted / blocked) for
+        each of reply / events / artifacts surfaces, plus the relevant detail.
+      value: |
+        | Surface | Verdict | Detail |
+        |---|---|---|
+        | reply | refuted | <judge rubric clause that failed> |
+        | events | verified | — |
+        | artifacts | verified | — |
+    validations:
+      required: true
+
+  - type: textarea
+    id: event_excerpt
+    attributes:
+      label: Event log excerpt (optional)
+      description: |
+        Relevant lines from `events.jsonl` if the finding is event-driven.
+        Triple-backtick fence the snippet.
+      render: jsonl
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        Command + reyn.yaml fragment that reproduces the finding.
+      value: |
+        ```bash
+        cd /tmp/reyn-b<N>/
+        reyn dogfood run dogfood/scenarios/<set>.yaml --agent default
+        # Inspect: .reyn/dogfood/runs/<run_id>/scenarios/<scenario_id>/
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: triage_class
+    attributes:
+      label: Triage classification (cf. regression-playbook Step 5)
+      description: |
+        One of: true-regression / scenario-flake / calibration-drift /
+        environment-dependency. Brief rationale.
+      value: |
+        Class: <true-regression | scenario-flake | calibration-drift | environment-dependency>
+
+        Rationale: <1-2 sentences>
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed_fix
+    attributes:
+      label: Proposed fix (optional)
+      description: |
+        If you have a fix direction in mind, note it. Otherwise leave blank
+        and the maintainers triage further.
