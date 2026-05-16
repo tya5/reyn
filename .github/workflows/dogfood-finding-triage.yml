@@ -1,0 +1,153 @@
+name: Dogfood finding triage
+
+# Fires when a new issue is opened or a label is added.
+# The job guard (contains ... 'dogfood-finding') ensures we only act on
+# issues that carry the dogfood-finding label.
+#
+# What this workflow does:
+#   1. Reads the Severity dropdown value from the rendered issue body and
+#      applies the corresponding severity:* label.
+#   2. Reads the "Batch discussion thread" URL and posts a cross-link comment
+#      to that GitHub Discussion via the GraphQL addDiscussionComment mutation.
+#
+# Permissions required:
+#   issues: write      — to add labels and (optionally) comment on the issue
+#   discussions: write — to post the cross-link comment on the discussion
+#   contents: read     — minimal; no checkout needed, kept for good measure
+
+on:
+  issues:
+    types: [opened, labeled]
+
+permissions:
+  issues: write
+  discussions: write
+  contents: read
+
+jobs:
+  triage:
+    # Only run when the issue has the dogfood-finding label.
+    # On `opened` events the label is set by the form template (labels: field).
+    # On `labeled` events we re-check so a manual label addition also triggers.
+    if: contains(github.event.issue.labels.*.name, 'dogfood-finding')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Apply severity label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+
+            // GitHub Issue Forms renders a dropdown as:
+            //   ### Severity
+            //
+            //   <selected option text>
+            //
+            // The option texts (verbatim from dogfood_finding.yml) are:
+            //   CRITICAL — system non-functional
+            //   HIGH — core user path blocked
+            //   MED — degradation with workaround
+            //   LOW — cosmetic / edge case
+            //
+            // We match the leading keyword (before the em dash) so the regex
+            // is resilient to minor option-text wording changes.
+            const severityMap = {
+              'CRITICAL': 'severity:critical',
+              'HIGH':     'severity:high',
+              'MED':      'severity:medium',
+              'LOW':      'severity:low',
+            };
+
+            let label = null;
+            for (const [key, val] of Object.entries(severityMap)) {
+              // Match "### Severity" heading, optional whitespace/newlines,
+              // then the keyword at the start of the option line.
+              const re = new RegExp(`###\\s+Severity\\s+${key}\\b`, 'i');
+              if (re.test(body)) {
+                label = val;
+                break;
+              }
+            }
+
+            if (!label) {
+              core.info('No severity dropdown match found in issue body; skipping label apply');
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: [label],
+            });
+            core.info(`Applied label: ${label}`);
+
+      - name: Cross-link to discussion thread
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.issue.body || '';
+
+            // GitHub Issue Forms renders an input field as:
+            //   ### Batch discussion thread
+            //
+            //   <value pasted by the user>
+            //
+            // We capture the first non-whitespace token after the heading,
+            // which should be the discussion URL.
+            const m = body.match(/###\s+Batch discussion thread\s+(\S+)/i);
+            if (!m) {
+              core.info('No "Batch discussion thread" URL found in body; skipping cross-link');
+              return;
+            }
+            const url = m[1];
+
+            // Accept both /discussions/N and /discussions/N#... forms.
+            const discMatch = url.match(/\/discussions\/(\d+)/);
+            if (!discMatch) {
+              core.info(`Value after "Batch discussion thread" is not a discussion URL: ${url}`);
+              return;
+            }
+            const discussionNumber = parseInt(discMatch[1], 10);
+
+            // Resolve the discussion's node ID via GraphQL (needed for the
+            // addDiscussionComment mutation which takes a node ID, not a number).
+            const query = `
+              query($owner: String!, $repo: String!, $num: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  discussion(number: $num) {
+                    id
+                  }
+                }
+              }
+            `;
+            const res = await github.graphql(query, {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              num:   discussionNumber,
+            });
+
+            const discussionId = res.repository.discussion.id;
+            const issueUrl     = context.payload.issue.html_url;
+            const issueTitle   = context.payload.issue.title;
+
+            const commentBody = `Linked finding: [${issueTitle}](${issueUrl})`;
+
+            const mutation = `
+              mutation($id: ID!, $body: String!) {
+                addDiscussionComment(input: { discussionId: $id, body: $body }) {
+                  comment {
+                    id
+                    url
+                  }
+                }
+              }
+            `;
+            const r = await github.graphql(mutation, {
+              id:   discussionId,
+              body: commentBody,
+            });
+
+            core.info(`Cross-linked to discussion #${discussionNumber}: ${r.addDiscussionComment.comment.url}`);
