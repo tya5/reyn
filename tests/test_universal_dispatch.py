@@ -59,13 +59,19 @@ def test_resolve_invoke_action_skill_wraps_args_when_input_missing() -> None:
 
 
 def test_resolve_invoke_action_agent_peer_routes_to_delegate() -> None:
-    """Tier 2: agent.peer__<name> → delegate_to_agent(to=name, ...)."""
+    """Tier 2: agent.peer__<name> → delegate_to_agent(to=name, request=...).
+
+    Universal-catalog callers pass ``message``; the translator must remap it
+    to ``request`` so the delegate_to_agent handler never raises KeyError.
+    """
     result = resolve_invoke_action(
         "agent.peer__alice", {"message": "hi"},
     )
     assert result.target_tool_name == "delegate_to_agent"
     assert result.target_args["to"] == "alice"
-    assert result.target_args["message"] == "hi"
+    # "message" must be remapped → "request" by _delegate_to_agent_args (B27-H3)
+    assert result.target_args["request"] == "hi"
+    assert "message" not in result.target_args
 
 
 def test_resolve_invoke_action_mcp_server_routes_to_list_tools() -> None:
@@ -415,3 +421,68 @@ def test_resolved_action_default_args_empty() -> None:
     """Tier 2: ResolvedAction.target_args defaults to empty mapping."""
     result = ResolvedAction(target_tool_name="x")
     assert dict(result.target_args) == {}
+
+
+# ── B27-H3 regression: agent.peer__ KeyError fix ─────────────────────────
+
+
+def test_agent_peer_translator_remaps_message_to_request() -> None:
+    """Tier 2: _delegate_to_agent_args remaps 'message' → 'request' (B27-H3).
+
+    Regression guard: before the fix, _delegate_to_agent_args passed
+    'message' through unchanged, causing KeyError: 'request' in the
+    delegate_to_agent handler which always reads args["request"].
+
+    This test exercises the full resolve_invoke_action route and then
+    simulates the handler receiving the translated args — no KeyError must
+    occur.
+    """
+    # Simulate the LLM call shape as instructed by universal_catalog (FP-0034 §D).
+    resolved = resolve_invoke_action(
+        "agent.peer__researcher",
+        {"message": "Summarise the quarterly report."},
+    )
+
+    assert resolved.target_tool_name == "delegate_to_agent"
+
+    # Handler reads args["to"] and args["request"]. Verify both keys are
+    # present and correct — no KeyError when accessed directly.
+    translated = resolved.target_args
+    assert translated["to"] == "researcher"
+    request_value = translated["request"]  # would raise KeyError before fix
+    assert request_value == "Summarise the quarterly report."
+    assert "message" not in translated, (
+        "'message' must not survive the translation — handler has no 'message' key"
+    )
+
+
+def test_agent_peer_translator_preserves_extra_args() -> None:
+    """Tier 2: _delegate_to_agent_args passes unknown extra args through unchanged.
+
+    Extra keys beyond 'message' (e.g. 'priority') are not remapped; only
+    the 'message' → 'request' rename is applied (B27-H3).
+    """
+    resolved = resolve_invoke_action(
+        "agent.peer__planner",
+        {"message": "Plan the sprint.", "priority": "high"},
+    )
+    translated = resolved.target_args
+    assert translated["to"] == "planner"
+    assert translated["request"] == "Plan the sprint."
+    assert translated["priority"] == "high"
+    assert "message" not in translated
+
+
+def test_agent_peer_translator_caller_supplies_request_directly() -> None:
+    """Tier 2: callers that already use 'request' are not double-remapped.
+
+    If a caller passes 'request' directly (= non-catalog path), the
+    translator should not corrupt it.
+    """
+    resolved = resolve_invoke_action(
+        "agent.peer__analyst",
+        {"request": "Run the numbers."},
+    )
+    translated = resolved.target_args
+    assert translated["to"] == "analyst"
+    assert translated["request"] == "Run the numbers."

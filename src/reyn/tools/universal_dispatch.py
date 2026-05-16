@@ -119,11 +119,19 @@ def _invoke_skill_args(entry_name: str, args: Mapping[str, Any]) -> dict[str, An
 def _delegate_to_agent_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``agent.peer__<name>`` → ``delegate_to_agent({to, message, ...})``."""
+    """``agent.peer__<name>`` → ``delegate_to_agent({to, request, ...})``.
+
+    The universal catalog instructs the LLM to pass the peer's message as
+    ``message`` (FP-0034 §D style), but the ``delegate_to_agent`` handler
+    reads the legacy ``request`` key.  Remap ``message`` → ``request`` here
+    so the handler never sees a KeyError.
+    """
     out = {"to": entry_name}
     for k, v in args.items():
-        if k != "to":
-            out[k] = v
+        if k == "to":
+            continue
+        # Universal-catalog callers use "message"; handler expects "request".
+        out["request" if k == "message" else k] = v
     return out
 
 
