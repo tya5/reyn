@@ -1,0 +1,58 @@
+{
+  "batch": "b28",
+  "worker": 5,
+  "head": "f5a6866",
+  "scenario_set": "multi_agent_and_mcp",
+  "date": "2026-05-17",
+  "verdicts": {
+    "verified": 0,
+    "inconclusive": 3,
+    "refuted": 4,
+    "blocked": 0
+  },
+  "delta_vs_b27": {
+    "verified": 0,
+    "inconclusive": "+2",
+    "refuted": "-2",
+    "blocked": 0
+  },
+  "c1_verify": "pass",
+  "h3_verify": "pass",
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "refuted",
+      "note": "routing_decided and skill_run_spawned not emitted; tool_failed(search_actions: unknown_tool)"
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "refuted",
+      "note": "routing_decided not emitted; tool_failed(search_actions: unknown_tool)"
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "inconclusive",
+      "note": "routing_decided present; invalid_args before delegation dispatch; reply unclear on agent-not-found"
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "inconclusive",
+      "note": "routing_decided present; H3 fix confirmed (agent_message_sent, no KeyError); peers not found at runtime by design"
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "refuted",
+      "note": "must_emit=[] satisfied; reply misses all 3 rubric bullets (A2A endpoint, polling URL, reyn web requirement)"
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "refuted",
+      "note": "routing_decided and skill_run_spawned not emitted; reply mentions mcp.operation__install_server but no events"
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "inconclusive",
+      "note": "routing_decided present; reply says action not found but omits reyn.yaml/CLI config guidance"
+    }
+  ]
+}

@@ -1,0 +1,141 @@
+{
+  "batch": "B28",
+  "worker": "6/7",
+  "head": "f5a6866",
+  "date": "2026-05-17",
+  "summary": {
+    "V": 0,
+    "I": 10,
+    "R": 0,
+    "B": 1,
+    "total": 11
+  },
+  "h1_plan_present": true,
+  "plan_emitted": "2/3",
+  "c1_verified": true,
+  "plan_40_fix_verified": true,
+  "scenarios": {
+    "plan_compare_two_concepts": {
+      "verdict": "inconclusive",
+      "plan_emitted": 1,
+      "plan_aggregated": 1,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_run_interrupted": 0,
+      "plan_step_failed": 0,
+      "reason": "Plan ran and completed. Reply rubric partially met — cited workspace.md well but claimed no direct P5-Permission connection, did not produce 3-5 concrete points citing BOTH docs."
+    },
+    "plan_explain_with_code_references": {
+      "verdict": "inconclusive",
+      "plan_emitted": 0,
+      "plan_aggregated": 0,
+      "reason": "LLM answered correctly by reading plan.py and planner.py directly, without invoking plan. must_emit requires plan_emitted>=1. Reply quality good; routing choice rational."
+    },
+    "plan_summary_across_n_files": {
+      "verdict": "inconclusive",
+      "plan_emitted": 1,
+      "plan_aggregated": 1,
+      "plan_step_started": 4,
+      "plan_step_completed": 4,
+      "plan_run_interrupted": 0,
+      "reason": "Plan ran and completed. Reply said docs not found (wrong reyn_src_read path: 'principles.md' vs 'docs/concepts/principles.md'). Plan lifecycle correct, reply refuted."
+    },
+    "narr-1-mcp-search": {
+      "verdict": "blocked",
+      "routing_decided": "skill__mcp_search",
+      "reason": "MCP registry unreachable in environment. Without --allow-unsafe-python: skill_run_failed. With --allow-unsafe-python: workflow_aborted (registry unavailable)."
+    },
+    "narr-3-skill-builder": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__skill_builder",
+      "skill_run_completed": "finished",
+      "reason": "Skill ran and completed. Narration is spawn-ack only; skill_completion_injected not observable within session. Skill created at reyn/local/string_length_calculator."
+    },
+    "s-fp11-1-builder-invalid-spec": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__skill_builder",
+      "reason": "Session closed before skill_run_completed. Narration not observable."
+    },
+    "s-fp11-2-eval-missing-target": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__eval",
+      "skill_run_failed": true,
+      "reason": "skill_run_failed (control block missing in phase). Narration was spawn-ack. D1 anti-optimism not verifiable."
+    },
+    "s-fp11-3-mcp-search-empty": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__mcp_search",
+      "skill_run_completed": "finished",
+      "reason": "Skill ran and completed (registry unreachable path). Narration was /tasks only. D3 not observable."
+    },
+    "s-fp12-spawn-1-builder-success-ack": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__skill_builder",
+      "skill_run_completed": "finished",
+      "d2_spawn_ack": "verified",
+      "d5_no_double_dispatch": "verified",
+      "reason": "D2+D5 verified. D3 completion narration not observable (session closed before skill_completion_injected)."
+    },
+    "s-fp12-completion-1-mcp-search-narrate": {
+      "verdict": "blocked",
+      "routing_decided": "skill__mcp_search",
+      "skill_run_failed": true,
+      "reason": "MCP registry unreachable. LLM then attempted self-message (agent.peer__dogfood-b28-6)."
+    },
+    "s-fp12-completion-2-error-narrate": {
+      "verdict": "inconclusive",
+      "routing_decided": "skill__skill_builder",
+      "skill_run_completed": "finished",
+      "d5_no_double_dispatch": "verified",
+      "reason": "Expected_status=error but skill_builder completed (created skill despite circular-ref request). Narration was /tasks."
+    }
+  },
+  "verification": {
+    "h1_plan_tool_present": {
+      "status": "verified",
+      "evidence": "plan is first tool in main router tools array (14 tools: plan, list_actions, describe_action, invoke_action, ...)",
+      "trace": "plan_compare_two_concepts_2.jsonl request 0d807090"
+    },
+    "plan_40_description_fix": {
+      "status": "verified",
+      "evidence": "steps_json uses 'invoke_action' in tools fields, not legacy tool names like reyn_src_read",
+      "example": "{\"id\": \"read_permission_model\", \"tools\": [\"invoke_action\"], \"depends_on\": []}"
+    },
+    "c1_no_duplicate_functions": {
+      "status": "verified",
+      "evidence": "All requests checked, 0 duplicate tool names found"
+    }
+  },
+  "issues_found": [
+    {
+      "id": "PLAN-STEP-PATH",
+      "description": "Plan step LLMs call reyn_src_read with short paths (e.g. 'principles.md') instead of full paths ('docs/concepts/principles.md'). Causes file not found in multi-source scenarios.",
+      "severity": "medium",
+      "seen_in": ["plan_summary_across_n_files"]
+    },
+    {
+      "id": "STEPS_JSON_ESCAPE",
+      "description": "LLM fails to escape inner quotes in steps_json JSON string when user prompt contains quoted phrases. Results in plan_invalid JSON parse error.",
+      "severity": "medium",
+      "seen_in": ["plan_summary_across_n_files (first attempt)"]
+    },
+    {
+      "id": "MCP_REGISTRY_UNAVAILABLE",
+      "description": "MCP registry endpoint not reachable in test environment. narr-1 and s-fp12-completion-1 blocked.",
+      "severity": "environment",
+      "seen_in": ["narr-1-mcp-search", "s-fp12-completion-1-mcp-search-narrate"]
+    },
+    {
+      "id": "ASYNC_NARRATION_GAP",
+      "description": "skill_completion_injected does not fire within CUI session because skills complete after session close. D3 observability requires multi-turn approach or longer session.",
+      "severity": "test-design",
+      "seen_in": ["narr-3-skill-builder", "s-fp12-spawn-1", "s-fp12-completion-2"]
+    },
+    {
+      "id": "SELF_MESSAGE_BUG",
+      "description": "LLM routed to agent.peer__dogfood-b28-6 (itself) after mcp_search failure. Self-message error surfaced correctly.",
+      "severity": "low",
+      "seen_in": ["s-fp12-completion-1-mcp-search-narrate"]
+    }
+  ]
+}

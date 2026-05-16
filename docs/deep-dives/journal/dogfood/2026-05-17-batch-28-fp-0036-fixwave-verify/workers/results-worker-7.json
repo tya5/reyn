@@ -1,0 +1,120 @@
+{
+  "batch": "b28",
+  "worker": 7,
+  "head": "f5a6866",
+  "date": "2026-05-17",
+  "scenario_set": "long_session_v1",
+  "summary": {
+    "verified": 2,
+    "inconclusive": 5,
+    "refuted": 0,
+    "blocked": 0,
+    "total": 7
+  },
+  "c1_verify": {
+    "total_llm_calls": 62,
+    "duplicates_found": 0,
+    "verdict": "ALL_CLEAN",
+    "turns_clean": "62/62"
+  },
+  "multi_turn_survival": {
+    "turns_completed": 37,
+    "turns_planned": 37,
+    "survival_rate": 1.0,
+    "b27_baseline_turns": 4,
+    "b27_baseline_total": 37
+  },
+  "b27_bug2_verify": {
+    "reyn__source__read_hallucination_observed": false,
+    "verdict": "NOT_OBSERVED"
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "turns_planned": 5,
+      "turns_completed": 5,
+      "llm_calls": 5,
+      "c1_duplicates": 0,
+      "outcome": "verified",
+      "rubric": {
+        "p7_principles_addressed": true,
+        "context_carried_across_turns": true,
+        "non_empty_final_reply": true
+      }
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "turns_planned": 6,
+      "turns_completed": 6,
+      "llm_calls": 17,
+      "c1_duplicates": 0,
+      "outcome": "inconclusive",
+      "notes": "No expected rubric. Skill errors (writing_review_app, index_events) recovered cleanly."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "turns_planned": 5,
+      "turns_completed": 5,
+      "llm_calls": 9,
+      "c1_duplicates": 0,
+      "outcome": "inconclusive",
+      "notes": "No expected rubric. T3/T4 general-question refusal (over-constraint attractor)."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "turns_planned": 6,
+      "turns_completed": 6,
+      "llm_calls": 9,
+      "c1_duplicates": 0,
+      "outcome": "inconclusive",
+      "notes": "No expected rubric. No G12 Pattern E (empty-stop) attractor detected."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "turns_planned": 5,
+      "turns_completed": 5,
+      "llm_calls": 8,
+      "c1_duplicates": 0,
+      "outcome": "verified",
+      "rubric": {
+        "asyncio_queue_producer_consumer_in_final_reply": true,
+        "uses_asyncio_queue": true,
+        "non_empty_final_reply": true
+      }
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "turns_planned": 5,
+      "turns_completed": 5,
+      "llm_calls": 8,
+      "c1_duplicates": 0,
+      "outcome": "inconclusive",
+      "notes": "No expected rubric. ADR catalog miss: docs/deep-dives/decisions/ not surfaced by reyn.source__list."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "turns_planned": 5,
+      "turns_completed": 5,
+      "llm_calls": 6,
+      "c1_duplicates": 0,
+      "outcome": "inconclusive",
+      "notes": "No expected rubric. All turns substantive, context carried correctly."
+    }
+  ],
+  "new_bugs": [
+    {
+      "id": "B28-7-OBS-1",
+      "severity": "low",
+      "description": "Scenario 3 T3/T4: LLM refused general asyncio questions with 'I am a Reyn agent' self-limitation. Over-constraint behavioral attractor.",
+      "scenario": "scenario_3_cross_reference_compare",
+      "turns": [3, 4]
+    },
+    {
+      "id": "B28-7-OBS-2",
+      "severity": "low",
+      "description": "Scenario 6: reyn.source__list action does not index docs/deep-dives/decisions/ — ADRs exist but agent reports 'no ADRs found'.",
+      "scenario": "scenario_6_file_and_doc_lookup_chain",
+      "turns": [1, 2, 3, 4]
+    }
+  ]
+}

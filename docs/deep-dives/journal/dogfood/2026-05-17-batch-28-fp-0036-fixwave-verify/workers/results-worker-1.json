@@ -1,0 +1,103 @@
+{
+  "worker": 1,
+  "batch": 28,
+  "set_name": "chat_router_smoke",
+  "head": "f5a6866",
+  "b27_baseline": {"verified": 0, "inconclusive": 0, "refuted": 3, "blocked": 4},
+  "b28_actual": {"verified": 0, "inconclusive": 0, "refuted": 7, "blocked": 0},
+  "delta_verified": 0,
+  "c1_regression": false,
+  "c1_note": "14 unique tools across all 7 scenarios; plan/list_actions/describe_action/invoke_action all appear exactly once",
+  "routing_decided_emitted_count": 3,
+  "routing_decided_scenarios": ["factual_query_direct_llm", "explicit_skill_invocation_word_stats", "multi_turn_pronoun_reference"],
+  "new_findings": ["B28-F5: python.pure vs python.safe permission key mismatch blocks word_stats_demo"],
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "b27_verdict": "blocked",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "routing_decided_required": false,
+      "evidence_one_liner": "LLM replied inline listing capabilities; no direct_llm skill spawned; no workspace artifact; 14 unique tools"
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "b27_verdict": "blocked",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "routing_decided_required": false,
+      "routing_decided_source": "invoke_action",
+      "evidence_one_liner": "LLM called invoke_action(web__search) for idempotency; routing_decided emitted (source=invoke_action); reply correct; no direct_llm artifact"
+    },
+    {
+      "id": "skill_discovery_request",
+      "b27_verdict": "blocked",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "routing_decided_required": true,
+      "evidence_one_liner": "LLM called list_actions (not invoke_action); routing_decided not emitted (only fires for invoke_action/__ tools); reply listed skills correctly; no artifact"
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "b27_verdict": "blocked",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "routing_decided_required": true,
+      "routing_decided_source": "invoke_action",
+      "evidence_one_liner": "skill_run_spawned+routing_decided fired; python.safe permission denied (reyn.yaml python.pure vs python.safe key mismatch); skill_run_failed; no output artifact"
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "b27_verdict": "refuted",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "routing_decided_required": true,
+      "evidence_one_liner": "LLM asked clarification instead of writing poem; no tool call; routing_decided not emitted; no artifact"
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "b27_verdict": "refuted",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "routing_decided_required": false,
+      "routing_decided_source": "invoke_action",
+      "evidence_one_liner": "Both turns completed; 2nd reply contains Python list comprehension code example; web_search in turn 2; routing_decided emitted; no direct_llm artifact"
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "b27_verdict": "refuted",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "routing_decided_required": false,
+      "evidence_one_liner": "LLM asked 'what kind of image?' instead of declining; no tool call; no permission_denied; no direct_llm artifact"
+    }
+  ]
+}
