@@ -82,7 +82,7 @@ split rule は 「category 名直後の最初の `__`」 なので
 
 | Qualified name | パース結果 |
 |---|---|
-| `skill__code_review` | (`skill`, `code_review`) |
+| `skill__index_docs` | (`skill`, `index_docs`) |
 | `agent.peer__alice` | (`agent.peer`, `alice`) |
 | `mcp.tool__brave.search` | (`mcp.tool`, `brave.search`) |
 | `mcp.operation__drop_server` | (`mcp.operation`, `drop_server`) |

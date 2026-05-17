@@ -336,9 +336,9 @@ action_retrieval:
 
 再起動後、 チャット Router の `tools=` 末尾に 3 wrapper が含まれる (有効時 — デフォルト)。 LLM は以下を呼び出し可能:
 
-- `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__code_review`) で利用可能 skill を列挙
-- `describe_action(action_name="skill__code_review")` → input schema を取得
-- `invoke_action(action_name="skill__code_review", args={...})` → 既存 handler 経由で実行
+- `list_actions(category=["skill"])` → qualified name 形式 (例: `skill__index_docs`) で利用可能 skill を列挙
+- `describe_action(action_name="skill__index_docs")` → input schema を取得
+- `invoke_action(action_name="skill__index_docs", args={...})` → 既存 handler 経由で実行
 
 リソースカテゴリ (`mcp.server`, `rag.corpus`, `memory.entry`, …) も canonical default semantic で `invoke_action` をサポート (FP-0034 §D19)。
 

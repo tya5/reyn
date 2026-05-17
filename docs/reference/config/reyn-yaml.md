@@ -345,9 +345,9 @@ action_retrieval:
 
 After restart, the chat router's `tools=` includes the 3 wrappers at the tail (when enabled — default).  The LLM can call:
 
-- `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__code_review`)
-- `describe_action(action_name="skill__code_review")` → fetch the input schema
-- `invoke_action(action_name="skill__code_review", args={...})` → execute via the existing handler
+- `list_actions(category=["skill"])` → enumerate available skills as qualified names (e.g. `skill__index_docs`)
+- `describe_action(action_name="skill__index_docs")` → fetch the input schema
+- `invoke_action(action_name="skill__index_docs", args={...})` → execute via the existing handler
 
 Resource categories (`mcp.server`, `rag.corpus`, `memory.entry`, …) also support `invoke_action` with the canonical default semantic (FP-0034 §D19).
 
