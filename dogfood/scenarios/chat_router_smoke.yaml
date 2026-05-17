@@ -37,11 +37,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.70
-        inconclusive: 0.20
-        refuted: 0.05
-        blocked: 0.05
+        verified: 0.25
+        inconclusive: 0.0
+        refuted: 0.75
+        blocked: 0.0
 
   # ── 2. Factual Q&A routed to direct_llm ─────────────────────────────────
   - id: factual_query_direct_llm
@@ -60,11 +61,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.75
-        inconclusive: 0.18
-        refuted: 0.05
-        blocked: 0.02
+        verified: 0.25
+        inconclusive: 0.0
+        refuted: 0.75
+        blocked: 0.0
 
   # ── 3. Skill discovery — list available skills ──────────────────────────
   - id: skill_discovery_request
@@ -85,11 +87,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.65
-        inconclusive: 0.25
-        refuted: 0.05
-        blocked: 0.05
+        verified: 0.0
+        inconclusive: 0.0
+        refuted: 1.0
+        blocked: 0.0
 
   # ── 4. Explicit skill invocation — word_stats_demo ──────────────────────
   - id: explicit_skill_invocation_word_stats
@@ -112,11 +115,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: word_stats_demo, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.60
-        inconclusive: 0.28
-        refuted: 0.07
-        blocked: 0.05
+        verified: 0.25
+        inconclusive: 0.25
+        refuted: 0.25
+        blocked: 0.25
 
   # ── 5. Universal catalog routing event (routing_decided) ─────────────────
   - id: catalog_routing_decided_emitted
@@ -141,11 +145,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.65
-        inconclusive: 0.25
-        refuted: 0.05
-        blocked: 0.05
+        verified: 0.0
+        inconclusive: 0.0
+        refuted: 0.75
+        blocked: 0.25
 
   # ── 6. Multi-turn pronoun reference ─────────────────────────────────────
   - id: multi_turn_pronoun_reference
@@ -167,11 +172,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.60
-        inconclusive: 0.28
-        refuted: 0.07
-        blocked: 0.05
+        verified: 0.25
+        inconclusive: 0.0
+        refuted: 0.5
+        blocked: 0.25
 
   # ── 7. Out-of-scope request — graceful decline ──────────────────────────
   - id: out_of_scope_graceful_decline
@@ -192,8 +198,9 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.65
-        inconclusive: 0.25
-        refuted: 0.07
-        blocked: 0.03
+        verified: 0.0
+        inconclusive: 0.0
+        refuted: 0.75
+        blocked: 0.25

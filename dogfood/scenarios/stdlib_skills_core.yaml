@@ -58,11 +58,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: index_docs, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.55
-      inconclusive: 0.30
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.0
+      refuted: 1.0
+      blocked: 0.0
 
   # ── 2. read_local_files — explain a source file ─────────────────────────
   - id: read_local_files_explain_source
@@ -87,11 +88,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: read_local_files, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.55
-      inconclusive: 0.30
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.25
+      inconclusive: 0.25
+      refuted: 0.5
+      blocked: 0.0
 
   # ── 3. read_local_files — multi-file inspection ─────────────────────────
   - id: read_local_files_multi_file
@@ -117,11 +119,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: read_local_files, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.50
-      inconclusive: 0.33
-      refuted: 0.12
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.0
+      refuted: 1.0
+      blocked: 0.0
 
   # ── 4. skill_builder — scaffold a new summarisation skill ───────────────
   - id: skill_builder_web_summariser
@@ -150,11 +153,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: skill_builder, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.55
-      inconclusive: 0.28
-      refuted: 0.12
-      blocked: 0.05
+      verified: 0.5
+      inconclusive: 0.5
+      refuted: 0.0
+      blocked: 0.0
 
   # ── 5. word_stats_demo — python preprocessor step end-to-end ────────────
   - id: word_stats_demo_sentence
@@ -182,11 +186,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: word_stats_demo, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.65
-      inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.5
+      refuted: 0.25
+      blocked: 0.25
 
   # ── 6. word_stats_demo — longer text, multiple stat dimensions ───────────
   - id: word_stats_demo_multiline
@@ -215,11 +220,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: word_stats_demo, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.65
-      inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.5
+      refuted: 0.5
+      blocked: 0.0
 
   # ── 7. eval — run eval on direct_llm ────────────────────────────────────
   - id: eval_run_direct_llm
@@ -250,11 +256,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: eval, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.50
-      inconclusive: 0.33
-      refuted: 0.12
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.25
+      refuted: 0.75
+      blocked: 0.0
 
   # ── 8. chat_compactor — session-triggered after long multi-turn ──────────
   #
@@ -305,11 +312,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: direct_llm, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.45
-      inconclusive: 0.40
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.5
+      refuted: 0.5
+      blocked: 0.0
 
   # ── 9. chained dispatch — find markdown files then index them ────────────
   - id: chained_find_then_index
@@ -341,8 +349,9 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { skill: index_docs, present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.50
-      inconclusive: 0.33
-      refuted: 0.12
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.0
+      refuted: 1.0
+      blocked: 0.0
