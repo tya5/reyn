@@ -132,12 +132,19 @@ class RightPanel(Widget):
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
+        # y-coord (0-indexed line) of each memory entry's name row in the
+        # rendered output. Populated by `render_memory`; used by
+        # `_scroll_memory_into_view` to keep the cursor visible as j/k
+        # moves it past the panel viewport.
+        self._memory_entry_ys: list[int] = []
         # Agents tab state — same cursor pattern as events / memory.
         # `_agents_items` is the flat list returned by `render_agents`,
         # one entry per running skill / running plan / recent skill /
         # recent plan. Used by j/k navigation and preview rendering.
         self._agents_cursor: int = 0
         self._agents_items: list[dict] = []
+        # y-coord of each agents-tab item; populated by `render_agents`.
+        self._agents_item_ys: list[int] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -574,8 +581,37 @@ class RightPanel(Widget):
             return
         self._memory_cursor = (self._memory_cursor + delta) % n
         self._invalidate()
+        self._scroll_memory_into_view()
         if self._preview_visible:
             self._update_preview()
+
+    def _scroll_memory_into_view(self) -> None:
+        """Scroll #panel-scroll so the memory cursor row is visible.
+
+        Memory entries render with variable structure (section headers,
+        per-type subheaders, optional description rows, blank separators),
+        so an arithmetic ``y = f(cursor)`` would be wrong as soon as a
+        type group changes. ``render_memory`` records the exact y of each
+        entry's name row in ``_memory_entry_ys``; we just look it up here.
+
+        Same idiom as the events-tab fix in PR #97.
+        """
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            if not (0 <= self._memory_cursor < len(self._memory_entry_ys)):
+                return
+            # +1 for content padding-top, matching the events-tab fix.
+            y = 1 + self._memory_entry_ys[self._memory_cursor]
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception as exc:
+            logger.warning("right_panel scroll_memory_into_view failed: %s", exc)
 
     def _show_memory_in_preview(self, pane: _PreviewPane) -> None:
         """Render the cursor's memory entry's body as Markdown in the preview."""
@@ -613,8 +649,36 @@ class RightPanel(Widget):
             return
         self._agents_cursor = (self._agents_cursor + delta) % n
         self._invalidate()
+        self._scroll_agents_into_view()
         if self._preview_visible:
             self._update_preview()
+
+    def _scroll_agents_into_view(self) -> None:
+        """Scroll #panel-scroll so the agents cursor row is visible.
+
+        Agents tab uses a RichTree per agent; each running skill / plan
+        / recent row spans 1-2 lines (a child node like a phase or goal
+        adds a second). ``render_agents`` records the exact y of each
+        selectable item in ``_agents_item_ys`` so we don't have to guess.
+
+        Same idiom as the events- and memory-tab fixes (PR #97 + this PR).
+        """
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            if not (0 <= self._agents_cursor < len(self._agents_item_ys)):
+                return
+            # +1 for content padding-top, matching the events-tab fix.
+            y = 1 + self._agents_item_ys[self._agents_cursor]
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception as exc:
+            logger.warning("right_panel scroll_agents_into_view failed: %s", exc)
 
     def _show_agent_in_preview(self, pane: _PreviewPane) -> None:
         """Render the cursor's agent-tab item in the preview pane.
@@ -1430,20 +1494,22 @@ class RightPanel(Widget):
                     self._events_cursor = max(0, len(windowed) - 1)
                 return rendered
             if self._panel_type == "agents":
-                rendered, flat_items = render_agents(
+                rendered, flat_items, item_ys = render_agents(
                     self._registry, self._exec_state,
                     project_root=self._project_root,
                     cursor=self._agents_cursor,
                 )
                 self._agents_items = flat_items
+                self._agents_item_ys = item_ys
                 if self._agents_cursor >= len(flat_items):
                     self._agents_cursor = max(0, len(flat_items) - 1)
                 return rendered
             if self._panel_type == "memory":
-                rendered, flat_entries = render_memory(
+                rendered, flat_entries, entry_ys = render_memory(
                     self._project_root, cursor=self._memory_cursor,
                 )
                 self._memory_entries = flat_entries
+                self._memory_entry_ys = entry_ys
                 if self._memory_cursor >= len(flat_entries):
                     self._memory_cursor = max(0, len(flat_entries) - 1)
                 return rendered
