@@ -642,7 +642,19 @@ class ReynTUIApp(App):
         plans were actually cancelled. Without this summary the user
         couldn't tell whether Ctrl+C did anything (= "did it really
         cancel, or was nothing in flight?").
+
+        Ctrl+C is hierarchical: if the slash picker is open, dismiss it
+        first (matches Esc, satisfies the "abort the visible thing"
+        intuition) and do NOT also touch in-flight state. Without a
+        picker visible, fall through to the cancel path below.
         """
+        try:
+            input_bar = self.query_one("#inputbar", InputBar)
+        except Exception:
+            input_bar = None
+        if input_bar is not None and input_bar.dismiss_slash_prefix():
+            return
+
         try:
             conv = self.query_one("#conversation", ConversationView)
         except Exception:

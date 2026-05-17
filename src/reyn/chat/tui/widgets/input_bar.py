@@ -241,13 +241,24 @@ class InputBar(Widget):
         Esc feel like a no-op and forced the user to backspace before
         typing anything else — Slack/Discord clear the prefix on Esc.
         """
+        self.dismiss_slash_prefix()
+
+    def dismiss_slash_prefix(self) -> bool:
+        """Hide the picker and clear the slash prefix it was tracking.
+
+        Returns True if the picker was actually visible (and got dismissed),
+        False otherwise. The App's ``action_cancel_inflight`` calls this
+        as an early branch on Ctrl+C so an open picker dismisses instead
+        of producing a misleading "nothing in-flight" message.
+        """
         picker = self._picker()
         if picker is None or not picker.visible_:
-            return
+            return False
         picker.hide()
         ta = self._textarea()
         if ta is not None:
             ta.load_text("")
+        return True
 
     def action_newline(self) -> None:
         ta = self._textarea()
