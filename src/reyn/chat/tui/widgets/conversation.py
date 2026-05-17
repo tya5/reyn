@@ -48,7 +48,7 @@ from textual.widget import Widget
 from textual.widgets import RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _AMBER, _CORAL
 
 from .error_box import ErrorBox
 from .intervention import InterventionWidget
@@ -388,7 +388,10 @@ class ConversationView(Widget):
         self.hide_status()  # turn finished — clear "thinking…" sticky
         meta_pfx = _meta_prefix(msg.meta)
         label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
-        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
+        # _AMBER for agent identity (header label) — distinct from _CORAL
+        # which is reserved for interactive affordances (/expand, picker
+        # selection caret, panel cursor ▶) and "you are here" indicators.
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
         if msg.text:
             self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
@@ -517,7 +520,8 @@ class ConversationView(Widget):
         """Start a streaming agent message row. Returns the row widget."""
         self._consume_empty_hint()
         label = agent_name if agent_name else "reyn"
-        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
+        # Same agent-identity styling as _render_agent_markdown (_AMBER).
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
@@ -832,6 +836,8 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 def _format_intervention_line(msg: OutboxMessage) -> Text:
     """Fallback inline line for intervention when no widget callback set."""
     t = Text()
-    t.append("  Aria asks  ", style="bold " + _CORAL)
+    # Intervention prefix is agent-identity (= the agent asking a question),
+    # so it matches the agent header colour (_AMBER), not the action colour.
+    t.append("  Aria asks  ", style="bold " + _AMBER)
     t.append(msg.text, style="#ffcc88")
     return t
