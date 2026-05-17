@@ -903,7 +903,7 @@ class AgentRegistry:
                     await self.repl_outbox.put(msg)
                 return
             if msg.kind == "__attach_request__":
-                # User typed `:attach <other>` while this agent was attached.
+                # User typed `/attach <other>` while this agent was attached.
                 if msg.text and self.exists(msg.text):
                     await self.attach(msg.text)
                 continue

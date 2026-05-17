@@ -2,7 +2,7 @@
 
 The REPL drains the registry-owned `repl_outbox` (always present, regardless
 of which agent is attached) and forwards user input to whichever agent is
-currently attached. Agent switching (`:attach <name>`) flips the registry's
+currently attached. Agent switching (`/attach <name>`) flips the registry's
 attached pointer; the REPL doesn't need to re-bind anything because both
 the input and output sides funnel through the registry.
 """
