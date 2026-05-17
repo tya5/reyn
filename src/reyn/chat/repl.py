@@ -72,7 +72,15 @@ async def _input_loop(
             continue
         # Mark a reply as in flight before submit so the pacing gate on
         # the next iteration blocks until the output loop signals it.
-        if reply_seen is not None:
+        # `/`-prefixed slash commands (`/list`, `/attach`, `/answer`, ...)
+        # bypass the router and emit only `status` (no router reply),
+        # so clearing the gate for them would deadlock the next pipe
+        # iteration. `/quit` and `/exit` are handled above and never
+        # reach this branch. Intervention answers (plain text that
+        # happens to answer a pending ask_user) can still deadlock the
+        # pipe; that path is rare in scripted use and tracked as a
+        # known limitation.
+        if reply_seen is not None and not text.startswith("/"):
             reply_seen.clear()
         await attached.submit_user_text(text)
 
