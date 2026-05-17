@@ -248,3 +248,14 @@ class InterventionWidget(Widget):
         self.post_message(self.Answered(iv_id=self._iv_id, answer=answer))
         # Remove ourselves from the conversation view
         self.remove()
+        # Restore focus to the input bar. Without an explicit call here
+        # Textual's auto-focus-walker picks the next focusable widget in
+        # DOM order on removal — often a non-editable widget (a child of
+        # ConversationView, or the right panel if it's open), which
+        # leaves the user typing into nothing. The input bar is the only
+        # widget that the user can keep going from.
+        try:
+            from .input_bar import InputBar  # late import → avoid cycle
+            self.app.query_one("#inputbar", InputBar).focus_input()
+        except Exception:
+            pass

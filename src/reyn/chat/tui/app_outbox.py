@@ -377,6 +377,17 @@ class OutboxRouter:
             widget.remove()
         except Exception:
             pass
+        # Mirror InterventionWidget._submit's focus restoration. The
+        # text-input path resolves the intervention from the InputBar's
+        # ``on_submitted`` handler so the user's focus is already there
+        # in the common case — but if the user clicked into the panel or
+        # tabbed away while waiting for confirmation, the widget removal
+        # would otherwise leak focus to a non-editable peer.
+        try:
+            from .widgets import InputBar
+            self._app.query_one("#inputbar", InputBar).focus_input()
+        except Exception:
+            pass
 
     def _on_status(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
