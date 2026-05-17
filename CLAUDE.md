@@ -117,6 +117,23 @@ Key constraints (full rationale in the doc):
 - Each test docstring's first line must declare its Tier:
   `"""Tier 3a: ..."""`.
 
+## PR workflow (READ BEFORE OPENING / REVIEWING A PR)
+
+This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
+per-PR coders) authenticating as the same `gh` user. Two rules keep that
+coherent:
+
+1. **Finish your own Test plan before merge.** PR authors run every
+   Manual / Visual item in the Test plan and tick the box, or replace
+   `- [ ]` with `- [x] (skipped — <reason>)`. Reviewers do not merge
+   while items are unchecked without an explicit waiver.
+2. **Role-prefix every issue / PR comment.** Start each comment with
+   `**[role-name]** — ` (e.g. `[lead-coder]`, `[e2e-coder]`,
+   `[security-reviewer]`) so the recipient session can tell "this is
+   feedback for me" from "I wrote this earlier myself". The
+   `Co-Authored-By: Claude` commit trailer does not propagate to PR
+   comments — this prefix is the only signal.
+
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
 **Active trigger**: when you are about to write any of the following — **STOP**
