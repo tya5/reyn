@@ -99,7 +99,11 @@ class ReynHeader(Widget):
         if self._tokens_cap is not None:
             tok_str += f" / {self._tokens_cap:,}"
         tok_str += " tok"
-        cost_str = f"${self._cost_usd:.2f}"
+        # Use 4 decimals so the cheap-model spend stays visible. With 2dp
+        # `gemini-flash-lite` rounds to `$0.00` even after dozens of calls;
+        # users see the token counter tick up but think the cost is free.
+        # The cap (when set) is at a larger scale, so 2dp there is fine.
+        cost_str = f"${self._cost_usd:.4f}"
         if self._cost_cap is not None:
             cost_str += f" / ${self._cost_cap:.2f}"
         parts.append(tok_str)
