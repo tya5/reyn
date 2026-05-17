@@ -247,9 +247,10 @@ def test_slash_discard_notifies_upstream_chain_waiter(tmp_path: Path, monkeypatc
         # Stash the chain_id that the spawn path would normally set
         sess_b.running_skills_chain["run_b_d14"] = "X-D14"
 
-        # User discards B's skill_run
+        # User discards B's skill_run (with --force; the bare form is
+        # confirmation-only and covered in test_skill_slash_command.py).
         consumed = await sess_b._maybe_handle_slash(
-            "/skill discard run_b_d14",
+            "/skill discard run_b_d14 --force",
         )
         assert consumed is True
         # Allow the registry to fire the handler on A
@@ -304,7 +305,7 @@ def test_slash_discard_no_chain_does_not_notify(tmp_path: Path, monkeypatch):
         )
         # No chain_id stashed — this is a user-initiated run
         # (running_skills_chain would either be missing or None)
-        await sess_b._maybe_handle_slash("/skill discard run_b_solo")
+        await sess_b._maybe_handle_slash("/skill discard run_b_solo --force")
         for _ in range(2):
             await asyncio.sleep(0)
 

@@ -1,15 +1,22 @@
 """/skill slash command — manage active skill runs (PR-resume-ux U2).
 
 Sub-commands:
-  /skill list                 — show active skill runs
-  /skill discard <run_id>     — abort a specific run + cleanup
+  /skill list                          — show active skill runs
+  /skill discard <run_id>              — preview discard (confirmation only)
+  /skill discard <run_id> --force      — actually abort the run + cleanup
 
 Note: distinct from ``/skills`` (plural, PR-tui-4) which lists *available*
 skills (catalogue). This one targets *running* skill instances.
+
+Discard is destructive: it cancels the asyncio.Task, drops pending
+interventions for the run, and writes a ``skill_discarded`` event. To
+guard against typos and stray Tab-completion, the bare form requires a
+second invocation with ``--force`` to actually commit.
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import TYPE_CHECKING
 
 from reyn.chat.slash import reply, reply_error, slash
@@ -19,9 +26,10 @@ if TYPE_CHECKING:
 
 
 _USAGE = (
-    "Usage: /skill <list|discard <run_id>>\n"
-    "  list                — show active skill runs\n"
-    "  discard <run_id>    — abort a specific run"
+    "Usage: /skill <list|discard <run_id> [--force]>\n"
+    "  list                       — show active skill runs\n"
+    "  discard <run_id>           — preview what would be discarded\n"
+    "  discard <run_id> --force   — actually abort the run"
 )
 
 
@@ -101,18 +109,86 @@ async def _list_skill_runs(session: "ChatSession") -> None:
     await reply(session, "\n".join(lines))
 
 
+def _parse_discard_args(args: str) -> tuple[str, bool]:
+    """Split discard args into ``(run_id, force)``.
+
+    Accepts ``--force`` anywhere in the args (before or after the id) to
+    stay friendly to Tab-completion ordering. Multiple non-flag tokens
+    collapse to the first one — discarding takes a single run_id.
+    """
+    tokens = args.strip().split()
+    force = False
+    run_id = ""
+    for tok in tokens:
+        if tok == "--force":
+            force = True
+        elif not run_id:
+            run_id = tok
+        # Extra positional tokens are ignored; the existing usage error
+        # path covers missing id, and ambiguity at multiple ids would
+        # confuse the warning more than help it.
+    return run_id, force
+
+
+def _format_elapsed(started_monotonic: float | None) -> str:
+    """Format an elapsed-since-start duration. ``?s`` when unknown.
+
+    Mirrors ``_slash_list`` semantics — runs not tracked in
+    ``running_skills_started_at`` (e.g. resumed after restart) display
+    ``?s`` rather than fabricating an elapsed time.
+    """
+    if started_monotonic is None:
+        return "?s"
+    secs = max(0, int(time.monotonic() - started_monotonic))
+    if secs < 60:
+        return f"{secs}s"
+    mins, sec = divmod(secs, 60)
+    if mins < 60:
+        return f"{mins}m{sec:02d}s"
+    hrs, mins = divmod(mins, 60)
+    return f"{hrs}h{mins:02d}m"
+
+
 async def _discard_skill_run(session: "ChatSession", args: str) -> None:
-    """Abort the run: cancel task, drop interventions, mark discarded."""
-    run_id = args.strip()
+    """Abort the run: cancel task, drop interventions, mark discarded.
+
+    Two-step flow:
+      - Without ``--force``: resolve the id, then emit a system warning
+        naming the skill + run_id + elapsed time. No state mutates.
+      - With ``--force``: perform the destructive discard.
+
+    The unknown-id error path is the same regardless of ``--force`` —
+    we never lie about the existence of a run.
+    """
+    run_id, force = _parse_discard_args(args)
     if not run_id:
-        await reply_error(session, "Usage: /skill discard <run_id>")
+        await reply_error(session, "Usage: /skill discard <run_id> [--force]")
         return
     reg = session._get_skill_registry()
     if reg is None:
         await reply_error(session, "skill registry not available")
         return
-    if reg.get(run_id) is None:
+    snap = reg.get(run_id)
+    if snap is None:
         await reply_error(session, f"unknown skill run: {run_id}")
+        return
+
+    if not force:
+        # Confirmation step: show what would be killed and require --force.
+        skill_name = snap.skill_name or "?"
+        started = session.running_skills_started_at.get(run_id)
+        elapsed = _format_elapsed(started)
+        warning = (
+            f"about to discard skill run:\n"
+            f"  skill:    {skill_name}\n"
+            f"  run_id:   {run_id}\n"
+            f"  elapsed:  {elapsed}\n"
+            f"This will cancel the running task and drop pending "
+            f"interventions.\n"
+            f"Re-run with --force to confirm: "
+            f"/skill discard {run_id} --force"
+        )
+        await reply(session, warning)
         return
 
     # 1. Cancel the asyncio.Task if mid-session

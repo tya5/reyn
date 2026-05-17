@@ -294,8 +294,12 @@ def test_postprocessor_mid_run_discard_notifies_upstream(
         # Stash the chain_id as the spawn path would for a chain-tagged run
         sess_b.running_skills_chain["run_b_post_001"] = "chain-post-001"
 
-        # Invoke /skill discard on B's run
-        consumed = await sess_b._maybe_handle_slash("/skill discard run_b_post_001")
+        # Invoke /skill discard on B's run (with --force to bypass the
+        # confirmation step; the safety prompt is covered separately in
+        # test_skill_slash_command.py).
+        consumed = await sess_b._maybe_handle_slash(
+            "/skill discard run_b_post_001 --force",
+        )
         assert consumed is True
 
         # Allow the async notify path to propagate to A

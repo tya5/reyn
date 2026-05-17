@@ -1,13 +1,18 @@
 """Tier 2: PR-resume-ux U2 — /skill slash command.
 
 Two sub-commands:
-  /skill list                — show active skill runs (id, name, current_phase)
-  /skill discard <id>        — abort a specific run + cleanup
+  /skill list                          — show active skill runs (id, name, current_phase)
+  /skill discard <id>                  — preview discard (confirmation only)
+  /skill discard <id> --force          — actually abort a specific run + cleanup
 
-Mid-session ``/skill discard`` must:
+Mid-session ``/skill discard <id> --force`` must:
   - cancel the running task (if any) via ``session.running_skills`` + await
   - drop pending interventions for the run via ``_drop_interventions_for_run``
   - mark the skill discarded via ``SkillRegistry.complete(status="discarded")``
+
+The bare ``/skill discard <id>`` (no ``--force``) emits a confirmation
+warning instead of mutating state — protects long-running skills from
+typos and Tab-completion accidents.
 """
 from __future__ import annotations
 
@@ -104,7 +109,7 @@ async def test_skill_list_with_no_active(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_skill_discard_completes_with_discarded_status(tmp_path, monkeypatch):
-    """Tier 2: /skill discard <id> emits ``skill_discarded`` to WAL."""
+    """Tier 2: /skill discard <id> --force emits ``skill_discarded`` to WAL."""
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
     session.is_attached = True
@@ -115,7 +120,9 @@ async def test_skill_discard_completes_with_discarded_status(tmp_path, monkeypat
         skill_input={"type": "input", "data": {}},
     )
 
-    consumed = await session._maybe_handle_slash("/skill discard run_to_discard")
+    consumed = await session._maybe_handle_slash(
+        "/skill discard run_to_discard --force",
+    )
     assert consumed is True
 
     log = StateLog(tmp_path / "state.wal")
@@ -123,6 +130,113 @@ async def test_skill_discard_completes_with_discarded_status(tmp_path, monkeypat
     discarded = [e for e in events if e["kind"] == "skill_discarded"]
     assert len(discarded) == 1
     assert discarded[0]["run_id"] == "run_to_discard"
+
+
+@pytest.mark.asyncio
+async def test_skill_discard_without_force_is_confirmation_only(tmp_path, monkeypatch):
+    """Tier 2: /skill discard <id> without --force emits a warning and does NOT
+    write a ``skill_discarded`` event.
+
+    Protects long-running skills from typo / Tab-completion accidents. The
+    warning must name the skill + run_id so the user can verify before
+    re-running with --force.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    reg = session._get_skill_registry()
+    await reg.start(
+        run_id="run_pending", skill_name="long_writer",
+        skill_input={"type": "input", "data": {}},
+    )
+
+    consumed = await session._maybe_handle_slash("/skill discard run_pending")
+    assert consumed is True
+
+    # WAL must NOT contain a skill_discarded event yet
+    log = StateLog(tmp_path / "state.wal")
+    events = list(log.iter_from(0))
+    discarded = [e for e in events if e["kind"] == "skill_discarded"]
+    assert discarded == [], (
+        f"bare discard must not write skill_discarded; got {discarded}"
+    )
+
+    # Warning message must clearly identify what would be killed
+    msgs = _drain_outbox(session)
+    system_msgs = [m for m in msgs if m.kind == "system"]
+    combined = "\n".join(m.text for m in system_msgs)
+    assert "run_pending" in combined
+    assert "long_writer" in combined
+    assert "--force" in combined
+
+
+@pytest.mark.asyncio
+async def test_skill_discard_without_force_leaves_task_running(tmp_path, monkeypatch):
+    """Tier 2: confirmation step must NOT cancel the asyncio.Task.
+
+    A bare ``/skill discard <id>`` shows a preview only — the running task
+    keeps going so the user can change their mind without losing work.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    reg = session._get_skill_registry()
+    await reg.start(
+        run_id="run_keep_running", skill_name="demo",
+        skill_input={"type": "input", "data": {}},
+    )
+
+    async def _run_forever():
+        await asyncio.sleep(60)
+
+    task = asyncio.ensure_future(_run_forever())
+    session.running_skills["run_keep_running"] = task
+
+    try:
+        consumed = await session._maybe_handle_slash(
+            "/skill discard run_keep_running",
+        )
+        assert consumed is True
+        # Task must still be alive — confirmation does not cancel.
+        assert not task.cancelled() and not task.done(), (
+            "bare discard must NOT cancel the task"
+        )
+    finally:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            pass
+
+
+@pytest.mark.asyncio
+async def test_skill_discard_force_flag_order_independent(tmp_path, monkeypatch):
+    """Tier 2: --force may appear before or after the run_id.
+
+    Tab-completion ordering is unpredictable; accept both forms.
+    """
+    monkeypatch.chdir(tmp_path)
+    session = _make_session(tmp_path)
+    session.is_attached = True
+
+    reg = session._get_skill_registry()
+    await reg.start(
+        run_id="run_flag_first", skill_name="demo",
+        skill_input={"type": "input", "data": {}},
+    )
+
+    consumed = await session._maybe_handle_slash(
+        "/skill discard --force run_flag_first",
+    )
+    assert consumed is True
+
+    log = StateLog(tmp_path / "state.wal")
+    events = list(log.iter_from(0))
+    discarded = [e for e in events if e["kind"] == "skill_discarded"]
+    assert len(discarded) == 1
+    assert discarded[0]["run_id"] == "run_flag_first"
 
 
 @pytest.mark.asyncio
@@ -160,7 +274,9 @@ async def test_skill_discard_cancels_running_task(tmp_path, monkeypatch):
     task = asyncio.ensure_future(_run_forever())
     session.running_skills["run_running"] = task
 
-    consumed = await session._maybe_handle_slash("/skill discard run_running")
+    consumed = await session._maybe_handle_slash(
+        "/skill discard run_running --force",
+    )
     assert consumed is True
 
     # Task should be cancelled
@@ -190,7 +306,9 @@ async def test_skill_discard_drops_interventions(tmp_path, monkeypatch):
     for _ in range(3):
         await asyncio.sleep(0)
 
-    consumed = await session._maybe_handle_slash("/skill discard run_with_iv")
+    consumed = await session._maybe_handle_slash(
+        "/skill discard run_with_iv --force",
+    )
     assert consumed is True
 
     # Yield so intervention finally clauses run
