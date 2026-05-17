@@ -60,6 +60,45 @@ class ChatEventForwarder:
     def on_workflow_aborted(self, data: dict) -> None:
         self._enqueue("skill done: aborted")
 
+    # ── In-phase detail signals (skill internal progress) ────────────────────
+    # Without these, the SkillActivityRow showed only the phase name
+    # during long LLM calls or heavy Control IR runs — a 10–30 s blank
+    # window where the user couldn't tell "still working" from "stuck".
+    # The ``detail: ...`` prefix is consumed by the TUI's trace handler
+    # and routed to ``ConversationView.update_skill_detail`` which
+    # appends a dim ``⤷ <text>`` segment to the row. Cleared by the
+    # next ``phase_started``.
+
+    def on_llm_called(self, data: dict) -> None:
+        """LLM call started — surface the model name as detail.
+
+        Fires once per LLM call; the row shows ``⤷ llm: <model>`` until
+        the response arrives or the phase advances.
+        """
+        model = data.get("model") or "?"
+        self._enqueue(f"detail: llm: {model}")
+
+    def on_llm_response_received(self, data: dict) -> None:
+        """LLM call finished — clear the detail (= we're between calls).
+
+        Without this the row would keep showing ``⤷ llm: <model>`` long
+        after the response arrived, misleading users about whether the
+        model is still working.
+        """
+        self._enqueue("detail: ")
+
+    def on_act_executed(self, data: dict) -> None:
+        """Control IR ops just ran — show a short summary as detail.
+
+        ``act_executed`` fires after a batch of ops complete; the
+        ``op_count`` from the event payload is the count of ops in that
+        batch. Useful as a "the skill is actively working" signal during
+        heavy preprocessor turns.
+        """
+        op_count = data.get("op_count")
+        if op_count:
+            self._enqueue(f"detail: act: {op_count} op{'s' if op_count != 1 else ''}")
+
     def _enqueue(self, text: str) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.
         meta: dict = {"skill_name": self.skill_name}

@@ -416,6 +416,15 @@ class ReynTUIApp(App):
             visit = int(existing.get("phase_visits", 0)) + 1
             conv.update_skill_phase(run_id, phase, visit=visit)
             self._last_focal_tab = "agents"
+        elif text.startswith("detail: "):
+            # In-phase detail (llm call / act batch / etc). Append a dim
+            # ``⤷ <detail>`` segment to the row so the user sees the
+            # skill is actively working rather than wondering if it's
+            # stuck on the phase name. An empty detail (``"detail: "``)
+            # clears the segment — that's how the forwarder signals
+            # "llm call finished; we're between events".
+            detail = text[len("detail: "):]
+            conv.update_skill_detail(run_id, detail)
         elif " → " in text and not text.startswith("skill done: "):
             # phase_completed trace: ``<phase> → <next>(  (confidence=X))?``
             # Strip the optional confidence suffix and display the bare
