@@ -62,6 +62,7 @@ class StickyStatus(Static):
     def __init__(self, *, id: str | None = None) -> None:
         super().__init__("", id=id)
         self._active: bool = False
+        self._kind: str = "thinking"
         self._glyph: str = _GLYPHS["thinking"]
         self._body: str = ""
         self._start: float = 0.0
@@ -74,7 +75,8 @@ class StickyStatus(Static):
 
     def show(self, text: str, kind: str = "thinking") -> None:
         """Activate the status bar with the given body text and glyph kind."""
-        self._glyph = _GLYPHS.get(kind, _GLYPHS["thinking"])
+        self._kind = kind if kind in _GLYPHS else "thinking"
+        self._glyph = _GLYPHS[self._kind]
         self._start = time.monotonic()
         self._active = True
         self.add_class("active")
@@ -103,4 +105,6 @@ class StickyStatus(Static):
         t.append(self._glyph + " ", style=_CORAL)
         t.append(self._body, style="dim italic")
         t.append(f" · {elapsed:.1f}s", style="dim italic")
+        if self._kind == "thinking":
+            t.append("  · Ctrl+C cancel", style="dim italic")
         self.update(t)
