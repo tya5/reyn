@@ -1,0 +1,74 @@
+[
+  {
+    "scenario_id": "index_docs_basic",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "LLM called operation__create_index directly (unknown_tool). tool_failed emitted. No skill_run_spawned. ARS now includes rag.operation__drop_source:{source} canonical but LLM never called it — chose non-existent operation__create_index instead. Hot-list gap: skill__index_docs in DEFAULT_HOT_LIST_SEED but not in top-20 (20 slots filled by higher-ranked freq actions)."
+  },
+  {
+    "scenario_id": "read_local_files_explain_source",
+    "verdict": "inconclusive",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Correct 1971-char reply via file__read direct (cron scheduling, async, CronJob class, runner_fn). skill_run_spawned=0; skill_run_completed=0. read_local_files skill not dispatched (not in top-20). Rubric PASS."
+  },
+  {
+    "scenario_id": "read_local_files_multi_file",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Reply: 'couldn't find any files in src/reyn/op_runtime/' — factually wrong. file__list was called and returned results but LLM reported failure. No skill_run_spawned. Rubric FAIL (did not describe any files, claimed error)."
+  },
+  {
+    "scenario_id": "skill_builder_web_summariser",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "LLM invoked invoke_action(skill__create_web_article_summarizer) — hallucinated skill name. tool_failed: ValueError: skill 'create_web_article_summarizer' not found. Ghost alias skill__create_skill NOT invoked (rank 23, outside top-20). skill__skill_builder in hot-list (rank 12) but LLM chose hallucinated name. ARS has no skill__ entries for skills with empty input_schema. Rubric FAIL."
+  },
+  {
+    "scenario_id": "word_stats_demo_sentence",
+    "verdict": "verified",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifacts_check": "pass",
+    "notes": "invoke_action(skill__word_stats_demo, {text: 'The quick brown fox...'}). skill_run_spawned=1, skill_run_completed=1 (status=finished). Reply: '44 characters over 1 line. The longest line is also the only line, with 44 characters. Estimated at 9 tokens.' Rubric PASS. All required events emitted."
+  },
+  {
+    "scenario_id": "word_stats_demo_multiline",
+    "verdict": "verified",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifacts_check": "pass",
+    "notes": "invoke_action(skill__word_stats_demo, {text: multiline text}). skill_run_spawned=1, skill_run_completed=1 (status=finished). Reply: '88 characters across 4 lines, longest line 40 characters'. Rubric PASS (char count, multi-line reference, precomputed stats)."
+  },
+  {
+    "scenario_id": "eval_run_direct_llm",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "partial",
+    "artifacts_check": "fail",
+    "notes": "LLM dispatched skill__judge_phase (not skill__eval). skill_run_spawned=1 (judge_phase), skill_run_failed=1. Error: 'Act turn budget exhausted before reading the artifact'. Reply: 'evaluation completed with an error'. routing_decided emitted but wrong skill. Rubric FAIL (no pass/fail score, error occurred)."
+  },
+  {
+    "scenario_id": "chat_compactor_long_session",
+    "verdict": "inconclusive",
+    "reply_rubric": "pass",
+    "events_check": "partial",
+    "artifacts_check": "fail",
+    "notes": "5-turn session. All turns coherent (1766-2903 chars). Final T5 (2260 chars) explains routing mechanism, universal action catalog, routing_decided. Rubric PASS. No skill_run_spawned (all inline). No compaction triggered (too few tokens). No direct_llm artifact. chat_turn_completed_inline emitted for each turn."
+  },
+  {
+    "scenario_id": "chained_find_then_index",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "T1 (file list): correct list of docs/concepts/ files. T2 (index): LLM called invoke_action(rag.operation__remember_shared) — wrong action (memory, not RAG index). routing_decided success for wrong action. Reply says 'rag.operation__remember_shared doesn't exist'. No index_docs skill_run_spawned. skill__index_docs in seed but not in top-20. Rubric FAIL (no arch_events_index indexing confirmed)."
+  }
+]

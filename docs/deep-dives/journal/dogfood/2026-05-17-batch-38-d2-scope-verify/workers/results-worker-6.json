@@ -1,0 +1,212 @@
+{
+  "batch": "B38",
+  "worker": 6,
+  "head": "1d5042d",
+  "date": "2026-05-17",
+  "agent_prefix": "dogfood-b38-6",
+  "port": 8086,
+  "worktree": "/private/tmp/reyn-worktrees/b38-6",
+  "scenario_sets": ["plan_mode.yaml (3)", "fp_0011_narration.yaml (2 enabled)", "fp_0011_0012_retest.yaml (6)"],
+
+  "totals": {
+    "verified": 3,
+    "inconclusive": 5,
+    "refuted": 3,
+    "blocked": 0
+  },
+
+  "delta_vs_b37_w6": {
+    "b37": {"verified": 4, "inconclusive": 3, "refuted": 4, "blocked": 0},
+    "b38": {"verified": 3, "inconclusive": 5, "refuted": 3, "blocked": 0},
+    "delta_v": "-1",
+    "delta_i": "+2",
+    "delta_r": "-1",
+    "delta_b": "0",
+    "note": "3 B37 R scenarios (narr-1, s-fp11-3, s-fp12-comp-1) moved from R to I: routing gap closed, mcp_search now dispatches, but MCP registry unreachable in dogfood env. plan_explain moved V→R (regression at N=1). s-fp11-1 moved I→V (phase_no_progress path traversed, error captured). s-fp12-comp-2 moved I→V (async error anti-optimism confirmed)."
+  },
+
+  "r_web_unblock_retest": {
+    "r_web_scenarios_verified": 0,
+    "routing_gap_closed_count": 3,
+    "scenarios_tested": ["narr-1-mcp-search", "s-fp11-3-mcp-search-empty", "s-fp12-completion-1-mcp-search-narrate"],
+    "mcp_search_dispatched": true,
+    "evidence": {
+      "narr-1": {"routing_decided_action": "skill__mcp_search", "source": "invoke_action", "outcome": "success", "permission_denied": false, "b37_was": "refuted_routing_miss"},
+      "s-fp11-3": {"routing_decided_action": "skill__mcp_search", "source": "invoke_action", "outcome": "success", "permission_denied": false, "b37_was": "refuted_routing_miss"},
+      "s-fp12-comp-1": {"routing_decided_action": "skill__mcp_search", "source": "invoke_action", "outcome": "success", "permission_denied": false, "b37_was": "refuted_routing_miss"}
+    },
+    "residual_blocker": "MCP registry unreachable in dogfood environment — all 3 mcp_search runs hit workflow_aborted at 'search' phase. Not a Reyn routing or gate issue.",
+    "hot_list_seed_confirmed": true,
+    "note": "HOT_LIST_SEED expansion (5e05b9b) confirmed operational. skill__mcp_search was already present in seed; ghost-alias rejection fix cleared any stale data. All 3 R-WEB mcp_search scenarios now reach invoke_action dispatch path."
+  },
+
+  "d2_wrapper_scope_verify": {
+    "scope_expanded": true,
+    "ars_entries_count": 19,
+    "ars_header": "ACTION ARG SCHEMAS (canonical keys for all session-visible actions)",
+    "sources_confirmed": ["static_operations (KNOWN_STATIC_QUALIFIED_NAMES)", "session_skills (skill_meta_map)", "mcp_tools", "peer_agents"],
+    "sample_entries": ["exec__sandboxed_exec", "file__grep", "file__list", "web__search", "skill__mcp_search", "skill__skill_builder"],
+    "behavioral_confirmation": "plan steps used invoke_action for file reads without arg hallucination. D2-wrapper ARS block present in tool calls.",
+    "note": "router_loop._collect_all_session_ars_entries() + _enrich_invoke_action_description() confirmed in B38 code. invoke_action.description ARS header reads 'all session-visible actions' (was 'current hot-list actions' in B37)."
+  },
+
+  "plan_emitted_rate": "2/3",
+  "plan_details": {
+    "plan_compare_two_concepts": {
+      "plan_emitted": true,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_aggregated": true,
+      "control_ir_failed": 2,
+      "verdict": "inconclusive",
+      "note": "plan triggered, 3 steps, aggregated. Reply cites both docs with section-level references. No line numbers. control_ir_failed x2 (index_query, no RAG index). Same as B37 W6."
+    },
+    "plan_explain_with_code_references": {
+      "plan_emitted": true,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_aggregated": true,
+      "verdict": "refuted",
+      "note": "B37=VERIFIED. B38: plan triggered but reply references generic src/reyn/plan/ directory — neither plan.py nor planner.py named, no function names cited. Rubric requires both files AND function. REGRESSION at N=1."
+    },
+    "plan_summary_across_n_files": {
+      "plan_emitted": false,
+      "plan_step_started": 0,
+      "verdict": "refuted",
+      "note": "LLM answered inline. routing_decided x4, no plan_emitted. Same as B37 W6."
+    }
+  },
+
+  "phase_no_progress_non_regression": {
+    "confirmed": true,
+    "evidence": "s-fp11-1 traversed phase_no_progress {build_skill, rollback_from: verify_skill} → workflow_aborted → skill_run_failed → skill_completion_injected → chat_turn_completed_inline. Error reply captured.",
+    "note": "B37 W6 hit JSON parse error (different path). B38 W6 hit phase_no_progress directly — fix path confirmed functional."
+  },
+
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "file": "plan_mode.yaml",
+      "verdict": "inconclusive",
+      "plan_emitted": true,
+      "events": "plan_emitted:1, plan_step_started:3, plan_step_completed:3, plan_aggregated:1, control_ir_failed:2",
+      "notes": "plan triggered. Both docs referenced. 3 points. No line numbers. control_ir_failed x2. Same as B37 W6."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": true,
+      "events": "plan_emitted:1, plan_step_started:3, plan_step_completed:3, plan_aggregated:1",
+      "notes": "B37=V. B38: plan triggered but generic dir reference, no specific file or function names. N=1 regression observation."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "events": "user_message_received:1, tool_called:1, tool_returned:1, routing_decided:4, compaction_check:1",
+      "notes": "LLM answered inline. Same as B37 W6."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "inconclusive",
+      "mcp_search_dispatched": true,
+      "routing_decided_source": "invoke_action",
+      "permission_denied": false,
+      "events": "skill_run_spawned, routing_decided(skill__mcp_search,invoke_action,success), invoke_skill_spawn_ack_exit, skill_run_failed, skill_completion_injected",
+      "notes": "B37=R (routing miss). B38: mcp_search dispatched. MCP registry unreachable → workflow_aborted. Error narrated. R-WEB gate reached."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "verified",
+      "events": "skill_run_spawned, routing_decided, workflow_started, phase_started x9 (5 main + rollbacks), workflow_finished",
+      "permission_denied": false,
+      "notes": "skill_builder ran 5+ phases to workflow_finished. string_length created. No permission_denied. Same as B37 W6."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "events": "skill_run_spawned, routing_decided, invoke_skill_spawn_ack_exit, phase_no_progress, workflow_aborted, skill_run_failed, skill_completion_injected, chat_turn_completed_inline",
+      "notes": "phase_no_progress (build_skill/verify_skill loop) triggered. Error surfaced in reply. W6 fix path confirmed. B37=I (JSON parse error path)."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "events": "skill_run_spawned, routing_decided, tool_failed(FileNotFoundError), skill_run_interrupted(PostprocessorError), skill_run_failed, skill_completion_injected, chat_turn_completed_inline",
+      "notes": "eval dispatched, FileNotFoundError, PostprocessorError. Error narrated (schema fields missing), no fabricated score. Missing: explicit missing-target error message. Anti-optimism partially satisfied."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "mcp_search_dispatched": true,
+      "routing_decided_source": "invoke_action",
+      "permission_denied": false,
+      "events": "skill_run_spawned, routing_decided(skill__mcp_search,invoke_action,success), invoke_skill_spawn_ack_exit, skill_run_failed, skill_completion_injected, chat_turn_completed_inline",
+      "notes": "B37=R (routing miss). B38: mcp_search dispatched. MCP registry unreachable. Error narrated, no invented servers. R-WEB gate reached."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "spawn_ack_present": true,
+      "tasks_pointer": true,
+      "routing_decided_source": "hot_list_alias",
+      "events": "skill_run_spawned, routing_decided(hot_list_alias), phase_no_progress, workflow_aborted, skill_run_failed",
+      "notes": "Spawn ack captured with /tasks pointer. But skill failed (phase_no_progress build_skill/verify_skill). No workflow_finished. Completion extracts (skill_name, lint_passed) unverifiable. REFUTED."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "mcp_search_dispatched": true,
+      "routing_decided_source": "invoke_action",
+      "permission_denied": false,
+      "events": "skill_run_spawned, routing_decided(skill__mcp_search,invoke_action,success), invoke_skill_spawn_ack_exit, skill_run_failed, skill_completion_injected",
+      "notes": "B37=R (routing miss). B38: dispatched. skill_completion_injected(status=error). Array field extraction not testable (no candidates). Routing fix confirmed."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "events": "skill_run_spawned, routing_decided(invoke_action), invoke_skill_spawn_ack_exit, control_ir_validation_error, phase_retry, workflow_aborted, skill_run_failed, skill_completion_injected, chat_turn_completed_inline",
+      "notes": "skill_completion_injected(status=error). Error message surfaced. No false success. D1+D3 anti-optimism on async path confirmed. B37=I."
+    }
+  ],
+
+  "new_findings": [
+    {
+      "id": "B38-W6-F1",
+      "severity": "HIGH",
+      "description": "plan_explain_with_code_references regression B37=V → B38=R. Reply uses generic src/reyn/plan/ directory reference instead of naming plan.py+planner.py+functions. N=1 observation; caution per pre-conclusion checklist.",
+      "evidence": "B38 reply: 'src/reyn/chat/planner.py' and 'src/reyn/tools/plan.py' not mentioned. Generic 'plan_runtime.py' and 'plan_registry.py' (non-existent files) referenced. B37: 'dispatch_plan_tool, _handle' cited.",
+      "recommendation": "Rerun this scenario (N=3) to distinguish stochastic variance from structural regression."
+    },
+    {
+      "id": "B38-W6-F2",
+      "severity": "HIGH",
+      "description": "mcp_search routing gap confirmed CLOSED: all 3 previously-REFUTED R-WEB scenarios now dispatch mcp_search via invoke_action (routing_decided confirmed). Residual blocker is MCP registry unavailability in dogfood (external infra), not Reyn.",
+      "evidence": "All 3: routing_decided {action_name: skill__mcp_search, source: invoke_action, outcome: success}. Followed by skill_run_spawned, workflow_started, workflow_aborted (registry unreachable). B37: 3 events only (no tool call).",
+      "impact": "r_web_routing_gap_closed=3. Full success-path verification blocked by external infra."
+    },
+    {
+      "id": "B38-W6-F3",
+      "severity": "MED",
+      "description": "skill_builder phase_no_progress stochastic: narr-3 (string_length) succeeded; s-fp12-spawn-1 (identical string_length spec) hit phase_no_progress loop. Both are N=1 observations.",
+      "evidence": "narr-3: workflow_finished. s-fp12-spawn-1: phase_no_progress {build_skill, rollback_from:verify_skill} → workflow_aborted.",
+      "recommendation": "Investigate if string_length DSL left from narr-3 run caused downstream issue in fp12-spawn-1. Agent isolation (separate agent dirs) should prevent this, but shared worktree workspace is a vector."
+    },
+    {
+      "id": "B38-W6-F4",
+      "severity": "INFO",
+      "description": "D2-wrapper scope expansion confirmed: _collect_all_session_ars_entries returns 19 entries covering static ops + session skills. ARS block header 'all session-visible actions' confirmed.",
+      "evidence": "Runtime check returned 19 entries including exec__sandboxed_exec, file__grep, web__search, skill__mcp_search, skill__skill_builder. Plan step tool calls used invoke_action for file reads without hallucinated args.",
+      "impact": "D2-wrapper now covers non-hot-listed actions (file__write, rag.operation__drop_source, agent.peer__*). B37 canonical-key hallucination gap addressed."
+    }
+  ]
+}
