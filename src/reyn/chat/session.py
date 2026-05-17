@@ -2273,8 +2273,29 @@ class ChatSession:
 
         Unknown slash commands also return True (with a hint on outbox) to
         keep the router from running on user typos like "/halp".
+
+        Multi-line slash input: slash commands today are line-oriented and
+        do not accept multi-line args. When the user submits `/cmd …\nmore`,
+        the trailing content was previously bundled into `args` and then
+        silently dropped by handlers that ignore their args (e.g. `/cost`,
+        `/help`, `/list`). We now warn before dispatching and feed the
+        handler only the first line, so the user sees that the extra lines
+        were not part of the command.
         """
         from reyn.chat.slash import REGISTRY
+
+        # Multi-line guard — keep only the first line for dispatch, warn if
+        # any non-whitespace content exists on later lines.
+        first_line, sep, rest = text.partition("\n")
+        if sep and rest.strip():
+            await self._put_outbox(OutboxMessage(
+                kind="system",
+                text=(
+                    f"note: {first_line.split(maxsplit=1)[0]} ignored extra "
+                    "lines; only the first line is treated as the command."
+                ),
+            ))
+        text = first_line
 
         body = text[1:].lstrip()
         if not body:
