@@ -62,6 +62,12 @@ class SlashPicker(Static):
         # "+N more — keep typing to filter" footer when the picker can't
         # show every match.
         self._total_matches: int = 0
+        # Hint-only mode: when the user has typed "/<known-cmd> " (space
+        # consumed, picker selection no longer relevant), show a single
+        # informational row with the matched command's summary. ``_matches``
+        # stays empty so Enter / Tab / arrows fall through to the normal
+        # text-submit path and the user's typed args are preserved.
+        self._hint_cmd: SlashCommand | None = None
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -78,15 +84,33 @@ class SlashPicker(Static):
         self._total_matches = len(matches)
         self._matches = list(matches)[:_MAX_VISIBLE]
         self._selected = 0
+        self._hint_cmd = None
         if self._matches:
             self.add_class("visible")
         else:
             self.remove_class("visible")
         self._repaint()
 
+    def set_hint(self, cmd: SlashCommand) -> None:
+        """Show a single informational row for ``cmd`` (no selection caret).
+
+        Used after the user types ``/<cmd> `` to remind them what the
+        command does. Leaves ``_matches`` empty so the keyboard / click
+        paths gated on ``has_matches`` skip; the user keeps typing args
+        and Enter submits the typed text instead of replacing it with
+        ``/cmdname``.
+        """
+        self._matches = []
+        self._total_matches = 0
+        self._selected = 0
+        self._hint_cmd = cmd
+        self.add_class("visible")
+        self._repaint()
+
     def hide(self) -> None:
         self._matches = []
         self._selected = 0
+        self._hint_cmd = None
         self.remove_class("visible")
         self._repaint()
 
@@ -138,7 +162,10 @@ class SlashPicker(Static):
 
     def _repaint(self) -> None:
         if not self._matches:
-            self.update("")
+            if self._hint_cmd is not None:
+                self._repaint_hint()
+            else:
+                self.update("")
             return
 
         # Width for the command-name column (left)
@@ -191,3 +218,33 @@ class SlashPicker(Static):
                 style="dim #888888",
             )
         self.update(body)
+
+    def _repaint_hint(self) -> None:
+        """Render a single dim hint row showing the matched command's summary.
+
+        No selection caret — the user has already chosen the command and is
+        typing args. The picker stays out of the keyboard / click paths
+        (``_matches`` is empty) so Enter / Tab / arrows fall through to the
+        normal text-submit and history-recall behaviour.
+        """
+        cmd = self._hint_cmd
+        if cmd is None:
+            self.update("")
+            return
+        try:
+            term_w = self.app.size.width
+        except Exception:
+            term_w = 60
+        content_w = max(20, term_w - 6)
+        name = f"/{cmd.name}"
+        prefix_cells = 2 + len(name) + 2  # leading "  " + name + "  "
+        summary_budget = max(10, content_w - prefix_cells)
+        summary = cmd.summary
+        if len(summary) > summary_budget:
+            summary = summary[: max(1, summary_budget - 1)] + "…"
+        t = Text()
+        t.append("  ", style="#1a1a1a")
+        t.append(name, style="dim #888888")
+        t.append("  ")
+        t.append(summary, style="dim #888888")
+        self.update(t)

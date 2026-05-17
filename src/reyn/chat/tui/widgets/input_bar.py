@@ -295,9 +295,20 @@ class InputBar(Widget):
             picker.hide()
             return
         token = text[1:]
-        # Stop matching once the user types a space (entering args)
+        # Once the user types a space, they've entered args mode. Look up
+        # the command they picked and surface its summary as a single-row
+        # hint — the picker stays out of the keyboard path so Enter
+        # submits the typed args instead of replacing them with /cmdname.
         if " " in token:
-            picker.hide()
+            cmd_name = token.split(" ", 1)[0]
+            cmd = next(
+                (c for c in self._slash_commands if c.name == cmd_name),
+                None,
+            )
+            if cmd is not None:
+                picker.set_hint(cmd)
+            else:
+                picker.hide()
             return
         matches = [
             c for c in self._slash_commands
