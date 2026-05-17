@@ -606,6 +606,75 @@ def _drop_required_field(params: dict, field_name: str) -> dict:
     return out
 
 
+def _enrich_invoke_action_description(
+    tools: list[dict],
+    hot_list_aliases: list[dict],
+) -> list[dict]:
+    """Propagate hot-list alias schemas into invoke_action's description.
+
+    D2-wrapper (B37): direct hot-list alias entries carry the target
+    action's real parameter schema (D2-min/D2-full). When the LLM routes
+    via the ``invoke_action`` wrapper instead of a direct alias, it sees
+    only ``args: {type: object}`` with no properties — so it hallucinates
+    non-canonical keys (B36 N=3 observations: W4-S1 ``text`` vs
+    ``content``, W4-S6 ``source_id`` vs ``source``, W5-S3 ``message``
+    via wrapper vs canonical ``request``).
+
+    Fix: append a compact per-action schema block to invoke_action's
+    description. This is data-driven from the existing hot_list_aliases
+    list (no hardcoded action names — P7-clean). Only actions whose
+    aliases carry non-empty ``properties`` contribute a line (= the same
+    condition D2-min/D2-full uses to build the alias schema).
+
+    The schema block uses the same format the LLM would see on a direct
+    alias, presented as a lookup table so the LLM can reference it when
+    it chooses invoke_action and needs to supply ``args``.
+    """
+    if not hot_list_aliases:
+        return tools
+
+    # Build compact schema lines: "  <action_name>: {key1, key2, ...}"
+    # Only include actions whose aliases carry non-empty properties
+    # (= those enriched by D2-min/D2-full). Actions with no schema
+    # (empty properties) get no line — adding them would just be noise.
+    schema_lines: list[str] = []
+    for alias in hot_list_aliases:
+        fn = alias.get("function") or {}
+        name = fn.get("name", "")
+        if not name:
+            continue
+        props = ((fn.get("parameters") or {}).get("properties")) or {}
+        if not props:
+            continue
+        keys = ", ".join(sorted(props.keys()))
+        schema_lines.append(f"  {name}: {{{keys}}}")
+
+    if not schema_lines:
+        return tools
+
+    hint = (
+        "\n\nACTION ARG SCHEMAS (canonical keys for current hot-list actions):\n"
+        + "\n".join(schema_lines)
+        + "\nUse these exact key names in args when calling invoke_action."
+    )
+
+    # Find and patch invoke_action in-place (mutates a copy to avoid
+    # modifying the ToolDefinition registry object).
+    result = []
+    for tool in tools:
+        fn = tool.get("function") or {}
+        if fn.get("name") == "invoke_action":
+            tool = {
+                "type": tool.get("type", "function"),
+                "function": {
+                    **fn,
+                    "description": fn.get("description", "") + hint,
+                },
+            }
+        result.append(tool)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # RouterLoop
 # ---------------------------------------------------------------------------
@@ -841,6 +910,12 @@ class RouterLoop:
             search_actions_visible=_search_visible,
             hot_list_aliases=_hot_list_aliases,
         )
+        # D2-wrapper (B37): propagate hot-list alias schemas into
+        # invoke_action's description so the LLM can see canonical arg
+        # names when it routes via the wrapper (surface B) rather than a
+        # direct alias (surface A). No-op when no hot-list aliases built.
+        if _univ_enabled and _hot_list_aliases:
+            tools = _enrich_invoke_action_description(tools, _hot_list_aliases)
         if self._exclude_tools:
             tools = [
                 t for t in tools
