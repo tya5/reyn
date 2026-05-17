@@ -177,6 +177,7 @@ class TestStateModeField:
 
         # Re-import _resolve_state_mode so env var takes effect
         import importlib
+
         import reyn.dogfood.runner as runner_mod
         importlib.reload(runner_mod)
 

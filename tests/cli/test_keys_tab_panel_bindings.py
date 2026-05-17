@@ -36,7 +36,6 @@ from textual.binding import Binding
 from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets.right_panel.keys_tab import render_keys
 
-
 # ── Binding existence ────────────────────────────────────────────────────────
 
 

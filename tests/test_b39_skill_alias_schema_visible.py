@@ -24,7 +24,6 @@ import pytest
 from reyn.chat.router_loop import _collect_all_session_ars_entries
 from reyn.chat.session import enumerate_available_skills
 
-
 # ---------------------------------------------------------------------------
 # Shared fixture helpers
 # ---------------------------------------------------------------------------
