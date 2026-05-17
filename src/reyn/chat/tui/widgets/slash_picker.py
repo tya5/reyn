@@ -145,6 +145,19 @@ class SlashPicker(Static):
         max_name_len = max(len(c.name) for c in self._matches)
         name_col = max(max_name_len + 1, 12)
 
+        # Truncate summary so each row stays on one visual line. Row layout
+        # inside the picker box: caret(2) + name(name_col) + sep(2) + summary.
+        # self.content_size lags during resize, so derive width from app.size
+        # (live terminal width) minus the picker's overhead: border(2) +
+        # padding(2) + an extra 2-cell margin (Textual sometimes wraps at the
+        # boundary even when widths nominally match).
+        try:
+            term_w = self.app.size.width
+        except Exception:
+            term_w = 60
+        content_w = max(20, term_w - 6)
+        summary_budget = max(10, content_w - (2 + name_col + 2))
+
         body = Text()
         for i, cmd in enumerate(self._matches):
             is_sel = i == self._selected
@@ -156,9 +169,12 @@ class SlashPicker(Static):
             name = f"/{cmd.name}".ljust(name_col)
             row.append(name, style=f"bold {_CORAL}" if is_sel else "#dddddd")
             row.append("  ")
-            # Summary
+            # Summary (truncated to fit the row)
+            summary = cmd.summary
+            if len(summary) > summary_budget:
+                summary = summary[: max(1, summary_budget - 1)] + "…"
             row.append(
-                cmd.summary,
+                summary,
                 style="#bbbbbb" if is_sel else "dim #888888",
             )
             if i > 0:
