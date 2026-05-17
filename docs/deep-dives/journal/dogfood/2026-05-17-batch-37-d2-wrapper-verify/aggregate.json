@@ -1,0 +1,56 @@
+{
+  "batch": "B37",
+  "date": "2026-05-17",
+  "head_at_dispatch": "561101a",
+  "head_at_dispatch_parent_fixes": ["e5ecadb", "561101a"],
+  "scenarios_total": 58,
+  "verdict_totals": {
+    "verified": 26,
+    "inconclusive": 16,
+    "refuted": 16,
+    "blocked": 0
+  },
+  "verified_rate": 0.448,
+  "delta_vs_b36": {
+    "mathematical_net": "+7V",
+    "rubric_artifact_corrected": "+1V (W7 from artifact-corrected baseline)",
+    "real_os_layer": "+structural: D2-wrapper visible all workers + R-WEB unblock confirmed; +scope_refinement"
+  },
+  "workers": {
+    "W1_chat_router_smoke":      {"v": 4, "i": 1, "r": 2, "b": 0, "delta_vs_b36": 4,  "d2_wrapper_visible": true,  "wrapper_path_arg_canonical": "partial", "notable": "ghost alias default_api.web__search [MED]"},
+    "W2_stdlib_skills_core":     {"v": 2, "i": 5, "r": 2, "b": 0, "delta_vs_b36": -1, "d2_wrapper_visible": true,  "wrapper_path_arg_canonical": "partial", "notable": "ghost alias skill__create_skill [MED], hot-list coverage gap unchanged"},
+    "W3_control_ir_ops":         {"v": 4, "i": 0, "r": 5, "b": 0, "delta_vs_b36": 0,  "d2_wrapper_visible": true,  "direct_alias_non_regress": true, "notable": "S8 judge_phase schema validation bug [MED]; worktree-freshness V swing"},
+    "W4_permissions_and_safety": {"v": 3, "i": 5, "r": 0, "b": 0, "delta_vs_b36": 0,  "wrapper_arg_canonical_s1": false, "wrapper_arg_canonical_s6": false, "notable": "hallucination drift source_id->source_name [HIGH: synonym normalize structural break evidence]"},
+    "W5_multi_agent_and_mcp":    {"v": 2, "i": 2, "r": 3, "b": 0, "delta_vs_b36": -1, "wrapper_arg_canonical_s3": false, "mcp_install_misroute": false, "notable": "cold-start gap: invoke_action description body hardcoded message example overwhelms ARS block [HIGH]"},
+    "W6_plan_mode_fp0011":       {"v": 4, "i": 3, "r": 4, "b": 0, "delta_vs_b36": -1, "r_web_unblock_count": "1 + 3 freed (BLOCKED -> REFUTED via routing miss)", "plan_emitted": "2/3", "notable": "R-WEB gate structurally verified open; mcp_search hot-list gap surfaces as next blocker"},
+    "W7_long_session_v1":        {"v": 7, "i": 0, "r": 0, "b": 0, "delta_vs_b36_mathematical": 6, "delta_vs_b36_artifact_corrected": 0, "c1_clean_turns": "37/37", "d2_wrapper_visible": true, "wrapper_path_arg_canonical": true, "notable": "3 invoke_action calls all canonical (vs B36 N=3 mismatches pre-fix)"}
+  },
+  "structural_findings_n_geq_3": {
+    "hypothesis": "D2-wrapper scope is hot-list-only; non-hot-listed actions on invoke_action path remain schema-blind, leading to LLM hallucination drift across batches.",
+    "observations": [
+      {"worker": "W2", "scenario": "S1", "action": "rag.operation__drop_source", "hot_list_state": "absent", "llm_args_key": "source_id"},
+      {"worker": "W4", "scenario": "S1", "action": "file__write", "hot_list_state": "absent", "llm_args_key": "text"},
+      {"worker": "W4", "scenario": "S6", "action": "rag.operation__drop_source", "hot_list_state": "absent", "llm_args_key": "source_name", "note": "NEW VARIANT — drift from B36 source_id (= synonym normalize bankrupt)"},
+      {"worker": "W5", "scenario": "S3", "action": "agent.peer__researcher", "hot_list_state": "absent (cold)", "llm_args_key": "message", "note": "invoke_action description body hardcoded example overwhelms ARS"}
+    ],
+    "structural_fix_candidates": [
+      "Expand D2-wrapper scope to all session-visible actions (list_actions registry)",
+      "Dynamically build invoke_action description body example from hot_list_aliases canonical schemas",
+      "Schema-based: invoke_action.args as oneOf discriminated by action_name (gemini compatibility check needed)"
+    ]
+  },
+  "ghost_alias_seed_corruption": {
+    "observations": [
+      {"worker": "W1", "ghost_name": "default_api.web__search", "note": "qualified-name corruption in action_usage.jsonl"},
+      {"worker": "W2", "ghost_name": "skill__create_skill", "note": "renamed skill (canonical: skill__skill_builder), prior session persistence"}
+    ],
+    "fix_candidate": "Validate alias existence at hot-list seed load time; reject names not in current action registry"
+  },
+  "r_web_python_unsafe_gate": {
+    "fix": "e5ecadb",
+    "verified_open_evidence": ["narr-3 skill_builder completed 5-phase", "s-fp12-spawn-1 workflow_finished"],
+    "permission_denied_events": 0,
+    "freed_blocked_to_refuted": 3
+  },
+  "worktree_freshness_v_swing_note": "V swings on W2/W3/W6 substantially driven by hot-list usage-history seed difference between B36 (= polluted worktrees from prior batches) and B37 (= fresh worktrees). Not OS regression. Measurement methodology consideration for next batches."
+}

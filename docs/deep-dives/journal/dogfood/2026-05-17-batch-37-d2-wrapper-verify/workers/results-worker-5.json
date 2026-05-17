@@ -1,0 +1,143 @@
+{
+  "batch": 37,
+  "worker": 5,
+  "head": "561101a",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "run_date": "2026-05-17",
+  "port": 8085,
+  "server_cwd": "/private/tmp/reyn-worktrees/b37-5",
+  "summary": {
+    "verified": 2,
+    "inconclusive": 2,
+    "refuted": 3,
+    "blocked": 0
+  },
+  "vs_b36": {
+    "delta_v": -1,
+    "b36": {"verified": 3, "inconclusive": 2, "refuted": 2, "blocked": 0}
+  },
+  "b37_angles": {
+    "d2_wrapper_invoke_action_ars_block_present": true,
+    "d2_wrapper_peer_in_ars_when_hot_listed": true,
+    "d2_wrapper_peer_in_ars_when_cold": false,
+    "wrapper_arg_canonical_s3": false,
+    "s3_arg_used": "message",
+    "s3_expected_arg": "request",
+    "s3_cold_start_attractor": "invoke_action_description_body_says_message_not_request",
+    "s4_arg_used": "request",
+    "s4_source": "hot_list_alias_direct",
+    "mcp_install_misroute": false,
+    "mcp_install_b37_behavior": "inline_refusal_list_actions_mcp_server_empty",
+    "w5_peer_error_envelope": "verified_s3_s4",
+    "sp_conflict_identified": "invoke_action_desc_says_args={message}_but_ACTION_ARG_SCHEMAS_says_{request}_when_hot_listed"
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": "list_actions",
+      "tool_args": {"category": ["mcp.server"]},
+      "tool_result": {"items": [], "total": 0},
+      "reply_excerpt": "MCP レジストリに GitHub 関連のサーバーは見つかりませんでした。",
+      "notes": "events_fail: routing_decided=0, skill_run_spawned=0 (both required). LLM used list_actions directly. No alternatives suggested. Same character as B36 (inline list_actions, no skill dispatch)."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "result": "inconclusive",
+      "events_pass": true,
+      "events_pass_via": "chat_turn_completed_inline",
+      "routing_decided": 0,
+      "tool_used_1": "search_actions",
+      "tool_failed_1": "unknown_tool: search_actions not found",
+      "tool_used_2": "list_actions",
+      "tool_args_2": {"category": ["mcp.server"]},
+      "tool_result_2": {"items": [], "total": 0},
+      "reply_excerpt": "github MCP サーバー というツールは見つかりませんでした。GitHubのプルリクエストを一覧するには、どのようなツールやAPIを利用したいか教えてください。",
+      "notes": "events pass via must_emit_any (chat_turn_completed_inline). Rubric partially met: explains MCP not configured, asks for more info. No listing of PRs."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 1,
+      "tool_used": "invoke_action",
+      "tool_args": {"action_name": "agent.peer__researcher", "args": {"message": "FP-0001の概要を要約してください。"}},
+      "error_envelope": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry.",
+        "available_agents_present": true
+      },
+      "reply_excerpt": "researcher エージェントは見つかりませんでした。他のエージェントに依頼しますか？",
+      "b37_d2_wrapper_retest": {
+        "invoke_action_path_used": true,
+        "arg_field_used": "message",
+        "canonical_arg_field": "request",
+        "arg_canonical": false,
+        "ars_block_present_in_invoke_action_desc": true,
+        "peer_in_ars_block": false,
+        "d2_wrapper_resolved": false,
+        "reason": "agent.peer__researcher not in hot list at cold start. ARS block only covers hot-listed actions. invoke_action desc body says args={'message': <user_query>} — wins when no ARS entry for peer."
+      },
+      "notes": "W5 peer error envelope: VERIFIED. D2-wrapper: NOT resolved for cold-start. Rubric: explains not found, no hallucination. Verdict=VERIFIED."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 1,
+      "tool_used_p1": "agent.peer__researcher",
+      "tool_args_p1": {"request": "Reyn の Phase エンジンについて調査してください。"},
+      "tool_path_p1": "hot_list_alias",
+      "error_envelope_p1": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry.",
+        "available_agents_present": true
+      },
+      "reply_p1_excerpt": "researcher という名前のエージェントは見つかりませんでした。",
+      "reply_p2_excerpt": "I do not have access to an agent named 'writer'.",
+      "b37_ars_evidence_p1": "ACTION ARG SCHEMAS includes agent.peer__researcher: {request} (peer now hot-listed). D2-wrapper effective for hot-listed peer. canonical 'request' used.",
+      "notes": "P1: hot_list_alias path, canonical 'request' field — D2-wrapper ARS resolved (peer warm). P2: no routing_decided for writer (not hot-listed in S4 context). Rubric: reports agents not found, no fabrication. Verified."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "result": "refuted",
+      "events_pass": true,
+      "routing_decided": 0,
+      "tools_used": ["list_actions", "list_actions"],
+      "tool_args_1": {"category": ["web"]},
+      "tool_args_2": {"category": ["mcp.tool"]},
+      "reply_excerpt": "found web__fetch and web__search, but nothing for 'reyn web' or A2A endpoints.",
+      "notes": "Rubric requires A2A message/send + GET /a2a/tasks/{id} description. LLM searched tools, found no reyn web action. Same failure as B35/B36. Predicted 100% refuted."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "tool_used": "list_actions",
+      "tool_args": {"category": ["mcp.server"]},
+      "tool_result": {"items": [], "total": 0},
+      "reply_excerpt": "MCPサーバーのインストールに関するコマンドは見つかりませんでした。",
+      "mcp_install_misroute_to_mcp_search": false,
+      "notes": "B35 §4.4 routing collision NOT observed (N=0/2 across B36+B37). Inline refusal via list_actions. Events FAIL. Same as B36."
+    },
+    {
+      "id": "cron_schedule_status",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "tool_used": "list_actions",
+      "tool_args": {"category": ["skill"]},
+      "reply_excerpt": "cronジョブの一覧を表示する機能は利用可能なスキルの中には見当たりませんでした。",
+      "b36_comparison": "B36 had routing_decided=1 (INCONCLUSIVE via exec__list_cron_jobs attempt). B37 routing_decided=0 (REFUTED). Behavioral variance, same code.",
+      "notes": "Events FAIL: routing_decided=0. LLM took list_actions(skill) path instead of invoke_action. -1V vs B36. LLM variance (not code regression)."
+    }
+  ]
+}

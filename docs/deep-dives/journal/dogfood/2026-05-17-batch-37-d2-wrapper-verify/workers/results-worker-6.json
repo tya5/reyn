@@ -1,0 +1,211 @@
+{
+  "batch": "B37",
+  "worker": 6,
+  "head": "561101a",
+  "date": "2026-05-17",
+  "agent_prefix": "dogfood-b37-6-sN",
+  "port": 8086,
+  "worktree": "/private/tmp/reyn-worktrees/b37-6",
+  "scenario_sets": ["plan_mode.yaml (3)", "fp_0011_narration.yaml (2 enabled)", "fp_0011_0012_retest.yaml (6)"],
+  "primary_targets": ["R-WEB-TRUSTED-PYTHON gate unblock (e5ecadb)", "D2-wrapper visible (561101a)"],
+
+  "totals": {
+    "verified": 4,
+    "inconclusive": 3,
+    "refuted": 4,
+    "blocked": 0
+  },
+
+  "delta_vs_b36_w6": {
+    "b36": {"verified": 5, "inconclusive": 1, "refuted": 2, "blocked": 3},
+    "b37": {"verified": 4, "inconclusive": 3, "refuted": 4, "blocked": 0},
+    "delta_v": "-1",
+    "delta_b": "-3",
+    "net_blocked_unblocked": 3,
+    "note": "All 3 BLOCKED verdicts from B36 converted: narr-1 → R (routing miss, hot-list gap), s-fp11-3 → R (routing miss), s-fp12-completion-1 → R (routing miss). R-WEB gate confirmed open for skill_builder (narr-3 + s-fp12-spawn-1: no permission_denied, workflow_finished). -1V net from plan_explain: B36=R (no plan), B37=V (plan used + code read). Offsetting: s-fp11-1 + s-fp12-completion-2 moved I→I (spawn-ack-only captures, skill ran in BG)."
+  },
+
+  "r_web_gate_unblock_verify": {
+    "gate_unblocked_count": 1,
+    "scenarios_gated": ["narr-3-skill-builder", "s-fp12-spawn-1-builder-success-ack"],
+    "evidence": {
+      "narr-3": {
+        "skill": "skill_builder",
+        "events": "workflow_started, preprocessor_step_started, preprocessor_step_completed, lint_plan_completed, phase_started x5, phase_completed x5, workflow_finished",
+        "permission_denied_observed": false,
+        "preprocessor_step_failed_observed": false,
+        "conclusion": "Unsafe preprocessor step (skill_builder build_skill phase) ran without permission_denied. R-WEB gate open."
+      },
+      "s-fp12-spawn-1": {
+        "skill": "skill_builder",
+        "events": "skill_run_spawned, invoke_skill_spawn_ack_exit, skill_run_completed, skill_completion_injected(status=finished)",
+        "permission_denied_observed": false,
+        "conclusion": "Skill ran to completion (finished), no gate block."
+      }
+    },
+    "permission_denied_event_presence": "ABSENT in both skill_builder runs — confirms python.unsafe: allow in reyn.local.yaml is effective",
+    "config_used": "permissions.python.unsafe: allow in /private/tmp/reyn-worktrees/b37-6/reyn.local.yaml",
+    "unverified_scenarios": {
+      "narr-1-mcp-search": "mcp_search not reached — routing miss (search_actions returned 0 items, LLM did not invoke invoke_skill)",
+      "s-fp11-3-mcp-search-empty": "mcp_search not reached — routing miss (inline reply, no tool call)",
+      "s-fp12-completion-1-mcp-search-narrate": "mcp_search not reached — routing miss (inline reply)"
+    },
+    "root_cause_of_unverified": "mcp_search is not seeded in the hot list for fresh workspace. The LLM sees search_actions return 0 items for mcp_search category, then defaults to inline answer. B36 W6 had mcp_search correctly invoked (routing_decided + invoke_skill) but failed at the gate. B37 has the gate open but routing doesn't reach it."
+  },
+
+  "d2_wrapper_verify": {
+    "visible": true,
+    "evidence": "LLM payload trace /tmp/b37-6-llm-trace.jsonl confirmed invoke_action.description contains ACTION ARG SCHEMAS block",
+    "schema_block_excerpt": "file__read: {path}, file__list: {path}, file__grep: {case_sensitive, glob, max_results, path, pattern}, file__glob: {path, pattern}, web__search: {max_results, query}, skill__skill_builder: {description, goal, skill_name}",
+    "note": "Canonical key names present. W3 also confirmed same block. D2-wrapper fix (561101a) is working as designed."
+  },
+
+  "plan_emitted_rate": "2/3",
+  "plan_details": {
+    "plan_compare_two_concepts": {
+      "plan_emitted": true,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_aggregated": true,
+      "verdict": "inconclusive",
+      "note": "plan triggered, steps read both docs, aggregated. Reply has 4 points but lacks explicit header/line-number citations. control_ir_failed x2 (index_query, no RAG index). Reply quality WEAK for rubric 'cites specific evidence'."
+    },
+    "plan_explain_with_code_references": {
+      "plan_emitted": true,
+      "plan_step_started": 2,
+      "plan_step_completed": 2,
+      "plan_aggregated": true,
+      "verdict": "verified",
+      "note": "B36=R (no plan). B37: plan triggered, read planner.py AND plan.py (tool_called reyn_src_read x2). Reply names dispatch_plan_tool, _handle function, references both files. VERIFIED."
+    },
+    "plan_summary_across_n_files": {
+      "plan_emitted": false,
+      "plan_step_started": 0,
+      "verdict": "refuted",
+      "note": "LLM answered inline. 3 events only. Same pattern as B36 W6 (also refuted). plan tool not invoked despite request to read 3 docs."
+    }
+  },
+
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "file": "plan_mode.yaml",
+      "verdict": "inconclusive",
+      "plan_emitted": true,
+      "events": "plan_emitted:1, plan_step_started:3, plan_step_completed:3, plan_aggregated:1, control_ir_failed:2",
+      "notes": "plan triggered (reyn_src_read x2 for both docs). control_ir_failed (index_query) x2 — no RAG index. Reply has 4 concrete points but no specific header citations. Rubric 'cites specific evidence (header names, line numbers, or short quotes)' not met. Same outcome as B36 W6."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "file": "plan_mode.yaml",
+      "verdict": "verified",
+      "plan_emitted": true,
+      "events": "plan_emitted:1, plan_step_started:2, plan_step_completed:2, plan_aggregated:1",
+      "notes": "B36=R (no plan). B37: plan triggered, 2 steps read planner.py + plan.py (reyn_src_read tool). Reply names dispatch_plan_tool, _handle function, explains both when-to-invoke and how-steps-execute with function references. VERIFIED."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "events": "user_message_received:1, chat_turn_completed_inline:1, compaction_check:1",
+      "notes": "LLM answered inline (no plan tool). 4 pillars cited with doc names. Content reasonable but plan tool NOT invoked. Rubric must_emit(plan_emitted>=1) FAILED."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "refuted",
+      "notes": "B36=BLOCKED (gate). B37: LLM called search_actions (mcp.server category), got 0 results, answered inline 'not found'. mcp_search not in hot list (fresh workspace, usage-seeded). Routing miss, not a gate failure. R-WEB gate NOT reached."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "verified",
+      "events": "skill_run_spawned, workflow_started, preprocessor_step_completed, phase_started x5, workflow_finished, skill_completion_injected",
+      "notes": "skill_builder ran 5 phases to completion. No permission_denied. No preprocessor_step_failed. R-WEB gate confirmed OPEN. Narration: string_length skill created. VERIFIED (same as B36 W6)."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "events": "skill_run_spawned, invoke_skill_spawn_ack_exit, skill_run_interrupted(will_resume=true), skill_run_failed",
+      "notes": "B36=V (skill_completion_injected, error narration). B37: skill LLM hit JSON parse error in design_artifacts phase. A2A returned spawn ack text ('phase started: plan_skill... phase started: design_artifacts'). Skill failed in background. Error NOT surfaced in captured reply. INCONCLUSIVE (measurement gap: A2A returned spawn-ack before skill completed; MessageBus 60s timeout)."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "events": "skill_run_spawned, invoke_skill_spawn_ack_exit, skill_run_completed, skill_completion_injected, skill_run_failed",
+      "notes": "eval ran, tool_failed (FileNotFoundError), postprocessor error, skill_run_failed. Narration: 'スキル評価中にエラーが発生しました... overall_score、passed、passed_criteria... が不足'. Error surfaced, no fabricated score, no false success. VERIFIED. No permission_denied (no Python gate issue for eval)."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "events": "user_message_received:1, chat_turn_completed_inline:1, compaction_check:1",
+      "notes": "B36=BLOCKED (gate). B37: LLM answered inline 'not found' without invoking mcp_search. Routing miss (same as narr-1). R-WEB gate not reached. REFUTED."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "events": "skill_run_spawned, invoke_skill_spawn_ack_exit, skill_run_completed, skill_completion_injected(status=finished), workflow_finished",
+      "notes": "skill_builder completed (finished). skill_completion_injected (status=finished). Narration: 'string_length... 正常に作成されました'. skill_name extracted. NO /tasks pointer in captured reply (A2A captured completion narration, not spawn ack). no_double_invoke: YES. INCONCLUSIVE: tasks_pointer rubric not assessable from completion narration capture."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "events": "user_message_received:1, chat_turn_completed_inline:1, compaction_check:1",
+      "notes": "B36=BLOCKED (gate; routing correctly chose invoke_skill). B37: LLM answered inline 'no Slack MCP server found'. Routing miss — mcp_search not in hot list. R-WEB gate not reached. REFUTED."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "events": "skill_run_spawned, invoke_skill_spawn_ack_exit, skill_run_interrupted(JSON parse error), skill_run_failed",
+      "notes": "B36=V. B37: skill_builder hit JSON parse error in design_artifacts. A2A returned spawn-ack text only. skill_run_failed injected to chat (background). Error NOT surfaced in captured reply. INCONCLUSIVE (same measurement gap as s-fp11-1)."
+    }
+  ],
+
+  "w6_fix_non_regression": {
+    "phase_no_progress_fix": "not_directly_tested_in_this_batch",
+    "note": "B36 W6 verified phase_no_progress → skill_completion_injected in s-fp11-1 + s-fp12-completion-2. B37 both scenarios hit JSON parse error (different failure path), so the fix path was not traversed. Non-regression not confirmed for this batch, not refuted."
+  },
+
+  "new_findings": [
+    {
+      "id": "B37-W6-F1",
+      "severity": "HIGH",
+      "description": "mcp_search hot-list gap: B36 W6 had mcp_search correctly dispatched (invoke_skill_spawn_ack_exit) but blocked by gate. With gate fixed (B37), mcp_search is NOT reaching the gate because it's not in the hot list. 3 scenarios (narr-1, s-fp11-3, s-fp12-completion-1) are now REFUTED (routing miss) instead of BLOCKED.",
+      "evidence": "narr-1: search_actions returned {items:[], total:0} for mcp.server category; LLM answered inline. s-fp11-3, s-fp12-completion-1: 3 events only (no tool call).",
+      "recommendation": "Seed mcp_search in the default hot list OR add to DEFAULT_HOT_LIST_SEED. Without this, the R-WEB gate fix cannot be exercised for mcp_search scenarios.",
+      "impact": "r_web_unblock_count for mcp_search = 0 (gate never reached). Full R-WEB fix verification requires hot-list seeding."
+    },
+    {
+      "id": "B37-W6-F2",
+      "severity": "MED",
+      "description": "A2A spawn-ack capture pattern: when skill runs take >60s (MessageBus timeout), A2A returns spawn-ack text as reply. skill_run_failed/interrupted occurs in background. Error narration NOT captured in the A2A response. Affects s-fp11-1 and s-fp12-completion-2 assessment.",
+      "evidence": "s-fp11-1: reply='phase started: plan_skill...'; skill_run_interrupted (JSON parse error, will_resume=true). s-fp12-completion-2: same pattern.",
+      "recommendation": "For error-path scenarios with slow skill runs, either increase MessageBus timeout or use polling pattern to capture the background completion narration.",
+      "impact": "2 scenarios moved from V (B36) to I (B37) due to capture gap, not behavioral regression."
+    },
+    {
+      "id": "B37-W6-F3",
+      "severity": "INFO",
+      "description": "D2-wrapper active and visible in B37 W6: invoke_action.description contains ACTION ARG SCHEMAS with canonical key names for 10 hot-list actions including file__grep (pattern, not content_regex) and skill__skill_builder (description, goal, skill_name).",
+      "evidence": "LLM trace /tmp/b37-6-llm-trace.jsonl confirms ACTION ARG SCHEMAS block. Consistent with B37 W3 primary evidence.",
+      "impact": "Positive non-regression confirmation for D2-wrapper across W3 and W6."
+    },
+    {
+      "id": "B37-W6-F4",
+      "severity": "INFO",
+      "description": "plan_explain_with_code_references: B36=R (no plan), B37=V (plan+code read). Behavioral improvement for this scenario.",
+      "evidence": "B37: plan_emitted:1, reyn_src_read(planner.py)+reyn_src_read(plan.py) in plan steps. Reply cites dispatch_plan_tool, _handle. B36: LLM answered inline.",
+      "impact": "+1V for plan_explain vs B36. One-shot observation; N=1 so caution on extrapolation per checklist."
+    }
+  ],
+
+  "r_web_unblock_count": 1,
+  "plan_emitted_count": 2
+}

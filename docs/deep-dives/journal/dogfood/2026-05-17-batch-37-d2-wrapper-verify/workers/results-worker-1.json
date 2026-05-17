@@ -1,0 +1,105 @@
+{
+  "batch": "B37",
+  "worker": 1,
+  "scenario_set": "chat_router_smoke",
+  "head": "561101a",
+  "port": 8081,
+  "agent_prefix": "dogfood-b37-1-s",
+  "generated": "2026-05-17",
+  "verdicts": {
+    "V": 4,
+    "I": 1,
+    "R": 2,
+    "B": 0
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "sN": "S1",
+      "verdict": "R",
+      "reply_rubric": "PARTIAL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Reply vague — mentions actions/agents but not skills by name. No skill artifact (inline reply)."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "sN": "S2",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Correct idempotency explanation. web_search via hot_list_alias (T1) and invoke_action wrapper retry (T2). No direct_llm artifact."
+    },
+    {
+      "id": "skill_discovery_request",
+      "sN": "S3",
+      "verdict": "R",
+      "reply_rubric": "PASS",
+      "events_pass": false,
+      "artifact_pass": false,
+      "note": "routing_decided NOT emitted — used list_actions inline. Consistent with B36 prediction (refuted=1.0)."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "sN": "S4",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": true,
+      "note": "Full skill run success. invoke_action(skill__word_stats_demo, {text:...}) canonical. 44 chars/5 words/1 line."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "sN": "S5",
+      "verdict": "I",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Poem produced after clarification turn. must_emit_any satisfied via chat_turn_completed_inline. Required extra turn."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "sN": "S6",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Correct code example despite invoke_action(default_api.web__search) error. Graceful fallback to LLM knowledge."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "sN": "S7",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Clean polite decline. No image hallucination."
+    }
+  ],
+  "d2_verification": {
+    "wrapper_description_visible": true,
+    "requests_checked": ["10727bfb", "b806c465"],
+    "action_arg_schemas_block_present": true,
+    "d2_min_baseline": true,
+    "wrapper_path_arg_canonical": "partial",
+    "canonical_correct": ["b806c465 skill__word_stats_demo", "c895cce9 web__search retry"],
+    "canonical_wrong": ["030a8544 default_api.web__search (hallucinated)", "2bf460ec default_api.web__search (toolset pollution)"]
+  },
+  "new_findings": [
+    {
+      "id": "B37-OBS-1",
+      "title": "default_api.web__search spurious tool in toolset",
+      "requests_affected": ["d8775949", "ae44217a", "2bf460ec"],
+      "agents_affected": ["dogfood-b37-1-s3", "dogfood-b37-1-s4", "dogfood-b37-1-s6"],
+      "description": "Three LLM requests received default_api.web__search as an actual tool with empty properties. Non-canonical qualified name causing occasional invoke_action wrong-name calls.",
+      "severity": "MED",
+      "hypothesis": "action_usage.jsonl hot_list may have recorded the malformed name from a prior session"
+    }
+  ],
+  "cost": {
+    "total_usd": 0.009392,
+    "total_tokens": 92794,
+    "llm_calls": 18
+  }
+}
