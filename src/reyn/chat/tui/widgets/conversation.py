@@ -164,7 +164,17 @@ class ConversationView(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield RichLog(highlight=False, markup=False, wrap=True, max_lines=5000, id="log")
+        # ``can_focus = False`` is the load-bearing piece: RichLog inherits
+        # ``can_focus = True`` from ScrollView, so a stray click on the conv
+        # pane (or Shift+Tab from the input bar) silently shifts focus here.
+        # The log is append-only and accepts no typed input, so the user then
+        # types into nothing until they click the input bar again. Ctrl+P/N
+        # turn-nav already calls ``log.scroll_to`` without needing focus, so
+        # disabling focus loses no real capability.
+        log = RichLog(highlight=False, markup=False, wrap=True,
+                      max_lines=5000, id="log")
+        log.can_focus = False
+        yield log
         # B5: empty-state hint, removed on first message
         yield Static(
             "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
