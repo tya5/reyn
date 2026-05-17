@@ -838,15 +838,17 @@ def _collect_all_session_ars_entries(
     skill_meta_map: "dict[str, dict] | None" = None,
     mcp_tool_map: "dict[str, dict] | None" = None,
     available_agents: "list[dict] | None" = None,
+    *,
+    known_skill_names: "frozenset[str] | None" = None,
 ) -> "list[tuple[str, dict]]":
-    """Collect (qualified_name, properties) for all session-visible schemed actions.
+    """Collect (qualified_name, properties) for all session-visible actions.
 
     D2-wrapper scope expansion (B38): B37's D2-wrapper fix was hot-list-only,
     causing schema-blind LLM calls for any action absent from the hot list
     (N=4 same-batch B37 observations: file__write, rag.operation__drop_source,
     agent.peer__researcher all hallucinated non-canonical keys).
 
-    Collects the full session-visible ARS set from four sources:
+    Collects the full session-visible ARS set from five sources:
 
     1. **Static operations**: all entries in ``KNOWN_STATIC_QUALIFIED_NAMES``
        (file / web / memory.operation / reyn.source / rag.operation /
@@ -854,9 +856,20 @@ def _collect_all_session_ars_entries(
        the default registry via ``resolve_describe_action``. Always populated;
        no session state required.
 
-    2. **Session skills**: keyed by qualified name ``skill__<name>`` in
-       ``skill_meta_map``, which carries the skill's ``input_schema``. Only
-       skills with a non-empty input schema contribute.
+    2. **Session skills (schemed)**: keyed by qualified name ``skill__<name>``
+       in ``skill_meta_map``, which carries the skill's ``input_schema``.
+       Only skills with a non-empty input schema contribute properties.
+
+    2b. **Session skills (empty-schema)** — B40 cognitive-bias fix: when
+       ``known_skill_names`` is supplied, skills that exist in the session
+       registry but have an empty / absent input schema (= no
+       ``user_message.yaml`` artifact in their dir) are emitted with empty
+       properties. Without this, names like ``skill__mcp_search`` are
+       invisible to wrapper-path routing — the LLM falls back to
+       category-prefix guessing (B39 W6 R-WEB: ``"mcp_search スキル"``
+       → 100% ``mcp.server`` miscategorization at fresh action_usage state).
+       Care-boundary §1 ("the LLM doesn't have to guess what exists")
+       places skill visibility in OS pre-call structural responsibility.
 
     3. **Session MCP tools**: keyed by ``mcp.tool__<server>.<tool>`` in
        ``mcp_tool_map``, which carries the tool's ``input_schema`` from the
@@ -867,10 +880,10 @@ def _collect_all_session_ars_entries(
        The ``to`` field is curried by the router, so it is dropped from the
        exposed schema.
 
-    Returns a deduplicated list of ``(qualified_name, properties_dict)`` pairs
-    where ``properties_dict`` is non-empty (= only actions with a known formal
-    schema contribute). P7-clean: no hardcoded action names; all data comes
-    from the registry or caller-supplied session state.
+    Returns a deduplicated list of ``(qualified_name, properties_dict)`` pairs.
+    Schemed actions carry their property dict; empty-schema actions from
+    Source 2b carry ``{}``. P7-clean: no hardcoded action names; all data
+    comes from the registry or caller-supplied session state.
     """
     # Late imports to avoid circular dependency at module load time.
     from reyn.tools import get_default_registry
@@ -910,6 +923,15 @@ def _collect_all_session_ars_entries(
             continue
         entries.append((qn, dict(props)))
         seen.add(qn)
+
+    # Source 2b (B40 cognitive-bias fix): empty-schema session skills.
+    # See docstring Source 2b for full rationale.
+    if known_skill_names:
+        for qn in sorted(known_skill_names):
+            if qn in seen:
+                continue
+            entries.append((qn, {}))
+            seen.add(qn)
 
     # Source 3: session MCP tools from mcp_tool_map.
     for qn, meta in (mcp_tool_map or {}).items():
@@ -971,12 +993,18 @@ def _enrich_invoke_action_description(
         return tools
 
     # Build compact schema lines: "  <action_name>: {key1, key2, ...}"
+    # Empty-props entries (= B40 cognitive-bias fix Source 2b: empty-schema
+    # skills) render as "  <action_name>: {}" so they're visible to wrapper
+    # routing without a false schema signal.
     schema_lines: list[str] = []
     for name, props in ars_entries:
-        if not name or not props:
+        if not name:
             continue
-        keys = ", ".join(sorted(props.keys()))
-        schema_lines.append(f"  {name}: {{{keys}}}")
+        if props:
+            keys = ", ".join(sorted(props.keys()))
+            schema_lines.append(f"  {name}: {{{keys}}}")
+        else:
+            schema_lines.append(f"  {name}: {{}}")
 
     if not schema_lines:
         return tools
@@ -1290,6 +1318,14 @@ class RouterLoop:
                 skill_meta_map=_skill_meta_map or None,
                 mcp_tool_map=_mcp_tool_map or None,
                 available_agents=host.list_available_agents() or None,
+                # B40 cognitive-bias fix: surface empty-schema skills in ARS
+                # so wrapper-path routing can pick them by name. Without this,
+                # cold-start LLMs at hot_list_n=10 + fresh action_usage fall
+                # back to category-prefix guessing for skill names with
+                # mcp_/file_/web_ overlap (B39 W6 R-WEB: narr-1 / S4 / others).
+                known_skill_names=(
+                    frozenset(_known_skill_names) if _known_skill_names else None
+                ),
             )
             tools = _enrich_invoke_action_description(tools, _ars_entries)
         if self._exclude_tools:
