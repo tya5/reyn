@@ -206,6 +206,23 @@ class _PreviewPane(Widget):
             event.prevent_default()
             event.stop()
             self.scroll_line(-1)
+        elif event.key in ("J", "N", "n"):
+            # Peek-next-item without leaving the preview: walk up to the
+            # parent RightPanel and advance the active tab's cursor by +1.
+            # The cursor-move helper re-renders the preview itself when
+            # the pane is visible (see `_docs_move` et al.), so this stays
+            # a single keystroke for "show me the next doc / event /
+            # memory entry / agent run". `n` is the bonus alias because
+            # some terminals (esp. on Windows / over SSH) don't deliver
+            # Shift+letter as a distinct key event.
+            event.prevent_default()
+            event.stop()
+            self._navigate_parent_cursor(+1)
+        elif event.key in ("K", "P", "p"):
+            # Peek-previous-item, mirror of J / n above.
+            event.prevent_default()
+            event.stop()
+            self._navigate_parent_cursor(-1)
         elif event.key == "d":
             # vim-style half-page down — bigger jump than `j` for the
             # long event-YAML dumps where line-by-line is tedious.
@@ -232,6 +249,34 @@ class _PreviewPane(Widget):
             event.prevent_default()
             event.stop()
             self.post_message(self.CloseRequested())
+
+    def _navigate_parent_cursor(self, delta: int) -> None:
+        """Walk up to the parent ``RightPanel`` and move its tab cursor.
+
+        Dispatches per active tab — docs / events / memory / agents each
+        have their own cursor + cursor-move helper. The helper takes care
+        of refreshing the preview when the pane is visible, so we don't
+        call ``_update_preview`` directly here. Tabs without a cursor
+        concept (keys / cost) are no-ops.
+        """
+        # late import to avoid circular: shells.py is imported by __init__.py.
+        from . import RightPanel
+        parent = None
+        for ancestor in self.ancestors_with_self:
+            if isinstance(ancestor, RightPanel):
+                parent = ancestor
+                break
+        if parent is None:
+            return
+        tab = parent.panel_type
+        if tab == "docs":
+            parent._docs_move(delta)
+        elif tab == "events":
+            parent._events_move(delta)
+        elif tab == "memory":
+            parent._memory_move(delta)
+        elif tab == "agents":
+            parent._agents_move(delta)
 
     def show_markdown(self, path: Path) -> None:
         from rich.markdown import Markdown as RichMarkdown
@@ -313,7 +358,7 @@ class _PreviewPane(Widget):
             name = "—"
         try:
             self.query_one("#preview-header", Label).update(
-                f"  {name}  │  j↓ k↑ d⇊ u⇈ h← l→"
+                f"  {name}  │  j↓ k↑ d⇊ u⇈ h← l→  J/n=next K/p=prev"
             )
         except Exception as exc:
             logger.warning("right_panel preview header update failed: %s", exc)
