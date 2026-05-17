@@ -110,14 +110,20 @@ def test_enrich_includes_all_schemed_entries() -> None:
     assert "query" in desc
 
 
-# ── 3. Entries with empty properties do not add noise ────────────────────────
+# ── 3. Entries with empty properties render as ``{}`` (B40) ─────────────────
 
 
-def test_enrich_skips_empty_properties_entries() -> None:
-    """Tier 2: ARS entries with empty properties dict are skipped.
+def test_enrich_renders_empty_properties_entries_as_empty_braces() -> None:
+    """Tier 2: B40 — ARS entries with empty properties render as ``<name>: {}``.
 
-    Actions without a known formal schema (e.g. resource actions whose D2-full
-    enrichment is not yet available) should not produce noise lines.
+    Empty-schema actions (= e.g. ``skill__mcp_search`` without an explicit
+    ``input_schema`` artifact) must surface in the ARS catalog so wrapper-path
+    routing can pick them by name. Rendering as ``{}`` signals "exists, no
+    formal arg schema" without falsely implying the action takes no args.
+
+    Care-boundary §1: the LLM doesn't have to guess what exists.
+    Reverses the pre-B40 "skip empty-props" contract; B40 cognitive-bias fix
+    (B39 W6 R-WEB: 0/10 → 10/10 mcp_search routing recovery via trace-patch-replay).
     """
     tools = [_make_invoke_action_tool("ORIGINAL")]
     ars_entries = [("skill__some_skill", {})]  # empty properties
@@ -125,9 +131,8 @@ def test_enrich_skips_empty_properties_entries() -> None:
     ia = _get_invoke_action(result)
     assert ia is not None
     desc = ia["function"]["description"]
-    # No hint block should be appended — description is original
     assert "ORIGINAL" in desc
-    assert "skill__some_skill" not in desc
+    assert "skill__some_skill: {}" in desc
 
 
 # ── 4. No-op when ars_entries is empty ──────────────────────────────────────
@@ -140,17 +145,26 @@ def test_enrich_noop_empty_entries() -> None:
     assert result is tools, "empty entry list must return the same list object"
 
 
-# ── 5. No-op when all entries have empty properties ──────────────────────────
+# ── 5. All-empty-properties entries still emit ARS block (B40) ──────────────
 
 
-def test_enrich_noop_all_empty_properties() -> None:
-    """Tier 2: when all ARS entries have empty properties, tools list returned unchanged."""
-    tools = [_make_invoke_action_tool("UNCHANGED")]
+def test_enrich_emits_block_for_all_empty_properties_entries() -> None:
+    """Tier 2: B40 — ARS block is emitted even when every entry has empty props.
+
+    Skill-discovery context: an LLM that sees ``skill__foo: {}`` /
+    ``skill__bar: {}`` in the catalog can pick them by name and use
+    ``describe_action`` to resolve args. Skipping the block entirely (= old
+    contract) would hide their existence and force category-prefix guessing.
+    """
+    tools = [_make_invoke_action_tool("ORIGINAL")]
     ars_entries = [("skill__foo", {}), ("skill__bar", {})]
     result = _enrich_invoke_action_description(tools, ars_entries)
     ia = _get_invoke_action(result)
     assert ia is not None
-    assert ia["function"]["description"] == "UNCHANGED"
+    desc = ia["function"]["description"]
+    assert "ORIGINAL" in desc
+    assert "skill__foo: {}" in desc
+    assert "skill__bar: {}" in desc
 
 
 # ── 6. Real ToolDefinition for invoke_action in default registry ──────────────
@@ -258,3 +272,91 @@ def test_collect_all_session_ars_entries_includes_static_ops() -> None:
     assert "source" in drop_source_props, (
         "rag.operation__drop_source must expose canonical 'source' key (not source_id/source_name)"
     )
+
+
+# ── 9. B40: empty-schema skills surface in ARS via known_skill_names ─────────
+
+
+class TestCollectArsEntriesEmptySchemaSkills:
+    """Tier 2: B40 cognitive-bias fix — empty-schema skills must surface in ARS.
+
+    Pre-B40 contract: ``_collect_all_session_ars_entries`` only emitted
+    actions with non-empty properties. Empty-schema skills (e.g.
+    ``skill__mcp_search`` without an explicit ``input_schema`` artifact)
+    were invisible to wrapper-path routing, causing cold-start cognitive
+    bias (B39 W6 R-WEB: ``"mcp_search スキル"`` → 100% mcp.server
+    miscategorization at hot_list_n=10 + fresh action_usage state).
+
+    Post-B40 contract: when ``known_skill_names`` is provided, every
+    qualified name in that set appears in the ARS — schemed skills with
+    their property dict, empty-schema skills with ``{}``. Wrapper-path
+    routing now has full visibility of session skills regardless of
+    schema availability. Care-boundary §1: "the LLM doesn't have to
+    guess what exists."
+    """
+
+    def test_known_skill_names_none_preserves_pre_b40_behavior(self) -> None:
+        """Tier 2: without known_skill_names, empty-schema skills stay excluded."""
+        entries = _collect_all_session_ars_entries(
+            skill_meta_map={
+                "skill__alpha": {
+                    "input_schema": {"properties": {"q": {"type": "string"}}}
+                },
+            },
+        )
+        names = {n for n, _ in entries}
+        # schemed skill included via Source 2
+        assert "skill__alpha" in names
+        # no empty-schema skill present (= no Source 2b inputs)
+        for n, props in entries:
+            if n.startswith("skill__"):
+                assert props, (
+                    f"pre-B40 path must not emit empty-props skill entries, "
+                    f"got ({n!r}, {props!r})"
+                )
+
+    def test_known_skill_names_surfaces_empty_schema_skills(self) -> None:
+        """Tier 2: known_skill_names with empty-schema entries emits ``{}`` props."""
+        entries = _collect_all_session_ars_entries(
+            skill_meta_map={
+                "skill__alpha": {
+                    "input_schema": {"properties": {"q": {"type": "string"}}}
+                },
+            },
+            known_skill_names=frozenset({
+                "skill__alpha",        # schemed — already in skill_meta_map
+                "skill__mcp_search",   # empty-schema — must appear via Source 2b
+                "skill__word_stats_demo",  # empty-schema — must appear via Source 2b
+            }),
+        )
+        entries_by_name = dict(entries)
+        # schemed skill keeps its properties (= not overwritten by Source 2b)
+        assert entries_by_name["skill__alpha"] == {"q": {"type": "string"}}
+        # empty-schema skills appear with empty dict
+        assert entries_by_name["skill__mcp_search"] == {}
+        assert entries_by_name["skill__word_stats_demo"] == {}
+
+    def test_known_skill_names_does_not_duplicate(self) -> None:
+        """Tier 2: Source 2 entries are not re-emitted by Source 2b."""
+        entries = _collect_all_session_ars_entries(
+            skill_meta_map={
+                "skill__alpha": {
+                    "input_schema": {"properties": {"q": {"type": "string"}}}
+                },
+            },
+            known_skill_names=frozenset({"skill__alpha"}),
+        )
+        alpha_entries = [e for e in entries if e[0] == "skill__alpha"]
+        assert len(alpha_entries) == 1, (
+            f"skill__alpha must appear exactly once, got {alpha_entries}"
+        )
+        # The single entry retains its full properties (Source 2 wins over 2b)
+        assert alpha_entries[0][1] == {"q": {"type": "string"}}
+
+    def test_known_skill_names_empty_frozenset_is_noop(self) -> None:
+        """Tier 2: empty known_skill_names produces no Source 2b entries."""
+        entries_baseline = _collect_all_session_ars_entries()
+        entries_with_empty = _collect_all_session_ars_entries(
+            known_skill_names=frozenset(),
+        )
+        assert {n for n, _ in entries_baseline} == {n for n, _ in entries_with_empty}
