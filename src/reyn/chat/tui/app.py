@@ -561,7 +561,28 @@ class ReynTUIApp(App):
                 task.cancel()
                 cancelled_plans += 1
 
-        if cancelled_skills == 0 and cancelled_plans == 0:
+        # Seal any orphan streaming rows. The router cancel above stops the
+        # producer but no `__stream_end__` is emitted, so the StreamingRow's
+        # blinking cursor would otherwise persist forever. Snapshot first —
+        # end_stream() mutates conv._stream_rows.
+        cancelled_streams = 0
+        if conv is not None:
+            from rich.text import Text as _RichText
+            for msg_id in list(conv._stream_rows.keys()):
+                try:
+                    conv.end_stream(msg_id)
+                    conv._write_log(
+                        _RichText("  ⌁ cancelled", style="dim italic #888888"),
+                    )
+                    cancelled_streams += 1
+                except Exception:
+                    pass
+
+        if (
+            cancelled_skills == 0
+            and cancelled_plans == 0
+            and cancelled_streams == 0
+        ):
             self._voice_status(
                 "(nothing in-flight to cancel)", style="dim #555555",
             )
@@ -574,6 +595,10 @@ class ReynTUIApp(App):
         if cancelled_plans:
             parts.append(
                 f"{cancelled_plans} plan{'s' if cancelled_plans != 1 else ''}"
+            )
+        if cancelled_streams:
+            parts.append(
+                f"{cancelled_streams} stream{'s' if cancelled_streams != 1 else ''}"
             )
         self._voice_status(
             f"✗ cancelled {' + '.join(parts)}", style="bold #aa6666",
