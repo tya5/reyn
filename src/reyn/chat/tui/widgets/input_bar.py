@@ -322,15 +322,26 @@ class InputBar(Widget):
         # hint — the picker stays out of the keyboard path so Enter
         # submits the typed args instead of replacing them with /cmdname.
         if " " in token:
-            cmd_name = token.split(" ", 1)[0]
+            cmd_name, _, arg_partial = token.partition(" ")
             cmd = next(
                 (c for c in self._slash_commands if c.name == cmd_name),
                 None,
             )
-            if cmd is not None:
-                picker.set_hint(cmd)
-            else:
+            if cmd is None:
                 picker.hide()
+                return
+            # If the command supplies a CompleterFn, run it and surface
+            # filtered matches (e.g. /attach <name> → agent names). Falls
+            # back to plain hint when there's no completer or no session.
+            completions = (
+                self._run_completer(cmd, arg_partial)
+                if cmd.completer is not None
+                else None
+            )
+            if completions:
+                picker.set_completions(cmd, completions)
+            else:
+                picker.set_hint(cmd)
             return
         matches = [
             c for c in self._slash_commands
@@ -339,6 +350,31 @@ class InputBar(Widget):
         # Sort by name length then alpha so closer prefix shows first
         matches.sort(key=lambda c: (len(c.name), c.name))
         picker.set_matches(matches)
+
+    def _run_completer(
+        self, cmd: SlashCommand, arg_partial: str,
+    ) -> list[str]:
+        """Resolve ``cmd.completer(session)`` and prefix-filter by partial.
+
+        Reaches up to ``self.app`` to fetch the active session — a small
+        layer leak that avoids threading a session-getter through every
+        widget constructor for the single arg-completion path. Returns
+        an empty list (= caller falls back to plain hint mode) on any
+        exception so a broken completer can't break the picker.
+        """
+        try:
+            session = self.app._get_session()  # type: ignore[attr-defined]
+        except Exception:
+            return []
+        if session is None or cmd.completer is None:
+            return []
+        try:
+            all_completions = cmd.completer(session)
+        except Exception:
+            return []
+        if arg_partial:
+            return [c for c in all_completions if c.startswith(arg_partial)]
+        return list(all_completions)
 
     def _confirm_picker(self, picker: SlashPicker, ta: TextArea) -> None:
         cmd = picker.selected_command()
