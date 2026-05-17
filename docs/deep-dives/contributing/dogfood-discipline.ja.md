@@ -368,6 +368,76 @@ Skip:
 
 本原則は 原則 11 (= predict before observing) + 原則 batch 19 (= pre-retrospective discipline) と pair で **agent self-discipline 3 段 ladder**: predict (prelude) → audit before retrospective (= batch 19) → audit before fix (= batch 22)。
 
+### 原則 17 (candidate): 単一 defect の investigation loop
+
+> Status: 2026-05-17 e2e-coder 探索 session で lift (= G31 三成分分解 + N1 / N3 / N4 / N5 probe、 5 PR landed)。 Section 2 の batch 形式 loop と並行する 「**light-user dogfood で偶発的に見つけた 1 defect 用の縮小版 loop**」 として記述。
+
+**いつ使うか.** ユーザに見える symptom が 1 つ surface した (= 「memory entry を保存したのに project path を聞き返される」、 「skill spawn の acknowledgment が出ない」、 「404 reply が bare」)。 1 シナリオ、 1 つの推定 root cause、 1 つの fix / reject。
+
+Section 2 の batch loop は固定シナリオ集合での multi-scenario regression sweep 用。 この loop は **light user として `reyn chat` を触っていて rough edge に当たった session の opportunistic 探索** 用。 観測 infra (= `REYN_LLM_TRACE_DUMP` / `scripts/llm_replay.py`) は共通; 違いは **scope、 N、 reporting cadence**。
+
+**7 ステップ loop:**
+
+1. **symptom を手動再現.** 1 user message を `reyn chat --cui` に pipe、 `REYN_LLM_TRACE_DUMP=<path>` で trace 取得、 agent reply を観察。 light user 自然な phrasing (= "Read the file ./nonexistent.md and tell me what it says"、 "trigger file_not_found path" ではない)。 再現しない場合は N=3-5 に escalate して stochastic rate を確認してから先へ。
+
+2. **測る前に観測を decompose.** light-user probe で surface する "defect" は umbrella に 2-3 個の separable signal が collapsed されていることが多い。 motivate した specific observation を列挙し、 各 signal について **"競合製品も同じ signal を出すか?"** を問う。 yes なら expected behaviour であって defect ではない — target metric から除外する。 (G31 case study: umbrella + specific を conflate して ~430 weak calls 浪費後に分解で surface。 user-side memory `feedback_separate_leak_types_before_measuring.md` 参照。)
+
+3. **patch する前に variant ladder を設計.** 各候補 fix に短い tag と 1 行 hypothesis を割り当てる。 cross-PR 参照のため命名規約を予約:
+
+   | Tag prefix | 触る layer | 典型 scope |
+   |---|---|---|
+   | **α** | SP-level behavioral rule | 「X-shape の質問では Y する」 — overfit risk 高 |
+   | **β** | SP-level identifier 置換 | 「SP 内の Z を W に rename」 |
+   | **γ** | SP-level section 削除 | 「`## Categories` block を削除」 |
+   | **δ** | SP-level 追加 | 「1 行 anchor を append」 |
+   | **ε** | tool-array description / shape | 「invoke_action description を N 字に trim」 |
+   | **H** | structural ablation (= tool array 手術) | 「4 wrapper 削除」、 「全 tool を verb-form rename」 |
+   | **ζ** | chat-layer pre-LLM intercept | 「regex で質問形状検出、 user msg 書換」 |
+
+   design 時点で ladder を網羅: 任意の variant を patch する前に β/δ/γ/α/ε/H/ζ 候補を列挙、 seed が真にどの layer に居るか見極める。
+
+4. **N=10 で captured trace に対し patch-verify.** 探索 standard は cell あたり N=10 — Section 5 の N=5 stability 要件 (= production regression sweep 用) と異なる。 N=10 が variant 比較に適する理由:
+
+   - variant 間の effect size は ~30% (80%+ ではない) のことが多く、 N=5 は underpowered
+   - 並列 batch (= `ThreadPoolExecutor` 経由 `scripts/llm_replay.py --patch` の subprocess) で 200 calls が ~50s で完了、 cost は bounded
+   - 7-10 variants × baseline × 3-4 scenarios = 1 ターミナル画面に収まる matrix size
+
+   N=5 は **隣接シナリオの regression check** 用 (= 「この variant が無関係 routing を壊さないか」)、 N=10 は **primary target metric** 用 (= 「variant が数字を動かしたか」)。
+
+5. **narrow regex で output を classify.** 分離した signal (= step 2) ごとに 1 regex。 まず baseline サンプルで false positive を check。 1 investigation で 4-6 dimension を上限に — それ以上は step 2 の decomposition が緩い兆候。 e2e-coder G31 の例:
+
+   ```python
+   prefix_leak = re.search(r"`?(skill__|file__|web__|memory\.|...)", reply)
+   router_meta = re.search(r"\b(list_actions|invoke_action|describe_action|...)\b", reply)
+   cap_enum    = re.search(r"(i can help|file operations|web access|...)", reply, re.I)
+   ```
+
+   per-run + Σ aggregate を variant ごとに print。 reviewer が読む artifact は Σ matrix、 per-run table は audit trail。
+
+6. **variant ごとに thesis 整合で採用判断.** **採用条件**は以下を AND で満たす:
+   - target metric が primary シナリオで 絶対値 ≥30% 動く (= 6/10 → ≤4/10)
+   - 隣接シナリオを regress しない (= routing-baseline の tool-call 率が ≥9/10 を維持)
+   - shape が non-overfit (= variant の logic が「テスト時に使った特定の質問 phrasing」 を encode していない)
+
+   variant が前 2 条件のみ満たし 3 つ目で外れる場合 — 例: 1 質問 shape を suppress するが無関係 questions に bleed する SP rule — **reject** + rejection log。 投資単位は investigation 全体の up/down ではなく **variant 単位の採用判断**。
+
+7. **rejection を "Do not redo these experiments" journal に記録.** reject された variant ごとに 1 行: tag、 scope、 baseline → variant 数字 (= 各 dimension)、 1 行 reject 理由。 future session は同 hypothesis を再提案する前にこの list を読む。 G31 deep-dive journal (`2026-05-17-g31-three-component-decomposition.md`) が prototype — 10 hypothesis 各 number-backed reject 理由付きで、 次 session は ~400 weak calls 無駄を skip 可能。
+
+**loop の output はどちらか:**
+
+- 採用 variant を持つ単一の小規模 PR、 PR 本文の "candidates considered" section に reject 候補を要約
+- journal entry + giveup-tracker addendum で 「採用 variant なし、 この layer では fixable defect ではない (policy-accepted)」 と documentation
+
+両方とも valid outcome。 loop の job は **その選択を audit 可能にすること**。
+
+**cross-session footprint.** この loop は e2e-coder role の primary mode (= role 規律は user-side memory `feedback_pr_workflow_for_e2e_coder.md`)。 規律サマリ:
+
+- 全 PR / issue コメントに `[e2e-coder]` prefix (= cross-session signal、 同 `gh` user で lead-coder / e2e-coder / per-PR coders を authenticate しているため)
+- pull main + 頻繁 rebase (= 主要 refactor wave 中 main は速く動く、 stale-base PR は merge ではなく cherry-pick される)
+- self-merge 禁止; reviewer (= lead) が scope と timing を決定
+
+この loop なしの代替は、 e2e-coder session の default だった 「先に fix 実装、 post-hoc verify」 — 多くの場合 variant ladder (= step 3) が enumerate されないまま不正な fix が land する。
+
 ---
 
 ## 4. common patterns / anti-patterns
