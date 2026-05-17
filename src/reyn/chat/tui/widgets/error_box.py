@@ -9,7 +9,7 @@ After click (expanded):
     ✗ [skill#run_id]: error message  ▼
       detail line 1
       detail line 2
-      … N more  [B→events]
+      … N more  Ctrl+B → events
 
 Press Esc to dismiss (handled by ConversationView / app.py via the
 `_error_boxes` list — same API as before).
@@ -123,7 +123,12 @@ class ErrorBox(Widget):
             if overflow > 0:
                 detail_text += f"\n… {overflow} more"
             yield Static(detail_text, classes="eb-details")
-            yield Label("[B→events] for full trace", classes="eb-hint")
+            yield Label("Ctrl+B → events for full trace", classes="eb-hint")
+        else:
+            # No details supplied — fall back to the full (untruncated) message
+            # so long errors are still readable when the box is expanded.
+            yield Static(self._message, classes="eb-details")
+            yield Label("Ctrl+B → events for full trace", classes="eb-hint")
 
     # ── interaction ───────────────────────────────────────────────────────────
 
