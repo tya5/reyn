@@ -359,6 +359,15 @@ class RightPanel(Widget):
             # an issue tracker.
             event.prevent_default()
             self._copy_current_view()
+        elif event.key == "/":
+            # Docs tab only: pre-fill the conv input with the
+            # `/docs-filter` slash command so the user can type a
+            # substring and press Enter. Advertised by keys_tab._DOCS_KEYS
+            # and the Docs header `/=filter` hint. MVP — no inline
+            # filter buffer; just hand off to the existing slash command.
+            if self._panel_type == "docs":
+                event.prevent_default()
+                self._prefill_docs_filter()
 
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
@@ -1032,6 +1041,30 @@ class RightPanel(Widget):
         except Exception as exc:
             logger.warning("right_panel copy status failed: %s", exc)
 
+    def _prefill_docs_filter(self) -> None:
+        """`/` on the Docs tab — focus InputBar and pre-fill `/docs-filter `.
+
+        MVP: hand off to the existing `/docs-filter` slash command instead of
+        building an inline filter buffer. The user types the substring and
+        hits Enter; an empty submission clears the filter (same as invoking
+        the slash command directly).
+        """
+        from .. import InputBar  # late import → avoid cycle
+        try:
+            inputbar = self.app.query_one("#inputbar", InputBar)
+        except Exception as exc:
+            logger.warning("right_panel prefill docs filter failed: %s", exc)
+            return
+        try:
+            ta = inputbar.query_one("#input")
+            ta.load_text("/docs-filter ")
+            # Move cursor past the trailing space so the user types the
+            # substring directly without having to skip whitespace.
+            ta.move_cursor((0, len("/docs-filter ")))
+            inputbar.focus_input()
+        except Exception as exc:
+            logger.warning("right_panel prefill docs filter focus failed: %s", exc)
+
     def _build_recent_skill_bundle(self, item: dict) -> str:
         """Header + events YAML for a finished skill run."""
         import json as _json
@@ -1292,7 +1325,10 @@ class RightPanel(Widget):
         if self._panel_type == "cost":
             return f"[bold {_CORAL}]Cost[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "docs":
-            return f"[bold {_CORAL}]Docs[/]  [#555555]j↓ k↑ space=open[/]"
+            return (
+                f"[bold {_CORAL}]Docs[/]"
+                f"  [#555555]j↓ k↑ space=open /=filter[/]"
+            )
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
             tail = _TAIL_CYCLE[self._event_tail_idx]
