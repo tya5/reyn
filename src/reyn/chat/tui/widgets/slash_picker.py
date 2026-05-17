@@ -47,7 +47,7 @@ class SlashPicker(Static):
         padding: 0 1;
         display: none;
     }
-    SlashPicker.visible {
+    SlashPicker.visible, SlashPicker.hint-active {
         display: block;
     }
     """
@@ -73,6 +73,13 @@ class SlashPicker(Static):
 
     @property
     def visible_(self) -> bool:
+        """True iff the picker is showing selectable matches.
+
+        Hint mode (= ``/<cmd> <args>``) does NOT count as visible_ — it has
+        no selection caret and the keyboard paths skip it via has_matches.
+        Existing test contract pins "post-confirm picker is not visible_"
+        so this predicate stays matches-driven.
+        """
         return self.has_class("visible")
 
     @property
@@ -85,6 +92,7 @@ class SlashPicker(Static):
         self._matches = list(matches)[:_MAX_VISIBLE]
         self._selected = 0
         self._hint_cmd = None
+        self.remove_class("hint-active")
         if self._matches:
             self.add_class("visible")
         else:
@@ -99,12 +107,18 @@ class SlashPicker(Static):
         paths gated on ``has_matches`` skip; the user keeps typing args
         and Enter submits the typed text instead of replacing it with
         ``/cmdname``.
+
+        Display is gated by the separate ``hint-active`` CSS class — NOT
+        ``visible`` — so the matches-driven ``visible_`` predicate stays
+        false (existing test contract: "post-confirm picker is not
+        visible_").
         """
         self._matches = []
         self._total_matches = 0
         self._selected = 0
         self._hint_cmd = cmd
-        self.add_class("visible")
+        self.remove_class("visible")
+        self.add_class("hint-active")
         self._repaint()
 
     def hide(self) -> None:
@@ -112,6 +126,7 @@ class SlashPicker(Static):
         self._selected = 0
         self._hint_cmd = None
         self.remove_class("visible")
+        self.remove_class("hint-active")
         self._repaint()
 
     def move_selection(self, delta: int) -> None:
