@@ -132,6 +132,9 @@ class ConversationView(Widget):
         padding: 0 1;
         height: auto;
     }
+    ConversationView #empty-hint.hidden {
+        display: none;
+    }
     """
 
     def __init__(self, *, scroll_end: bool = True, id: str | None = None) -> None:
@@ -188,7 +191,8 @@ class ConversationView(Widget):
             return
         self._has_first_message = True
         try:
-            self.query_one("#empty-hint", Static).remove()
+            # Hide instead of remove so /clear can bring it back.
+            self.query_one("#empty-hint", Static).add_class("hidden")
         except Exception:
             pass
 
@@ -597,6 +601,12 @@ class ConversationView(Widget):
         self._last_long_reply = None
         # Hide sticky status
         self.hide_status()
+        # Restore the empty-state hint so the next session looks fresh.
+        self._has_first_message = False
+        try:
+            self.query_one("#empty-hint", Static).remove_class("hidden")
+        except Exception:
+            pass
 
 
 # ── formatting helpers ─────────────────────────────────────────────────────────
