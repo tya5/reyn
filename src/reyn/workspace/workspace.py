@@ -122,17 +122,24 @@ class Workspace:
                     raise PermissionError(
                         f"glob not permitted: {pattern!r} (outside project, no read permission)"
                     )
-            raw = sorted(_glob.glob(pattern, recursive=True))[:max_results]
-            return [m for m in raw if Path(m).is_file()]
+            # Filter for files BEFORE applying max_results; otherwise a glob
+            # whose first max_results matches are directories (common at the
+            # project root: .claude, .git, .github, .reyn, .venv, ...) silently
+            # truncates the file list to ~zero.
+            raw = sorted(_glob.glob(pattern, recursive=True))
+            files = [m for m in raw if Path(m).is_file()]
+            return files[:max_results]
 
+        # Same fix for the relative-path branch: filter to files first, then
+        # cap at max_results.
         ws_matches = sorted(self.base_dir.glob(pattern))
+        files_only = [m for m in ws_matches if m.is_file()]
         result = []
-        for m in ws_matches[:max_results]:
-            if m.is_file():
-                try:
-                    result.append(str(m.relative_to(self.base_dir)))
-                except ValueError:
-                    pass
+        for m in files_only[:max_results]:
+            try:
+                result.append(str(m.relative_to(self.base_dir)))
+            except ValueError:
+                pass
         return result
 
     def store_artifact(
