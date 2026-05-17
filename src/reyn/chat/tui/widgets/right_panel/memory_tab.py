@@ -36,7 +36,9 @@ def render_memory(
     def _render_scope(entries: list, label: str, label_color: str) -> None:
         lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
         if not entries:
-            lines.append("[#555555]    (empty)[/]")
+            lines.append(
+                "[#555555]    (empty — ask reyn to \"remember <fact>\")[/]"
+            )
             lines.append("")
             return
         groups: dict[str, list] = {
