@@ -12,6 +12,8 @@ Usage:
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
         --patch 'tools[0].function.parameters.properties.name.enum=["a","b"]' \\
         --patch 'messages[0].content+=" MUST output flat skill names"'
+    python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
+        --patch 'messages[0].content~=s/skill__code_review/skill__<entry>/g'
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> --diff
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> --diff --n 10
     python scripts/llm_replay.py <request_id> --trace <jsonl_path> \\
@@ -99,13 +101,44 @@ _PATH_SEG = re.compile(r"([^\[\].]+)|\[(\d+)\]")
 
 # Regex matching the full patch expression:
 #   <key.path><op>[<value>]
-# Supported ops:  =  +=  ?=  --
+# Supported ops:  =  +=  ?=  ~=  --
+#   ~=  sed-style substitution on a string target.
+#       Value form: s/<pattern>/<replacement>/[flags]
+#       Flags supported: g (global), i (case-insensitive). Default: first match only.
+#       Delimiter is fixed as '/'. Escape '/' inside pattern/replacement as '\/'.
 _PATCH_RE = re.compile(
-    r"^(.+?)"           # group 1: key.path (non-greedy)
-    r"(\?\=|\+\=|\-\-|=)"  # group 2: operator
-    r"(.*)$",           # group 3: value string (may be empty for --)
+    r"^(.+?)"                  # group 1: key.path (non-greedy)
+    r"(\?\=|\+\=|\~\=|\-\-|=)" # group 2: operator
+    r"(.*)$",                  # group 3: value string (may be empty for --)
     re.DOTALL,
 )
+
+
+_SUBST_RE = re.compile(
+    r"^s/((?:[^/\\]|\\.)*)/((?:[^/\\]|\\.)*)/([gi]*)$",
+    re.DOTALL,
+)
+
+
+def _parse_subst(raw: str) -> tuple[str, str, int, int]:
+    """Parse sed-style 's/pat/repl/flags' into (pattern, replacement, count, re_flags).
+
+    count: 0 = global, 1 = first match (sed-default: first occurrence per line, but
+    we apply it across the whole string).
+    """
+    m = _SUBST_RE.match(raw.strip())
+    if not m:
+        raise ValueError(
+            f"patch: ~= requires 's/pattern/replacement/[gi]' form, got {raw!r}"
+        )
+    pat = m.group(1).replace(r"\/", "/")
+    repl = m.group(2).replace(r"\/", "/")
+    flags_str = m.group(3)
+    re_flags = re.DOTALL
+    if "i" in flags_str:
+        re_flags |= re.IGNORECASE
+    count = 0 if "g" in flags_str else 1
+    return pat, repl, count, re_flags
 
 
 def _parse_path(path: str) -> list[str | int]:
@@ -224,6 +257,26 @@ def _apply_patch(payload: dict, expr: str) -> tuple[str, str]:
         else:
             parent[last] = existing + value
         return raw_path, f"appended {value!r}"
+
+    if op == "~=":
+        # sed-style substitution on a string target
+        try:
+            parent, last = _get_parent(payload, segments)
+            existing = parent[last]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ValueError(f"patch: ~= path not found: {raw_path!r}") from exc
+        if not isinstance(existing, str):
+            raise ValueError(
+                f"patch: ~= requires a string target; got {type(existing).__name__} at {raw_path!r}"
+            )
+        pat, repl, count, re_flags = _parse_subst(raw_value)
+        new_value, n_subs = re.subn(pat, repl, existing, count=count, flags=re_flags)
+        if n_subs == 0:
+            raise ValueError(
+                f"patch: ~= pattern {pat!r} did not match at {raw_path!r}"
+            )
+        parent[last] = new_value
+        return raw_path, f"substituted {n_subs}x: s/{pat}/{repl}/"
 
     # op == "="  — unconditional replace
     try:
@@ -977,6 +1030,7 @@ def main() -> None:
         help=(
             "Patch the payload before replay. Format: 'key.path=value', "
             "'key.path+=value' (string append), 'key.path?=value' (set if absent), "
+            "'key.path~=s/pattern/replacement/[gi]' (sed-style substitution), "
             "'key.path--' (delete). Repeatable; applied in CLI order."
         ),
     )

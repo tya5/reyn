@@ -1707,4 +1707,15 @@ EN 同等質問 ("What can you do?") は base model の英語 chat 訓練 prior 
 - **trace-driven A/B (= `--patch` 経由) は SP 候補を deploy 前に empirical 評価できる**: fixture re-record せず短時間で variant 比較、 strong/weak/thinking まで横並び。 今後の SP 検討で standard flow とする
 - **cost ladder 既知の場合、 weak model 側の限界は数字で documentation 化、 prompt overfit で塗りつぶさない**: README 警告 + giveup-tracker entry がユーザの意思決定 surface
 
+#### Addendum (2026-05-17 deep dive)
+
+[`2026-05-17-g31-three-component-decomposition.md`](./2026-05-17-g31-three-component-decomposition.md) でこの G31 を 3 成分に分解して再検証。 ~430 weak calls × 10 hypotheses (β/δ/α/γ/γ'/ε1/ε2/ε3/ε4/H1/H2/H3/ζ1) で確認:
+
+- **C (cap-enum umbrella)** = 「I can help...」 は **defect ではなく expected product behaviour** (Claude Code / ChatGPT も同じ)。 全 hypothesis で 10/10 不変、 question + model-prior bound
+- **A (prefix-leak `skill__/file__/web__`) + B (router-meta `list_actions`/`invoke_action`)** が真の defect。 ただし両方を同時に下げる **deployable な single-PR fix は不在**: 一方を下げる試みは他方を悪化させる zero-sum パターンが β/ε2/ε3/ε4/H2/H3 で再現
+- 唯一両方下げた ε1 (= descriptions=空) は routing が機能しなくなり deploy 不能。 ε4 (= 現実的 trim) は C-en rt 4→7 と逆悪化
+- 「policy-accepted、 no SP rule」 の元判断は **再確認**。 description trim 系 PR は出さない
+
+→ **将来この issue を再度 visit する場合**は 2026-05-17 journal の "Do not redo these experiments" セクション (= 各 hypothesis の数字付き reject reason) を先に読むこと。
+
 ---
