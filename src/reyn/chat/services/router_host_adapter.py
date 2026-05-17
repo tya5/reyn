@@ -172,6 +172,15 @@ class RouterHostAdapter:
         # build synchronously on the first turn before computing the D14
         # search_actions visibility gate. Off by default (= lazy bg build).
         eager_embedding_build: bool = False,
+        # FP-0022 fix (#53): callable that yields an InterventionBus for
+        # router-initiated tools that need the 4-layer approval flow
+        # (web_fetch interactive prompt, mcp install / drop ask gates).
+        # ChatSession passes a factory that wraps ``ChatInterventionBus(
+        # session, run_id=None, skill_name="chat_router")``; tests can
+        # pass None and the OpContext gets ``intervention_bus=None`` (=
+        # config-deny path still raises, interactive prompt path raises
+        # the documented RuntimeError telling the caller a bus is needed).
+        intervention_bus_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._agent_name = agent_name
         self._agent_role = agent_role
@@ -222,6 +231,12 @@ class RouterHostAdapter:
         # FP-0034 Phase 2 step 5
         self._action_usage_tracker = action_usage_tracker
         self._action_retrieval_config = action_retrieval_config
+        # FP-0022 fix (#53): intervention-bus factory used by
+        # make_router_op_context to populate ``ctx.intervention_bus`` so
+        # web_fetch / mcp install / mcp drop handlers can run their
+        # interactive (Layer 4) approval flow without crashing on
+        # ``intervention_bus is None`` defensive guards.
+        self._intervention_bus_factory = intervention_bus_factory
 
     # --- RouterLoopHost identity attributes ---
 
@@ -242,6 +257,18 @@ class RouterHostAdapter:
     def events(self) -> Any:
         """EventLog for dispatch_tool events."""
         return self._events
+
+    @property
+    def permission_resolver(self) -> Any:
+        """PermissionResolver bound at construction (= session's resolver).
+
+        Exposed so ``RouterLoop._invoke_via_registry`` can populate the
+        ToolContext.permission_resolver universal field via getattr; without
+        this property the lookup falls through to None and every Tier-1
+        config-deny check (web.fetch, mcp, …) silently bypasses for the
+        router-invoked path. See #53 for the original silent-bypass bug.
+        """
+        return self._perm
 
     # --- Catalogue accessors ---
 
@@ -841,6 +868,18 @@ class RouterHostAdapter:
             permission_resolver=self._perm,
             skill_name="chat_router",
         )
+        # FP-0022 fix (#53): wire intervention_bus so handlers that need
+        # the 4-layer approval flow (web_fetch, mcp install / drop) can
+        # progress past their ``intervention_bus is None`` defensive
+        # guard. The config-deny check inside require_web_fetch fires
+        # before the bus is touched, so leaving the bus None is still
+        # safe for the deny path — but we wire a real bus when one is
+        # available so the interactive (Layer 4) path also works.
+        bus = (
+            self._intervention_bus_factory()
+            if self._intervention_bus_factory is not None
+            else None
+        )
         return OpContext(
             workspace=workspace,
             events=self._events,
@@ -848,4 +887,5 @@ class RouterHostAdapter:
             permission_resolver=self._perm,
             skill_name="chat_router",
             mcp_servers=self._mcp_servers_flat(),
+            intervention_bus=bus,
         )

@@ -262,3 +262,138 @@ def test_require_web_fetch_config_deny_raises_immediately(tmp_path: Path) -> Non
     bus = _DenyAllInterventionBus()  # must not be called
     with pytest.raises(PermissionError, match="web fetch denied by config"):
         asyncio.run(resolver.require_web_fetch("https://example.com", bus))
+
+
+# ── 8. #53 regression — router invoke_action path enforces web.fetch deny ────
+
+
+def _make_router_op_ctx_factory(resolver, bus, events):
+    """Return a callable mirroring RouterHostAdapter.make_router_op_context.
+
+    Builds an OpContext whose ``permission_resolver`` / ``intervention_bus`` /
+    ``permission_decl`` mirror what the production factory wires. Used to
+    exercise the router-invoked path of WEB_FETCH._handle without spinning
+    up a full ChatSession.
+    """
+    from reyn.op_runtime.context import OpContext
+    from reyn.permissions.permissions import PermissionDecl
+    from reyn.workspace.workspace import Workspace
+
+    def _factory():
+        ws = Workspace(
+            events=events,
+            permission_resolver=resolver,
+            skill_name="chat_router",
+        )
+        return OpContext(
+            workspace=ws,
+            events=events,
+            permission_decl=PermissionDecl(),
+            permission_resolver=resolver,
+            skill_name="chat_router",
+            intervention_bus=bus,
+        )
+
+    return _factory
+
+
+def test_router_invoke_action_web_fetch_deny_raises_permission_error(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: WEB_FETCH._handle raises PermissionError under web.fetch: deny.
+
+    Regression for #53. Before the fix, the router-invoked path of
+    ``invoke_action(web__fetch, ...)`` silently bypassed the deny check —
+    ``ctx.permission_resolver`` was None (the ToolContext lookup
+    ``getattr(host, "permission_resolver", None)`` returned None because
+    the adapter stored the resolver as ``_perm``), so ``handle_web_fetch``
+    skipped its entire permission gate. The fetch returned ``status: ok,
+    status_code: 200``.
+
+    The fix wires:
+      1. ``RouterHostAdapter.permission_resolver`` property
+      2. ``intervention_bus`` into ``make_router_op_context``
+      3. ``web_fetch._handle`` uses ``router_state.op_context_factory``
+         instead of synthesizing a minimal OpContext with None bus.
+
+    With those landed, the deny check at Layer 1a of ``require_web_fetch``
+    fires before any HTTP traffic and raises PermissionError. ``dispatch_tool``
+    wraps that into a ``permission_denied`` error_kind and a tool_failed
+    event — but the propagation itself is enough for this regression guard.
+    """
+    from reyn.events.events import EventLog
+    from reyn.permissions.permissions import PermissionResolver
+    from reyn.tools.types import RouterCallerState, ToolContext
+
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "deny"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+    bus = _DenyAllInterventionBus()  # config-deny path must short-circuit before bus
+
+    rs = RouterCallerState(
+        op_context_factory=_make_router_op_ctx_factory(resolver, bus, events),
+    )
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=resolver,
+        workspace=None,
+        caller_kind="router",
+        router_state=rs,
+    )
+
+    with pytest.raises(PermissionError, match="web fetch denied by config"):
+        asyncio.run(
+            WEB_FETCH.handler({"url": "https://example.com"}, tool_ctx),
+        )
+
+
+def test_router_invoke_action_web_fetch_allow_no_deny_proceeds(
+    tmp_path: Path,
+) -> None:
+    """Tier 2: web.fetch: allow lets the router path proceed past the gate.
+
+    Sibling assertion to the deny test — guards against a fix that
+    over-corrects and starts denying every router-invoked web fetch.
+    Uses a sentinel URL that resolves to a non-routable IP so the HTTP
+    layer fails fast (we only care that the permission gate let us
+    through, not that the fetch succeeds).
+    """
+    from reyn.events.events import EventLog
+    from reyn.permissions.permissions import PermissionResolver
+    from reyn.tools.types import RouterCallerState, ToolContext
+
+    events = EventLog()
+    resolver = PermissionResolver(
+        config_permissions={"web.fetch": "allow"},
+        project_root=tmp_path,
+        interactive=True,
+    )
+    bus = _DenyAllInterventionBus()  # allow-config short-circuits before bus
+
+    rs = RouterCallerState(
+        op_context_factory=_make_router_op_ctx_factory(resolver, bus, events),
+    )
+    tool_ctx = ToolContext(
+        events=events,
+        permission_resolver=resolver,
+        workspace=None,
+        caller_kind="router",
+        router_state=rs,
+    )
+
+    # The gate must not raise PermissionError. The fetch itself may fail
+    # at the HTTP layer (unroutable host) — that's fine; the handler
+    # returns ``{"status": "error" / "timeout"}`` for transport errors.
+    # What matters: no PermissionError, AND no RuntimeError about a
+    # missing intervention_bus (= the make_router_op_context wiring).
+    result = asyncio.run(WEB_FETCH.handler(
+        {"url": "http://127.0.0.1:1/never-listens"},
+        tool_ctx,
+    ))
+    # Either a transport error (= permitted to attempt) or an ok response.
+    assert isinstance(result, dict)
+    assert result.get("kind") == "web_fetch"
+    # The deny path would have raised before getting a dict back.

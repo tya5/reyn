@@ -845,6 +845,15 @@ class ChatSession:
             # B25-S5-1: thread eager-build flag so RouterLoop awaits build
             # before computing _search_visible on the first turn.
             eager_embedding_build=self._eager_embedding_build,
+            # FP-0022 fix (#53): give the router OpContext a real
+            # InterventionBus so web_fetch / mcp install / mcp drop
+            # handlers can run their interactive (Layer 4) approval
+            # flow. The bus is built per make_router_op_context() call
+            # — short-lived, scoped to the chat_router skill, identical
+            # to what session._mcp_call_tool wires manually today.
+            intervention_bus_factory=lambda: ChatInterventionBus(
+                self, run_id=None, skill_name="chat_router",
+            ),
         )
 
         # FP-0019 Wave 1: background head/body/tail compaction service.
