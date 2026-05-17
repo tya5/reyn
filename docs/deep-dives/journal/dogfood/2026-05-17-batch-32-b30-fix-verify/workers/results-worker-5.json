@@ -1,0 +1,78 @@
+{
+  "worker": 5,
+  "batch": 32,
+  "scenario_set": "multi_agent_and_mcp",
+  "head": "c8fae2e",
+  "agent": "dogfood-b32-5",
+  "run_date": "2026-05-17",
+  "summary": {
+    "verified": 0,
+    "inconclusive": 4,
+    "refuted": 3,
+    "blocked": 0
+  },
+  "vs_b30": {
+    "delta_v": -1,
+    "delta_i": 1,
+    "delta_r": 0,
+    "delta_b": 0
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "score": "inconclusive",
+      "events_satisfied": true,
+      "rubric_satisfied": false,
+      "notes": "First skill run returned github results (fabricated?). Second run failed unsafe-python. Final reply was error message. routing_decided + skill_run_spawned emitted. search_actions attractor: NOT present — LLM used skill__mcp_search directly (NEW-1+2 fix confirmed)."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "score": "inconclusive",
+      "events_satisfied": true,
+      "rubric_satisfied": false,
+      "notes": "must_emit_any satisfied via chat_turn_completed_inline. Context contaminated by S1 history bleed. LLM replied inline about MCP limitations. No search_actions attractor observed."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "score": "inconclusive",
+      "events_satisfied": true,
+      "rubric_satisfied": false,
+      "notes": "routing_decided emitted (outcome=error). LLM attempted invoke_action on agent.peer__researcher but args validation failed (args serialized as string not object). Reply: encountered error, no actionable guidance."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "score": "inconclusive",
+      "events_satisfied": true,
+      "rubric_satisfied": false,
+      "notes": "routing_decided emitted for researcher (success). Results returned. Writer not routed — LLM said writer action name not visible. Second turn inline only. Reply not empty but writer delegation not completed."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "score": "refuted",
+      "events_satisfied": true,
+      "rubric_satisfied": false,
+      "notes": "must_emit empty (satisfied). Reply did not mention /a2a/tasks/{run_id} endpoint or message/send JSON-RPC method. LLM explained it can't launch reyn web without specific protocol details."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "score": "refuted",
+      "events_satisfied": false,
+      "rubric_satisfied": false,
+      "notes": "routing_decided and skill_run_spawned both missing (both must_emit). LLM replied 'no capability' inline without attempting mcp_install skill dispatch."
+    },
+    {
+      "id": "cron_schedule_status",
+      "score": "refuted",
+      "events_satisfied": false,
+      "rubric_satisfied": false,
+      "notes": "routing_decided missing (must_emit). LLM called list_actions(category=['mcp.server']) — wrong category. Replied 'no tool found.' No explanation of reyn.yaml cron config."
+    }
+  ],
+  "key_findings": {
+    "search_actions_attractor": "resolved",
+    "history_bleed_between_scenarios": "S1-S4 contaminated; S5-S7 clean after adding history.jsonl to wipe",
+    "args_double_serialization": "LLM serialized args as JSON string in S3 (invalid_args error)",
+    "mcp_search_unsafe_python_gate": "mcp_search blocked without --allow-unsafe-python flag",
+    "writer_agent_not_seeded": "agent.peer__writer alias not visible; only researcher was seeded"
+  }
+}

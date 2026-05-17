@@ -1,0 +1,97 @@
+{
+  "batch": "B32",
+  "worker": 1,
+  "head": "c8fae2e",
+  "agent": "dogfood-b32-1",
+  "scenarios": {
+    "simple_capability_question": {
+      "B28": null,
+      "B30": "I",
+      "B32": "V",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "Inline reply. user_message_received + chat_turn_completed_inline emitted. Reply mentions skills/capabilities."
+    },
+    "factual_query_direct_llm": {
+      "B28": null,
+      "B30": "R",
+      "B32": "V",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "Inline factual reply about idempotency. Correct and comprehensive."
+    },
+    "skill_discovery_request": {
+      "B28": null,
+      "B30": "R",
+      "B32": "R",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "list_actions inline path taken. routing_decided not emitted. must_emit violated. 16 skills listed, no contamination in skill list."
+    },
+    "explicit_skill_invocation_word_stats": {
+      "B28": null,
+      "B30": "R",
+      "B32": "V",
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "chat_turn_completed_inline_emitted": false,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "Full skill lifecycle: routing_decided + skill_run_spawned + skill_run_completed(finished). Word stats reply correct."
+    },
+    "catalog_routing_decided_emitted": {
+      "B28": null,
+      "B30": "R",
+      "B32": "R",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": true,
+      "contamination_type": "WAL_and_history",
+      "notes": "session_restored + skill_completion_injected from S4 WAL. Reply: word_stats_demo completion inject, not a poem. history.jsonl also had S1 turns in context."
+    },
+    "multi_turn_pronoun_reference": {
+      "B28": null,
+      "B30": "R",
+      "B32": "V",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "Two turns, both inline. Turn 2 contained Python list comprehension code examples coherent with Turn 1."
+    },
+    "out_of_scope_graceful_decline": {
+      "B28": null,
+      "B30": "R",
+      "B32": "R",
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "new1_seed_visible": true,
+      "contamination_observed": false,
+      "notes": "Agent asked for image details instead of declining. Does not pretend to generate. Rubric 1 fail: no polite decline."
+    }
+  },
+  "summary": {
+    "V": 4,
+    "I": 0,
+    "R": 3,
+    "B": 0,
+    "vs_B30": "+4V",
+    "new1_seed_visible_all": true,
+    "new3_reyn_local_clean": true,
+    "wipe_recipe_gaps_found": ["wal.jsonl not cleared", "history.jsonl not cleared"],
+    "c1_regression": false
+  }
+}

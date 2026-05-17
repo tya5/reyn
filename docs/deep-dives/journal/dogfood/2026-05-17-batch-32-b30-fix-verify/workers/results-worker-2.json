@@ -1,0 +1,90 @@
+{
+  "batch": "B32",
+  "worker": "2/7",
+  "head": "c8fae2e",
+  "scenario_set": "stdlib_skills_core",
+  "date": "2026-05-17",
+  "tally": {"V": 1, "I": 5, "R": 3, "B": 0},
+  "delta_vs_b30": {"V": 0, "I": 2, "R": -2, "B": 0},
+  "new1_fix_verified": true,
+  "new2_fix_verified": true,
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "label": "S1",
+      "outcome": "refuted",
+      "reason": "skill_run_failed: SafeModeViolation in __post__ postprocessor (glob import blocked in safe mode despite --allow-unsafe-python flag). strategy phase completed correctly. routing_decided to skill__index_docs via hot-list alias (NEW-1 verified)."
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "label": "S2",
+      "outcome": "verified",
+      "reason": "Full event chain: routing_decided (2x), skill_run_spawned, skill_run_completed:finished, phase_started (2x). MCP unavailable, reply honestly disclosed. No permission_denied event."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "label": "S3",
+      "outcome": "refuted",
+      "reason": "Routing miss: LLM called list_actions(category=['file'], filter='src/reyn/op_runtime/') -> 0 results -> inline reply. No routing_decided/skill_run_spawned/phase_started."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "label": "S4",
+      "outcome": "inconclusive",
+      "reason": "routing_decided + skill_run_spawned + 8 phase_started + lint ops fired correctly. skill_run_interrupted (CancelledError, will_resume=true) when stdin closed. Async skill still running."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "label": "S5",
+      "outcome": "inconclusive",
+      "reason": "All events fired including skill_run_completed:finished. Python preprocessor computed zero stats (char_count=0, word_count=0). LLM inferred correct values (44 chars) from own knowledge. Stats pipeline bug."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "label": "S6",
+      "outcome": "inconclusive",
+      "reason": "routing_decided (2x) + skill_run_completed:finished. Reply incorrectly said 'word_stats_demo is not a valid action' despite skill completing. task_completed handler narration bug."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "label": "S7",
+      "outcome": "inconclusive",
+      "reason": "routing_decided (3x, all skill__eval, NEW-2 verified) + skill_run_spawned (3x) + phase_started. All 3 eval runs skill_run_interrupted when stdin closed. Reply '/tasks' (correct SPAWN-ACK)."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "label": "S8",
+      "outcome": "inconclusive",
+      "reason": "5 turns answered inline. Compaction never triggered (all turns within head_size=12 window, min_compact_batch=5 not met). No skill_run_spawned. Final reply meets rubric on content quality."
+    },
+    {
+      "id": "chained_find_then_index",
+      "label": "S9",
+      "outcome": "refuted",
+      "reason": "Turn 1: LLM said no MD files in docs/concepts/ (incorrect, used list_actions catalog search). Turn 2: routing to skill__index_docs correct (2x, NEW-1 confirmed). skill_run_interrupted before completion."
+    }
+  ],
+  "new1_detail": {
+    "s1_first_request_id": "fcd032ea-2d82-4f4e-9111-e1d4166fe910",
+    "tools_count": 17,
+    "skill__index_docs_in_first_request": true,
+    "skill__eval_in_first_request": true,
+    "llm_tool_call": "invoke_action(action_name='skill__index_docs', args={'corpus_name': 'concepts_index', 'path_glob': 'docs/concepts/'})",
+    "hallucinated_rag_ops": false
+  },
+  "new2_detail": {
+    "s7_first_request_id": "d993e228-d90e-41e8-bd7b-b89c7682f089",
+    "tools_count": 17,
+    "skill__eval_in_first_request": true,
+    "llm_tool_call": "invoke_action(action_name='skill__eval', args={...})",
+    "hallucinated_direct_llm_eval": false
+  },
+  "recurring_issues": [
+    "SafeModeViolation in index_docs __post__ postprocessor (S1, S9) — --allow-unsafe-python not honored by postprocessor",
+    "Async skill interruption on stdin close (S4, S7, S9) — expected behavior but blocks skill_run_completed verification",
+    "Directory listing routing miss: LLM uses list_actions(file category) instead of skill__read_local_files (S3, S9 T1)",
+    "word_stats python preprocessor computes zero stats (S5, S6)",
+    "task_completed narration bug: skill success narrated as error for word_stats_demo (S6)",
+    "Wipe recipe incomplete: agent state/.reyn/agents/<name>/state/ not included in brief recipe"
+  ]
+}

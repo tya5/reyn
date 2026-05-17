@@ -1,0 +1,99 @@
+{
+  "worker": 7,
+  "batch": 32,
+  "scenario_set": "long_session_v1",
+  "head": "c8fae2e",
+  "run_id": "b32-7-long-session",
+  "agent": "dogfood-b32-7",
+  "raw_band": {"verified": 0, "inconclusive": 7, "refuted": 0, "blocked": 0},
+  "true_band": {"verified": 1, "inconclusive": 5, "refuted": 1, "blocked": 0},
+  "brier_score": 0.2656,
+  "vs_b30": {
+    "delta_verified": -1,
+    "delta_inconclusive": 0,
+    "delta_refuted": 1,
+    "delta_blocked": 0,
+    "note": "S1 regressed: B30 true_band=verified, B32 true_band=refuted (final turn P7 rubric not met)"
+  },
+  "c1_verify": {
+    "total_llm_requests": 53,
+    "router_turns": 51,
+    "phase_turns": 2,
+    "clean_turns": 53,
+    "duplicate_turns": 0,
+    "result": "53/53 clean"
+  },
+  "new1_verify": {
+    "router_turns": 51,
+    "both_visible": 51,
+    "skills_checked": ["skill__index_docs", "skill__eval"],
+    "result": "51/51 router turns"
+  },
+  "multi_turn_survival": {
+    "total_user_turns": 37,
+    "empty_llm_responses": 0,
+    "g12_pattern_e": 0,
+    "result": "0 empty responses / 53 LLM calls"
+  },
+  "q2_event": {
+    "clean_scenarios": 6,
+    "anomaly_scenarios": ["scenario_5_general_python_chain"],
+    "anomaly_detail": "S5 turn 5: double invoke_action for skill__direct_llm, 2 routing_decided + 2 chat_turn_completed_inline for 1 user message",
+    "result": "6/7 scenarios Q2-clean"
+  },
+  "scenarios": {
+    "scenario_1_reyn_research_chain": {
+      "band": "inconclusive",
+      "true_band": "refuted",
+      "turns": "5 (4i+1r)",
+      "b30_turns": "5 (2i+3r)",
+      "reply_len": 1473,
+      "notes": "Turns 2-5 all refused: same-description tools ambiguity. Final turn P7 rubric not met."
+    },
+    "scenario_2_pronoun_followup": {
+      "band": "inconclusive",
+      "true_band": "inconclusive",
+      "turns": "6 (6i+0r)",
+      "b30_turns": "6 (6i)",
+      "reply_len": 2157
+    },
+    "scenario_3_cross_reference_compare": {
+      "band": "inconclusive",
+      "true_band": "inconclusive",
+      "turns": "5 (5i+0r)",
+      "b30_turns": "5 (5i)",
+      "reply_len": 1836,
+      "notes": "Turn 1 LangGraph refusal (expected — non-Reyn domain)"
+    },
+    "scenario_4_repetitive_context_bloat": {
+      "band": "inconclusive",
+      "true_band": "inconclusive",
+      "turns": "6 (6i+0r)",
+      "b30_turns": "6 (6i)",
+      "reply_len": 6686
+    },
+    "scenario_5_general_python_chain": {
+      "band": "inconclusive",
+      "true_band": "verified",
+      "turns": "8 events for 5 user turns (6i+2r)",
+      "b30_turns": "5 (5i)",
+      "reply_len": 16503,
+      "notes": "S5 Q2 anomaly: double invoke_action on turn 5. Reply substantive with asyncio.Queue code."
+    },
+    "scenario_6_file_and_doc_lookup_chain": {
+      "band": "inconclusive",
+      "true_band": "inconclusive",
+      "turns": "5 (5i+0r)",
+      "b30_turns": "5 (4i+1r)",
+      "reply_len": 898
+    },
+    "scenario_7_concept_explanation_chain": {
+      "band": "inconclusive",
+      "true_band": "inconclusive",
+      "turns": "5 (4i+1r)",
+      "b30_turns": "5 (4i+1r)",
+      "reply_len": 15045,
+      "notes": "web_search on turn 1 (eventual consistency) — succeeded"
+    }
+  }
+}

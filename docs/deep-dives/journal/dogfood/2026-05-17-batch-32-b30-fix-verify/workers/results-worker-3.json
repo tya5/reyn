@@ -1,0 +1,87 @@
+{
+  "batch": "b32",
+  "worker": 3,
+  "set": "control_ir_ops",
+  "head": "c8fae2e",
+  "agent": "dogfood-b32-3",
+  "driver": "reyn dogfood run (framework path, manual scoring)",
+  "verified": 2,
+  "inconclusive": 1,
+  "refuted": 6,
+  "blocked": 0,
+  "total": 9,
+  "vs_b30": "+0",
+  "vs_b28": "-4",
+  "w3_cluster_status": "stable_regression",
+  "scenarios": {
+    "file_read_via_chat": {
+      "verdict": "refuted",
+      "b28": "verified",
+      "b30": "verified",
+      "first_turn_tool": "skill__read_local_files",
+      "note": "skill ran but phase LLM hallucinated generic SW principles, not P1-P8 content; tool_executed missing"
+    },
+    "file_glob_grep": {
+      "verdict": "refuted",
+      "b28": "verified",
+      "b30": "refuted",
+      "first_turn_tool": "skill__index_docs",
+      "note": "LLM called index_docs not glob/grep; skill_run_failed unsafe python"
+    },
+    "web_search_query": {
+      "verdict": "verified",
+      "b28": "inconclusive",
+      "b30": "verified",
+      "first_turn_tool": "web__search",
+      "note": "web_search_started/completed emitted; good reply"
+    },
+    "web_fetch_url": {
+      "verdict": "verified",
+      "b28": "verified",
+      "b30": "refuted",
+      "first_turn_tool": "web__fetch",
+      "note": "RECOVERED from B30. web__fetch chosen directly (not plan); good Python 3.12 summary"
+    },
+    "sandboxed_exec_simple": {
+      "verdict": "refuted",
+      "b28": "inconclusive",
+      "b30": "refuted",
+      "first_turn_tool": "exec__run",
+      "note": "no routing rule for exec category; no sandboxed_exec events; stable failure"
+    },
+    "lint_a_skill": {
+      "verdict": "refuted",
+      "b28": "inconclusive",
+      "b30": "inconclusive",
+      "first_turn_tool": "skill__eval",
+      "note": "NEW-2 effective (eval seeded); but skill_run_failed due to unsafe python in eval target"
+    },
+    "recall_indexed_source": {
+      "verdict": "inconclusive",
+      "b28": "blocked",
+      "b30": "refuted",
+      "first_turn_tool": "memory.entry__recall",
+      "note": "honest error (memory file not found); no fabrication; borderline rubric"
+    },
+    "judge_output_direct": {
+      "verdict": "refuted",
+      "b28": "blocked",
+      "b30": "refuted",
+      "first_turn_tool": "skill__judge_phase",
+      "note": "skill_run_failed artifact not found; reply confused by (answered) token"
+    },
+    "ask_user_round_trip": {
+      "verdict": "refuted",
+      "b28": "unknown",
+      "b30": "refuted",
+      "first_turn_tool": "inline_reply (asked skill name without tool call)",
+      "note": "user_intervention_requested/received never emitted; multi-turn at chat level not ask_user op level"
+    }
+  },
+  "c1_stable": true,
+  "c1_note": "tools=17 across all 24 router requests, 0 duplicates",
+  "q2_stable": true,
+  "new1_effective": true,
+  "new2_effective": true,
+  "new3_effective": true
+}
