@@ -41,22 +41,21 @@ _EVENT_COLORS: dict[str, str] = {
     "chat_stopped":                "#dddddd",
     "user_intervention_requested": "#ffcc88",
     "user_intervention_received":  "#ffcc88",
-    "preprocessor_step_started":   "#555555",
-    "preprocessor_step_completed": "#555555",
-    "postprocessor_step_started":   "#555555",
-    "postprocessor_step_completed": "#555555",
     "postprocessor_step_failed":    "#ff6644",
-    "postprocessor_step_memoized":  "#cc8855",
-    "python_step_started":         "#555555",
-    "python_step_completed":       "#555555",
+    "tool_executed":               "#cc88ff",
     "web_fetch_started":           "#888888",
-    "web_fetch_completed":         "#888888",
     "web_search_started":          "#888888",
     "web_search_completed":        "#888888",
-    # Sandboxed execution (FP-0017) — same dim grey as shell ops; they're
-    # the same concept at a lower privilege level.
-    "sandboxed_exec_started":      "#888888",
-    "sandboxed_exec_completed":    "#888888",
+    "web_search_failed":           "#ff6644",
+    "phase_failed":                "#ff4444",
+    "skill_run_failed":            "#ff6644",
+    "run_skill_started":           "#88aaff",
+    "control_ir_failed":           "#ff6644",
+    "control_ir_skipped":          "#555555",
+    "normalization_error":         "#ff6644",
+    "compaction_failed":           "#ff6644",
+    "memory_deleted":              "#555555",
+    "memory_saved":                "#555555",
     "workspace_updated":           "#555555",
     "compaction_check":            "#555555",
     # Internal routing / multi-agent housekeeping — very dim so they don't
@@ -96,14 +95,18 @@ _DEFAULT_EVENT_COLOR = "#666666"
 _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     ("all",   frozenset()),
     ("phase", frozenset({
-        "phase_started", "phase_completed", "control_decided", "context_built",
+        "phase_started", "phase_completed", "phase_failed",
+        "control_decided", "context_built",
         "artifact_created", "artifact_validated",
+        "control_ir_failed", "control_ir_skipped",
     })),
     ("llm",   frozenset({"llm_called", "llm_response_received"})),
     ("tool",  frozenset({
-        "tool_called", "tool_returned", "tool_failed",
+        "tool_called", "tool_returned", "tool_failed", "tool_executed",
         "mcp_called", "mcp_completed", "mcp_failed",
         "mcp_server_installed", "act_executed",
+        "web_fetch_started", "web_search_started",
+        "web_search_completed", "web_search_failed",
     })),
     # RAG (ADR-0033) — embed / recall / index lifecycle. Separate group so a
     # noisy embed_progress stream can be filtered in/out independently.
@@ -119,8 +122,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "budget_warn", "budget_exceeded", "budget_extended", "budget_reset",
     })),
     ("skill", frozenset({
-        "skill_run_spawned", "skill_run_completed",
-        "skill_completion_injected",
+        "skill_run_spawned", "skill_run_completed", "skill_run_failed",
+        "skill_completion_injected", "run_skill_started",
         "workflow_started", "workflow_finished", "workflow_aborted",
         "agent_message_sent", "agent_request_received", "agent_response_received",
     })),
@@ -138,6 +141,8 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
         "plan_step_failed", "plan_step_memo_failed", "plan_run_interrupted",
         "loop_limit_exceeded", "phase_budget_exceeded", "budget_exceeded",
         "recall_embed_failed", "postprocessor_step_failed", "workflow_aborted",
+        "phase_failed", "skill_run_failed", "control_ir_failed",
+        "web_search_failed", "normalization_error", "compaction_failed",
     })),
     ("user", frozenset({
         "user_message_received",
@@ -148,9 +153,11 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     # chains and budget resets, but very noisy in normal sessions.
     ("internal", frozenset({
         "chain_peer_discarded",
-        "compaction_check",
+        "compaction_check", "compaction_failed",
         "budget_reset",
         "workspace_updated",
+        "memory_saved", "memory_deleted",
+        "control_ir_skipped",
     })),
 ]
 
