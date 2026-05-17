@@ -711,6 +711,17 @@ class SkillRunner:
                 ))
             except Exception:  # noqa: BLE001 — outbox failure must not suppress enqueue
                 pass
+            # #106: an unexpected Python exception bypasses the OS's
+            # workflow_aborted emit, so ChatEventForwarder never converts
+            # it into a "skill done: aborted" trace — leaving any mounted
+            # SkillActivityRow spinning forever. Enqueue the trace
+            # directly so the TUI finishes the row.
+            try:
+                await self._put_outbox(OutboxMessage(
+                    kind="trace", text="skill done: aborted", meta=meta,
+                ))
+            except Exception:  # noqa: BLE001 — same defense as above
+                pass
         else:
             if result.status == "budget_exceeded":
                 _terminal_status = "budget_exceeded"
