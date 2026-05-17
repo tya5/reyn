@@ -368,6 +368,76 @@ Skip for: simple structural / wiring / null-safety bugs where the trace already 
 
 This principle pairs with principle 11 (= predict before observing) and principle batch 19 (= pre-retrospective discipline) to form a three-stage agent-self-discipline ladder: predict (prelude) → audit before retrospective (= batch 19) → audit before fix (= batch 22).
 
+### Principle 17 (candidate): Single-defect investigation loop
+
+> Status: lifted from 2026-05-17 e2e-coder exploration session (= G31 decomposition + N1 / N3 / N4 / N5 probes, 5 PRs landed). Complements Section 2's batch-format loop with a tighter loop for **one user-visible defect found by light-user dogfood**, where running a full multi-scenario batch is too heavy.
+
+**When this applies.** A single user-visible symptom surfaced (= "agent asks for project path even though I saved a memory entry", "agent doesn't acknowledge skill spawn", "404 reply is bare"). One scenario, one suspected root cause, one fix or rejection.
+
+The batch loop in Section 2 is calibrated for multi-scenario regression sweeps with a fixed scenario set. This loop is calibrated for **opportunistic exploration** by a session that just hit a rough edge while using `reyn chat` as a light user. The two loops share the same observation infra (= `REYN_LLM_TRACE_DUMP`, `scripts/llm_replay.py`); they differ on **scope, N, and reporting cadence**.
+
+**The 7-step loop:**
+
+1. **Reproduce the symptom manually.** Pipe a single user message through `reyn chat --cui` with `REYN_LLM_TRACE_DUMP=<path>` and observe the agent's reply. Phrase the message the way an actual light user would (= "Read the file ./nonexistent.md and tell me what it says", not "trigger file_not_found path"). If the symptom doesn't reproduce, escalate to N=3-5 and look for stochastic rate before continuing.
+
+2. **Decompose the observation before measuring.** Most "defects" surfaced by light-user probes are actually 2-3 separable signals collapsed under one umbrella. List the *specific* observations that motivated the report, then ask **"would a well-designed competing product also produce this signal?"** for each. If yes, that signal is expected behaviour, not a defect — exclude it from your target metric. (See user-side memory `feedback_separate_leak_types_before_measuring.md` for the G31 case study where conflating umbrella + specific signals burned ~430 weak calls before the decomposition surfaced.)
+
+3. **Design a variant ladder before patching.** Name each candidate fix with a short tag and a one-line hypothesis. Reserve names so cross-PR references stay readable:
+
+   | Tag prefix | Layer the variant touches | Typical scope |
+   |---|---|---|
+   | **α** | SP-level behavioral rule | "for X-shaped questions, do Y" — high overfit risk |
+   | **β** | SP-level identifier replacement | "rename Z to W in the SP text" |
+   | **γ** | SP-level section removal | "delete the `## Categories` block" |
+   | **δ** | SP-level addition | "append a 1-line anchor" |
+   | **ε** | tool-array description / shape | "trim invoke_action description to N chars" |
+   | **H** | structural ablation (= tool array surgery) | "delete the 4 wrappers", "rename all tools to verb-form" |
+   | **ζ** | chat-layer pre-LLM intercept | "regex-detect question shape, rewrite user msg" |
+
+   Treat the ladder as exhaustive at design time: enumerate β/δ/γ/α/ε/H/ζ candidates before patching any, so you can spot which layer the seed actually lives in.
+
+4. **Patch-verify with N=10 against the captured trace.** The exploratory standard is N=10 per cell — different from Section 5's N=5 stability requirement, which is calibrated for production regression sweeps. N=10 is right for variant comparison because:
+
+   - effect sizes between variants are often ~30% (not 80%+), so N=5 is underpowered
+   - parallel batches (= `ThreadPoolExecutor` over `scripts/llm_replay.py --patch` subprocess calls) finish 200 calls in ~50s, so the cost is bounded
+   - 7-10 variants × baseline × 3-4 scenarios = matrix small enough to fit one terminal screen
+
+   Reserve N=5 for the regression check on **adjacent scenarios** (= "does this variant break unrelated routing?") and N=10 for the **primary target metric** (= "did the variant move the number").
+
+5. **Classify outputs with narrow regex.** Write one regex per separated signal (= step 2). Test on baseline samples first to catch false positives. Cap classification at 4-6 dimensions per investigation; more dimensions usually means the decomposition in step 2 wasn't tight enough. Examples from e2e-coder G31:
+
+   ```python
+   prefix_leak = re.search(r"`?(skill__|file__|web__|memory\.|...)", reply)
+   router_meta = re.search(r"\b(list_actions|invoke_action|describe_action|...)\b", reply)
+   cap_enum    = re.search(r"(i can help|file operations|web access|...)", reply, re.I)
+   ```
+
+   Print per-run + Σ aggregate for each variant. The Σ matrix is the artifact reviewers read; the per-run table is the audit trail.
+
+6. **Decide adoption per variant against the thesis.** A variant is **adoptable** only if:
+   - it moves the target metric by ≥30% absolute (= 6/10 → ≤4/10) on the primary scenario
+   - it does NOT regress adjacent scenarios (= tool-call rate on routing-baseline stays ≥9/10)
+   - its shape is non-overfit (= the variant's logic does not encode the specific question phrasing it was tested on)
+
+   If a variant only meets the first two but fails the third — for instance, an SP rule that suppresses one question shape but bleeds onto unrelated questions — **reject** and log the rejection. Per-variant adoption decisions, not whole-investigation up/down votes, are the unit of work.
+
+7. **Record rejections in a "Do not redo these experiments" journal.** Every rejected variant gets a row with: tag, scope, baseline → variant number on each dimension, one-line reject reason. Future sessions read this list before re-proposing the same hypothesis. The G31 deep-dive journal entry (`2026-05-17-g31-three-component-decomposition.md`) is the prototype — 10 hypotheses, each with number-backed reject reason, lets the next session skip ~400 wasted weak calls.
+
+**Output of this loop is one of:**
+
+- A single small PR carrying the adopted variant, with the rejected variants summarised in the PR body's "candidates considered" section.
+- A journal entry + giveup-tracker addendum documenting why no variant was adopted (= policy-accepted, not a fixable defect at this layer).
+
+Both are valid outcomes. The loop's job is to make the choice between them auditable.
+
+**Cross-session footprint.** This loop is the e2e-coder role's primary mode (= the role description in user-side memory `feedback_pr_workflow_for_e2e_coder.md`). The role's discipline is captured by:
+
+- `[e2e-coder]` prefix on every PR / issue comment (= cross-session signal, since the same `gh` user authenticates lead-coder, e2e-coder, and per-PR coders)
+- pull main + rebase frequently (= main moves fast during active refactor waves; stale-base PRs get cherry-picked instead of merged)
+- never self-merge; reviewer (= lead) decides scope and timing
+
+Without this loop the alternative is what e2e-coder sessions used to default to: implement a fix first, then verify post-hoc. That pattern lands the wrong fix more often than not because the variant ladder (= step 3) was never enumerated.
+
 ---
 
 ## 4. Common patterns and anti-patterns
