@@ -587,7 +587,88 @@ def _resource_alias_metadata(
         )
         return description, schema
 
+    if category == "memory.entry":
+        # E2e-coder 2026-05-17 N4 probe: memory.entry__<slug> aliases were
+        # previously marked unhandled because _read_memory_body_args sent
+        # {name: slug} while read_memory_body required {layer, slug} — that
+        # transform is now fixed (universal_dispatch.py) to send the
+        # canonical {layer: "shared", slug} pair, so the alias can be
+        # surfaced with an empty input schema (the qualified name encodes
+        # the slug; layer defaults to "shared").
+        meta = (skill_metadata_lookup or {}).get(qualified_name) or {}
+        desc_body = meta.get("description") or f"shared memory entry {entry_name!r}"
+        description = (
+            f"Read the body of shared memory entry {entry_name!r}. "
+            f"{desc_body}"
+        )
+        params = {"type": "object", "properties": {}, "required": []}
+        return description, params
+
     return None
+
+
+def _enumerate_shared_memory_entries(host: Any) -> dict[str, dict]:
+    """List shared memory entries as ``memory.entry__<slug>`` → metadata.
+
+    Scans the shared memory layer's directory (= ``<cwd>/.reyn/memory``) for
+    ``*.md`` files, ignoring the ``MEMORY.md`` index. The returned mapping is
+    keyed by qualified action name so the caller can:
+
+      - extend the hot-list seed (so the alias appears in ``tools=`` without
+        the LLM running a discovery ``list_actions(category=['memory.entry'])``
+        first), and
+      - populate the alias metadata lookup so ``_resource_alias_metadata``
+        renders a human description from the entry's frontmatter rather
+        than a generic placeholder.
+
+    Returns an empty dict when the layer's directory is absent, a host
+    method is missing, or the filesystem read raises — this surface is
+    advisory (= a missing entry just means the LLM has to discover it via
+    ``list_actions``), so failures are silently absorbed rather than raised.
+
+    Used by 2026-05-17 N4 fix; see project memory entry for context.
+    """
+    out: dict[str, dict] = {}
+    memory_dir_fn = getattr(host, "memory_dir", None)
+    if memory_dir_fn is None:
+        return out
+    try:
+        mem_dir = Path(memory_dir_fn("shared"))
+    except Exception:
+        return out
+    if not mem_dir.is_dir():
+        return out
+    for md_file in sorted(mem_dir.glob("*.md")):
+        if md_file.name == "MEMORY.md":
+            continue
+        slug = md_file.stem
+        meta: dict = {"description": f"shared memory entry {slug!r}"}
+        # Best-effort frontmatter parse to surface the user-facing
+        # "description" field. Files without a parseable frontmatter
+        # fall back to the generic placeholder above.
+        try:
+            text = md_file.read_text(encoding="utf-8")
+            stripped = _strip_frontmatter(text)
+            if stripped != text:
+                # frontmatter present; extract description line
+                lines = text.split("\n")
+                in_fm = False
+                for line in lines:
+                    s = line.strip()
+                    if s == "---":
+                        if in_fm:
+                            break
+                        in_fm = True
+                        continue
+                    if in_fm and s.startswith("description:"):
+                        desc = s.split(":", 1)[1].strip()
+                        if desc:
+                            meta["description"] = desc
+                        break
+        except OSError:
+            pass
+        out[f"memory.entry__{slug}"] = meta
+    return out
 
 
 def _drop_required_field(params: dict, field_name: str) -> dict:
@@ -999,6 +1080,22 @@ class RouterLoop:
                     if _seed_cfg == "default"
                     else (list(_seed_cfg) if isinstance(_seed_cfg, list) else [])
                 )
+                # N4 (2026-05-17): seed shared memory entries dynamically so
+                # the LLM can read user-saved memory in a fresh session
+                # without first running list_actions(category=['memory.entry']).
+                # Without this, cross-session memory retrieval requires a
+                # discovery step the weak default model rarely takes.
+                # Populates skill_metadata_lookup so the alias gets a
+                # human-readable description (= the entry's frontmatter
+                # `description`).
+                _memory_entries = _enumerate_shared_memory_entries(host)
+                for _qn, _meta in _memory_entries.items():
+                    if _qn not in _seed:
+                        _seed.append(_qn)
+                    # _skill_meta_map is reused as a generic
+                    # qualified-name → metadata lookup; see
+                    # _resource_alias_metadata's memory.entry branch.
+                    _skill_meta_map.setdefault(_qn, _meta)
                 _top_names = _tracker.get_top_n(_n, _seed)
                 if _top_names:
                     _hot_list_aliases = _build_hot_list_aliases(

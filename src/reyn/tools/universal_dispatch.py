@@ -165,11 +165,19 @@ def _call_mcp_tool_args(
 def _read_memory_body_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``memory.entry__<name>`` → ``read_memory_body({name})``.
+    """``memory.entry__<name>`` → ``read_memory_body({layer, slug})``.
 
     D19 resource invoke: invoking a memory entry returns its body.
+
+    The qualified-name format ``memory.entry__<slug>`` does not encode a
+    layer; we default to "shared" because that is what the
+    ``memory.operation__remember_shared`` write surface produces, and
+    therefore what users encounter from natural-language "remember X"
+    requests (= e2e-coder 2026-05-17 N4 probe). Agent-layer entries
+    require a separate alias namespace (= follow-up if a real probe
+    surfaces the gap).
     """
-    return {"name": entry_name}
+    return {"layer": "shared", "slug": entry_name}
 
 
 def _recall_single_source_args(
