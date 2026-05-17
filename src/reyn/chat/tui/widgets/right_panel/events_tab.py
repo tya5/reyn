@@ -511,7 +511,13 @@ def render_events(
             lines.append("")
         prev_chain = chain_id
 
-        ts = _esc(str(ev.get("timestamp", ""))[:19].replace("T", " "))
+        # Use HH:MM:SS only — the full ISO timestamp consumed 19 chars on the
+        # narrow panel and the event-type was pushed off-screen behind an `…`.
+        # Date is rarely needed at-a-glance for events tab consumers; the
+        # full timestamp is still in the JSON preview opened with Space.
+        raw_ts = str(ev.get("timestamp", ""))
+        # "2026-05-17T09:54:42…" — the time block lives in chars 11-19
+        ts = _esc(raw_ts[11:19] if len(raw_ts) >= 19 else raw_ts)
         color = _EVENT_COLORS.get(ev_type, _DEFAULT_EVENT_COLOR)
         hint = _esc(_event_hint(ev))
         hint_part = f"  [#555555]{hint}[/]" if hint else ""
