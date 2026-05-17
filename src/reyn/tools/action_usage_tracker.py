@@ -29,20 +29,32 @@ Not yet implemented:
 from __future__ import annotations
 
 import json
+import sys
 import time
 from pathlib import Path
 
-# OS default seed: 5 universal + 5 Reyn flagship actions.
+# OS default seed: universal file/web ops + Reyn flagship skills.
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
+# Seed growth log:
+#   B27-M2: file__grep removed (no routing rule yet).
+#   B27-M5: file__list + reyn.source__list added (cold-start directory listing).
+#   B28-MED-1: skill__index_docs added (RAG indexing intent).
+#   B30-NEW-2: skill__eval added (eval discoverability).
+#   B34: file__grep + file__glob re-added (ToolDefinitions implemented).
+#   B37 W4/W6: file__write + rag.operation__drop_source added (arg-canonical
+#              gap — D2-wrapper scope is hot-list-only; seeding ensures schema
+#              guidance is present at first use).
 DEFAULT_HOT_LIST_SEED: tuple[str, ...] = (
     "file__read",
     "file__list",
     "file__grep",
     "file__glob",
-    # file__edit deferred — FP-0034 §D20; implemented in B34 for grep/glob.
+    "file__write",
+    # file__edit deferred — FP-0034 §D20.
     "reyn.source__list",
     "web__search",
     "web__fetch",
+    "rag.operation__drop_source",
     "memory.operation__remember_shared",
     "skill__skill_builder",
     "skill__skill_improver",
@@ -73,15 +85,48 @@ class ActionUsageTracker:
 
     # ── Disk persistence helpers ──────────────────────────────────────────
 
+    @staticmethod
+    def _is_valid_qualified_name(name: str) -> bool:
+        """Return True when *name* is a structurally valid qualified action name.
+
+        Validates that the name:
+          - Contains the ``__`` separator.
+          - Has a non-empty category portion that matches one of the known
+            categories (= ``universal_catalog.CATEGORIES``).
+          - Has a non-empty entry-name portion.
+
+        This is a structural / parse-level check — it does not require the
+        referenced skill or agent to exist at call time. The check is
+        data-driven from the category registry (P7: no hardcoded ghost lists).
+
+        Names that fail here are stale artifacts: qualified-name corruption
+        (e.g. ``default_api.web__search``), unknown categories
+        (e.g. ``bogus__nonexistent``), or empty entry-names.
+        """
+        try:
+            from reyn.tools.universal_catalog import split_qualified_name
+            split_qualified_name(name)
+            return True
+        except (ValueError, ImportError):
+            return False
+
     def _load_from_disk(self) -> None:
         """Load JSONL history into in-memory state.
 
         Swallows all errors and falls back to empty state — persistence
         failure is non-fatal; the tracker functions correctly in memory-only
         mode after a failed load.
+
+        Ghost alias rejection (B37 F1): each loaded qualified_name is
+        validated via _is_valid_qualified_name. Names that fail structural
+        parse (= unknown category, missing separator, qualified-name
+        corruption) are silently skipped; a single warning per unique invalid
+        name is printed to stderr so operators can identify stale ledger
+        entries without crashing startup.
         """
         if self._persist_path is None or not self._persist_path.exists():
             return
+        _warned: set[str] = set()
         try:
             with self._persist_path.open("r", encoding="utf-8") as fh:
                 for raw_line in fh:
@@ -97,6 +142,17 @@ class ActionUsageTracker:
                     if not isinstance(qn, str) or not qn:
                         continue
                     if not isinstance(ts, (int, float)):
+                        continue
+                    # Ghost alias rejection: skip names that don't parse as
+                    # valid qualified names (= renamed/deleted/corrupted).
+                    if not self._is_valid_qualified_name(qn):
+                        if qn not in _warned:
+                            print(
+                                f"[reyn] action_usage: skipping invalid alias "
+                                f"{qn!r} — not in current action registry",
+                                file=sys.stderr,
+                            )
+                            _warned.add(qn)
                         continue
                     self._freq[qn] = self._freq.get(qn, 0) + 1
                     prev = self._last_ts.get(qn)

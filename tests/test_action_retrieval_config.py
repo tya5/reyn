@@ -2,7 +2,7 @@
 
 Tests for the new ``action_retrieval:`` config block:
   - Default config has the safe defaults (= wrappers enabled, no embedding,
-    mode='default', hot_list_n=16 — sized to cover DEFAULT_HOT_LIST_SEED).
+    mode='default', hot_list_n=20 — sized to cover DEFAULT_HOT_LIST_SEED).
   - Parser accepts each field independently, validates types, and
     raises on bad values.
   - ReynConfig.action_retrieval is populated by load_config from the
@@ -41,7 +41,7 @@ def test_default_action_retrieval_config_is_on() -> None:
     cfg = ActionRetrievalConfig()
     assert cfg.universal_wrappers_enabled is True
     assert cfg.embedding_class is None
-    assert cfg.hot_list_n == 16  # B30-NEW-1: covers DEFAULT_HOT_LIST_SEED (13) + headroom
+    assert cfg.hot_list_n == 20  # B37: covers DEFAULT_HOT_LIST_SEED (17) + headroom
     assert cfg.mode == "default"
 
 
@@ -231,7 +231,7 @@ def test_load_config_without_action_retrieval_uses_defaults(tmp_path: Path) -> N
     cfg = load_config(cwd=tmp_path)
     assert cfg.action_retrieval.universal_wrappers_enabled is True
     assert cfg.action_retrieval.embedding_class is None
-    assert cfg.action_retrieval.hot_list_n == 16
+    assert cfg.action_retrieval.hot_list_n == 20
     assert cfg.action_retrieval.mode == "default"
 
 

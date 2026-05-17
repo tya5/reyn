@@ -1011,7 +1011,7 @@ class ActionRetrievalConfig:
             Hot list size for top-N freq+recency projection (§D2).
             Phase 2 wiring; the field lives here so reyn.yaml shape
             stabilises early. Default sized to cover DEFAULT_HOT_LIST_SEED
-            with headroom (= seed length 12 → default 16) so cold-start
+            with headroom (= seed length 17 → default 20) so cold-start
             sessions surface every seed entry as a direct alias before
             usage-driven sorting kicks in. Lower values silently truncate
             the seed; the invariant test in test_action_usage_tracker.py
@@ -1027,7 +1027,7 @@ class ActionRetrievalConfig:
 
     universal_wrappers_enabled: bool = True
     embedding_class: str | None = None
-    hot_list_n: int = 16
+    hot_list_n: int = 20
     mode: str = "default"
     # FP-0034 §D16: seed qualified names for initial hot list (before freq
     # accumulates). "default" means the OS-defined 10-item seed (5 universal
