@@ -57,6 +57,10 @@ from .streaming_row import StreamingRow
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
 _FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
+# /copy ring-buffer depth. Far enough back that the user can grab "the
+# reply two turns ago" — the typical "wait, that one was useful" recovery
+# pattern — without growing memory unboundedly across long sessions.
+_RECENT_REPLIES_MAX = 10
 # RichLog ring-buffer size. Bumped from the historical 5000 → 20000 to push
 # the truncation boundary well past realistic session lengths (~400-800
 # turns at typical reply sizes). Storage stays modest at average line width;
@@ -194,10 +198,14 @@ class ConversationView(Widget):
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
         self._last_long_reply: str | None = None
-        # Full text of the most recent agent reply (any length). Consumed by
-        # the /copy slash command so users don't have to fight the TUI's
-        # mouse-capture to grab text out of the log.
-        self._last_reply_full: str | None = None
+        # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
+        # Consumed by the /copy slash command — users can grab the latest reply
+        # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
+        # fighting the TUI's mouse-capture to drag-select text out of the log.
+        # Single-slot storage silently lost every prior reply on each new turn;
+        # a bounded ring keeps the immediate history reachable without growing
+        # memory unboundedly across long sessions.
+        self._recent_replies: list[str] = []
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
         # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
@@ -376,12 +384,14 @@ class ConversationView(Widget):
         self._last_long_reply so expand_last_reply() can flush the rest.
         Replies that fit are rendered as-is and clear any pending fold.
 
-        Side effect: stores ``text`` in ``self._last_reply_full`` so the
-        /copy slash command can hand it to the system clipboard (no need
-        to fight TUI mouse-capture for selection).
+        Side effect: appends ``text`` to ``self._recent_replies`` (capped
+        at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
+        any of the last N replies to the system clipboard.
         """
         # Always remember the full text — independent of fold thresholds.
-        self._last_reply_full = text
+        self._recent_replies.append(text)
+        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
         log = self._log()
         # Detect that a prior fold is about to be invalidated. The single-slot
         # ``_last_long_reply`` is replaced (or cleared) by every new agent
@@ -451,7 +461,22 @@ class ConversationView(Widget):
         Used by the /copy slash command. Returns None when there has been no
         agent reply in this session yet.
         """
-        return self._last_reply_full
+        return self._recent_replies[-1] if self._recent_replies else None
+
+    def reply_at(self, n: int) -> str | None:
+        """Return the n-th most recent agent reply (1-indexed; n=1 is latest).
+
+        Returns None when ``n`` is out of range (≤ 0 or beyond the buffered
+        history). The /copy slash uses this to surface older replies that the
+        single-slot predecessor silently lost on every new turn.
+        """
+        if n <= 0 or n > len(self._recent_replies):
+            return None
+        return self._recent_replies[-n]
+
+    def recent_reply_count(self) -> int:
+        """Number of agent replies currently held in the /copy ring buffer."""
+        return len(self._recent_replies)
 
     def _write_log(self, text: Text) -> None:
         log = self._log()

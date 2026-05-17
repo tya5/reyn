@@ -187,23 +187,75 @@ class OutboxRouter:
     def _on_copy_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__copy_last_reply__` — /copy slash; pipe last reply to OS clipboard.
+        """`__copy_last_reply__` — /copy slash; pipe a buffered reply to OS clipboard.
+
+        ``msg.text`` carries the parsed slash argument:
+          - empty           → copy the latest reply (= ``reply_at(1)``)
+          - ``"list"``      → show how many replies are buffered + dim hint
+          - integer N >= 1  → copy ``reply_at(N)`` (N = 1 is newest)
+          - anything else   → surface a usage hint and stop
 
         Workaround for the TUI's mouse-capture preventing native click-and-
         drag selection. Tries platform-native binaries in order; if none
         succeed, surfaces a status line so the user knows the workaround
         wasn't available.
         """
-        text = conv.last_reply_text()
-        if not text:
-            conv.show_status("nothing to copy yet", kind="general")
-            self._app.set_timer(2.0, conv.hide_status)
+        arg = (msg.text or "").strip()
+
+        if arg.lower() == "list":
+            count = conv.recent_reply_count()
+            if count == 0:
+                conv.show_status("no replies buffered yet", kind="general")
+            else:
+                conv.show_status(
+                    f"{count} reply{'s' if count != 1 else ''} buffered "
+                    f"— /copy 1..{count}",
+                    kind="general",
+                )
+            self._app.set_timer(2.5, conv.hide_status)
             return
+
+        # Parse N. Empty → latest (n=1); digits → that index. Anything else
+        # is a typo — surface the usage hint rather than silently copying
+        # the latest, since that would mask the user's mistake.
+        if arg == "":
+            n = 1
+        elif arg.isdigit():
+            n = int(arg)
+            if n <= 0:
+                conv.show_status(
+                    "/copy index must be ≥ 1 (1 = newest)", kind="error",
+                )
+                self._app.set_timer(2.5, conv.hide_status)
+                return
+        else:
+            conv.show_status(
+                "usage: /copy [N] or /copy list", kind="error",
+            )
+            self._app.set_timer(2.5, conv.hide_status)
+            return
+
+        text = conv.reply_at(n)
+        if text is None:
+            buffered = conv.recent_reply_count()
+            if buffered == 0:
+                conv.show_status("nothing to copy yet", kind="general")
+            else:
+                conv.show_status(
+                    f"reply {n} not in buffer "
+                    f"(only {buffered} available — /copy list)",
+                    kind="error",
+                )
+            self._app.set_timer(2.5, conv.hide_status)
+            return
+
         ok, label = _copy_to_clipboard(text)
         if ok:
             n_chars = len(text)
+            tag = "latest" if n == 1 else f"#{n}"
             conv.show_status(
-                f"copied {n_chars} chars via {label}", kind="general",
+                f"copied reply {tag} ({n_chars} chars) via {label}",
+                kind="general",
             )
         else:
             conv.show_status(
