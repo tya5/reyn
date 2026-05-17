@@ -39,7 +39,9 @@ from __future__ import annotations
 import time
 
 from rich.cells import cell_len
+from rich.console import RenderableType
 from rich.markdown import Markdown as RichMarkdown
+from rich.padding import Padding
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
@@ -68,6 +70,14 @@ _RECENT_REPLIES_MAX = 10
 # cross the boundary don't break Ctrl+P/N navigation.
 _RICHLOG_MAX_LINES = 20_000
 _NAME_COL_COLS = 4  # display-cell width reserved for the speaker label column
+# Hanging indent for message bodies (= the lines under each header). The
+# header is ``HH:MM  reyn ───`` — 5 (timestamp) + 2 (gap) = 7 cells before
+# the name column starts. Indenting the body to column 7 visually nests
+# replies under their author's name and, crucially, makes wrap continuations
+# of a long body line visually distinct from the start of a new turn
+# (which begins at column 0). Without this, a wrapped URL or code-line
+# looks identical to a new ``HH:MM …`` header on a quick scan.
+_BODY_INDENT_COLS = 7
 
 
 def _pad_to_cells(s: str, target_cells: int) -> str:
@@ -87,6 +97,16 @@ def _pad_to_cells(s: str, target_cells: int) -> str:
     if width >= target_cells:
         return s
     return s + " " * (target_cells - width)
+
+
+def _indent_body(renderable: RenderableType) -> RenderableType:
+    """Wrap ``renderable`` in a left-only Padding for the body indent column.
+
+    Used at every body write site (agent markdown, user text, system text,
+    fallback formatted lines). Header writes intentionally bypass this
+    helper so the timestamp / name / dash rule stay anchored at column 0.
+    """
+    return Padding(renderable, (0, 0, 0, _BODY_INDENT_COLS))
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
@@ -330,13 +350,13 @@ class ConversationView(Widget):
         text = _format_message(msg)
         if text is not None:
             self._consume_empty_hint()
-            self._write_log(text)
+            self._write_body(text)
 
     def render_user_message(self, text: str) -> None:
         """Render a freshly submitted user message with grouped header."""
         self._consume_empty_hint()
         self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
-        self._write_log(Text(text))
+        self._write_body(Text(text))
         self._write_log(Text(""))
 
     def _render_system_message(self, msg: OutboxMessage) -> None:
@@ -352,9 +372,8 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         self.hide_status()
         self._maybe_write_header("system", "system", "bold #888888", "#444444")
-        log = self._log()
         for line in (msg.text or "").splitlines() or [""]:
-            log.write(Text(line))
+            self._write_body(Text(line))
         self._write_log(Text(""))
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
@@ -401,14 +420,14 @@ class ConversationView(Widget):
         had_prev_fold = self._last_long_reply is not None
         lines = text.split("\n")
         if len(lines) <= _FOLD_THRESHOLD_LINES:
-            log.write(RichMarkdown(text))
+            self._write_body(RichMarkdown(text))
             if had_prev_fold:
                 self._write_fold_expired_marker()
             self._last_long_reply = None
             return
         preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
         remaining = len(lines) - _FOLD_THRESHOLD_LINES
-        log.write(RichMarkdown(preview))
+        self._write_body(RichMarkdown(preview))
         hint = Text()
         hint.append(
             f"  [ … {remaining} more lines · type ",
@@ -446,7 +465,7 @@ class ConversationView(Widget):
         marker = Text()
         marker.append("  ↓ expanded", style=f"dim {_CORAL}")
         log.write(marker)
-        log.write(RichMarkdown(self._last_long_reply))
+        self._write_body(RichMarkdown(self._last_long_reply))
         log.write(Text(""))
         self._last_long_reply = None
         return True
@@ -481,6 +500,16 @@ class ConversationView(Widget):
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
+
+    def _write_body(self, renderable: RenderableType) -> None:
+        """Append a body renderable at the hanging-indent column.
+
+        Wraps ``renderable`` in left-only ``Padding`` so wrap continuations
+        line up under the speaker name and stay visually distinct from the
+        column-0 turn header. Used for agent markdown, user / system text,
+        and any other content that belongs "under" the most recent header.
+        """
+        self._log().write(_indent_body(renderable))
 
     # ── streaming support ─────────────────────────────────────────────────────
 
