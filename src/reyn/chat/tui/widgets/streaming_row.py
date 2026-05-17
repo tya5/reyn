@@ -34,7 +34,7 @@ from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _AMBER
 
 _RENDER_INTERVAL_MS = 16  # ~60 fps max
 _RENDER_INTERVAL_S = _RENDER_INTERVAL_MS / 1000
@@ -117,7 +117,7 @@ class StreamingRow(Widget):
 
     def _build_renderable(self) -> Text:
         t = Text()
-        t.append(self._prefix, style="bold " + _CORAL)
+        t.append(self._prefix, style="bold " + _AMBER)
         t.append("".join(self._chunks))
         if not self._sealed:
             idle = (monotonic() - self._last_chunk_at) if self._last_chunk_at != 0.0 else 0.0
@@ -125,7 +125,7 @@ class StreamingRow(Widget):
                 t.append(" …", style="dim")
             else:
                 if self._cursor_visible:
-                    t.append("▍", style="bold " + _CORAL)
+                    t.append("▍", style="bold " + _AMBER)
                 else:
                     t.append(" ")
         return t
@@ -146,7 +146,7 @@ class StreamingRow(Widget):
             prefix_widget = Static(id="sealed_prefix")
             md_widget = Markdown(full, id="sealed_markdown")
             self.mount(prefix_widget, md_widget)
-            prefix_widget.update(Text(self._prefix, style="bold " + _CORAL))
+            prefix_widget.update(Text(self._prefix, style="bold " + _AMBER))
         except Exception:
             # Graceful fallback: freeze raw Rich text in the existing Static.
             if self._static is not None:
