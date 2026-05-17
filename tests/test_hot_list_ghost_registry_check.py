@@ -22,6 +22,10 @@ Test plan:
   R9. Warning logged once per unique ghost name (deduplication).
   R10. Integration: ActionUsageTracker freq-loaded jsonl with 1 valid skill +
        1 ghost skill → hot-list excludes ghost.
+  R11. memory.entry name in known_memory_entries passes through (dynamic
+       enumeration from .reyn/memory/*.md).
+  R12. memory.entry name NOT in known_memory_entries is filtered (stale name
+       from action_usage tracker after the entry was deleted).
 
 No mocks. Uses real _filter_ghost_names_by_registry + real ActionUsageTracker
 + real KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
@@ -54,13 +58,21 @@ def _call_filter(
     skill_meta_map: dict | None = None,
     mcp_tool_map: dict | None = None,
     available_agents: list[dict] | None = None,
+    known_memory_entries: frozenset[str] | None = None,
 ) -> list[str]:
-    """Convenience wrapper with empty defaults."""
+    """Convenience wrapper with empty defaults.
+
+    ``known_memory_entries`` defaults to an empty frozenset (= no entries),
+    which is the realistic state for tests that aren't exercising the
+    memory.entry path. Test-internal default — the production signature
+    requires the parameter, see ``_filter_ghost_names_by_registry``.
+    """
     return _filter_ghost_names_by_registry(
         names,
         skill_meta_map=skill_meta_map,
         mcp_tool_map=mcp_tool_map,
         available_agents=available_agents,
+        known_memory_entries=known_memory_entries if known_memory_entries is not None else frozenset(),
     )
 
 
@@ -228,6 +240,7 @@ def test_r9_ghost_warning_logged_once_per_unique_name(capsys: pytest.CaptureFixt
     # First call: warning emitted.
     _filter_ghost_names_by_registry(
         [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
+        known_memory_entries=frozenset(),
         _warned=warned,
     )
     captured = capsys.readouterr()
@@ -239,6 +252,7 @@ def test_r9_ghost_warning_logged_once_per_unique_name(capsys: pytest.CaptureFixt
     # Second call with same _warned: no additional warning.
     _filter_ghost_names_by_registry(
         [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
+        known_memory_entries=frozenset(),
         _warned=warned,
     )
     captured2 = capsys.readouterr()
@@ -301,6 +315,7 @@ def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) ->
         skill_meta_map=skill_meta_map,
         mcp_tool_map=None,
         available_agents=None,
+        known_memory_entries=frozenset(),
     )
 
     assert "skill__word_stats_demo" in filtered, (
@@ -309,3 +324,52 @@ def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) ->
     assert "skill__nonexistent_xyz" not in filtered, (
         "Ghost skill not in skill_meta_map must be removed by registry check."
     )
+
+
+# ── R11. memory.entry passes when in known_memory_entries ─────────────────────
+
+
+def test_r11_memory_entry_passes_when_in_known_set() -> None:
+    """Tier 2: memory.entry__<slug> in known_memory_entries passes the filter.
+
+    Regression guard for the 2026-05-17 N4+B38 W2 interaction: PR #138
+    seeded dynamic memory.entry aliases into the hot-list, but the B38 W2
+    ghost-filter that landed later did not know about dynamic categories.
+    Result: all memory.entry aliases were rejected via the static_ops
+    fall-through. This test pins the fix that adds the known-set check.
+    """
+    filtered = _filter_ghost_names_by_registry(
+        ["memory.entry__user_project_phoenix"],
+        skill_meta_map=None,
+        mcp_tool_map=None,
+        available_agents=None,
+        known_memory_entries=frozenset({"memory.entry__user_project_phoenix"}),
+    )
+    assert filtered == ["memory.entry__user_project_phoenix"], (
+        "memory.entry name in known set must pass the filter."
+    )
+
+
+# ── R12. memory.entry filtered when not in known_memory_entries ───────────────
+
+
+def test_r12_memory_entry_filtered_when_absent_from_known_set() -> None:
+    """Tier 2: memory.entry__<slug> NOT in known_memory_entries is filtered.
+
+    Scenario: user deleted .reyn/memory/<slug>.md between sessions, but
+    the action_usage tracker still has it from prior freq history. The
+    filter must reject the stale name so the LLM doesn't see a ghost
+    alias that would dispatch to a non-existent entry.
+    """
+    filtered = _filter_ghost_names_by_registry(
+        ["memory.entry__deleted_slug"],
+        skill_meta_map=None,
+        mcp_tool_map=None,
+        available_agents=None,
+        known_memory_entries=frozenset(),  # zero entries this session
+    )
+    assert filtered == [], (
+        "memory.entry name not in known set must be removed."
+    )
+
+
