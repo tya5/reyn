@@ -279,7 +279,19 @@ class OutboxRouter:
         raw_choices = msg.meta.get("choices")
         choices = None
         if raw_choices:
-            choices = [(c["label"], c["id"]) for c in raw_choices]
+            # Forward the full choice shape (label / id / hotkey / default)
+            # so the widget can render `[h] Label` prefixes and highlight a
+            # default option. Missing keys fall back to safe blanks — callers
+            # that historically only set label+id keep working.
+            choices = [
+                {
+                    "label": c["label"],
+                    "id": c["id"],
+                    "hotkey": c.get("hotkey") or "",
+                    "default": bool(c.get("default", False)),
+                }
+                for c in raw_choices
+            ]
         # Best-effort queue depth — the registry owns the canonical count;
         # any failure (no session attached, attribute missing on a stubbed
         # session in tests) falls back to 0 so we never break the mount.

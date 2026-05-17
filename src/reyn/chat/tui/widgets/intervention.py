@@ -10,7 +10,7 @@ selects "free response".
 """
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
 from textual.app import ComposeResult
 from textual.message import Message
@@ -23,8 +23,10 @@ class InterventionWidget(Widget):
 
     Args:
         question:        The prompt text shown to the user.
-        choices:         List of (label, choice_id) tuples for chip buttons.
-                         When empty, only a free-text input is shown.
+        choices:         Chip definitions. Each entry is either a legacy
+                         ``(label, choice_id)`` 2-tuple or a dict with
+                         ``{"label", "id", "hotkey"?, "default"?}``. When the
+                         list is empty, only a free-text input is shown.
         answer_callback: Coroutine called with the user's answer string.
         iv_id:           Intervention ID (for logging / targeting).
         queued_extra:    Number of additional pending interventions waiting
@@ -99,7 +101,7 @@ class InterventionWidget(Widget):
         self,
         *,
         question: str,
-        choices: list[tuple[str, str]] | None = None,
+        choices: list[tuple[str, str] | dict] | None = None,
         answer_callback: Callable[[str], Awaitable[None]] | None = None,
         iv_id: str = "",
         queued_extra: int = 0,
@@ -107,11 +109,37 @@ class InterventionWidget(Widget):
     ) -> None:
         super().__init__(id=id or f"iv_{iv_id[:8]}")
         self._question = question
-        self._choices = choices or []
+        # Normalise both legacy 2-tuples and richer dict shapes into a single
+        # internal list-of-dicts so compose() / hotkey lookup stays uniform.
+        self._choices: list[dict[str, Any]] = [
+            self._normalise_choice(c) for c in (choices or [])
+        ]
         self._answer_callback = answer_callback
         self._iv_id = iv_id
         self._queued_extra = max(0, int(queued_extra))
         self._show_input = not self._choices  # no chips → always show free text
+
+    @staticmethod
+    def _normalise_choice(raw: tuple[str, str] | dict) -> dict[str, Any]:
+        """Coerce one choice entry into ``{label, id, hotkey, default}``.
+
+        Accepts the legacy ``(label, id)`` 2-tuple (no hotkey, not default)
+        and the richer dict carrying ``hotkey`` / ``default``. Missing keys
+        on the dict path fall back to safe blanks so a caller that only
+        supplies label + id keeps working.
+        """
+        if isinstance(raw, dict):
+            return {
+                "label": raw.get("label", ""),
+                "id": raw.get("id", ""),
+                "hotkey": raw.get("hotkey") or "",
+                "default": bool(raw.get("default", False)),
+            }
+        # Tuple path — historical shape is (label, id); we ignore extras
+        # defensively in case a caller widened it.
+        label = raw[0] if len(raw) > 0 else ""
+        choice_id = raw[1] if len(raw) > 1 else ""
+        return {"label": label, "id": choice_id, "hotkey": "", "default": False}
 
     def compose(self) -> ComposeResult:
         yield Label(f"  {self._question}", classes="iv-question")
@@ -122,8 +150,16 @@ class InterventionWidget(Widget):
             )
         if self._choices:
             with Widget(classes="iv-chips"):
-                for label, choice_id in self._choices:
-                    yield Button(label, id=f"chip_{choice_id}", variant="default")
+                for choice in self._choices:
+                    label = choice["label"]
+                    hotkey = choice["hotkey"]
+                    display = f"[{hotkey}] {label}" if hotkey else label
+                    variant = "primary" if choice["default"] else "default"
+                    yield Button(
+                        display,
+                        id=f"chip_{choice['id']}",
+                        variant=variant,
+                    )
                 # "free response" chip always at end
                 yield Button("free response…", id="chip__free", variant="default")
             yield Label(
@@ -142,6 +178,29 @@ class InterventionWidget(Widget):
         # Find the choice whose chip_ prefix matches
         choice_id = btn_id.removeprefix("chip_")
         await self._submit(choice_id)
+
+    async def on_key(self, event) -> None:  # textual.events.Key
+        """Activate a chip when its hotkey is pressed.
+
+        Skipped while an Input widget has focus — otherwise a user typing a
+        free answer that starts with a hotkey letter would be intercepted.
+        Match is case-sensitive, mirroring the producer-side ``match_choice``
+        contract in ``user_intervention.py``.
+        """
+        try:
+            focused = self.app.focused
+        except Exception:
+            focused = None
+        if isinstance(focused, Input):
+            return
+        key_char = getattr(event, "character", None) or getattr(event, "key", "")
+        if not key_char or len(key_char) != 1:
+            return
+        for choice in self._choices:
+            if choice["hotkey"] and choice["hotkey"] == key_char:
+                event.stop()
+                await self._submit(choice["id"])
+                return
 
     def _show_free_input(self) -> None:
         """Show a text input for free-form answer."""
