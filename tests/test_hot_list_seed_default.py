@@ -13,7 +13,6 @@ import pytest
 from reyn.tools.action_usage_tracker import DEFAULT_HOT_LIST_SEED
 from reyn.tools.universal_dispatch import UnknownActionError, resolve_invoke_action
 
-
 # ── Part A: B37 W4/W6 seed entries present ────────────────────────────────────
 
 # mcp_search — W6 R-WEB scenarios: mcp_search routing miss with fresh

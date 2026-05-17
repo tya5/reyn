@@ -27,15 +27,15 @@ Both tests use real instances (no mocks). Tier 2 (OS / compiler contract).
 from __future__ import annotations
 
 import json
-from pathlib import Path
-
-import jsonschema
-import pytest
 
 # ---------------------------------------------------------------------------
 # Load the real judge_phase skill from the stdlib directory.
 # ---------------------------------------------------------------------------
 import sys
+from pathlib import Path
+
+import jsonschema
+import pytest
 
 # Ensure the package is importable when running from repo root.
 _SRC = Path(__file__).resolve().parent.parent / "src"
