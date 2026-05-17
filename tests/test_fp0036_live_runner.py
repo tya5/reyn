@@ -10,6 +10,10 @@ Covers:
   4. Failure isolation: a scenario that fails during execution yields a
      ScenarioRunResult with events_outcome="blocked" and does NOT propagate
      as a Python exception out of the runner.
+  5. History isolation: chat history written by a prior scenario does not
+     leak into the next scenario's LLM context. The runner wipes
+     .reyn/agents/<name>/history.jsonl before each scenario so that
+     ChatSession.load_history() returns empty for scenario N.
 
 Policy compliance (docs/deep-dives/contributing/testing.md):
 - No unittest.mock.MagicMock / AsyncMock.  `patch` used only to replace
@@ -303,3 +307,77 @@ async def test_failure_isolation_returns_blocked_not_exception(tmp_path, monkeyp
     assert result.detail.get("stage") == "ensure_running", (
         f"Expected stage='ensure_running', got {result.detail!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: history isolation — pre-existing history.jsonl is wiped per scenario
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_history_jsonl_wiped_before_scenario(tmp_path, monkeypatch):
+    """Tier 2: history isolation — chat history from a prior session does not
+    leak into the next scenario's LLM context.
+
+    Regression guard for the 2026-05-17 dogfood runner gap: before this
+    fix, `_wipe_scenario_state` cleaned events and action_usage but left
+    `.reyn/agents/<name>/history.jsonl` on disk. `ChatSession.load_history()`
+    (called by the session factory) reads that file unconditionally, so
+    scenario N inside a single `reyn dogfood run` saw scenarios 1..N-1's
+    user/assistant turns in its `messages[]` — defeating "fresh per
+    scenario". This test pins the wipe.
+
+    Strategy:
+    1. Pre-create a `history.jsonl` with stale entries before running
+       any scenario.
+    2. Run a scenario via the runner_fn.
+    3. Assert the file was wiped (= no longer exists) before the session
+       loaded it. We verify by checking that the scenario's LLM call
+       received messages without the stale entries.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    # Pre-populate history.jsonl with stale entries that should NOT be
+    # visible to the scenario's LLM call.
+    agent_dir = tmp_path / ".reyn" / "agents" / "default"
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    history_path = agent_dir / "history.jsonl"
+    stale_entries = [
+        '{"role": "user", "content": "STALE FROM PRIOR SESSION", "meta": {}}',
+        '{"role": "assistant", "content": "stale reply", "meta": {}}',
+    ]
+    history_path.write_text("\n".join(stale_entries) + "\n", encoding="utf-8")
+    assert history_path.exists(), "Precondition: history.jsonl seeded on disk."
+
+    # Capture the messages the LLM sees on each call.
+    captured_messages: list = []
+
+    async def capturing_llm(**kw):
+        captured_messages.append(kw.get("messages") or [])
+        return _text_result("Fresh reply.")
+
+    runner_fn = _make_live_runner_fn(tmp_path, agent_name="default")
+    assert runner_fn is not None
+
+    scenario = _make_scenario("hist-s1", input_text="What is fresh?")
+
+    with patch("reyn.chat.router_loop.call_llm_tools", side_effect=capturing_llm):
+        result = await runner_fn(scenario)
+
+    # The LLM must NOT have seen any of the stale entries in any call.
+    # (Cannot assert history_path absence after the run because the session
+    # appends each new turn to history.jsonl as it executes — the file is
+    # recreated by the live run itself. The invariant we care about is
+    # that the LLM messages were not pre-populated with stale content.)
+    assert captured_messages, "Precondition: LLM must have been invoked at least once."
+    stale_marker = "STALE FROM PRIOR SESSION"
+    for i, msgs in enumerate(captured_messages):
+        for m in msgs:
+            content = m.get("content") or ""
+            if isinstance(content, str):
+                assert stale_marker not in content, (
+                    f"Stale history bled into LLM call {i}: message content "
+                    f"contained {stale_marker!r}. Wipe failed."
+                )
+
+    assert result.scenario_id == "hist-s1"

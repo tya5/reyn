@@ -349,6 +349,14 @@ def _build_live_runner(agent_name: str):
       events contain only the events from that scenario's turns.
     - Wipes state/action_usage.jsonl before each scenario so hot-list
       frequency counters don't bleed across scenarios.
+    - Wipes agents/<name>/history.jsonl before each scenario so chat
+      history from prior scenarios is not injected into the LLM's
+      messages. Without this, ChatSession.load_history() (called by the
+      session factory) loads the accumulated history-jsonl from disk,
+      and scenario N sees scenario 1..N-1's user/assistant turns in its
+      context — defeating the "fresh per scenario" guarantee. The
+      dogfood_fresh_reset.sh script explicitly defers per-agent history
+      wipe to callers (= the runner is the caller); this is that wipe.
     - Drops the cached ChatSession from the registry between scenarios so
       the session's in-memory EventLog starts empty each time.
 
@@ -456,6 +464,15 @@ def _build_live_runner(agent_name: str):
         # Wipe action_usage ledger to prevent hot-list bleed across scenarios.
         action_usage_path = project_root / ".reyn" / "state" / "action_usage.jsonl"
         action_usage_path.unlink(missing_ok=True)
+        # Wipe per-agent chat history so prior scenarios' user/assistant
+        # turns are NOT injected into the LLM context for this scenario.
+        # ChatSession.load_history() (called by the session factory) reads
+        # this file unconditionally; without the wipe, scenario N sees
+        # scenarios 1..N-1's messages. dogfood_fresh_reset.sh intentionally
+        # defers this wipe to callers because it requires knowing the
+        # agent name (which the script doesn't); the runner has it.
+        history_path = project_root / ".reyn" / "agents" / agent_name / "history.jsonl"
+        history_path.unlink(missing_ok=True)
 
     def _collect_events(registry: AgentRegistry) -> list[dict]:
         """Harvest events emitted during the scenario from the EventStore."""
