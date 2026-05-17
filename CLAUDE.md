@@ -127,12 +127,17 @@ coherent:
    Manual / Visual item in the Test plan and tick the box, or replace
    `- [ ]` with `- [x] (skipped — <reason>)`. Reviewers do not merge
    while items are unchecked without an explicit waiver.
-2. **Role-prefix every issue / PR comment.** Start each comment with
-   `**[role-name]** — ` (e.g. `[lead-coder]`, `[e2e-coder]`,
-   `[security-reviewer]`) so the recipient session can tell "this is
-   feedback for me" from "I wrote this earlier myself". The
-   `Co-Authored-By: Claude` commit trailer does not propagate to PR
-   comments — this prefix is the only signal.
+2. **Role-prefix every issue / PR body / PR comment.** Start the PR
+   body AND each follow-up comment with `**[role-name]** — ` (e.g.
+   `[lead-coder]`, `[e2e-coder]`, `[tui-coder]`, `[dogfood-coder]`,
+   `[per-PR-coder]`, `[security-reviewer]`) so the recipient session
+   can tell "this is feedback for me" from "I wrote this earlier
+   myself". **The PR body counts** — it is the first comment a
+   reviewing session reads, and without the prefix the role of the
+   author can only be inferred from branch naming (= a hint, not the
+   workflow contract). The `Co-Authored-By: Claude` commit trailer
+   does not propagate to PR comments, so this prefix is the only
+   cross-session signal.
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
