@@ -1,0 +1,15 @@
+{
+  "type": "skill_structure",
+  "data": {
+    "name": "hello_world",
+    "description": "A minimal skill that greets the user and returns a short confirmation.",
+    "entry_phase": "greet",
+    "graph": {},
+    "phases": [
+      {
+        "name": "greet",
+        "instructions": "Greet the user by name and return a greeting message."
+      }
+    ]
+  }
+}
