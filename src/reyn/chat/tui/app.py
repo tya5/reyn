@@ -384,8 +384,12 @@ class ReynTUIApp(App):
 
         Recognised text patterns from ChatEventForwarder:
           - "phase started: <phase_name>" → start row (if missing) + set_phase
-          - "<phase> → <next> ..."         → ignored (phase-completed details
-            are visible in the right panel events tab)
+          - "<phase> → <next> ..."         → phase_completed transition. The
+            outgoing phase's LLM call may take 10-30 s before the next
+            ``phase started`` arrives; without this branch the row would
+            stay on the OLD phase name the whole time, making the skill
+            look stuck. Show ``<phase> → <next>`` so the user can see the
+            handoff is in flight.
           - "skill done: <status>"         → finish row (FP-0011/FP-0012)
         """
         run_id = msg.meta.get("run_id", "")
@@ -401,6 +405,23 @@ class ReynTUIApp(App):
             existing = self._skill_exec.get(run_id) or {}
             visit = int(existing.get("phase_visits", 0)) + 1
             conv.update_skill_phase(run_id, phase, visit=visit)
+            self._last_focal_tab = "agents"
+        elif " → " in text and not text.startswith("skill done: "):
+            # phase_completed trace: ``<phase> → <next>(  (confidence=X))?``
+            # Strip the optional confidence suffix and display the bare
+            # transition so the row reflects "old phase has handed off to
+            # next" until the next ``phase started`` arrives. The visit
+            # count is left at the existing exec state (= the just-
+            # finished phase's visit) so the badge doesn't bump too
+            # early.
+            transition = text.split("  (confidence=", 1)[0].strip()
+            existing = self._skill_exec.get(run_id) or {}
+            # If no row exists yet (edge case: a malformed forwarder
+            # delivered phase_completed before phase_started), lazy-mount
+            # to keep behaviour robust.
+            conv.start_skill_row(run_id, skill_name)
+            visit = int(existing.get("phase_visits", 1)) or 1
+            conv.update_skill_phase(run_id, transition, visit=visit)
             self._last_focal_tab = "agents"
         elif text.startswith("skill done: "):
             # FP-0011: skill_narrator removed → skill_done outbox kind gone.
