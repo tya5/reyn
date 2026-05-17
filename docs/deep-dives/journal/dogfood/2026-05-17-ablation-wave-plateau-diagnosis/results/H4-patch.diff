@@ -1,0 +1,28 @@
+diff --git a/src/reyn/stdlib/skills/skill_builder/skill.md b/src/reyn/stdlib/skills/skill_builder/skill.md
+index a548361..1731c48 100644
+--- a/src/reyn/stdlib/skills/skill_builder/skill.md
++++ b/src/reyn/stdlib/skills/skill_builder/skill.md
+@@ -1,7 +1,7 @@
+ ---
+ type: skill
+ name: skill_builder
+-description: Generate a new skill from a natural-language description
++description: "Create a NEW skill from a natural-language spec. Output: working skill in reyn/local/. Does NOT improve an existing skill — use skill_improver for that."
+ entry: plan_skill
+ final_output: skill_builder_result
+ final_output_description: |
+diff --git a/src/reyn/stdlib/skills/skill_importer/skill.md b/src/reyn/stdlib/skills/skill_importer/skill.md
+index 40a3076..aeca936 100644
+--- a/src/reyn/stdlib/skills/skill_importer/skill.md
++++ b/src/reyn/stdlib/skills/skill_importer/skill.md
+@@ -1,9 +1,7 @@
+ ---
+ type: skill
+ name: skill_importer
+-description: |
+-  Search a public skills registry, let the user pick a candidate, and import
+-  the chosen skill as a multi-phase reyn skill under reyn/local/.
++description: "Import a skill from an external source / registry. Input: source URL or path. Output: installed skill under reyn/local/. Does NOT create or modify skill content."
+ entry: search
+ final_output: skill_import_result
+ final_output_description: |

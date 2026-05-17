@@ -1,0 +1,56 @@
+--- /Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/src/reyn/chat/router_loop.py	2026-05-17 10:39:44
++++ /tmp/reyn-ablation/H3-async-race/src/reyn/chat/router_loop.py	2026-05-17 11:00:46
+@@ -901,6 +901,53 @@
+                             chain_id=self.chain_id,
+                         )
+                         _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
++                # H3 ablation: detect invoke_skill / invoke_action spawn-ack
++                # race condition.
++                # When invoke_skill OR invoke_action (FP-0034 universal catalog
++                # path: invoke_action → universal_dispatch → spawn_for_router)
++                # returns status="spawned", the skill is running in the
++                # background. If we continue the loop, the next LLM call sees
++                # the spawn-ack as role=tool, the (answered) workaround injects
++                # a user-role prompt, and the LLM composes a reply BEFORE the
++                # skill output is available — causing the hallucination of
++                # generic content observed in B32 §4.2
++                # (W3 S1 file_read_via_chat).
++                #
++                # Fix: exit the loop on spawn-ack. The skill_completed inbox
++                # message (enqueued by _run_one_skill when the skill finishes)
++                # re-engages the router via _handle_skill_completed, which
++                # injects a [task_completed] user message with the real output.
++                # This is exactly the same pattern as the async_count exit above
++                # for delegate_to_agent — spawn-ack is the invoke_skill /
++                # invoke_action analogue.
++                # NOTE: dispatch_tool wraps the invoker result in
++                # {"status": "ok", "data": <inner_result>}. The inner
++                # result (= spawn-ack from spawn_for_router) has
++                # status="spawned" nested under the "data" key.
++                # This check runs AFTER routing_decided so that the P6 audit
++                # event fires even on the early-exit path.
++                _spawn_ack_count = sum(
++                    1
++                    for tc, r in zip(tool_calls, tool_results)
++                    if (
++                        tc["function"]["name"] in ("invoke_skill", "invoke_action")
++                        and isinstance(r, dict)
++                        and (
++                            r.get("status") == "spawned"
++                            or (
++                                isinstance(r.get("data"), dict)
++                                and r["data"].get("status") == "spawned"
++                            )
++                        )
++                    )
++                )
++                if _spawn_ack_count:
++                    host.events.emit(
++                        "invoke_skill_spawn_ack_exit",
++                        spawn_ack_count=_spawn_ack_count,
++                        chain_id=self.chain_id,
++                    )
++                    return self._total_usage
+                 # No delegation — accumulate messages for next iteration.
+                 # Use deduped tool_calls so the assistant message and tool
+                 # result messages stay in sync (matching tool_call_ids).
