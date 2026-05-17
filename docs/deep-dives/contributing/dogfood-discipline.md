@@ -624,6 +624,57 @@ The reply is the agent's final synthesised text — exactly what the TUI would r
 
 **Why this is easy to forget.** The web server isn't part of the dogfood batch driver scripts (those drive `reyn chat --cui` via subprocess for parity with real users). The A2A endpoint is the operator's hand-driven debug tool; reach for it when piping into `reyn chat --cui` is awkward (TUI buffering issues, missing terminal, etc.).
 
+#### When to prefer A2A over `reyn chat --cui` for batch workers
+
+**Dogfood batch 33 surfaced a contract gap** between the H3 race fix (= `invoke_skill_spawn_ack_exit`, commit `25834de`) and the `reyn chat --cui` stdin-pipe driver pattern:
+
+- Post-H3 the router exits the loop on a skill spawn-ack. The actual completion narration arrives later via `_handle_skill_completed` → `_run_router_loop` → outbox.
+- `send_to_agent_impl` (the A2A entry point) waits via `MessageBus.request` until quiescent (= `running_skills` empty), so the completion narration is captured into the response.
+- `reyn chat --cui` with piped stdin closes stdin after the single user prompt, triggering CUI shutdown. The shutdown grace window (B27-H4, 30 s) is best-effort — heavy skills (e.g. multi-phase `skill_builder`, multi-turn `eval`) often overrun, and the completion narration is then lost to the shutdown.
+
+Empirically (B33 W2): A2A POST captured the completion narration cleanly on `invoke_action(skill__read_local_files)` ("The `read_local_files` skill could not be completed because the filesystem MCP server is inaccessible..."). The same prompt under `reyn chat --cui` stdin-pipe in B33 W2 returned empty reply on 3 of 4 spawn-ack scenarios (timing-dependent).
+
+**Recommendation for B34+ batch workers**:
+
+```bash
+# Per-scenario driver pattern via A2A (replaces `reyn chat --cui` stdin-pipe)
+# 1. One-time per worker: start reyn web in the background.
+LITELLM_API_BASE=http://localhost:4000 OPENAI_API_KEY=dummy \
+  reyn web --port 8081 > web.log 2>&1 &
+WEB_PID=$!
+sleep 3  # wait for /health
+curl -sf http://localhost:8081/health   # sanity check
+
+# 2. One-time per worker: create the agent.
+reyn agent new dogfood-bN-i
+
+# 3. Per scenario: apply the wipe recipe (= same as before — events / state /
+#    agents/<n>/history.jsonl / reyn/local/), then POST.
+rm -rf .reyn/events .reyn/agents/dogfood-bN-i/events 2>/dev/null
+rm -f  .reyn/state/action_usage.jsonl .reyn/state/wal.jsonl
+rm -rf .reyn/state/plans/ reyn/local/
+rm -f  .reyn/agents/dogfood-bN-i/history.jsonl
+
+REYN_LLM_TRACE_DUMP="traces/${scenario_id}.jsonl" \
+  curl -s --max-time 240 \
+       -X POST "http://localhost:8081/a2a/agents/dogfood-bN-i" \
+       -H 'Content-Type: application/json' \
+       -d "$(jq -n --arg t "$prompt_text" '{
+         jsonrpc:"2.0", id:"r1", method:"message/send",
+         params:{message:{messageId:"m1", role:"user",
+                          parts:[{kind:"text", text:$t}]}}
+       }')" \
+  | jq -r '.result.parts[0].text' > "replies/${scenario_id}.txt"
+
+# 4. Tear down at end of worker.
+kill $WEB_PID
+```
+
+The `reyn chat --cui` stdin-pipe pattern remains valid for **synchronous-only**
+scenarios (= LLM answers inline, no skill spawn). Workers that mix both
+patterns should default to A2A. Drivers built on top of
+`scripts/dogfood_b24_driver.py` should migrate accordingly.
+
 ### scripts/dogfood_sp_render.py
 
 A CLI for verifying system prompt rendering. Preview the wrapper-only or legacy SP and get size-delta stats in one command, without writing a throwaway script each time you want to confirm what the LLM will receive.
