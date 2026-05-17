@@ -1,7 +1,28 @@
-"""/agents, /attach slash commands."""
+"""/agents and /attach slash commands.
+
+Migrated out of ``session.py`` per the cli-redesign plan (`docs/deep-dives/
+contributing/cli-redesign.md`). The session still owns the AgentRegistry
+reference and the REPL listens for ``__attach_request__`` outbox messages
+to perform the actual swap; this module just turns user input into the
+right outbox shape.
+"""
 from __future__ import annotations
 
-from reyn.chat.slash import slash
+from typing import TYPE_CHECKING
+
+from reyn.chat.outbox import OutboxMessage
+from reyn.chat.slash import reply, reply_error, slash
+
+if TYPE_CHECKING:
+    from reyn.chat.session import ChatSession
+
+
+_NO_REGISTRY_AGENTS = (
+    "agent registry not wired; /agents only works in `reyn chat`"
+)
+_NO_REGISTRY_ATTACH = (
+    "agent registry not wired; /attach only works in `reyn chat`"
+)
 
 
 def _attach_completer(session: "object") -> list[str]:
@@ -12,8 +33,36 @@ def _attach_completer(session: "object") -> list[str]:
 
 
 @slash("agents", summary="List all agents (* = attached, · = loaded)")
-async def agents_cmd(session: "object", args: str) -> None:
-    await session._slash_agents(args)
+async def agents_cmd(session: "ChatSession", args: str) -> None:
+    """``/agents`` — list known agents with attach / loaded markers."""
+    if session._registry is None:
+        await reply_error(session, _NO_REGISTRY_AGENTS)
+        return
+    names = session._registry.list_names()
+    if not names:
+        # Default agent auto-creates on first chat start, so an empty list
+        # is unexpected — surface as system note rather than swallowing.
+        await reply(
+            session,
+            "no agents (this should not happen — default auto-creates)",
+        )
+        return
+    attached = session._registry.attached_name
+    loaded = set(session._registry.loaded_names())
+    lines = ["agents:"]
+    for n in names:
+        try:
+            profile = session._registry.load_profile(n)
+            role_excerpt = (profile.role or "").strip().splitlines()
+            role = role_excerpt[0] if role_excerpt else ""
+        except Exception:
+            role = "(profile load failed)"
+        last = session._registry.last_activity_at(n)
+        last_str = last.strftime("%Y-%m-%dT%H:%M") if last else "—"
+        mark = "*" if n == attached else (" " if n not in loaded else "·")
+        lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
+    lines.append("(* = attached, · = loaded, blank = not yet loaded)")
+    await reply(session, "\n".join(lines))
 
 
 @slash(
@@ -21,5 +70,31 @@ async def agents_cmd(session: "object", args: str) -> None:
     summary="Switch attached agent: /attach <name>",
     completer=_attach_completer,
 )
-async def attach_cmd(session: "object", args: str) -> None:
-    await session._slash_attach(args)
+async def attach_cmd(session: "ChatSession", args: str) -> None:
+    """``/attach <name>`` — request the REPL switch to a different agent.
+
+    The actual switch happens in ``repl._input_loop`` (which owns the
+    display wiring). This handler just validates the name and posts a
+    ``__attach_request__`` outbox message; the REPL listens for that
+    kind and performs the swap.
+    """
+    name = args.strip()
+    if not name:
+        await reply_error(session, "usage: /attach <name>")
+        return
+    if session._registry is None:
+        await reply_error(session, _NO_REGISTRY_ATTACH)
+        return
+    if not session._registry.exists(name):
+        await reply_error(
+            session,
+            f"agent {name!r} not found; create with `reyn agent new {name}`",
+        )
+        return
+    if name == session._registry.attached_name:
+        await reply(session, f"already attached to {name!r}")
+        return
+    # Sentinel kind — see repl._input_loop for the receiver.
+    await session._put_outbox(OutboxMessage(
+        kind="__attach_request__", text=name,
+    ))
