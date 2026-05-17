@@ -361,8 +361,12 @@ class InputBar(Widget):
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self) -> str:
+        # Stays on one line (~84 cols). Dropped Ctrl+O / Ctrl+R / Ctrl+\
+        # / Ctrl+C — all visible in the Keys tab, all infrequent or
+        # discoverable on demand. Ctrl+P/N turn was missing from every
+        # user-facing surface above the fold; that's the whole point of
+        # this hint. Ctrl+B panel stays so users can find the Keys tab.
         return (
-            "  Enter send  │  Ctrl+J newline  │  Ctrl+D quit  │  "
-            "Ctrl+L clear  │  Ctrl+C cancel  │  Ctrl+B panel  │  "
-            "Ctrl+O focus panel  │  Ctrl+R voice  │  Ctrl+\\ shot"
+            "  Enter send │ Ctrl+J nl │ Ctrl+D quit │ Ctrl+L clear │ "
+            "Ctrl+B panel │ Ctrl+P/N turn"
         )

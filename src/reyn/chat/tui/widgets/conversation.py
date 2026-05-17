@@ -168,7 +168,7 @@ class ConversationView(Widget):
         # B5: empty-state hint, removed on first message
         yield Static(
             "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
-            "[bold]Ctrl+L[/] clear  ·  ↑ history",
+            "[bold]Ctrl+L[/] clear  ·  ↑ history  ·  [bold]Ctrl+P/N[/] turn",
             id="empty-hint",
             markup=True,
         )
