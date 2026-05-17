@@ -140,6 +140,12 @@ async def _handle_write(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
     from reyn.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
+    # B34 LLM-attractor fix: accept common synonyms before KeyError.
+    # LLM sends {text:...} instead of {content:...} — observed B33 W4 S1,
+    # B30 W4 S1. Canonical key wins when both are present.
+    if "content" not in args and "text" in args:
+        args = {**args, "content": args["text"]}
+
     op = FileIROp(kind="file", op="write", path=args["path"], content=args["content"])
     legacy_ctx = _build_legacy_op_context(ctx)
     return await execute_op(op, legacy_ctx, caller="control_ir")
