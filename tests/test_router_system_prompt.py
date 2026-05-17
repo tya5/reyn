@@ -312,6 +312,98 @@ class TestBehaviourRulesAfterF3F9Fix:
         assert "NO text replies" in prompt
 
 
+class TestAvailableSkillsBlock:
+    """Tier 2: B40 cognitive-bias fix — when universal wrappers are enabled and
+    skills are available, the SP includes a ``## Available skills`` section
+    listing canonical ``skill__NAME`` qualified_names so the LLM can match
+    natural-language references (e.g. ``"X スキル"``) without mis-routing to
+    mcp.server / mcp.tool categories.
+
+    The contract this pins:
+    - Section header appears IFF ``universal_wrappers_enabled=True`` AND
+      ``available_skills`` is non-empty.
+    - Every input skill appears as ``skill__NAME`` in the rendered section.
+    - Skills are listed by their qualified_name; no skill is silently dropped.
+
+    Granularity: section presence + per-skill ``skill__NAME`` entry. Exact
+    wording of the prose paragraph is not pinned (= per Tier 2 granularity
+    rule, "wording is not pinned").
+    """
+
+    def test_section_present_with_wrappers_and_skills(self):
+        """Tier 2: section emitted when universal wrappers + skills both present."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[
+                _make_skill("mcp_search"),
+                _make_skill("eval"),
+            ],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            universal_wrappers_enabled=True,
+        )
+        assert "## Available skills" in prompt
+        assert "skill__mcp_search" in prompt
+        assert "skill__eval" in prompt
+
+    def test_section_omitted_without_wrappers(self):
+        """Tier 2: section omitted when universal_wrappers_enabled=False."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill("mcp_search")],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            universal_wrappers_enabled=False,
+        )
+        assert "## Available skills" not in prompt
+
+    def test_section_omitted_with_empty_skills(self):
+        """Tier 2: section omitted (no orphan header) when no skills."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            universal_wrappers_enabled=True,
+        )
+        assert "## Available skills" not in prompt
+
+    def test_every_skill_appears_as_qualified_name(self):
+        """Tier 2: no skill silently dropped; each input → one skill__NAME entry."""
+        skill_names = ["alpha", "beta", "gamma", "delta_under_score"]
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[_make_skill(n) for n in skill_names],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            universal_wrappers_enabled=True,
+        )
+        for n in skill_names:
+            assert f"skill__{n}" in prompt
+
+    def test_malformed_skill_entries_silently_skipped(self):
+        """Tier 2: entries lacking ``name`` are skipped (defensive parsing)."""
+        prompt = build_system_prompt(
+            agent_name="chat",
+            agent_role="assistant",
+            available_skills=[
+                _make_skill("valid_one"),
+                {"description": "no name field"},
+                "not even a dict",
+                _make_skill("valid_two"),
+            ],
+            available_agents=[],
+            memory_index=_EMPTY_MEMORY,
+            universal_wrappers_enabled=True,
+        )
+        assert "skill__valid_one" in prompt
+        assert "skill__valid_two" in prompt
+
+
 class TestPostInvokeSkillNarrationGuidance:
     """Tier 2: FP-0034 B23-PRE-1 — spawn-ack and completion-narration content
     moved from SP to invoke_action.description. The SP Behaviour section retains

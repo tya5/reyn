@@ -252,6 +252,20 @@ def build_system_prompt(
         )
         parts.append("")
 
+    # ── 3.6. Available skills (B40: cognitive-bias fix for cold-start
+    # skill discovery) ────────────────────────────────────────────────────
+    # Without explicit enumeration, the LLM mis-routes "X スキル" user
+    # prompts to mcp.server / mcp.tool categories when X has prefix overlap
+    # (= B39 W6 R-WEB: 0/10 list_actions(category=['skill']) invocations,
+    # 6-10/10 mcp.server miscategorization for "mcp_search スキル"). Per
+    # care-boundary.md §1 "The LLM doesn't have to guess what exists",
+    # the OS provides the flat skill enumeration in the structural pre-call
+    # context. Data-driven from host.list_available_skills() — P7-clean.
+    if universal_wrappers_enabled and available_skills:
+        skill_block = _render_available_skills_block(available_skills)
+        if skill_block:
+            parts.append(skill_block)
+
     # ── 4 & 5. Behaviour (static core) ─────────────────────────────────────
     # FP-0023 Change 1: Static Behaviour rules moved here (before dynamic
     # sections) to maximise cache prefix coverage. The two dynamic conditional
@@ -400,6 +414,52 @@ def build_system_prompt(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _render_available_skills_block(available_skills: list[dict]) -> str:
+    """Return the ``## Available skills`` section listing canonical qualified_names.
+
+    B40 cognitive-bias fix: without an explicit skill enumeration in the
+    SP, the LLM mis-routes ``"X スキル"`` / ``"X skill"`` user prompts to
+    the ``mcp.server`` / ``mcp.tool`` categories when the natural-language
+    name X has a prefix overlap (= the B39 W6 R-WEB observation: 0/10
+    ``list_actions(category=['skill'])`` invocations on a ``"mcp_search
+    スキル"`` prompt, 6-10/10 ``mcp.server`` miscategorization).
+
+    The block lists each skill's canonical ``skill__NAME`` qualified_name
+    plus a 1-line description (= ``description`` frontmatter field, first
+    line). Data-driven from ``host.list_available_skills()`` — P7-clean
+    (no hardcoded skill names; the OS treats every entry uniformly).
+
+    Returns an empty string when ``available_skills`` is empty so the
+    section is omitted entirely (= no orphan header).
+    """
+    rows: list[str] = []
+    for skill in available_skills:
+        if not isinstance(skill, dict) or "name" not in skill:
+            continue
+        name = skill["name"]
+        desc_raw = skill.get("description") or skill.get("short_description") or ""
+        desc = str(desc_raw).strip().splitlines()[0] if desc_raw else ""
+        qn = f"skill__{name}"
+        rows.append(f"- {qn} — {desc}" if desc else f"- {qn}")
+
+    if not rows:
+        return ""
+
+    return "\n".join([
+        "## Available skills",
+        "",
+        "Skills below are listed with their canonical qualified_name. When the"
+        " user references a skill by natural-language name (e.g. \"X スキル\","
+        " \"X skill\", \"X 機能\"), match to the canonical skill__NAME from"
+        " this list and invoke via invoke_action(action_name=\"skill__NAME\","
+        " args={...}). Skill names containing substrings like \"mcp\" are"
+        " still in the skill category — NOT mcp.server / mcp.tool.",
+        "",
+        *rows,
+        "",
+    ])
+
 
 def _render_skills(available_skills: list[dict]) -> str:
     """Return one-line category summary, or empty string when no skills."""
