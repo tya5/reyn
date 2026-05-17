@@ -396,31 +396,87 @@ def _build_hot_list_aliases(
     result = []
     lookup = short_description_lookup or {}
     for name in names:
-        short_desc = lookup.get(name, "")
-        if short_desc:
-            description = (
-                f"{short_desc}. "
-                f"Use this direct alias to invoke {name} without going "
-                "through invoke_action."
-            )
+        # D2-min: for operation-category aliases (= passthrough rules in
+        # ``_OPERATION_RULES``: web__*, file__*, memory.operation__*,
+        # reyn.source__*, rag.operation__*, mcp.operation__*, exec__*),
+        # surface the target ToolDefinition's real description + JSON
+        # schema directly. Without this the alias arrives at the LLM as
+        # `description: "Direct alias for X. Use invoke_action for schema
+        # details."` + `parameters: {properties: {}, additionalProperties:
+        # true}` — the LLM has neither a use-case hint nor an arg
+        # signature, falls back to its training prior ("AI cannot access
+        # external sites") and refuses, or hallucinates control-character
+        # tool-call text. The FP-0034 D2 "hot list direct alias は full
+        # schema 提供" intent is realised here for the passthrough
+        # categories; resource categories (skill__X / agent.peer__X /
+        # mcp.tool__X.Y / memory.entry__X / rag.corpus__X) need per-
+        # resource schema introspection and are out of scope for D2-min.
+        rich = _operation_alias_metadata(name)
+        if rich is not None:
+            description, parameters = rich
         else:
-            description = (
-                f"Direct alias for {name}. "
-                "Use invoke_action for schema details."
-            )
+            short_desc = lookup.get(name, "")
+            if short_desc:
+                description = (
+                    f"{short_desc}. "
+                    f"Use this direct alias to invoke {name} without going "
+                    "through invoke_action."
+                )
+            else:
+                description = (
+                    f"Direct alias for {name}. "
+                    "Use invoke_action for schema details."
+                )
+            parameters = {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            }
         result.append({
             "type": "function",
             "function": {
                 "name": name,
                 "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": True,
-                },
+                "parameters": parameters,
             },
         })
     return result
+
+
+def _operation_alias_metadata(
+    qualified_name: str,
+) -> "tuple[str, dict] | None":
+    """Return ``(description, parameters)`` for an operation-category alias.
+
+    Scoped to qualified names whose category routes through ``_OPERATION_RULES``
+    in ``reyn.tools.universal_dispatch`` (= ``_passthrough_args`` transform —
+    the alias's args are forwarded verbatim to the target). For those, the
+    target ``ToolDefinition.description`` and ``ToolDefinition.parameters``
+    are the correct alias metadata.
+
+    Returns ``None`` for resource-category aliases (skill / agent.peer /
+    mcp.tool / memory.entry / rag.corpus) — those route through
+    ``_RESOURCE_RULES`` whose target is a generic dispatcher (``invoke_skill``
+    etc.) whose parameters do NOT match the resource's actual input schema.
+    Those need per-resource schema introspection (D2-full).
+    """
+    # Late imports to avoid circular dependency at module load time.
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_dispatch import (
+        KNOWN_STATIC_QUALIFIED_NAMES,
+        resolve_describe_action,
+    )
+
+    if qualified_name not in KNOWN_STATIC_QUALIFIED_NAMES:
+        return None
+    try:
+        resolved = resolve_describe_action(qualified_name)
+    except Exception:
+        return None
+    tool = get_default_registry().lookup(resolved.target_tool_name)
+    if tool is None:
+        return None
+    return tool.description, dict(tool.parameters)
 
 
 # ---------------------------------------------------------------------------
