@@ -1129,6 +1129,15 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
         cfg.monthly_tokens.is_active,
         cfg.monthly_cost_usd.is_active,
     ]):
+        # Pre-compute the label column width so `tokens` lines up across
+        # Today / Month rows. `Today (YYYY-MM-DD):` is 4 chars wider than
+        # `Month (YYYY-MM):`; the old hand-rolled "   " spacing assumed an
+        # exact label length and broke when day_label / month_label format
+        # changed.
+        day_label_part = f"Today ({day_label}):" if day_label else ""
+        month_label_part = f"Month ({month_label}):" if month_label else ""
+        label_col = max(len(day_label_part), len(month_label_part)) + 1
+
         if day_label:
             tok_cap = cfg.daily_tokens
             cost_cap = cfg.daily_cost_usd
@@ -1140,7 +1149,9 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
                 f"${daily_cost:.4f} / ${cost_cap.hard_limit:.2f}{_pct(daily_cost, cost_cap.hard_limit)}"
                 if cost_cap.is_active else f"${daily_cost:.4f}"
             )
-            lines.append(f"  Today ({day_label}):   tokens {tok_str} | {cost_str}")
+            lines.append(
+                f"  {day_label_part:<{label_col}}tokens {tok_str} | {cost_str}"
+            )
 
         if month_label:
             tok_cap = cfg.monthly_tokens
@@ -1153,7 +1164,9 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
                 f"${monthly_cost:.4f} / ${cost_cap.hard_limit:.2f}{_pct(monthly_cost, cost_cap.hard_limit)}"
                 if cost_cap.is_active else f"${monthly_cost:.4f}"
             )
-            lines.append(f"  Month ({month_label}): tokens {tok_str} | {cost_str}")
+            lines.append(
+                f"  {month_label_part:<{label_col}}tokens {tok_str} | {cost_str}"
+            )
 
         lines.append("")
 
