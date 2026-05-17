@@ -520,6 +520,7 @@ class ConversationView(Widget):
         choices: list[tuple[str, str]] | None = None,
         answer_callback=None,
         iv_id: str = "",
+        queued_extra: int = 0,
     ) -> InterventionWidget:
         self._consume_empty_hint()
         # The run is now blocked on the user's answer; "thinking…" is no
@@ -530,6 +531,7 @@ class ConversationView(Widget):
             choices=choices,
             answer_callback=answer_callback,
             iv_id=iv_id,
+            queued_extra=queued_extra,
         )
         self.mount(widget)
         widget.scroll_visible()

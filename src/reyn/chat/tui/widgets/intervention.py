@@ -27,6 +27,10 @@ class InterventionWidget(Widget):
                          When empty, only a free-text input is shown.
         answer_callback: Coroutine called with the user's answer string.
         iv_id:           Intervention ID (for logging / targeting).
+        queued_extra:    Number of additional pending interventions waiting
+                         behind this one. When > 0, a dim ``+N more pending``
+                         label is rendered in the widget header so the user
+                         has a persistent signal that more questions follow.
     """
 
     DEFAULT_CSS = """
@@ -75,6 +79,13 @@ class InterventionWidget(Widget):
         height: auto;
         width: 1fr;
     }
+    InterventionWidget Label.iv-queued {
+        color: #888888;
+        text-style: dim;
+        padding-bottom: 1;
+        height: auto;
+        width: 1fr;
+    }
     """
 
     class Answered(Message):
@@ -91,6 +102,7 @@ class InterventionWidget(Widget):
         choices: list[tuple[str, str]] | None = None,
         answer_callback: Callable[[str], Awaitable[None]] | None = None,
         iv_id: str = "",
+        queued_extra: int = 0,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id or f"iv_{iv_id[:8]}")
@@ -98,10 +110,16 @@ class InterventionWidget(Widget):
         self._choices = choices or []
         self._answer_callback = answer_callback
         self._iv_id = iv_id
+        self._queued_extra = max(0, int(queued_extra))
         self._show_input = not self._choices  # no chips → always show free text
 
     def compose(self) -> ComposeResult:
         yield Label(f"  {self._question}", classes="iv-question")
+        if self._queued_extra > 0:
+            yield Label(
+                f"  +{self._queued_extra} more pending",
+                classes="iv-queued",
+            )
         if self._choices:
             with Widget(classes="iv-chips"):
                 for label, choice_id in self._choices:
