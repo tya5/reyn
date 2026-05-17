@@ -64,6 +64,16 @@ class ReynTUIApp(App):
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
         Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        # Right-panel tab cycling. The action methods
+        # (``action_panel_next_content`` / ``_prev_content``) already exist
+        # but were missing Binding declarations, so the keys never fired AND
+        # the Keys tab — which iterates ``app.BINDINGS`` — never rendered
+        # them. ``ctrl+shift+o`` is an alias for prev-tab; some terminals
+        # don't deliver ``ctrl+shift+w`` reliably, so the alias is the
+        # escape hatch.
+        Binding("ctrl+w", "panel_next_content", "Next tab", priority=True, show=False),
+        Binding("ctrl+shift+w", "panel_prev_content", "Prev tab", priority=True, show=False),
+        Binding("ctrl+shift+o", "panel_prev_content", "Prev tab (alt)", priority=True, show=False),
         Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
         Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
