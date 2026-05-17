@@ -29,9 +29,17 @@ async def _input_loop(
 ) -> None:
     is_tty = sys.stdin.isatty()
     while True:
-        # Track whether this iteration submitted user text so we know
-        # whether to wait for a reply on EOF (= non-TTY scripted use).
-        submitted_this_turn = False
+        # Piped / scripted mode: pace input by reply availability. Without
+        # this gate, readline pulls every buffered line before the output
+        # loop renders the first reply — the per-turn `reply_seen.clear()`
+        # races with `set()`, and any later `wait_for(reply_seen)` may be
+        # satisfied by an earlier turn's reply instead of the current one.
+        # The gate serialises turns: read line N+1 only after turn N's
+        # reply has been rendered (or there is no pending turn at all).
+        # TTY mode is unaffected — interactive users may type ahead.
+        if not is_tty and reply_seen is not None:
+            await reply_seen.wait()
+
         try:
             if is_tty:
                 with patch_stdout():
@@ -47,18 +55,9 @@ async def _input_loop(
                     raise EOFError
                 text = line
         except (EOFError, KeyboardInterrupt):
-            # Non-TTY EOF: the user's last submitted turn (if any) is
-            # likely still in flight. Wait briefly for the output loop
-            # to render an agent reply before shutting down — without
-            # this wait, asyncio.wait(FIRST_COMPLETED) cancels the
-            # output loop mid-LLM-round and the reply never reaches
-            # stdout (= prior behaviour broke all piped / scripted use,
-            # the reply was visible only in history.jsonl).
-            if not is_tty and reply_seen is not None:
-                try:
-                    await asyncio.wait_for(reply_seen.wait(), timeout=300.0)
-                except asyncio.TimeoutError:
-                    pass
+            # The pacing gate above guarantees any in-flight reply has
+            # already been rendered before we read the next line, so we
+            # can shut down immediately without a drain timeout.
             await registry.shutdown()
             return
         text = (text or "").strip()
@@ -71,11 +70,11 @@ async def _input_loop(
         if attached is None:
             renderer.message(_simple_status("no agent attached; try :agents"))
             continue
-        await attached.submit_user_text(text)
-        submitted_this_turn = True
-        # Reset the reply-seen event so the next turn's wait starts fresh.
-        if reply_seen is not None and submitted_this_turn:
+        # Mark a reply as in flight before submit so the pacing gate on
+        # the next iteration blocks until the output loop signals it.
+        if reply_seen is not None:
             reply_seen.clear()
+        await attached.submit_user_text(text)
 
 
 async def _output_loop(
@@ -96,9 +95,10 @@ async def _output_loop(
             await run_in_terminal(lambda m=msg: renderer.message(m))
         else:
             renderer.message(msg)
-        # Signal end-of-turn for non-TTY drain wait. "agent" is the
-        # canonical reply kind; "skill_done" / "error" also count as
-        # turn-terminal so a skill-launch chat doesn't hang on EOF.
+        # Signal end-of-turn for the input loop's pacing gate. "agent" is
+        # the canonical reply kind; "skill_done" / "error" also count as
+        # turn-terminal so a skill-launch chat or a failed router round
+        # doesn't deadlock the next iteration.
         if reply_seen is not None and msg.kind in {"agent", "skill_done", "error"}:
             reply_seen.set()
 
@@ -124,11 +124,11 @@ async def run_repl(registry: AgentRegistry, renderer: ChatRenderer) -> None:
 
     renderer.banner(attached.agent_name)
 
-    # Shared event so the input loop's EOF-handler can wait for the
-    # output loop to render an agent reply before shutting down. Only
-    # used in non-TTY mode; passing it unconditionally is harmless
-    # because the input loop only awaits it when `is_tty` is False.
+    # `set` = "no reply pending" (the input loop's pacing gate is open).
+    # `clear` = "a turn is in flight" (the gate blocks until the output
+    # loop renders the reply). Start opened so the first read isn't gated.
     reply_seen: asyncio.Event = asyncio.Event()
+    reply_seen.set()
 
     inputs = asyncio.create_task(
         _input_loop(registry, prompt_session, renderer, reply_seen)
