@@ -16,6 +16,7 @@ re-renders itself.
 from __future__ import annotations
 
 from rich.text import Text
+from textual.message import Message
 from textual.widgets import Static
 
 from reyn.chat.slash import SlashCommand
@@ -26,6 +27,15 @@ _MAX_VISIBLE = 8
 
 class SlashPicker(Static):
     """Inline list of slash-command matches shown above the TextArea."""
+
+    class Clicked(Message):
+        """Posted when the user clicks one of the picker rows.
+
+        ``InputBar`` listens for this and calls ``_confirm_picker`` to
+        insert the highlighted command — matching the keyboard Tab path.
+        The picker stays ``can_focus = False`` so the click does not
+        steal focus from the TextArea (the user keeps typing args).
+        """
 
     DEFAULT_CSS = """
     SlashPicker {
@@ -91,6 +101,38 @@ class SlashPicker(Static):
         if not self._matches:
             return None
         return self._matches[self._selected]
+
+    def select_at_y(self, content_y: int) -> bool:
+        """Move the selection to the row at ``content_y`` (content-coord).
+
+        ``content_y`` is the y-offset within the widget's content region
+        (excluding border / padding). Returns True when the offset hit
+        a valid match row; False when it landed on the "+N more" footer,
+        a blank line, or beyond the visible matches.
+        """
+        if 0 <= content_y < len(self._matches):
+            self._selected = content_y
+            self._repaint()
+            return True
+        return False
+
+    # ── mouse ────────────────────────────────────────────────────────────────
+
+    def on_click(self, event) -> None:
+        """Click on a row — confirm it.
+
+        Slack/Discord muscle memory: clicking a suggestion inserts it.
+        We compute the row from the content-relative offset (so the
+        border + padding don't shift the math), update the selection,
+        and post a ``Clicked`` message for InputBar to act on. The
+        picker stays ``can_focus = False`` so focus does not move off
+        the TextArea — the user can immediately type args.
+        """
+        offset = event.get_content_offset(self)
+        if offset is None:
+            return
+        if self.select_at_y(offset.y):
+            self.post_message(self.Clicked())
 
     # ── rendering ─────────────────────────────────────────────────────────────
 
