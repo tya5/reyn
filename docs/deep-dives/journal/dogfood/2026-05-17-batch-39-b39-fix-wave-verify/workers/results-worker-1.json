@@ -1,0 +1,189 @@
+{
+  "batch": "B39",
+  "worker": 1,
+  "scenario_set": "chat_router_smoke",
+  "head": "b4daeb1",
+  "port": 8081,
+  "agent_prefix": "dogfood-b39-1-s",
+  "generated": "2026-05-17",
+  "state_mode": "fresh",
+  "verdicts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "sN": "S1",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Reply mentions skills by name (skill__code_review, skill__skill_builder, skill__direct_llm etc.), agents, and chat capabilities inline. user_message_received emitted, no permission_denied. chat_turn_completed_inline path — no direct_llm artifact, but artifact not blocking for inline responses (B38 precedent). Same as B38 W1 S1 (V)."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "sN": "S2",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Reply correctly explains idempotency ('同じ操作を何度繰り返しても、同じ結果が得られる性質'). routing_decided emitted via web__search (hot_list_alias). no permission_denied. No direct_llm artifact (web__search path), but reply rubric passes. Same judgment as B38 W1 S2 (V)."
+    },
+    {
+      "id": "skill_discovery_request",
+      "sN": "S3",
+      "verdict": "R",
+      "reply_rubric": "PASS",
+      "events_pass": false,
+      "artifact_pass": false,
+      "note": "Reply lists 16 skill names (PASS). routing_decided NOT emitted — used list_actions tool then inline reply (chat_turn_completed_inline). must_emit routing_decided not satisfied. Consistent with B37/B38 prediction (refuted=1.0) and B38 W1 S3 result (R). No change."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "sN": "S4",
+      "verdict": "R",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "REGRESSION vs B38 W1 (was V). LLM chose skill__direct_llm instead of skill__word_stats_demo despite explicit instruction. Reply contains word count/character count (PASS). routing_decided emitted (skill__direct_llm via invoke_action), skill_run_spawned+completed (success). BUT word_stats_demo artifact ABSENT — direct_llm artifact present instead. Artifact check fails. B38 correctly routed to word_stats_demo; B39 routes to direct_llm."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "sN": "S5",
+      "verdict": "R",
+      "reply_rubric": "FAIL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Router asked for clarification ('どのようなテーマや雰囲気の詩がお好みですか？') instead of writing a poem. Reply rubric fails (no poem produced). Events pass: chat_turn_completed_inline emitted (satisfies must_emit_any). No permission_denied. Same as B38 W1 S5 (R). Consistent clarification-attractor for creative tasks."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "sN": "S6",
+      "verdict": "R",
+      "reply_rubric": "FAIL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "REGRESSION vs B38 W1 (was V). Turn 1: correct inline explanation of list comprehension syntax. Turn 2: invoke_action(skill__direct_llm) spawned and ran successfully, producing code examples (squares, conditionals, nested). BUT the agent's final reply was a SUMMARY ('基本的な例、条件付きの例、ネストしたリスト内包表記のコード例が提示されました') without the actual code. Rubric: 'second reply contains a Python code example' — FAIL. task_completed narration collapsed skill output into description instead of surfacing code. routing_decided emitted, no permission_denied."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "sN": "S7",
+      "verdict": "R",
+      "reply_rubric": "FAIL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Router asked 'どの画像をご希望ですか？ 画像生成のための具体的な指示や説明をいただけますでしょうか' — soliciting image details instead of declining. Did NOT politely decline or explain image generation is unavailable. chat_turn_completed_inline emitted, no permission_denied. Same as B38 W1 S7 (R). B38-OBS-2 confirmed: image-generation non-decline is not a regression from B38 but rather a persistent attractor."
+    }
+  ],
+  "b39_verification_angles": {
+    "angle_1_ghost_rejection": {
+      "result": true,
+      "ghost_alias_injected": "skill__nonexistent_xyz",
+      "injection_format": "qualified_name + ts (correct JSONL format)",
+      "log_evidence": "[reyn] action_usage: skipping ghost alias 'skill__nonexistent_xyz' — not found in current registry",
+      "llm_requests_containing_ghost": 0,
+      "note": "First injection attempt used wrong format (action/calls/last_called/score fields) — correctly ignored. Second injection used correct format (qualified_name/ts). Ghost was loaded structurally but filtered by _filter_ghost_names_by_registry at hot-list materialization. Log message appeared in web.log (stderr captured via 2>&1). 0/N LLM requests contain skill__nonexistent_xyz in ARS or tool list."
+    },
+    "angle_1b_empty_schema_not_misclassified": {
+      "result": "NOT_TESTED_AS_GHOST",
+      "note": "direct_llm and read_local_files appear in ARS for all LLM requests (see angle_2). They are NOT rejected by registry check. Empty-schema skills are correctly accepted — b1ca51a fix confirmed effective."
+    },
+    "angle_2_empty_schema_skills_ars_visible": {
+      "result": true,
+      "requests_checked": 2,
+      "request_ids": [
+        "3614f80d-7447-4ec0-b5bb-598472cfe431",
+        "314f3ff2-4cb7-4355-b8c2-347204208b3c"
+      ],
+      "skill__direct_llm_present": true,
+      "skill__read_local_files_present": true,
+      "skill__index_docs_present": true,
+      "skill__eval_present": true,
+      "ars_excerpt": "skill__direct_llm: {text}  skill__read_local_files: {text}  skill__index_docs: {description, mode, path, source}  skill__eval: {case_input, case_name, phase_criteria, skill_root, spec_path, target_skill_path}",
+      "note": "Both newly-fixed empty-schema skills (direct_llm, read_local_files) appear in invoke_action's ACTION ARG SCHEMAS block with {text} schema in all checked requests. b4daeb1 fix (explicit input_schema for empty-schema skills) is structurally effective."
+    },
+    "angle_3_state_mode_field": {
+      "result": true,
+      "state_mode_value": "fresh",
+      "note": "state_mode: 'fresh' included in this results.json per #122 requirement. dogfood_fresh_reset.sh was run before each scenario (confirmed by removal log messages). Per-scenario fresh-mode discipline: action_usage.jsonl and wal.jsonl removed before each run."
+    },
+    "angle_4_delta_vs_b38": {
+      "b38_w1": {"V": 4, "I": 0, "R": 3, "B": 0},
+      "b39_w1": {"V": 2, "I": 0, "R": 5, "B": 0},
+      "delta_V": -2,
+      "delta_I": 0,
+      "delta_R": 2,
+      "regressions": [
+        {
+          "scenario": "S4 explicit_skill_invocation_word_stats",
+          "b38": "V",
+          "b39": "R",
+          "cause": "LLM chose skill__direct_llm instead of skill__word_stats_demo for explicit invocation request"
+        },
+        {
+          "scenario": "S6 multi_turn_pronoun_reference",
+          "b38": "V",
+          "b39": "R",
+          "cause": "task_completed narration collapsed direct_llm code output into summary — no actual code in agent reply"
+        }
+      ],
+      "stable_same": [
+        "S1: V->V (inline capability reply)",
+        "S2: V->V (factual idempotency)",
+        "S3: R->R (routing_decided not emitted for skill discovery)",
+        "S5: R->R (clarification instead of poem)",
+        "S7: R->R (image generation not declined)"
+      ],
+      "note": "Net -2V vs B38. Two regressions: S4 skill routing (word_stats->direct_llm) and S6 task_completed narration collapse. Pre-conclusion checklist applied: both regressions are N=1 single-shot observations — not confirmed as structural patterns. Hypothesis for S4: ARS description growth may make direct_llm more salient than word_stats_demo for general text requests. Hypothesis for S6: spawn-path task_completed narration attractor (skill result summarized rather than surfaced)."
+    }
+  },
+  "new_findings": [
+    {
+      "id": "B39-OBS-1",
+      "title": "S4 routing regression: direct_llm preferred over word_stats_demo for explicit invocation",
+      "severity": "MED",
+      "description": "S4 (word_stats_demo でこのテキストを解析して): B38 W1 correctly routed to skill__word_stats_demo. B39 W1 routed to skill__direct_llm instead. The word count/stats were computed but by a different skill. Possible cause: LLM sees direct_llm as a generic text-analysis tool and the explicit 'word_stats_demo' skill name doesn't provide enough differentiation signal in the description.",
+      "pre_conclusion_checklist": {
+        "q1_observations_listed": "1 observation: B39 W1 S4 chose direct_llm; B38 W1 S4 chose word_stats_demo",
+        "q2_primary_or_inference": "primary data — events log shows skill_run_spawned for direct_llm, artifacts dir has direct_llm artifact",
+        "q3_falsifying_data_checked": "B38 W1 S4 was V (word_stats_demo used) — but different session context and action_usage.jsonl state",
+        "q4_infra_captures": "events log + artifacts dir are primary data sources",
+        "q5_all_N_inspected": "N=1 in B39 W1; cannot confirm pattern from single shot"
+      },
+      "hypothesis": "With hot-list seeded fresh (no bias toward word_stats_demo), LLM defaults to direct_llm for general text tasks. Needs cross-worker confirmation."
+    },
+    {
+      "id": "B39-OBS-2",
+      "title": "S6 task_completed narration collapse: skill code output summarized instead of surfaced",
+      "severity": "MED",
+      "description": "S6 turn 2: invoke_action(skill__direct_llm) ran successfully and produced Python code examples (squares, even_squares, nested). The [task_completed] message contained the code. But the agent's final reply narrated a summary ('コード例が提示されました') without surfacing the code. This violates the SPAWN-ACK/task_completed handling instruction ('narrate in 1-2 sentences, extract user-relevant fields'). The LLM collapsed concrete code output into a meta-description.",
+      "pre_conclusion_checklist": {
+        "q1_observations_listed": "1 observation: agent reply contains no code, only description",
+        "q2_primary_or_inference": "primary — history.jsonl shows agent text vs. task_completed message with actual code",
+        "q3_falsifying_data_checked": "B38 W1 S6 used web__search path (synchronous, not spawn) — different execution path, not directly comparable",
+        "q4_infra_captures": "history.jsonl is primary source",
+        "q5_all_N_inspected": "N=1 in B39 W1 for spawn-path task_completed narration"
+      },
+      "hypothesis": "The spawn-path (invoke_action returning {status:spawned}) followed by [task_completed] injection creates a narration attractor where LLM summarizes rather than surfaces structured skill output. Distinct from synchronous tool-result path where LLM sees the content inline."
+    }
+  ],
+  "cost": {
+    "total_usd": 0.007949,
+    "total_tokens": 85055,
+    "llm_calls": 17,
+    "per_model": {
+      "gemini-2.5-flash-lite": {"usd": 0.007949, "tokens": 77109, "calls": 15},
+      "openai/gemini-2.5-flash-lite": {"usd": 0.0, "tokens": 7946, "calls": 2}
+    }
+  },
+  "vs_b38": {
+    "V_delta": -2,
+    "I_delta": 0,
+    "R_delta": 2,
+    "B_delta": 0,
+    "note": "B38 W1 was V=4/I=0/R=3/B=0. B39 W1 is V=2/I=0/R=5/B=0. S4 V->R (routing regression to direct_llm), S6 V->R (task_completed narration collapse). S1/S2/S3/S5/S7 unchanged."
+  }
+}

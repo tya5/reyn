@@ -1,0 +1,85 @@
+{
+  "batch": "B39",
+  "worker": "W2",
+  "head": "b4daeb1",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "date": "2026-05-17",
+  "agents": ["dogfood-b39-2-s1", "dogfood-b39-2-s2", "dogfood-b39-2-s3", "dogfood-b39-2-s4", "dogfood-b39-2-s5", "dogfood-b39-2-s6", "dogfood-b39-2-s7", "dogfood-b39-2-s8", "dogfood-b39-2-s9"],
+  "score": {"V": 1, "I": 3, "R": 5, "B": 0},
+  "delta_vs_b38": {"V": -1, "I": 1, "R": 0, "B": 0},
+  "four_skills_ars_visible": true,
+  "hot_list_coverage_gap_closed": "partial",
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "verdict": "REFUTED",
+      "agent": "dogfood-b39-2-s1",
+      "key_events": ["invoke_action(rag.operation__create_corpus) unknown action", "list_actions fallback", "no skill_run_spawned"],
+      "notes": "LLM attempted rag.operation__create_corpus (non-existent). Third consecutive batch with different non-existent RAG create action."
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "verdict": "INCONCLUSIVE",
+      "agent": "dogfood-b39-2-s2",
+      "key_events": ["file__read direct", "routing_decided: file__read", "correct reply content"],
+      "notes": "Correct 8-line explanation of scheduler.py via file__read direct. No skill_run_spawned for read_local_files. Inline path used."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "verdict": "REFUTED",
+      "agent": "dogfood-b39-2-s3",
+      "key_events": ["list_actions x2", "no file ops", "reply: files not found"],
+      "notes": "Same B38 failure: list_actions called with incompatible filters, no file read/list executed."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "verdict": "REFUTED",
+      "agent": "dogfood-b39-2-s4",
+      "key_events": ["skill__skill_builder dispatched", "skill_run_failed", "workflow_aborted: phase_no_progress"],
+      "notes": "Correct routing; skill_builder ran but aborted (build_skill/verify_skill loop). Same as B38."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "verdict": "VERIFIED",
+      "agent": "dogfood-b39-2-s5",
+      "key_events": ["invoke_action(skill__word_stats_demo, {text: 'The quick...'})", "skill_run_spawned", "skill_run_completed(finished)", "reply: 44 chars/8 words/1 line"],
+      "notes": "Clean correct dispatch via invoke_action with correct text arg."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "verdict": "INCONCLUSIVE",
+      "agent": "dogfood-b39-2-s6",
+      "key_events": ["skill__word_stats_demo (direct wrapper) x2 with empty args", "skill_run_completed x2", "reply: 25 words/159 chars + 0 chars/0 lines"],
+      "notes": "Double-dispatch via direct wrapper (not invoke_action), empty args. Stats inconsistent. Both runs completed."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "verdict": "REFUTED",
+      "agent": "dogfood-b39-2-s7",
+      "key_events": ["invoke_action(skill__direct_llm) not skill__eval", "routing_decided: skill__direct_llm", "reply: こんにちは (no eval score)"],
+      "notes": "B39 fix confirms skill__direct_llm reachable via ARS (no prior list_actions needed). But wrong skill selected — action-selection failure."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "verdict": "INCONCLUSIVE",
+      "agent": "dogfood-b39-2-s8",
+      "key_events": ["T1: reyn.source__read(README.md)", "T2-T5: inline", "no compaction triggered", "T5: coherent routing answer"],
+      "notes": "T1 routed to wrong action (reyn.source__read instead of direct_llm). T2-T5 inline coherent. compaction_check: too_few_turns x5."
+    },
+    {
+      "id": "chained_find_then_index",
+      "verdict": "REFUTED",
+      "agent": "dogfood-b39-2-s9",
+      "key_events": ["T1: file__list(docs/concepts/) correct", "T2: invoke_action(rag.operation__remember_or_update_corpus) wrong action"],
+      "notes": "T1 correct. T2 wrong action (memory-like corpus op instead of skill__index_docs). Same pattern as B38 S9."
+    }
+  ],
+  "ars_schemas": {
+    "skill__direct_llm": {"text": "string"},
+    "skill__read_local_files": {"text": "string"},
+    "skill__index_docs": {"source": "string", "path": "string", "description": "string", "mode": "string"},
+    "skill__eval": {"case_name": "string", "case_input": "string", "spec_path": "string", "target_skill_path": "string", "skill_root": "string", "phase_criteria": "array"}
+  },
+  "structural_tests_passed": 14,
+  "structural_tests_total": 14
+}

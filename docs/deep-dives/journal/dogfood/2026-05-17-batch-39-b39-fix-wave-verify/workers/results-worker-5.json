@@ -1,0 +1,150 @@
+{
+  "batch": 39,
+  "worker": 5,
+  "head": "b4daeb1",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "run_date": "2026-05-17",
+  "port": 8085,
+  "server_cwd": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2",
+  "agent_prefix": "dogfood-b39-5",
+  "summary": {
+    "verified": 1,
+    "inconclusive": 2,
+    "refuted": 4,
+    "blocked": 0
+  },
+  "vs_b38": {
+    "delta_v": -1,
+    "b38": {"verified": 2, "inconclusive": 1, "refuted": 4, "blocked": 0}
+  },
+  "b39_angles": {
+    "angle_1_s3_cold_start_peer_canonical": {
+      "result": "HELD",
+      "b38_arg_used": "request",
+      "b39_arg_used": "request",
+      "arg_canonical": true,
+      "tool_call_event": {
+        "tool": "invoke_action",
+        "args": {
+          "action_name": "agent.peer__dogfood-b39-5-peer-researcher",
+          "args": {"request": "FP-0001 の概要を要約してください。"}
+        }
+      },
+      "note": "Peer agent existed (created by setup), so delegation succeeded vs B38 not-found. Canonical arg held regardless."
+    },
+    "angle_2_mcp_install_misroute": {
+      "observed": false,
+      "s6_behavior": "inline_reply_no_tool_calls",
+      "routing_decided": 0,
+      "n_batches_non_recurrence": 4,
+      "note": "B36/B37/B38/B39 all N=0. Routing collision not recurring."
+    },
+    "angle_3_w5_peer_error_envelope": {
+      "s3_error_path_triggered": false,
+      "note": "Peer existed and responded in B39. Error envelope not triggered. B38 format unchanged (inferred; not directly tested).",
+      "non_regression": "NOT_TESTED_directly"
+    },
+    "angle_4_ghost_peer_rejected": {
+      "ghost_filter_scope": "hot_list_aliases_only",
+      "hot_list_ghost_rejection": "VERIFIED",
+      "search_actions_ghost_exposure": true,
+      "note": "search_actions semantic results returned old ghost agents (agent.peer__b16_s2, b23_s2 etc.) in S4 peer-researcher sub-agent. Ghost filter does not apply to search_actions path. Hot-list ghost filter working correctly for its scope.",
+      "example_ghost_in_search": ["agent.peer__b16_s2", "agent.peer__b23_s2", "agent.peer__b16_s5"]
+    }
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": "list_actions",
+      "tool_args": {"filter": "github", "category": ["mcp.server"]},
+      "tool_result": {"items": [], "total": 0},
+      "reply_excerpt": "GitHub 関連の MCP サーバーは見つかりませんでした。",
+      "notes": "Events FAIL: routing_decided=0, skill_run_spawned=0. Same character as B38."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "result": "inconclusive",
+      "events_pass": true,
+      "events_pass_via": "chat_turn_completed_inline",
+      "routing_decided": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_attempted": ["search_actions (hallucinated, tool_failed)", "list_actions (filter=github)"],
+      "reply_excerpt": "search_actions ツールは利用できません。GitHub の PR を取得できるツールが見当たらない。別の方法を探せるかもしれません。",
+      "notes": "search_actions hallucination observed (tool_failed: unknown_tool). Fallback to list_actions returned empty. Events PASS via chat_turn_completed_inline. Rubric partially met: explains MCP not configured, actionable suggestion offered."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 2,
+      "routing_source": "invoke_action",
+      "tool_called": "invoke_action",
+      "tool_args": {
+        "action_name": "agent.peer__dogfood-b39-5-peer-researcher",
+        "args": {"request": "FP-0001 の概要を要約してください。"}
+      },
+      "arg_canonical": true,
+      "arg_key": "request",
+      "peer_response": "inline reply from peer (no FP-0001 knowledge but responded substantively)",
+      "reply_excerpt": "FP-0001 の概要を要約してください。\n\nFP-0001の概要を要約しました。",
+      "b39_angle_1_held": true,
+      "notes": "VERIFIED. B39 canonical arg non-regression held: 'request' used (not 'message'). Peer existed, responded. routing_decided=2 (dispatched twice). Rubric met: delegate content returned."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided": 6,
+      "p1_tool_called": "invoke_action",
+      "p1_tool_args": {
+        "action_name": "agent.peer__dogfood-b39-5-peer-researcher",
+        "args": {"request": "Reyn の Phase エンジンについて調査してください。"}
+      },
+      "p1_arg_canonical": true,
+      "p2_tool_called": "invoke_action",
+      "p2_tool_args": {"action_name": "writer"},
+      "p2_issue": "missing args field, action_name='writer' not qualified peer path",
+      "reply_excerpt": "Reyn の Phase エンジンについて、researcher エージェントに調査を依頼しました。調査結果は、後ほどお伝えします。",
+      "notes": "Events PASS (routing_decided=6). P1: researcher dispatched with canonical 'request' arg. P2: writer invoke_action had no args field, action_name='writer' unqualified — bad call. S4 regressed VERIFIED→INCONCLUSIVE vs B38 (B38 P2 found writer via ARS and produced 3-line summary). B39 P2 failed to produce summary."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "result": "refuted",
+      "events_pass": true,
+      "events_pass_via": "routing_decided=1",
+      "routing_decided": 1,
+      "routing_source": "invoke_action",
+      "tool_attempted": "invoke_action({action_name:'web__search', args:{query:'...'}})",
+      "tool_outcome": "error (ModuleNotFoundError: No module named 'reyn.search_backends')",
+      "reply_excerpt": "web__search ツールを使用できませんでした。ModuleNotFoundError: No module named 'reyn.search_backends'. Reyn-specific documentation や具体的なコマンドを提供してください。",
+      "notes": "Events PASS (routing_decided=1 via error outcome). Rubric not met: didn't describe message/send JSON-RPC method, endpoint shape, or reyn web startup. Same as B38 prediction (100% refuted)."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": null,
+      "reply_excerpt": "mcp.server__install のようなコマンドがあります。インストールしたいサーバーの名前を教えてください。",
+      "mcp_install_misroute_to_mcp_search": false,
+      "notes": "Events FAIL: routing_decided=0, skill_run_spawned=0. Inline clarification. mcp_install misroute NOT observed (N=4 batches non-recurrence)."
+    },
+    {
+      "id": "cron_schedule_status",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": null,
+      "reply_excerpt": "現在スケジュールされている cron ジョブを一覧表示する機能は提供されていません。",
+      "notes": "Events FAIL: routing_decided=0. Inline reply, no tool calls. Same as B38."
+    }
+  ]
+}

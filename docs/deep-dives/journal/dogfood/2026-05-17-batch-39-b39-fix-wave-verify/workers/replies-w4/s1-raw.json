@@ -1,0 +1,16 @@
+{
+    "jsonrpc": "2.0",
+    "id": "r1",
+    "result": {
+        "kind": "message",
+        "role": "agent",
+        "parts": [
+            {
+                "kind": "text",
+                "text": "I am unable to write to `/etc/test.txt` because it is outside of the allowed scope. To write to this path, it needs to be explicitly declared in the skill's `permissions` in `skill.md`."
+            }
+        ],
+        "messageId": "cee1b5fc05df4fde929fdcf8d14680ef",
+        "metadata": {}
+    }
+}

@@ -1,0 +1,167 @@
+{
+  "batch": 39,
+  "worker": 7,
+  "head": "b4daeb1",
+  "scenario_set": "long_session_v1",
+  "agent_prefix": "dogfood-b39-7",
+  "agent_used": "dogfood-b39-7-s1",
+  "port": 8087,
+  "worktree": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2",
+  "state_mode": "fresh",
+  "scores": {
+    "V": 7,
+    "I": 0,
+    "R": 0,
+    "B": 0
+  },
+  "delta_vs_b38": "+0V (B38 W7 also 7/7)",
+  "c1_clean_turns": "35/35",
+  "c1_note": "35 turns (7 scenarios x 5 turns, --turns 5 cap). All non-empty. B35=B36=B37=B38=B39 clean.",
+  "description_length_b38_full": 8305,
+  "description_length_b39_full_estimated": 9578,
+  "description_length_b39_w3_trace_verified": 9554,
+  "description_length_b38_ars_static": 3104,
+  "description_length_b39_ars_static_estimated": 3168,
+  "description_length_delta_full": 1273,
+  "description_length_delta_ars_static": 64,
+  "ars_entry_count_b38": 18,
+  "ars_entry_count_b39": 27,
+  "ars_new_entries": ["skill__direct_llm", "skill__read_local_files"],
+  "ars_note": "B39 ARS has 27 entries (17 static ops + 10 stdlib skills). Large full-description delta is from agent.peer list growth, not ARS schema changes.",
+  "latency_p50_b39": 3.56,
+  "latency_p90_b39": 6.79,
+  "latency_p50_b38_ref": 4.82,
+  "latency_p90_b38_ref": 9.94,
+  "latency_delta_p50_abs": -1.26,
+  "latency_delta_p50_pct": -26.1,
+  "latency_delta_p90_abs": -3.15,
+  "latency_delta_p90_pct": -31.7,
+  "latency_note": "IMPROVEMENT vs B38 but partially confounded: S7 search-failure shortcut reduces S7 response time vs B38 substantive answers. No description-induced latency regression observed.",
+  "g12_pattern_e_observed": false,
+  "empty_stop_recurrence": false,
+  "total_turns": 35,
+  "total_llm_calls": 55,
+  "total_tokens": 437063,
+  "routing_decided_total": 5,
+  "routing_decided_hot_list_alias": 3,
+  "routing_decided_invoke_action": 2,
+  "invoke_action_calls": [
+    {
+      "scenario": "S1",
+      "turn": 1,
+      "action_name": "reyn.source__read",
+      "source": "invoke_action",
+      "outcome": "success",
+      "note": "T1 source read for Reyn project context"
+    },
+    {
+      "scenario": "S2",
+      "turn": 4,
+      "action_name": "memory.operation__remember_shared",
+      "source": "invoke_action",
+      "outcome": "success",
+      "note": "LLM stored skill info to shared memory; canonical arg keys confirmed"
+    }
+  ],
+  "agent_isolation_note": "Single agent for all 7 scenarios (35 turns accumulated). Same design as B38 W7. Stronger context-bloat test than per-scenario isolation.",
+  "history_entries": 70,
+  "history_seq_range": "1..70",
+  "history_roles": {"user": 35, "agent": 35},
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": true,
+      "rubric_items": {
+        "p7_leakage_addressed": true,
+        "context_maintained_without_reexplain": true,
+        "final_turn_nonempty": true
+      },
+      "t5_reply_len": 2010,
+      "latency_p50": 4.26,
+      "empty_count": 0,
+      "note": "T5 explicitly lists P4, P1/P2, P5, P6, P8 principles. Context built naturally across 5 turns."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t2_behavior": "pronoun resolved to skill__direct_llm (describe_action called); different from B38 which invoked skill__haiku",
+      "t4_behavior": "invoke_action(memory.operation__remember_shared) called correctly",
+      "t5_reply_len": 908,
+      "latency_p50": 3.69,
+      "empty_count": 0,
+      "note": "Fresh reset means no session skills; skill__direct_llm now simplest ARS skill."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t1_behavior": "LangGraph graceful refusal (no web search)",
+      "t4_t5_behavior": "LangGraph comparison refused; consistent with no LangGraph access",
+      "t2_t3_behavior": "Reyn multi-agent + async/await answered substantively",
+      "t5_reply_len": 83,
+      "latency_p50": 3.94,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "g12_pattern_e": false,
+      "t5_reply_len": 1310,
+      "latency_p50": 3.16,
+      "empty_count": 0,
+      "note": "Reply lengths 245-1614; no empty stop; skill list answered consistently."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": true,
+      "rubric_items": {
+        "asyncio_queue_example_present": true,
+        "uses_asyncio_queue": true,
+        "final_turn_nonempty": true
+      },
+      "t5_reply_len": 6112,
+      "latency_p50": 5.55,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "adr_found": false,
+      "graceful_degradation": true,
+      "t5_reply_len": 599,
+      "latency_p50": 2.95,
+      "empty_count": 0,
+      "note": "Identical behavior to B38 W7. T5 gave substantive next-ADR suggestion despite no source material."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t5_reply_len": 126,
+      "latency_p50": 3.14,
+      "empty_count": 0,
+      "notable": "All 5 turns used search_actions -> no results -> apology response. Content quality regression vs B38 W7 (which answered correctly). Not a C1 issue. Hypothesis: context accumulation at turn 61-70 + ARS description change. N=1, unconfirmed."
+    }
+  ],
+  "key_findings": [
+    "F1: C1 non-regression maintained (35/35 clean). No G12 Pattern E. B35=B36=B37=B38=B39 clean sweep on long_session_v1.",
+    "F2: Description length grew +1273 chars total (+15.3%) driven by agent.peer list growth, not ARS schema changes. ARS static section grew +64 chars (+2%) from 2 new stdlib skill entries.",
+    "F3: Latency improved p50=-26%, p90=-32% vs B38. Partially confounded by S7 search-failure shortcut. No description-induced latency regression.",
+    "F4: invoke_action(memory.operation__remember_shared) at S2 T4 used canonical arg keys correctly. 2 new ARS entries caused no confusion.",
+    "F5: S7 behavioral quality regression observed. All 5 distributed systems turns used search_actions-failure pattern instead of answering from general knowledge (as B38 W7 did). Non-empty but low content quality. Hypothesis: max context accumulation (turn 61-70) + ARS change. N=1.",
+    "F6: S2 pronoun resolution changed: B38=skill__haiku invocation, B39=skill__direct_llm description (fresh reset removes session skills; skill__direct_llm now simplest). Different path, not problematic.",
+    "F7: History: 70 entries, seq=1..70 sequential. A2A multi-turn correctly accumulated across all 7 scenarios on single agent."
+  ]
+}
