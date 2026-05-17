@@ -217,6 +217,7 @@ async def dispatch_tool(
     try:
         result = await invoker(args)
     except PermissionError as e:
+        enriched = _enrich_permission_message(name, str(e))
         ctx.events.emit(
             "tool_failed",
             caller_kind=ctx.caller_kind,
@@ -225,15 +226,15 @@ async def dispatch_tool(
             chain_id=ctx.chain_id,
             args_hash=args_hash,
             error_kind="permission_denied",
-            message=str(e),
+            message=enriched,
         )
         if emit_step and purity != OpPurity.pure:
             await _wal_step_failed(
                 ctx, name, args_hash, op_invocation_id,
-                "permission_denied", str(e),
+                "permission_denied", enriched,
             )
         return {"status": "error",
-                "error": {"kind": "permission_denied", "message": str(e)}}
+                "error": {"kind": "permission_denied", "message": enriched}}
     except Exception as e:  # noqa: BLE001 — caller errors are normalized
         ctx.events.emit(
             "tool_failed",
@@ -478,6 +479,67 @@ def _compute_llm_args_hash(
     except Exception:  # noqa: BLE001 — fall back to repr for unhashable values
         canonical = repr(payload)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+# ── Permission-denied message enrichment ─────────────────────────────────────
+# Maps a dispatch tool name → config key the user would set in
+# reyn.yaml / reyn.local.yaml to grant the capability. The hint is appended
+# to the underlying PermissionError text so the user sees both WHAT was
+# denied and HOW to allow it without leaving the chat to read source.
+#
+# Names cover both router-tool catalog entries (read_file, web_fetch, …)
+# and skill_phase op kinds (file, shell, web_fetch, …). Unmapped names
+# fall back to a generic "see logs / events tab" suffix — better than
+# fabricating a config key the user can't actually find.
+_PERMISSION_CONFIG_HINTS: dict[str, str] = {
+    # File ops — router catalog + skill_phase "file" op kind.
+    "file": "permissions.file.read / file.write: allow",
+    "read_file": "permissions.file.read: allow",
+    "write_file": "permissions.file.write: allow",
+    "delete_file": "permissions.file.write: allow",
+    "list_directory": "permissions.file.read: allow",
+    # Shell.
+    "shell": "permissions.shell: allow",
+    # MCP family.
+    "mcp": "permissions.mcp.<server>: allow",
+    "call_mcp_tool": "permissions.mcp.<server>: allow",
+    "list_mcp_tools": "permissions.mcp.<server>: allow",
+    "describe_mcp_tool": "permissions.mcp.<server>: allow",
+    "mcp_install": "permissions.mcp_install: allow",
+    "mcp_drop_server": "permissions.mcp_drop_server: allow",
+    # Web.
+    "web_fetch": "permissions.web.fetch: allow",
+    "web_search": "permissions.web.search: allow",
+    # Index ops.
+    "index_drop": "permissions.index_drop: allow",
+    "drop_source": "permissions.index_drop: allow",
+}
+
+
+def _enrich_permission_message(tool: str, original: str) -> str:
+    """Append an actionable config hint to a PermissionError message.
+
+    The hint points the user at the reyn.yaml / reyn.local.yaml config key
+    that grants the capability. Format keeps the original message as the
+    prefix (so callers / tests that look for substrings in the underlying
+    text continue to work) and adds a single trailing line:
+
+        <original>
+        To allow: add `<config-key>` to reyn.local.yaml under permissions:
+
+    Unknown tool names fall back to a generic suffix that points at the
+    events tab instead of fabricating a config key.
+    """
+    hint = _PERMISSION_CONFIG_HINTS.get(tool)
+    if hint is None:
+        return (
+            f"{original}\n"
+            f"To allow: see the events tab for the full permission trace."
+        )
+    return (
+        f"{original}\n"
+        f"To allow: add `{hint}` to reyn.local.yaml under permissions:"
+    )
 
 
 def _error(ctx: DispatchContext, name: str, kind: str, message: str) -> dict:

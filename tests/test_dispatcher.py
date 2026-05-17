@@ -128,6 +128,81 @@ def test_permission_error_inside_invoker_returns_permission_denied():
     asyncio.run(main())
 
 
+def test_permission_denied_message_includes_actionable_hint():
+    """Tier 2: permission_denied messages MUST include a "To allow:" hint.
+
+    Without the hint, the user sees a bare PermissionError and has no path
+    forward besides reading source. The hint is appended after the original
+    message so substring checks ("nope" etc.) keep working downstream.
+    """
+    write_catalog = {
+        "write_file": {
+            "function": {
+                "name": "write_file",
+                "description": "Write a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            }
+        }
+    }
+
+    async def main():
+        async def invoker(args):
+            raise PermissionError("write to '/tmp/foo' was not approved.")
+        ctx, ev = make_ctx(catalog=write_catalog)
+        result = await dispatch_tool(
+            name="write_file", args={"path": "/tmp/foo"},
+            ctx=ctx, invoker=invoker,
+        )
+        msg = result["error"]["message"]
+        # Original error stays as the prefix (substring contract).
+        assert "write to '/tmp/foo' was not approved." in msg
+        # Actionable hint is appended.
+        assert "To allow:" in msg
+        # The hint names the matching config key for the tool.
+        assert "file.write" in msg
+        # And points the user at a config file they can edit.
+        assert "reyn.local.yaml" in msg
+
+        # The same hint flows through to the tool_failed audit event so
+        # later inspection (events tab / forensics) sees what the user saw.
+        failed = [e for e in ev.events if e[0] == "tool_failed"]
+        assert failed, "tool_failed event must fire on permission_denied"
+        assert "To allow:" in failed[0][1]["message"]
+    asyncio.run(main())
+
+
+def test_permission_denied_unmapped_tool_falls_back_to_generic_hint():
+    """Tier 2: unmapped tool names get a generic suffix, not a fabricated key.
+
+    The fix must never invent a config key that doesn't exist; an unknown
+    tool gets the "see the events tab" suffix instead.
+    """
+    catalog = {
+        "some_unmapped_tool": {
+            "function": {"name": "some_unmapped_tool", "description": "x"},
+        }
+    }
+
+    async def main():
+        async def invoker(args):
+            raise PermissionError("nope")
+        ctx, _ = make_ctx(catalog=catalog)
+        result = await dispatch_tool(
+            name="some_unmapped_tool", args={},
+            ctx=ctx, invoker=invoker,
+        )
+        msg = result["error"]["message"]
+        assert "nope" in msg
+        assert "To allow:" in msg
+        # Generic fallback — no fabricated config key.
+        assert "events tab" in msg
+    asyncio.run(main())
+
+
 def test_generic_exception_inside_invoker_returns_exception_kind():
     async def main():
         async def invoker(args):
