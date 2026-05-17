@@ -383,8 +383,8 @@ def render_agents(
     *,
     project_root: Path | None = None,
     cursor: int = 0,
-) -> tuple[Any, list[dict]]:
-    """Return ``(renderable, flat_items)`` for the agents tab.
+) -> tuple[Any, list[dict], list[int]]:
+    """Return ``(renderable, flat_items, item_ys)`` for the agents tab.
 
     ``project_root`` is optional — when provided, the RECENT subsection
     surfaces the last few completed skill runs and finished plans by reading
@@ -399,20 +399,31 @@ def render_agents(
     running skill / running plan / recent skill / recent plan. Each entry
     carries enough metadata for the preview pane to build a detail view
     without re-reading the registry.
+
+    ``item_ys`` is the 0-indexed y-coordinate (line number) of each item's
+    row in the rendered output, so the orchestrator can scroll the cursor
+    into view as j/k cycles past the visible window. Tracked here because
+    RichTree's guide-line layout makes the y-coord impossible to predict
+    arithmetically from the cursor index alone — running skills add 1-2
+    lines, recent plans with a goal add 2 lines, etc.
     """
     flat_items: list[dict] = []
+    item_ys: list[int] = []
+    # Line counter for tracking item y-coords as we build the renderable.
+    # Each tree-node add() = 1 line; blank between agent blocks = 1 line.
+    y_counter = 0
 
     if registry is None:
-        return "[#555555]  (no registry)[/]", flat_items
+        return "[#555555]  (no registry)[/]", flat_items, item_ys
 
     try:
         names = registry.list_names()
     except Exception as exc:
         logger.warning("right_panel agents: registry.list_names() failed: %s", exc)
-        return "[#555555]  (registry unavailable)[/]", flat_items
+        return "[#555555]  (registry unavailable)[/]", flat_items, item_ys
 
     if not names:
-        return "[#555555]  (no agents)[/]", flat_items
+        return "[#555555]  (no agents)[/]", flat_items, item_ys
 
     try:
         attached = registry.attached_name
@@ -428,7 +439,12 @@ def render_agents(
 
     agent_trees: list[Any] = []
 
-    for name in names:
+    for agent_idx, name in enumerate(names):
+        # Blank separator between agent blocks (matches the interleave below).
+        if agent_idx > 0:
+            y_counter += 1
+        # Root label of this agent's RichTree is one line.
+        y_counter += 1
         is_attached = name == attached
         in_loaded = name in loaded
 
@@ -503,6 +519,10 @@ def render_agents(
                     style=name_style or "#dddddd",
                 )
                 skill_node = tree.add(skill_label)
+                # Record the y of this item's selectable row, then bump
+                # past the skill row (and an optional phase child row).
+                item_ys.append(y_counter)
+                y_counter += 1
 
                 phase = info.get("phase", "")
                 if phase:
@@ -512,6 +532,7 @@ def render_agents(
                     if visits > 1:
                         phase_label.append(f"  v{visits}", style="#444444")
                     skill_node.add(phase_label)
+                    y_counter += 1
                 flat_items.append({
                     "kind": "running_skill",
                     "agent": name,
@@ -550,9 +571,12 @@ def render_agents(
                     style="#44cc88" if p["status"] == "running" else "#aaaa55",
                 )
                 plan_node = tree.add(plan_label)
+                item_ys.append(y_counter)
+                y_counter += 1
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
                     plan_node.add(RichText(goal, style="#555555"))
+                    y_counter += 1
                 flat_items.append({
                     "kind": "running_plan",
                     "agent": name,
@@ -591,6 +615,8 @@ def render_agents(
             recent_node = tree.add(
                 RichText("recent", style="#777777")
             )
+            # The "recent" header occupies its own line.
+            y_counter += 1
             for s in recent_skills:
                 pfx, _ = _cursor_prefix(len(flat_items))
                 line = RichText()
@@ -621,6 +647,8 @@ def render_agents(
                 if s["ts"]:
                     line.append(f"  {s['ts']}", style="#444444")
                 recent_node.add(line)
+                item_ys.append(y_counter)
+                y_counter += 1
                 flat_items.append({
                     "kind": "recent_skill",
                     "agent": name,
@@ -645,9 +673,12 @@ def render_agents(
                 if p["ts"]:
                     line.append(f"  {p['ts']}", style="#444444")
                 node = recent_node.add(line)
+                item_ys.append(y_counter)
+                y_counter += 1
                 if p["goal"]:
                     goal = p["goal"][:60] + ("…" if len(p["goal"]) > 60 else "")
                     node.add(RichText(goal, style="#555555"))
+                    y_counter += 1
                 flat_items.append({
                     "kind": "recent_plan",
                     "agent": name,
@@ -681,6 +712,7 @@ def render_agents(
                 tree.add(RichText(
                     f"last: {ts_str}{count_part}", style="#555555",
                 ))
+                y_counter += 1
                 if snippet:
                     # Collapse all whitespace runs to single spaces FIRST,
                     # then truncate. The user's last message may be a
@@ -699,6 +731,7 @@ def render_agents(
                     line2.append("↳ ", style="#555555")
                     line2.append(short, style="#444444")
                     tree.add(line2)
+                    y_counter += 1
 
         agent_trees.append(tree)
 
@@ -708,7 +741,7 @@ def render_agents(
         if i > 0:
             items.append(RichText(""))
         items.append(tree)
-    return RichGroup(*items), flat_items
+    return RichGroup(*items), flat_items, item_ys
 
 
 __all__ = ["render_agents"]

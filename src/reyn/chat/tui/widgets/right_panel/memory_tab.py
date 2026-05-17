@@ -18,20 +18,27 @@ def render_memory(
     project_root: Path | None,
     *,
     cursor: int = 0,
-) -> tuple[str, list[Any]]:
-    """Return Rich markup + the flat ordered list of MemoryEntry items.
+) -> tuple[str, list[Any], list[int]]:
+    """Return Rich markup + the flat ordered list of MemoryEntry items
+    + the y-coordinate (= 0-indexed line number) of each entry's name row.
 
     The flat list lets the orchestrator drive cursor navigation and the
     Enter→preview integration without re-walking the disk. The row at
     index ``cursor`` is highlighted with a coral ▶ prefix.
+
+    ``entry_ys[i]`` is the line-index of ``flat_entries[i]``'s name row in
+    the rendered output. Section labels, per-type subheaders and blank
+    separators all bump the y, so the orchestrator can't predict it
+    arithmetically — we record it here, where the structure is known.
     """
     if project_root is None:
-        return "[#555555]  (no project root)[/]", []
+        return "[#555555]  (no project root)[/]", [], []
 
     from reyn.memory.memory import list_entries
 
     lines: list[str] = []
     flat_entries: list[Any] = []
+    entry_ys: list[int] = []
 
     def _render_scope(entries: list, label: str, label_color: str) -> None:
         lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
@@ -58,6 +65,7 @@ def render_memory(
             lines.append(f"[bold {color}]    \\[{type_key.upper()}][/]")
             for e in group:
                 flat_entries.append(e)
+                entry_ys.append(len(lines))
                 is_cursor = (len(flat_entries) - 1) == cursor
                 indent = f"[bold {_CORAL}]    ▶ [/]" if is_cursor else "      "
                 name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
@@ -68,6 +76,7 @@ def render_memory(
             lines.append("[bold #888888]    \\[OTHER][/]")
             for e in other:
                 flat_entries.append(e)
+                entry_ys.append(len(lines))
                 is_cursor = (len(flat_entries) - 1) == cursor
                 indent = f"[bold {_CORAL}]    ▶ [/]" if is_cursor else "      "
                 name_style = f"bold {_CORAL}" if is_cursor else "#dddddd"
@@ -88,7 +97,7 @@ def render_memory(
             agent_entries = list_entries(mem_dir)
             _render_scope(agent_entries, f"AGENT  {agent_dir.name}", "#7a9fc7")
 
-    return "\n".join(lines), flat_entries
+    return "\n".join(lines), flat_entries, entry_ys
 
 
 __all__ = ["render_memory"]
