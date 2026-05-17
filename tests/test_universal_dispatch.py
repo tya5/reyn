@@ -149,6 +149,8 @@ def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
         ("file__write",  "write_file"),
         ("file__delete", "delete_file"),
         ("file__list",   "list_directory"),
+        ("file__grep",   "grep_files"),
+        ("file__glob",   "glob_files"),
         # web ops
         ("web__search",  "web_search"),
         ("web__fetch",   "web_fetch"),
@@ -389,6 +391,7 @@ def test_known_qualified_name_for_category() -> None:
     file_names = known_qualified_name_for_category("file")
     assert set(file_names) == {
         "file__read", "file__write", "file__delete", "file__list",
+        "file__grep", "file__glob",
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()

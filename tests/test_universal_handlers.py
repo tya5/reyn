@@ -76,11 +76,14 @@ def _run(coro: Any) -> Any:
 
 
 def test_list_actions_file_static_category() -> None:
-    """Tier 2: list_actions(category=['file']) returns 4 file ops."""
+    """Tier 2: list_actions(category=['file']) returns 6 file ops (B34: +grep/glob)."""
     result = _run(LIST_ACTIONS.handler({"category": ["file"]}, _make_ctx()))
     qns = {it["qualified_name"] for it in result["items"]}
-    assert qns == {"file__read", "file__write", "file__delete", "file__list"}
-    assert result["total"] == 4
+    assert qns == {
+        "file__read", "file__write", "file__delete", "file__list",
+        "file__grep", "file__glob",
+    }
+    assert result["total"] == 6
 
 
 def test_list_actions_web_static_category() -> None:
@@ -416,8 +419,8 @@ def test_list_actions_unknown_category_silently_ignored() -> None:
     result = _run(LIST_ACTIONS.handler(
         {"category": ["file", "not_a_category"]}, _make_ctx(),
     ))
-    # File items still returned; bad category contributed 0
-    assert result["total"] == 4
+    # File items still returned (6 after B34 +grep/glob); bad category contributed 0
+    assert result["total"] == 6
 
 
 # ── 4. describe_action returns target schema ──────────────────────────────
