@@ -491,7 +491,24 @@ def render_events(
         visible = all_events
 
     if not visible:
-        return "[#555555]  (no matching events)[/]", []
+        # Two distinct empty states:
+        #   1. `all_events` empty → pool itself is empty (no events logged yet).
+        #      The existing "no matching events" wording is already meaningful;
+        #      there's nothing to cycle to that would help.
+        #   2. `all_events` non-empty but filter excluded everything → user
+        #      cycled to a filter (e.g. `phase`, `rag`) whose event types
+        #      haven't fired this session. They need a reminder of HOW to
+        #      cycle to a different filter (the `[f]` header hint is only
+        #      visible when the panel is wider than the filter name).
+        if not all_events:
+            return "[#555555]  (no matching events)[/]", []
+        return (
+            f"[#555555]  (no events matching filter: [/]"
+            f"[bold #aaaaaa]{_esc(filter_name)}[/][#555555])[/]\n"
+            f"[#555555]  press [/][bold #aaaaaa]\\[f][/]"
+            f"[#555555] to cycle filter · [/]"
+            f"[bold #aaaaaa]\\[t][/][#555555] for tail size[/]"
+        ), []
 
     # Newest-first window — also returned to the caller for cursor / preview
     windowed = list(visible[-tail:])[::-1]
