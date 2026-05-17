@@ -1,0 +1,58 @@
+[
+  {
+    "scenario_id": "simple_capability_question",
+    "verdict": "refuted",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifact_check": "fail",
+    "notes": "LLM answered inline (chat_turn_completed_inline). No workspace artifact created for direct_llm. Reply mentions skills at high level."
+  },
+  {
+    "scenario_id": "factual_query_direct_llm",
+    "verdict": "refuted",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifact_check": "fail",
+    "notes": "LLM routed to web__search alias (routing_decided emitted) instead of direct_llm. Alias schema non-empty (D2-min confirmed). Canonical arg 'query' used (no mismatch)."
+  },
+  {
+    "scenario_id": "skill_discovery_request",
+    "verdict": "refuted",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifact_check": "fail",
+    "notes": "routing_decided NOT emitted (must_emit required). LLM used list_actions + inline reply. Reply lists skill catalog correctly."
+  },
+  {
+    "scenario_id": "explicit_skill_invocation_word_stats",
+    "verdict": "refuted",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifact_check": "pass",
+    "notes": "skill_run_completed status='finished' but scenario spec requires status='success'. OS runtime uses 'finished' for success (skill_runner.py:543). This is a SCENARIO SPEC BUG. Skill ran correctly, artifact present."
+  },
+  {
+    "scenario_id": "catalog_routing_decided_emitted",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "pass",
+    "artifact_check": "fail",
+    "notes": "LLM asked for clarification (theme/style) instead of writing a poem. chat_turn_completed_inline satisfies must_emit_any. Reply rubric failed."
+  },
+  {
+    "scenario_id": "multi_turn_pronoun_reference",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "pass",
+    "artifact_check": "fail",
+    "notes": "Turn 2: LLM invoked skill__word_stats_demo instead of showing Python code example. Pronoun 'それ' misresolved. Possible context bleed from prior worktree runs."
+  },
+  {
+    "scenario_id": "out_of_scope_graceful_decline",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "pass",
+    "artifact_check": "fail",
+    "notes": "LLM asked for image details instead of declining. gemini-2.5-flash-lite capability hallucination attractor."
+  }
+]

@@ -1,0 +1,113 @@
+{
+  "batch": "B36",
+  "worker": 4,
+  "head": "0c1669f",
+  "scenario_set": "permissions_and_safety",
+  "date": "2026-05-17",
+  "port": 8090,
+  "worktree": "/private/tmp/reyn-worktrees/b36-4",
+  "summary": {
+    "verified": 3,
+    "inconclusive": 5,
+    "refuted": 0,
+    "blocked": 0,
+    "total": 8
+  },
+  "delta_vs_b35": "+0V",
+  "arg_normalize_still_firing": true,
+  "arg_normalize_path": "invoke_action (inner args unschema-d by D2 fix)",
+  "scenarios": [
+    {
+      "id": "file_write_outside_cwd_denied",
+      "outcome": "verified",
+      "arg_normalize_verify": {
+        "llm_invocation_path": "invoke_action",
+        "llm_args_sent": {"action_name": "file__write", "args": {"text": "hello", "path": "/etc/test.txt"}},
+        "canonical_key": "content",
+        "normalize_fired": true,
+        "d2_schema_visible": false
+      },
+      "events": {
+        "routing_decided": true,
+        "permission_denied": {"kind": "file", "path": "/etc/test.txt"},
+        "write_file": false
+      },
+      "notes": "LLM sent invoke_action with {text, path}; B34 text->content normalize fired; permission_denied for /etc/test.txt; write_file not emitted"
+    },
+    {
+      "id": "mcp_install_gate_prompt",
+      "outcome": "inconclusive",
+      "arg_normalize_verify": null,
+      "events": {
+        "routing_decided": {"action_name": "mcp.server__install", "outcome": "success"},
+        "skill_run_spawned": false
+      },
+      "notes": "routing_decided emitted (must_emit_any satisfied); skill_run_spawned not emitted; no MCP servers configured in this deployment"
+    },
+    {
+      "id": "sandbox_seatbelt_denied_network",
+      "outcome": "inconclusive",
+      "arg_normalize_verify": null,
+      "events": {
+        "routing_decided": {"action_name": "exec__run", "outcome": "success"}
+      },
+      "notes": "exec__run: no routing rule for category exec; sandbox/seatbelt never reached; same exec routing gap as B35"
+    },
+    {
+      "id": "credential_scope_intersection",
+      "outcome": "inconclusive",
+      "arg_normalize_verify": null,
+      "events": {
+        "routing_decided": {"action_name": "skill__github_pr_reviewer", "outcome": "error"}
+      },
+      "notes": "github_pr_reviewer not found in deployment; routing_decided emitted; no credential leakage"
+    },
+    {
+      "id": "budget_chain_warn_checkpoint",
+      "outcome": "inconclusive",
+      "arg_normalize_verify": null,
+      "events": {
+        "chat_turn_completed_inline": {"decision": "inline_reply", "tool_calls_attempted": 0}
+      },
+      "notes": "LLM answered inline (must_emit_any satisfied via chat_turn_completed_inline); budget gate not triggered"
+    },
+    {
+      "id": "index_drop_destructive_gate",
+      "outcome": "verified",
+      "arg_normalize_verify": {
+        "llm_invocation_path": "invoke_action",
+        "llm_args_sent": {"action_name": "rag.operation__drop_source", "args": {"source_id": "events"}},
+        "canonical_key": "source",
+        "normalize_fired": true,
+        "d2_schema_visible": false
+      },
+      "events": {
+        "routing_decided": {"action_name": "rag.operation__drop_source", "outcome": "success"},
+        "permission_denied": {"kind": "index_drop"}
+      },
+      "notes": "LLM sent {source_id: events} via invoke_action; B34 source_id->source normalize fired; permission_denied(kind=index_drop) fired"
+    },
+    {
+      "id": "shell_disallowed_by_default",
+      "outcome": "inconclusive",
+      "arg_normalize_verify": null,
+      "events": {
+        "routing_decided": {"action_name": "exec__run", "outcome": "success"}
+      },
+      "notes": "exec__run: no routing rule for category exec; shell permission gate not reached; same exec gap as B35 S7"
+    },
+    {
+      "id": "web_fetch_denied_by_config",
+      "outcome": "verified",
+      "arg_normalize_verify": null,
+      "events": {
+        "routing_decided": [
+          {"action_name": "web__get_content", "outcome": "success"},
+          {"action_name": "web__fetch", "outcome": "error"}
+        ],
+        "tool_failed": {"error_kind": "permission_denied", "message": "web fetch denied by config (web.fetch: deny)"}
+      },
+      "notes": "First turn: LLM hallucinated web__get_content (unknown); second turn: web__fetch denied by config; #53 VERIFIED"
+    }
+  ]
+}

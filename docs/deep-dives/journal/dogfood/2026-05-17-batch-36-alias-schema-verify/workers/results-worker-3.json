@@ -1,0 +1,114 @@
+{
+  "batch": 36,
+  "worker": 3,
+  "head": "0c1669f",
+  "scenario_set": "control_ir_ops",
+  "agent_prefix": "dogfood-b36-3-s",
+  "port": 8083,
+  "worktree": "/private/tmp/reyn-worktrees/b36-3",
+  "scores": {
+    "V": 4,
+    "I": 2,
+    "R": 3,
+    "B": 0
+  },
+  "delta_vs_b35_w3": "+2V",
+  "file_glob_arg_correct": true,
+  "file_glob_arg_b35": "dir (wrong — empty alias schema, hallucinated)",
+  "file_glob_arg_b36": "pattern (correct — D2-full alias schema fix active)",
+  "alias_schema_properties": {
+    "file__glob": ["pattern", "path"],
+    "file__grep": ["pattern", "path", "glob", "case_sensitive", "max_results"]
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "agent": "dogfood-b36-3-s1",
+      "verdict": "V",
+      "tool": "file__read",
+      "args": {"path": "docs/concepts/principles.md"},
+      "events": {"routing_decided": 1, "tool_executed": 1, "permission_granted": 1},
+      "note": "Direct path; all must_emit satisfied; reply mentions P1-P8"
+    },
+    {
+      "id": "file_glob_grep",
+      "agent": "dogfood-b36-3-s2",
+      "verdict": "I",
+      "tool": "file__grep",
+      "args": {"pattern": "judge_output", "glob": "src/**/skill.md"},
+      "events": {"routing_decided": 1, "tool_executed": 1, "permission_granted": 1},
+      "note": "B35 R→B36 I: arg name correct (pattern not dir/content_regex); 0 matches because no skill.md under src/ contains judge_output (scenario false premise); routing_decided.source=hot_list_alias"
+    },
+    {
+      "id": "web_search_query",
+      "agent": "dogfood-b36-3-s3",
+      "verdict": "V",
+      "tool": "web__search",
+      "args": {"query": "OpenAI Python SDK changelog 2026"},
+      "events": {"routing_decided": 1, "web_search_started": 1, "web_search_completed": 1},
+      "note": "web_search_started + web_search_completed emitted; reply mentions OpenAI SDK"
+    },
+    {
+      "id": "web_fetch_url",
+      "agent": "dogfood-b36-3-s4",
+      "verdict": "V",
+      "tool": "web__fetch",
+      "args": {"url": "https://docs.python.org/3/whatsnew/3.12.html"},
+      "events": {"routing_decided": 1, "web_fetch_started": 1, "web_fetch_completed": 1},
+      "note": "web_fetch_started ✓; Python 3.12 features summarised correctly"
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "agent": "dogfood-b36-3-s5",
+      "verdict": "R",
+      "tool": "invoke_action",
+      "args": {"action_name": "exec__run", "args": {"command": "python -c 'print(2 + 2)'"}},
+      "events": {"routing_decided": 1, "sandboxed_exec_started": 0, "sandboxed_exec_completed": 0},
+      "note": "exec__run returned UnknownAction: no routing rule for category exec; same gap as B35"
+    },
+    {
+      "id": "lint_a_skill",
+      "agent": "dogfood-b36-3-s6",
+      "verdict": "R",
+      "tool": "invoke_action",
+      "args": {"action_name": "skill__skill_improver", "target_skill": "index_events"},
+      "events": {"routing_decided": 1, "skill_run_spawned": 1, "skill_run_failed": 1, "lint_completed": 0},
+      "note": "LLM routed to skill_improver; failed: unsafe python step without --allow-unsafe-python; lint_completed never emitted"
+    },
+    {
+      "id": "recall_indexed_source",
+      "agent": "dogfood-b36-3-s7",
+      "verdict": "V",
+      "tool": "invoke_action",
+      "args": {"action_name": "memory.entry__recall", "args": {"slug": "phase_rollback"}},
+      "events": {"routing_decided": 1, "tool_executed": 1, "permission_granted": 1},
+      "note": "routing_decided ✓; recall ran; reply: no indexed sources found (correct, rubric allows)"
+    },
+    {
+      "id": "judge_output_direct",
+      "agent": "dogfood-b36-3-s8",
+      "verdict": "I",
+      "tool": "invoke_action",
+      "args": {"action_name": "skill__judge_phase", "args": {"rubric": "...", "text": "..."}},
+      "events": {"routing_decided": 1, "skill_run_spawned": 1, "tool_executed": 10, "workflow_aborted": 1},
+      "note": "skill_run_spawned ✓, tool_executed ✓ (all must_emit pass); workflow_aborted (act budget exhausted in judge_phase after 12 LLM calls); reply has no score/verdict → I"
+    },
+    {
+      "id": "ask_user_round_trip",
+      "agent": "dogfood-b36-3-s9",
+      "verdict": "R",
+      "tool": null,
+      "args": null,
+      "events": {"routing_decided": 0, "skill_run_spawned": 0, "user_intervention_requested": 0},
+      "note": "LLM answered inline both turns; no skill invoked; ask_user op never emitted"
+    }
+  ],
+  "key_findings": [
+    "F1: file__glob/file__grep arg names correct (B35 residue resolved): D2-full active, properties=[pattern,path] for file__glob, [pattern,path,glob,...] for file__grep. B35 dir→B36 pattern.",
+    "F2: exec routing gap unchanged: exec__run returns UnknownAction, no sandboxed_exec_started",
+    "F3: lint via skill_improver mismatch: no standalone lint action; skill_improver fails on unsafe python",
+    "F4: judge_phase act budget exhaustion unchanged: workflow_aborted after 12 LLM calls",
+    "F5: ask_user inline vs op unchanged: LLM answers skill_builder question conversationally",
+    "F6: S2 scenario premise false: no skill.md under src/ contains judge_output"
+  ]
+}
