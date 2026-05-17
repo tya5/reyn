@@ -269,6 +269,70 @@ class ConversationView(Widget):
         except Exception:
             return None
 
+    def on_mount(self) -> None:
+        """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
+
+        Previously the ``_user_scrolled`` flag existed but nothing ever
+        set it: every ``log.write(...)`` snapped the view back to the
+        bottom even mid-read. Watching ``scroll_y`` from a single reactive
+        callback distinguishes "user is reading old content" (= scroll_y
+        below max) from "stream just appended" (= scroll_y already at
+        max because Textual's auto_scroll moved it there). The watcher
+        only flips ``auto_scroll`` on the boundary crossing, so writes
+        during user-read keep their place and writes after user-return
+        immediately auto-scroll again.
+        """
+        log = self._log()
+        try:
+            self.watch(log, "scroll_y", self._on_log_scroll_y)
+        except Exception:
+            # If Textual's cross-widget watch API changes, fail open
+            # (= keep historic auto-scroll behaviour) rather than crash mount.
+            pass
+
+    def _snap_to_bottom(self) -> None:
+        """Force the log to the bottom and re-arm auto-scroll.
+
+        Called from "I'm re-engaging" entry points (``render_user_message``,
+        ``clear``) so the user's previous scroll-up state doesn't pin them
+        to old content after they've explicitly taken an action.
+        """
+        try:
+            log = self._log()
+        except Exception:
+            return
+        try:
+            log.auto_scroll = True
+            log.scroll_end(animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = False
+
+    def _on_log_scroll_y(self, old: float, new: float) -> None:
+        """Flip ``auto_scroll`` and ``_user_scrolled`` based on at-bottom check.
+
+        The ``-1`` threshold absorbs float-coord noise from Textual's
+        scroll math; treating "within 1 cell of the bottom" as "at the
+        bottom" matches how the user perceives the boundary.
+        """
+        try:
+            log = self._log()
+        except Exception:
+            return
+        at_bottom = new >= log.max_scroll_y - 1
+        # Only re-assign when the value actually changes so we don't churn
+        # Textual's reactive system every scroll tick.
+        if at_bottom:
+            if not log.auto_scroll:
+                log.auto_scroll = True
+            if self._user_scrolled:
+                self._user_scrolled = False
+        else:
+            if log.auto_scroll:
+                log.auto_scroll = False
+            if not self._user_scrolled:
+                self._user_scrolled = True
+
     # ── empty state ───────────────────────────────────────────────────────────
 
     def _consume_empty_hint(self) -> None:
@@ -353,7 +417,14 @@ class ConversationView(Widget):
             self._write_body(text)
 
     def render_user_message(self, text: str) -> None:
-        """Render a freshly submitted user message with grouped header."""
+        """Render a freshly submitted user message with grouped header.
+
+        Submitting a message is an "I'm re-engaging" signal — even if the
+        user had previously scrolled up to read history, they now want to
+        see the conversation continue. Snap back to the bottom and re-arm
+        auto-scroll so subsequent agent reply chunks track the tail.
+        """
+        self._snap_to_bottom()
         self._consume_empty_hint()
         self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
         self._write_body(Text(text))
@@ -801,6 +872,14 @@ class ConversationView(Widget):
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
+        # Re-arm auto-scroll: clear() puts the user back at a fresh blank
+        # log, and any prior scroll-up state is meaningless once the
+        # content it was reading is gone.
+        self._user_scrolled = False
+        try:
+            self._log().auto_scroll = True
+        except Exception:
+            pass
         # Hide sticky status
         self.hide_status()
         # Restore the empty-state hint so the next session looks fresh.
