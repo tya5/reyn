@@ -1,0 +1,44 @@
+{
+  "worker": 7,
+  "batch": 30,
+  "scenario_set": "long_session_v1",
+  "head": "4be42fe",
+  "run_id": "b30-7-long-session",
+  "agent": "dogfood-b30-7",
+  "raw_band": {"verified": 0, "inconclusive": 7, "refuted": 0, "blocked": 0},
+  "true_band": {"verified": 2, "inconclusive": 5, "refuted": 0, "blocked": 0},
+  "brier_score": 0.2656,
+  "vs_b28": {"delta_verified": 0, "delta_inconclusive": 0, "delta_refuted": 0, "delta_blocked": 0},
+  "c1_verify": {
+    "total_turns": 52,
+    "clean_turns": 52,
+    "duplicate_turns": 0,
+    "result": "52/52 clean"
+  },
+  "multi_turn_survival": {
+    "expected": 37,
+    "actual": 37,
+    "result": "37/37"
+  },
+  "q2_event": {
+    "inline_turns": 32,
+    "q2_events": 32,
+    "result": "32/32 clean"
+  },
+  "b27_7_bug2_manifested": false,
+  "g12_pattern_e_empty_responses": 0,
+  "notable": [
+    "scenario_3: tool_failed on search_actions (unknown_tool) - graceful recovery",
+    "scenario_7: web_search_started invoked (success)",
+    "verifier triad never invoked - pre-existing framework gap, not B30 regression"
+  ],
+  "scenarios": {
+    "scenario_1_reyn_research_chain": {"band": "inconclusive", "true_band": "verified", "turns": "5/5", "reply_len": 4903},
+    "scenario_2_pronoun_followup": {"band": "inconclusive", "turns": "6/6", "reply_len": 5900},
+    "scenario_3_cross_reference_compare": {"band": "inconclusive", "turns": "5/5", "reply_len": 3464, "notes": "tool_failed search_actions - recovered"},
+    "scenario_4_repetitive_context_bloat": {"band": "inconclusive", "turns": "6/6", "reply_len": 8645},
+    "scenario_5_general_python_chain": {"band": "inconclusive", "true_band": "verified", "turns": "5/5", "reply_len": 18803},
+    "scenario_6_file_and_doc_lookup_chain": {"band": "inconclusive", "turns": "5/5", "reply_len": 2494},
+    "scenario_7_concept_explanation_chain": {"band": "inconclusive", "turns": "5/5", "reply_len": 18167}
+  }
+}

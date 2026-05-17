@@ -1,0 +1,110 @@
+{
+  "run_id": "b30-worker3",
+  "head": "4be42fe",
+  "scenario_set": "control_ir_ops",
+  "b28_baseline": "6/1/2/0",
+  "verified": 2,
+  "inconclusive": 0,
+  "refuted": 7,
+  "blocked": 0,
+  "total": 9,
+  "c1_regression": false,
+  "routing_decided_emitted": {
+    "s1_file_read_via_chat": true,
+    "s2_file_glob_grep": true,
+    "s3_web_search_query": true,
+    "s4_web_fetch_url": false,
+    "s5_sandboxed_exec_simple": true,
+    "s6_lint_a_skill": true,
+    "s7_recall_indexed_source": false,
+    "s8_judge_output_direct": true,
+    "s9_ask_user_round_trip": true
+  },
+  "chat_turn_completed_inline_emitted": {
+    "s1_file_read_via_chat": false,
+    "s2_file_glob_grep": false,
+    "s3_web_search_query": false,
+    "s4_web_fetch_url": true,
+    "s5_sandboxed_exec_simple": false,
+    "s6_lint_a_skill": true,
+    "s7_recall_indexed_source": true,
+    "s8_judge_output_direct": false,
+    "s9_ask_user_round_trip": true
+  },
+  "q2_exclusivity_holds": true,
+  "scenario_outcomes": {
+    "s1_file_read_via_chat": "verified",
+    "s2_file_glob_grep": "refuted",
+    "s3_web_search_query": "verified",
+    "s4_web_fetch_url": "refuted",
+    "s5_sandboxed_exec_simple": "refuted",
+    "s6_lint_a_skill": "refuted",
+    "s7_recall_indexed_source": "refuted",
+    "s8_judge_output_direct": "refuted",
+    "s9_ask_user_round_trip": "refuted"
+  },
+  "regressions_vs_b28": [
+    {
+      "scenario": "s2_file_glob_grep",
+      "b28": "verified",
+      "b30": "refuted",
+      "cause": "file__list hot-alias KeyError:'path' — wrong args for glob operation"
+    },
+    {
+      "scenario": "s4_web_fetch_url",
+      "b28": "verified",
+      "b30": "refuted",
+      "cause": "LLM chose plan tool over invoke_action — routing_decided not fired"
+    },
+    {
+      "scenario": "s5_sandboxed_exec_simple",
+      "b28": "inconclusive",
+      "b30": "refuted",
+      "cause": "Same env limitation (no sandbox backend), now classified refuted"
+    },
+    {
+      "scenario": "s7_recall_indexed_source",
+      "b28": "verified",
+      "b30": "refuted",
+      "cause": "LLM went inline, no catalog dispatch — chat_turn_completed_inline instead"
+    },
+    {
+      "scenario": "s8_judge_output_direct",
+      "b28": "verified",
+      "b30": "refuted",
+      "cause": "Async dispatch returns 'will notify' reply, not synchronous score"
+    }
+  ],
+  "new_bugs": [
+    {
+      "id": "B30-NEW-1",
+      "severity": "HIGH",
+      "scenario": "s2_file_glob_grep",
+      "description": "file__list hot-alias receives glob args (match+filter) but expects 'path' param — KeyError:'path'"
+    },
+    {
+      "id": "B30-NEW-2",
+      "severity": "MED",
+      "scenario": "s4_web_fetch_url",
+      "description": "plan-first strategy bypasses routing_decided — must_emit routing_decided fails when plan tool used"
+    },
+    {
+      "id": "B30-NEW-3",
+      "severity": "MED",
+      "scenario": "s7_recall_indexed_source",
+      "description": "LLM says recall only available in plan steps, goes inline — routing_decided not emitted, rubric not satisfied"
+    },
+    {
+      "id": "B30-NEW-4",
+      "severity": "MED",
+      "scenario": "s8_judge_output_direct",
+      "description": "judge_phase dispatched async — single-turn reply is 'will notify', not synchronous score as in B28"
+    },
+    {
+      "id": "B30-NEW-5",
+      "severity": "LOW",
+      "scenario": "s9_ask_user_round_trip",
+      "description": "Inbox contamination from previous scenario's in-flight skill run persists after agent recreation"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "batch": "B30",
+  "worker": "6/7",
+  "head": "4be42fe",
+  "date": "2026-05-17",
+  "v": 0,
+  "i": 9,
+  "r": 2,
+  "b": 0,
+  "delta_vs_b28": "+2R (was 0R), -1B, -2I",
+  "b29_med3_verified": "partial",
+  "plan_emitted": "1/3",
+  "q2_event_observed": true,
+  "c1_duplicate_decl": false,
+  "scenarios": {
+    "plan_compare_two_concepts": {"outcome": "I", "note": "no plan trigger, replied inline, Q2 fired"},
+    "plan_explain_with_code_references": {"outcome": "R", "note": "no code refs, wrong tool path (describe_action not read_file)"},
+    "plan_summary_across_n_files": {"outcome": "I", "note": "plan emitted, step LLMs used bare filename, interrupted on exit"},
+    "narr-1-mcp-search": {"outcome": "I", "note": "env: --allow-unsafe-python missing, error narrated correctly"},
+    "narr-3-skill-builder": {"outcome": "I", "note": "quad dispatch (4x), async exit before narration"},
+    "s-fp11-1-builder-invalid-spec": {"outcome": "I", "note": "router sanitized input, no error path triggered"},
+    "s-fp11-2-eval-missing-target": {"outcome": "I", "note": "double dispatch, async exit before narration"},
+    "s-fp11-3-mcp-search-empty": {"outcome": "I", "note": "env: --allow-unsafe-python, error narrated correctly"},
+    "s-fp12-spawn-1-builder-success-ack": {"outcome": "R", "note": "triple dispatch, /tasks pointer missing from ack"},
+    "s-fp12-completion-1-mcp-search-narrate": {"outcome": "I", "note": "env: --allow-unsafe-python"},
+    "s-fp12-completion-2-error-narrate": {"outcome": "R", "note": "double dispatch, false success (no error narrated)"}
+  },
+  "issues": {
+    "double_triple_dispatch": {"severity": "HIGH", "scenarios": ["narr-3", "s-fp12-spawn-1 (3x)", "s-fp12-completion-2 (2x)", "s-fp11-2 (2x)"]},
+    "allow_unsafe_python": {"severity": "MED", "scenarios": ["narr-1", "s-fp11-3", "s-fp12-completion-1"]},
+    "tasks_pointer_missing": {"severity": "LOW", "scenarios": ["s-fp12-spawn-1"]},
+    "b29_med3_path_issue": {"severity": "MED", "note": "cwd injected but step descriptions carry bare filenames from router plan generation"}
+  }
+}

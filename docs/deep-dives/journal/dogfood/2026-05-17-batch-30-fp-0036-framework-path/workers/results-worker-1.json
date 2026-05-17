@@ -1,0 +1,111 @@
+{
+  "batch": 30,
+  "worker": 1,
+  "scenario_set": "chat_router_smoke",
+  "head": "4be42fe",
+  "aggregate": {"verified": 0, "inconclusive": 1, "refuted": 6, "blocked": 0},
+  "delta_vs_b28": {"dV": 0, "dI": 1, "dR": -1, "dB": 0},
+  "c1_regression": false,
+  "chat_turn_completed_inline_emit": "4/7",
+  "scenarios": [
+    {
+      "scenario_id": "simple_capability_question",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "evidence_one_liner": "chat_turn_completed_inline emitted, reply lists capabilities, but no direct_llm artifact (inline reply path)"
+    },
+    {
+      "scenario_id": "factual_query_direct_llm",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "chat_turn_completed_inline_emitted": false,
+      "evidence_one_liner": "routing_decided(web__search) emitted, good idempotency reply, but direct_llm artifact absent (web_search used instead)"
+    },
+    {
+      "scenario_id": "skill_discovery_request",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "evidence_one_liner": "list_actions called (not invoke_action), routing_decided NOT emitted, 16 skills listed correctly, no direct_llm artifact"
+    },
+    {
+      "scenario_id": "explicit_skill_invocation_word_stats",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": "partial",
+      "artifacts_pass": true,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "chat_turn_completed_inline_emitted": false,
+      "evidence_one_liner": "routing_decided(word_stats_demo) emitted x2, artifact present, reply has stats, skill_run_completed status='finished' not 'success' (spec mismatch)"
+    },
+    {
+      "scenario_id": "catalog_routing_decided_emitted",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "evidence_one_liner": "chat_turn_completed_inline emitted (must_emit_any PASS), but reply asks for theme clarification instead of writing poem"
+    },
+    {
+      "scenario_id": "multi_turn_pronoun_reference",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": true,
+      "chat_turn_completed_inline_emitted": false,
+      "evidence_one_liner": "turn2 misrouted to skill__skill_importer x2, timed out at 180s, no Python code example in reply"
+    },
+    {
+      "scenario_id": "out_of_scope_graceful_decline",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "c1_regression": false,
+      "routing_decided_emitted": false,
+      "chat_turn_completed_inline_emitted": true,
+      "evidence_one_liner": "reply asks for image details instead of declining: 'どのような画像を生成しますか？'"
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B30-W1-1",
+      "severity": "HIGH-isolation",
+      "description": "reyn/local/ not wiped between scenarios — skill_builder creates persistent skill files that contaminate subsequent runs (observed: list_comprehension_generator appeared in S3 skill list after S6 ran skill_builder)"
+    },
+    {
+      "id": "B30-W1-2",
+      "severity": "LOW-scenario-design",
+      "description": "S7 LLM asks for image details instead of declining (asks 'どのような画像を生成しますか？' rather than explaining capability is unavailable)"
+    }
+  ],
+  "carry_over_findings": [
+    "B28-3.7: direct_llm artifact never created for inline replies",
+    "B28-3.2: routing_decided not emitted for list_actions calls",
+    "B28: skill_run_completed status 'finished' vs spec 'success' mismatch"
+  ],
+  "b30_verifications": {
+    "C1_no_duplicate_tools": "VERIFIED - all 7 scenarios: 14 tools each, zero duplicates",
+    "Q2_chat_turn_completed_inline": "VERIFIED emit - 4/7 scenarios; S5 must_emit_any semantics work (events pass)",
+    "B28_MED1_index_docs_seed": "VERIFIED - skill__index_docs appears in S3 skill list"
+  }
+}

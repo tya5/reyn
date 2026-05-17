@@ -1,0 +1,63 @@
+{
+  "batch": "b30",
+  "worker": 2,
+  "head": "4be42fe",
+  "scenario_set": "stdlib_skills_core",
+  "run_date": "2026-05-17",
+  "verdicts": {
+    "S1_index_docs_basic": "refuted",
+    "S2_read_local_files_explain_source": "refuted",
+    "S3_read_local_files_multi_file": "refuted",
+    "S4_skill_builder_web_summariser": "verified",
+    "S5_word_stats_demo_sentence": "inconclusive",
+    "S6_word_stats_demo_multiline": "inconclusive",
+    "S7_eval_run_direct_llm": "refuted",
+    "S8_chat_compactor_long_session": "inconclusive",
+    "S9_chained_find_then_index": "refuted"
+  },
+  "totals": {
+    "verified": 1,
+    "inconclusive": 3,
+    "refuted": 5,
+    "blocked": 0
+  },
+  "b28_comparison": {
+    "b28_v": 1,
+    "b28_i": 0,
+    "b28_r": 8,
+    "b28_b": 0,
+    "delta_v": 0,
+    "delta_i": 3,
+    "delta_r": -3,
+    "delta_b": 0
+  },
+  "c1_regression": false,
+  "routing_decided_emitted": true,
+  "chat_turn_completed_inline_emitted": true,
+  "fix_verification": {
+    "B28_MED_1_skill_index_docs_seed": {
+      "status": "incomplete",
+      "detail": "skill__index_docs in DEFAULT_HOT_LIST_SEED but hot_list_n=10 truncates 12-item seed; items 11-12 (skill__read_local_files, skill__index_docs) never reach LLM tool list. Hallucination rag.operation__create_index persists in S1 and S9.",
+      "verified": false
+    },
+    "B28_NEW_2_python_safe": {
+      "status": "verified",
+      "detail": "preprocessor_step_completed without permission_denied in S5 and S6. reyn.yaml python.safe:allow confirmed.",
+      "verified": true
+    },
+    "B29_eval_audit": {
+      "status": "partial",
+      "detail": "skill__skill_improver not observed (disambiguation worked). New variant: skill__direct_llm_eval hallucinated. skill__eval absent from tool list due to hot_list_n=10 cap.",
+      "verified": false
+    }
+  },
+  "new_bugs": [
+    {
+      "id": "B30-NEW-1",
+      "severity": "HIGH",
+      "description": "hot_list_n=10 default truncates 12-item DEFAULT_HOT_LIST_SEED; skill__read_local_files and skill__index_docs never appear in LLM tool list on cold-start sessions. Also skill__eval not in seed at all.",
+      "fix_hint": "bump hot_list_n default to >=13 in ActionRetrievalConfig; add skill__eval to DEFAULT_HOT_LIST_SEED"
+    }
+  ],
+  "findings_path": "/tmp/reyn-worktrees/b30-2/findings.md"
+}

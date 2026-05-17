@@ -1,0 +1,90 @@
+{
+  "batch": "B30",
+  "worker": "5/7",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "head": "4be42fe",
+  "run_date": "2026-05-17",
+  "summary": {
+    "verified": 1,
+    "inconclusive": 3,
+    "refuted": 3,
+    "blocked": 0,
+    "total": 7
+  },
+  "delta_vs_b28": "+2 (S4: I->V, S6: R->I)",
+  "b29_q2_verified": "2/2 (S2, S5)",
+  "c1_no_dup_decl": "PASS",
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "inconclusive",
+      "b28_verdict": "inconclusive",
+      "event_check": "PASS",
+      "events_emitted": ["routing_decided x2", "skill_run_spawned x1"],
+      "notes": "skill__mcp_search spawned but failed: unsafe-python flag not provided. LLM fabricated results mid-flight, corrected in final narration. Environmental blocker prevents rubric validation."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "refuted",
+      "b28_verdict": "refuted",
+      "event_check": "PASS",
+      "events_emitted": ["chat_turn_completed_inline x1"],
+      "notes": "search_actions attractor active. LLM called search_actions(query='github MCP server recent PRs') -> unknown_tool error. Reply explains search_actions unavailable, not github MCP not configured. B29-Q2 fix confirmed: chat_turn_completed_inline emitted.",
+      "b29_q2_verified": true,
+      "search_actions_attractor": {
+        "observed": true,
+        "call": "search_actions(query='github MCP server recent PRs')",
+        "error": "unknown_tool"
+      }
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "inconclusive",
+      "b28_verdict": "inconclusive",
+      "event_check": "PASS",
+      "events_emitted": ["routing_decided x2", "agent_message_sent x2"],
+      "notes": "researcher agent not found. CUI showed error but LLM reply says 'I have asked the researcher agent...' — does not convey agent-not-found to user."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "verified",
+      "b28_verdict": "inconclusive",
+      "event_check": "PASS",
+      "events_emitted": ["routing_decided x2", "agent_message_sent x2"],
+      "notes": "LLM produced a 3-line summary of Reyn Phase engine. Both researcher and writer agents not found (errors), but LLM self-synthesized the 3-line summary. Rubric satisfied."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "refuted",
+      "b28_verdict": "refuted",
+      "event_check": "PASS",
+      "events_emitted": ["chat_turn_completed_inline x1"],
+      "notes": "LLM answered about its tool limitations instead of A2A protocol documentation. All 3 rubric points fail. B29-Q2 fix confirmed: chat_turn_completed_inline emitted.",
+      "b29_q2_verified": true
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "inconclusive",
+      "b28_verdict": "refuted",
+      "event_check": "PASS",
+      "events_emitted": ["routing_decided x2", "skill_run_spawned x1"],
+      "notes": "mcp.server__install action was routed. mcp_search failed (unsafe-python). Unsafe-python blocker prevented layer-4 interactive permission gate from being reached. Promoted from R to I: install action was at least routed."
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "refuted",
+      "b28_verdict": "refuted",
+      "event_check": "PASS",
+      "events_emitted": ["routing_decided x1", "sandboxed_exec_started x1"],
+      "notes": "LLM used crontab -l (system cron) instead of reyn cron list. Sandbox blocked execution (returncode=71). Reply says 'could not list due to permissions' rather than explaining Reyn cron configuration."
+    }
+  ],
+  "findings_path": "/tmp/reyn-worktrees/b30-5/findings.md",
+  "open_issues": [
+    {"id": "B30-W5-1", "severity": "MED", "desc": "search_actions attractor in S2 persists post-B29"},
+    {"id": "B30-W5-2", "severity": "MED", "desc": "S5: LLM answers tool-capability instead of A2A architecture how-to"},
+    {"id": "B30-W5-3", "severity": "MED", "desc": "S7: LLM routes to system crontab -l instead of reyn cron"},
+    {"id": "B30-W5-4", "severity": "LOW", "desc": "S3: LLM narration does not convey agent-not-found to user"},
+    {"id": "B30-W5-5", "severity": "LOW", "desc": "mcp_search requires --allow-unsafe-python; blocks S1/S6 paths"}
+  ]
+}
