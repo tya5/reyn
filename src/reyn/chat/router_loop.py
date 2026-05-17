@@ -369,6 +369,9 @@ _UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
 def _build_hot_list_aliases(
     names: list[str],
     short_description_lookup: "dict[str, str] | None" = None,
+    *,
+    skill_metadata_lookup: "dict[str, dict] | None" = None,
+    mcp_tool_lookup: "dict[str, dict] | None" = None,
 ) -> list[dict]:
     """Build OpenAI-format ToolDefinition dicts for hot list direct aliases.
 
@@ -411,7 +414,11 @@ def _build_hot_list_aliases(
         # categories; resource categories (skill__X / agent.peer__X /
         # mcp.tool__X.Y / memory.entry__X / rag.corpus__X) need per-
         # resource schema introspection and are out of scope for D2-min.
-        rich = _operation_alias_metadata(name)
+        rich = _operation_alias_metadata(name) or _resource_alias_metadata(
+            name,
+            skill_metadata_lookup=skill_metadata_lookup,
+            mcp_tool_lookup=mcp_tool_lookup,
+        )
         if rich is not None:
             description, parameters = rich
         else:
@@ -477,6 +484,126 @@ def _operation_alias_metadata(
     if tool is None:
         return None
     return tool.description, dict(tool.parameters)
+
+
+def _resource_alias_metadata(
+    qualified_name: str,
+    *,
+    skill_metadata_lookup: "dict[str, dict] | None" = None,
+    mcp_tool_lookup: "dict[str, dict] | None" = None,
+) -> "tuple[str, dict] | None":
+    """Return ``(description, parameters)`` for a resource-category alias
+    whose schema can be derived from either the routing target (static
+    categories) or session-time per-resource metadata (dynamic categories).
+
+    Covered:
+      - ``agent.peer__<name>`` (D2-full step 1) — accepts ``{request, ...}``;
+        rule curries ``to=<name>``. Source: ``delegate_to_agent`` parameters
+        minus ``to``.
+      - ``mcp.server__<name>`` (step 1) — accepts ``{}``; rule curries
+        ``server=<name>``. The action IS "list this server's tools".
+      - ``rag.corpus__<name>`` (step 1) — accepts ``{query, top_k?, ...}``;
+        rule curries ``sources=[<name>]``. Source: ``recall`` parameters
+        minus ``sources``.
+      - ``skill__<name>`` (step 2) — caller supplies ``skill_metadata_lookup``
+        keyed by qualified name with ``{description?, input_schema?,
+        input_wrapped?}``. The transform ``_invoke_skill_args`` wraps caller
+        args under the artifact ``data`` slot, so the alias's parameters
+        are the artifact's data schema directly (= ``input_schema``).
+      - ``mcp.tool__<server>.<tool>`` (step 3) — caller supplies
+        ``mcp_tool_lookup`` keyed by qualified name with ``{description?,
+        input_schema?}`` from the MCP server's declared tool schema.
+
+    Returns ``None`` for:
+      - any unhandled category, e.g. ``memory.entry__X`` — the current
+        ``_read_memory_body_args`` transform sends ``{name: entry}`` but
+        the target ``read_memory_body`` expects ``{layer, slug}``;
+        pre-existing dispatch shape mismatch, surface separately.
+    """
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_catalog import split_qualified_name
+
+    try:
+        category, entry_name = split_qualified_name(qualified_name)
+    except ValueError:
+        return None
+
+    registry = get_default_registry()
+
+    if category == "agent.peer":
+        tool = registry.lookup("delegate_to_agent")
+        if tool is None:
+            return None
+        params = _drop_required_field(dict(tool.parameters), "to")
+        description = (
+            f"Delegate a request to peer agent {entry_name!r}. "
+            f"{tool.description}"
+        )
+        return description, params
+
+    if category == "mcp.server":
+        params = {"type": "object", "properties": {}, "required": []}
+        description = (
+            f"List the MCP tools exposed by server {entry_name!r}. "
+            f"Returns name + description for each tool."
+        )
+        return description, params
+
+    if category == "rag.corpus":
+        tool = registry.lookup("recall")
+        if tool is None:
+            return None
+        params = _drop_required_field(dict(tool.parameters), "sources")
+        first_line = tool.description.splitlines()[0] if tool.description else ""
+        description = (
+            f"Recall (semantic search) against indexed source {entry_name!r}. "
+            f"Single-source variant of: {first_line}"
+        )
+        return description, params
+
+    if category == "skill":
+        meta = (skill_metadata_lookup or {}).get(qualified_name)
+        if not meta or "input_schema" not in meta:
+            return None
+        schema = dict(meta["input_schema"])
+        desc_body = meta.get("description") or f"Skill {entry_name!r}"
+        description = (
+            f"{desc_body}. Hot-list direct alias for skill {entry_name!r} "
+            f"— pass the skill's input fields as args; the dispatcher wraps "
+            f"them into the input artifact for invoke_skill."
+        )
+        return description, schema
+
+    if category == "mcp.tool":
+        meta = (mcp_tool_lookup or {}).get(qualified_name)
+        if not meta or "input_schema" not in meta:
+            return None
+        schema = dict(meta["input_schema"])
+        desc_body = meta.get("description") or f"MCP tool {entry_name!r}"
+        description = (
+            f"{desc_body}. Hot-list direct alias for MCP tool "
+            f"{entry_name!r} — pass the tool's declared inputSchema args; "
+            f"the dispatcher routes via call_mcp_tool."
+        )
+        return description, schema
+
+    return None
+
+
+def _drop_required_field(params: dict, field_name: str) -> dict:
+    """Return a copy of a JSON schema with ``field_name`` removed from
+    ``properties`` and ``required``.
+
+    Used by ``_resource_alias_metadata`` to remove curried fields from a
+    target tool's parameters before exposing them on the alias.
+    """
+    out = dict(params)
+    props = dict(out.get("properties") or {})
+    props.pop(field_name, None)
+    out["properties"] = props
+    req = [r for r in (out.get("required") or []) if r != field_name]
+    out["required"] = req
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -654,18 +781,55 @@ class RouterLoop:
                 if _top_names:
                     # Lever D (B23-PRE-1): build short_description map from
                     # available skills so aliases embed the target's purpose.
-                    # Skills are the dominant hot-list category; others fall
-                    # back to the generic description gracefully.
+                    # FP-0034 D2-full step 2: also capture per-skill
+                    # ``input_schema`` (when the skill's entry artifact has
+                    # a structured shape) so ``skill__<name>`` hot-list
+                    # aliases expose the actual input parameters instead
+                    # of the empty ``properties: {}, additionalProperties:
+                    # True`` stub.
                     _short_desc_map: dict[str, str] = {}
+                    _skill_meta_map: dict[str, dict] = {}
                     for _s in host.list_available_skills():
-                        if isinstance(_s, dict) and "name" in _s:
-                            _qn = f"skill__{_s['name']}"
-                            _sd = _s.get("description") or _s.get("short_description") or ""
-                            if _sd:
-                                _short_desc_map[_qn] = str(_sd)
+                        if not isinstance(_s, dict) or "name" not in _s:
+                            continue
+                        _qn = f"skill__{_s['name']}"
+                        _sd = _s.get("description") or _s.get("short_description") or ""
+                        if _sd:
+                            _short_desc_map[_qn] = str(_sd)
+                        if "input_schema" in _s:
+                            _skill_meta_map[_qn] = {
+                                "description": str(_sd) if _sd else "",
+                                "input_schema": _s["input_schema"],
+                                "input_wrapped": bool(_s.get("input_wrapped", True)),
+                            }
+                    # FP-0034 D2-full step 3: per-MCP-tool inputSchema lookup
+                    # so ``mcp.tool__<server>.<tool>`` aliases expose the
+                    # tool's declared args directly. host.get_mcp_servers()
+                    # returns the FP-0032 expanded shape with nested tools.
+                    _mcp_tool_map: dict[str, dict] = {}
+                    for _srv in (host.get_mcp_servers() or []):
+                        if not isinstance(_srv, dict):
+                            continue
+                        _server_name = _srv.get("name")
+                        if not _server_name:
+                            continue
+                        for _t in (_srv.get("tools") or []):
+                            if not isinstance(_t, dict):
+                                continue
+                            _tool_name = _t.get("name")
+                            _input_schema = _t.get("inputSchema") or _t.get("input_schema")
+                            if not _tool_name or not _input_schema:
+                                continue
+                            _qn = f"mcp.tool__{_server_name}.{_tool_name}"
+                            _mcp_tool_map[_qn] = {
+                                "description": str(_t.get("description") or ""),
+                                "input_schema": _input_schema,
+                            }
                     _hot_list_aliases = _build_hot_list_aliases(
                         _top_names,
                         short_description_lookup=_short_desc_map or None,
+                        skill_metadata_lookup=_skill_meta_map or None,
+                        mcp_tool_lookup=_mcp_tool_map or None,
                     )
         tools = build_tools(
             skills_for_tools,
