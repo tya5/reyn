@@ -247,8 +247,40 @@ class RightPanel(Widget):
         if self._panel_width == 0:
             self._panel_width = self.size.width or 40
         max_width = max(40, int((self.app.size.width or 120) * 0.66))
-        self._panel_width = max(24, min(max_width, self._panel_width + delta))
+        new_width = max(24, min(max_width, self._panel_width + delta))
+        # Flash the new width in the conv sticky bar so the user sees
+        # something changed (and learns the bounds via the at-min /
+        # at-max suffix). Skip the flash on no-op clamps to avoid the
+        # impression that the keystroke was lost when nothing moved.
+        at_min = new_width == 24
+        at_max = new_width == max_width
+        clamp_hint = (
+            " (min)" if at_min and delta < 0
+            else " (max)" if at_max and delta > 0
+            else ""
+        )
+        self._panel_width = new_width
         self.styles.width = self._panel_width
+        self._flash_status(f"panel: {new_width} col{clamp_hint}")
+
+    def _flash_status(self, text: str, *, duration: float = 1.5) -> None:
+        """Brief sticky-status message in the conv pane, auto-hides.
+
+        Used for transient feedback (panel resize, panel-action confirm)
+        that doesn't warrant a persistent log entry. Falls through
+        silently if the conv pane isn't reachable (e.g. headless tests).
+        """
+        from .. import ConversationView  # late import → avoid cycle
+        try:
+            conv = self.app.query_one("#conversation", ConversationView)
+        except Exception as exc:
+            logger.warning("right_panel flash status: conv query failed: %s", exc)
+            return
+        try:
+            conv.show_status(text, kind="general")
+            self.app.set_timer(duration, conv.hide_status)
+        except Exception as exc:
+            logger.warning("right_panel flash status failed: %s", exc)
 
     def _scroll_panel(self, delta: int) -> None:
         try:
