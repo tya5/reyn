@@ -632,10 +632,16 @@ class ConversationView(Widget):
         )
         self.mount(box)
         self._error_boxes.append(box)
-        try:
-            box.scroll_visible()
-        except Exception:
-            pass
+        # Same scroll-respect rule as ``mount_intervention``: when the
+        # user has scrolled up to read prior context, an async error
+        # arriving must not yank the view to the bottom; the error box
+        # carries its own non-color cue (left-bar) and the user can
+        # discover it on their next scroll-down without being interrupted.
+        if not self._user_scrolled:
+            try:
+                box.scroll_visible()
+            except Exception:
+                pass
         return box
 
     def has_error_boxes(self) -> bool:
@@ -675,7 +681,18 @@ class ConversationView(Widget):
             queued_extra=queued_extra,
         )
         self.mount(widget)
-        widget.scroll_visible()
+        # Only yank the user down to the new widget when they were
+        # already at the tail. If they've scrolled up to read history,
+        # an async intervention arriving must not jerk the view — they
+        # can see the prompt waiting at the bottom via the scrollbar /
+        # auto_scroll once they return on their own, and ``hide_status``
+        # above already replaced the live "thinking…" so they have a
+        # clear signal that the run is waiting for them.
+        if not self._user_scrolled:
+            try:
+                widget.scroll_visible()
+            except Exception:
+                pass
         return widget
 
     # ── cost suffix (A4) ──────────────────────────────────────────────────────
