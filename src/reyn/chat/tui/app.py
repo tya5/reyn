@@ -48,6 +48,14 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
+    # Default terminal window title — shown in the tab bar of multiplexers
+    # (tmux, iTerm2 tabs, gnome-terminal). Defaults to the class name
+    # (``"ReynTUIApp"``) if left unset, which leaks an implementation
+    # detail. ``set_title_state`` swaps this to ``reyn — awaiting answer``
+    # / ``reyn — error`` etc. so a user in a background terminal can see
+    # the state without focusing the window.
+    TITLE = "reyn"
+
     ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
@@ -260,6 +268,35 @@ class ReynTUIApp(App):
             queued_extra=queued_extra,
         )
 
+    def set_title_state(self, state: str | None) -> None:
+        """Set the terminal window title to reflect the agent's state.
+
+        ``state`` is a short verb / noun like ``"awaiting answer"``,
+        ``"error"``, or ``None`` for idle. The title shown in the tab
+        bar becomes ``"reyn — <state>"`` (or just ``"reyn"`` for idle)
+        so a user with reyn in a background terminal tab can see the
+        state without focusing the window. Wraps ``self.title`` to
+        contain the formatting in one place and let tests assert on a
+        normalised state token.
+        """
+        try:
+            self.title = f"reyn — {state}" if state else "reyn"
+        except Exception:
+            pass
+
+    def alert(self) -> None:
+        """Fire the terminal BEL for "you need to come back" events.
+
+        Wraps ``self.bell()`` so call sites don't need to know whether
+        the platform supports it (the call is a no-op on terminals that
+        ignore ``\\a``). The helper exists so future ``/quiet`` opt-out
+        can short-circuit one place rather than every hook point.
+        """
+        try:
+            self.bell()
+        except Exception:
+            pass
+
     def _maybe_refresh_status(self, header: ReynHeader | None = None) -> None:
         """Fetch budget snapshot and update the header.
 
@@ -371,6 +408,14 @@ class ReynTUIApp(App):
             # as "skill done: <status>" so the row can stop spinning here.
             status = text[len("skill done: "):].strip()
             conv.finish_skill_row(run_id, success=(status == "finished"), reason="")
+            # Out-of-band: an aborted skill is an attention case — flash the
+            # title to "error" and ring the bell so a user with reyn in a
+            # background tab sees something happened. Successful finishes
+            # are silent here (the next agent reply / cost suffix is the
+            # in-pane signal). The title resets on the next user submit.
+            if status != "finished":
+                self.set_title_state("error")
+                self.alert()
             # Issue 2 — dim completion line in conversation log
             _existing = self._skill_exec.get(run_id) or {}
             _elapsed = _now_monotonic() - _existing.get("start_time", _now_monotonic())
@@ -439,6 +484,10 @@ class ReynTUIApp(App):
         conv.render_user_message(text)
         # A4: snapshot cost/tokens/time at turn start
         self._record_turn_start()
+        # Out-of-band: a fresh user submit clears any prior "awaiting
+        # answer" / "error" title flag — the user is back at the
+        # keyboard, so the attention signal has done its job.
+        self.set_title_state(None)
         # Remember this message so the next skill run that fires can
         # tag itself with "triggered_by". Cleared / overwritten on each
         # subsequent submit, so a long-tail skill that finishes after
