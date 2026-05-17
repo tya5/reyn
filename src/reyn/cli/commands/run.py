@@ -87,7 +87,9 @@ def run(args: argparse.Namespace) -> None:
     loaded = load_skill_from_args(args)
 
     raw_input = _read_input(args)
-    initial_input = _parse_cli_input(raw_input)
+    initial_input = _parse_cli_input(
+        raw_input, default_type=_entry_input_type(loaded.skill),
+    )
 
     model, resolved_model = session.model_for(args)
     # output_language is Optional[str]. None propagates all the way down
@@ -176,12 +178,62 @@ def _read_input(args: argparse.Namespace) -> str:
     sys.exit(1)
 
 
-def _parse_cli_input(raw: str) -> dict:
-    """Accept JSON or natural language. Natural language → user_message artifact."""
+def _entry_input_type(skill) -> str | None:
+    """Return the artifact type name to wrap a bare-data CLI input dict with,
+    or None when the wrap isn't safe to apply automatically.
+
+    Safe to wrap when the entry phase has exactly one input artifact (no
+    ``anyOf`` union) and that artifact is declared ``wrapped: true`` (default)
+    so its compiled schema carries ``{type, data}`` envelope properties.
+
+    Skipped when:
+      - entry phase missing (defensive)
+      - input is an ``anyOf`` of multiple artifact types (= which type would
+        we wrap with? — leave to the user)
+      - artifact is declared ``wrapped: false`` (= no envelope; the bare dict
+        IS the artifact, not its inner data)
+    """
+    entry = skill.phases.get(skill.entry_phase)
+    if entry is None:
+        return None
+    schema = entry.input_schema or {}
+    if "anyOf" in schema:
+        return None
+    props = schema.get("properties") or {}
+    if "type" not in props or "data" not in props:
+        return None
+    return entry.input_schema_name
+
+
+def _parse_cli_input(raw: str, *, default_type: str | None = None) -> dict:
+    """Accept JSON or natural language and return a Reyn artifact dict.
+
+    Cases:
+      - **Non-JSON text** → wrapped as ``{type: user_message, data: {text}}``.
+      - **JSON dict already in envelope form** (= has a ``type`` key) →
+        passed through unchanged.
+      - **JSON dict in bare-data form + ``default_type`` provided** →
+        auto-wrapped as ``{type: default_type, data: <parsed>}``. This is
+        the path that lets ``reyn run index_docs '{"source":..., "path":...}'``
+        (README's RAG demo) work without forcing users to know the artifact
+        envelope; the skill loader supplies the target type via
+        ``_entry_input_type``.
+      - **Anything else** (JSON list, string, number, dict with no
+        ``default_type``) → passed through unchanged; downstream artifact
+        validation reports the mismatch.
+    """
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except json.JSONDecodeError:
         return {"type": "user_message", "data": {"text": raw}}
+
+    if (
+        isinstance(parsed, dict)
+        and "type" not in parsed
+        and default_type is not None
+    ):
+        return {"type": default_type, "data": parsed}
+    return parsed
 
 
 def _build_permission_resolver(config, shell_allowed: bool, unsafe_python: bool = False):
