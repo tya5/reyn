@@ -141,6 +141,25 @@ class InterventionWidget(Widget):
         choice_id = raw[1] if len(raw) > 1 else ""
         return {"label": label, "id": choice_id, "hotkey": "", "default": False}
 
+    @staticmethod
+    def _format_chip_label(label: str, hotkey: str) -> str:
+        """Render a chip label, avoiding a duplicate ``[h]`` prefix.
+
+        The producer-side factories in ``reyn.intervention_choices`` embed the
+        hotkey in the label itself (``"[y]es"``, ``"[A]lways"``, …) so the CLI
+        renderer can show the hint without consulting the separate ``hotkey``
+        field. When that same choice flows into the TUI chip we don't want to
+        double-prefix into ``"[y] [y]es"``. If the label already starts with
+        ``[<hotkey>]`` (case-sensitive — hotkeys are case-sensitive), pass it
+        through unchanged; otherwise prepend ``[h] `` so callers that supply
+        a bare label still get a visible hint.
+        """
+        if not hotkey:
+            return label
+        if label.startswith(f"[{hotkey}]"):
+            return label
+        return f"[{hotkey}] {label}"
+
     def compose(self) -> ComposeResult:
         yield Label(f"  {self._question}", classes="iv-question")
         if self._queued_extra > 0:
@@ -153,7 +172,7 @@ class InterventionWidget(Widget):
                 for choice in self._choices:
                     label = choice["label"]
                     hotkey = choice["hotkey"]
-                    display = f"[{hotkey}] {label}" if hotkey else label
+                    display = self._format_chip_label(label, hotkey)
                     variant = "primary" if choice["default"] else "default"
                     yield Button(
                         display,
