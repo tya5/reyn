@@ -413,6 +413,13 @@ class RightPanel(Widget):
     # ── preview pane ─────────────────────────────────────────────────────────
 
     def _toggle_preview(self) -> None:
+        # Refuse to open the preview pane on a tab that has nothing to show
+        # (e.g. agents tab with no running / recent skills, or memory tab
+        # with an empty SHARED bucket). Otherwise the user sees a blank
+        # `—` preview window with no obvious recovery, and has to press
+        # Space again to dismiss it.
+        if not self._preview_visible and not self._has_previewable_content():
+            return
         self._preview_visible = not self._preview_visible
         try:
             pane = self.query_one("#preview-pane", _PreviewPane)
@@ -423,6 +430,19 @@ class RightPanel(Widget):
                 pane.remove_class("preview-visible")
         except Exception as exc:
             logger.warning("right_panel toggle_preview failed: %s", exc)
+
+    def _has_previewable_content(self) -> bool:
+        """Whether the current tab has at least one item the preview pane
+        can render. Keys / cost tabs never have previews."""
+        if self._panel_type == "docs":
+            return bool(self._docs_files)
+        if self._panel_type == "events":
+            return bool(self._events_visible)
+        if self._panel_type == "memory":
+            return bool(self._memory_entries)
+        if self._panel_type == "agents":
+            return bool(self._agents_items)
+        return False
 
     def _update_preview(self) -> None:
         try:
