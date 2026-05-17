@@ -56,7 +56,7 @@ def test_extract_and_split_returns_path_list_without_content_read(tmp_path):
     return value or side-effecting the artifact). An empty-glob case is also
     tested to confirm no error is raised for missing files.
     """
-    from reyn.stdlib.skills.index_docs.chunkers import extract_and_split
+    from reyn.stdlib.skills.index_docs.chunkers_safe import extract_and_split
 
     # ── Case 1: real files ────────────────────────────────────────────────────
     (tmp_path / "a.md").write_text("hello world", encoding="utf-8")

@@ -14,12 +14,24 @@ from input alone — `math`, `json`, `re`, `hashlib`, `collections`, ...).
 
 What `mode: safe` rules out by *syntactic unreachability*:
 
-  - filesystem path I/O — `glob`, `os`, `pathlib`, `shutil`, `tempfile`
+  - file content I/O — `open` (banned builtin), `os.read` / `os.write`,
+    `pathlib.Path.read_text` / `write_text`, `shutil`, `tempfile`
   - network — `urllib`, `socket`, `http`, `ssl`, `requests`, `httpx`
   - subprocess / external command — `subprocess`, `os.system`, `popen`
   - environment — `os.environ`, `sys.argv` (= operator-injected state)
   - dynamic code — `exec`, `eval`, `compile`, `__import__`,
     `importlib`, file-reading codec / encoding loaders
+
+`glob` is admitted as a *restricted ambient source* — it exposes operator
+filesystem state (= the set of paths matching a pattern) but never reads
+file content. The carveout was made explicit by the 2026-05-15
+``R-PURE-MODE-REDEFINE`` stdlib audit, which signed off on stdlib
+``index_docs.extract_and_split`` (= ``mode: safe`` python step calling
+``glob.glob``) on the grounds that path enumeration without content read
+preserves the safe-mode contract for the step's *output* (= the path
+list; downstream content reads happen in a paired ``mode: unsafe`` step).
+See ``docs/deep-dives/audits/2026-05-15-pure-mode-stdlib-audit.md`` for
+the full reasoning.
 
 Authors who need *any* of the above must declare `mode: unsafe` (= stdlib
 auto-allowed via `reyn run`, user skills need `--allow-unsafe-python` or
@@ -69,6 +81,14 @@ PURE_STDLIB_ALLOWLIST: frozenset[str] = frozenset({
     "datetime",    # ambient: system clock via datetime.now(); also pure date arithmetic
     "calendar",    # pure: calendar arithmetic (grouped here; no system clock read at any call site)
     "zoneinfo",    # ambient: bundled IANA TZ database shipped with Python (static files)
+
+    # --- restricted ambient: filesystem path enumeration (no content read) ---
+    "glob",        # restricted: path-list reads only (= operator filesystem
+                   #             state, but content reads stay in mode: unsafe).
+                   #             Carveout endorsed by the 2026-05-15
+                   #             R-PURE-MODE-REDEFINE stdlib audit; see
+                   #             docs/deep-dives/audits/2026-05-15-pure-mode-
+                   #             stdlib-audit.md.
 
     # --- pure: data encoding and hashing ---
     "json",        # pure: JSON serialisation / deserialisation
