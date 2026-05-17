@@ -26,6 +26,9 @@ async def help_cmd(session: "object", args: str) -> None:
     for name, summary in rows:
         lines.append(f"  /{name:<{width}}  {summary}")
     lines.append("")
-    lines.append("Tab opens the command palette with the same list.")
+    lines.append(
+        "Type / to open the command palette. Tab inserts the highlighted "
+        "command (and keeps the cursor); Enter inserts + submits."
+    )
 
     await reply(session, "\n".join(lines))
