@@ -459,6 +459,13 @@ class OutboxRouter:
         self._app._mount_intervention(
             conv, msg.text, iv_id, choices, queued_extra=queued_extra,
         )
+        # Out-of-band signals: the agent is hard-blocked on a human answer,
+        # so a user in a background terminal tab needs to know to come
+        # back. The terminal title flips visible in the tab bar; the BEL
+        # gives an audio cue. Both reset when the user submits an answer
+        # (see InputBar.UserSubmitted path → set_title_state(None)).
+        self._app.set_title_state("awaiting answer")
+        self._app.alert()
 
     def _on_intervention_resolved(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -525,6 +532,11 @@ class OutboxRouter:
         conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"
+        # Out-of-band: flag the terminal title and ring the bell so a
+        # user with reyn in a background tab notices something failed.
+        # Reset on the next user submit.
+        self._app.set_title_state("error")
+        self._app.alert()
 
 
 __all__ = ["OutboxRouter"]
