@@ -655,6 +655,17 @@ class ConversationView(Widget):
         if row is not None:
             row.set_phase(phase, visit=visit)
 
+    def update_skill_detail(self, run_id: str, detail: str) -> None:
+        """Update the row's in-phase detail (=``⤷ <detail>`` segment).
+
+        No-op if the row isn't mounted yet (a detail trace can arrive
+        before the first ``phase_started``; the row will be lazy-mounted
+        on the next phase event and will pick up subsequent details).
+        """
+        row = self._skill_rows.get(run_id)
+        if row is not None:
+            row.set_detail(detail)
+
     def finish_skill_row(
         self, run_id: str, *, success: bool = True, reason: str = "",
     ) -> None:
