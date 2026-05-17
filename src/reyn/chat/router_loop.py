@@ -901,6 +901,65 @@ class RouterLoop:
                             chain_id=self.chain_id,
                         )
                         _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
+                # H3-ablation race fix: detect invoke_skill / invoke_action
+                # spawn-ack and exit the router loop instead of accumulating
+                # the spawn-ack into messages for the next iteration.
+                #
+                # Race condition observed in dogfood batch 32 §4.2 (= W3 S1
+                # file_read_via_chat) and confirmed at the OS layer by the
+                # H3 ablation (= patch flipped only that single scenario;
+                # K/N = 1/22 at batch scale, but the fix is structural and
+                # model-agnostic — H1 strong-model ablation reproduced the
+                # same "Understood" hallucination under gemini-2.5-flash,
+                # confirming this is OS-layer, not LLM-layer).
+                #
+                # Mechanism: when invoke_skill / invoke_action (= FP-0034
+                # universal catalog dispatches that spawn a background skill
+                # via spawn_for_router) returns status="spawned", continuing
+                # the loop appends the spawn-ack as role=tool. The
+                # (answered) workaround in llm.py:821 then injects a
+                # user-role prompt, causing the LLM to compose a final
+                # reply before the skill output is available — producing
+                # the generic "Understood" / "I will notify you" output
+                # observed in B32.
+                #
+                # Fix: exit on spawn-ack so _handle_skill_completed
+                # re-engages the router with the real skill output via the
+                # [task_completed] inbox message. This is exactly the
+                # invoke_skill / invoke_action analogue of the existing
+                # async_count exit for delegate_to_agent (= adjacent
+                # FP-0012 spawn-ack pattern).
+                #
+                # NOTE: dispatch_tool wraps invoker results as
+                # ``{"status": "ok", "data": <inner_result>}``. The inner
+                # result (= spawn-ack from spawn_for_router) has
+                # ``status="spawned"`` nested under "data". The check
+                # below covers both wrapped and unwrapped shapes.
+                #
+                # This check runs AFTER routing_decided so that the P6
+                # audit event still fires even on the early-exit path.
+                _spawn_ack_count = sum(
+                    1
+                    for tc, r in zip(tool_calls, tool_results)
+                    if (
+                        tc["function"]["name"] in ("invoke_skill", "invoke_action")
+                        and isinstance(r, dict)
+                        and (
+                            r.get("status") == "spawned"
+                            or (
+                                isinstance(r.get("data"), dict)
+                                and r["data"].get("status") == "spawned"
+                            )
+                        )
+                    )
+                )
+                if _spawn_ack_count:
+                    host.events.emit(
+                        "invoke_skill_spawn_ack_exit",
+                        spawn_ack_count=_spawn_ack_count,
+                        chain_id=self.chain_id,
+                    )
+                    return self._total_usage
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).

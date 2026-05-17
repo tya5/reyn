@@ -118,20 +118,31 @@ def test_user_message_chitchat_appended_to_history(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
-    """Tier 1 framework boundary: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking), round 2 produces ack in outbox. AsyncMock required for multi-round e2e path.
+    """Tier 1 framework boundary: ChatSession→RouterLoop invoke_skill — round 1 spawns skill (FP-0012 non-blocking) and the router exits on spawn-ack. AsyncMock required for the e2e path.
 
-    Post-FP-0012 contract: invoke_skill returns the spawn-ack
-    ``{status: "spawned", run_id, chain_id, note}`` synchronously and
-    the actual skill task runs in the background. The router LLM gets
-    the ack as tool_result and produces a 1-sentence acknowledgment.
-    Completion narration arrives later via the ``skill_completed``
-    inbox kind, which is exercised by
+    Post-H3-ablation contract (= dogfood B32 §4.2 + H3 ablation diagnosis):
+    invoke_skill / invoke_action returning the spawn-ack
+    ``{status: "spawned", run_id, chain_id, note}`` causes the router
+    loop to exit immediately rather than continuing for a second LLM
+    round. The previous behaviour — accumulating the spawn-ack into
+    messages and asking the LLM to compose an acknowledgment — was the
+    race condition observed in B32 W3 S1 (= `(answered)` workaround in
+    llm.py:821 caused the LLM to hallucinate a generic reply before the
+    skill output was available).
+
+    The skill_completed inbox path (= ``_handle_skill_completed``
+    re-engaging the router with the real skill output) is the
+    sanctioned reply path post-H3. That path is exercised by
     ``test_skill_completed_inbox_enqueued_on_finish`` in
     test_session_invariants.py.
 
-    Script: round 1 invoke_skill (spawn), round 2 ack text.
-    Mock chat-mode dispatch via ``host.spawn_skill``.
-    Assert spawn fired and outbox has the ack text.
+    Script: round 1 invoke_action returning a spawn-ack; no round 2
+    needed (= router exits on spawn-ack via the H3 check). Mock
+    chat-mode dispatch via ``host.spawn_skill``.
+
+    Assertions: spawn fired; ``invoke_skill_spawn_ack_exit`` event
+    emitted; outbox carries no agent message in this turn (ack arrives
+    later via the inbox path tested elsewhere).
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -144,13 +155,10 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
             "action_name": "skill__some_skill",
             "args": {"input": {"type": "test", "data": {}}},
         }}]),
-        _text_result("Started some_skill — I'll let you know when it finishes."),
+        # No round 2: H3 patch exits the loop on spawn-ack.
     ]
 
     async def run():
-        # FP-0012: chat-mode invoke_skill goes through host.spawn_skill,
-        # which returns the spawn-ack dict synchronously. RouterLoop
-        # forwards it to the LLM as tool_result; the LLM acknowledges.
         async def fake_adapter_spawn_skill(*, skill, input, chain_id):
             spawn_called["called"] = True
             return {
@@ -172,10 +180,25 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     _run(run())
 
     assert spawn_called["called"], "Skill should have been spawned"
+    # H3 contract: outbox carries no agent message on the spawn turn.
+    # The acknowledgment / narration arrives later via skill_completed
+    # inbox → _handle_skill_completed.
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
-    assert len(agent_msgs) == 1
-    assert "Started some_skill" in agent_msgs[0].text
+    assert len(agent_msgs) == 0, (
+        f"Post-H3 contract: spawn-ack turn should NOT produce an outbox "
+        f"agent message (ack comes via skill_completed inbox). Got: "
+        f"{[m.text[:80] for m in agent_msgs]}"
+    )
+    # H3 audit event: the spawn-ack exit must have fired exactly once.
+    emitted = [
+        e for e in session._chat_events.all()
+        if e.type == "invoke_skill_spawn_ack_exit"
+    ]
+    assert len(emitted) == 1, (
+        f"Expected exactly one invoke_skill_spawn_ack_exit event; "
+        f"got {len(emitted)}: {emitted!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

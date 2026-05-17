@@ -50,4 +50,16 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     #   this turn where the LLM did try a non-catalog tool (e.g. list_skills).
     # chain_id: for cross-agent tracing (P6)
     "chat_turn_completed_inline": frozenset({"chain_id", "decision", "tool_calls_attempted"}),
+    # invoke_skill_spawn_ack_exit: router exited the loop because invoke_skill /
+    #   invoke_action returned a spawn-ack (= background skill started). The
+    #   actual reply will come later via the [task_completed] inbox path when
+    #   _handle_skill_completed re-engages the router. Without this exit, the
+    #   spawn-ack accumulates into messages, the (answered) workaround injects a
+    #   user prompt, and the LLM composes a reply before the skill output is
+    #   available — producing generic "Understood" / "I will notify you"
+    #   hallucinations observed in dogfood B32 §4.2.
+    # spawn_ack_count: how many invoke_skill / invoke_action calls in this
+    #   tool_calls batch produced spawn-ack (= usually 1).
+    # chain_id: for cross-agent tracing (P6)
+    "invoke_skill_spawn_ack_exit": frozenset({"chain_id", "spawn_ack_count"}),
 }
