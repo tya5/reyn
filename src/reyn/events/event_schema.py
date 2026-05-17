@@ -38,4 +38,16 @@ EVENT_AUDIT_REQUIREMENTS: dict[str, frozenset[str]] = {
     # outcome: "success" | "error" based on the tool result status
     # chain_id: for cross-agent tracing (P6)
     "routing_decided": frozenset({"action_name", "source", "outcome", "chain_id"}),
+    # FP-0034 B28-Q2 Case A: Inline LLM reply (no catalog dispatch in this turn).
+    # Emitted by RouterLoop when the turn ends with a text reply and no
+    # routing_decided event was emitted in the same turn.  Mutually exclusive
+    # with routing_decided per turn.
+    # decision: "inline_reply" — LLM answered conversationally without invoking
+    #   any catalog-dispatched tool.  "clarification_asked" and "decline" are
+    #   reserved in the schema for future analytics but NOT emitted by the router
+    #   yet (both collapse to "inline_reply" at emit time).
+    # tool_calls_attempted: count of tool_call rounds in earlier iterations of
+    #   this turn where the LLM did try a non-catalog tool (e.g. list_skills).
+    # chain_id: for cross-agent tracing (P6)
+    "chat_turn_completed_inline": frozenset({"chain_id", "decision", "tool_calls_attempted"}),
 }

@@ -56,8 +56,11 @@ scenarios:
           - lists recent pull requests OR explains that the github MCP server is not configured
           - does not silently fail — replies with actionable information either way
       events:
-        must_emit:
+        # B28-Q2: LLM may explain MCP not configured inline (chat_turn_completed_inline)
+        # or dispatch via routing_decided. Accept either path.
+        must_emit_any:
           - { type: routing_decided, count: ">=1" }
+          - { type: chat_turn_completed_inline, count: ">=1" }
       outcome_prediction:
         verified: 0.2
         inconclusive: 0.55
