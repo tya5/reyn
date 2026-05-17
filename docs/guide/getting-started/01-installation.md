@@ -68,7 +68,7 @@ This creates `reyn.yaml` and `reyn.local.yaml.example` if they don't exist.
 
 ```bash
 reyn skills          # lists stdlib + project + local skills
-reyn run text_summarizer "reyn is a workflow OS for LLMs."
+reyn run direct_llm "reyn is a workflow OS for LLMs."
 ```
 
 If the second command produces a summary and exits cleanly, you're ready for [02 — Chat mode](02-chat-mode.md).

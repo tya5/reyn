@@ -29,7 +29,7 @@ reyn chat
 何が起こるか:
 
 1. `skill_router`（stdlib Skill）が意図を分類します。
-2. 最もマッチする Skill を選びます — 「README を要約」 のような要求なら、 典型的には `read_local_files` のあとに `text_summarizer` が走るか、 モデルが返答内でインライン要約するなら `read_local_files` 単独で完結することもあります。
+2. 最もマッチする Skill を選びます — 「README を要約」 のような要求なら、 典型的には `read_local_files` のあとに `direct_llm` が走るか、 モデルが返答内でインライン要約するなら `read_local_files` 単独で完結することもあります。
 3. Skill が実行され、 プロンプトの下に答えが表示されます。
 4. セッションは継続。 次のターンを入力できます。
 

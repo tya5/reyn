@@ -42,7 +42,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 Run a stdlib skill with natural-language input:
 
 ```bash
-reyn run text_summarizer "reyn is a workflow OS for LLMs."
+reyn run direct_llm "reyn is a workflow OS for LLMs."
 ```
 
 Run with structured JSON input:
@@ -54,13 +54,13 @@ reyn run my_skill '{"type": "topic_input", "data": {"topic": "ml"}}'
 Run from stdin:
 
 ```bash
-echo "summarize this text" | reyn run text_summarizer
+echo "summarize this text" | reyn run direct_llm
 ```
 
 Replay events afterwards:
 
 ```bash
-reyn run text_summarizer "..." --events
+reyn run direct_llm "..." --events
 ```
 
 Run a meta-skill that needs shell access:

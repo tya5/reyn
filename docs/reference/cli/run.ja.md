@@ -42,7 +42,7 @@ reyn run [OPTIONS] [SKILL] [INPUT]
 自然言語入力で stdlib Skill を実行:
 
 ```bash
-reyn run text_summarizer "reyn is a workflow OS for LLMs."
+reyn run direct_llm "reyn is a workflow OS for LLMs."
 ```
 
 構造化 JSON 入力で実行:
@@ -54,13 +54,13 @@ reyn run my_skill '{"type": "topic_input", "data": {"topic": "ml"}}'
 stdin から実行:
 
 ```bash
-echo "summarize this text" | reyn run text_summarizer
+echo "summarize this text" | reyn run direct_llm
 ```
 
 実行後にイベントをリプレイ:
 
 ```bash
-reyn run text_summarizer "..." --events
+reyn run direct_llm "..." --events
 ```
 
 シェルアクセスが必要なメタ Skill を実行:
