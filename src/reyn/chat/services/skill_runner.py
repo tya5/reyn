@@ -454,6 +454,15 @@ class SkillRunner:
             run_id=run_id, skill_name=skill_name,
             subscribers=[ChatEventForwarder(skill_name, self._outbox, run_id=run_id)],
         )
+        # B33 W6 NEW-1 fix: track the terminal (status, data) pair so
+        # _enqueue_skill_completed fires even when an intermediate await
+        # (e.g. _put_outbox) raises before the explicit enqueue call.
+        # The finally clause guarantees the inbox message reaches the
+        # session loop on every non-cancelled terminal path — regardless
+        # of which sub-path (LLM-abort / phase_no_progress / budget /
+        # success) produced the terminal status.
+        _terminal_status: str | None = None
+        _terminal_data: dict = {}
         try:
             result = await agent.run(
                 skill, input_artifact,
@@ -466,45 +475,53 @@ class SkillRunner:
             await self._put_outbox(OutboxMessage(
                 kind="status", text="cancelled", meta=meta,
             ))
-            raise
+            raise  # CancelledError: no completion enqueue (task was discarded)
         except Exception as exc:
+            # WorkflowAbortedError (= LLM-abort / phase_no_progress / no
+            # previous phase) and all other terminal errors land here.
+            _terminal_status = "error"
+            _terminal_data = {"error": str(exc)}
             self._events.emit("skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc))
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"failed: {exc}", meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="error", data={"error": str(exc)},
-            )
-            return
-
-        if result.status == "budget_exceeded":
-            self._events.emit(
-                "skill_run_failed",
-                run_id=run_id, skill=skill_name,
-                error="budget_exceeded",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=result.error or "budget exceeded",
-                meta=meta,
-            ))
-            await self._enqueue_skill_completed(
-                run_id=run_id, skill=skill_name, chain_id=chain_id,
-                status="budget_exceeded",
-                data={"error": result.error or "budget exceeded"},
-            )
-            return
-
-        self._accumulate(result)
-        self._events.emit(
-            "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
-        )
-        await self._enqueue_skill_completed(
-            run_id=run_id, skill=skill_name, chain_id=chain_id,
-            status=result.status or "finished",
-            data=result.data or {},
-        )
+            try:
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"failed: {exc}", meta=meta,
+                ))
+            except Exception:  # noqa: BLE001 — outbox failure must not suppress enqueue
+                pass
+        else:
+            if result.status == "budget_exceeded":
+                _terminal_status = "budget_exceeded"
+                _terminal_data = {"error": result.error or "budget exceeded"}
+                self._events.emit(
+                    "skill_run_failed",
+                    run_id=run_id, skill=skill_name,
+                    error="budget_exceeded",
+                )
+                try:
+                    await self._put_outbox(OutboxMessage(
+                        kind="error",
+                        text=result.error or "budget exceeded",
+                        meta=meta,
+                    ))
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                self._accumulate(result)
+                self._events.emit(
+                    "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
+                )
+                _terminal_status = result.status or "finished"
+                _terminal_data = result.data or {}
+        finally:
+            # Guaranteed enqueue on all non-cancelled terminal paths.
+            # _enqueue_skill_completed has its own try/except so it never
+            # raises; the guard avoids a spurious enqueue on CancelledError
+            # (where _terminal_status is still None).
+            if _terminal_status is not None:
+                await self._enqueue_skill_completed(
+                    run_id=run_id, skill=skill_name, chain_id=chain_id,
+                    status=_terminal_status, data=_terminal_data,
+                )
 
 
 __all__ = ["SkillRunner"]
