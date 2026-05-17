@@ -1197,12 +1197,15 @@ class ReynTUIApp(App):
         )
 
     def action_voice_cancel(self) -> None:
-        """Esc — cancel voice recording, or dismiss the last ErrorBox.
+        """Esc — cancel voice recording, dismiss ErrorBox, or close panel.
 
         Priority:
           1. If recording → cancel recording.
           2. Else if ErrorBoxes visible → dismiss the topmost one.
-        Gated by check_action so this never fires when neither condition holds.
+          3. Else if side panel is visible → close it.
+
+        Gated by check_action so this never fires when no condition holds
+        (allowing InputBar's own Esc binding to handle slash-picker dismissal).
         """
         if self._voice_input is not None and self._voice_input.is_recording:
             self._voice_input.cancel()
@@ -1211,9 +1214,13 @@ class ReynTUIApp(App):
             return
         try:
             conv = self.query_one("#conversation", ConversationView)
-            conv.dismiss_last_error()
+            if conv.has_error_boxes():
+                conv.dismiss_last_error()
+                return
         except Exception:
             pass
+        if self._panel_visible:
+            self.action_toggle_panel()
 
     def _voice_config(self):
         """Best-effort fetch of the user's voice config block."""
@@ -1235,8 +1242,13 @@ class ReynTUIApp(App):
             except Exception:
                 return False
         if action == "voice_cancel":
-            # Intercept Esc while recording, OR when ErrorBoxes need dismissal.
+            # Intercept Esc when there's an overlay/recording to dismiss:
+            # voice recording, ErrorBoxes, or the side panel. Without any
+            # of those, Esc falls through so InputBar can handle the
+            # slash-picker dismissal.
             if self._voice_input is not None and self._voice_input.is_recording:
+                return True
+            if self._panel_visible:
                 return True
             try:
                 conv = self.query_one("#conversation", ConversationView)
