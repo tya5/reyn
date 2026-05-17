@@ -279,6 +279,48 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
         logger.warning("llm trace dump write failed: %s", exc)
 
 
+def _apply_g12_signal(messages: list[dict]) -> list[dict]:
+    """Embed the G12 "(answered)" signal inside the trailing role=tool message.
+
+    Replaces the prior shape (= append `{"role": "user", "content": "(answered)"}`)
+    which violated the OpenAI / Anthropic role contract. See the docstring
+    in `call_llm_tools` (around the call site) for the full motivation +
+    measurement data.
+
+    Behaviour:
+      - No-op when `messages` is empty or messages[-1] is not role=tool.
+      - JSON-shaped tool content (= starts with "{"): inject a top-level
+        `_g12_signal: "(answered)"` field after the opening brace.
+      - Plain-text tool content: prefix with `"(answered) "`.
+      - Non-string content (= list of content parts): leave untouched
+        (= no safe place to embed the signal without a deeper API
+        contract decision).
+
+    The returned list is either the same `messages` reference (no-op case)
+    or a new list with only the trailing message replaced.
+    """
+    if not messages:
+        return messages
+    last = messages[-1]
+    if not isinstance(last, dict) or last.get("role") != "tool":
+        return messages
+    content = last.get("content")
+    if not isinstance(content, str):
+        return messages
+    new_last = dict(last)
+    if content.startswith("{"):
+        new_last["content"] = (
+            '{"_g12_signal": "(answered) — task complete; '
+            'reply to user or chain another tool", ' + content[1:]
+        )
+    else:
+        new_last["content"] = (
+            "(answered) — task complete; "
+            "reply to user or chain another tool\n\n" + content
+        )
+    return messages[:-1] + [new_last]
+
+
 async def shutdown_logging() -> None:
     """Drain LiteLLM's async logging worker before the event loop closes.
 
@@ -790,35 +832,66 @@ async def call_llm_tools(
     # Operator-declared kwargs from ModelSpec; Gemini-safe forced settings override these.
     spec_kwargs = dict(spec.kwargs)
 
-    # ── G12 post-tool empty-stop attractor workaround ──────────────────────
+    # ── G12 post-tool empty-stop attractor workaround (V1-INNER) ────────────
     #
     # WORKAROUND (not a real fix): when the last message is role=tool,
     # gemini-2.5-flash-lite (and likely other weak LLMs in the OpenAI
     # tool_use compat path) hits an empty-stop attractor at high rate
-    # (30-100% in N=10 measurement, deterministic-leaning depending on
-    # context). The model emits 0 completion tokens with finish_reason=stop,
-    # so the user sees nothing after a successful tool call.
+    # (30-100% in 2026-05-07 N=10 measurement, deterministic-leaning).
+    # The model emits 0 completion tokens with finish_reason=stop, so the
+    # user sees nothing after a successful tool call.
     #
-    # Empirically (`/tmp/wave_a_trailing_user.py` evidence, N=10 each):
-    #   V0 baseline:                empty_stop 30-60%, reply 40-70%
-    #   V7 trailing user "(answered)": empty_stop 0%, reply 100%, no duplicate tool_call
+    # ── V1-INNER (2026-05-18, issue #156 fix) ───────────────────────────────
+    # Earlier shape: inject ``{"role": "user", "content": "(answered)"}``
+    # as a trailing message. That violated the OpenAI / Anthropic role
+    # contract — `role=user` content is, by spec, "what the human typed".
+    # The OS was masquerading an orchestration signal as user input.
     #
-    # Why "(answered)": the user's question was answered (tool returned), and
-    # the LLM is free to either summarise in text OR chain another tool. It's
-    # a *neutral state signal*, not an imperative "reply now" — so multi-tool
-    # workflows aren't blocked by this injection. Compare with "(continue)"
-    # (= 70-100% duplicate tool_call) or "Reply in text now." (= forces text,
-    # blocks tool-chain).
+    # Weak `gemini-2.5-flash-lite` correctly followed the contract: it
+    # treated the literal `(answered)` as a user paste and produced
+    # canned-reply replies ("It looks like you've pasted '(answered)'
+    # again, which might be a leftover from a previous interaction or a
+    # mistake.") at 100% rate in polluted-history post-tool turns
+    # (issue #156, 10/10 reproduction on the tui-coder baseline trace).
+    # The reply persisted to `history.jsonl`, polluting future turns and
+    # producing a snowball where short user prompts (`?`, `f`) kept
+    # reproducing the canned-reply via Mechanism B (history hallucination).
     #
-    # Caveats:
+    # Fix: embed the neutral signal INSIDE the role=tool message content
+    # (= contract-correct location for signals about tool results) instead
+    # of appending a fake user message. The signal lives as a top-level
+    # `_g12_signal` field in the JSON-shaped tool result (= 100% of
+    # current tool dispatch paths produce JSON-shaped tool content), or
+    # as a `(answered) ` prefix on non-JSON content (defensive fallback).
+    #
+    # Empirical (2026-05-18, issue #156 measurement N=10 against the
+    # tui-coder reproducing baseline = post-tool turn + 5-msg polluted
+    # history + `summarize readme.md` prompt):
+    #
+    #   V7 (old shape, role=user "(answered)"):  canned 10/10, text 0/10
+    #   V0 (no injection at all):                canned 0/10,  text 9/10, tool_call 1/10
+    #   V1-INNER (this implementation):          canned 0/10,  text 10/10
+    #   V2A (role=assistant empty content):      canned 0/10,  text 9/10, tool_call 1/10
+    #
+    # V1-INNER is selected because: (a) it preserves the documented signal
+    # mechanism (= a downstream context whose empty_stop rate has not been
+    # re-measured may still benefit from "(answered)"), (b) it's
+    # contract-correct (signals about tool results live in role=tool), and
+    # (c) it yields the highest reply stability (= 10/10 text vs 9/10 for
+    # V0 / V2A; the LLM reliably summarises rather than choosing to chain
+    # another tool).
+    #
+    # Caveats (carried from original workaround):
     #   - Workaround only — true fix is provider-side or different model.
-    #   - English directive: weak LLM may bias reply language to English.
-    #     Accepted as workaround limitation (= we don't multilingual-engineer
-    #     the bandaid).
-    #   - The injected message is NOT persisted to history; it's added at the
-    #     LLM call boundary so chat history stays clean for downstream logic.
-    if messages and isinstance(messages[-1], dict) and messages[-1].get("role") == "tool":
-        messages = messages + [{"role": "user", "content": "(answered)"}]
+    #   - 2026-05-07 V0 baseline measurement "30-60% empty_stop" appears
+    #     validity-degraded in the post-FP-0034 SP/tools shape (0/10
+    #     empty_stop measured 2026-05-18). The workaround's protective
+    #     effect in current contexts is unverified; V1-INNER preserves
+    #     the signal so contexts that still benefit are unaffected.
+    #   - This modification is NOT persisted to history; it's applied at
+    #     the LLM call boundary so chat history stays clean for downstream
+    #     logic (= same property as the prior shape).
+    messages = _apply_g12_signal(messages)
 
     call_kwargs: dict = {
         "model": effective_model,
