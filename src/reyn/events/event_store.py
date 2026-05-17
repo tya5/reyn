@@ -58,8 +58,22 @@ class EventStore:
         if self._active is None or self._should_rotate():
             self._open_new_file(now=datetime.now())
         line = json.dumps(event.model_dump(mode="json"), ensure_ascii=False)
-        with self._active.open("a", encoding="utf-8") as f:  # type: ignore[union-attr]
-            f.write(line + "\n")
+        try:
+            with self._active.open("a", encoding="utf-8") as f:  # type: ignore[union-attr]
+                f.write(line + "\n")
+        except FileNotFoundError:
+            # The active file (or its parent directory) was deleted by an
+            # external process (e.g. dogfood scripts that wipe .reyn/events/
+            # between scenarios while the server is still live).
+            # Recovery: reset _active and open a fresh file, then retry once.
+            # If the second attempt also fails (e.g. the directory is truly
+            # gone and cannot be recreated), re-raise so the caller sees the
+            # error rather than silently dropping events.
+            self._active = None
+            self._active_started_at = None
+            self._open_new_file(now=datetime.now())
+            with self._active.open("a", encoding="utf-8") as f:  # type: ignore[union-attr]
+                f.write(line + "\n")
 
     def iter_all(self) -> Iterator[Event]:
         """Yield every event in this store in chronological order.

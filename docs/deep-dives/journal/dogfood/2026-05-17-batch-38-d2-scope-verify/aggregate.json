@@ -1,0 +1,76 @@
+{
+  "batch": "B38",
+  "date": "2026-05-17",
+  "head_at_dispatch": "1d5042d",
+  "head_at_dispatch_parent_fixes": ["29a0c31", "5e05b9b", "1d5042d"],
+  "scenarios_total": 58,
+  "verdict_totals": {
+    "verified": 23,
+    "inconclusive": 15,
+    "refuted": 21,
+    "blocked": 0
+  },
+  "verified_rate": 0.397,
+  "delta_vs_b37": "-3V mathematical (= measurement noise dominant, structural wins under-counted)",
+  "workers": {
+    "W1_chat_router_smoke":      {"v": 4, "i": 0, "r": 3, "b": 0, "delta_vs_b37": 0,  "ars_scope_expanded": true,  "hardcoded_message_removed": true, "ghost_rejected": true,  "notable": "G31 ε2 dilution at S7 capability decline (V→R), +86% description length from B37 baseline"},
+    "W2_stdlib_skills_core":     {"v": 2, "i": 2, "r": 5, "b": 0, "delta_vs_b37": 0,  "ars_scope_expanded": true,  "wrapper_arg_canonical_s1": "n/a (wrong path)", "ghost_rejected": "partial (rank-23 lucky)", "notable": "INC→REF x3 internal regression, surface migration"},
+    "W3_control_ir_ops":         {"v": 2, "i": 1, "r": 6, "b": 0, "delta_vs_b37": -1, "ars_scope_expanded": true,  "s8_judge_verdict_emitted": false, "notable": "ARS guides arg names not action selection, incomplete-args attractor surfaces (S7 sources missing)"},
+    "W4_permissions_and_safety": {"v": 3, "i": 5, "r": 0, "b": 0, "delta_vs_b37": 0,  "s1_arg_canonical": true, "s6_arg_canonical": "n/a (action-level drift)", "notable": "S1 file__write canonical ✓, S6 drift: source_id (B36) -> source_name (B37) -> wrong action skill__index_events (B38)"},
+    "W5_multi_agent_and_mcp":    {"v": 2, "i": 1, "r": 4, "b": 0, "delta_vs_b37": 0,  "s3_arg_canonical": true, "hardcoded_message_removed": true, "mcp_install_misroute": false, "notable": "CRITICAL: cold-start peer canonical CONFIRMED (B37 message -> B38 request), 97 peer agents in ARS"},
+    "W6_plan_mode_fp0011":       {"v": 3, "i": 5, "r": 3, "b": 0, "delta_vs_b37": -1, "r_web_routing_gap_closed": 3, "r_web_scenarios_verified": 0, "mcp_search_dispatched": true, "plan_emitted": "2/3", "notable": "R-WEB mcp_search routing chain CLOSED (2-batch structural chain: e5ecadb gate + 5e05b9b seed), residual = MCP external infra"},
+    "W7_long_session_v1":        {"v": 7, "i": 0, "r": 0, "b": 0, "delta_vs_b37": 0, "c1_clean_turns": "35/35", "ars_scope_expanded": true, "description_length_impact": "ok (3104ch, latency p50/p90 identical to B37)", "notable": "Single-agent 35-turn accumulated context still 100% clean (= stronger test than B37 per-scenario isolation)"}
+  },
+  "structural_wins_primary_data": [
+    {"finding": "D2-wrapper scope expansion landed", "evidence": "All 7 workers confirmed ARS block lists session-visible actions (header 'all session-visible actions'), W5 listed 97 peer agents"},
+    {"finding": "Cold-start peer canonical", "worker": "W5", "evidence": "B37 args={message:...} -> B38 args={request:...} on agent.peer__researcher cold invoke"},
+    {"finding": "S1 file__write canonical", "worker": "W4", "evidence": "B36/B37 text -> B38 content, arg-normalize non-firing"},
+    {"finding": "R-WEB mcp_search routing chain CLOSED", "worker": "W6", "evidence": "B37 zero tool_calls -> B38 routing_decided{action=skill__mcp_search}+skill_run_spawned on 3 R-WEB scenarios"},
+    {"finding": "Ghost rejection (qualified-name corruption)", "worker": "W1", "evidence": "B37-OBS-1 default_api.web__search 0/17 LLM requests, web_search skip-log on every turn"},
+    {"finding": "C1 stability + zero latency degradation", "worker": "W7", "evidence": "35/35 clean at +44% description length, latency p50/p90 identical to B37"}
+  ],
+  "g31_lesson_direct_evidence": {
+    "epsilon2_dilution": {
+      "worker": "W1",
+      "scenario": "S7 (image generation request)",
+      "evidence": "B37 V (decline) -> B38 R (asked for details). Hypothesis: ARS description growth (+86% from B37 baseline 2150ch -> 3991ch) dilutes implicit capability-constraint signal.",
+      "g31_match": "ε2 (invoke_action stub) C-en rt 4->10 saturation pattern, but inverted direction (= bloat instead of strip, same dilution mechanism)"
+    },
+    "surface_fungibility": {
+      "evidence": "B37 W2 S1 source_id vs source mismatch + W4 S6 source_id->source_name drift NOT REPRODUCIBLE in B38: LLM took different wrong paths (W2 S1: operation__create_index direct invoke, W4 S6: skill__index_events{mode:drop} routing). Drift migrated from arg-key layer to action-name layer.",
+      "g31_match": "10/10 candidates tested: removing specifics causes LLM to substitute remaining vocabulary; surface area is partly fungible"
+    },
+    "incomplete_args_attractor": {
+      "worker": "W3",
+      "scenario": "S7 (recall)",
+      "evidence": "ARS expansion made rag.operation__recall visible. LLM attempts it but omits required 'sources' arg -> KeyError. B37 LLM had replied inline avoiding the error entirely.",
+      "structural_implication": "ARS scope expansion exposes previously-unreachable actions but does not guarantee LLM produces complete args. ARS guides arg NAMES but does not enforce REQUIRED arg presence."
+    }
+  },
+  "new_structural_hypothesis": {
+    "name": "ARS effect domain: arg names guide, action selection unchanged",
+    "n_observations": 3,
+    "supporting_workers": ["W3 S2 (LLM file__list selection unchanged despite file__glob/grep in ARS)", "W4 S6 (LLM skill__index_events instead of rag.operation__drop_source)", "W2 S1 (LLM operation__create_index direct invoke instead of routing via invoke_action)"],
+    "implication": "D2-wrapper / ARS scope expansion solves wrapper-path arg canonical (= structural arg-key fix verified), but LLM action preference is governed by separate mechanism (description content + frequency + scenario priors). Next batch fix candidates should NOT target ARS layer for action selection issues."
+  },
+  "ghost_rejection_scope_limitation": {
+    "finding": "_is_valid_qualified_name (B38 fix) only validates structural shape (category/separator); does not validate action existence in current registry",
+    "evidence_worker": "W2",
+    "concrete_case": "skill__create_skill passes structural check (valid category + separator + non-empty entry), only escaped invocation because freq+recency rank=23 outside top-20",
+    "residual_risk": "Usage pattern shift to <23 actions could re-expose the ghost",
+    "fix_candidate_b39": "Add registry-existence check after structural validation"
+  },
+  "judge_phase_fix_status": {
+    "fix_landed": "29a0c31 (inline->artifact reference)",
+    "unit_tests": "3/3 Tier 2 pass + 20/20 existing",
+    "e2e_retest": "untestable via W3 S8 scenario (= scenario asks LLM to evaluate inline text, judge_phase requires real artifact file). LLM passed 'artifact_path' literal -> 10 retries -> workflow_aborted. Scenario design mismatch, not fix failure.",
+    "follow_up": "B39+ scenario redesign needed for e2e verification"
+  },
+  "delta_v_decomposition": {
+    "real_os_layer_wins": "+4V worth (W6 phase_no_progress paths +2, W4 S1 canonical, W5 S3 canonical, W6 R-WEB routing) — most absorbed by INC since infra unreachable",
+    "g31_eps2_dilution": "-1V (W1 S7)",
+    "surface_migration_noise": "-3V (W3 S7 incomplete args, W4 S6 action drift, W2 INC->REF x3)",
+    "worktree_freshness_continued": "-1 to -2V (B37 retro identified gap continues)",
+    "net": "-3V mathematical with structural wins under-counted by measurement noise"
+  }
+}

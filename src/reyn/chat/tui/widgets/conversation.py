@@ -38,14 +38,17 @@ from __future__ import annotations
 
 import time
 
+from rich.cells import cell_len
+from rich.console import RenderableType
 from rich.markdown import Markdown as RichMarkdown
+from rich.padding import Padding
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import RichLog, Static
 
 from reyn.chat.outbox import OutboxMessage
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _AMBER, _CORAL
 
 from .error_box import ErrorBox
 from .intervention import InterventionWidget
@@ -56,17 +59,71 @@ from .streaming_row import StreamingRow
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
 _FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
+# /copy ring-buffer depth. Far enough back that the user can grab "the
+# reply two turns ago" — the typical "wait, that one was useful" recovery
+# pattern — without growing memory unboundedly across long sessions.
+_RECENT_REPLIES_MAX = 10
+# RichLog ring-buffer size. Bumped from the historical 5000 → 20000 to push
+# the truncation boundary well past realistic session lengths (~400-800
+# turns at typical reply sizes). Storage stays modest at average line width;
+# turn anchors below are drop-aware so even pathological sessions that DO
+# cross the boundary don't break Ctrl+P/N navigation.
+_RICHLOG_MAX_LINES = 20_000
+_NAME_COL_COLS = 4  # display-cell width reserved for the speaker label column
+# Hanging indent for message bodies (= the lines under each header). The
+# header is ``HH:MM  reyn ───`` — 5 (timestamp) + 2 (gap) = 7 cells before
+# the name column starts. Indenting the body to column 7 visually nests
+# replies under their author's name and, crucially, makes wrap continuations
+# of a long body line visually distinct from the start of a new turn
+# (which begins at column 0). Without this, a wrapped URL or code-line
+# looks identical to a new ``HH:MM …`` header on a quick scan.
+_BODY_INDENT_COLS = 7
+
+
+def _pad_to_cells(s: str, target_cells: int) -> str:
+    """Right-pad ``s`` with spaces so its terminal column width >= target.
+
+    ``str.ljust`` counts code points, but terminal columns count display
+    cells — a CJK character (or full-width punctuation, or an emoji)
+    occupies 2 columns per glyph. Using ``ljust(4)`` on an agent name
+    like ``"アリア"`` leaves it at 6 cells when the next column expects
+    a fixed 4-cell offset, breaking the dash-rule alignment between
+    user (``"you "``) and agent headers.
+
+    Returns ``s`` unchanged when it already meets or exceeds the target;
+    truncation would split a wide glyph and is left to the caller.
+    """
+    width = cell_len(s)
+    if width >= target_cells:
+        return s
+    return s + " " * (target_cells - width)
+
+
+def _indent_body(renderable: RenderableType) -> RenderableType:
+    """Wrap ``renderable`` in a left-only Padding for the body indent column.
+
+    Used at every body write site (agent markdown, user text, system text,
+    fallback formatted lines). Header writes intentionally bypass this
+    helper so the timestamp / name / dash rule stay anchored at column 0.
+    """
+    return Padding(renderable, (0, 0, 0, _BODY_INDENT_COLS))
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
-    """Timestamp + label + dash rule for a new message turn."""
+    """Timestamp + label + dash rule for a new message turn.
+
+    Column layout: ``HH:MM`` (5) + 2 spaces + label (>=4 cells) + 1 space +
+    dashes. The dash count flexes with the actual cell width of ``label``
+    so wide-character agent names don't push the line past _DASH_TOTAL.
+    """
     t = Text()
     t.append(time.strftime("%H:%M"), style="dim #666666")
     t.append("  ")
-    padded = label.ljust(4)  # "you " / "reyn" — fixed 4-char column
+    padded = _pad_to_cells(label, _NAME_COL_COLS)
+    name_cells = cell_len(padded)
     t.append(padded, style=name_style)
     t.append(" ")
-    dashes = max(1, _DASH_TOTAL - 5 - 2 - 4 - 1)  # = 26
+    dashes = max(1, _DASH_TOTAL - 5 - 2 - name_cells - 1)
     t.append("─" * dashes, style=dash_style)
     return t
 
@@ -147,15 +204,28 @@ class ConversationView(Widget):
         self._last_speaker_at: float = 0.0
         # Empty-state (B5)
         self._has_first_message = False
-        # Turn navigation (B4) — log line indexes where each agent turn begins
+        # Turn navigation (B4) — absolute line positions for each turn header.
+        # "Absolute" = ``log._start_line + len(log.lines)`` at write time, NOT
+        # the bare ``len(log.lines)`` value. RichLog uses a ring buffer; once
+        # the session crosses _RICHLOG_MAX_LINES, ``log._start_line`` grows
+        # and ``log.lines`` shifts. Bare-index anchors silently rot the moment
+        # the first line is dropped; absolute positions stay stable and we
+        # convert back to the current ``log.lines`` index on read.
         self._turn_anchors: list[int] = []
+        # One-shot flag so the "earlier history trimmed" warning fires at most
+        # once per session (= the first time Ctrl+P/N is used after trim).
+        self._trim_warned = False
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
         self._last_long_reply: str | None = None
-        # Full text of the most recent agent reply (any length). Consumed by
-        # the /copy slash command so users don't have to fight the TUI's
-        # mouse-capture to grab text out of the log.
-        self._last_reply_full: str | None = None
+        # Recent agent replies (newest last), capped at ``_RECENT_REPLIES_MAX``.
+        # Consumed by the /copy slash command — users can grab the latest reply
+        # (``/copy``) or any of the last N (``/copy 2``, ``/copy 3``, …) without
+        # fighting the TUI's mouse-capture to drag-select text out of the log.
+        # Single-slot storage silently lost every prior reply on each new turn;
+        # a bounded ring keeps the immediate history reachable without growing
+        # memory unboundedly across long sessions.
+        self._recent_replies: list[str] = []
         # Track whether user has scrolled up (suppress auto-scroll while scrolled)
         self._user_scrolled = False
         # Issue 5 — track mounted ErrorBoxes for Escape-to-dismiss
@@ -164,11 +234,26 @@ class ConversationView(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield RichLog(highlight=False, markup=False, wrap=True, max_lines=5000, id="log")
-        # B5: empty-state hint, removed on first message
+        # ``can_focus = False`` is the load-bearing piece: RichLog inherits
+        # ``can_focus = True`` from ScrollView, so a stray click on the conv
+        # pane (or Shift+Tab from the input bar) silently shifts focus here.
+        # The log is append-only and accepts no typed input, so the user then
+        # types into nothing until they click the input bar again. Ctrl+P/N
+        # turn-nav already calls ``log.scroll_to`` without needing focus, so
+        # disabling focus loses no real capability.
+        log = RichLog(highlight=False, markup=False, wrap=True,
+                      max_lines=_RICHLOG_MAX_LINES, id="log")
+        log.can_focus = False
+        yield log
+        # B5: empty-state hint, removed on first message.
+        # The hint is the first thing a new user sees, so it has to do double
+        # duty: announce the core key-binds AND describe the side panel — the
+        # most sophisticated piece of the TUI, which is hidden by default and
+        # otherwise has zero discoverability on first run.
         yield Static(
-            "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
-            "[bold]Ctrl+L[/] clear  ·  ↑ history  ·  [bold]Ctrl+P/N[/] turn",
+            "  Type [bold]/[/] for commands  ·  [bold]/help[/] for a guide\n"
+            "  [bold]Ctrl+B[/] side panel ([dim]keys · events · agents · memory · cost · docs[/])  ·  "
+            "[bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn",
             id="empty-hint",
             markup=True,
         )
@@ -183,6 +268,70 @@ class ConversationView(Widget):
             return self.query_one("#sticky-status", StickyStatus)
         except Exception:
             return None
+
+    def on_mount(self) -> None:
+        """Wire a scroll watcher so user scroll-up suppresses auto-scroll.
+
+        Previously the ``_user_scrolled`` flag existed but nothing ever
+        set it: every ``log.write(...)`` snapped the view back to the
+        bottom even mid-read. Watching ``scroll_y`` from a single reactive
+        callback distinguishes "user is reading old content" (= scroll_y
+        below max) from "stream just appended" (= scroll_y already at
+        max because Textual's auto_scroll moved it there). The watcher
+        only flips ``auto_scroll`` on the boundary crossing, so writes
+        during user-read keep their place and writes after user-return
+        immediately auto-scroll again.
+        """
+        log = self._log()
+        try:
+            self.watch(log, "scroll_y", self._on_log_scroll_y)
+        except Exception:
+            # If Textual's cross-widget watch API changes, fail open
+            # (= keep historic auto-scroll behaviour) rather than crash mount.
+            pass
+
+    def _snap_to_bottom(self) -> None:
+        """Force the log to the bottom and re-arm auto-scroll.
+
+        Called from "I'm re-engaging" entry points (``render_user_message``,
+        ``clear``) so the user's previous scroll-up state doesn't pin them
+        to old content after they've explicitly taken an action.
+        """
+        try:
+            log = self._log()
+        except Exception:
+            return
+        try:
+            log.auto_scroll = True
+            log.scroll_end(animate=False)
+        except Exception:
+            pass
+        self._user_scrolled = False
+
+    def _on_log_scroll_y(self, old: float, new: float) -> None:
+        """Flip ``auto_scroll`` and ``_user_scrolled`` based on at-bottom check.
+
+        The ``-1`` threshold absorbs float-coord noise from Textual's
+        scroll math; treating "within 1 cell of the bottom" as "at the
+        bottom" matches how the user perceives the boundary.
+        """
+        try:
+            log = self._log()
+        except Exception:
+            return
+        at_bottom = new >= log.max_scroll_y - 1
+        # Only re-assign when the value actually changes so we don't churn
+        # Textual's reactive system every scroll tick.
+        if at_bottom:
+            if not log.auto_scroll:
+                log.auto_scroll = True
+            if self._user_scrolled:
+                self._user_scrolled = False
+        else:
+            if log.auto_scroll:
+                log.auto_scroll = False
+            if not self._user_scrolled:
+                self._user_scrolled = True
 
     # ── empty state ───────────────────────────────────────────────────────────
 
@@ -212,7 +361,7 @@ class ConversationView(Widget):
             # results. Ctrl+P / Ctrl+N then walk through every header in
             # order, which matches the user's mental model of "jump to
             # the previous turn" better than "jump only to agent replies".
-            self._turn_anchors.append(len(log.lines))
+            self._turn_anchors.append(self._absolute_line_position(log))
             # Cap to last 200 to avoid unbounded growth (long sessions)
             if len(self._turn_anchors) > 200:
                 self._turn_anchors = self._turn_anchors[-200:]
@@ -265,13 +414,20 @@ class ConversationView(Widget):
         text = _format_message(msg)
         if text is not None:
             self._consume_empty_hint()
-            self._write_log(text)
+            self._write_body(text)
 
     def render_user_message(self, text: str) -> None:
-        """Render a freshly submitted user message with grouped header."""
+        """Render a freshly submitted user message with grouped header.
+
+        Submitting a message is an "I'm re-engaging" signal — even if the
+        user had previously scrolled up to read history, they now want to
+        see the conversation continue. Snap back to the bottom and re-arm
+        auto-scroll so subsequent agent reply chunks track the tail.
+        """
+        self._snap_to_bottom()
         self._consume_empty_hint()
         self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
-        self._write_log(Text(text))
+        self._write_body(Text(text))
         self._write_log(Text(""))
 
     def _render_system_message(self, msg: OutboxMessage) -> None:
@@ -287,9 +443,8 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         self.hide_status()
         self._maybe_write_header("system", "system", "bold #888888", "#444444")
-        log = self._log()
         for line in (msg.text or "").splitlines() or [""]:
-            log.write(Text(line))
+            self._write_body(Text(line))
         self._write_log(Text(""))
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
@@ -304,7 +459,10 @@ class ConversationView(Widget):
         self.hide_status()  # turn finished — clear "thinking…" sticky
         meta_pfx = _meta_prefix(msg.meta)
         label = f"reyn  {meta_pfx}".rstrip() if meta_pfx else "reyn"
-        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
+        # _AMBER for agent identity (header label) — distinct from _CORAL
+        # which is reserved for interactive affordances (/expand, picker
+        # selection caret, panel cursor ▶) and "you are here" indicators.
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
         if msg.text:
             self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
@@ -319,21 +477,31 @@ class ConversationView(Widget):
         self._last_long_reply so expand_last_reply() can flush the rest.
         Replies that fit are rendered as-is and clear any pending fold.
 
-        Side effect: stores ``text`` in ``self._last_reply_full`` so the
-        /copy slash command can hand it to the system clipboard (no need
-        to fight TUI mouse-capture for selection).
+        Side effect: appends ``text`` to ``self._recent_replies`` (capped
+        at ``_RECENT_REPLIES_MAX``) so the /copy slash command can hand
+        any of the last N replies to the system clipboard.
         """
         # Always remember the full text — independent of fold thresholds.
-        self._last_reply_full = text
+        self._recent_replies.append(text)
+        if len(self._recent_replies) > _RECENT_REPLIES_MAX:
+            self._recent_replies = self._recent_replies[-_RECENT_REPLIES_MAX:]
         log = self._log()
+        # Detect that a prior fold is about to be invalidated. The single-slot
+        # ``_last_long_reply`` is replaced (or cleared) by every new agent
+        # reply, so any old fold hint up-screen still reads "type /expand to
+        # show" while /expand itself silently no-ops. Flag it inline so the
+        # user can tell the previous fold is no longer reachable.
+        had_prev_fold = self._last_long_reply is not None
         lines = text.split("\n")
         if len(lines) <= _FOLD_THRESHOLD_LINES:
-            log.write(RichMarkdown(text))
+            self._write_body(RichMarkdown(text))
+            if had_prev_fold:
+                self._write_fold_expired_marker()
             self._last_long_reply = None
             return
         preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
         remaining = len(lines) - _FOLD_THRESHOLD_LINES
-        log.write(RichMarkdown(preview))
+        self._write_body(RichMarkdown(preview))
         hint = Text()
         hint.append(
             f"  [ … {remaining} more lines · type ",
@@ -342,7 +510,22 @@ class ConversationView(Widget):
         hint.append("/expand", style=f"bold {_CORAL}")
         hint.append(" to show ]", style=f"dim {_CORAL}")
         log.write(hint)
+        if had_prev_fold:
+            self._write_fold_expired_marker()
         self._last_long_reply = text
+
+    def _write_fold_expired_marker(self) -> None:
+        """Emit a dim marker noting that an earlier fold's /expand is gone.
+
+        The fold stash is a single slot — every new agent reply either
+        clears it (short reply) or replaces it (next long reply). Either
+        way the earlier fold's /expand becomes unreachable; this marker
+        makes that visible chronologically so users don't keep typing
+        /expand into a no-op.
+        """
+        marker = Text()
+        marker.append("  [ ↑ earlier fold cleared ]", style=f"dim {_CORAL}")
+        self._log().write(marker)
 
     def expand_last_reply(self) -> bool:
         """Append the full text of the most recently truncated reply.
@@ -356,7 +539,7 @@ class ConversationView(Widget):
         marker = Text()
         marker.append("  ↓ expanded", style=f"dim {_CORAL}")
         log.write(marker)
-        log.write(RichMarkdown(self._last_long_reply))
+        self._write_body(RichMarkdown(self._last_long_reply))
         log.write(Text(""))
         self._last_long_reply = None
         return True
@@ -371,11 +554,36 @@ class ConversationView(Widget):
         Used by the /copy slash command. Returns None when there has been no
         agent reply in this session yet.
         """
-        return self._last_reply_full
+        return self._recent_replies[-1] if self._recent_replies else None
+
+    def reply_at(self, n: int) -> str | None:
+        """Return the n-th most recent agent reply (1-indexed; n=1 is latest).
+
+        Returns None when ``n`` is out of range (≤ 0 or beyond the buffered
+        history). The /copy slash uses this to surface older replies that the
+        single-slot predecessor silently lost on every new turn.
+        """
+        if n <= 0 or n > len(self._recent_replies):
+            return None
+        return self._recent_replies[-n]
+
+    def recent_reply_count(self) -> int:
+        """Number of agent replies currently held in the /copy ring buffer."""
+        return len(self._recent_replies)
 
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
+
+    def _write_body(self, renderable: RenderableType) -> None:
+        """Append a body renderable at the hanging-indent column.
+
+        Wraps ``renderable`` in left-only ``Padding`` so wrap continuations
+        line up under the speaker name and stay visually distinct from the
+        column-0 turn header. Used for agent markdown, user / system text,
+        and any other content that belongs "under" the most recent header.
+        """
+        self._log().write(_indent_body(renderable))
 
     # ── streaming support ─────────────────────────────────────────────────────
 
@@ -383,7 +591,8 @@ class ConversationView(Widget):
         """Start a streaming agent message row. Returns the row widget."""
         self._consume_empty_hint()
         label = agent_name if agent_name else "reyn"
-        self._maybe_write_header("reyn", label, "bold " + _CORAL, "#5a2020")
+        # Same agent-identity styling as _render_agent_markdown (_AMBER).
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
@@ -446,6 +655,17 @@ class ConversationView(Widget):
         if row is not None:
             row.set_phase(phase, visit=visit)
 
+    def update_skill_detail(self, run_id: str, detail: str) -> None:
+        """Update the row's in-phase detail (=``⤷ <detail>`` segment).
+
+        No-op if the row isn't mounted yet (a detail trace can arrive
+        before the first ``phase_started``; the row will be lazy-mounted
+        on the next phase event and will pick up subsequent details).
+        """
+        row = self._skill_rows.get(run_id)
+        if row is not None:
+            row.set_detail(detail)
+
     def finish_skill_row(
         self, run_id: str, *, success: bool = True, reason: str = "",
     ) -> None:
@@ -494,10 +714,16 @@ class ConversationView(Widget):
         )
         self.mount(box)
         self._error_boxes.append(box)
-        try:
-            box.scroll_visible()
-        except Exception:
-            pass
+        # Same scroll-respect rule as ``mount_intervention``: when the
+        # user has scrolled up to read prior context, an async error
+        # arriving must not yank the view to the bottom; the error box
+        # carries its own non-color cue (left-bar) and the user can
+        # discover it on their next scroll-down without being interrupted.
+        if not self._user_scrolled:
+            try:
+                box.scroll_visible()
+            except Exception:
+                pass
         return box
 
     def has_error_boxes(self) -> bool:
@@ -537,7 +763,18 @@ class ConversationView(Widget):
             queued_extra=queued_extra,
         )
         self.mount(widget)
-        widget.scroll_visible()
+        # Only yank the user down to the new widget when they were
+        # already at the tail. If they've scrolled up to read history,
+        # an async intervention arriving must not jerk the view — they
+        # can see the prompt waiting at the bottom via the scrollbar /
+        # auto_scroll once they return on their own, and ``hide_status``
+        # above already replaced the live "thinking…" so they have a
+        # clear signal that the run is waiting for them.
+        if not self._user_scrolled:
+            try:
+                widget.scroll_visible()
+            except Exception:
+                pass
         return widget
 
     # ── cost suffix (A4) ──────────────────────────────────────────────────────
@@ -545,17 +782,17 @@ class ConversationView(Widget):
     def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
         """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
 
-        Uses Rich's ``justify="right"`` so the suffix tracks the actual content
-        width at render time. A hard-coded space prefix would either centre the
-        suffix on wider terminals or push it off-screen when the right panel is
-        open and the conv pane shrinks.
+        Both pieces are load-bearing: ``Text(..., justify="right")`` only
+        right-aligns when the renderer is told a width to fill, and
+        ``RichLog.write`` defaults to ``expand=False`` — without
+        ``expand=True`` the suffix silently renders at column 0.
         """
         t = Text(
             f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
             style="dim #666666",
             justify="right",
         )
-        self._write_log(t)
+        self._log().write(t, expand=True)
 
     # ── turn navigation (B4) ──────────────────────────────────────────────────
 
@@ -567,14 +804,65 @@ class ConversationView(Widget):
         """Scroll the log to the next agent turn anchor."""
         self._jump_to_relative_anchor(+1)
 
+    @staticmethod
+    def _absolute_line_position(log: RichLog) -> int:
+        """Return the absolute write-position (drop-aware) for the next line.
+
+        ``log._start_line`` is RichLog's cumulative dropped-lines counter
+        (private but stable). Combined with ``len(log.lines)``, it yields
+        a monotonic absolute index that survives the ring-buffer trim —
+        unlike the bare ``len(log.lines)`` value, which silently rebases
+        the moment ``max_lines`` is exceeded.
+        """
+        return getattr(log, "_start_line", 0) + len(log.lines)
+
+    def _resolve_anchors_to_current_view(self, log: RichLog) -> list[int]:
+        """Project stored absolute anchors back into current ``log.lines`` indexes.
+
+        Anchors whose target line has been trimmed (= ``absolute - start < 0``)
+        are silently dropped: jumping to a turn that no longer exists in the
+        log would scroll to whatever line happens to occupy that slot now,
+        which is exactly the bug the bare-index version exhibited.
+        """
+        start = getattr(log, "_start_line", 0)
+        return [a - start for a in self._turn_anchors if a - start >= 0]
+
+    def _maybe_warn_about_trimmed_history(self, log: RichLog) -> None:
+        """Surface a one-shot dim status when older history has been trimmed.
+
+        We only fire once per session — repeated Ctrl+P presses past the
+        top would otherwise spam the sticky status with the same message.
+        ``/clear`` resets the flag so a fresh session can warn again.
+        """
+        if self._trim_warned:
+            return
+        start = getattr(log, "_start_line", 0)
+        if start <= 0:
+            return
+        self._trim_warned = True
+        sticky = self._sticky()
+        if sticky is not None:
+            try:
+                sticky.show(
+                    f"↑ earlier history trimmed ({start:,} lines)",
+                    kind="general",
+                )
+            except Exception:
+                pass
+
     def _jump_to_relative_anchor(self, delta: int) -> None:
         if not self._turn_anchors:
             return
         log = self._log()
+        anchors = self._resolve_anchors_to_current_view(log)
+        if not anchors:
+            self._maybe_warn_about_trimmed_history(log)
+            return
+        # If the trim swallowed some anchors, surface that to the user.
+        if len(anchors) < len(self._turn_anchors):
+            self._maybe_warn_about_trimmed_history(log)
         # Find the nearest anchor >= or <= current scroll y
         cur_y = log.scroll_y
-        # Pick the most recent one before/after cur_y
-        anchors = self._turn_anchors
         if delta < 0:
             target = None
             for a in reversed(anchors):
@@ -610,7 +898,16 @@ class ConversationView(Widget):
         self._last_speaker = ""
         self._last_speaker_at = 0.0
         self._turn_anchors.clear()
+        self._trim_warned = False
         self._last_long_reply = None
+        # Re-arm auto-scroll: clear() puts the user back at a fresh blank
+        # log, and any prior scroll-up state is meaningless once the
+        # content it was reading is gone.
+        self._user_scrolled = False
+        try:
+            self._log().auto_scroll = True
+        except Exception:
+            pass
         # Hide sticky status
         self.hide_status()
         # Restore the empty-state hint so the next session looks fresh.
@@ -646,6 +943,8 @@ def _format_message(msg: OutboxMessage) -> Text | None:
 def _format_intervention_line(msg: OutboxMessage) -> Text:
     """Fallback inline line for intervention when no widget callback set."""
     t = Text()
-    t.append("  Aria asks  ", style="bold " + _CORAL)
+    # Intervention prefix is agent-identity (= the agent asking a question),
+    # so it matches the agent header colour (_AMBER), not the action colour.
+    t.append("  Aria asks  ", style="bold " + _AMBER)
     t.append(msg.text, style="#ffcc88")
     return t

@@ -326,7 +326,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
         agent_state_dir=agent_state_dir,
     )
 
-    # Re-launch via the existing ChatSession._spawn_resumed_plan path.
+    # Re-launch via the PlanRunner.spawn_resumed_plan path.
     decision = PlanResumeDecision(
         plan=resume_plan,
         action="retry_pending",
@@ -334,7 +334,7 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
         child_actions={},
     )
     try:
-        await session._spawn_resumed_plan(decision=decision)
+        await session._plan_runner.spawn_resumed_plan(decision=decision)
     except Exception as exc:  # noqa: BLE001
         await reply_error(
             session,

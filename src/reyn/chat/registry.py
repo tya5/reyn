@@ -341,7 +341,8 @@ class AgentRegistry:
           4. Call coordinator.apply_decisions → cancel children flagged,
              discard non-resumable plans (= surfaces outbox notice).
           5. For each launchable decision, call
-             ``session._spawn_resumed_plan`` → PlanRuntime task starts.
+             ``session._plan_runner.spawn_resumed_plan`` → PlanRuntime
+             task starts.
 
         Errors at any step degrade gracefully: a bad config falls back
         to defaults; an unloadable artifact yields forced discard with
@@ -436,10 +437,12 @@ class AgentRegistry:
         )
         for decision in launchable:
             try:
-                await session._spawn_resumed_plan(decision=decision)
+                await session._plan_runner.spawn_resumed_plan(
+                    decision=decision,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "_spawn_resumed_plan failed for %s: %r",
+                    "spawn_resumed_plan failed for %s: %r",
                     decision.plan.plan_id, exc,
                 )
 

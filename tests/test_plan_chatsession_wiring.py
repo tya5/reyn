@@ -239,7 +239,7 @@ async def test_spawn_plan_task_emits_plan_summary_before_execution(
     )
     stub_runtime = _StubRuntime(plan)
 
-    await session.spawn_plan_task(
+    await session._plan_runner.spawn_plan_task(
         plan_id="test_summary", runtime=stub_runtime, chain_id="plan_test_summary",
     )
 

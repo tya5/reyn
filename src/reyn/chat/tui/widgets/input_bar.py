@@ -316,6 +316,24 @@ class InputBar(Widget):
         ta.move_cursor((0, len(new_text)))
         picker.hide()
 
+    def on_slash_picker_clicked(self, event: SlashPicker.Clicked) -> None:
+        """Click on a picker row — insert the highlighted command.
+
+        The picker's ``on_click`` already moved its own ``_selected`` to
+        the clicked row before posting the message, so this just routes
+        the existing confirm path. Mirrors the Tab key flow exactly:
+        ``/<name> `` lands in the TextArea with the cursor past the
+        trailing space, and the picker hides itself.
+        """
+        picker = self._picker()
+        ta = self._textarea()
+        if picker is not None and ta is not None:
+            self._confirm_picker(picker, ta)
+            # Re-focus the TextArea — the click may have implicitly
+            # shifted focus context even though SlashPicker is
+            # ``can_focus = False``, and the user expects to keep typing.
+            ta.focus()
+
     # ── submit / history ─────────────────────────────────────────────────────
 
     def _submit(self, ta: TextArea) -> None:

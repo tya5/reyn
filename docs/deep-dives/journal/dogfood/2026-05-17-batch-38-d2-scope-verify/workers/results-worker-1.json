@@ -1,0 +1,157 @@
+{
+  "batch": "B38",
+  "worker": 1,
+  "scenario_set": "chat_router_smoke",
+  "head": "1d5042d",
+  "port": 8081,
+  "agent_prefix": "dogfood-b38-1-s",
+  "generated": "2026-05-17",
+  "verdicts": {
+    "V": 4,
+    "I": 0,
+    "R": 3,
+    "B": 0
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "sN": "S1",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Reply mentions skills by name (skill__skill_builder, list_actions, invoke_action, file__, web__), agents, and chat capabilities. Inline reply — no direct_llm artifact, but artifact check is not blocking for inline responses. B37 was R due to vague reply; B38 S1 is V."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "sN": "S2",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Correct, comprehensive idempotency explanation. Unusual routing: tried ghost 'web_search' (rejected), then delegated to agent.peer__dogfood-b38-1-s7 via invoke_action, which did a web search for idempotency definition. Final reply factually correct. routing_decided emitted for peer delegation. No direct_llm artifact (peer chain)."
+    },
+    {
+      "id": "skill_discovery_request",
+      "sN": "S3",
+      "verdict": "R",
+      "reply_rubric": "PASS",
+      "events_pass": false,
+      "artifact_pass": false,
+      "note": "Reply correctly lists 16 skills with descriptions (PASS). routing_decided NOT emitted — used list_actions tool then inline reply. must_emit routing_decided not satisfied. Consistent with B37 prediction (refuted=1.0) and B37 W1 S3 result."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "sN": "S4",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": true,
+      "note": "Full skill run success: invoke_action(skill__word_stats_demo) via invoke_action wrapper. 44 chars/1 line/~10 tokens. routing_decided, skill_run_spawned, skill_run_completed all emitted. word_stats_demo artifact present."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "sN": "S5",
+      "verdict": "R",
+      "reply_rubric": "FAIL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Router asked for clarification ('どのようなテーマや雰囲気の詩をご希望ですか？') instead of writing a poem. Reply rubric fails. Events pass: chat_turn_completed_inline emitted (satisfies must_emit_any). B37 was I (poem produced after clarification); B38 produced no poem at all."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "sN": "S6",
+      "verdict": "V",
+      "reply_rubric": "PASS",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Turn 1: inline explanation of list comprehension syntax. Turn 2: correct code examples (squares, even_squares) with pronoun resolved to list comprehension topic. invoke_action(web__search 'Python list comprehension example') + web__fetch (failed, graceful fallback). No permission_denied."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "sN": "S7",
+      "verdict": "R",
+      "reply_rubric": "FAIL",
+      "events_pass": true,
+      "artifact_pass": false,
+      "note": "Router asked 'どのような画像を生成しますか？ 画像の内容について...' — solicited image details instead of declining. Did NOT politely decline or explain image generation is unavailable. Regression vs. B37 W1 S7 (V: clean polite decline). chat_turn_completed_inline emitted, no permission_denied."
+    }
+  ],
+  "d2_ars_scope_verification": {
+    "angle_1_ars_scope_expanded": true,
+    "ars_entry_count": 33,
+    "description_length_chars": 3991,
+    "description_length_vs_commit_claim": "commit claimed 2150->3080 (+43%); actual observed: 3991 chars (higher due to 8 peer agents enumerated)",
+    "key_actions_present": {
+      "file__write": true,
+      "rag.operation__drop_source": true,
+      "agent.peer__default": true,
+      "agent.peer__dogfood-b38-1-s2": true,
+      "mcp.operation__drop_server": true,
+      "mcp.tool__": false
+    },
+    "note_mcp_tool_absent": "No mcp.tool__ entries because no MCP tools are installed in this session. mcp.operation__ (drop_server) IS present.",
+    "angle_2_hardcoded_message_removed": true,
+    "hardcoded_message_evidence": "Searched for \"args={'message':\" in invoke_action description — NOT found. Confirmed removed.",
+    "angle_3_direct_alias_schemas_non_empty": true,
+    "direct_alias_examples": {
+      "skill__skill_builder": "3 props (skill_name, description, goal)",
+      "skill__skill_improver": "9 props"
+    },
+    "ghost_rejected": true,
+    "ghost_aliases_found_in_toolsets": [],
+    "ghost_rejection_evidence": "web.log: '[reyn] action_usage: skipping invalid alias web_search — not in current action registry' (appears on every turn). No default_api.* or skill__create_skill in any of 17 LLM requests."
+  },
+  "b37_obs1_regression_check": {
+    "b37_obs1_default_api_web_search": "RESOLVED",
+    "requests_checked": 17,
+    "default_api_found": false,
+    "note": "B37-OBS-1 (default_api.web__search as spurious tool in toolset) does not appear in any of 17 B38 router LLM requests. The ghost rejection at seed load (5e05b9b) appears effective."
+  },
+  "b38_new_findings": [
+    {
+      "id": "B38-OBS-1",
+      "title": "S5 poem clarification attractor persists (no poem at all vs. B37 after-clarification)",
+      "severity": "LOW",
+      "description": "S5 (短い詩を書いてください): router asked for theme/atmosphere clarification instead of writing a poem directly. B37 produced a poem after clarification (I). B38 produced no poem in the observed turn (R). Likely same underlying attractor — LLM asks for clarification on ambiguous creative tasks. Not a B38 regression per se (same attractor, single-turn observation).",
+      "hypothesis": "Router treats creative poetry as under-specified without theme; prefers to ask before executing."
+    },
+    {
+      "id": "B38-OBS-2",
+      "title": "S7 image generation not declined — regression vs. B37",
+      "severity": "MED",
+      "description": "S7 (画像を生成してください): B37 W1 produced a clean polite decline. B38 W1 asked 'どのような画像を生成しますか？ 画像の内容について、できるだけ詳しく教えてください。' — soliciting image details rather than declining. Single-shot N=1, pre-conclusion checklist applied: this is a single observation, not confirmed as a consistent regression.",
+      "pre_conclusion_checklist": {
+        "q1_observations_listed": "1 observation: B38 W1 S7 asked for image details instead of declining",
+        "q2_primary_or_inference": "primary data from A2A response",
+        "q3_falsifying_data_checked": "B37 W1 S7 was V (clean decline) — but different model call, different session context",
+        "q4_infra_captures": "A2A response is direct primary data",
+        "q5_all_N_inspected": "N=1 in B38; cannot confirm pattern from 1 observation"
+      },
+      "hypothesis": "ARS scope expansion (+43% description length) may shift LLM attention toward 'how to execute' rather than 'whether to execute' for ambiguous requests. Needs retest with N>=3 to confirm."
+    },
+    {
+      "id": "B38-OBS-3",
+      "title": "S2 peer delegation via invoke_action(agent.peer__s7) — unexpected routing",
+      "severity": "LOW",
+      "description": "S2 (冪等の意味): router first attempted ghost alias 'web_search' (rejected), then called invoke_action with agent.peer__dogfood-b38-1-s7. S7 performed a web search for '冪等とは' and returned results. Final reply was correct. The peer delegation path is exercised — ARS scope expansion makes peer agents visible — but the s7 agent's context was then contaminated (S7's agent now has idempotency history before receiving the image-generation request).",
+      "hypothesis": "action_usage.jsonl has web_search as a hot alias from prior session; router tried it first (rejected), then fell back to action catalog. ARS enumeration made agent.peer__s7 visible as an option — unexpected for a factual Q&A."
+    }
+  ],
+  "cost": {
+    "total_usd": 0.012801,
+    "total_tokens": 125527,
+    "llm_calls": 18,
+    "per_model": {
+      "gemini-2.5-flash-lite": {"usd": 0.012801, "tokens": 121586, "calls": 17},
+      "openai/gemini-2.5-flash-lite": {"usd": 0.0, "tokens": 3941, "calls": 1}
+    }
+  },
+  "vs_b37": {
+    "V_delta": 0,
+    "I_delta": -1,
+    "R_delta": 1,
+    "B_delta": 0,
+    "note": "B37 W1 was V=4, I=1, R=2, B=0. B38 W1 is V=4, I=0, R=3, B=0. S1 improved R->V, S5 degraded I->R, net delta 0V. S7 result comparable (B37 V, B38 R — possible regression but N=1)."
+  }
+}

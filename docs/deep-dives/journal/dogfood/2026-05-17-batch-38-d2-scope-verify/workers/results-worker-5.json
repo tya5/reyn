@@ -1,0 +1,169 @@
+{
+  "batch": 38,
+  "worker": 5,
+  "head": "1d5042d",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "run_date": "2026-05-17",
+  "port": 8085,
+  "server_cwd": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2",
+  "worktree": "/private/tmp/reyn-worktrees/b38-5",
+  "summary": {
+    "verified": 2,
+    "inconclusive": 1,
+    "refuted": 4,
+    "blocked": 0
+  },
+  "vs_b37": {
+    "delta_v": 0,
+    "b37": {"verified": 2, "inconclusive": 2, "refuted": 3, "blocked": 0}
+  },
+  "b38_angles": {
+    "angle_1_s3_cold_start_peer_retest": {
+      "result": "VERIFIED",
+      "b37_arg_used": "message",
+      "b38_arg_used": "request",
+      "arg_canonical": true,
+      "routing_source": "hot_list_alias",
+      "ars_entry_present": "agent.peer__dogfood-b38-5-peer-researcher: {request}",
+      "description_body_hardcoded_message_removed": true,
+      "description_body_excerpt": "AGENT DELEGATION: For peer agent delegation, use action_name='agent.peer__<agent_name>' with the canonical args shown in the ACTION ARG SCHEMAS block below (e.g. {request: ...}). Use when task is outside available actions but matches a peer agent's role, or when user explicitly addresses a named agent.",
+      "ars_block_header": "ACTION ARG SCHEMAS (canonical keys for all session-visible actions):",
+      "tool_call_event": {
+        "tool": "agent.peer__researcher",
+        "args": {"request": "FP-0001の概要を要約してください。"}
+      }
+    },
+    "angle_2_mcp_scope": {
+      "mcp_operation_in_ars": true,
+      "mcp_server_in_ars": false,
+      "mcp_tool_in_ars": false,
+      "note": "mcp.server__ and mcp.tool__ absent from ARS when no MCP servers configured — expected behavior. Static ops include mcp.operation__drop_server only. Dynamic mcp.server__/mcp.tool__ entries appear only when sessions have configured servers.",
+      "ars_mcp_entry_found": "mcp.operation__drop_server: {clear_secrets, scope, server}"
+    },
+    "angle_3_w5_peer_error_envelope": {
+      "s3_error_envelope": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry.",
+        "available_agents_present": true
+      },
+      "non_regression": "VERIFIED"
+    },
+    "angle_4_mcp_install_misroute": {
+      "observed": false,
+      "s6_behavior": "inline_reply_asking_what_to_install",
+      "routing_decided": 0,
+      "note": "B35 §4.4 routing collision NOT observed. S6 did not route to mcp_search. Inline refusal same as B37."
+    }
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": "list_actions",
+      "tool_args": {"filter": "github", "category": ["mcp.server"]},
+      "tool_result": {"items": [], "total": 0},
+      "reply_excerpt": "MCP レジストリで \"github\" に一致するサーバーは見つかりませんでした。検索語を変更して再度お試しください。",
+      "notes": "Events FAIL: routing_decided=0, skill_run_spawned=0. LLM used list_actions(mcp.server) + inline reply. No alternatives suggested. Same character as B37."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "result": "inconclusive",
+      "events_pass": true,
+      "events_pass_via": "chat_turn_completed_inline",
+      "routing_decided": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": null,
+      "reply_excerpt": "申し訳ありませんが、利用可能なツールの中に「github MCP サーバー」という名前のツールや、GitHub の Pull Request を一覧する直接的な機能を持つものはありません。GitHub の情報を取得するには、web__search ツールを使用して...",
+      "notes": "Events pass via must_emit_any (chat_turn_completed_inline). Rubric partially met: explains MCP not configured, no hallucination. Inline reply with no tool calls — LLM didn't even try list_actions. No alternatives suggested beyond web__search mention. Inconclusive."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 1,
+      "routing_source": "hot_list_alias",
+      "tool_called": "agent.peer__researcher",
+      "tool_args": {"request": "FP-0001の概要を要約してください。"},
+      "arg_canonical": true,
+      "error_envelope": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry.",
+        "available_agents_present": true
+      },
+      "reply_excerpt": "申し訳ありませんが、「researcher」という名前のエージェントは見つかりませんでした。利用可能なエージェントのリストを確認するか、別のエージェント名を指定してください。",
+      "b38_d2_retest": {
+        "invoke_path": "hot_list_alias (agent.peer__researcher as direct tool)",
+        "arg_field_used": "request",
+        "canonical_arg_field": "request",
+        "arg_canonical": true,
+        "b37_was": "message (WRONG)",
+        "b38_is": "request (CORRECT)",
+        "fix_attribution": "Part B hardcoded example removal + Part A ARS block shows {request} for peer agents"
+      },
+      "notes": "CRITICAL B38 retest PASSED. S3 cold-start: LLM used canonical 'request' arg NOT 'message'. B37 used 'message' because description body said args={'message': <user_query>}. B38 removed hardcoded example and ARS shows canonical {request}. Rubric: explains not found, no hallucination, mentions available agents. VERIFIED."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 3,
+      "tool_called_p1": "agent.peer__researcher",
+      "tool_args_p1": {"request": "Reyn の Phase エンジンについて調べてください。"},
+      "tool_path_p1": "hot_list_alias",
+      "arg_canonical_p1": true,
+      "error_envelope_p1": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry."
+      },
+      "tool_called_p2": "invoke_action",
+      "tool_args_p2": {
+        "action_name": "agent.peer__dogfood-b36-5-peer-writer",
+        "args": {"request": "ReynのPhaseエンジンについて、今の説明を3行にまとめてください。"}
+      },
+      "tool_path_p2": "invoke_action (ARS-guided, canonical request arg)",
+      "arg_canonical_p2": true,
+      "reply_p2_excerpt": "ReynのPhaseエンジンについて、今の説明を3行にまとめてください。\n\nReynのPhaseエンジンは、LLMの意思決定を検証可能な制約下で行うワークフローOSです...",
+      "notes": "P1: hot_list_alias path, canonical 'request' arg. Researcher not found but reported gracefully. P2: writer not named exactly but LLM found b36 peer writer from ARS, canonical 'request' arg. Produced 3-line summary. Rubric met. VERIFIED."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "result": "refuted",
+      "events_pass": true,
+      "events_pass_via": "routing_decided=1 (via reyn.source__read)",
+      "routing_decided": 1,
+      "tool_called": "invoke_action",
+      "tool_args": {"action_name": "reyn.source__read", "args": {"path": "README.md"}},
+      "reply_excerpt": "ReynのWeb UIを起動し、A2Aエンドポイントにタスクを送信して、GET /a2a/tasks/<id> でステータスを確認する方法についてですね。...現時点では、タスクのステータスを GET /a2a/tasks/<id> で直接確認することはできない可能性が高いです。",
+      "notes": "Events pass (routing_decided=1). Rubric requires: A2A message/send JSON-RPC method + endpoint shape + GET /a2a/tasks/{id} + reyn web startup. Reply read README, mentioned A2A exists, but stated v1 doesn't support status polling — didn't describe message/send endpoint shape or how to start reyn web. REFUTED. Same as B37 prediction (100% refuted)."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "skill_run_spawned": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": null,
+      "reply_excerpt": "どのMCPサーバーをインストールしますか？例えば、`mcp.server.install`のようなコマンドがあります。もし、インストールしたいサーバーの名前を知っていれば、教えてください。",
+      "mcp_install_misroute_to_mcp_search": false,
+      "notes": "Events FAIL: routing_decided=0, skill_run_spawned=0. LLM replied inline asking for clarification instead of attempting install. B35 §4.4 misroute NOT observed. Same as B37."
+    },
+    {
+      "id": "cron_schedule_status",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "chat_turn_completed_inline": 1,
+      "tool_used": null,
+      "reply_excerpt": "申し訳ありませんが、現在スケジュールされている cron ジョブを一覧表示する機能は提供されていません。",
+      "notes": "Events FAIL: routing_decided=0. LLM replied inline without any tool calls. Same as B37 (though B37 also had routing_decided=0 at REFUTED). No route to ops_report skill."
+    }
+  ]
+}

@@ -236,8 +236,8 @@ def test_missing_fields_in_jsonl_skipped(tmp_path: Path) -> None:
 # ── 8. DEFAULT_HOT_LIST_SEED ──────────────────────────────────────────────────
 
 
-def test_default_seed_has_thirteen_items() -> None:
-    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 13 entries.
+def test_default_seed_has_seventeen_items() -> None:
+    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 17 entries.
 
     Seed growth log:
       - file__grep removed (B27-M2): §D20 file-ops not yet implemented
@@ -254,8 +254,16 @@ def test_default_seed_has_thirteen_items() -> None:
         discoverability-vs-disambiguation gap surfaced by dogfood B30
         worker 2 (= new hallucination variant skill__direct_llm_eval
         when skill__eval was missing from the seed).
+      - file__grep + file__glob re-added (B34): W3 ablation confirmed
+        LLM picks file__list for grep/glob intent (KeyError:'path') when
+        file__grep is absent from the hot list. ToolDefinitions now
+        implemented; routing rules added; seed re-seeded (B27-M2 closed).
+      - file__write + rag.operation__drop_source added (B37 W4/W6):
+        D2-wrapper scope is hot-list-only; seeding these ensures the LLM
+        sees canonical arg schemas (write: content; drop_source: source)
+        from the first turn instead of hallucinating wrong key names.
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 13
+    assert len(DEFAULT_HOT_LIST_SEED) == 17
 
 
 def test_default_seed_fits_within_default_hot_list_n() -> None:

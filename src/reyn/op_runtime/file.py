@@ -14,6 +14,26 @@ from .context import OpContext
 _WRITE_OPS = frozenset({"write", "edit", "delete", "regenerate_index"})
 _READ_OPS = frozenset({"read", "glob", "grep"})
 
+# Max nearby-file suggestions returned on a not_found error. Mirrors the
+# ~8-suggestion shape that invoke_action's UnknownActionError emits so the
+# LLM's "did you mean X" narration looks the same across both surfaces.
+_NOT_FOUND_SUGGESTIONS_LIMIT = 8
+
+
+def _nearby_files(ws, path: str, *, max_results: int = _NOT_FOUND_SUGGESTIONS_LIMIT) -> list[str]:
+    """List sibling files under the parent of *path*, for use as not_found suggestions.
+
+    Returns project-relative paths from ``Workspace.glob_files``. Empty list
+    when the parent dir doesn't exist, permission is denied, or the glob
+    yields nothing — never raises.
+    """
+    parent = str(Path(path).parent) if str(Path(path).parent) not in ("", ".") else "."
+    pattern = f"{parent}/*" if parent != "." else "*"
+    try:
+        return ws.glob_files(pattern, max_results=max_results)
+    except (PermissionError, OSError):
+        return []
+
 
 async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     # Permission check (single point for both frontends). For
@@ -38,7 +58,19 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
 
     if op.op == "read":
         content, found = ctx.workspace.read_file(op.path)
-        if found and (op.offset is not None or op.limit is not None):
+        if not found:
+            suggestions = _nearby_files(ctx.workspace, op.path)
+            ctx.events.emit("tool_executed", op="read_file", path=op.path, found=False)
+            return {
+                "kind": "file",
+                "op": "read",
+                "path": op.path,
+                "status": "not_found",
+                "error": f"file not found: {op.path}",
+                "suggestions": suggestions,
+                "content": "",
+            }
+        if op.offset is not None or op.limit is not None:
             lines = content.splitlines(keepends=True)
             start = op.offset or 0
             sliced = lines[start:start + op.limit] if op.limit is not None else lines[start:]
@@ -48,7 +80,7 @@ async def handle(op: FileIROp, ctx: OpContext, caller: Literal["preprocessor", "
             "kind": "file",
             "op": "read",
             "path": op.path,
-            "status": "ok" if found else "not_found",
+            "status": "ok",
             "content": content,
         }
 
@@ -175,7 +207,15 @@ def _execute_edit(op: FileIROp, ctx: OpContext) -> dict:
 
     content, found = ctx.workspace.read_file(op.path)
     if not found:
-        return {"kind": "file", "op": "edit", "status": "not_found", "path": op.path}
+        suggestions = _nearby_files(ctx.workspace, op.path)
+        return {
+            "kind": "file",
+            "op": "edit",
+            "path": op.path,
+            "status": "not_found",
+            "error": f"file not found: {op.path}",
+            "suggestions": suggestions,
+        }
 
     count = content.count(op.old_string)
     if count == 0:

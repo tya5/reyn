@@ -1,0 +1,95 @@
+{
+  "worker": 7,
+  "batch": "B33",
+  "run_id": "b33-7-run2",
+  "head": "08ccc27",
+  "scenario_set": "long_session_v1",
+  "agent": "dogfood-b33-7",
+  "date": "2026-05-17",
+  "four_band": {
+    "verified": 2,
+    "inconclusive": 5,
+    "refuted": 0,
+    "blocked": 0,
+    "total": 7,
+    "verified_pct": 28.6
+  },
+  "brier_mean": 0.3125,
+  "brier_per_scenario": {
+    "scenario_1_reyn_research_chain": 0.5000,
+    "scenario_5_general_python_chain": 0.1250
+  },
+  "c1_multi_turn_stability": {
+    "pass": 37,
+    "total": 37,
+    "rate": 1.0
+  },
+  "h3_skill_spawn_fires": true,
+  "h3_spawn_count": 1,
+  "h3_scenarios": ["scenario_2_pronoun_followup"],
+  "empty_stops": 0,
+  "errors": 0,
+  "compaction_triggered": false,
+  "scenarios": {
+    "scenario_1_reyn_research_chain": {
+      "outcome": "verified",
+      "turns": 5,
+      "empty_stops": 0,
+      "errors": 0,
+      "rubric_pass": true,
+      "notes": "P7/leakage prevention referenced. Prior concepts (Phase/Skill/OS) carried forward. Non-empty final reply."
+    },
+    "scenario_2_pronoun_followup": {
+      "outcome": "inconclusive",
+      "turns": 6,
+      "empty_stops": 0,
+      "errors": 0,
+      "skill_spawn": "skill__direct_llm",
+      "h3_confirmed": true,
+      "notes": "Pronoun chain maintained. H3 spawn-ack-exit fired correctly on turn 3. Skill completed async, injected before turn 4."
+    },
+    "scenario_3_cross_reference_compare": {
+      "outcome": "inconclusive",
+      "turns": 5,
+      "empty_stops": 0,
+      "errors": 0,
+      "notes": "LangGraph knowledge gap caused graceful deferral on turns 1,4,5. Reyn multi-agent description correct."
+    },
+    "scenario_4_repetitive_context_bloat": {
+      "outcome": "inconclusive",
+      "turns": 6,
+      "empty_stops": 0,
+      "errors": 0,
+      "g12_pattern_e": false,
+      "notes": "G12 Pattern E did not trigger. Skill list consistent across all 6 repetitive turns. No context degradation."
+    },
+    "scenario_5_general_python_chain": {
+      "outcome": "verified",
+      "turns": 5,
+      "empty_stops": 0,
+      "errors": 0,
+      "rubric_pass": true,
+      "notes": "Final reply contains working asyncio.Queue producer-consumer. Non-empty. Asyncio concepts built correctly across turns."
+    },
+    "scenario_6_file_and_doc_lookup_chain": {
+      "outcome": "inconclusive",
+      "turns": 5,
+      "empty_stops": 0,
+      "errors": 0,
+      "tool_used": "reyn.source__list",
+      "notes": "ADR search returned empty (no ADRs in source index). Graceful degradation. Multi-turn survived empty tool result."
+    },
+    "scenario_7_concept_explanation_chain": {
+      "outcome": "inconclusive",
+      "turns": 5,
+      "empty_stops": 0,
+      "errors": 0,
+      "tool_used": "web__search",
+      "notes": "Eventual consistency chain complete. Each turn built on prior context. Web search used for supplemental data."
+    }
+  },
+  "delta_vs_b32": {
+    "c1_note": "B32 was 53/53 (different scenario count). B33-7: 37/37. C1 maintained at 100%.",
+    "regressions": "none detected"
+  }
+}

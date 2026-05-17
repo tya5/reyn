@@ -40,6 +40,12 @@ class ErrorBox(Widget):
         height: auto;
         margin: 0;
         padding: 0;
+        /* Left bar — a non-color channel for "this is an error". Color alone
+           (``#cc5555`` on a dark pane, ~3.5:1 contrast vs the surroundings)
+           is right at the WCAG AA threshold for large text and below for
+           small text. The vertical bar gives the eye a shape / position
+           cue that survives quick scrolling and color-blind users. */
+        border-left: solid #cc5555;
     }
     /* Header line — always visible */
     ErrorBox Label.eb-header {

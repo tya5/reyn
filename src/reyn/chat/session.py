@@ -22,6 +22,7 @@ from reyn.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.chat.error_format import classify_router_error
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
     AutoResumeHandler,
@@ -31,6 +32,7 @@ from reyn.chat.services import (
     InterventionHandler,
     InterventionRegistry,
     MemoryService,
+    PlanRunner,
     RouterHostAdapter,
     SnapshotJournal,
 )
@@ -398,6 +400,8 @@ def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
         # falling back to user_message if that's the only one.
         preferred = [n for n in artifact_names if n != "user_message"] or artifact_names
         input_fields: list[str] = []
+        input_schema: dict | None = None
+        input_wrapped: bool = True
         artifacts_dir = skill_dir / "artifacts"
         for art_name in preferred:
             art_path = artifacts_dir / f"{art_name}.yaml"
@@ -408,9 +412,22 @@ def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
             props = schema.get("properties") or {}
             if props:
                 input_fields = list(props.keys())
+                input_schema = dict(schema)
+                input_wrapped = bool(art_data.get("wrapped", True))
                 break
 
-        return {"input_artifact": input_artifact, "input_fields": input_fields}
+        result: dict = {
+            "input_artifact": input_artifact,
+            "input_fields": input_fields,
+        }
+        if input_schema is not None:
+            # FP-0034 D2-full step 2: the hot-list alias for skill__<name>
+            # exposes the skill's actual input shape on the LLM-facing
+            # parameters. ``input_wrapped`` lets the alias builder decide
+            # whether to peel the {type, data} envelope.
+            result["input_schema"] = input_schema
+            result["input_wrapped"] = input_wrapped
+        return result
     except Exception:  # noqa: BLE001 — best-effort; never break catalogue
         return {}
 
@@ -726,10 +743,10 @@ class ChatSession:
         # access them directly (slash/skill.py, slash/tasks.py).
         # SkillRunner is constructed below after _interventions is ready.
 
-        # ADR-0023 Phase 2 step 7d: per-plan resume task tracking.
-        # Populated by ``_spawn_resumed_plan`` after restart cleanup;
-        # tasks are awaited at shutdown like running_skills.
-        self.running_plans: dict[str, asyncio.Task] = {}
+        # ADR-0023 Phase 2 step 7d: per-plan resume task tracking is now
+        # owned by PlanRunner (constructed below). ``self.running_plans``
+        # remains accessible via a forwarding property — slash commands
+        # and mcp_server.py read it directly.
 
         # PR-refactor-session-1 wave 2: pending-chain lifecycle and intervention
         # queue ownership extracted into services. The session orchestrates the
@@ -792,6 +809,20 @@ class ChatSession:
         # forward the reply upstream. None = not capturing (user-turn context).
         self._router_loop_agent_replies: list[str] | None = None
 
+        # RunSpawner wave: PlanRunner — plan task lifecycle (spawn / resume).
+        # Owns ``running_plans``; session exposes a forwarding property.
+        # Constructed BEFORE RouterHostAdapter because the adapter binds
+        # ``spawn_plan_task=self._plan_runner.spawn_plan_task`` as one of
+        # its callbacks. PlanRunner needs ``_router_host`` for plan
+        # artifact cleanup, resolved lazily via ``get_router_host``.
+        self._plan_runner = PlanRunner(
+            agent_name=self.agent_name,
+            put_outbox=self._put_outbox,
+            enqueue_plan_completed=self._enqueue_plan_completed,
+            journal=self._journal,
+            get_router_host=lambda: self._router_host,
+        )
+
         # PR-refactor-session-1 wave 3 PR3: RouterHostAdapter — concrete
         # RouterLoopHost implementation extracted from ChatSession. Constructed
         # last in __init__ because it receives callbacks that reference self
@@ -821,12 +852,12 @@ class ChatSession:
             mcp_list_servers=self._mcp_list_servers,
             mcp_list_tools=self._mcp_list_tools,
             mcp_call_tool=self._mcp_call_tool,
-            run_skill_awaitable=self._run_skill_awaitable,
+            run_skill_awaitable=self._skill_runner.run_skill_awaitable,
             spawn_skill=self._skill_runner.spawn_for_router,
             send_to_agent=self._send_to_agent,
             put_outbox=self._put_outbox,
             append_history=self._append_history,
-            spawn_plan_task=self.spawn_plan_task,
+            spawn_plan_task=self._plan_runner.spawn_plan_task,
             delegation_tracker=lambda: self._router_loop_delegations,
             agent_replies_tracker=lambda: self._router_loop_agent_replies,
             universal_wrappers_enabled=self._action_retrieval.universal_wrappers_enabled,
@@ -884,7 +915,7 @@ class ChatSession:
             state_log=self._state_log,
             get_skill_registry=self._get_skill_registry,
             drop_interventions_for_run=self._drop_interventions_for_run,
-            launcher=self._spawn_resumed_skill,
+            launcher=self._skill_runner.spawn_resumed_skill,
         )
 
         # FP-0019 Wave 2 part 2: A2AHandler — agent-to-agent messaging service.
@@ -951,6 +982,16 @@ class ChatSession:
     def running_skills_chain(self) -> dict:
         """Forwarding property → SkillRunner.running_skills_chain."""
         return self._skill_runner.running_skills_chain
+
+    @property
+    def running_plans(self) -> dict:
+        """Forwarding property → PlanRunner.running_plans.
+
+        Slash commands (slash/plan.py), mcp_server.py shutdown gather,
+        and the TUI app read this directly; the dict itself is owned by
+        PlanRunner.
+        """
+        return self._plan_runner.running_plans
 
     def _build_agent_for_skill_runner(
         self,
@@ -1360,7 +1401,7 @@ class ChatSession:
             return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed: {exc}",
+                kind="error", text=classify_router_error(exc),
                 meta={"chain_id": chain_id},
             ))
             return
@@ -1388,7 +1429,7 @@ class ChatSession:
 
         ``launcher`` is dependency-injected so tests can inspect decisions
         without launching real skill runtimes.  Production callers pass
-        ``None`` to use the default launcher (``_spawn_resumed_skill``).
+        ``None`` to use the default launcher (``SkillRunner.spawn_resumed_skill``).
 
         Returns the list of decisions that were launched (= decisions
         minus discards).
@@ -1399,84 +1440,9 @@ class ChatSession:
             launcher=launcher,
         )
 
-    async def _spawn_resumed_skill(self, decision: "Any") -> None:
-        """Default launcher used by ``_auto_resume_active_skills``.
-
-        Loads the skill by name from the resume plan, builds an Agent,
-        and spawns ``Agent.run`` as a tracked asyncio task with the
-        resume_plan threaded in. Exists as a separate method so the
-        auto-resume hook can be tested with a stub launcher (see
-        ``tests/test_session_auto_resume.py``).
-        """
-        plan = decision.plan
-        skill_name = plan.skill_name
-        run_id = plan.run_id
-        meta = _run_meta(run_id, skill_name)
-        try:
-            skill_dir, skill_root = resolve_skill_path(skill_name)
-            skill = load_dsl_skill(
-                str(skill_dir / "skill.md"), skill_root=str(skill_root),
-            )
-        except (SkillNotFoundError, Exception) as exc:
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"resume failed to load: {exc}",
-            )
-            await self._put_outbox(OutboxMessage(
-                kind="error", text=f"resume failed: {exc}", meta=meta,
-            ))
-            return
-
-        from reyn.chat.forwarder import ChatEventForwarder
-        agent = self._build_agent(
-            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
-            mcp_servers=self._mcp_servers,
-            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
-        )
-
-        async def _runner():
-            try:
-                await agent.run(
-                    skill, plan.skill_input,
-                    output_language=self.output_language,
-                    skill_registry=self._get_skill_registry(),
-                    state_log=self._state_log,
-                    resume_plan=plan,
-                    run_id=run_id,
-                )
-            except asyncio.CancelledError:
-                await self._put_outbox(OutboxMessage(
-                    kind="status", text="cancelled", meta=meta,
-                ))
-                raise
-            except Exception as exc:  # noqa: BLE001 — surface to outbox
-                self._chat_events.emit(
-                    "skill_run_failed", run_id=run_id, skill=skill_name,
-                    error=str(exc),
-                )
-                await self._put_outbox(OutboxMessage(
-                    kind="error", text=f"resume failed: {exc}", meta=meta,
-                ))
-
-        self.running_skills_started_at[run_id] = time.monotonic()
-        # R-D14: resumed skill_run is generally not chain-tagged (the
-        # original chain has long-since either completed or been wedged
-        # by the timeout watchdog). If a future re-issue path needs to
-        # carry chain_id across resume, plumb it through ``decision``.
-        self.running_skills_chain[run_id] = None
-        await self._put_outbox(OutboxMessage(
-            kind="status", text="resuming…", meta=meta,
-        ))
-        task = asyncio.create_task(_runner())
-        self.running_skills[run_id] = task
-
-        def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
-            self.running_skills.pop(rid, None)
-            self.running_skills_started_at.pop(rid, None)
-            self.running_skills_chain.pop(rid, None)
-            self._drop_interventions_for_run(rid)
-
-        task.add_done_callback(_cleanup)
+    # NOTE: ``_spawn_resumed_skill`` moved to SkillRunner.spawn_resumed_skill
+    # (RunSpawner wave). Callers go through ``self._skill_runner`` directly;
+    # the AutoResumeHandler wiring in __init__ uses the method reference.
 
     def _get_skill_registry(self) -> "SkillRegistry | None":
         """Return the per-agent SkillRegistry, lazily constructed on first call.
@@ -2350,213 +2316,11 @@ class ChatSession:
         await slash_cmd.handler(self, args)
         return True
 
-    async def _slash_list(self, args: str) -> None:
-        """`/list` — running skills + pending interventions."""
-        now = time.monotonic()
-        lines: list[str] = []
-        if self.running_skills:
-            lines.append("running skills:")
-            for rid, _task in self.running_skills.items():
-                started = self.running_skills_started_at.get(rid)
-                elapsed = f"{int(now - started)}s" if started is not None else "?s"
-                # Recover skill_name from the run_id format
-                # "TIMESTAMP_<skill>_<short>" — split between first and last underscore.
-                short = _run_short(rid)
-                # skill_name is everything between first '_' after timestamp and the trailing _short
-                trimmed = rid[: -len(short) - 1] if short else rid  # drop "_abcd"
-                # trimmed = "TIMESTAMP_skill_name"; drop the leading TIMESTAMP_
-                _, _, skill_part = trimmed.partition("_")
-                lines.append(f"  {short}  {skill_part:<24} {elapsed:>5}  (run_id={rid})")
-        else:
-            lines.append("running skills: (none)")
-        active_ivs = self._interventions.list_active()
-        if active_ivs:
-            lines.append("pending interventions:")
-            for iv in active_ivs:
-                short = (iv.run_id[-4:] if iv.run_id else "----")
-                lines.append(
-                    f"  {iv.id[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
-                )
-        await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
-
-    async def _slash_cancel(self, args: str) -> None:
-        """`/cancel <id-prefix>` — cancel a running skill task."""
-        prefix = args.strip()
-        if not prefix:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: /cancel <id-prefix>",
-            ))
-            return
-        rid, candidates = self._resolve_run_id(prefix)
-        if rid is None:
-            if not candidates:
-                await self._put_outbox(OutboxMessage(
-                    kind="error", text=f"no running skill matches {prefix!r}",
-                ))
-            else:
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=f"ambiguous prefix {prefix!r}; matches: {', '.join(_run_short(c) for c in candidates)}",
-                ))
-            return
-        task = self.running_skills.get(rid)
-        if task is None or task.done():
-            await self._put_outbox(OutboxMessage(
-                kind="system", text=f"skill {_run_short(rid)} already finished",
-            ))
-            return
-        task.cancel()
-        await self._put_outbox(OutboxMessage(
-            kind="system", text="cancel requested",
-            meta=_run_meta(rid, None),
-        ))
-
-    async def _slash_answer(self, args: str) -> None:
-        """`/answer <id-prefix> <text>` — deliver answer to a non-head intervention."""
-        parts = args.split(maxsplit=1)
-        if not parts:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: /answer <id-prefix> <text>",
-            ))
-            return
-        prefix = parts[0]
-        text = parts[1] if len(parts) > 1 else ""
-        iid, candidates = self._resolve_intervention_id(prefix)
-        if iid is None:
-            if not candidates:
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=f"no pending intervention matches {prefix!r}",
-                ))
-            else:
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=f"ambiguous prefix {prefix!r}; matches: {', '.join(c[:8] for c in candidates)}",
-                ))
-            return
-        iv = self._interventions.get(iid)
-        if iv is None:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"intervention {prefix!r} disappeared mid-resolution",
-            ))
-            return
-        await self._deliver_answer_to(iv, text)
-
-    async def _slash_agents(self, args: str) -> None:
-        """`/agents` — list known agents (registry-backed)."""
-        if self._registry is None:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text="agent registry not wired; /agents only works in `reyn chat`",
-            ))
-            return
-        names = self._registry.list_names()
-        if not names:
-            await self._put_outbox(OutboxMessage(
-                kind="system", text="no agents (this should not happen — default auto-creates)",
-            ))
-            return
-        attached = self._registry.attached_name
-        loaded = set(self._registry.loaded_names())
-        lines = ["agents:"]
-        for n in names:
-            try:
-                profile = self._registry.load_profile(n)
-                role_excerpt = (profile.role or "").strip().splitlines()
-                role = role_excerpt[0] if role_excerpt else ""
-            except Exception:
-                role = "(profile load failed)"
-            last = self._registry.last_activity_at(n)
-            last_str = last.strftime("%Y-%m-%dT%H:%M") if last else "—"
-            mark = "*" if n == attached else (" " if n not in loaded else "·")
-            lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
-        lines.append("(* = attached, · = loaded, blank = not yet loaded)")
-        await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
-
-    async def _slash_attach(self, args: str) -> None:
-        """`/attach <name>` — switch attached agent.
-
-        The actual switch happens in repl._input_loop, which owns the display
-        wiring. Here we only validate the name and put a sentinel attach
-        request on this session's outbox; the REPL listens for the kind.
-        """
-        name = args.strip()
-        if not name:
-            await self._put_outbox(OutboxMessage(
-                kind="error", text="usage: /attach <name>",
-            ))
-            return
-        if self._registry is None:
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text="agent registry not wired; /attach only works in `reyn chat`",
-            ))
-            return
-        if not self._registry.exists(name):
-            await self._put_outbox(OutboxMessage(
-                kind="error",
-                text=f"agent {name!r} not found; create with `reyn agent new {name}`",
-            ))
-            return
-        if name == self._registry.attached_name:
-            await self._put_outbox(OutboxMessage(
-                kind="system", text=f"already attached to {name!r}",
-            ))
-            return
-        # The REPL drains its own outbox loop. Send the attach request as a
-        # specially-kinded message so the input loop can recognize it.
-        await self._put_outbox(OutboxMessage(
-            kind="__attach_request__", text=name,
-        ))
-
-    async def _slash_cost(self, args: str) -> None:
-        """`/cost` — quick token + USD line for the attached agent."""
-        line = self._budget.cost_line()
-        if line is None:
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
-            ))
-            return
-        await self._put_outbox(OutboxMessage(kind="system", text=line))
-
-    async def _slash_budget(self, args: str) -> None:
-        """`/budget` (full breakdown) / `/budget reset` (clear counters)."""
-        sub = args.strip()
-        if sub == "reset":
-            before = self._budget.reset_all()
-            if before is None:
-                await self._put_outbox(OutboxMessage(
-                    kind="system",
-                    text="budget tracker is disabled (no `cost:` config or non-chat mode)",
-                ))
-                return
-            lines = ["Budget counters reset."]
-            if before.get("agent_tokens"):
-                for a, t in before["agent_tokens"].items():
-                    cost = before.get("agent_cost_usd", {}).get(a, 0.0)
-                    lines.append(f"  per-agent ({a}) tokens:    {t:>10,} → 0")
-                    lines.append(f"  per-agent ({a}) cost_usd:  ${cost:.4f} → $0.00")
-            if before.get("chain_skill_calls"):
-                lines.append("  per-chain skill calls:        cleared")
-            if before.get("rate_window_sizes"):
-                lines.append("  rate-limit window:            cleared")
-            lines.append(
-                "Note: daily / monthly counters are NOT reset — "
-                "they auto-reset at period boundary."
-            )
-            lines.append("Use `/budget` to verify.")
-            await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
-            return
-        text = self._budget.budget_full()
-        if text is None:
-            await self._put_outbox(OutboxMessage(
-                kind="system",
-                text="budget tracker is disabled (no `cost:` config or non-chat mode)",
-            ))
-            return
-        await self._put_outbox(OutboxMessage(kind="system", text=text))
+    # NOTE: the 7 ``_slash_*`` handlers (list / cancel / answer / agents /
+    # attach / cost / budget) live in ``src/reyn/chat/slash/`` per the
+    # cli-redesign plan. ``_resolve_run_id`` / ``_resolve_intervention_id``
+    # / ``_deliver_answer_to`` stay here as session-state helpers the slash
+    # modules call back into.
 
     # ── skill spawn (FP-0019 Wave 1b) ───────────────────────────────────────────
     # Business logic lives in SkillRunner. Session keeps thin delegating
@@ -2898,128 +2662,9 @@ class ChatSession:
             }
         return {"error": result.get("error", "regenerate_index failed")}
 
-    async def _run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
-        """Awaitable variant of _spawn_skill. Runs a single skill, awaits its
-        completion, returns the final_output dict.
-
-        spec format: {"skill": <name>, "input": <artifact dict>}
-        Returns: {"status": "finished"|"error", "data": <final_output>}
-
-        FP-0011: narration is the router LLM's responsibility (post-invoke_skill
-        SP guidance). This method no longer pushes to outbox — the caller (= the
-        invoke_skill tool dispatcher) returns the dict to the router loop, and
-        the router LLM narrates from `data` on its next turn.
-        """
-        skill_name = spec.get("skill")
-        input_artifact = spec.get("input")
-        if not skill_name or not isinstance(input_artifact, dict):
-            return {"status": "error", "data": {"error": f"invalid skill spec: {spec}"}}
-
-        # PR15: allowlist check — same defense as _spawn_skill
-        if (
-            self._allowed_skills is not None
-            and skill_name not in self._allowed_skills
-        ):
-            self._chat_events.emit(
-                "skill_spawn_refused",
-                reason="allowlist", skill=skill_name, agent=self.agent_name,
-            )
-            return {
-                "status": "error",
-                "data": {
-                    "error": (
-                        f"skill {skill_name!r} is not in allowed_skills for agent "
-                        f"{self.agent_name!r}; refused"
-                    )
-                },
-            }
-
-        # PR22: budget cap check — routed through BudgetGateway (wave 3 PR1
-        # missed this call site; _spawn_skill / SkillRunner.spawn already uses
-        # the gateway).
-        check = self._budget.check_pre_spawn(chain_id=chain_id, skill=skill_name)
-        if not check.allowed:
-            self._chat_events.emit(
-                "budget_exceeded",
-                dimension=check.hard_dimension,
-                detail=check.detail,
-                skill=skill_name,
-                chain_id=chain_id,
-            )
-            return {
-                "status": "error",
-                "data": {"error": check.detail or "budget exceeded"},
-            }
-        self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
-
-        run_id = (
-            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
-            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
-        )
-        self._chat_events.emit("skill_run_spawned", run_id=run_id, skill=skill_name)
-
-        try:
-            skill_dir, skill_root = resolve_skill_path(skill_name)
-        except SkillNotFoundError:
-            # P6 audit completeness: skill_run_spawned was emitted above; we must
-            # emit a corresponding skill_run_failed for the error path so the
-            # event log records every state transition (dogfood S13b).
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"skill not found: {skill_name}",
-            )
-            return {"status": "error", "data": {"error": f"skill not found: {skill_name}"}}
-
-        try:
-            skill = load_dsl_skill(str(skill_dir / "skill.md"), skill_root=str(skill_root))
-        except Exception as exc:
-            # P6 audit completeness: pair with skill_run_spawned above.
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name,
-                error=f"failed to load: {exc}",
-            )
-            return {"status": "error", "data": {"error": f"failed to load {skill_name}: {exc}"}}
-
-        from reyn.chat.forwarder import ChatEventForwarder
-        agent = self._build_agent(
-            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
-            mcp_servers=self._mcp_servers,
-            subscribers=[ChatEventForwarder(skill_name, self.outbox, run_id=run_id)],
-        )
-
-        try:
-            result = await agent.run(
-                skill, input_artifact,
-                output_language=self.output_language,
-                chain_id=chain_id,
-                skill_registry=self._get_skill_registry(),
-                state_log=self._state_log,
-            )
-        except asyncio.CancelledError:
-            return {"status": "error", "data": {"error": "cancelled"}}
-        except Exception as exc:
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name, error=str(exc),
-            )
-            return {"status": "error", "data": {"error": str(exc)}}
-
-        if result.status == "budget_exceeded":
-            self._chat_events.emit(
-                "skill_run_failed", run_id=run_id, skill=skill_name, error="budget_exceeded",
-            )
-            return {"status": "error", "data": {"error": result.error or "budget exceeded"}}
-
-        self._accumulate(result)
-        self._chat_events.emit(
-            "skill_run_completed", run_id=run_id, skill=skill_name, status=result.status,
-        )
-
-        # FP-0011: skill_narrator removed — the router LLM narrates inline on
-        # its post-invoke_skill turn (see router_system_prompt.py guidance).
-        # The tool-result dict returned below flows back to the router loop
-        # unchanged; the LLM picks user-relevant fields from `data` and surfaces
-        # error fields verbatim per the strengthened anti-optimism rule.
-        return {"status": result.status or "finished", "data": result.data or {}}
+    # NOTE: ``_run_skill_awaitable`` moved to
+    # SkillRunner.run_skill_awaitable (RunSpawner wave). The
+    # RouterHostAdapter wiring in __init__ now binds the method directly.
 
     async def _mcp_list_servers(self) -> list[dict]:
         """Returns the configured MCP server list with descriptions."""
@@ -3070,170 +2715,11 @@ class ChatSession:
             mcp=[server],
         )
         return await execute_op(op, ctx, caller="control_ir")
-    async def spawn_plan_task(
-        self, *, plan_id: str, runtime: Any, chain_id: str,
-        parent_chain_id: str | None = None,
-    ) -> None:
-        """Run a PlanRuntime as a background task (ADR-0023 Phase 2.1).
 
-        Tracks the task in ``self.running_plans`` for `/plan discard`
-        and shutdown await. On clean exit, emits the runtime's
-        aggregated text to the user outbox + cleans up the
-        decomposition artifact (= P5 cleanup mirror of
-        dispatch_plan_tool's old finally clause).
-
-        Errors during runtime.run() are logged and swallowed (= the
-        task is fire-and-forget; the runtime's own finally emits
-        plan_run_interrupted via events for forensic visibility, and
-        crash cases preserve the artifact for restart resume).
-
-        FP-0031-A: emit a plan summary status message before starting
-        execution so the user immediately sees what steps are planned.
-        """
-        # FP-0031-A: report plan steps to the user before execution starts.
-        plan = getattr(runtime, "plan", None)
-        if plan is not None:
-            plan_steps = getattr(plan, "steps", ())
-            if plan_steps:
-                plan_summary = "\n".join(
-                    f"{i + 1}. {step.description}"
-                    for i, step in enumerate(plan_steps)
-                )
-                try:
-                    await self._put_outbox(OutboxMessage(
-                        kind="system",
-                        text=f"以下の計画で実行します:\n{plan_summary}",
-                        meta={"plan_id": plan_id, "source": "plan_summary"},
-                    ))
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning("spawn_plan_task plan_summary emit failed: %r", exc)
-
-        async def _run_plan_task() -> None:
-            from reyn.chat.planner import _is_workflow_abort
-            clean_exit = False
-            result: Any = None
-            try:
-                result = await runtime.run()
-                clean_exit = True
-            except BaseException as exc:
-                if _is_workflow_abort(type(exc)):
-                    clean_exit = True
-                else:
-                    logger.warning(
-                        "plan task crashed for %s: %r", plan_id, exc,
-                    )
-            # FP-0025 C: on clean exit, enqueue plan_completed inbox so
-            # the run() loop drives router narration (symmetric with
-            # FP-0012 skill_completed). The router LLM synthesises
-            # step_results into the final user reply.
-            if clean_exit and result is not None:
-                try:
-                    await self._enqueue_plan_completed(
-                        plan_id=plan_id,
-                        chain_id=parent_chain_id or chain_id,
-                        goal=result.plan_goal,
-                        step_results=result.step_results,
-                        step_failures=result.step_failures,
-                        n_steps=result.n_steps,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "plan task enqueue_plan_completed failed for %s: %r",
-                        plan_id, exc,
-                    )
-            # Artifact cleanup mirrors the old dispatch_plan_tool finally.
-            if clean_exit:
-                try:
-                    await self._router_host.delete_plan_decomposition(plan_id=plan_id)
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "plan task delete_decomposition failed for %s: %r",
-                        plan_id, exc,
-                    )
-            self.running_plans.pop(plan_id, None)
-
-        task = asyncio.create_task(_run_plan_task())
-        self.running_plans[plan_id] = task
-
-    async def _spawn_resumed_plan(
-        self,
-        *,
-        decision: Any,
-        budget: Any = None,
-        router_model: str = "light",
-    ) -> None:
-        """Launch a PlanRuntime for a resume decision (ADR-0023 §3.4).
-
-        Reads the decomposition artifact for ``decision.plan.plan_id``,
-        constructs ``PlanRuntime(resume_plan=decision.plan)``, and
-        registers the resulting task on ``self.running_plans``. The
-        task is fire-and-forget; the runtime's finally clause emits
-        plan_completed / plan_run_interrupted as usual.
-
-        Errors during decomposition load surface as outbox notices and
-        the plan is marked aborted (= ADR-0023 §3.5 corruption fallback,
-        even after the coordinator earlier-validated path).
-        """
-        from reyn.plan import (
-            PlanRuntime,
-            read_decomposition,
-        )
-
-        plan_id = decision.plan.plan_id
-        agent_state_dir = (
-            Path(".reyn") / "agents" / self.agent_name / "state"
-        )
-        try:
-            decomposition = read_decomposition(agent_state_dir, plan_id)
-        except Exception as exc:  # noqa: BLE001 — defensive, surface to user
-            logger.warning(
-                "_spawn_resumed_plan: cannot load decomposition for %s: %r",
-                plan_id, exc,
-            )
-            try:
-                from reyn.chat.outbox import OutboxMessage
-                await self._put_outbox(OutboxMessage(
-                    kind="error",
-                    text=(
-                        "A plan-mode reply was interrupted; the saved "
-                        "decomposition could not be loaded — please "
-                        "re-issue your request."
-                    ),
-                    meta={"plan_id": plan_id, "reason": "decomposition_load_failed"},
-                ))
-            except Exception:  # noqa: BLE001
-                pass
-            try:
-                await self._journal.record_plan_aborted(
-                    plan_id=plan_id, reason="decomposition_load_failed",
-                )
-            except Exception as exc2:  # noqa: BLE001
-                logger.warning("plan_aborted emit failed: %r", exc2)
-            return
-
-        runtime = PlanRuntime(
-            decomposition,
-            host=self._router_host,
-            chain_id=decision.plan.chain_id,
-            plan_id=plan_id,
-            budget=budget,
-            router_model=router_model,
-            resume_plan=decision.plan,
-        )
-
-        async def _run_resumed_plan() -> None:
-            try:
-                await runtime.run()
-            except Exception as exc:  # noqa: BLE001 — top-level swallow
-                logger.warning(
-                    "_spawn_resumed_plan task crashed for %s: %r",
-                    plan_id, exc,
-                )
-            finally:
-                self.running_plans.pop(plan_id, None)
-
-        task = asyncio.create_task(_run_resumed_plan())
-        self.running_plans[plan_id] = task
+    # NOTE: ``spawn_plan_task`` and ``_spawn_resumed_plan`` moved to
+    # PlanRunner.spawn_plan_task / spawn_resumed_plan (RunSpawner wave).
+    # RouterHostAdapter binds the method reference; registry.py calls
+    # ``session._plan_runner.spawn_resumed_plan(...)`` directly.
 
     # --- RouterLoop orchestration ---
 

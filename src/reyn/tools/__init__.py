@@ -50,7 +50,15 @@ def get_default_registry() -> ToolRegistry:
     from reyn.tools.drop_source import DROP_SOURCE
 
     # Wave 2 additions (ADR-0026 M3 Wave 2)
-    from reyn.tools.file import DELETE_FILE, FILE_OP, LIST_DIRECTORY, READ_FILE, WRITE_FILE
+    from reyn.tools.file import (
+        DELETE_FILE,
+        FILE_OP,
+        GLOB_FILES,
+        GREP_FILES,
+        LIST_DIRECTORY,
+        READ_FILE,
+        WRITE_FILE,
+    )
     from reyn.tools.invoke_skill import INVOKE_SKILL, RUN_SKILL_OP
     from reyn.tools.lint import LINT
     from reyn.tools.mcp import (
@@ -99,6 +107,8 @@ def get_default_registry() -> ToolRegistry:
     registry.register(WRITE_FILE)
     registry.register(DELETE_FILE)
     registry.register(LIST_DIRECTORY)
+    registry.register(GREP_FILES)
+    registry.register(GLOB_FILES)
     # MCP ops (Wave 2 — Type C closure: phase-side discover)
     # FP-0032: DESCRIBE_MCP_TOOL added as D4 (mirror of describe_skill).
     registry.register(CALL_MCP_TOOL)

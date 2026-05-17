@@ -1,0 +1,74 @@
+[
+  {
+    "scenario_id": "index_docs_basic",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Wrong action: LLM routed to rag.operation__drop_source (drop existing index) instead of invoking index_docs. permission_denied x2. Hot-list gap: index_docs absent. Arg mismatch: LLM used source_id (non-canonical) but ACTION ARG SCHEMAS was absent at call time."
+  },
+  {
+    "scenario_id": "read_local_files_explain_source",
+    "verdict": "inconclusive",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Correct 675-char explanation of scheduler.py (cron scheduler, async, CronJob class). Routed via file__read directly (read_local_files not in hot-list). skill_run_spawned=0."
+  },
+  {
+    "scenario_id": "read_local_files_multi_file",
+    "verdict": "inconclusive",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Correct 886-char overview referencing ask_user.py, context.py, embed.py. 4x file__read calls. No router loop this time (vs B36 W2 S3 loop). skill_run_spawned=0."
+  },
+  {
+    "scenario_id": "skill_builder_web_summariser",
+    "verdict": "refuted",
+    "reply_rubric": "fail",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "Ghost alias: skill__create_skill in hot-list but skill does not exist (should be skill__skill_builder). LLM called invoke_action(skill__create_skill) -> ValueError. Reply listed available skills, no skill created."
+  },
+  {
+    "scenario_id": "word_stats_demo_sentence",
+    "verdict": "verified",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifacts_check": "pass",
+    "notes": "invoke_action({action_name: skill__word_stats_demo, args: {text: The quick...}}). skill_run_spawned=1, completed=1 (status=finished). Reply: 1行で44文字. Correct."
+  },
+  {
+    "scenario_id": "word_stats_demo_multiline",
+    "verdict": "verified",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifacts_check": "pass",
+    "notes": "skill__word_stats_demo({}) direct alias call. Empty args -> skill ran with empty text. [task_completed] brought correct word_counts via LLM review phase. Reply 527 chars with word_counts dict."
+  },
+  {
+    "scenario_id": "eval_run_direct_llm",
+    "verdict": "verified",
+    "reply_rubric": "pass",
+    "events_check": "pass",
+    "artifacts_check": "pass",
+    "notes": "invoke_action({action_name: skill__direct_llm, args: {prompt: ..., test_case: ...}}). skill_run_spawned=1, completed=1. Reply: \"The direct_llm skill completed successfully and returned konnichiwa\". Rubric satisfied."
+  },
+  {
+    "scenario_id": "chat_compactor_long_session",
+    "verdict": "inconclusive",
+    "reply_rubric": "pass",
+    "events_check": "fail",
+    "artifacts_check": "pass",
+    "notes": "5/5 turns coherent (3060/2705/2737/2336/2631 chars). Turn 5 explains routing_decided correctly. skill_run_spawned=0 (all inline, expected for chat scenarios). Must_emit skill_run_spawned not met."
+  },
+  {
+    "scenario_id": "chained_find_then_index",
+    "verdict": "inconclusive",
+    "reply_rubric": "partial",
+    "events_check": "fail",
+    "artifacts_check": "fail",
+    "notes": "T1: correct 1942-char markdown file listing. T2: invoke_action(rag.operation__index_dir, {source: arch_events_index, dir_path: docs/concepts/}) -> action not found. Correct source name used but wrong action."
+  }
+]

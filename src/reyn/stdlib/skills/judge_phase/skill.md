@@ -21,34 +21,12 @@ permissions:
 # FP-0016 D: this skill needs no static secrets / OAuth tokens.
 required_credentials: []
 postprocessor:
-  output_name: phase_judgment
-  output_description: |
-    Caller-facing judgment with deterministic `score` (= passed/total)
-    merged in by the postprocessor.
-  output_schema:
-    type: object
-    properties:
-      phase_name:
-        type: string
-      passed:
-        type: boolean
-      score:
-        type: number
-        minimum: 0.0
-        maximum: 1.0
-      criteria_results:
-        type: array
-        items:
-          type: object
-          properties:
-            description: {type: string}
-            required: {type: boolean}
-            met: {type: boolean}
-            reason: {type: string}
-          required: [description, met, reason]
-      summary:
-        type: string
-    required: [phase_name, passed, score, criteria_results, summary]
+  # B38-fix: reference the artifact by name so the compiler wraps it into
+  # the full {type, data} envelope schema via artifact_to_json_schema().
+  # Inline dict literals bypass the wrapping step, causing the final
+  # output_schema validation in PostprocessorExecutor.run() to fail
+  # with "required property missing" for every data field (B37 W3 S8).
+  output_schema: phase_judgment
   steps:
     - type: python
       module: ./postprocessor.py

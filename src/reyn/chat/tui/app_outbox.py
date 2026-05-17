@@ -46,6 +46,17 @@ class OutboxRouter:
 
     def __init__(self, app: "ReynTUIApp") -> None:
         self._app = app
+        # Tracker for the single in-flight transient-status auto-hide timer.
+        # Every transient sticky status (``/cost-inline on``, ``/copy …``,
+        # ``/docs-filter …``, etc.) arms ``app.set_timer(_, conv.hide_status)``
+        # to auto-clear after ~2 s. Before this tracker, every arming created
+        # a NEW timer and the previous one kept ticking — so a user firing two
+        # transients in quick succession (or transient → live ``⟳ thinking…``)
+        # would have the old timer silently hide the LIVE indicator a couple
+        # of seconds later. Holding a single handle lets us cancel the prior
+        # timer before installing a new one, and cancel it outright when a
+        # live thinking-status arrives so it can't kill the agent's spinner.
+        self._transient_status_timer = None  # type: ignore[assignment]
         # Dispatch table — each entry maps a `msg.kind` to its handler.
         # Methods on `self` are bound, so we can reference them directly.
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
@@ -70,6 +81,44 @@ class OutboxRouter:
             # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
         }
+
+    # ── transient sticky helpers ──────────────────────────────────────────────
+
+    def _cancel_transient_timer(self) -> None:
+        """Cancel any in-flight auto-hide timer for the transient sticky.
+
+        Called before arming a new one, and whenever a live thinking
+        indicator takes over the sticky (= we must not allow the old
+        auto-hide to fire and kill the live spinner).
+        """
+        timer = self._transient_status_timer
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except Exception:
+            pass
+        self._transient_status_timer = None
+
+    def _show_transient_status(
+        self,
+        conv: ConversationView,
+        text: str,
+        *,
+        kind: str = "general",
+        duration: float = 2.5,
+    ) -> None:
+        """Show a transient sticky status that auto-hides after ``duration`` s.
+
+        Single entry point for ``show + set_timer(hide)`` so the previous
+        timer (if any) is always cancelled first. The previous behaviour
+        of arming a fresh timer per call meant a transient fired right
+        before an agent reply would hide the live ``⟳ thinking…`` ~2 s
+        into the agent's run.
+        """
+        self._cancel_transient_timer()
+        conv.show_status(text, kind=kind)
+        self._transient_status_timer = self._app.set_timer(duration, conv.hide_status)
 
     # ── main loop ─────────────────────────────────────────────────────────────
 
@@ -135,12 +184,22 @@ class OutboxRouter:
     def _on_attach_request(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__attach_request__` — agent switched; refresh header label."""
+        """`__attach_request__` — agent switched; refresh header label.
+
+        Also clears the sticky status: a ``⟳ thinking…`` left by the
+        previous agent's in-flight turn would otherwise persist with
+        the new agent's name attached in the header, confusing the user
+        about WHICH agent is actively running. Any pending transient
+        auto-hide timer is cancelled too — the new agent should not
+        inherit a ghost timer from the old one's flow.
+        """
         app = self._app
         new_name = msg.text
         if new_name and app._agent_registry is not None:
             app._agent_name = new_name
             header.refresh_status(agent_name=new_name)
+            self._cancel_transient_timer()
+            conv.hide_status()
 
     def _on_matrix(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -173,45 +232,114 @@ class OutboxRouter:
         else:
             app._cost_inline_enabled = not app._cost_inline_enabled
         state = "on" if app._cost_inline_enabled else "off"
-        conv.show_status(f"cost-inline {state}", kind="general")
-        app.set_timer(2.5, conv.hide_status)
+        self._show_transient_status(conv, f"cost-inline {state}", duration=2.5)
 
     def _on_expand_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
         """`__expand_last_reply__` — /expand slash; flush truncated reply."""
         if not conv.expand_last_reply():
-            conv.show_status("nothing to expand", kind="general")
-            self._app.set_timer(2.0, conv.hide_status)
+            self._show_transient_status(conv, "nothing to expand", duration=2.0)
 
     def _on_copy_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__copy_last_reply__` — /copy slash; pipe last reply to OS clipboard.
+        """`__copy_last_reply__` — /copy slash; pipe a buffered reply to OS clipboard.
+
+        ``msg.text`` carries the parsed slash argument:
+          - empty           → copy the latest reply (= ``reply_at(1)``)
+          - ``"list"``      → show how many replies are buffered + dim hint
+          - integer N >= 1  → copy ``reply_at(N)`` (N = 1 is newest)
+          - anything else   → surface a usage hint and stop
 
         Workaround for the TUI's mouse-capture preventing native click-and-
         drag selection. Tries platform-native binaries in order; if none
         succeed, surfaces a status line so the user knows the workaround
         wasn't available.
         """
-        text = conv.last_reply_text()
-        if not text:
-            conv.show_status("nothing to copy yet", kind="general")
-            self._app.set_timer(2.0, conv.hide_status)
+        arg = (msg.text or "").strip()
+
+        if arg.lower() == "list":
+            count = conv.recent_reply_count()
+            if count == 0:
+                self._show_transient_status(conv, "no replies buffered yet")
+            else:
+                self._show_transient_status(
+                    conv,
+                    f"{count} reply{'s' if count != 1 else ''} buffered "
+                    f"— /copy 1..{count}",
+                )
             return
-        ok, label = _copy_to_clipboard(text)
+
+        # Parse N. Empty → latest (n=1); digits → that index. Anything else
+        # is a typo — surface the usage hint rather than silently copying
+        # the latest, since that would mask the user's mistake.
+        if arg == "":
+            n = 1
+        elif arg.isdigit():
+            n = int(arg)
+            if n <= 0:
+                self._show_transient_status(
+                    conv, "/copy index must be ≥ 1 (1 = newest)", kind="error",
+                )
+                return
+        else:
+            self._show_transient_status(
+                conv, "usage: /copy [N] or /copy list", kind="error",
+            )
+            return
+
+        text = conv.reply_at(n)
+        if text is None:
+            buffered = conv.recent_reply_count()
+            if buffered == 0:
+                self._show_transient_status(conv, "nothing to copy yet")
+            else:
+                self._show_transient_status(
+                    conv,
+                    f"reply {n} not in buffer "
+                    f"(only {buffered} available — /copy list)",
+                    kind="error",
+                )
+            return
+
+        # Off-load the blocking ``subprocess.run`` (up to 2 s per tool tried)
+        # to a thread executor so the outbox loop stays free to drain other
+        # events. Without this, ``/copy`` mid-stream could freeze the TUI
+        # for up to 2 s — streaming chunks would back up in the queue and
+        # all unblock in a burst at the end. Surface an instant "copying…"
+        # placeholder so the user sees their action register immediately;
+        # the worker overwrites it with the success / failure status on
+        # completion (each ``_show_transient_status`` cancels the prior
+        # auto-hide timer, so the placeholder never out-lives the result).
+        self._show_transient_status(conv, "copying…", duration=10.0)
+        asyncio.create_task(self._finish_copy_async(conv, text, n))
+
+    async def _finish_copy_async(
+        self, conv: ConversationView, text: str, n: int,
+    ) -> None:
+        """Background worker for /copy — runs subprocess off the event loop."""
+        from ._clipboard import copy_to_clipboard_async
+        try:
+            ok, label = await copy_to_clipboard_async(text)
+        except Exception as exc:
+            self._show_transient_status(
+                conv, f"copy failed: {exc}", kind="error",
+            )
+            return
         if ok:
             n_chars = len(text)
-            conv.show_status(
-                f"copied {n_chars} chars via {label}", kind="general",
+            tag = "latest" if n == 1 else f"#{n}"
+            self._show_transient_status(
+                conv, f"copied reply {tag} ({n_chars} chars) via {label}",
             )
         else:
-            conv.show_status(
+            self._show_transient_status(
+                conv,
                 "no clipboard tool found "
                 "(install pbcopy / xclip / wl-copy / xsel)",
                 kind="error",
             )
-        self._app.set_timer(2.5, conv.hide_status)
 
     def _on_docs_filter(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -226,35 +354,60 @@ class OutboxRouter:
         except Exception:
             pass
         msg_text = f"docs filter: {substr}" if substr else "docs filter cleared"
-        conv.show_status(msg_text, kind="general")
-        app.set_timer(2.0, conv.hide_status)
+        self._show_transient_status(conv, msg_text, duration=2.0)
 
     def _on_stream_start(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_start__` — begin a streaming agent reply row."""
+        """`__stream_start__` — begin a streaming agent reply row.
+
+        The row is created keyed on the START message's ``msg_id``. Chunks
+        and end events route by their own ``msg.meta["msg_id"]`` (see
+        ``_on_stream_chunk`` / ``_on_stream_end``), NOT by a shared
+        ``app._current_stream_id`` — that single-slot global was racy under
+        concurrent streams (e.g. ``/attach`` mid-stream): a new start would
+        overwrite it, and late chunks from the previous stream then
+        appended to the wrong agent's row.
+        """
         app = self._app
-        app._current_stream_id = msg.meta.get("msg_id", id(msg))
-        # Hide the "thinking…" sticky now that the reply is starting
+        msg_id = msg.meta.get("msg_id", id(msg))
+        app._current_stream_id = msg_id
+        # Hide the "thinking…" sticky now that the reply is starting. Cancel
+        # any pending transient timer too — a transient that fired right
+        # before the reply must not auto-hide a fresh sticky armed later
+        # in this same turn.
+        self._cancel_transient_timer()
         conv.hide_status()
-        conv.begin_stream(app._current_stream_id, app._agent_name)
+        conv.begin_stream(msg_id, app._agent_name)
 
     def _on_stream_chunk(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_chunk__` — append text to the active streaming row."""
-        app = self._app
-        if app._current_stream_id is not None:
-            conv.append_stream(app._current_stream_id, msg.text)
+        """`__stream_chunk__` — append text to the row keyed on the chunk's own msg_id.
+
+        Routing by ``msg.meta["msg_id"]`` (not the global
+        ``app._current_stream_id``) means a late chunk from an earlier
+        stream lands on its original row even if a newer stream has
+        started in the meantime — the canonical fix for chunks bleeding
+        across agents after a ``/attach`` mid-stream.
+        """
+        msg_id = msg.meta.get("msg_id")
+        if msg_id is not None:
+            conv.append_stream(msg_id, msg.text)
 
     def _on_stream_end(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_end__` — seal the streaming row + refresh status."""
+        """`__stream_end__` — seal the row keyed on the end message's msg_id."""
         app = self._app
-        if app._current_stream_id is not None:
-            conv.end_stream(app._current_stream_id)
-            app._current_stream_id = None
+        msg_id = msg.meta.get("msg_id")
+        if msg_id is not None:
+            conv.end_stream(msg_id)
+            # Only clear the "latest stream" pointer if THIS stream was
+            # the latest. If a newer stream started in between, its id
+            # is still the latest in-flight and must stay tracked.
+            if app._current_stream_id == msg_id:
+                app._current_stream_id = None
         app._maybe_refresh_status(header)
         # A4: render per-turn cost suffix when opt-in is enabled
         app._maybe_render_cost_suffix(conv)
@@ -306,6 +459,13 @@ class OutboxRouter:
         self._app._mount_intervention(
             conv, msg.text, iv_id, choices, queued_extra=queued_extra,
         )
+        # Out-of-band signals: the agent is hard-blocked on a human answer,
+        # so a user in a background terminal tab needs to know to come
+        # back. The terminal title flips visible in the tab bar; the BEL
+        # gives an audio cue. Both reset when the user submits an answer
+        # (see InputBar.UserSubmitted path → set_title_state(None)).
+        self._app.set_title_state("awaiting answer")
+        self._app.alert()
 
     def _on_intervention_resolved(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -325,11 +485,28 @@ class OutboxRouter:
             widget.remove()
         except Exception:
             pass
+        # Mirror InterventionWidget._submit's focus restoration. The
+        # text-input path resolves the intervention from the InputBar's
+        # ``on_submitted`` handler so the user's focus is already there
+        # in the common case — but if the user clicked into the panel or
+        # tabbed away while waiting for confirmation, the widget removal
+        # would otherwise leak focus to a non-editable peer.
+        try:
+            from .widgets import InputBar
+            self._app.query_one("#inputbar", InputBar).focus_input()
+        except Exception:
+            pass
 
     def _on_status(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`status` — route to sticky bar (not the log)."""
+        """`status` — route to sticky bar (not the log).
+
+        A live ``⟳ thinking…`` must outlive any pending transient timer
+        from a slash command that fired just before this turn started —
+        otherwise the auto-hide kills the agent's spinner mid-thought.
+        """
+        self._cancel_transient_timer()
         conv.show_status(msg.text, kind="thinking")
 
     def _on_trace(
@@ -355,6 +532,11 @@ class OutboxRouter:
         conv.hide_status()
         conv.render_message(msg)
         self._app._last_focal_tab = "events"
+        # Out-of-band: flag the terminal title and ring the bell so a
+        # user with reyn in a background tab notices something failed.
+        # Reset on the next user submit.
+        self._app.set_title_state("error")
+        self._app.alert()
 
 
 __all__ = ["OutboxRouter"]

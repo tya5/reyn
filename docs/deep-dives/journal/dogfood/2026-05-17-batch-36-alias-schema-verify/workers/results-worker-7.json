@@ -1,0 +1,386 @@
+{
+  "results": [
+    {
+      "scenario_id": "scenario_1_reyn_research_chain",
+      "agent_name": "dogfood-b36-7-s1",
+      "kind": "research_chain",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What is Reyn and what problem does it solve?",
+          "status": "ok",
+          "reply_len": 1011,
+          "empty": false,
+          "elapsed_s": 2.892,
+          "reply_preview": "Reyn is an LLM workflow OS that provides a constrained, predictable, and auditable environment for running LLM applications.\n\nIt solves the problem of LLM unpredictability by:\n\n*   **Constrained Decis"
+        },
+        {
+          "turn": 2,
+          "prompt": "How does its skill system work?",
+          "status": "ok",
+          "reply_len": 356,
+          "empty": false,
+          "elapsed_s": 2.436,
+          "reply_preview": "I'm sorry, but I couldn't find specific information about how Reyn's skill system works in the provided documentation. My attempt to read 'docs/en/concepts/skills.md' resulted in a 'path does not exis"
+        },
+        {
+          "turn": 3,
+          "prompt": "What is the difference between a Phase and a Skill in that system?",
+          "status": "ok",
+          "reply_len": 175,
+          "empty": false,
+          "elapsed_s": 1.253,
+          "reply_preview": "I can't answer your question because I lack the specific information about Reyn's \"Phase\" and \"Skill\" system. The documentation I have access to doesn't detail these concepts."
+        },
+        {
+          "turn": 4,
+          "prompt": "Where does the OS fit in the architecture you just described?",
+          "status": "ok",
+          "reply_len": 1236,
+          "empty": false,
+          "elapsed_s": 2.227,
+          "reply_preview": "Reyn itself is the \"LLM workflow OS\" that I described. It's the overarching system that provides the environment and the constraints for running LLM applications.\n\nHere's a breakdown of how the compon"
+        },
+        {
+          "turn": 5,
+          "prompt": "What principles prevent skill-specific code from leaking into the OS?",
+          "status": "ok",
+          "reply_len": 183,
+          "empty": false,
+          "elapsed_s": 1.165,
+          "reply_preview": "I cannot answer this question. The documentation I have access to does not contain information about the specific principles that prevent skill-specific code from leaking into the OS."
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_2_pronoun_followup",
+      "agent_name": "dogfood-b36-7-s2",
+      "kind": "pronoun_followup",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What stdlib skills does Reyn bundle?",
+          "status": "ok",
+          "reply_len": 2177,
+          "empty": false,
+          "elapsed_s": 3.993,
+          "reply_preview": "Reyn bundles the following skills:\n\n*   `skill__ai_article_generator`: Generates an article about AI benefits and reviews it for clarity and accuracy.\n*   `skill__ai_article_writer`: An app that gener"
+        },
+        {
+          "turn": 2,
+          "prompt": "Tell me more about the simplest one.",
+          "status": "ok",
+          "reply_len": 133,
+          "empty": false,
+          "elapsed_s": 2.296,
+          "reply_preview": "The `skill__direct_llm` skill is a fallback for single-shot natural-language tasks. It takes a skill name and its input as arguments."
+        },
+        {
+          "turn": 3,
+          "prompt": "What event types does it emit?",
+          "status": "ok",
+          "reply_len": 138,
+          "empty": false,
+          "elapsed_s": 2.068,
+          "reply_preview": "I cannot answer that question. The `skill__direct_llm` tool does not emit events. It is a fallback for single-shot natural-language tasks."
+        },
+        {
+          "turn": 4,
+          "prompt": "Are those events stored somewhere on disk?",
+          "status": "ok",
+          "reply_len": 138,
+          "empty": false,
+          "elapsed_s": 2.186,
+          "reply_preview": "I cannot answer that question. The `skill__direct_llm` tool does not emit events, and therefore, there are no events to be stored on disk."
+        },
+        {
+          "turn": 5,
+          "prompt": "What format are they stored in?",
+          "status": "ok",
+          "reply_len": 159,
+          "empty": false,
+          "elapsed_s": 1.335,
+          "reply_preview": "I cannot answer that question. The `skill__direct_llm` tool does not emit events. Therefore, there is no information about the format in which they are stored."
+        },
+        {
+          "turn": 6,
+          "prompt": "Can you show me an example of that format?",
+          "status": "ok",
+          "reply_len": 163,
+          "empty": false,
+          "elapsed_s": 1.316,
+          "reply_preview": "I cannot answer that question. The `skill__direct_llm` tool does not emit events, and therefore, there is no information about the format in which they are stored."
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_3_cross_reference_compare",
+      "agent_name": "dogfood-b36-7-s3",
+      "kind": "cross_reference",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "Describe how LangGraph structures multi-agent workflows.",
+          "status": "ok",
+          "reply_len": 389,
+          "empty": false,
+          "elapsed_s": 4.445,
+          "reply_preview": "LangGraph structures multi-agent workflows using a graph-based approach. In this paradigm, individual agents are represented as nodes within the graph, and their communication and interactions are def"
+        },
+        {
+          "turn": 2,
+          "prompt": "Now describe how Reyn structures multi-agent workflows.",
+          "status": "ok",
+          "reply_len": 2114,
+          "empty": false,
+          "elapsed_s": 4.183,
+          "reply_preview": "Reyn structures multi-agent workflows by enforcing a strict, layered architecture centered around a core **Operating System (OS)**. Here's how it works:\n\n1.  **Skills:** These are the primary building"
+        },
+        {
+          "turn": 3,
+          "prompt": "What is async/await in Python and why does it matter for agents?",
+          "status": "ok",
+          "reply_len": 2591,
+          "empty": false,
+          "elapsed_s": 8.741,
+          "reply_preview": "Async/await in Python is a programming paradigm for writing **asynchronous** code. It allows you to write code that looks sequential but can perform other operations while waiting for certain tasks to"
+        },
+        {
+          "turn": 4,
+          "prompt": "Given what you said about both LangGraph and Reyn, which approach handles async ",
+          "status": "ok",
+          "reply_len": 410,
+          "empty": false,
+          "elapsed_s": 3.648,
+          "reply_preview": "The search results did not provide specific information about how LangGraph or Reyn handle async tool calls. My previous descriptions focused on their general approaches to structuring multi-agent wor"
+        },
+        {
+          "turn": 5,
+          "prompt": "What would a developer need to change when migrating from LangGraph to Reyn?",
+          "status": "ok",
+          "reply_len": 3852,
+          "empty": false,
+          "elapsed_s": 6.734,
+          "reply_preview": "To provide a comprehensive answer about migrating from LangGraph to Reyn, I need more specific information about how LangGraph handles agent workflows and tool calls, particularly in an asynchronous c"
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_4_repetitive_context_bloat",
+      "agent_name": "dogfood-b36-7-s4",
+      "kind": "repetitive_context",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What skills are available in Reyn?",
+          "status": "ok",
+          "reply_len": 2604,
+          "empty": false,
+          "elapsed_s": 3.252,
+          "reply_preview": "I found the following skills:\n\n*   **skill__ai_article_generator**: Generates an article about AI benefits and reviews it for clarity and accuracy.\n*   **skill__ai_article_writer**: An app that genera"
+        },
+        {
+          "turn": 2,
+          "prompt": "List the available skills again, but this time include a one-line description fo",
+          "status": "ok",
+          "reply_len": 2647,
+          "empty": false,
+          "elapsed_s": 3.632,
+          "reply_preview": "Here are the available skills in Reyn, each with a one-line description:\n\n*   **skill__ai_article_generator**: Generates an article about AI benefits and reviews it for clarity and accuracy.\n*   **ski"
+        },
+        {
+          "turn": 3,
+          "prompt": "Which of those skills are used most commonly in dogfood sessions?",
+          "status": "ok",
+          "reply_len": 245,
+          "empty": false,
+          "elapsed_s": 1.571,
+          "reply_preview": "I cannot determine the most commonly used skills in \"dogfood sessions\" as I lack the ability to track or access session data or usage statistics. My capabilities are limited to the tools and informati"
+        },
+        {
+          "turn": 4,
+          "prompt": "Summarize the skill list one more time in bullet form.",
+          "status": "ok",
+          "reply_len": 910,
+          "empty": false,
+          "elapsed_s": 2.184,
+          "reply_preview": "Here's a summary of the available skills in bullet form:\n\n*   **AI Article Generation & Review**: skill__ai_article_generator, skill__ai_article_writer\n*   **General Article Writing**: skill__article_"
+        },
+        {
+          "turn": 5,
+          "prompt": "Which skill would you recommend for a first-time Reyn user?",
+          "status": "ok",
+          "reply_len": 736,
+          "empty": false,
+          "elapsed_s": 1.903,
+          "reply_preview": "For a first-time Reyn user, I would recommend starting with one of the more straightforward skills to get a feel for how Reyn works. The **skill__article_writer** or **skill__article_writer_app** skil"
+        },
+        {
+          "turn": 6,
+          "prompt": "Can you re-confirm which skills are available? I want to make sure I have the fu",
+          "status": "ok",
+          "reply_len": 141,
+          "empty": false,
+          "elapsed_s": 3.2,
+          "reply_preview": "It seems like you've answered your own question! Let me know if you have any other questions or if there's anything else I can help you with."
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_5_general_python_chain",
+      "agent_name": "dogfood-b36-7-s5",
+      "kind": "general_topic",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "Explain Python's asyncio event loop in simple terms.",
+          "status": "ok",
+          "reply_len": 475,
+          "empty": false,
+          "elapsed_s": 6.92,
+          "reply_preview": "The asyncio event loop in Python is like a conductor for asynchronous tasks. It keeps track of all the tasks that are waiting for something to happen (like waiting for data from a website or a file to"
+        },
+        {
+          "turn": 2,
+          "prompt": "What is the difference between asyncio.gather and asyncio.wait?",
+          "status": "ok",
+          "reply_len": 104,
+          "empty": false,
+          "elapsed_s": 2.582,
+          "reply_preview": "I cannot answer this question as I lack the ability to browse the internet or access external documents."
+        },
+        {
+          "turn": 3,
+          "prompt": "When would you choose asyncio over threading?",
+          "status": "ok",
+          "reply_len": 1373,
+          "empty": false,
+          "elapsed_s": 3.346,
+          "reply_preview": "When would you choose asyncio over threading?\n\nYou would generally choose `asyncio` over threading in Python for I/O-bound tasks, such as network requests, database operations, or file operations. `as"
+        },
+        {
+          "turn": 4,
+          "prompt": "How does Python's GIL interact with async code?",
+          "status": "ok",
+          "reply_len": 1687,
+          "empty": false,
+          "elapsed_s": 4.306,
+          "reply_preview": "The Global Interpreter Lock (GIL) in CPython doesn't directly prevent `asyncio` from working. `asyncio` achieves concurrency by interleaving the execution of I/O-bound tasks within a single thread, ra"
+        },
+        {
+          "turn": 5,
+          "prompt": "Give me a minimal example of an async producer-consumer queue.",
+          "status": "ok",
+          "reply_len": 4123,
+          "empty": false,
+          "elapsed_s": 5.868,
+          "reply_preview": "It seems like you're asking for a minimal example of an async producer-consumer queue in Python. Since I don't have access to a file named `async_producer_consumer.py` or the ability to create one dir"
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_6_file_and_doc_lookup_chain",
+      "agent_name": "dogfood-b36-7-s6",
+      "kind": "research_chain",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What ADRs exist in this project?",
+          "status": "ok",
+          "reply_len": 2007,
+          "empty": false,
+          "elapsed_s": 5.546,
+          "reply_preview": "I found the following ADRs in the project:\n\n*   `ADR-0001: WAL + snapshot cache (transactional event-sourced replay)`\n*   `ADR-0002: Forward-replay resume (no phase-head re-execution)`\n*   `ADR-0003: "
+        },
+        {
+          "turn": 2,
+          "prompt": "Summarize the most recent one.",
+          "status": "ok",
+          "reply_len": 135,
+          "empty": false,
+          "elapsed_s": 2.446,
+          "reply_preview": "I apologize, but I was unable to find the content of ADR-0025 at the provided path. It seems the file might have been moved or deleted."
+        },
+        {
+          "turn": 3,
+          "prompt": "What problem was it solving?",
+          "status": "ok",
+          "reply_len": 89,
+          "empty": false,
+          "elapsed_s": 1.833,
+          "reply_preview": "I can't tell you what problem ADR-0025 was solving because I couldn't access its content."
+        },
+        {
+          "turn": 4,
+          "prompt": "Is there a related ADR that covers the same area?",
+          "status": "ok",
+          "reply_len": 424,
+          "empty": false,
+          "elapsed_s": 2.394,
+          "reply_preview": "It seems there are no other ADRs that directly mention \"ADR-0025\" in their name or description. However, based on the previous search results, ADR-0025 was related to \"LLM call memoization\" and was me"
+        },
+        {
+          "turn": 5,
+          "prompt": "What would be the next logical ADR to write given the current state?",
+          "status": "ok",
+          "reply_len": 424,
+          "empty": false,
+          "elapsed_s": 1.866,
+          "reply_preview": "I cannot determine the next logical ADR to write without understanding the current state of the project and its development goals. This would require a deeper understanding of the project's architectu"
+        }
+      ]
+    },
+    {
+      "scenario_id": "scenario_7_concept_explanation_chain",
+      "agent_name": "dogfood-b36-7-s7",
+      "kind": "general_topic",
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "Explain eventual consistency in distributed systems.",
+          "status": "ok",
+          "reply_len": 444,
+          "empty": false,
+          "elapsed_s": 5.363,
+          "reply_preview": "Eventual consistency is a consistency model used in distributed systems. It ensures that if no new updates are made to a given data item, eventually all read accesses to that item will return the last"
+        },
+        {
+          "turn": 2,
+          "prompt": "What is the CAP theorem and how does it relate to what you just described?",
+          "status": "ok",
+          "reply_len": 985,
+          "empty": false,
+          "elapsed_s": 2.164,
+          "reply_preview": "The CAP theorem, also known as Brewer's theorem, states that it is impossible for a distributed data store to simultaneously provide more than two out of the following three guarantees:\n\n*   **Consist"
+        },
+        {
+          "turn": 3,
+          "prompt": "Give a concrete example of a system that chooses availability over consistency.",
+          "status": "ok",
+          "reply_len": 2113,
+          "empty": false,
+          "elapsed_s": 2.28,
+          "reply_preview": "A classic example of a system that often chooses availability over consistency is a **social media feed** or a **product recommendation engine**.\n\nHere's how it relates to eventual consistency and the"
+        },
+        {
+          "turn": 4,
+          "prompt": "How would you detect inconsistency in that system at runtime?",
+          "status": "ok",
+          "reply_len": 2458,
+          "empty": false,
+          "elapsed_s": 5.551,
+          "reply_preview": "I cannot provide a concrete example of how to detect inconsistency at runtime for a system like a social media feed or recommendation engine because it is a complex software engineering problem that r"
+        },
+        {
+          "turn": 5,
+          "prompt": "What repair strategies exist once an inconsistency is detected?",
+          "status": "ok",
+          "reply_len": 3777,
+          "empty": false,
+          "elapsed_s": 10.714,
+          "reply_preview": "The previous response was \"I cannot provide a concrete example of how to detect inconsistency in that system at runtime because it is a complex software engineering problem that requires deep knowledg"
+        }
+      ]
+    }
+  ]
+}

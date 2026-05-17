@@ -709,3 +709,84 @@ def test_outcome_prediction_attached_from_scenario(tmp_path: Path) -> None:
     # Perfect prediction → Brier = 0.0
     assert agg["brier_score"] is not None
     assert abs(agg["brier_score"]) < 1e-9
+
+
+# ---------------------------------------------------------------------------
+# 14. Verifier triad wired into run_scenario_set (task #93)
+# ---------------------------------------------------------------------------
+
+
+def test_verifier_triad_produces_real_reply_outcome_for_substring_match(tmp_path: Path) -> None:
+    """Tier 2: verifier triad wired — substring match on reply elevates reply_outcome
+    from the default 'inconclusive' to 'verified'.
+
+    Before task #93 the verifiers were never called; every scenario run
+    returned ScenarioRunResult with all outcomes stuck at 'inconclusive'.
+    This test confirms that run_scenario_set now invokes verify_reply so a
+    scenario whose runner_fn returns a reply containing the expected substring
+    receives reply_outcome='verified' (not 'inconclusive').
+
+    Design:
+    - The runner_fn returns reply_text='hello world' with all outcomes set to
+      the 'inconclusive' default — simulating what the live runner returns
+      before the verifier fires.
+    - The scenario declares expected_reply with kind='substring', value='hello'.
+    - After run_scenario_set the runner fills in the verifier-driven outcomes;
+      reply_outcome must be 'verified' (substring present in reply_text).
+    - events_outcome and artifacts_outcome are 'blocked' because the scenario
+      declares no expected_events or expected_artifacts.
+    - overall_outcome = worst-case('verified', 'blocked', 'blocked') = 'blocked'.
+    """
+    from reyn.dogfood.scenarios import ExpectedReply
+
+    async def _reply_runner(scenario: Scenario) -> ScenarioRunResult:
+        """Returns reply containing the expected substring; all outcomes at default."""
+        return ScenarioRunResult(
+            scenario_id=scenario.id,
+            reply_text="hello world",
+            events=[],
+            artifacts=[],
+            # Outcomes deliberately left at 'inconclusive' (= what live runner returns).
+            # The verifier triad inside run_scenario_set must overwrite them.
+        )
+
+    scenario = Scenario(
+        id="substring-verify",
+        input="greet me",
+        expected_reply=ExpectedReply(kind="substring", value="hello"),
+        expected_events=None,
+        expected_artifacts=None,
+    )
+    scenario_set = ScenarioSet(name="verifier-triad-test", scenarios=[scenario])
+
+    result = asyncio.run(
+        run_scenario_set(
+            scenario_set,
+            storage_dir=tmp_path / "verifier_run",
+            runner_fn=_reply_runner,
+        )
+    )
+
+    assert len(result.scenario_results) == 1
+    sr = result.scenario_results[0]
+
+    # The verifier must have fired: reply_outcome is 'verified' because
+    # 'hello' appears in 'hello world'.
+    assert sr.reply_outcome == "verified", (
+        f"Expected reply_outcome='verified' after verifier triad; got {sr.reply_outcome!r}. "
+        "The verifier triad may not be wired into run_scenario_set."
+    )
+    # No expected_events / expected_artifacts → both are 'blocked' (no assertion declared).
+    assert sr.events_outcome == "blocked", (
+        f"Expected events_outcome='blocked' (no events assertion); got {sr.events_outcome!r}"
+    )
+    assert sr.artifacts_outcome == "blocked", (
+        f"Expected artifacts_outcome='blocked' (no artifacts assertion); got {sr.artifacts_outcome!r}"
+    )
+    # overall = worst('verified', 'blocked', 'blocked') = 'blocked'
+    assert sr.overall_outcome == "blocked", (
+        f"Expected overall_outcome='blocked'; got {sr.overall_outcome!r}"
+    )
+    # detail must carry per-verifier breakdown
+    assert "reply" in sr.detail, "detail['reply'] must be populated by verifier triad"
+    assert sr.detail["reply"].get("kind") == "substring"

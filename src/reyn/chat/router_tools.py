@@ -95,7 +95,23 @@ MAX_DESC_LEN_FOR_LISTING: int = 80
 # P7-clean: ``routing`` and ``category`` are OS-level catalogue metadata
 # fields (not skill-specific names).  Filtering applied uniformly across all
 # skills (no skill-name / phase-name / artifact-name literals hardcoded).
-_DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({"routing", "category"})
+#
+# ``input_schema`` / ``input_wrapped`` are also stripped (FP-0034 D2-full
+# follow-up): they were added to ``enumerate_available_skills`` so the
+# hot-list direct aliases for ``skill__<name>`` can expose the actual JSON
+# schema on the alias's parameters — that's already a structured surface
+# the LLM consumes. Echoing the same schema inside ``describe_skill``'s
+# JSON response duplicates content (often >1000 chars for non-trivial
+# skills like ``skill_improver`` at ~3.6k chars), pushing past the G12
+# Pattern D verbosity-attractor threshold. ``input_fields`` (the field
+# name list) stays as the lightweight hint; structured schema lives in
+# the hot-list alias and ``describe_action``.
+_DESCRIBE_SKILL_STRIP_FIELDS: frozenset[str] = frozenset({
+    "routing",
+    "category",
+    "input_schema",
+    "input_wrapped",
+})
 
 
 # ── ToolSpec — unified tool descriptor ──────────────────────────────────────

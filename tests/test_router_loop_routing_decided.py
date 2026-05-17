@@ -97,9 +97,11 @@ class _FakeRouterHost:
         *,
         universal_wrappers_enabled: bool = True,
         tracker: "ActionUsageTracker | None" = None,
+        skills: list[dict] | None = None,
     ) -> None:
         self._universal_wrappers_enabled = universal_wrappers_enabled
         self._tracker = tracker
+        self._skills = skills or []
         self.outbox: list[dict] = []
         self._events = _FakeEventLog()
 
@@ -126,7 +128,7 @@ class _FakeRouterHost:
         return None
 
     def list_available_skills(self) -> list[dict]:
-        return []
+        return list(self._skills)
 
     def list_available_agents(self) -> list[dict]:
         return []
@@ -244,7 +246,14 @@ def test_routing_decided_emitted_for_hot_list_alias():
     for _ in range(5):
         tracker.record("skill__bar")
 
-    host = _FakeRouterHost(universal_wrappers_enabled=True, tracker=tracker)
+    host = _FakeRouterHost(
+        universal_wrappers_enabled=True,
+        tracker=tracker,
+        skills=[{"name": "bar", "short_description": "bar skill"}],
+    )
+    # B39: ``bar`` must be in available_skills so the registry-existence
+    # check accepts ``skill__bar``. No input_schema needed (= empty-schema
+    # skills are valid registry members; see B39 #119 fix).
     # Turn 1: LLM calls skill__bar (hot list alias — contains '__')
     # Turn 2: text reply
     _run_with_llm_sequence(

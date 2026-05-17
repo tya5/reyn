@@ -39,7 +39,7 @@ permissions:
       function: cost_preflight
       mode: unsafe
       timeout: 10
-    - module: ./chunkers.py
+    - module: ./chunkers_safe.py
       function: extract_and_split
       mode: safe
       timeout: 30
@@ -56,9 +56,11 @@ permissions:
 postprocessor:
   output_schema: index_summary
   steps:
-    # Step 1: safe — glob enum (path list only, no file content read)
+    # Step 1: safe — glob enum (path list only, no file content read).
+    # Lives in chunkers_safe.py (separate module) so the safe-mode AST
+    # validator does not inherit chunkers.py's legitimate unsafe imports.
     - type: python
-      module: ./chunkers.py
+      module: ./chunkers_safe.py
       function: extract_and_split
       into: data.chunk_list
       mode: safe

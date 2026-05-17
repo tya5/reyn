@@ -104,13 +104,18 @@ def test_resolve_invoke_action_mcp_tool_missing_dot_raises() -> None:
 
 
 def test_resolve_invoke_action_memory_entry_routes_to_read_body() -> None:
-    """Tier 2: memory.entry__<name> → read_memory_body(name).
+    """Tier 2: memory.entry__<slug> → read_memory_body({layer: shared, slug}).
 
     §D19 resource invoke: invoking a memory entry returns its body.
+
+    Post-N4 (2026-05-17): the transform was updated to emit the canonical
+    ``{layer, slug}`` pair that ``read_memory_body`` requires. The previous
+    ``{name}`` shape caused dispatch failure when memory.entry aliases were
+    invoked (= the pre-existing shape mismatch surfaced by N4-d).
     """
     result = resolve_invoke_action("memory.entry__pref_dates", {})
     assert result.target_tool_name == "read_memory_body"
-    assert result.target_args == {"name": "pref_dates"}
+    assert result.target_args == {"layer": "shared", "slug": "pref_dates"}
 
 
 def test_resolve_invoke_action_rag_corpus_curries_single_source() -> None:
@@ -149,6 +154,8 @@ def test_resolve_invoke_action_rag_corpus_without_top_k() -> None:
         ("file__write",  "write_file"),
         ("file__delete", "delete_file"),
         ("file__list",   "list_directory"),
+        ("file__grep",   "grep_files"),
+        ("file__glob",   "glob_files"),
         # web ops
         ("web__search",  "web_search"),
         ("web__fetch",   "web_fetch"),
@@ -185,7 +192,7 @@ def test_invoke_action_with_none_args_treats_as_empty() -> None:
     """Tier 2: passing args=None is equivalent to args={}."""
     result = resolve_invoke_action("memory.entry__foo", None)
     assert result.target_tool_name == "read_memory_body"
-    assert result.target_args == {"name": "foo"}
+    assert result.target_args == {"layer": "shared", "slug": "foo"}
 
 
 # ── 3. UnknownActionError + §D12 error response shape ─────────────────────
@@ -389,6 +396,7 @@ def test_known_qualified_name_for_category() -> None:
     file_names = known_qualified_name_for_category("file")
     assert set(file_names) == {
         "file__read", "file__write", "file__delete", "file__list",
+        "file__grep", "file__glob",
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()

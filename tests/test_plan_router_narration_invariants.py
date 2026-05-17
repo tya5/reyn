@@ -83,7 +83,7 @@ async def test_plan_completion_emits_plan_completed_inbox(
         session.inbox.get_nowait()
 
     plan_id = "fp0025c_test"
-    await session.spawn_plan_task(
+    await session._plan_runner.spawn_plan_task(
         plan_id=plan_id,
         runtime=_FakeRuntime(),
         chain_id=f"plan_{plan_id}",

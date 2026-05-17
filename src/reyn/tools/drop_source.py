@@ -53,6 +53,12 @@ async def _handle_drop_source(
     from reyn.permissions.permissions import PermissionDecl
     from reyn.schemas.models import IndexDropIROp
 
+    # B34 LLM-attractor fix: accept common synonyms before KeyError.
+    # LLM sends {source_id:...} instead of {source:...} — observed B33 W4 S6.
+    # Canonical key wins when both are present.
+    if "source" not in args and "source_id" in args:
+        args = {**args, "source": args["source_id"]}
+
     op = IndexDropIROp(
         kind="index_drop",
         source=str(args["source"]),

@@ -87,6 +87,13 @@ class SkillActivityRow(Widget):
         self._phase: str = ""
         self._visit: int = 1
         self._progress: tuple[int, int] | None = None  # (current, total)
+        # Optional in-phase detail (= what's happening WITHIN the phase right
+        # now — "calling llm", "running act op", etc.). Without this the row
+        # showed only the phase name during a 10–30 s LLM call inside that
+        # phase, with no signal whether the skill was making progress or
+        # stuck. The detail is replaced each event and cleared on phase
+        # change (= the new phase's detail context starts fresh).
+        self._detail: str = ""
 
         # Finish state
         self._finished = False
@@ -116,9 +123,27 @@ class SkillActivityRow(Widget):
     # ── Public API ─────────────────────────────────────────────────────────────
 
     def set_phase(self, phase: str, visit: int = 1) -> None:
-        """Update the currently active phase name (and visit count)."""
+        """Update the currently active phase name (and visit count).
+
+        Also clears any in-phase detail — the previous phase's "llm:
+        <model>" / "act: <op>" context is no longer relevant once the
+        phase advances.
+        """
         self._phase = phase
         self._visit = visit
+        self._detail = ""
+        self._refresh()
+
+    def set_detail(self, detail: str) -> None:
+        """Update the in-phase detail text shown after the elapsed counter.
+
+        Detail is ephemeral: each call replaces the previous text, and
+        ``set_phase`` clears it on phase advance. Empty string hides
+        the detail segment. Typical sources: forwarder ``on_llm_called``
+        (= ``"llm: <model>"``) or ``on_act_executed``
+        (= ``"act: <N> ops"``).
+        """
+        self._detail = detail
         self._refresh()
 
     def set_progress(self, current: int, total: int) -> None:
@@ -192,6 +217,13 @@ class SkillActivityRow(Widget):
         else:
             elapsed_style = "dim"
         t.append(f"  {secs:.1f}s", style=elapsed_style)
+        # In-phase detail ("llm: opus-4-5", "act: 3 ops", etc.). Dim so
+        # it doesn't compete with the phase name, separated from elapsed
+        # by ``  ⤷`` so the eye can grok "this is the inner-most thing
+        # happening right now".
+        if self._detail:
+            t.append("  ⤷ ", style="dim")
+            t.append(self._detail, style="dim")
         return t
 
     def _build_finished(self) -> Text:

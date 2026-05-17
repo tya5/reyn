@@ -624,6 +624,58 @@ The reply is the agent's final synthesised text — exactly what the TUI would r
 
 **Why this is easy to forget.** The web server isn't part of the dogfood batch driver scripts (those drive `reyn chat --cui` via subprocess for parity with real users). The A2A endpoint is the operator's hand-driven debug tool; reach for it when piping into `reyn chat --cui` is awkward (TUI buffering issues, missing terminal, etc.).
 
+#### When to prefer A2A over `reyn chat --cui` for batch workers
+
+**Dogfood batch 33 surfaced a contract gap** between the H3 race fix (= `invoke_skill_spawn_ack_exit`, commit `25834de`) and the `reyn chat --cui` stdin-pipe driver pattern:
+
+- Post-H3 the router exits the loop on a skill spawn-ack. The actual completion narration arrives later via `_handle_skill_completed` → `_run_router_loop` → outbox.
+- `send_to_agent_impl` (the A2A entry point) waits via `MessageBus.request` until quiescent (= `running_skills` empty), so the completion narration is captured into the response.
+- `reyn chat --cui` with piped stdin closes stdin after the single user prompt, triggering CUI shutdown. The shutdown grace window (B27-H4, 30 s) is best-effort — heavy skills (e.g. multi-phase `skill_builder`, multi-turn `eval`) often overrun, and the completion narration is then lost to the shutdown.
+
+Empirically (B33 W2): A2A POST captured the completion narration cleanly on `invoke_action(skill__read_local_files)` ("The `read_local_files` skill could not be completed because the filesystem MCP server is inaccessible..."). The same prompt under `reyn chat --cui` stdin-pipe in B33 W2 returned empty reply on 3 of 4 spawn-ack scenarios (timing-dependent).
+
+**Recommendation for B34+ batch workers**:
+
+```bash
+# Per-scenario driver pattern via A2A (replaces `reyn chat --cui` stdin-pipe)
+# 1. One-time per worker: start reyn web in the background.
+LITELLM_API_BASE=http://localhost:4000 OPENAI_API_KEY=dummy \
+  reyn web --port 8081 > web.log 2>&1 &
+WEB_PID=$!
+sleep 3  # wait for /health
+curl -sf http://localhost:8081/health   # sanity check
+
+# 2. One-time per worker: create the agent.
+reyn agent new dogfood-bN-i
+
+# 3. Per scenario: apply the wipe recipe (= same as before — events / state /
+#    agents/<n>/history.jsonl / reyn/local/), then POST.
+rm -rf .reyn/events .reyn/agents/dogfood-bN-i/events 2>/dev/null
+rm -f  .reyn/state/action_usage.jsonl .reyn/state/wal.jsonl
+rm -f  .reyn/state/history.jsonl                          # ← B39 addition
+rm -rf .reyn/state/plans/ reyn/local/
+rm -f  .reyn/agents/dogfood-bN-i/history.jsonl
+
+REYN_LLM_TRACE_DUMP="traces/${scenario_id}.jsonl" \
+  curl -s --max-time 240 \
+       -X POST "http://localhost:8081/a2a/agents/dogfood-bN-i" \
+       -H 'Content-Type: application/json' \
+       -d "$(jq -n --arg t "$prompt_text" '{
+         jsonrpc:"2.0", id:"r1", method:"message/send",
+         params:{message:{messageId:"m1", role:"user",
+                          parts:[{kind:"text", text:$t}]}}
+       }')" \
+  | jq -r '.result.parts[0].text' > "replies/${scenario_id}.txt"
+
+# 4. Tear down at end of worker.
+kill $WEB_PID
+```
+
+The `reyn chat --cui` stdin-pipe pattern remains valid for **synchronous-only**
+scenarios (= LLM answers inline, no skill spawn). Workers that mix both
+patterns should default to A2A. Drivers built on top of
+`scripts/dogfood_b24_driver.py` should migrate accordingly.
+
 ### scripts/dogfood_sp_render.py
 
 A CLI for verifying system prompt rendering. Preview the wrapper-only or legacy SP and get size-delta stats in one command, without writing a throwaway script each time you want to confirm what the LLM will receive.
@@ -917,11 +969,23 @@ The full reset every dogfood worker should run **between scenarios within a batc
 rm -rf .reyn/events
 rm -rf .reyn/agents/<worker-agent-name>/events
 rm -f  .reyn/state/action_usage.jsonl
+rm -f  .reyn/state/wal.jsonl            # ← B39 addition (plan resume substrate)
+rm -f  .reyn/state/history.jsonl        # ← B39 addition (session summary carry-over)
 rm -rf .reyn/state/plans/
-rm -rf reyn/local/                       # ← B30-NEW-3 addition
+rm -rf reyn/local/                      # ← B30-NEW-3 addition
 ```
 
+Alternatively, use `bash scripts/dogfood_fresh_reset.sh` from the worktree
+root — it runs the hot-list portion of this recipe (all lines except the
+`.reyn/events` and per-agent lines, which require knowing the agent name and
+must not run while `reyn web` is live). See §6.7 for the full fresh-mode
+rationale.
+
 The `reyn/local/` line was added in B30 follow-up: `skill_builder` writes persistent skill files there, and on subsequent scenarios the LLM sees those skills in `list_actions` enumeration — silently contaminating the catalog. Observation: B30 worker 1 had S6's `list_comprehension_generator` skill bleed into S3's skill list because `reyn/local/` was not reset.
+
+The `wal.jsonl` and `history.jsonl` lines were added in B39: these files carry
+plan-resume substrate and session-summary state respectively; their absence at
+scenario start is required for fresh mode (§6.7).
 
 Note: `reyn/local/` is the **workspace-local skill directory** (= `Skill resolution order` step 2 in CLAUDE.md). It is gitignored by default and lives under cwd, so a worktree-isolated worker cleaning its cwd's `reyn/local/` does not affect any other worker.
 
@@ -1064,6 +1128,111 @@ For `--n-shot N > 1`, each shot uses a distinct agent name (`default-shot1` thro
 - **G28 in `giveup-tracker.md`**: the entry that motivated this driver, including the batch 16 8% baseline and the confirmed driver-induced explanation.
 - **`dogfood/scenarios/long_session_v1.yaml`**: the 7-scenario starting set. Extend it when testing specific context-growth hypotheses.
 - **`scripts/detect_attractor.py`**: run against the events log path reported by `--json` to check for empty-stop events at the phase level.
+
+---
+
+## 6.7 Fresh mode is the dogfood baseline
+
+> **B37 retro §3 F2 / B38 retro §6 evidence**: V swings between batches are
+> partly driven by hot-list usage-history seed state differences (= fresh
+> worktree vs polluted worktree with prior batch's accumulated
+> `action_usage.jsonl`). Cross-batch V comparison is only valid when every
+> batch starts from the same deterministic state. Fresh mode formalises that
+> baseline.
+
+### Definition
+
+**Fresh mode** means every batch and every scenario within a batch starts from
+the default `DEFAULT_HOT_LIST_SEED` state with no carry-over hot-list history,
+no persistent local skills, and no WAL or plan-resume state from a prior run.
+Concretely:
+
+- `action_usage.jsonl` is absent (= hot-list seed is exactly
+  `DEFAULT_HOT_LIST_SEED`, no frequency/recency boosts from prior sessions).
+- `reyn/local/` is absent (= no skills written by prior `skill_builder`
+  invocations pollute `list_actions`).
+- `.reyn/state/wal.jsonl` is absent (= no plan-resume substrate from a prior
+  interrupted run).
+- `.reyn/state/history.jsonl` is absent when present (= no prior session
+  summary carry-over).
+- `.reyn/state/plans/` is absent (= no stale decomposition artifacts).
+
+Fresh mode does **not** require wiping `.reyn/events/` while a `reyn web`
+server is running — events are append-only and the server holds an open file
+handle. Wiping events with a live server causes the server to emit malformed
+state. Wipe events only when the server is stopped or use a per-agent events
+subdir pattern (see §6.3 A2A wipe recipe).
+
+### Comparability rationale
+
+Without fresh mode, the LLM's action selection is influenced by
+frequency/recency boosts in `action_usage.jsonl` accumulated from prior runs.
+This makes V counts scenario-dependent on batch *order* and worker *history*,
+not just on OS state. Concretely observed (B37 retro §3 F2):
+
+- B36 used worktrees with accumulated usage history → higher V on
+  hot-list-seeded scenarios.
+- B37 used fresh worktrees → lower V on the same scenarios.
+- The V swing attributed to "worktree freshness" in B37 was -3V; similar
+  magnitude was tracked in B38 (§4 decomposition: -1 to -2V estimated).
+
+Cross-batch V comparison is only meaningful when both batches are in fresh
+mode. Mixed-mode comparisons conflate OS-layer changes with hot-list-state
+changes.
+
+### The wipe recipe — updated
+
+Use `scripts/dogfood_fresh_reset.sh` (Part B of the B39 fresh-mode
+infrastructure fix) for a single idempotent command:
+
+```bash
+bash scripts/dogfood_fresh_reset.sh          # run from worktree root
+```
+
+It wipes exactly the fresh-mode state files and echoes what was removed.
+Idempotent — safe to run even when the files are already absent.
+
+Equivalent manual recipe (= what the script does, for reference):
+
+```bash
+rm -f  .reyn/state/action_usage.jsonl
+rm -f  .reyn/state/wal.jsonl           # ← added B39 (was missing from prior recipe)
+rm -f  .reyn/state/history.jsonl       # ← added B39 (was missing from prior recipe)
+rm -rf .reyn/state/plans/
+rm -rf reyn/local/
+```
+
+Workers MUST run the wipe sequence **before each scenario invocation**, not
+only between batches. Scenarios within the same batch that share a worktree
+will otherwise contaminate each other's hot-list state via `action_usage.jsonl`
+updates written by the chat router during the prior scenario.
+
+**Update from prior wipe recipe in §6.5.6**: the prior recipe (lines under
+"Per-scenario wipe recipe") omitted `wal.jsonl` and `history.jsonl`. Those
+are now included. The §6.5.6 recipe is the plan-mode variant; consult that
+section for the additional `.reyn/events` and per-agent history lines needed
+when plan-mode scenarios are also being wiped.
+
+### Fresh mode declaration in results
+
+Each per-scenario `output.json` carries `"state_mode": "fresh"` (added in the
+B39 runner update). This makes the assumption explicit and machine-readable.
+When comparing runs across batches, verify that both runs carry the same
+`state_mode` value before treating V deltas as attributable to OS-layer
+changes.
+
+The field is set by the runner at serialization time. Default is `"fresh"`.
+To override (future: when non-fresh comparison batches are deliberately run),
+set env var `REYN_DOGFOOD_STATE_MODE=<value>` before invoking the runner.
+
+### Open question — non-fresh comparison batches
+
+As of B39, no automated non-fresh mode exists. Non-fresh runs in B36 were
+accidental (= stale worktrees from prior sessions). If a deliberate non-fresh
+comparison batch is needed (e.g. to measure the magnitude of hot-list carry-over
+effect), the runner should be invoked with `REYN_DOGFOOD_STATE_MODE=non-fresh`
+and the wipe step skipped. This is not yet a supported workflow; file a tracking
+issue if this becomes a measurement need.
 
 ---
 

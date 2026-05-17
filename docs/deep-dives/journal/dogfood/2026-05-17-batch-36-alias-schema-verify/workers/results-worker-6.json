@@ -1,0 +1,130 @@
+{
+  "worker": "b36-6",
+  "date": "2026-05-17",
+  "head": "0c1669f",
+  "agent_prefix": "dogfood-b36-6-s{N}",
+  "port": 8086,
+  "driver": "A2A POST",
+  "worktree": "/private/tmp/reyn-worktrees/b36-6",
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "file": "plan_mode.yaml",
+      "verdict": "inconclusive",
+      "plan_emitted": true,
+      "notes": "plan_emitted, 3 steps (started+completed), plan_aggregated. Reply references both workspace.md and permission-model.md but starts with 'could not find direct relationship' — narration quality weak. index_query control_ir_failed (NoneType.base_dir) in plan steps — RAG index not configured in worktree."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "notes": "LLM answered inline without any tool call. No plan tool invocation, no file reads. Pure inline reflection."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "notes": "LLM called file__read 3x (invoke_action pattern) for all 3 concept docs. Good narration with 5 pillars citing principles/architecture/workspace.md. But plan tool NOT invoked — direct multi-file read pattern bypassed plan."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "blocked",
+      "notes": "mcp_search invoked (invoke_skill_spawn_ack_exit fired) but preprocessor_step_failed immediately. exc_type=PreprocessorError — R-WEB-TRUSTED-PYTHON gate: web/deps.py creates PermissionResolver(unsafe_python_allowed=False) hardcoded; mcp_search skill declares mode:unsafe. reyn.local.yaml python.unsafe:allow does not override the CLI-flag gate."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "verified",
+      "notes": "skill_builder ran to completion (finished). 5 phases: plan_skill→design_artifacts→review_plan→build_skill→verify_skill. Narration: skill_name='string_length' extracted, creation confirmed. lint_passed and file_count not explicitly named in narration but skill creation confirmed."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "skill_builder invoked, normalization_error + phase_retry + workflow_aborted + skill_completion_injected chain. W6 fix (phase_no_progress→completion_injected) confirmed. Narration: 'skill builder failed'. CAVEAT: narration says 'restricted file read operations' rather than 'invalid spec/circular graph' — error surfaced but mischaracterized root cause."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "eval invoked (run_target phase), tool_failed with FileNotFoundError for missing skill path, PostprocessorError. skill_completion_injected fired. Narration: 'skill eval failed because the output did not match the expected schema... evaluation of reyn/local/__definitely_does_not_exist__ could not be completed.' Error surfaced, no fabricated score. Note: heuristic initially classified as inconclusive (checked for 'error' keyword but narration used 'failed')."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "blocked",
+      "notes": "Same R-WEB-TRUSTED-PYTHON gate as narr-1. mcp_search invoked, preprocessor_step_failed immediately. Narration correctly says 'unsafe mode without allow-unsafe-python flag' but that's the gate error, not empty-result narration."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "skill_builder completed (finished). invoke_skill_spawn_ack_exit fired. Narration: '/tasks\\n\\nスキル「string_length」が正常に作成され...' — /tasks pointer present, narration confirms creation. ack_len=94. skill_run_completed in events."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "blocked",
+      "notes": "mcp_search invoked (not list_actions), preprocessor_step_failed. Same R-WEB-TRUSTED-PYTHON gate. Note: B35 W6 had 'LLM called list_actions instead of invoke_skill' — this shot shows routing improved (LLM correctly chose invoke_skill) but gate blocks completion."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "skill_builder invoked with circular graph spec, phase_rollback + workflow_aborted + skill_completion_injected. Narration: 'skill_builder failed to create... plan_skill phase attempted to roll back without preceding phase.' Error surfaced, no false success claim. W6 fix confirmed."
+    }
+  ],
+  "totals": {
+    "verified": 5,
+    "inconclusive": 1,
+    "refuted": 2,
+    "blocked": 3
+  },
+  "vs_b35_w6": {
+    "b35": {"verified": 3, "inconclusive": 4, "refuted": 2, "blocked": 2},
+    "b36": {"verified": 5, "inconclusive": 1, "refuted": 2, "blocked": 3},
+    "delta_v": "+2",
+    "delta_b": "+1",
+    "note": "1 additional blocked due to mcp-search routing fix — B35 s-fp12-completion-1 was refuted (list_actions routing mistake), B36 is blocked (correct routing but R-WEB-TRUSTED-PYTHON gate fires). Net behavioral improvement."
+  },
+  "plan_emitted_rate": "1/3",
+  "plan_schema_verify": {
+    "result": "PASS",
+    "evidence": "plan ToolDefinition.parameters.properties = {'goal': {type:string}, 'steps_json': {type:string}}. Required: ['goal','steps_json']. plan is universal-top-level fixed (not a hot-list alias). render_for_router() returns non-empty properties. Schema was visible to LLM — 2/3 non-invocations are behavioral (LLM choice to read directly), not schema-visibility failures."
+  },
+  "w6_fix_verified": "still_verified",
+  "w6_evidence": "s-fp11-1 and s-fp12-completion-2: skill_run_failed + skill_completion_injected in all cases. No regression from B35 W6.",
+  "new_findings": [
+    {
+      "id": "B36-W6-F1",
+      "severity": "MED",
+      "description": "control_ir_failed (index_query) in plan steps: 'NoneType object has no attribute base_dir'",
+      "evidence": "4 control_ir_failed events for index_query kind in dogfood-b36-6-s1 (plan_compare). No RAG index configured in worktree. Plan steps attempt index_query but index manager returns None.",
+      "impact": "Plan step results are degraded (fall back to inline context). Affects narration quality for scenarios requiring multi-source evidence."
+    },
+    {
+      "id": "B36-W6-F2",
+      "severity": "LOW",
+      "description": "plan_compare narration quality: inconclusive despite plan_emitted + all steps completed",
+      "evidence": "Narration opens with 'could not find direct relationship' then provides document-level summary without >=3 concrete point-form items. plan_aggregated fired (result_len=807). Quality below rubric threshold.",
+      "impact": "Narration synthesis quality issue — LLM aggregated step results but produced a hedged paragraph rather than 3-5 concrete bullets."
+    },
+    {
+      "id": "B36-W6-F3",
+      "severity": "INFO",
+      "description": "s-fp12-completion-1 routing improvement: B35 refuted (list_actions), B36 invoke_skill called correctly",
+      "evidence": "B35 W6 s-fp12-completion-1: 'LLM called list_actions instead of invoke_skill'. B36 s-fp12-completion-1: invoke_skill_spawn_ack_exit fired, skill_run_spawned. Routing fixed but blocked by R-WEB-TRUSTED-PYTHON gate.",
+      "impact": "Positive signal — routing regression from B35 resolved. Blocked status is structural (gate), not behavioral (routing)."
+    },
+    {
+      "id": "B36-W6-F4",
+      "severity": "LOW",
+      "description": "s-fp11-1 narration mischaracterizes error root cause",
+      "evidence": "Prompt: 'invalid spec with circular a→b→a graph'. Narration: 'failed because it could not access the skill plan due to restricted file read operations'. Actual error: normalization_error + workflow_aborted for invalid spec. The 'file read' narrative is plausible (plan_skill reads the spec file) but misrepresents the circular graph as the root cause.",
+      "impact": "Anti-optimism rule passes (error IS surfaced, no false success) but error characterization is inaccurate. Does not affect D1 rubric outcome but is a narration-quality observation."
+    }
+  ]
+}

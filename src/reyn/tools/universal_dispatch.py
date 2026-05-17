@@ -31,8 +31,8 @@ Not in PR-2:
   - The ``list_actions`` enumeration body (= PR-3 with caller-state
     integration)
   - ``mcp.operation__drop_server`` op handler (= PR-4 new op)
-  - ``file__edit/glob/grep``, ``reyn.source__glob/grep`` (= FP-0034
-    §D20 missing ops, future PRs)
+  - ``file__edit``, ``reyn.source__glob/grep`` (= FP-0034
+    §D20 missing ops, future PRs; file__glob/grep implemented in B34)
 """
 from __future__ import annotations
 
@@ -165,11 +165,19 @@ def _call_mcp_tool_args(
 def _read_memory_body_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``memory.entry__<name>`` → ``read_memory_body({name})``.
+    """``memory.entry__<name>`` → ``read_memory_body({layer, slug})``.
 
     D19 resource invoke: invoking a memory entry returns its body.
+
+    The qualified-name format ``memory.entry__<slug>`` does not encode a
+    layer; we default to "shared" because that is what the
+    ``memory.operation__remember_shared`` write surface produces, and
+    therefore what users encounter from natural-language "remember X"
+    requests (= e2e-coder 2026-05-17 N4 probe). Agent-layer entries
+    require a separate alias namespace (= follow-up if a real probe
+    surfaces the gap).
     """
-    return {"name": entry_name}
+    return {"layer": "shared", "slug": entry_name}
 
 
 def _recall_single_source_args(
@@ -236,14 +244,16 @@ _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], d
 # Per-qualified-name rule (= category + specific entry_name → specific tool)
 # The key is the FULL qualified name. The value is the same tuple shape.
 _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
-    # file category — current op surface (read/write/delete/list).
-    # FP-0034 §D20 also specifies edit / glob / grep, which are not yet
-    # implemented as ToolDefinitions; these routes are intentionally
-    # absent so resolve_* raises UnknownActionError with suggestions.
+    # file category — current op surface (read/write/delete/list/grep/glob).
+    # FP-0034 §D20 also specifies edit, which is not yet implemented as a
+    # ToolDefinition; that route is intentionally absent so resolve_* raises
+    # UnknownActionError with suggestions for that specific op.
     "file__read":   ("read_file",       _passthrough_args),
     "file__write":  ("write_file",      _passthrough_args),
     "file__delete": ("delete_file",     _passthrough_args),
     "file__list":   ("list_directory",  _passthrough_args),
+    "file__grep":   ("grep_files",      _passthrough_args),
+    "file__glob":   ("glob_files",      _passthrough_args),
 
     # web category
     "web__search":  ("web_search",      _passthrough_args),

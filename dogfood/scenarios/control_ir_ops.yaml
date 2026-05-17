@@ -208,19 +208,26 @@ scenarios:
       blocked: 0.25
 
   # ── 8. judge_output via judge_phase skill ────────────────────────────────
+  # Redesigned B39: pre-placed fixture artifact at dogfood/fixtures/judge_phase/sample_artifact.json
+  # so judge_phase can read a real file on disk (B38 W3 S8 aborted because artifact_path was
+  # a literal placeholder string — no real file existed). Exercises the B38 postprocessor
+  # output_schema fix end-to-end: skill_run_spawned + postprocessor wrap + verdict in reply.
   - id: judge_output_direct
     covers:
       - control-ir-ops/judge-output
     input: >
-      Run the judge_phase skill to evaluate the following text against this
-      rubric: "Is the text concise and mentions at least one Reyn principle?"
-      Text to evaluate: "P5 states that the workspace is the single source of truth."
+      Use the judge_phase skill to evaluate the artifact at
+      dogfood/fixtures/judge_phase/sample_artifact.json against these two criteria:
+      (1) The skill has a non-empty description field.
+      (2) The skill declares at least one phase.
+      Report the verdict (passed/failed) and numeric score from the judgment.
     expected:
       reply:
         kind: judge
         rubric:
-          - reports a numeric score or pass/fail verdict
-          - references the rubric or evaluation criteria in the response
+          - mentions "passed" or "failed" (or equivalent verdict) for the judgment
+          - reports a numeric score (e.g. "1.0", "0.5", "score") or fraction of criteria met
+          - references at least one of the two evaluation criteria in the reply
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
@@ -228,14 +235,16 @@ scenarios:
           - { type: tool_executed, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
+          - { type: validation_error }
       artifacts:
         - { present: true }
-    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
+    # outcome_prediction: B39 redesign — real artifact present, postprocessor fix (B38) in place.
+    # Expect V because: LLM gets the exact path, judge phase reads real file, postprocessor wraps correctly.
     outcome_prediction:
-      verified: 0.25
-      inconclusive: 0.0
-      refuted: 0.5
-      blocked: 0.25
+      verified: 0.6
+      inconclusive: 0.2
+      refuted: 0.2
+      blocked: 0.0
 
   # ── 9. ask_user round-trip (multi-turn) ──────────────────────────────────
   # Turn 1: a request that causes a skill to emit ask_user for clarification.

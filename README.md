@@ -38,12 +38,22 @@ reyn init                      # creates reyn.yaml + .reyn/config.yaml
 ```
 
 > **A note on weak default models.** Reyn's default `models.standard`
-> points at a low-cost LLM. With weak models, occasional empty replies
-> on tool-heavy queries (= "list available skills" / "explain how X
-> works") are normal — measured ~15% rate on `gemini-2.5-flash-lite`,
-> dissolves on stronger models. Edit `reyn.yaml`'s `models.standard` to
-> point at a stronger model if the rate matters for your use. Tracked
-> as G12 in `docs/deep-dives/journal/dogfood/giveup-tracker.md`.
+> points at a low-cost LLM. Two phenomena are normal at the weak tier
+> and dissolve on stronger models:
+>
+> - **Occasional empty replies on tool-heavy queries** (e.g. "list
+>   available skills" / "explain how X works"). Measured ~15% rate on
+>   `gemini-2.5-flash-lite`. Tracked as G12 in
+>   `docs/deep-dives/journal/dogfood/giveup-tracker.md`.
+> - **Capability questions leak router-internal vocabulary** in
+>   non-English replies (e.g. asking 「何ができる?」 may return text
+>   that mentions `invoke_action` / `list_actions` / `skill__X` / etc.
+>   verbatim). Trace-driven A/B at N=10: weak `gemini-2.5-flash-lite`
+>   clean rate 20%, strong `gemini-2.5-flash` 87.5% with no prompt
+>   change. Tracked as G31 in the same file with the full matrix.
+>
+> Edit `reyn.yaml`'s `models.standard` to point at a stronger model
+> if either rate matters for your use.
 
 ### Build a minimal skill
 
@@ -97,7 +107,10 @@ Full tutorial: [docs/guide/getting-started/02-your-first-skill.md](docs/guide/ge
 
 ```bash
 # Index any glob into a named source — one source per chunking strategy.
-reyn run index_docs '{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}'
+# The CLI also accepts the bare data dict
+#   '{"source":..., "path":..., "description":...}'
+# and auto-wraps it with the artifact envelope.
+reyn run index_docs '{"type":"index_docs_input","data":{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}}'
 
 # Chat — the LLM calls `recall` automatically when an indexed source covers the topic.
 reyn chat

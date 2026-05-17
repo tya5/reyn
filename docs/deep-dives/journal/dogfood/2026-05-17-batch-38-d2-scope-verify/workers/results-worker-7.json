@@ -1,0 +1,154 @@
+{
+  "batch": 38,
+  "worker": 7,
+  "head": "1d5042d",
+  "scenario_set": "long_session_v1",
+  "agent_prefix": "dogfood-b38-7",
+  "agent_used": "dogfood-b38-7-s1",
+  "port": 8087,
+  "worktree": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2",
+  "scores": {
+    "V": 7,
+    "I": 0,
+    "R": 0,
+    "B": 0
+  },
+  "delta_vs_b37": "+0V (B37 W7 also 7/7)",
+  "c1_clean_turns": "35/35",
+  "c1_b37_baseline": "37/37",
+  "c1_note": "35 vs 37: B38 used --turns 5 (explicit cap); B37 ran uncapped so S2+S4 ran 6 prompts each",
+  "ars_scope_expanded": true,
+  "ars_entries_count": 18,
+  "ars_static_count": 17,
+  "ars_session_skills_count": 1,
+  "ars_key_fixes_verified": {
+    "rag.operation__drop_source": "source",
+    "file__write": "content, path",
+    "web__fetch": "max_length, url",
+    "file__glob": "path, pattern",
+    "file__grep": "case_sensitive, glob, max_results, path, pattern"
+  },
+  "description_length_b37_base": 2150,
+  "description_length_b38_enriched": 3104,
+  "description_length_delta": 954,
+  "description_length_commit_estimate": 3080,
+  "description_length_impact": "ok",
+  "latency_p50_b38": 4.82,
+  "latency_p90_b38": 9.94,
+  "latency_p50_b37_ref": 4.82,
+  "latency_p90_b37_ref": 9.94,
+  "latency_delta": "none",
+  "empty_stop_recurrence": false,
+  "g12_pattern_e_observed": false,
+  "total_turns": 35,
+  "total_llm_calls": 53,
+  "total_tokens": 477561,
+  "routing_decided_total": 8,
+  "routing_decided_hot_list_alias": 7,
+  "routing_decided_invoke_action": 1,
+  "invoke_action_calls": [
+    {
+      "scenario": "S2",
+      "turn": 2,
+      "chain_id": "79c7c1ed5d614b9e98db26c42555e587",
+      "action_name": "skill__haiku",
+      "args_top_level_keys": ["action_name", "args"],
+      "canonical_match": true,
+      "note": "LLM used list_actions -> describe_action -> invoke_action flow; canonical key names correct"
+    }
+  ],
+  "agent_isolation_note": "B38 W7 used single agent for all 7 scenarios (35 turns accumulated). B37 W7 used separate agents per scenario. B38 is stronger context-bloat test. No G12 Pattern E despite larger accumulated context.",
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": true,
+      "rubric_items": {
+        "p7_leakage_addressed": true,
+        "context_maintained_without_reexplain": true,
+        "final_turn_nonempty": true
+      },
+      "t5_reply_len": 2289,
+      "latency_p50": 4.82,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t2_behavior": "pronoun resolved via haiku skill invocation (improved vs B37 disambiguation deflection)",
+      "t5_reply_len": 327,
+      "latency_p50": 2.29,
+      "empty_count": 0,
+      "notable": "haiku skill invoked correctly at T2; T3-T5 built on result"
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t1_behavior": "LangGraph graceful refusal (no web search) - same as B37",
+      "t4_t5_comparison": "answered from project-grounded context on Reyn side",
+      "t5_reply_len": 4037,
+      "latency_p50": 6.06,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "g12_pattern_e": false,
+      "context_growth": "10k-11k tokens per turn (stable, no jump)",
+      "t5_reply_len": 1756,
+      "latency_p50": 3.00,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": true,
+      "rubric_items": {
+        "asyncio_queue_example_present": true,
+        "uses_asyncio_queue": true,
+        "final_turn_nonempty": true
+      },
+      "t5_reply_len": 6125,
+      "latency_p50": 6.56,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "adr_found": false,
+      "graceful_degradation": true,
+      "t5_reply_len": 1775,
+      "latency_p50": 2.55,
+      "empty_count": 0
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "rubric_pass": null,
+      "t5_reply_len": 4463,
+      "latency_p50": 9.94,
+      "empty_count": 0,
+      "notable": "T5 opened with Reyn preamble (minor cross-scenario context contamination); body content correct"
+    }
+  ],
+  "key_findings": [
+    "F1: C1 non-regression maintained (35/35 clean). No G12 Pattern E. B35=B36=B37=B38 clean on long_session_v1.",
+    "F2: D2-wrapper scope expansion confirmed (18 ARS entries: 17 static + 1 skill). B37 problem actions all fixed: rag.operation__drop_source={source}, file__write={content,path}, web__fetch={max_length,url}.",
+    "F3: Description length 3104 chars (base 2150 + 954 ARS). Matches commit estimate ~3080 within 1%. No latency degradation: p50=4.82s, p90=9.94s identical to B37 W7.",
+    "F4: invoke_action S2 T2 (skill__haiku) used canonical arg keys [action_name, args]. No arg-name mismatch. Flow: list_actions -> describe_action -> invoke_action (correct).",
+    "F5: S2 pronoun resolution improved vs B37: T2 resolved 'simplest one' to haiku skill via invocation, rather than deflecting with disambiguation requests (B37 pattern). Hypothesis: HOT_LIST_SEED fix or cross-scenario context grounding (N=1, not confirmed).",
+    "F6: History preservation: 71 entries, seq=1..71 sequential, timestamps ordered. A2A multi-turn correctly accumulated across 35 turns on single agent.",
+    "F7: S7 T5 minor Reyn preamble ('Reyn skill system offers ways...') in distributed systems response. Body content correct. Cross-scenario context contamination artifact from 35-turn single-agent accumulation. Non-blocking."
+  ]
+}

@@ -48,6 +48,14 @@ class ReynTUIApp(App):
 
     CSS_PATH = Path(__file__).parent / "theme.tcss"
 
+    # Default terminal window title — shown in the tab bar of multiplexers
+    # (tmux, iTerm2 tabs, gnome-terminal). Defaults to the class name
+    # (``"ReynTUIApp"``) if left unset, which leaks an implementation
+    # detail. ``set_title_state`` swaps this to ``reyn — awaiting answer``
+    # / ``reyn — error`` etc. so a user in a background terminal can see
+    # the state without focusing the window.
+    TITLE = "reyn"
+
     ENABLE_COMMAND_PALETTE = False
 
     BINDINGS = [
@@ -56,6 +64,16 @@ class ReynTUIApp(App):
         Binding("ctrl+c", "cancel_inflight", "Cancel", priority=True),
         Binding("ctrl+b", "toggle_panel", "Panel", priority=True, show=False),
         Binding("ctrl+o", "focus_toggle_panel", "Focus panel", priority=True, show=False),
+        # Right-panel tab cycling. The action methods
+        # (``action_panel_next_content`` / ``_prev_content``) already exist
+        # but were missing Binding declarations, so the keys never fired AND
+        # the Keys tab — which iterates ``app.BINDINGS`` — never rendered
+        # them. ``ctrl+shift+o`` is an alias for prev-tab; some terminals
+        # don't deliver ``ctrl+shift+w`` reliably, so the alias is the
+        # escape hatch.
+        Binding("ctrl+w", "panel_next_content", "Next tab", priority=True, show=False),
+        Binding("ctrl+shift+w", "panel_prev_content", "Prev tab", priority=True, show=False),
+        Binding("ctrl+shift+o", "panel_prev_content", "Prev tab (alt)", priority=True, show=False),
         Binding("ctrl+p", "prev_turn", "Prev turn", priority=True, show=False),
         Binding("ctrl+n", "next_turn", "Next turn", priority=True, show=False),
         Binding("f", "event_filter_cycle", "Filter events", priority=True, show=False),
@@ -260,6 +278,35 @@ class ReynTUIApp(App):
             queued_extra=queued_extra,
         )
 
+    def set_title_state(self, state: str | None) -> None:
+        """Set the terminal window title to reflect the agent's state.
+
+        ``state`` is a short verb / noun like ``"awaiting answer"``,
+        ``"error"``, or ``None`` for idle. The title shown in the tab
+        bar becomes ``"reyn — <state>"`` (or just ``"reyn"`` for idle)
+        so a user with reyn in a background terminal tab can see the
+        state without focusing the window. Wraps ``self.title`` to
+        contain the formatting in one place and let tests assert on a
+        normalised state token.
+        """
+        try:
+            self.title = f"reyn — {state}" if state else "reyn"
+        except Exception:
+            pass
+
+    def alert(self) -> None:
+        """Fire the terminal BEL for "you need to come back" events.
+
+        Wraps ``self.bell()`` so call sites don't need to know whether
+        the platform supports it (the call is a no-op on terminals that
+        ignore ``\\a``). The helper exists so future ``/quiet`` opt-out
+        can short-circuit one place rather than every hook point.
+        """
+        try:
+            self.bell()
+        except Exception:
+            pass
+
     def _maybe_refresh_status(self, header: ReynHeader | None = None) -> None:
         """Fetch budget snapshot and update the header.
 
@@ -347,8 +394,12 @@ class ReynTUIApp(App):
 
         Recognised text patterns from ChatEventForwarder:
           - "phase started: <phase_name>" → start row (if missing) + set_phase
-          - "<phase> → <next> ..."         → ignored (phase-completed details
-            are visible in the right panel events tab)
+          - "<phase> → <next> ..."         → phase_completed transition. The
+            outgoing phase's LLM call may take 10-30 s before the next
+            ``phase started`` arrives; without this branch the row would
+            stay on the OLD phase name the whole time, making the skill
+            look stuck. Show ``<phase> → <next>`` so the user can see the
+            handoff is in flight.
           - "skill done: <status>"         → finish row (FP-0011/FP-0012)
         """
         run_id = msg.meta.get("run_id", "")
@@ -365,12 +416,46 @@ class ReynTUIApp(App):
             visit = int(existing.get("phase_visits", 0)) + 1
             conv.update_skill_phase(run_id, phase, visit=visit)
             self._last_focal_tab = "agents"
+        elif text.startswith("detail: "):
+            # In-phase detail (llm call / act batch / etc). Append a dim
+            # ``⤷ <detail>`` segment to the row so the user sees the
+            # skill is actively working rather than wondering if it's
+            # stuck on the phase name. An empty detail (``"detail: "``)
+            # clears the segment — that's how the forwarder signals
+            # "llm call finished; we're between events".
+            detail = text[len("detail: "):]
+            conv.update_skill_detail(run_id, detail)
+        elif " → " in text and not text.startswith("skill done: "):
+            # phase_completed trace: ``<phase> → <next>(  (confidence=X))?``
+            # Strip the optional confidence suffix and display the bare
+            # transition so the row reflects "old phase has handed off to
+            # next" until the next ``phase started`` arrives. The visit
+            # count is left at the existing exec state (= the just-
+            # finished phase's visit) so the badge doesn't bump too
+            # early.
+            transition = text.split("  (confidence=", 1)[0].strip()
+            existing = self._skill_exec.get(run_id) or {}
+            # If no row exists yet (edge case: a malformed forwarder
+            # delivered phase_completed before phase_started), lazy-mount
+            # to keep behaviour robust.
+            conv.start_skill_row(run_id, skill_name)
+            visit = int(existing.get("phase_visits", 1)) or 1
+            conv.update_skill_phase(run_id, transition, visit=visit)
+            self._last_focal_tab = "agents"
         elif text.startswith("skill done: "):
             # FP-0011: skill_narrator removed → skill_done outbox kind gone.
             # ChatEventForwarder now forwards workflow_finished / workflow_aborted
             # as "skill done: <status>" so the row can stop spinning here.
             status = text[len("skill done: "):].strip()
             conv.finish_skill_row(run_id, success=(status == "finished"), reason="")
+            # Out-of-band: an aborted skill is an attention case — flash the
+            # title to "error" and ring the bell so a user with reyn in a
+            # background tab sees something happened. Successful finishes
+            # are silent here (the next agent reply / cost suffix is the
+            # in-pane signal). The title resets on the next user submit.
+            if status != "finished":
+                self.set_title_state("error")
+                self.alert()
             # Issue 2 — dim completion line in conversation log
             _existing = self._skill_exec.get(run_id) or {}
             _elapsed = _now_monotonic() - _existing.get("start_time", _now_monotonic())
@@ -439,6 +524,10 @@ class ReynTUIApp(App):
         conv.render_user_message(text)
         # A4: snapshot cost/tokens/time at turn start
         self._record_turn_start()
+        # Out-of-band: a fresh user submit clears any prior "awaiting
+        # answer" / "error" title flag — the user is back at the
+        # keyboard, so the attention signal has done its job.
+        self.set_title_state(None)
         # Remember this message so the next skill run that fires can
         # tag itself with "triggered_by". Cleared / overwritten on each
         # subsequent submit, so a long-tail skill that finishes after

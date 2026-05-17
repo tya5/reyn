@@ -98,6 +98,10 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
 
     Raises RuntimeError when router_state or send_to_agent is missing
     (= mis-wiring; matches the catalog/plan handler convention).
+
+    Returns an error-shaped response when the requested peer agent is not
+    in the available_agents list (= B33 W5 F2 fix: prevents the LLM from
+    receiving a success-shaped envelope and fabricating a plausible reply).
     """
     rs = ctx.router_state
     if rs is None or rs.send_to_agent is None:
@@ -105,10 +109,28 @@ async def _handle(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
             "delegate_to_agent handler requires ctx.router_state.send_to_agent "
             "to be populated by the dispatcher (= RouterLoop)."
         )
-    await rs.send_to_agent(to=args["to"], request=args["request"])
+    to = args["to"]
+
+    # B33 W5 F2: guard against non-existent peer agents.
+    # available_agents is populated by RouterLoop at caller-state build time
+    # (router_loop.py: RouterCallerState(available_agents=...)).  When it is
+    # set and the requested name is absent, return error-shape immediately so
+    # the LLM sees the failure instead of a success "dispatched" envelope that
+    # triggers content fabrication.
+    if rs.available_agents is not None:
+        available_names = [a["name"] for a in rs.available_agents if "name" in a]
+        if to not in available_names:
+            return {
+                "status": "error",
+                "kind": "agent_not_found",
+                "error": f"Agent {to!r} not found in registry.",
+                "available_agents": available_names,
+            }
+
+    await rs.send_to_agent(to=to, request=args["request"])
     return {
         "status": "dispatched",
-        "to": args["to"],
+        "to": to,
         "note": (
             "Peer's reply will arrive in a future router invocation; "
             "please wait for it."

@@ -49,6 +49,20 @@ _DELETE_FILE_DESCRIPTION = (
     "Delete a file under the agent's write scope."
 )
 
+_GREP_FILES_DESCRIPTION = (
+    "Search for a regex pattern across files under the agent's read scope. "
+    "Use this when you need to find text or code patterns in files — "
+    "do NOT use list_directory for grep/glob intent. "
+    "Returns matching lines with file paths and line numbers."
+)
+
+_GLOB_FILES_DESCRIPTION = (
+    "Find files matching a glob pattern (e.g. '**/*.py') under the agent's "
+    "read scope. Use this when you need to enumerate files by name pattern — "
+    "do NOT use list_directory for glob intent. "
+    "Returns a list of matching file paths."
+)
+
 # Parameters JSON schemas must be byte-identical to the ToolSpec.parameters
 # literals in router_tools.py lines ~546-614 (C1-C4 block). Copied verbatim.
 
@@ -83,6 +97,48 @@ _DELETE_FILE_PARAMETERS: dict[str, Any] = {
         "path": {"type": "string"},
     },
     "required": ["path"],
+}
+
+_GREP_FILES_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pattern": {
+            "type": "string",
+            "description": "Regex pattern to search for.",
+        },
+        "path": {
+            "type": "string",
+            "description": "Directory or file to search. Defaults to '.' (workspace root).",
+        },
+        "glob": {
+            "type": "string",
+            "description": "File-glob filter (e.g. '**/*.py'). Searches all files when omitted.",
+        },
+        "case_sensitive": {
+            "type": "boolean",
+            "description": "When true, search is case-sensitive. Defaults to false.",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Maximum number of matches to return. Defaults to 50.",
+        },
+    },
+    "required": ["pattern"],
+}
+
+_GLOB_FILES_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pattern": {
+            "type": "string",
+            "description": "Glob pattern (e.g. '**/*.py', 'src/**/*.md').",
+        },
+        "path": {
+            "type": "string",
+            "description": "Root directory for the glob. Defaults to '.' (workspace root).",
+        },
+    },
+    "required": ["pattern"],
 }
 
 
@@ -140,6 +196,12 @@ async def _handle_write(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult
     from reyn.op_runtime import execute_op
     from reyn.schemas.models import FileIROp
 
+    # B34 LLM-attractor fix: accept common synonyms before KeyError.
+    # LLM sends {text:...} instead of {content:...} — observed B33 W4 S1,
+    # B30 W4 S1. Canonical key wins when both are present.
+    if "content" not in args and "text" in args:
+        args = {**args, "content": args["text"]}
+
     op = FileIROp(kind="file", op="write", path=args["path"], content=args["content"])
     legacy_ctx = _build_legacy_op_context(ctx)
     return await execute_op(op, legacy_ctx, caller="control_ir")
@@ -186,6 +248,59 @@ async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return {"error": result.get("error", "list_directory failed")}
 
 
+async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Adapter for grep_files — delegates to op_runtime file handler.
+
+    Maps the router-side `case_sensitive` boolean to the op_runtime
+    `case_insensitive` convention (= FileIROp.case_insensitive).
+    """
+    from reyn.op_runtime import execute_op
+    from reyn.schemas.models import FileIROp
+
+    case_sensitive = args.get("case_sensitive", False)
+    op = FileIROp(
+        kind="file",
+        op="grep",
+        path=args.get("path", "."),
+        pattern=args["pattern"],
+        glob=args.get("glob"),
+        case_insensitive=not case_sensitive,
+        head_limit=args.get("max_results", 50),
+    )
+    legacy_ctx = _build_legacy_op_context(ctx)
+    return await execute_op(op, legacy_ctx, caller="control_ir")
+
+
+async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Adapter for glob_files — delegates to op_runtime file handler.
+
+    Combines `path` (root dir) and `pattern` (glob) into the FileIROp.path
+    field that the glob op uses as its glob pattern. The op_runtime glob op
+    interprets FileIROp.path as the full glob pattern, so we build
+    `<path>/<pattern>` (or just `<pattern>` when path is absent / ".").
+    """
+    from reyn.op_runtime import execute_op
+    from reyn.schemas.models import FileIROp
+
+    root = args.get("path", ".").rstrip("/")
+    pattern = args["pattern"]
+    # Combine: if root is "." use pattern directly (avoids "./**/*.py" oddity
+    # when workspace.glob_files is cwd-relative). Otherwise prefix the root.
+    combined = pattern if root in ("", ".") else f"{root}/{pattern}"
+    op = FileIROp(kind="file", op="glob", path=combined)
+    legacy_ctx = _build_legacy_op_context(ctx)
+    result = await execute_op(op, legacy_ctx, caller="control_ir")
+
+    # Normalise: surface as {pattern, matches, count} for caller ergonomics.
+    if result.get("status") == "ok":
+        return {
+            "pattern": combined,
+            "matches": result.get("matches", []),
+            "count": result.get("count", 0),
+        }
+    return {"error": result.get("error", "glob_files failed")}
+
+
 READ_FILE = ToolDefinition(
     name="read_file",
     description=_READ_FILE_DESCRIPTION,
@@ -222,6 +337,26 @@ LIST_DIRECTORY = ToolDefinition(
     parameters=_LIST_DIRECTORY_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
     handler=_handle_list,
+    category="io",
+    purity="read_only",
+)
+
+GREP_FILES = ToolDefinition(
+    name="grep_files",
+    description=_GREP_FILES_DESCRIPTION,
+    parameters=_GREP_FILES_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_grep,
+    category="io",
+    purity="read_only",
+)
+
+GLOB_FILES = ToolDefinition(
+    name="glob_files",
+    description=_GLOB_FILES_DESCRIPTION,
+    parameters=_GLOB_FILES_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_glob,
     category="io",
     purity="read_only",
 )

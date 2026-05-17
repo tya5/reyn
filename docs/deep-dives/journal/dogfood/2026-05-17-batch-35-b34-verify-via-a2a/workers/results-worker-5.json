@@ -1,0 +1,86 @@
+{
+  "batch": 35,
+  "worker": 5,
+  "head": "99d8407",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "run_date": "2026-05-17",
+  "port": 8085,
+  "summary": {
+    "verified": 2,
+    "inconclusive": 2,
+    "refuted": 3,
+    "blocked": 0
+  },
+  "w5_peer_fix_verify": "verified",
+  "search_actions_attractor": "resolved",
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided": 1,
+      "skill_run_spawned": 1,
+      "reply_excerpt": "MCP レジストリの検索はエラーで完了しました。'mcp_search' スキルは安全でないPythonステップを宣言していますが、--allow-unsafe-python フラグが提供されませんでした。",
+      "notes": "rubric partial: skill error explained but no alternatives suggested"
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided": 1,
+      "skill_run_spawned": 1,
+      "chat_turn_completed_inline": 1,
+      "reply_excerpt": "MCPサーバーの検索はエラーで完了しました。'mcp_search'スキルは安全でないPythonステップを宣言していますが、--allow-unsafe-pythonフラグが提供されませんでした。",
+      "notes": "rubric partial: actionable info present but describes search not PR listing"
+    },
+    {
+      "id": "agent_delegation_simple",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 1,
+      "reply_excerpt": "I couldn't find a researcher agent. Please check the agent name and try again.",
+      "error_envelope": {
+        "status": "error",
+        "kind": "agent_not_found",
+        "error": "Agent 'researcher' not found in registry.",
+        "available_agents": ["default", "dogfood-b35-5"]
+      },
+      "w5_fix_verified": true,
+      "notes": "No fabrication observed. Error envelope correctly used by LLM."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "result": "verified",
+      "events_pass": true,
+      "routing_decided": 1,
+      "reply_excerpt_p1": "researcher という名前のエージェントは見つかりませんでした。利用可能なエージェントは default、dogfood-b35-5、dogfood-b35-5-s3 です。",
+      "reply_excerpt_p2": "writer という名前のエージェントは見つかりませんでした。利用可能なエージェントは default、dogfood-b35-5、dogfood-b35-5-s3 です。",
+      "w5_fix_verified": true,
+      "notes": "Both delegation hops: error envelope received, available_agents surfaced, no hallucination."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "result": "refuted",
+      "events_pass": true,
+      "routing_decided": 2,
+      "reply_excerpt": "invoke_action(action_name='mcp.tool__reyn.web.a2a', ...) format described instead of message/send + GET /a2a/tasks",
+      "notes": "LLM tried non-existent mcp.tool__reyn.web.a2a action. Reply used internal API format, not A2A protocol."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "result": "refuted",
+      "events_pass": true,
+      "routing_decided": 1,
+      "skill_run_spawned": 1,
+      "reply_excerpt": "The mcp_search skill encountered an error because it declared an unsafe Python step without the --allow-unsafe-python flag.",
+      "notes": "Wrong skill: routed to mcp_search instead of mcp_install. Permission gate not surfaced."
+    },
+    {
+      "id": "cron_schedule_status",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "notes": "routing_decided must_emit FAIL. LLM called list_actions. Reply: 現在スケジュールされている cron ジョブの一覧を表示する機能が見つかりませんでした。"
+    }
+  ]
+}
