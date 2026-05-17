@@ -336,33 +336,55 @@ class OutboxRouter:
     def _on_stream_start(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_start__` — begin a streaming agent reply row."""
+        """`__stream_start__` — begin a streaming agent reply row.
+
+        The row is created keyed on the START message's ``msg_id``. Chunks
+        and end events route by their own ``msg.meta["msg_id"]`` (see
+        ``_on_stream_chunk`` / ``_on_stream_end``), NOT by a shared
+        ``app._current_stream_id`` — that single-slot global was racy under
+        concurrent streams (e.g. ``/attach`` mid-stream): a new start would
+        overwrite it, and late chunks from the previous stream then
+        appended to the wrong agent's row.
+        """
         app = self._app
-        app._current_stream_id = msg.meta.get("msg_id", id(msg))
+        msg_id = msg.meta.get("msg_id", id(msg))
+        app._current_stream_id = msg_id
         # Hide the "thinking…" sticky now that the reply is starting. Cancel
         # any pending transient timer too — a transient that fired right
         # before the reply must not auto-hide a fresh sticky armed later
         # in this same turn.
         self._cancel_transient_timer()
         conv.hide_status()
-        conv.begin_stream(app._current_stream_id, app._agent_name)
+        conv.begin_stream(msg_id, app._agent_name)
 
     def _on_stream_chunk(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_chunk__` — append text to the active streaming row."""
-        app = self._app
-        if app._current_stream_id is not None:
-            conv.append_stream(app._current_stream_id, msg.text)
+        """`__stream_chunk__` — append text to the row keyed on the chunk's own msg_id.
+
+        Routing by ``msg.meta["msg_id"]`` (not the global
+        ``app._current_stream_id``) means a late chunk from an earlier
+        stream lands on its original row even if a newer stream has
+        started in the meantime — the canonical fix for chunks bleeding
+        across agents after a ``/attach`` mid-stream.
+        """
+        msg_id = msg.meta.get("msg_id")
+        if msg_id is not None:
+            conv.append_stream(msg_id, msg.text)
 
     def _on_stream_end(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__stream_end__` — seal the streaming row + refresh status."""
+        """`__stream_end__` — seal the row keyed on the end message's msg_id."""
         app = self._app
-        if app._current_stream_id is not None:
-            conv.end_stream(app._current_stream_id)
-            app._current_stream_id = None
+        msg_id = msg.meta.get("msg_id")
+        if msg_id is not None:
+            conv.end_stream(msg_id)
+            # Only clear the "latest stream" pointer if THIS stream was
+            # the latest. If a newer stream started in between, its id
+            # is still the latest in-flight and must stay tracked.
+            if app._current_stream_id == msg_id:
+                app._current_stream_id = None
         app._maybe_refresh_status(header)
         # A4: render per-turn cost suffix when opt-in is enabled
         app._maybe_render_cost_suffix(conv)
