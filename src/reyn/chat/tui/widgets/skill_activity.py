@@ -12,11 +12,11 @@ Design:
 
   Rendering after finish(success=True, reason="3 phases")::
 
-      ✓ skill_name#abcd  · 4.2s · 3 phases            [B→agents]
+      ✓ skill_name#abcd  · 4.2s · 3 phases            Ctrl+B → agents
 
   Rendering after finish(success=False, reason="timeout")::
 
-      ✗ skill_name#abcd  · failed: timeout            [B→events]
+      ✗ skill_name#abcd  · failed: timeout            Ctrl+B → events
 
 Caller contract:
   - Instantiate with run_id + skill_name.
@@ -206,9 +206,11 @@ class SkillActivityRow(Widget):
             t.append(self._elapsed(), style="dim")
             if self._reason:
                 t.append(f" · {self._reason}", style="dim")
-            # Pad and append [B→agents]
+            # Pad and append the panel hint. `B` alone isn't bound — Ctrl+B
+            # is the real panel-toggle binding, and the panel remembers its
+            # last focal tab so it lands on agents/events automatically.
             t.append("            ", style="")
-            t.append("[B→agents]", style="dim")
+            t.append("Ctrl+B → agents", style="dim")
         else:
             t.append("✗ ", style="bold red")
             t.append(
@@ -219,7 +221,7 @@ class SkillActivityRow(Widget):
             failed_msg = f"failed: {self._reason}" if self._reason else "failed"
             t.append(failed_msg, style="dim")
             t.append("            ", style="")
-            t.append("[B→events]", style="dim")
+            t.append("Ctrl+B → events", style="dim")
         return t
 
     def _refresh(self) -> None:
