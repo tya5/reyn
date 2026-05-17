@@ -419,6 +419,19 @@ class RightPanel(Widget):
     # ── content refresh ──────────────────────────────────────────────────────
 
     def _refresh_live(self) -> None:
+        """Tick every ``_REFRESH_INTERVAL`` s; invalidate live tabs in view.
+
+        Gated by ``self.display`` so a hidden right panel doesn't pay the
+        refresh cost. The events tab's ``render_events`` walks every
+        ``.reyn/events/*.jsonl`` to compute mtime / parse caches; on a
+        long-running session that adds up to hundreds of ``stat()``
+        syscalls every 2 s even when the user can't see the panel.
+        Re-checking ``self.display`` is the cheapest filter — Textual's
+        ``display`` reactive flips to ``False`` while ``Ctrl+B`` has the
+        panel collapsed, so the gate is exact rather than heuristic.
+        """
+        if not self.display:
+            return
         if self._panel_type in _LIVE_PANELS:
             self._invalidate()
 
