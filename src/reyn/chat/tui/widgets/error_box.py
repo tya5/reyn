@@ -111,7 +111,17 @@ class ErrorBox(Widget):
     def _header_text(self) -> str:
         prefix = self._prefix()
         arrow = "▼" if self._expanded else "▶"
-        msg = self._message[:72] + "…" if len(self._message) > 72 else self._message
+        # Header is a 1-line Label, so use the first message line as the
+        # synopsis. Only append the "…" overflow indicator when that first
+        # line itself is too long — for multi-line messages whose first
+        # line already fits (e.g. usage strings with sub-commands below),
+        # the ▶/▼ arrow alone signals "expand for more" instead of a
+        # misleading mid-sentence truncation marker.
+        first_line, sep, _rest = self._message.partition("\n")
+        if len(first_line) > 72:
+            msg = first_line[:71] + "…"
+        else:
+            msg = first_line
         if prefix:
             return f"✗ {prefix}: {msg}  {arrow}"
         return f"✗ {msg}  {arrow}"
