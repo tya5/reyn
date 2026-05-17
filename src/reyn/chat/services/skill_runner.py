@@ -472,6 +472,14 @@ class SkillRunner:
             await self._put_outbox(OutboxMessage(
                 kind="error", text=f"failed: {exc}", meta=meta,
             ))
+            # An unexpected Python exception bypasses the OS's workflow_aborted
+            # emit, so ChatEventForwarder never converts it into a
+            # "skill done: aborted" trace — leaving any mounted
+            # SkillActivityRow spinning forever. Enqueue the trace
+            # directly so the TUI finishes the row.
+            await self._put_outbox(OutboxMessage(
+                kind="trace", text="skill done: aborted", meta=meta,
+            ))
             await self._enqueue_skill_completed(
                 run_id=run_id, skill=skill_name, chain_id=chain_id,
                 status="error", data={"error": str(exc)},
