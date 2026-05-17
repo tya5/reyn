@@ -236,20 +236,47 @@ def test_missing_fields_in_jsonl_skipped(tmp_path: Path) -> None:
 # ── 8. DEFAULT_HOT_LIST_SEED ──────────────────────────────────────────────────
 
 
-def test_default_seed_has_twelve_items() -> None:
-    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 12 entries.
+def test_default_seed_has_thirteen_items() -> None:
+    """Tier 2: DEFAULT_HOT_LIST_SEED contains exactly 13 entries.
 
-    file__grep was removed (B27-M2) because FP-0034 §D20 file-ops
-    (edit / glob / grep) are not yet implemented as ToolDefinitions.
-    file__list and reyn.source__list were added in B27 S6 follow-up
-    so directory-listing intent has a discoverable cold-start path
-    (= avoids the catch-22 where list_actions itself is the only
-    tool the LLM knows and gets misused as a filesystem finder).
-    skill__index_docs was added in B28-MED-1 follow-up so RAG
-    indexing intent surfaces the real skill instead of luring the
-    LLM into hallucinating rag.operation__add_source (= W2 attractor).
+    Seed growth log:
+      - file__grep removed (B27-M2): §D20 file-ops not yet implemented
+        as ToolDefinitions.
+      - file__list + reyn.source__list added (B27 S6 follow-up): cold-
+        start directory-listing intent gets a real action instead of
+        misusing list_actions as a filesystem finder.
+      - skill__index_docs added (B28-MED-1): RAG indexing intent
+        surfaces a real skill rather than hallucinating
+        rag.operation__add_source.
+      - skill__eval added (B30-NEW-2): eval intent has a discoverable
+        cold-start path. Companion to the hot_list_n bump in
+        ActionRetrievalConfig — both together close the
+        discoverability-vs-disambiguation gap surfaced by dogfood B30
+        worker 2 (= new hallucination variant skill__direct_llm_eval
+        when skill__eval was missing from the seed).
     """
-    assert len(DEFAULT_HOT_LIST_SEED) == 12
+    assert len(DEFAULT_HOT_LIST_SEED) == 13
+
+
+def test_default_seed_fits_within_default_hot_list_n() -> None:
+    """Tier 2: ActionRetrievalConfig.hot_list_n default must cover the seed.
+
+    B30 surfaced a silent-truncation bug: DEFAULT_HOT_LIST_SEED grew
+    to 12 entries while ActionRetrievalConfig.hot_list_n stayed at 10,
+    so the last 2 seed entries (skill__read_local_files,
+    skill__index_docs) were silently dropped from the cold-start hot
+    list. The fix (B30-NEW-1) bumped hot_list_n default to 16. This
+    invariant prevents the gap from reopening as the seed grows.
+    """
+    from reyn.config import ActionRetrievalConfig
+
+    default_cfg = ActionRetrievalConfig()
+    assert default_cfg.hot_list_n >= len(DEFAULT_HOT_LIST_SEED), (
+        f"ActionRetrievalConfig.hot_list_n default ({default_cfg.hot_list_n}) "
+        f"is smaller than DEFAULT_HOT_LIST_SEED length ({len(DEFAULT_HOT_LIST_SEED)}). "
+        f"Cold-start hot list will silently truncate seed entries. "
+        f"Bump hot_list_n in src/reyn/config.py or shrink the seed."
+    )
 
 
 def test_default_seed_items_are_strings() -> None:
