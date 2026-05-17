@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import os
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -35,6 +36,27 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 
 if TYPE_CHECKING:
     from reyn.dogfood.scenarios import Scenario, ScenarioSet
+
+
+# ---------------------------------------------------------------------------
+# Fresh-mode state annotation
+# ---------------------------------------------------------------------------
+
+#: Default state mode — fresh means every scenario starts from
+#: DEFAULT_HOT_LIST_SEED with no carry-over action_usage.jsonl / wal.jsonl /
+#: history.jsonl / reyn/local/ state. Override via env var
+#: REYN_DOGFOOD_STATE_MODE for deliberate non-fresh comparison runs.
+_DEFAULT_STATE_MODE = "fresh"
+
+
+def _resolve_state_mode() -> str:
+    """Return the current state mode.
+
+    Reads ``REYN_DOGFOOD_STATE_MODE`` env var; falls back to ``"fresh"``.
+    The field is written into every per-scenario output.json so that
+    cross-batch V comparisons can verify both runs share the same mode.
+    """
+    return os.environ.get("REYN_DOGFOOD_STATE_MODE", _DEFAULT_STATE_MODE)
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +98,11 @@ class ScenarioRunResult:
     artifacts_outcome: str = "inconclusive"  # from verifiers.artifacts
     overall_outcome: str = "inconclusive"  # worst-case of the three
     detail: dict = field(default_factory=dict)
+    #: Explicit hot-list state annotation — "fresh" means the scenario ran
+    #: from DEFAULT_HOT_LIST_SEED with no carry-over state. Set to
+    #: "non-fresh" (or a custom label) when a deliberate warm-state run is
+    #: needed for comparison. See §6.7 of dogfood-discipline.md.
+    state_mode: str = field(default_factory=_resolve_state_mode)
 
     def __post_init__(self) -> None:
         # Recompute overall_outcome from the three verifier outcomes
@@ -188,6 +215,7 @@ def _persist_scenario_result(
         "events_outcome": result.events_outcome,
         "artifacts_outcome": result.artifacts_outcome,
         "overall_outcome": result.overall_outcome,
+        "state_mode": result.state_mode,
         "detail": result.detail,
     }
     _write_json(sdir / "output.json", output_data)
@@ -498,6 +526,7 @@ def load_run_result_from_storage(run_dir: Path) -> RunResult:
                 events_outcome=data.get("events_outcome", "inconclusive"),
                 artifacts_outcome=data.get("artifacts_outcome", "inconclusive"),
                 overall_outcome=data.get("overall_outcome", "inconclusive"),
+                state_mode=data.get("state_mode", _DEFAULT_STATE_MODE),
                 detail=data.get("detail", {}),
             )
             scenario_results.append(sr)
