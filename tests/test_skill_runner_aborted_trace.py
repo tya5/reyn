@@ -25,7 +25,6 @@ from typing import Any
 from reyn.chat.services.skill_runner import SkillRunner
 from reyn.events.events import EventLog
 
-
 # ── Fakes (mirrors test_skill_runner_invariants.py style) ────────────────────
 
 

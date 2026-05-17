@@ -400,6 +400,8 @@ def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
         # falling back to user_message if that's the only one.
         preferred = [n for n in artifact_names if n != "user_message"] or artifact_names
         input_fields: list[str] = []
+        input_schema: dict | None = None
+        input_wrapped: bool = True
         artifacts_dir = skill_dir / "artifacts"
         for art_name in preferred:
             art_path = artifacts_dir / f"{art_name}.yaml"
@@ -410,9 +412,22 @@ def _extract_skill_input_hint(skill_dir: "Path", entry_phase_name: str) -> dict:
             props = schema.get("properties") or {}
             if props:
                 input_fields = list(props.keys())
+                input_schema = dict(schema)
+                input_wrapped = bool(art_data.get("wrapped", True))
                 break
 
-        return {"input_artifact": input_artifact, "input_fields": input_fields}
+        result: dict = {
+            "input_artifact": input_artifact,
+            "input_fields": input_fields,
+        }
+        if input_schema is not None:
+            # FP-0034 D2-full step 2: the hot-list alias for skill__<name>
+            # exposes the skill's actual input shape on the LLM-facing
+            # parameters. ``input_wrapped`` lets the alias builder decide
+            # whether to peel the {type, data} envelope.
+            result["input_schema"] = input_schema
+            result["input_wrapped"] = input_wrapped
+        return result
     except Exception:  # noqa: BLE001 — best-effort; never break catalogue
         return {}
 

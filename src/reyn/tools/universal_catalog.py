@@ -815,10 +815,18 @@ async def _handle_describe_action(
     """describe_action handler — return target's description + input_schema.
 
     Per FP-0034 §D11, returns ``{long_description?, input_schema,
-    metadata?}``. PR-3a maps to the target ToolDefinition's fields:
-      - description (= the target's LLM-facing description)
-      - input_schema (= the target's parameters dict)
-      - metadata (= qualified_name + target_tool_name + category + purity)
+    metadata?}``. PR-3a mapped this to the target ToolDefinition's
+    ``.parameters`` directly — which is correct for operation-category
+    actions (web__fetch / file__read / …) whose target IS the action.
+
+    For resource-category actions (``skill__X``, ``agent.peer__X``,
+    ``mcp.tool__X.Y``, ``mcp.server__X``, ``rag.corpus__X``) the target
+    is a generic dispatcher (``invoke_skill`` / ``delegate_to_agent`` /
+    ``call_mcp_tool`` / …) whose ``.parameters`` is the dispatcher's
+    own args shape, NOT the resource's actual input schema. D2-full
+    extends the handler to look up the per-resource schema via
+    ``ctx.router_state`` so the LLM gets actionable structure instead
+    of an opaque ``{name, input}`` envelope (or worse — empty stub).
 
     For unknown qualified_name, returns the §D12 error-with-suggestions
     response.
@@ -850,16 +858,135 @@ async def _handle_describe_action(
             f"this in production, the target may be a future-PR op)",
         ))
 
+    # D2-full: prefer the per-resource schema over the dispatcher schema.
+    # Falls back to ``target.parameters`` for operation categories and any
+    # resource category we couldn't resolve from router_state.
+    resource_schema = _resource_input_schema(qualified_name, ctx, registry)
+    input_schema = (
+        resource_schema if resource_schema is not None
+        else dict(target.parameters)
+    )
+
     return {
         "qualified_name": qualified_name,
         "description": target.description,
-        "input_schema": dict(target.parameters),
+        "input_schema": input_schema,
         "metadata": {
             "target_tool_name": resolved.target_tool_name,
             "category": target.category,
             "purity": target.purity,
         },
     }
+
+
+def _drop_field_from_schema(params: Mapping[str, Any], field_name: str) -> dict:
+    """Return a copy of a JSON schema with ``field_name`` removed from
+    ``properties`` and ``required``.
+
+    Used to strip curried fields from a dispatcher's parameters before
+    exposing them as the resource's input schema (e.g. ``delegate_to_agent``
+    carries ``to`` which is curried from ``agent.peer__<name>``).
+    """
+    out = dict(params)
+    props = dict(out.get("properties") or {})
+    props.pop(field_name, None)
+    out["properties"] = props
+    req = [r for r in (out.get("required") or []) if r != field_name]
+    out["required"] = req
+    return out
+
+
+def _resource_input_schema(
+    qualified_name: str,
+    ctx: ToolContext,
+    registry: Any,
+) -> "dict | None":
+    """Return the per-resource input schema for a resource-category action,
+    or ``None`` for operation categories (= caller falls back to target's
+    parameters).
+
+    Covered:
+      - ``skill__<name>`` — uses ``ctx.router_state.host.list_available_skills()``
+        which carries ``input_schema`` after FP-0034 D2-full.
+      - ``agent.peer__<name>`` — ``delegate_to_agent`` parameters minus ``to``.
+      - ``mcp.server__<name>`` — empty object (``list_mcp_tools`` takes
+        only the curried ``server`` arg).
+      - ``rag.corpus__<name>`` — ``recall`` parameters minus ``sources``.
+      - ``mcp.tool__<server>.<tool>`` — scans
+        ``ctx.router_state.mcp_servers`` for the tool's declared
+        ``inputSchema`` (FP-0032 expanded shape).
+
+    Returns ``None`` when the category isn't a resource category, or when
+    the per-resource metadata isn't reachable (= test sites with stub
+    router_state, plan-step host without mcp_servers, …).
+    """
+    rs = getattr(ctx, "router_state", None)
+
+    try:
+        category, entry_name = split_qualified_name(qualified_name)
+    except ValueError:
+        return None
+
+    if category == "skill":
+        host = getattr(rs, "host", None) if rs is not None else None
+        if host is None or not hasattr(host, "list_available_skills"):
+            return None
+        try:
+            for skill in host.list_available_skills():
+                if not isinstance(skill, Mapping):
+                    continue
+                if skill.get("name") == entry_name and "input_schema" in skill:
+                    return dict(skill["input_schema"])
+        except Exception:
+            return None
+        return None
+
+    if category == "agent.peer":
+        tool = registry.lookup("delegate_to_agent")
+        if tool is None:
+            return None
+        return _drop_field_from_schema(tool.parameters, "to")
+
+    if category == "mcp.server":
+        # list_mcp_tools is curried with ``server=<entry_name>``; user-
+        # facing args are empty.
+        return {"type": "object", "properties": {}, "required": []}
+
+    if category == "rag.corpus":
+        tool = registry.lookup("recall")
+        if tool is None:
+            return None
+        return _drop_field_from_schema(tool.parameters, "sources")
+
+    if category == "mcp.tool":
+        # entry_name is ``<server>.<tool>``; split on first '.'.
+        mcp_servers = (
+            getattr(rs, "mcp_servers", None) if rs is not None else None
+        )
+        if not mcp_servers or "." not in entry_name:
+            return None
+        server_name, tool_name = entry_name.split(".", 1)
+        for srv in mcp_servers:
+            if not isinstance(srv, Mapping):
+                continue
+            if srv.get("name") != server_name:
+                continue
+            for t in (srv.get("tools") or []):
+                if not isinstance(t, Mapping):
+                    continue
+                if t.get("name") != tool_name:
+                    continue
+                schema = t.get("inputSchema") or t.get("input_schema")
+                if schema:
+                    return dict(schema)
+            return None
+        return None
+
+    # memory.entry__X and any other category: pre-existing dispatch shape
+    # mismatch (memory.entry's transform sends {name} but read_memory_body
+    # wants {layer, slug}); fall back to target.parameters so the LLM at
+    # least sees the dispatcher's shape and can recover via list_actions.
+    return None
 
 
 async def _handle_invoke_action(

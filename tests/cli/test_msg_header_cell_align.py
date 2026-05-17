@@ -24,7 +24,6 @@ from reyn.chat.tui.widgets.conversation import (
     _pad_to_cells,
 )
 
-
 # ── _pad_to_cells ─────────────────────────────────────────────────────────────
 
 
