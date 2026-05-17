@@ -29,7 +29,7 @@ You'll get a `>` prompt.
 What happens:
 
 1. `skill_router` (a stdlib skill) classifies the intent.
-2. It picks the best-matching skill — for a "summarize README" request, that's typically `read_local_files` followed by `text_summarizer`, or `read_local_files` alone if the model already summarises inline.
+2. It picks the best-matching skill — for a "summarize README" request, that's typically `read_local_files` followed by `direct_llm`, or `read_local_files` alone if the model already summarises inline.
 3. The skill runs and the answer prints below the prompt.
 4. The session stays open. Type the next turn.
 

@@ -43,7 +43,7 @@ created_at: 2026-05-01T12:00:00+00:00
 allowed_skills:
   - web_search
   - recall_docs
-  - text_summarizer
+  - direct_llm
 ```
 
 Save the file. The next `reyn chat researcher` picks up the change at startup.
@@ -61,7 +61,7 @@ workspace:   /path/to/project/.reyn/agents/researcher
 allowed_skills:
   - web_search
   - recall_docs
-  - text_summarizer
+  - direct_llm
 role:
   deep technical research, prefers primary sources.
 ```

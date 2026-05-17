@@ -33,7 +33,7 @@ Prints a table of all installed skills across project (`reyn/project/`), local (
 
 ```
 NAME                SOURCE    DESCRIPTION
-text_summarizer     stdlib    Summarise text into a compact paragraph
+direct_llm     stdlib    Summarise text into a compact paragraph
 article_writer      project   Draft and review a long-form article
 ```
 

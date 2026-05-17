@@ -69,7 +69,7 @@ reyn init
 
 ```bash
 reyn skills          # stdlib + project + local の Skill を一覧表示
-reyn run text_summarizer "reyn is a workflow OS for LLMs."
+reyn run direct_llm "reyn is a workflow OS for LLMs."
 ```
 
 2 番目のコマンドがサマリーを生成してクリーンに終了すれば、[02 — Chat モード](02-chat-mode.md) に進む準備ができています。
