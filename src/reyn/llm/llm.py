@@ -279,6 +279,19 @@ def _dump_llm_response(request_id: str | None, payload: dict) -> None:
         logger.warning("llm trace dump write failed: %s", exc)
 
 
+_G12_SIGNAL_TEXT = "(answered) — task complete; reply to user or chain another tool"
+
+
+def _g12_signal_enabled() -> bool:
+    """Return True unless `REYN_G12_SIGNAL` env var explicitly disables it.
+
+    Recognised disable values (case-insensitive): "off", "0", "false", "no".
+    Any other value (or unset) leaves the workaround active.
+    """
+    val = os.environ.get("REYN_G12_SIGNAL", "").strip().lower()
+    return val not in {"off", "0", "false", "no"}
+
+
 def _apply_g12_signal(messages: list[dict]) -> list[dict]:
     """Embed the G12 "(answered)" signal inside the trailing role=tool message.
 
@@ -288,17 +301,25 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
     measurement data.
 
     Behaviour:
+      - **`REYN_G12_SIGNAL=off`** env var disables the workaround entirely
+        (= returns messages unchanged). Operator opt-out for diagnostic
+        or A/B comparison purposes.
       - No-op when `messages` is empty or messages[-1] is not role=tool.
-      - JSON-shaped tool content (= starts with "{"): inject a top-level
-        `_g12_signal: "(answered)"` field after the opening brace.
-      - Plain-text tool content: prefix with `"(answered) "`.
-      - Non-string content (= list of content parts): leave untouched
-        (= no safe place to embed the signal without a deeper API
-        contract decision).
+      - JSON object tool content (= `{...}`-shaped string): inject a
+        top-level `_g12_signal` field after the opening brace, with
+        trailing-comma elision for empty-object shapes (= `"{}"`,
+        `"{ }"`) so the output is always parse-valid.
+      - Plain-text or non-JSON tool content: prefix with the signal text
+        + a blank line for visual separation.
+      - Non-string content (= list of content parts or None): leave
+        untouched (= no safe place to embed the signal without a deeper
+        API contract decision).
 
     The returned list is either the same `messages` reference (no-op case)
     or a new list with only the trailing message replaced.
     """
+    if not _g12_signal_enabled():
+        return messages
     if not messages:
         return messages
     last = messages[-1]
@@ -309,15 +330,18 @@ def _apply_g12_signal(messages: list[dict]) -> list[dict]:
         return messages
     new_last = dict(last)
     if content.startswith("{"):
-        new_last["content"] = (
-            '{"_g12_signal": "(answered) — task complete; '
-            'reply to user or chain another tool", ' + content[1:]
-        )
+        inner = content[1:]
+        # Empty-object shapes ("{}", "{ }", "{\n}") must not get a
+        # separator comma, otherwise the output would have a trailing
+        # `, }` which fails JSON parse.
+        if inner.lstrip().startswith("}"):
+            new_last["content"] = f'{{"_g12_signal": "{_G12_SIGNAL_TEXT}"{inner}'
+        else:
+            new_last["content"] = (
+                f'{{"_g12_signal": "{_G12_SIGNAL_TEXT}", {inner}'
+            )
     else:
-        new_last["content"] = (
-            "(answered) — task complete; "
-            "reply to user or chain another tool\n\n" + content
-        )
+        new_last["content"] = f"{_G12_SIGNAL_TEXT}\n\n{content}"
     return messages[:-1] + [new_last]
 
 
@@ -891,6 +915,9 @@ async def call_llm_tools(
     #   - This modification is NOT persisted to history; it's applied at
     #     the LLM call boundary so chat history stays clean for downstream
     #     logic (= same property as the prior shape).
+    #   - **Operator opt-out**: set `REYN_G12_SIGNAL=off` (case-insensitive;
+    #     `0` / `false` / `no` also accepted) to disable the workaround
+    #     entirely for diagnostic or A/B-comparison runs.
     messages = _apply_g12_signal(messages)
 
     call_kwargs: dict = {

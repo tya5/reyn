@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from reyn.llm.llm import _apply_g12_signal
 
 # ── 1. No-op gate (= signal must NOT fire on non-post-tool turns) ─────────
@@ -144,7 +146,77 @@ def test_non_string_content_returns_unchanged() -> None:
     assert _apply_g12_signal(msgs) == msgs
 
 
-# ── 5. Multi-turn realistic shape ───────────────────────────────────────────
+# ── 5. Empty JSON object — must produce parse-valid output ─────────────────
+
+
+def test_empty_json_object_produces_valid_json() -> None:
+    """Tier 2: empty `{}` tool content must NOT yield invalid JSON
+    (= trailing comma). Empty object shapes get the signal as the
+    sole field, no separator comma.
+    """
+    msgs = [{"role": "tool", "content": "{}"}]
+    result = _apply_g12_signal(msgs)
+    new_content = result[-1]["content"]
+    # Must parse cleanly
+    parsed = json.loads(new_content)
+    assert parsed["_g12_signal"].startswith("(answered)")
+    # No other fields (= the only key is the signal)
+    assert list(parsed.keys()) == ["_g12_signal"]
+
+
+def test_empty_json_object_with_whitespace_produces_valid_json() -> None:
+    """Tier 2: `{ }` with internal whitespace still produces valid JSON.
+
+    Edge case — defensive against tool dispatchers that pretty-print
+    empty objects.
+    """
+    msgs = [{"role": "tool", "content": "{ }"}]
+    result = _apply_g12_signal(msgs)
+    json.loads(result[-1]["content"])  # raises if invalid
+
+
+# ── 6. Env var disable (= operator opt-out) ─────────────────────────────────
+
+
+def test_env_var_off_returns_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tier 2: REYN_G12_SIGNAL=off disables the workaround entirely.
+
+    Operator opt-out for diagnostic / A/B comparison. When set, the
+    helper is a no-op even on post-tool turns.
+    """
+    monkeypatch.setenv("REYN_G12_SIGNAL", "off")
+    msgs = [{"role": "tool", "content": '{"a": 1}'}]
+    result = _apply_g12_signal(msgs)
+    assert result is msgs, "REYN_G12_SIGNAL=off must short-circuit (no copy)"
+    assert msgs[-1]["content"] == '{"a": 1}', "content must be unmodified"
+
+
+@pytest.mark.parametrize("value", ["off", "OFF", "0", "false", "False", "no", "NO"])
+def test_env_var_off_case_and_alias_variants(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Tier 2: case-insensitive disable values + common aliases all work."""
+    monkeypatch.setenv("REYN_G12_SIGNAL", value)
+    msgs = [{"role": "tool", "content": '{"a": 1}'}]
+    assert _apply_g12_signal(msgs) is msgs
+
+
+@pytest.mark.parametrize("value", ["", "on", "1", "true", "garbage"])
+def test_env_var_non_disable_values_leave_workaround_active(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """Tier 2: any non-disable value (= unset, "on", garbage) leaves the
+    workaround active. Default state is on; disable is opt-in.
+    """
+    monkeypatch.setenv("REYN_G12_SIGNAL", value)
+    msgs = [{"role": "tool", "content": '{"a": 1}'}]
+    result = _apply_g12_signal(msgs)
+    assert result is not msgs, f"value={value!r} should leave workaround active"
+    parsed = json.loads(result[-1]["content"])
+    assert "_g12_signal" in parsed
+
+
+# ── 7. Multi-turn realistic shape ───────────────────────────────────────────
 
 
 def test_realistic_polluted_history_post_tool_shape() -> None:
