@@ -344,17 +344,13 @@ def _candidate_loop_back() -> CandidateOutput:
     )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "DOGFOOD BUG (high): apply_improvements rolls back to run_and_eval even "
-        "when the LLM's reason field correctly identifies a regression "
-        "(0.72 → 0.55). The recorded fixture shows reason.summary='Regression "
-        "detected: ... Rolling back ...' but next_phase='run_and_eval' — the "
-        "termination logic in skill.md step 3 is not being honoured. "
-        "Remove this xfail when skill.md / phase prompt is fixed."
-    ),
-    strict=True,
-)
+# The previous xfail (= strict=True) marked a dogfood bug where
+# apply_improvements rolled back to run_and_eval even after the LLM
+# correctly identified a regression. The bug was incidentally resolved by
+# the B28-MED-2 description disambiguation wave (= commit 14c6b6b): with
+# the sharper "Iterate ... Does NOT just score" framing in
+# skill_improver/skill.md, the LLM now follows the apply_improvements
+# step-3 termination path on regression. xfail removed in B29.
 @pytest.mark.replay("fixtures/llm/skill_improver/improvement_makes_worse.jsonl")
 def test_improvement_regression_handled():
     """Tier 3a corner: latest_eval < previous score → finalize with regression_detected.
