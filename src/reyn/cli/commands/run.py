@@ -82,6 +82,8 @@ def register(sub) -> None:
 
 def run(args: argparse.Namespace) -> None:
     session = Session.from_args(args)
+    from reyn.cli.credentials_check import verify_credentials_or_exit
+    verify_credentials_or_exit(session, args)
     loaded = load_skill_from_args(args)
 
     raw_input = _read_input(args)
