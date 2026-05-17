@@ -379,12 +379,11 @@ class InputBar(Widget):
     # ── hint rendering ────────────────────────────────────────────────────────
 
     def _build_hint(self) -> str:
-        # Stays on one line (~84 cols). Dropped Ctrl+O / Ctrl+R / Ctrl+\
-        # / Ctrl+C — all visible in the Keys tab, all infrequent or
-        # discoverable on demand. Ctrl+P/N turn was missing from every
-        # user-facing surface above the fold; that's the whole point of
-        # this hint. Ctrl+B panel stays so users can find the Keys tab.
+        # Fits in 80 cols (= 72 cells incl. 2-space left margin) so the
+        # tail "Ctrl+P/N turn" doesn't get clipped on default terminals.
+        # Dropped Ctrl+J nl in addition to Ctrl+O / Ctrl+R / Ctrl+\ /
+        # Ctrl+C — all remain discoverable via the Keys tab (Ctrl+B).
         return (
-            "  Enter send │ Ctrl+J nl │ Ctrl+D quit │ Ctrl+L clear │ "
+            "  Enter send │ Ctrl+D quit │ Ctrl+L clear │ "
             "Ctrl+B panel │ Ctrl+P/N turn"
         )
