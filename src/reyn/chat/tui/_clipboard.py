@@ -28,6 +28,10 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
     Looked up via ``shutil.which`` so the user only needs one of the
     binaries on PATH. We avoid hard-coding the OS because users may run,
     e.g., xclip inside a Linux VM regardless of the host platform.
+
+    BLOCKING: ``subprocess.run`` is synchronous and can hold the calling
+    thread for up to ~2 s (timeout). Callers inside an async event loop
+    should use :func:`copy_to_clipboard_async` instead.
     """
     import shutil
     import subprocess
@@ -49,4 +53,20 @@ def copy_to_clipboard(text: str) -> tuple[bool, str]:
     return False, ""
 
 
-__all__ = ["copy_to_clipboard"]
+async def copy_to_clipboard_async(text: str) -> tuple[bool, str]:
+    """Async variant — off-loads :func:`copy_to_clipboard` to a thread executor.
+
+    The blocking subprocess (timeout=2 s) runs on the default executor so
+    the event loop stays free to drain other outbox events (streaming
+    chunks, status messages, traces). Without this off-load, a single
+    ``/copy`` could freeze the TUI for up to 2 seconds per clipboard
+    tool attempted.
+
+    Returns the same ``(ok, tool_label)`` shape as the sync version.
+    """
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, copy_to_clipboard, text)
+
+
+__all__ = ["copy_to_clipboard", "copy_to_clipboard_async"]

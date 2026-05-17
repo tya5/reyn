@@ -303,7 +303,30 @@ class OutboxRouter:
                 )
             return
 
-        ok, label = _copy_to_clipboard(text)
+        # Off-load the blocking ``subprocess.run`` (up to 2 s per tool tried)
+        # to a thread executor so the outbox loop stays free to drain other
+        # events. Without this, ``/copy`` mid-stream could freeze the TUI
+        # for up to 2 s — streaming chunks would back up in the queue and
+        # all unblock in a burst at the end. Surface an instant "copying…"
+        # placeholder so the user sees their action register immediately;
+        # the worker overwrites it with the success / failure status on
+        # completion (each ``_show_transient_status`` cancels the prior
+        # auto-hide timer, so the placeholder never out-lives the result).
+        self._show_transient_status(conv, "copying…", duration=10.0)
+        asyncio.create_task(self._finish_copy_async(conv, text, n))
+
+    async def _finish_copy_async(
+        self, conv: ConversationView, text: str, n: int,
+    ) -> None:
+        """Background worker for /copy — runs subprocess off the event loop."""
+        from ._clipboard import copy_to_clipboard_async
+        try:
+            ok, label = await copy_to_clipboard_async(text)
+        except Exception as exc:
+            self._show_transient_status(
+                conv, f"copy failed: {exc}", kind="error",
+            )
+            return
         if ok:
             n_chars = len(text)
             tag = "latest" if n == 1 else f"#{n}"
