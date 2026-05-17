@@ -1,0 +1,35 @@
+{
+  "batch": 35,
+  "worker": 3,
+  "head": "99d8407",
+  "scenario_set": "control_ir_ops",
+  "agent": "dogfood-b35-3",
+  "port": 8083,
+  "scores": {
+    "V": 2,
+    "I": 0,
+    "R": 7,
+    "B": 0
+  },
+  "delta_vs_b33_estimated": 0,
+  "file_grep_verified": false,
+  "file_grep_partial_improvement": true,
+  "scenarios": [
+    {"id": "file_read_via_chat", "verdict": "V", "tool": "file__read", "args": {"path": "docs/concepts/principles.md"}, "note": "Direct path; all must_emit satisfied"},
+    {"id": "file_glob_grep", "verdict": "R", "tool": "file__glob", "args": {"content_regex": "judge_output", "glob": "src/**/skill.md"}, "note": "LLM picked correct action (improvement over B30-B33 file__list) but wrong arg name: content_regex vs expected pattern; KeyError: 'pattern'"},
+    {"id": "web_search_query", "verdict": "V", "tool": "web__search", "args": {"query": "OpenAI Python SDK changelog 2026"}, "note": "web_search_started + web_search_completed emitted"},
+    {"id": "web_fetch_url", "verdict": "R", "tool": "web__fetch", "args": {"url": "https://docs.python.org/3/whatsnew/3.12.html"}, "note": "permission_denied; no web_fetch_started event"},
+    {"id": "sandboxed_exec_simple", "verdict": "R", "tool": "exec__run", "args": {"command": "python -c 'print(2 + 2)'"}, "note": "Unknown action exec__run: no routing rule for category exec"},
+    {"id": "lint_a_skill", "verdict": "R", "tool": null, "args": null, "note": "0 tool calls; inline reply; routing_decided missing"},
+    {"id": "recall_indexed_source", "verdict": "R", "tool": null, "args": null, "note": "0 tool calls; inline reply; routing_decided missing"},
+    {"id": "judge_output_direct", "verdict": "R", "tool": "skill__judge_phase", "args": {"rubric": "...", "text_to_evaluate": "..."}, "note": "skill_run_spawned but skill_run_failed: act budget exhausted; tool_executed missing"},
+    {"id": "ask_user_round_trip", "verdict": "R", "tool": "skill__skill_builder", "args": {"skill_name": "my_demo_skill"}, "note": "T1 LLM asked inline (not ask_user op); T2 skill completed; user_intervention_requested/received never emitted"}
+  ],
+  "key_findings": [
+    "F1: file__glob arg mismatch — LLM now picks file__glob (correct, vs file__list in B30-B33) but passes content_regex instead of pattern; KeyError: 'pattern' in handler",
+    "F2: exec routing gap unchanged — no category exec registered in universal_dispatch.py",
+    "F3: web_fetch permission gate fires correctly — permission_denied before web_fetch_started can emit",
+    "F4: judge_phase act budget exhausted — skill_run_failed on act budget; need to investigate budget setting",
+    "F5: ask_user inline vs op — LLM asked question inline rather than via ask_user Control IR op"
+  ]
+}

@@ -1,0 +1,172 @@
+{
+  "batch": "B35",
+  "worker": "2",
+  "head": "99d8407",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "driver": "A2A (port 8082)",
+  "tally": {
+    "V": 2,
+    "I": 2,
+    "R": 5,
+    "B": 0
+  },
+  "vs_b33": "+4V (W2 F2 fix verified, all 4 spawn-ack returned non-empty)",
+  "w2_f2_verify": {
+    "applicable_spawn_ack_scenarios": 4,
+    "non_empty_reply": 4,
+    "scenarios": {
+      "s4_skill_builder": {"reply_chars": 83, "non_empty": true, "content_correct": true},
+      "s5_word_stats_demo": {"reply_chars": 89, "non_empty": true, "content_correct": true},
+      "s6_word_stats_demo_multiline": {"reply_chars": 121, "non_empty": true, "content_correct": false, "note": "text arg not passed to skill"},
+      "s7_eval_run_direct_llm": {"reply_chars": 95, "non_empty": true, "content_correct": false, "note": "direct_llm not found in catalog"}
+    }
+  },
+  "scenarios": [
+    {
+      "id": "s1_index_docs_basic",
+      "score": "R",
+      "reason": "skill_run_failed: unsafe python step (--allow-unsafe-python required). Reply non-empty but reports error.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed_success": false,
+        "phase_started": false,
+        "permission_denied": false
+      }
+    },
+    {
+      "id": "s2_read_local_files_explain_source",
+      "score": "I",
+      "reason": "MCP permission denied (filesystem server). skill_run_completed emitted. Rubric allows MCP-unavailable path. No file content explained.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "phase_started": true,
+        "permission_denied_event": false,
+        "tool_failed_permission": true
+      }
+    },
+    {
+      "id": "s3_read_local_files_multi_file",
+      "score": "R",
+      "reason": "Router called list_actions(category=file, filter=path) -> 0 items. No skill dispatched. Should use file__glob instead.",
+      "events_check": {
+        "routing_decided": false,
+        "skill_run_spawned": false,
+        "skill_run_completed": false
+      }
+    },
+    {
+      "id": "s4_skill_builder_web_summariser",
+      "score": "V",
+      "reason": "skill_builder ran 5 phases successfully. Skill created at reyn/local/web_article_summariser/. Reply confirmed skill name.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "phase_started": true,
+        "permission_denied": false
+      },
+      "w2_f2": "PASS (non-empty reply, correct content)"
+    },
+    {
+      "id": "s5_word_stats_demo_sentence",
+      "score": "V",
+      "reason": "word_stats_demo ran python preprocessor step. 44 chars computed correctly. Reply non-empty with correct stat.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "phase_started": true,
+        "llm_called": true,
+        "permission_denied": false
+      },
+      "w2_f2": "PASS (non-empty reply, correct content)"
+    },
+    {
+      "id": "s6_word_stats_demo_multiline",
+      "score": "R",
+      "reason": "_input artifact was {} (empty). Text not passed. Stats: 0 chars/words/lines. Reply non-empty but reports 0 values.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed": true,
+        "permission_denied": false
+      },
+      "w2_f2": "PASS (non-empty reply, wrong content - arg-passing bug)"
+    },
+    {
+      "id": "s7_eval_run_direct_llm",
+      "score": "R",
+      "reason": "Router could not find direct_llm in catalog. No skill dispatched. Reply: 'direct_llm not found'.",
+      "events_check": {
+        "routing_decided": false,
+        "skill_run_spawned": false,
+        "skill_run_completed": false,
+        "permission_denied": false
+      },
+      "w2_f2": "PASS (non-empty reply, router error message)"
+    },
+    {
+      "id": "s8_chat_compactor_long_session",
+      "score": "I",
+      "reason": "6 turns all inline (no skill dispatch). Compaction below threshold (375 tokens < 30000). Final reply coherent on routing question.",
+      "events_check": {
+        "skill_run_spawned": false,
+        "llm_called": true,
+        "permission_denied": false,
+        "compaction_triggered": false
+      }
+    },
+    {
+      "id": "s9_chained_find_then_index",
+      "score": "R",
+      "reason": "T1: list_actions filter bug (0 files found). T2: index_docs spawned twice but both failed (unsafe python). Reply non-empty error message.",
+      "events_check": {
+        "routing_decided": true,
+        "skill_run_spawned": true,
+        "skill_run_completed_success": false,
+        "phase_started": false,
+        "permission_denied": false
+      }
+    }
+  ],
+  "bugs_observed": [
+    {
+      "id": "BUG-list_actions-path-filter",
+      "description": "Router uses list_actions(category=file, filter=path) for directory listing instead of file__glob. list_actions filter matches action names not filesystem paths, so returns 0 items.",
+      "scenarios": ["s3", "s9_t1"],
+      "severity": "MED",
+      "new_in_b35": "possibly persisting"
+    },
+    {
+      "id": "BUG-word-stats-text-arg-multiline",
+      "description": "Multi-line quoted text block not extracted and passed as text arg to word_stats_demo. _input artifact lands as {}.",
+      "scenarios": ["s6"],
+      "severity": "MED",
+      "new_in_b35": "possibly persisting from B34 partial fix"
+    },
+    {
+      "id": "BUG-direct_llm-not-found",
+      "description": "Router cannot resolve 'direct_llm' as a valid action when invoked by name in eval context.",
+      "scenarios": ["s7"],
+      "severity": "MED",
+      "new_in_b35": false
+    },
+    {
+      "id": "CONFIG-unsafe-python",
+      "description": "index_docs requires --allow-unsafe-python flag. Not set in web server startup.",
+      "scenarios": ["s1", "s9_t2"],
+      "severity": "CONFIG",
+      "new_in_b35": false
+    },
+    {
+      "id": "CONFIG-mcp-filesystem",
+      "description": "MCP filesystem server not permitted in reyn.local.yaml.",
+      "scenarios": ["s2"],
+      "severity": "CONFIG",
+      "new_in_b35": false
+    }
+  ]
+}

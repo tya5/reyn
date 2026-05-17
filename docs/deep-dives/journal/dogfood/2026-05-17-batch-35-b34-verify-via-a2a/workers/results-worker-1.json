@@ -1,0 +1,101 @@
+{
+  "worker": 1,
+  "batch": 35,
+  "set_name": "chat_router_smoke",
+  "head": "99d8407",
+  "driver_pattern": "a2a",
+  "a2a_pattern_ok": true,
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply mentions agents/tools (PASS); user_message_received+chat_turn_completed_inline only (PASS); no direct_llm artifact (answered inline, FAIL)"
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply explains idempotency (PASS); routing_decided→web__search not direct_llm; no direct_llm artifact (FAIL)"
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "refuted",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply lists 15 skills (PASS); routing_decided absent (used tool call inline, FAIL); no direct_llm artifact (FAIL)"
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "inconclusive",
+      "reply_pass": true,
+      "events_pass": false,
+      "artifacts_pass": true,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply has 44-char stat (PASS); skill_run_completed.status='finished' not 'success' (rubric bug); word_stats_demo artifacts present at .reyn/artifacts/"
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply asked for theme clarification, not a poem (FAIL); chat_turn_completed_inline satisfies must_emit_any (PASS); no direct_llm artifact (FAIL)"
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "T2 reply shows read_local_files skill error instead of code example (FAIL); skill_run_failed event; no permission_denied (PASS)"
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "refuted",
+      "reply_pass": false,
+      "events_pass": true,
+      "artifacts_pass": false,
+      "a2a_status_ok": true,
+      "evidence_one_liner": "Reply offered to generate image (asked for details), did not decline (FAIL); chat_turn_completed_inline; no permission_denied (PASS)"
+    }
+  ],
+  "summary": {
+    "verified": 0,
+    "inconclusive": 1,
+    "refuted": 6,
+    "blocked": 0
+  },
+  "findings": [
+    {
+      "id": "B35-DISCOVERY-1",
+      "severity": "INFRA",
+      "description": "Per-scenario event dir wipe (rm -rf .reyn/events) breaks A2A sessions: EventStore._active holds stale path, next write raises FileNotFoundError. Use per-scenario agent names or restart web server between scenarios."
+    },
+    {
+      "id": "S4-RUBRIC",
+      "severity": "LOW",
+      "description": "Scenario YAML specifies skill_run_completed status: success but codebase emits status: 'finished'. Rubric needs update."
+    },
+    {
+      "id": "B35-F1",
+      "severity": "HIGH",
+      "description": "Multi-turn pronoun reference 'それをコード例で示してください' misroutes to read_local_files skill instead of inline answer. Skill fails (no filesystem MCP). User sees error instead of code example."
+    },
+    {
+      "id": "B35-F2",
+      "severity": "MED",
+      "description": "Out-of-scope image generation request not gracefully declined. Agent asks for image generation details instead of explaining capability is unavailable."
+    }
+  ]
+}

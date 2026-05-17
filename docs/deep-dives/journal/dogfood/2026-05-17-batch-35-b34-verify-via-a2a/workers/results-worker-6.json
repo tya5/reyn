@@ -1,0 +1,87 @@
+{
+  "worker": "b35-6",
+  "date": "2026-05-17",
+  "head": "99d8407",
+  "agent": "dogfood-b35-6",
+  "port": 8086,
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "file": "plan_mode.yaml",
+      "verdict": "verified",
+      "plan_emitted": true,
+      "notes": "plan_emitted + 3 plan_step cycles + plan_aggregated fired. 4 concrete points citing both docs."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "file": "plan_mode.yaml",
+      "verdict": "inconclusive",
+      "plan_emitted": true,
+      "notes": "plan fired but cites plan_runtime.py not plan.py/planner.py per rubric. Both (1) and (2) addressed."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "notes": "tool_calls_attempted=0, inline_reply. Plan tool not invoked despite fresh session."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "blocked",
+      "notes": "mcp_search requires --allow-unsafe-python. skill_run_failed immediately."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "inconclusive",
+      "notes": "Skill ran (finished). Narration: skill_name extracted, skill_path/files_written/lint_passed/file_count missing."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "phase_no_progress+workflow_aborted triggered. skill_completion_injected fired (W6 fix). Error surfaced, no false success."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "notes": "PostprocessorError surfaced with missing required properties listed. No fabricated score."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "blocked",
+      "notes": "mcp_search requires --allow-unsafe-python."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "notes": "invoke_skill_spawn_ack_exit=1 (no double dispatch). Final narration sparse: skill_name mentioned, skill_path/lint_passed missing."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "notes": "LLM called list_actions instead of invoke_skill. mcp_search not invoked."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "notes": "skill_completion_injected(error) fired. Anti-optimism held. Error summary not verbatim."
+    }
+  ],
+  "totals": {
+    "verified": 3,
+    "inconclusive": 4,
+    "refuted": 2,
+    "blocked": 2
+  },
+  "plan_emitted_rate": "2/3",
+  "w6_fix_verified": true,
+  "w6_evidence": "All 5 skill_run_failed events followed immediately by skill_completion_injected. s-fp11-1 confirmed phase_no_progress -> workflow_aborted -> skill_completion_injected(error) chain."
+}
