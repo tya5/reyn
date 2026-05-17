@@ -233,10 +233,21 @@ class InputBar(Widget):
         ta.action_cursor_down()
 
     def action_dismiss_picker(self) -> None:
-        """Escape — hide picker but keep typed text."""
+        """Escape — abandon slash entry: hide picker AND clear the prefix.
+
+        The picker is only visible when the input is ``/<name-partial>``
+        with no space or newline (see ``_update_picker``), so the entire
+        text is the slash prefix being discovered. Leaving it behind made
+        Esc feel like a no-op and forced the user to backspace before
+        typing anything else — Slack/Discord clear the prefix on Esc.
+        """
         picker = self._picker()
-        if picker is not None and picker.visible_:
-            picker.hide()
+        if picker is None or not picker.visible_:
+            return
+        picker.hide()
+        ta = self._textarea()
+        if ta is not None:
+            ta.load_text("")
 
     def action_newline(self) -> None:
         ta = self._textarea()
