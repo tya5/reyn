@@ -517,7 +517,7 @@ class ConversationView(Widget):
         self,
         *,
         question: str,
-        choices: list[tuple[str, str]] | None = None,
+        choices: list[tuple[str, str] | dict] | None = None,
         answer_callback=None,
         iv_id: str = "",
         queued_extra: int = 0,

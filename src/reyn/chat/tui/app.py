@@ -229,7 +229,7 @@ class ReynTUIApp(App):
         conv: ConversationView,
         text: str,
         iv_id: str,
-        choices: list[tuple[str, str]] | None = None,
+        choices: list[tuple[str, str] | dict] | None = None,
         queued_extra: int = 0,
     ) -> None:
         """Mount an InterventionWidget inline in the conversation view.
@@ -238,6 +238,10 @@ class ReynTUIApp(App):
         rendered. The user's answer (chip label or free text) is routed via
         session._maybe_answer_oldest_intervention — which matches hotkeys /
         choice labels against the pending intervention.
+
+        ``choices`` accepts both legacy ``(label, id)`` 2-tuples and the
+        richer ``{"label", "id", "hotkey", "default"}`` dict shape — the
+        widget normalises both forms internally.
 
         ``queued_extra`` surfaces the number of additional pending
         interventions waiting behind the head one (caller-computed) so the
