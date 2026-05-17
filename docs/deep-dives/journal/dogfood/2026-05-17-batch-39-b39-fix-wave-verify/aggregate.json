@@ -1,0 +1,99 @@
+{
+  "batch": "B39",
+  "date": "2026-05-17",
+  "head_at_dispatch": "b4daeb1",
+  "head_at_dispatch_parent_fixes": [
+    "561101a (B37 D2-wrapper hot-list scope)",
+    "5e05b9b (B37 DEFAULT_HOT_LIST_SEED + ghost rejection)",
+    "29a0c31 (B37 judge_phase postprocessor schema)",
+    "1d5042d (B38 D2-wrapper scope expansion)",
+    "bfeb9f8 (B39 ghost registry-existence check)",
+    "16b439c (B39 S8 scenario redesign)",
+    "b1ca51a (B39 ghost check accepts empty-schema skills)",
+    "f48333c (B39 fresh-mode reset helper)",
+    "b4daeb1 (B39 stdlib explicit input_schema)"
+  ],
+  "state_mode": "fresh",
+  "scenarios_total": 58,
+  "verdict_totals": {
+    "verified": 21,
+    "inconclusive": 13,
+    "refuted": 24,
+    "blocked": 0
+  },
+  "verified_rate": 0.362,
+  "delta_vs_b38": "-2V mathematical (B38 was 23V/15I/21R, B39 is 21V/13I/24R = ΔV=-2 / ΔI=-2 / ΔR=+3)",
+  "workers": {
+    "W1_chat_router_smoke":      {"v": 2, "i": 0, "r": 5, "b": 0, "scenarios": 7,  "delta_vs_b38": -2, "notable": "S4 V→R (explicit_skill_invocation_word_stats: LLM picked skill__direct_llm over word_stats_demo); S6 V→R (multi_turn_pronoun_reference: task_completed narration collapse on spawn path)"},
+    "W2_stdlib_skills_core":     {"v": 1, "i": 3, "r": 5, "b": 0, "scenarios": 9,  "delta_vs_b38": -1, "notable": "S7 eval_run_direct_llm V→R (LLM picked skill__direct_llm over skill__eval; direct_llm ARS visibility from b4daeb1 created selection competition)"},
+    "W3_control_ir_ops":         {"v": 3, "i": 0, "r": 6, "b": 0, "scenarios": 9,  "delta_vs_b38": "+1V", "notable": "S8 judge_output_direct R→V (= 29a0c31 + 16b439c e2e working: workflow_finished + score=1.0 + 0 validation_errors)"},
+    "W4_permissions_and_safety": {"v": 4, "i": 4, "r": 0, "b": 0, "scenarios": 8,  "delta_vs_b38": "+1V", "notable": "S3 sandbox_seatbelt_denied_network I→V (deterministic permission path); S1 file__write canonical key remained"},
+    "W5_multi_agent_and_mcp":    {"v": 1, "i": 2, "r": 4, "b": 0, "scenarios": 7,  "delta_vs_b38": "-1V (S4 multi_agent_topology_route V→I)", "notable": "Peer ARS expansion confirmed (97+ peer agents listed including this batch's dogfood-b39-* agents)"},
+    "W6_plan_mode_fp0011":       {"v": 3, "i": 4, "r": 4, "b": 0, "scenarios": 11, "delta_vs_b38": "0V (B38 W6 = 3V/5I/3R, B39 W6 = 3V/4I/4R = ΔI=-1/ΔR=+1)", "notable": "R-WEB mcp_search routing chain REOPENED (3 scenarios I→R: narr-1, s-fp11-3, s-fp12-comp-1) — initial hypothesis blamed b4daeb1 ARS expansion, post-batch verify session refuted that (see retrospective §2)"},
+    "W7_long_session_v1":        {"v": 7, "i": 0, "r": 0, "b": 0, "scenarios": 7,  "delta_vs_b38": 0, "notable": "C1 clean turns 7/7 maintained; S7 concept_explanation_chain still V despite search-failure pattern (= apology when knowledge query returns empty)"}
+  },
+
+  "post_batch_commit_verify_session": {
+    "purpose": "Verify each of the 9 fix commits via dogfood trace evidence (trace-patch-replay at fixed user params + S8 live + B38-state simulation) before deciding revert.",
+    "methodology": "User-tunable params (hot_list_n=10, default seed, fresh mode) held fixed. Each commit's revert simulated via llm_replay --patch on the baseline narr-1 trace; deterministic commits verified via S8 live and B38-sim ghost filter observation.",
+    "verdict_per_commit": {
+      "561101a": {"verdict": "keep", "evidence": "P2 trace-patch (= ARS block removed) → arg variants 5→8 increase. Reverting this OR 1d5042d removes the same ARS block; both keep."},
+      "5e05b9b": {"verdict": "keep", "evidence": "P3a trace-patch (= file__write + rag.operation__drop_source removed from tools[]) → mcp_search routing 0/10 unchanged. Pre-fix seed at n=10 still doesn't put mcp_search in top-10 (position 12 → cap-out). Orthogonal to W6 regression."},
+      "29a0c31": {"verdict": "keep", "evidence": "S8 live dogfood → judge_phase finished, score=1.0, no validation_error"},
+      "1d5042d": {"verdict": "keep", "evidence": "P2 trace-patch → arg variants 5→8 increase (hallucination worsens without ARS). Functioning."},
+      "bfeb9f8": {"verdict": "keep", "evidence": "B38-sim run web.log: 'skipping ghost alias mcp.server__search — not found in current registry'. Ghost filter empirically rejecting fake names."},
+      "16b439c": {"verdict": "keep", "evidence": "S8 live dogfood → scenario yaml + fixture produce valid evidence (= rubric pass)"},
+      "b1ca51a": {"verdict": "keep", "evidence": "B38-sim run: skill__mcp_search (empty input_schema) passed ghost filter and appeared as direct alias in tools[]. Empty-schema acceptance functioning."},
+      "f48333c": {"verdict": "keep (with carry-over)", "evidence": "Live test confirmed: B38-state simulation (action_usage.jsonl with skill__mcp_search history) → mcp_search routes correctly. Fresh state (= post-f48333c) → routes to mcp.server__* guesses. f48333c does not cause the regression — it removes the action_usage masking that previously hid a latent cold-start wrapper-discovery gap. Methodology fix correct per care-boundary; latent gap is separate fix domain (cognitive bias attractor)."},
+      "b4daeb1": {"verdict": "keep", "evidence": "P1 trace-patch (= direct_llm + read_local_files removed from ARS) → mcp_search routing 0/10 unchanged. B39-W6-F1 initial hypothesis (= ARS expansion shifted routing landscape) REFUTED by trace-patch-replay."}
+    },
+    "total_verify_cost_usd_approx": 0.20
+  },
+
+  "w6_r_web_regression_real_root_cause": {
+    "name": "Cold-start wrapper-discovery cognitive bias (Class A attractor)",
+    "trace_evidence_summary": "When skill__mcp_search is NOT in tools[] direct aliases (= cold-start, fresh action_usage state at hot_list_n=10), LLM never calls list_actions(category=['skill']) to discover it. Instead 100% of 10 baseline replays routed to mcp.server__* category guesses (mcp.server__search / mcp.tool__mcp_search.* / list_actions(category=['mcp.server']))",
+    "cognitive_path": "User prompt 'mcp_search スキルで...' → LLM associates 'mcp_search' with mcp.server category (= mcp prefix overlap with mcp.server category description 'invoke to list this server's tools') → skill category never tried",
+    "post_batch_context_analysis": "5 parallel sonnet info-gathering (SP / wrapper desc / past batch / trace / care boundary) confirmed: (a) Router SP has no guidance for 'user says X スキル → list_actions(category=[skill])', (b) ROUTING RULE (ABSOLUTE) only fires when user message contains literal qualified action_name, (c) Same pattern observed in B35-B38 cold-start gap findings, (d) Per care-boundary.md §1 'The LLM doesn't have to guess what exists', this IS Reyn OS structural responsibility",
+    "fix_layer_recommendation": "structural (pre-call context) OR gray (SP MUST rule). Sonnet 5 ladder cheap-first: (1) observe trace [done], (2) structural skill-list inject in router context, (3) SP MUST rule 'X スキル' → list_actions(category=['skill']), (4) list_actions description example enrichment. Carry-over to B40."
+  },
+
+  "principles_applied_in_post_batch_verify": [
+    "P6 verify-first / reproduce-first (= bug reproduced on current HEAD 5c79bd7 before any revert proposal)",
+    "P16 pre-fix multi-agent context analysis (= 5 parallel sonnet info-gathering before fix design)",
+    "User-tunable params fixed in comparison (= new memory entry, established this session)",
+    "Verify fix via replay before land (= existing memory, applied via trace-patch-replay)",
+    "Pre-conclusion observation checklist (= triggered when writing per-commit verdict)"
+  ],
+
+  "carry_over_to_b40": [
+    {
+      "id": "B39-W6-COGNITIVE-BIAS",
+      "severity": "MED",
+      "description": "Cold-start wrapper-discovery cognitive bias: LLM doesn't try list_actions(category=['skill']) when direct alias absent. 100% N=10 reproducible at user config hot_list_n=10 + fresh action_usage.",
+      "fix_candidates": ["(c) structural skill-list inject", "(b) SP MUST rule for X スキル prompt → category=['skill']", "(a) list_actions description enrichment"],
+      "fix_order": "cheap-first per intervention layer ladder (Sonnet 5 recommendation: observe → structural → SP → description)"
+    },
+    {
+      "id": "B39-W1-S4-DIRECT-LLM-COMPETITION",
+      "severity": "LOW",
+      "description": "S4 explicit_skill_invocation_word_stats V→R: LLM picked skill__direct_llm over word_stats_demo. Hypothesis: b4daeb1 added direct_llm to ARS with {text} schema, easier to use than word_stats_demo's more specific schema. Same class as W2-S7 eval competition.",
+      "note": "Not a fix bug per se; design consideration for ARS visibility ordering"
+    },
+    {
+      "id": "B39-W2-S7-EVAL-COMPETITION",
+      "severity": "LOW",
+      "description": "S7 eval_run_direct_llm V→R: LLM picked skill__direct_llm over skill__eval. Same family as W1-S4."
+    },
+    {
+      "id": "B39-W6-F2-NARR1-INVALID-SPEC",
+      "severity": "LOW",
+      "description": "s-fp11-1 anti-optimism REFUTED. Scenario design flaw: invalid-spec prompt was natural-language vague, LLM reinterpreted as valid build. Recommend rewrite with structurally invalid DSL."
+    },
+    {
+      "id": "B39-W6-F4-NARR3-LOOP-LIMIT",
+      "severity": "MED",
+      "description": "narr-3 skill_builder loop_limit_exceeded (design_artifacts ×5). B38 was V. May correlate with ARS expansion (b4daeb1) but not directly confirmed; needs N≥3 retest."
+    }
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "batch": "B39",
+  "worker": "W3",
+  "head": "b4daeb1",
+  "port": 8083,
+  "agent_prefix": "dogfood-b39-3-sN",
+  "date": "2026-05-17",
+  "state_mode": "fresh",
+  "score": {
+    "V": 3,
+    "I": 0,
+    "R": 6,
+    "B": 0
+  },
+  "delta_vs_b38": "+1V",
+  "s8_judge_verdict_emitted": true,
+  "ars_non_regression": true,
+  "scenarios": {
+    "file_read_via_chat": {
+      "verdict": "V",
+      "b38": "V",
+      "note": "file__read hot_list_alias; mentions 8 principles"
+    },
+    "file_glob_grep": {
+      "verdict": "R",
+      "b38": "R",
+      "note": "LLM used file__grep (improvement vs B38 file__list); 0 matches (accurate)"
+    },
+    "web_search_query": {
+      "verdict": "V",
+      "b38": "V",
+      "note": "web_search_started+completed; OpenAI SDK mentioned"
+    },
+    "web_fetch_url": {
+      "verdict": "R",
+      "b38": "R",
+      "note": "web__fetch selected (ARS-guided); permission_denied"
+    },
+    "sandboxed_exec_simple": {
+      "verdict": "R",
+      "b38": "R",
+      "note": "sandboxed_exec_started+completed; returncode=-6"
+    },
+    "lint_a_skill": {
+      "verdict": "R",
+      "b38": "R",
+      "note": "skill__eval spawned; skill_run_failed postprocessor schema"
+    },
+    "recall_indexed_source": {
+      "verdict": "R",
+      "b38": "I",
+      "note": "rag.operation__recall without sources -> KeyError; B38=I B39=R"
+    },
+    "judge_output_direct": {
+      "verdict": "V",
+      "b38": "R",
+      "note": "CRITICAL FIX: workflow_finished; score=1.0; no validation_error"
+    },
+    "ask_user_round_trip": {
+      "verdict": "R",
+      "b38": "R",
+      "note": "no skill_run_spawned; no user_intervention events; inline reply"
+    }
+  },
+  "s8_detail": {
+    "invoke_action_tool_call": {
+      "tool": "invoke_action",
+      "chain_id": "646a2b4883d24a76a64a89f83ddea5ea",
+      "action_name": "skill__judge_phase",
+      "args": {
+        "criteria": [
+          "The skill has a non-empty description field.",
+          "The skill declares at least one phase."
+        ],
+        "artifact_path": "dogfood/fixtures/judge_phase/sample_artifact.json",
+        "phase_name": "sample_phase",
+        "artifact_type": "skill"
+      }
+    },
+    "skill_run_id": "20260517T082213Z_judge_phase_05ad",
+    "workflow_status": "finished",
+    "final_output_keys": [
+      "phase_name",
+      "passed",
+      "criteria_results",
+      "summary",
+      "score"
+    ],
+    "validation_error_count": 0,
+    "verdict_in_reply": "passed all criteria with a score of 1.0",
+    "events_sequence": [
+      "workflow_started",
+      "artifact_created (_input)",
+      "phase_started (judge)",
+      "context_built",
+      "llm_called",
+      "tool_called (file read)",
+      "tool_executed",
+      "permission_granted",
+      "tool_returned",
+      "act_executed",
+      "context_built (2nd)",
+      "llm_called (2nd)",
+      "control_decided",
+      "artifact_validated",
+      "artifact_created (phase_judgment_raw)",
+      "phase_completed (next: end)",
+      "artifact_created (__post__)",
+      "postprocessor_step_completed",
+      "workflow_finished"
+    ]
+  },
+  "ars_entries_confirmed": [
+    "exec__sandboxed_exec: {allow_subprocess, argv, env_passthrough, network, read_paths, timeout_seconds, write_paths}",
+    "file__glob: {path, pattern}",
+    "file__grep: {case_sensitive, glob, max_results, path, pattern}",
+    "file__list: {path}",
+    "file__read: {path}",
+    "file__write: {content, path}",
+    "web__fetch: {max_length, url}",
+    "web__search: {max_results, query}",
+    "rag.operation__recall: {embedding_model, filters, query, sources, top_k}",
+    "skill__judge_phase: {artifact_path, artifact_type, criteria, phase_name}"
+  ]
+}

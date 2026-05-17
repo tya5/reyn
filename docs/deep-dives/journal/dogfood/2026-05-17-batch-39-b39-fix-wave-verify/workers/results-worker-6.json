@@ -1,0 +1,210 @@
+{
+  "batch": "B39",
+  "worker": 6,
+  "head": "b4daeb1",
+  "date": "2026-05-17",
+  "agent_prefix": "dogfood-b39-6-sN",
+  "port": 8086,
+  "worktree": "/private/tmp/reyn-worktrees/b39-6",
+  "scenario_sets": ["plan_mode.yaml (3)", "fp_0011_narration.yaml (2 enabled)", "fp_0011_0012_retest.yaml (6)"],
+
+  "totals": {
+    "verified": 3,
+    "inconclusive": 4,
+    "refuted": 4,
+    "blocked": 0
+  },
+
+  "delta_vs_b38_w6": {
+    "b38": {"verified": 3, "inconclusive": 5, "refuted": 3, "blocked": 0},
+    "b39": {"verified": 3, "inconclusive": 4, "refuted": 4, "blocked": 0},
+    "delta_v": "0",
+    "delta_i": "-1",
+    "delta_r": "+1",
+    "delta_b": "0",
+    "note": "R-WEB routing gap that was CLOSED in B38 appears to have REOPENED in B39. ARS expansion (b4daeb1) is suspect. plan_emitted rate dropped 2/3->1/3. s-fp11-1 anti-optimism REFUTED (LLM reinterpreted invalid spec). s7 (eval-missing-target) same I as B38."
+  },
+
+  "r_web_routing_chain": {
+    "held": false,
+    "narr_1": {
+      "routing_decided_skill_mcp_search": false,
+      "actual_tool_called": "list_actions(category:mcp.server)",
+      "tool_failed": "search_actions (unknown_tool)",
+      "verdict": "refuted"
+    },
+    "s_fp11_3": {
+      "routing_decided_skill_mcp_search": false,
+      "routing_decided_action": "mcp.server.search",
+      "routing_decided_source": "invoke_action",
+      "verdict": "refuted (wrong action name)"
+    },
+    "s_fp12_completion_1": {
+      "routing_decided_skill_mcp_search": false,
+      "actual_tool_called": "list_actions(category:mcp.server)",
+      "verdict": "refuted"
+    },
+    "hypothesis": "B39 ARS expansion (b4daeb1 adds read_local_files/direct_llm/eval/index_docs to ARS) may have changed LLM routing context for mcp_search. N=1 per scenario, direct causal link unconfirmed."
+  },
+
+  "plan_emitted_rate": "1/3",
+  "plan_explain_v_vs_r": "R",
+
+  "plan_details": {
+    "plan_compare_two_concepts": {
+      "plan_emitted": true,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_aggregated": true,
+      "verdict": "inconclusive",
+      "note": "plan fired correctly. Reply cites both docs with 3 concrete points. Section references ('セクション2', 'セクション3') present but no actual header names or line numbers. Partial rubric satisfaction."
+    },
+    "plan_explain_with_code_references": {
+      "plan_emitted": false,
+      "events": "tool_called:3 (list_actions, describe_action), chat_turn_completed_inline",
+      "verdict": "refuted",
+      "note": "LLM said 'plan tool does not exist', tried list_actions/describe_action for 'plan' tool name. plan not emitted at all. Different failure mode from B38 (B38: plan fired, wrong files cited)."
+    },
+    "plan_summary_across_n_files": {
+      "plan_emitted": false,
+      "routing_decided": 3,
+      "verdict": "refuted",
+      "note": "LLM answered inline with 4 pillars from principles.md. routing_decided x3. No plan_emitted. Same as B38."
+    }
+  },
+
+  "phase_no_progress_non_regression": {
+    "s_fp11_1_result": "REFUTED (expected error)",
+    "evidence": "LLM reinterpreted 'build skill with empty name, empty desc, circular graph a->b->a' as a valid graph_transformer build request. workflow_finished, lint_passed, reply says '正常に完了'. Phase_no_progress path not triggered.",
+    "note": "s-fp12-completion-2 (s11): workflow_aborted at plan_skill due to circular reference. Error narrated. This confirms abort path works for explicit graph validation at planning stage."
+  },
+
+  "stdlib_ars_expansion_impact": {
+    "b39_fix": "b4daeb1 adds explicit input_schema to read_local_files, direct_llm, eval, index_docs for ARS visibility",
+    "observed_impact": "mcp_search routing degraded (all 3 R-WEB scenarios miss). narr-3 hit loop_limit_exceeded (design_artifacts x5). Structural link unconfirmed at N=1.",
+    "note": "skill__mcp_search remains in DEFAULT_HOT_LIST_SEED in B39 code. ARS expansion did not remove it."
+  },
+
+  "scenarios": [
+    {
+      "id": "plan_compare_two_concepts",
+      "file": "plan_mode.yaml",
+      "verdict": "inconclusive",
+      "plan_emitted": true,
+      "events": "plan_emitted:1, plan_step_started:3, plan_step_completed:3, plan_aggregated:1",
+      "notes": "plan fired, 3 points, both docs referenced. Section refs present (セクション2, セクション3) but no header names/line numbers. Partial rubric. Same as B38."
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "events": "tool_called:3, chat_turn_completed_inline:1",
+      "notes": "LLM could not find plan tool. Tried list_actions + describe_action for 'default.plan'. No plan_emitted. Different symptom from B38 (B38 plan fired but wrong files)."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "file": "plan_mode.yaml",
+      "verdict": "refuted",
+      "plan_emitted": false,
+      "events": "routing_decided:3, chat_turn_completed_inline:1",
+      "notes": "LLM answered inline with 4 pillars. routing_decided x3. Same as B38."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "refuted",
+      "mcp_search_dispatched": false,
+      "events": "tool_called:1 (list_actions), tool_failed:1 (search_actions unknown), chat_turn_completed_inline:1",
+      "notes": "B38=I (routing hit, MCP unreachable). B39: routing miss. LLM used list_actions(mcp.server)=0 results. R-WEB regression."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "file": "fp_0011_narration.yaml",
+      "verdict": "inconclusive",
+      "skill_spawned": true,
+      "events": "skill_run_spawned:1, routing_decided:1, workflow_started:1, loop_limit_exceeded:1, workflow_terminated:1, phase_rollback:5",
+      "notes": "skill__skill_builder dispatched. But loop_limit_exceeded (design_artifacts x5, max=5). workflow_terminated (not finished). Reply is raw phase-transition spawn ack text. skill_run_completed(status=loop_limit_exceeded). B38=V."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "skill_spawned": true,
+      "events": "skill_run_spawned:1, workflow_finished:1, skill_completion_injected:1, chat_turn_completed_inline:1",
+      "notes": "Expected error/abort. LLM reinterpreted prompt as valid graph_transformer build. workflow_finished. Reply: '正常に完了'. False success — anti-optimism NOT triggered. B38=V."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "skill_spawned": true,
+      "events": "skill_run_spawned:1, skill_run_interrupted:1, skill_run_failed:1, skill_completion_injected:1",
+      "notes": "eval dispatched, PostprocessorError (schema validation failure). Reply: 'eval はエラーで完了 — 出力スキーマの検証に失敗'. No fabricated score. Anti-optimism partial (error surfaced, not 'target not found'). Same as B38."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "mcp_search_dispatched": false,
+      "routing_decided_action": "mcp.server.search",
+      "events": "routing_decided:1(mcp.server.search, invoke_action), tool_returned:1, compaction_check:1",
+      "notes": "B38=I (routing hit skill__mcp_search, MCP unreachable). B39: routing_decided but action_name='mcp.server.search' (invalid/non-existent). No skill_run_spawned. R-WEB regression."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "inconclusive",
+      "skill_spawned": true,
+      "events": "routing_decided:1(skill__skill_builder, invoke_action, success), skill_run_spawned:1, workflow_finished:1, skill_completion_injected:1, chat_turn_completed_inline:1",
+      "notes": "workflow_finished. Completion narration: skill_name='string_length', path='reyn/local/string_length'. No /tasks pointer in reply. spawn_ack fired (invoke_skill_spawn_ack_exit:1) but single-shot HTTP captured completion narration only."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "refuted",
+      "mcp_search_dispatched": false,
+      "events": "tool_called:1 (list_actions), tool_returned:1, chat_turn_completed_inline:1",
+      "notes": "B38=I (routing hit skill__mcp_search, MCP unreachable). B39: routing miss. LLM used list_actions(mcp.server)=0 results. R-WEB regression."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "file": "fp_0011_0012_retest.yaml",
+      "verdict": "verified",
+      "skill_spawned": true,
+      "events": "routing_decided:1(skill__skill_builder, invoke_action, success), skill_run_spawned:1, workflow_aborted:1, skill_run_failed:1, skill_completion_injected:1, chat_turn_completed_inline:1",
+      "notes": "LLM detected circular reference at plan_skill phase. workflow_aborted with 'invalid circular reference' reason. Reply: 'skill could not be built because...circular reference'. Error narrated, no false success. Anti-optimism on async path confirmed. Same path as B38."
+    }
+  ],
+
+  "new_findings": [
+    {
+      "id": "B39-W6-F1",
+      "severity": "HIGH",
+      "description": "R-WEB mcp_search routing chain REGRESSED vs B38. All 3 scenarios (narr-1, s-fp11-3, s-fp12-comp-1) that B38 confirmed dispatching skill__mcp_search now miss. Likely suspect: B39 ARS expansion (b4daeb1). N=1 per scenario.",
+      "evidence": "narr-1/s-fp12-comp-1: list_actions(mcp.server)=0 results, then inline. s-fp11-3: routing_decided but action_name='mcp.server.search' (wrong, non-existent). skill__mcp_search remains in DEFAULT_HOT_LIST_SEED.",
+      "recommendation": "Run narr-1 N=3 with REYN_LLM_TRACE_DUMP to observe invoke_action ARS content in B39. Check if mcp_search key appears in ARS block."
+    },
+    {
+      "id": "B39-W6-F2",
+      "severity": "HIGH",
+      "description": "s-fp11-1 anti-optimism REFUTED. LLM reinterpreted invalid spec prompt as valid graph_transformer build. workflow_finished. Reply: false success ('正常に完了'). Phase_no_progress path from B38 not triggered.",
+      "evidence": "s6: routing_decided(skill__skill_builder), workflow_finished(verify_skill, lint_passed), skill_completion_injected(status=finished). Reply mentions 'graph_transformer' not the empty/circular spec.",
+      "recommendation": "Rewrite s-fp11-1 prompt to be more explicit: use an LLM-unambiguous invalid DSL payload rather than describing invalid properties in natural language."
+    },
+    {
+      "id": "B39-W6-F3",
+      "severity": "MED",
+      "description": "plan_emitted rate 2/3->1/3 regression. plan_explain: no plan_emitted (LLM could not find plan tool). plan_summary: inline (same as B38). plan_compare: plan still fires.",
+      "evidence": "s2: tool_called list_actions, describe_action('default.plan') -> 'unknown action'. No plan_emitted. B38: plan fired but wrong files cited.",
+      "recommendation": "Investigate what changed in plan tool visibility between B38 and B39. Check if plan tool descriptor changed."
+    },
+    {
+      "id": "B39-W6-F4",
+      "severity": "MED",
+      "description": "narr-3 skill_builder loop_limit_exceeded (design_artifacts x5). workflow_terminated. Reply is raw spawn ack text. B38=V (workflow_finished). B39: skill build loops on schema design.",
+      "evidence": "s5: loop_limit_exceeded{phase: design_artifacts, visit_count:5, max:5}. workflow_terminated. phase_rollback:5.",
+      "recommendation": "Raise max_phase_visits in dogfood reyn.local.yaml OR investigate why design_artifacts phase loops more in B39."
+    }
+  ]
+}
