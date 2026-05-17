@@ -30,7 +30,8 @@ class SlashPicker(Static):
     DEFAULT_CSS = """
     SlashPicker {
         height: auto;
-        max-height: 10;
+        /* 8 command rows + 1 "+N more" footer + 2 border rows = 11. */
+        max-height: 11;
         background: #1a1a1a;
         border: solid $primary;
         padding: 0 1;
@@ -47,6 +48,10 @@ class SlashPicker(Static):
         super().__init__("", id=id)
         self._matches: list[SlashCommand] = []
         self._selected: int = 0
+        # Total matches before truncation to _MAX_VISIBLE. Surfaced as a
+        # "+N more — keep typing to filter" footer when the picker can't
+        # show every match.
+        self._total_matches: int = 0
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -60,6 +65,7 @@ class SlashPicker(Static):
 
     def set_matches(self, matches: list[SlashCommand]) -> None:
         """Replace the match list. Resets selection to row 0."""
+        self._total_matches = len(matches)
         self._matches = list(matches)[:_MAX_VISIBLE]
         self._selected = 0
         if self._matches:
@@ -116,4 +122,14 @@ class SlashPicker(Static):
             if i > 0:
                 body.append("\n")
             body.append_text(row)
+        # When the typed prefix matches more commands than the picker
+        # can display, surface the overflow so the user knows there's
+        # more to discover by narrowing the prefix.
+        hidden = self._total_matches - len(self._matches)
+        if hidden > 0:
+            body.append("\n")
+            body.append(
+                f"  +{hidden} more — keep typing to filter",
+                style="dim #888888",
+            )
         self.update(body)
