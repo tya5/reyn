@@ -165,10 +165,15 @@ class ConversationView(Widget):
 
     def compose(self) -> ComposeResult:
         yield RichLog(highlight=False, markup=False, wrap=True, max_lines=5000, id="log")
-        # B5: empty-state hint, removed on first message
+        # B5: empty-state hint, removed on first message.
+        # The hint is the first thing a new user sees, so it has to do double
+        # duty: announce the core key-binds AND describe the side panel — the
+        # most sophisticated piece of the TUI, which is hidden by default and
+        # otherwise has zero discoverability on first run.
         yield Static(
-            "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
-            "[bold]Ctrl+L[/] clear  ·  ↑ history  ·  [bold]Ctrl+P/N[/] turn",
+            "  Type [bold]/[/] for commands  ·  [bold]/help[/] for a guide\n"
+            "  [bold]Ctrl+B[/] side panel ([dim]keys · events · agents · memory · cost · docs[/])  ·  "
+            "[bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn",
             id="empty-hint",
             markup=True,
         )
