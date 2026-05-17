@@ -36,11 +36,12 @@ scenarios:
         must_emit:
           - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.6
-        inconclusive: 0.3
-        refuted: 0.05
-        blocked: 0.05
+        verified: 0.0
+        inconclusive: 0.75
+        refuted: 0.25
+        blocked: 0.0
 
   # ── 2. MCP tool call (pre-condition: configured server) ───────────────────
   - id: mcp_call_remote_tool
@@ -61,11 +62,12 @@ scenarios:
         must_emit_any:
           - { type: routing_decided, count: ">=1" }
           - { type: chat_turn_completed_inline, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.2
-        inconclusive: 0.55
-        refuted: 0.05
-        blocked: 0.2
+        verified: 0.0
+        inconclusive: 0.25
+        refuted: 0.75
+        blocked: 0.0
 
   # ── 3. Simple agent delegation ────────────────────────────────────────────
   - id: agent_delegation_simple
@@ -84,11 +86,12 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.3
-        inconclusive: 0.45
-        refuted: 0.05
-        blocked: 0.2
+        verified: 0.0
+        inconclusive: 0.75
+        refuted: 0.25
+        blocked: 0.0
 
   # ── 4. Multi-hop agent fan-out ────────────────────────────────────────────
   - id: multi_agent_topology_route
@@ -110,11 +113,12 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.2
-        inconclusive: 0.45
-        refuted: 0.05
-        blocked: 0.3
+        verified: 0.25
+        inconclusive: 0.5
+        refuted: 0.25
+        blocked: 0.0
 
   # ── 5. A2A task lifecycle polling ─────────────────────────────────────────
   - id: a2a_task_lifecycle_status_poll
@@ -135,11 +139,12 @@ scenarios:
           - explains that reyn web must be running first
       events:
         must_emit: []
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.5
-        inconclusive: 0.35
-        refuted: 0.05
-        blocked: 0.1
+        verified: 0.0
+        inconclusive: 0.0
+        refuted: 1.0
+        blocked: 0.0
 
   # ── 6. MCP install permission gate ───────────────────────────────────────
   - id: mcp_install_permission_gate
@@ -160,11 +165,12 @@ scenarios:
         must_emit:
           - { type: routing_decided, count: ">=1" }
           - { type: skill_run_spawned, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.4
-        inconclusive: 0.4
-        refuted: 0.05
-        blocked: 0.15
+        verified: 0.0
+        inconclusive: 0.25
+        refuted: 0.75
+        blocked: 0.0
 
   # ── 7. Scheduled job status introspection ────────────────────────────────
   - id: cron_schedule_status
@@ -182,8 +188,9 @@ scenarios:
       events:
         must_emit:
           - { type: routing_decided, count: ">=1" }
+      # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
       outcome_prediction:
-        verified: 0.4
-        inconclusive: 0.45
-        refuted: 0.05
-        blocked: 0.1
+        verified: 0.0
+        inconclusive: 0.25
+        refuted: 0.75
+        blocked: 0.0

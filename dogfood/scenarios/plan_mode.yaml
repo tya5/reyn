@@ -47,14 +47,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # plan-mode trigger relies on LLM routing decision; flash-lite may
-      # reply directly without plan. Expectation distribution reflects
-      # both happy paths.
-      verified: 0.45
-      inconclusive: 0.35
-      refuted: 0.15
-      blocked: 0.05
+      verified: 0.25
+      inconclusive: 0.75
+      refuted: 0.0
+      blocked: 0.0
 
   # ── 2. Explain X with code references ─────────────────────────────────────
   - id: plan_explain_with_code_references
@@ -84,11 +82,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.40
-      inconclusive: 0.35
-      refuted: 0.20
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.25
+      refuted: 0.5
+      blocked: 0.25
 
   # ── 3. Build a summary across N files ─────────────────────────────────────
   - id: plan_summary_across_n_files
@@ -120,8 +119,9 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.35
-      inconclusive: 0.40
-      refuted: 0.20
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.5
+      refuted: 0.25
+      blocked: 0.25

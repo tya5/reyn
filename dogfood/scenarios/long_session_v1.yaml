@@ -51,11 +51,12 @@ scenarios:
           - does not produce an empty reply on the final turn
       events:
         must_emit: []
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.65
-      inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.5
+      inconclusive: 0.0
+      refuted: 0.5
+      blocked: 0.0
 
   - id: scenario_2_pronoun_followup
     description: >
@@ -133,11 +134,12 @@ scenarios:
           - does not produce an empty reply on the final turn
       events:
         must_emit: []
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.7
-      inconclusive: 0.2
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.75
+      inconclusive: 0.0
+      refuted: 0.25
+      blocked: 0.0
 
   - id: scenario_6_file_and_doc_lookup_chain
     description: >

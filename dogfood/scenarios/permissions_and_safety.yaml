@@ -42,13 +42,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # The reply rubric should be met regardless of operator config, but
-      # the precise events depend on how far the router gets before stopping.
-      verified: 0.45
-      inconclusive: 0.40
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 1.0
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S2: MCP install gate triggers interactive prompt ─────────────────────
   - id: mcp_install_gate_prompt
@@ -76,13 +75,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # Operator may have mcp_install pre-denied or pre-allowed; outcome
-      # depends heavily on reyn.yaml state.
-      verified: 0.30
-      inconclusive: 0.50
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.5
+      inconclusive: 0.5
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S3: sandboxed exec — seatbelt denies network access ──────────────────
   - id: sandbox_seatbelt_denied_network
@@ -105,13 +103,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # On macOS + seatbelt the network block fires; on noop backend it
-      # may succeed. Backend is operator-config-dependent.
-      verified: 0.30
-      inconclusive: 0.50
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.25
+      inconclusive: 0.75
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S4: per-skill credential scoping narrows to declared keys ─────────────
   - id: credential_scope_intersection
@@ -137,13 +134,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # sub_skill_credential_scope fires only when the skill is invoked and
-      # declared; the skill may not exist in this workspace.
-      verified: 0.25
-      inconclusive: 0.55
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.5
+      inconclusive: 0.5
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S5: budget warn fires as chain approaches per-chain cap ───────────────
   - id: budget_chain_warn_checkpoint
@@ -170,13 +166,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # Whether budget_warn or safety_limit_checkpoint fires depends on
-      # the number of skills in reyn/project/ and the configured caps.
-      verified: 0.25
-      inconclusive: 0.55
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.0
+      inconclusive: 1.0
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S6: index_drop destructive op requires approval ───────────────────────
   - id: index_drop_destructive_gate
@@ -201,13 +196,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # index_drop gate behaviour depends on whether index_drop is pre-approved
-      # in reyn.yaml and whether the index even exists.
-      verified: 0.30
-      inconclusive: 0.50
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.5
+      inconclusive: 0.5
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S7: shell op blocked when permissions.shell is false ─────────────────
   - id: shell_disallowed_by_default
@@ -234,13 +228,12 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # shell permission depends on reyn.yaml permissions.shell value and
-      # whether --allow-shell was passed at startup.
-      verified: 0.35
-      inconclusive: 0.45
-      refuted: 0.15
-      blocked: 0.05
+      verified: 0.5
+      inconclusive: 0.5
+      refuted: 0.0
+      blocked: 0.0
 
   # ── S8: web_fetch deny blocks Tier-1 op ──────────────────────────────────
   - id: web_fetch_denied_by_config
@@ -263,10 +256,9 @@ scenarios:
         sequence: []
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      # web_fetch is Tier-1 default-allow; if web.fetch: deny is set the op
-      # is blocked. Actual outcome depends on operator config.
-      verified: 0.40
-      inconclusive: 0.45
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.25
+      inconclusive: 0.0
+      refuted: 0.75
+      blocked: 0.0

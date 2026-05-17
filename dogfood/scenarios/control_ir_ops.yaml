@@ -38,11 +38,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.65
+      verified: 0.5
       inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.05
+      refuted: 0.25
+      blocked: 0.0
 
   # ── 2. file.glob + file.grep via chat router ──────────────────────────────
   - id: file_glob_grep
@@ -63,11 +64,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.60
-      inconclusive: 0.30
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.25
+      inconclusive: 0.0
+      refuted: 0.75
+      blocked: 0.0
 
   # ── 3. web_search via chat router ─────────────────────────────────────────
   - id: web_search_query
@@ -90,11 +92,12 @@ scenarios:
           - { type: web_search_failed }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.65
+      verified: 0.75
       inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.05
+      refuted: 0.0
+      blocked: 0.0
 
   # ── 4. web_fetch via chat router ──────────────────────────────────────────
   - id: web_fetch_url
@@ -115,11 +118,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.60
+      verified: 0.5
       inconclusive: 0.25
-      refuted: 0.05
-      blocked: 0.10
+      refuted: 0.25
+      blocked: 0.0
 
   # ── 5. sandboxed_exec simple calculation ─────────────────────────────────
   - id: sandboxed_exec_simple
@@ -141,11 +145,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.55
-      inconclusive: 0.30
-      refuted: 0.05
-      blocked: 0.10
+      verified: 0.0
+      inconclusive: 0.25
+      refuted: 0.75
+      blocked: 0.0
 
   # ── 6. lint via chat router ────────────────────────────────────────────────
   - id: lint_a_skill
@@ -166,11 +171,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.60
-      inconclusive: 0.30
-      refuted: 0.05
-      blocked: 0.05
+      verified: 0.0
+      inconclusive: 0.0
+      refuted: 1.0
+      blocked: 0.0
 
   # ── 7. recall indexed source ──────────────────────────────────────────────
   # Calibrated high inconclusive: source may not be indexed in this environment.
@@ -194,11 +200,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.30
-      inconclusive: 0.55
-      refuted: 0.05
-      blocked: 0.10
+      verified: 0.25
+      inconclusive: 0.25
+      refuted: 0.25
+      blocked: 0.25
 
   # ── 8. judge_output via judge_phase skill ────────────────────────────────
   - id: judge_output_direct
@@ -223,11 +230,12 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.55
-      inconclusive: 0.30
-      refuted: 0.10
-      blocked: 0.05
+      verified: 0.25
+      inconclusive: 0.0
+      refuted: 0.5
+      blocked: 0.25
 
   # ── 9. ask_user round-trip (multi-turn) ──────────────────────────────────
   # Turn 1: a request that causes a skill to emit ask_user for clarification.
@@ -256,8 +264,9 @@ scenarios:
           - { type: permission_denied }
       artifacts:
         - { present: true }
+    # outcome_prediction refitted from B27/B28/B30/B32 actuals (H5 ablation, 2026-05-17)
     outcome_prediction:
-      verified: 0.40
-      inconclusive: 0.40
-      refuted: 0.10
-      blocked: 0.10
+      verified: 0.0
+      inconclusive: 0.0
+      refuted: 0.75
+      blocked: 0.25
