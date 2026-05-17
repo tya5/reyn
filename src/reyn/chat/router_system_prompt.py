@@ -30,6 +30,7 @@ def build_system_prompt(
     indexed_sources_section: str | None = None,
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
     cwd: str | None = None,
+    search_actions_enabled: bool = True,  # FP-0034 §D14 — default True preserves byte-compat
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -72,6 +73,22 @@ def build_system_prompt(
             "the codebase" as the project at ``cwd``. When None
             (default), the section is omitted — preserves SP byte
             content for tests that don't plumb cwd through.
+        search_actions_enabled: Whether ``search_actions`` is included in
+            the tool catalogue for this session (= D14 visibility gate:
+            ``action_retrieval.embedding_class`` is configured AND the
+            ActionEmbeddingIndex is ready). When True (default), the
+            Capabilities wrapper enumeration lists all 4 wrappers
+            including ``search_actions``. When False, the enumeration
+            lists only the 3 always-available wrappers and the
+            ``search_actions``-specific Behaviour guidance is omitted.
+
+            Default True preserves byte-identical SP output relative to
+            the pre-fix code so existing LLMReplay fixture keys remain
+            valid for callers that have not yet wired the flag (e.g.
+            FakeRouterHost-based replay tests that don't set
+            ``_search_visible``). Production RouterLoop passes
+            ``_search_visible`` which is False when no embedding class is
+            configured — that is the path that fixes the N5 hallucination.
     """
     parts: list[str] = []
 
@@ -120,17 +137,32 @@ def build_system_prompt(
     # section with a clear internal-vs-user-facing split.
     parts.append("## Capabilities (routing guide)")
     parts.append("")
-    # B23-PRE-1 wrapper-only path: tools= contains only the 4 universal
+    # B23-PRE-1 wrapper-only path: tools= contains only the universal
     # wrappers + hot list direct aliases + plan + ask_user. All
     # per-kind tools (list_skills / read_file / web_search / etc.)
     # are routed via invoke_action(action_name="<category>__<entry>").
     # The "## Action categories" section below covers the 13-category
     # taxonomy. Drop the legacy 5-axis "intent" framing — wrapper-only
     # is binary Action / Reply.
+    #
+    # FP-0034 §D14: ``search_actions`` is only in tools= when the
+    # embedding class is configured.  Build the wrapper name list
+    # dynamically so the SP count matches the actual tools= shape and
+    # the LLM cannot hallucinate a call to a tool that does not exist
+    # (N5 empirical finding: gemini-2.5-flash-lite invented
+    # search_actions when not in tools= → unknown_tool dispatcher
+    # error → gave up without recovering via list_actions).
+    _wrapper_names = ["list_actions"]
+    if search_actions_enabled:
+        _wrapper_names.append("search_actions")
+    _wrapper_names.extend(["describe_action", "invoke_action"])
+    _wrapper_line = (
+        f"{len(_wrapper_names)} universal wrappers: {' / '.join(_wrapper_names)}."
+        " Frequent actions also appear as direct aliases in"
+        " tools list — call them directly when you know the exact qualified name."
+    )
     parts.extend([
-        "4 universal wrappers: list_actions / search_actions / describe_action"
-        " / invoke_action. Frequent actions also appear as direct aliases in"
-        " tools list — call them directly when you know the exact qualified name.",
+        _wrapper_line,
         "",
         "For chitchat or self-questions, reply without tools.",
         "",
@@ -260,15 +292,27 @@ def build_system_prompt(
     # Wrapper-only: plan intent routing already encoded in the 3-way
     # header lines above ("Domain task → invoke_action OR plan ...").
     # Also add "never invent action names" (= cross-cutting policy 3).
-    parts.extend([
-        "  - Never invent action names; only use those returned by",
-        "    list_actions or search_actions.",
-        "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
-        "「something for X」 「similar to」), USE search_actions(query=...).",
-        "    For exact category enumeration or substring lookup of a known",
-        "    keyword, USE list_actions(category=[...]) or"
-        " list_actions(filter='...').",
-    ])
+    # FP-0034 §D14: only reference search_actions in routing guidance
+    # when it is actually in tools= (= search_actions_enabled=True).
+    # When not available, omit the search_actions signal entirely so the
+    # LLM does not attempt to call a tool that does not exist.
+    if search_actions_enabled:
+        parts.extend([
+            "  - Never invent action names; only use those returned by",
+            "    list_actions or search_actions.",
+            "  - For semantic / natural-language queries (= 「探したい」 「関連」 "
+            "「something for X」 「similar to」), USE search_actions(query=...).",
+            "    For exact category enumeration or substring lookup of a known",
+            "    keyword, USE list_actions(category=[...]) or"
+            " list_actions(filter='...').",
+        ])
+    else:
+        parts.extend([
+            "  - Never invent action names; only use those returned by",
+            "    list_actions.",
+            "  - For category enumeration, USE list_actions(category=[...]).",
+            "    For substring lookup, USE list_actions(filter='...').",
+        ])
 
     # B12-R2/B13-R3 V3 ABSOLUTE rule preserved in wrapper vocab (1-line,
     # JA examples dropped — per B23-PRE-1 SP simplification policy).
