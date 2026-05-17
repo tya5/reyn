@@ -9,6 +9,7 @@ per second from on_mount.
 """
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 
@@ -17,6 +18,37 @@ from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
+
+
+# Trailing date suffix on a model id: ``-YYYYMMDD`` (8 digits) or the
+# ``-YYYY-MM-DD`` form. Both rotate per release and add 9-11 cells to
+# the header without changing within a session. Stripping them recovers
+# ~25 cells of header width on a narrow terminal — the cost / token
+# counters and the clock canary fit again without truncation.
+_MODEL_DATE_SUFFIX = re.compile(r"-(?:\d{8}|\d{4}-\d{1,2}-\d{1,2})$")
+_MODEL_LATEST_SUFFIX = re.compile(r"-latest$")
+
+
+def _shorten_model_id(model: str) -> str:
+    """Return ``model`` with trailing date / ``-latest`` suffix stripped.
+
+    Conservative: keeps the provider prefix (``claude-``, ``gpt-``, …) and
+    everything up to the version segment so the user can still tell what
+    family is active. Only strips the universally redundant tail.
+
+    Examples::
+
+        claude-opus-4-5-20251101    → claude-opus-4-5
+        claude-3-7-sonnet-20250219  → claude-3-7-sonnet
+        gpt-4o-2024-08-06           → gpt-4o
+        gemini-1.5-flash-latest     → gemini-1.5-flash
+        claude-sonnet-4-6           → claude-sonnet-4-6 (untouched)
+    """
+    if not model:
+        return model
+    stripped = _MODEL_DATE_SUFFIX.sub("", model)
+    stripped = _MODEL_LATEST_SUFFIX.sub("", stripped)
+    return stripped or model  # paranoia: never return empty
 
 
 class ReynHeader(Widget):
@@ -89,12 +121,24 @@ class ReynHeader(Widget):
             pass
 
     def _format_status(self) -> Text:
-        """Build the right-side status as a Rich Text with dim │ separators."""
-        parts: list[str] = []
+        """Build the right-side status as a Rich Text with dim │ separators.
+
+        Field layout (left → right):
+          agent_name │ model │ tokens │ cost │ clock
+
+        ``model`` is rendered DIM and date-suffix-stripped (e.g.
+        ``claude-opus-4-5-20251101`` → ``claude-opus-4-5``). It rarely
+        changes within a session, so de-emphasising it keeps the user's
+        eye on the per-turn metrics that DO change — tokens, cost, and
+        the clock canary at the right edge.
+        """
+        # (text, style) tuples — style=None falls back to the widget's
+        # default text color (#aaaaaa, see DEFAULT_CSS above).
+        parts: list[tuple[str, str | None]] = []
         if self._agent_name:
-            parts.append(self._agent_name)
+            parts.append((self._agent_name, None))
         if self._model:
-            parts.append(self._model)
+            parts.append((_shorten_model_id(self._model), "dim #888888"))
         tok_str = f"{self._tokens_today:,}"
         if self._tokens_cap is not None:
             tok_str += f" / {self._tokens_cap:,}"
@@ -106,16 +150,19 @@ class ReynHeader(Widget):
         cost_str = f"${self._cost_usd:.4f}"
         if self._cost_cap is not None:
             cost_str += f" / ${self._cost_cap:.2f}"
-        parts.append(tok_str)
-        parts.append(cost_str)
+        parts.append((tok_str, None))
+        parts.append((cost_str, None))
         # Clock always present, last — the canary for "is the UI frozen?"
-        parts.append(self._now_text())
+        parts.append((self._now_text(), None))
 
         out = Text()
-        for i, p in enumerate(parts):
+        for i, (text, style) in enumerate(parts):
             if i > 0:
                 out.append("  │  ", style="dim #555555")
-            out.append(p)
+            if style is None:
+                out.append(text)
+            else:
+                out.append(text, style=style)
         return out
 
     def refresh_status(
