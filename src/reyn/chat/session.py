@@ -1274,12 +1274,34 @@ class ChatSession:
         ``RunOrchestrator.run()`` → ``skill_run_interrupted`` instead of
         ``skill_run_completed``.  The 30-second limit prevents hanging
         indefinitely on a stalled LLM call.
+
+        #52 fix: also suppress the benign ``coroutine
+        'OpenAIChatCompletion.acompletion' was never awaited`` RuntimeWarning
+        that litellm 1.84.0 ``main.py:614-622`` emits when our forced
+        ``cancel_all()`` delivers ``CancelledError`` at the exact checkpoint
+        between ``init_response = await loop.run_in_executor(...)`` and the
+        downstream ``await init_response``. The inner coroutine being
+        unawaited is the cancelled LLM request — semantically correct
+        behaviour for a forced shutdown. The filter is scoped to the
+        cancel_all() block so genuine missing-await bugs elsewhere stay
+        visible.
         """
+        import warnings
+
         # FP-0019 Wave 1b: delegated to SkillRunner.
         # Grace window: wait up to 30 s for background skills to land their
         # skill_run_completed event before resorting to cancellation.
         await self._skill_runner.wait_for_completion(timeout_sec=30.0)
-        await self._skill_runner.cancel_all()
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=(
+                    r".*coroutine 'OpenAIChatCompletion\.acompletion' "
+                    r"was never awaited.*"
+                ),
+                category=RuntimeWarning,
+            )
+            await self._skill_runner.cancel_all()
 
         # PR18: cancel any pending chain-timeout watchdogs so they don't keep
         # the loop alive past shutdown. Late-firing timers swallow their work
