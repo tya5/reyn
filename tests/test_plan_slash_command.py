@@ -69,7 +69,7 @@ async def test_plan_list_shows_running_plans(tmp_path, monkeypatch):
         consumed = await session._maybe_handle_slash("/plan list")
         assert consumed is True
         msgs = _drain_outbox(session)
-        combined = "\n".join(m.text for m in msgs if m.kind == "status")
+        combined = "\n".join(m.text for m in msgs if m.kind == "system")
         assert "plan_abc123" in combined
         assert "running" in combined
     finally:
@@ -91,7 +91,7 @@ async def test_plan_list_shows_active_ids_without_task(tmp_path, monkeypatch):
     consumed = await session._maybe_handle_slash("/plan list")
     assert consumed is True
     msgs = _drain_outbox(session)
-    combined = "\n".join(m.text for m in msgs if m.kind == "status")
+    combined = "\n".join(m.text for m in msgs if m.kind == "system")
     assert "plan_xyz789" in combined
     assert "active" in combined or "resume pending" in combined
 
@@ -135,7 +135,7 @@ async def test_plan_discard_records_plan_aborted(tmp_path, monkeypatch):
 
     # Confirmation message in outbox.
     msgs = _drain_outbox(session)
-    status_texts = [m.text for m in msgs if m.kind == "status"]
+    status_texts = [m.text for m in msgs if m.kind == "system"]
     assert any("discarded plan run" in t for t in status_texts)
 
 
@@ -353,7 +353,7 @@ async def test_plan_resume_clears_target_step_results(tmp_path, monkeypatch):
 
     # Status confirmation in outbox.
     msgs = _drain_outbox(session)
-    status_texts = [m.text for m in msgs if m.kind == "status"]
+    status_texts = [m.text for m in msgs if m.kind == "system"]
     assert any("resumed from step" in t for t in status_texts)
 
     # Reload registry and confirm s1 preserved, s2/s3 cleared.

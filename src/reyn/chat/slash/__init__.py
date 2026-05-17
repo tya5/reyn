@@ -106,11 +106,14 @@ def slash(
 # ── reply helpers ──────────────────────────────────────────────────────────
 
 
-async def reply(session: "object", text: str, *, kind: str = "status") -> None:
+async def reply(session: "object", text: str, *, kind: str = "system") -> None:
     """Emit a slash-command reply via the session outbox.
 
-    Default kind is `status` (dim italic in the TUI). Use `reply_error`
-    for errors, or pass an explicit kind for special cases.
+    Default kind is ``system`` (persistent log entry with a neutral
+    ``system`` header) so prior command outputs remain visible when the
+    user runs multiple commands in succession. Pass ``kind="status"``
+    for ephemeral one-line indicators that should overwrite. Use
+    ``reply_error`` for errors.
     """
     from reyn.chat.outbox import OutboxMessage
     await session._put_outbox(OutboxMessage(kind=kind, text=text))

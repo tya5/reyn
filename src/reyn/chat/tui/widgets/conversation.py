@@ -220,6 +220,7 @@ class ConversationView(Widget):
 
         Routing:
           agent      → header + Markdown inline (with B3 fold for >30 lines)
+          system     → header + plain-text inline (persistent slash output)
           intervention/trace/status/skill_done → suppressed (handled elsewhere)
           error      → ErrorBox widget
           others     → plain Rich Text line
@@ -241,6 +242,10 @@ class ConversationView(Widget):
             self._render_agent_markdown(msg)
             return
 
+        if msg.kind == "system":
+            self._render_system_message(msg)
+            return
+
         if msg.kind == "error":
             self.mount_error(
                 message=msg.text,
@@ -260,6 +265,24 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
         self._write_log(Text(text))
+        self._write_log(Text(""))
+
+    def _render_system_message(self, msg: OutboxMessage) -> None:
+        """Render a slash-command (or other OS-generated) message persistently.
+
+        Distinct from ``agent`` so the log doesn't claim the LLM produced
+        these lines, and distinct from ``status`` so prior outputs survive
+        when running multiple commands in a row.
+
+        Rendered as plain text (newlines preserved, no Markdown) under a
+        neutral ``system`` header in dim grey.
+        """
+        self._consume_empty_hint()
+        self.hide_status()
+        self._maybe_write_header("system", "system", "bold #888888", "#444444")
+        log = self._log()
+        for line in (msg.text or "").splitlines() or [""]:
+            log.write(Text(line))
         self._write_log(Text(""))
 
     def _render_agent_markdown(self, msg: OutboxMessage) -> None:
@@ -581,7 +604,7 @@ def _format_message(msg: OutboxMessage) -> Text | None:
     body = f"{meta_pfx}{msg.text}"
 
     if msg.kind in {"__end__", "__attach_request__", "intervention",
-                    "agent", "status", "error", "trace", "skill_done"}:
+                    "agent", "system", "status", "error", "trace", "skill_done"}:
         return None
     # Unknown kind — show raw with subtle prefix
     t = Text()

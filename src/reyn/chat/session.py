@@ -2280,7 +2280,7 @@ class ChatSession:
         if not body:
             known = ", ".join(f"/{n}" for n in REGISTRY.names())
             await self._put_outbox(OutboxMessage(
-                kind="status",
+                kind="system",
                 text=f"known commands: {known}",
             ))
             return True
@@ -2291,7 +2291,7 @@ class ChatSession:
         if slash_cmd is None:
             known = ", ".join(f"/{n}" for n in REGISTRY.names())
             await self._put_outbox(OutboxMessage(
-                kind="status",
+                kind="system",
                 text=f"unknown command /{cmd}; try: {known}",
             ))
             return True
@@ -2325,7 +2325,7 @@ class ChatSession:
                 lines.append(
                     f"  {iv.id[:8]}  {iv.kind:<20}  {iv.skill_name or '?'}#{short}"
                 )
-        await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
+        await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
 
     async def _slash_cancel(self, args: str) -> None:
         """`/cancel <id-prefix>` — cancel a running skill task."""
@@ -2350,12 +2350,12 @@ class ChatSession:
         task = self.running_skills.get(rid)
         if task is None or task.done():
             await self._put_outbox(OutboxMessage(
-                kind="status", text=f"skill {_run_short(rid)} already finished",
+                kind="system", text=f"skill {_run_short(rid)} already finished",
             ))
             return
         task.cancel()
         await self._put_outbox(OutboxMessage(
-            kind="status", text="cancel requested",
+            kind="system", text="cancel requested",
             meta=_run_meta(rid, None),
         ))
 
@@ -2402,7 +2402,7 @@ class ChatSession:
         names = self._registry.list_names()
         if not names:
             await self._put_outbox(OutboxMessage(
-                kind="status", text="no agents (this should not happen — default auto-creates)",
+                kind="system", text="no agents (this should not happen — default auto-creates)",
             ))
             return
         attached = self._registry.attached_name
@@ -2420,7 +2420,7 @@ class ChatSession:
             mark = "*" if n == attached else (" " if n not in loaded else "·")
             lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
         lines.append("(* = attached, · = loaded, blank = not yet loaded)")
-        await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
+        await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
 
     async def _slash_attach(self, args: str) -> None:
         """`/attach <name>` — switch attached agent.
@@ -2449,7 +2449,7 @@ class ChatSession:
             return
         if name == self._registry.attached_name:
             await self._put_outbox(OutboxMessage(
-                kind="status", text=f"already attached to {name!r}",
+                kind="system", text=f"already attached to {name!r}",
             ))
             return
         # The REPL drains its own outbox loop. Send the attach request as a
@@ -2463,11 +2463,11 @@ class ChatSession:
         line = self._budget.cost_line()
         if line is None:
             await self._put_outbox(OutboxMessage(
-                kind="status",
+                kind="system",
                 text="budget tracker is disabled (no `cost:` config or non-chat mode)",
             ))
             return
-        await self._put_outbox(OutboxMessage(kind="status", text=line))
+        await self._put_outbox(OutboxMessage(kind="system", text=line))
 
     async def _slash_budget(self, args: str) -> None:
         """`/budget` (full breakdown) / `/budget reset` (clear counters)."""
@@ -2476,7 +2476,7 @@ class ChatSession:
             before = self._budget.reset_all()
             if before is None:
                 await self._put_outbox(OutboxMessage(
-                    kind="status",
+                    kind="system",
                     text="budget tracker is disabled (no `cost:` config or non-chat mode)",
                 ))
                 return
@@ -2495,16 +2495,16 @@ class ChatSession:
                 "they auto-reset at period boundary."
             )
             lines.append("Use `/budget` to verify.")
-            await self._put_outbox(OutboxMessage(kind="status", text="\n".join(lines)))
+            await self._put_outbox(OutboxMessage(kind="system", text="\n".join(lines)))
             return
         text = self._budget.budget_full()
         if text is None:
             await self._put_outbox(OutboxMessage(
-                kind="status",
+                kind="system",
                 text="budget tracker is disabled (no `cost:` config or non-chat mode)",
             ))
             return
-        await self._put_outbox(OutboxMessage(kind="status", text=text))
+        await self._put_outbox(OutboxMessage(kind="system", text=text))
 
     # ── skill spawn (FP-0019 Wave 1b) ───────────────────────────────────────────
     # Business logic lives in SkillRunner. Session keeps thin delegating
@@ -3049,7 +3049,7 @@ class ChatSession:
                 )
                 try:
                     await self._put_outbox(OutboxMessage(
-                        kind="status",
+                        kind="system",
                         text=f"以下の計画で実行します:\n{plan_summary}",
                         meta={"plan_id": plan_id, "source": "plan_summary"},
                     ))
