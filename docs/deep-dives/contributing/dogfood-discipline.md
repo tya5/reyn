@@ -909,6 +909,22 @@ rm -rf .reyn/state/plans/
 
 This is mandatory before running Class 3 (crash + resume) or Class 5 (long-tail) scenarios if any prior interrupted run left artifacts behind. It is safe to run between batches — the WAL will not reference the removed artifacts after cleanup.
 
+#### Per-scenario wipe recipe (= what every worker must reset between scenarios)
+
+The full reset every dogfood worker should run **between scenarios within a batch** (= not just between batches) is:
+
+```bash
+rm -rf .reyn/events
+rm -rf .reyn/agents/<worker-agent-name>/events
+rm -f  .reyn/state/action_usage.jsonl
+rm -rf .reyn/state/plans/
+rm -rf reyn/local/                       # ← B30-NEW-3 addition
+```
+
+The `reyn/local/` line was added in B30 follow-up: `skill_builder` writes persistent skill files there, and on subsequent scenarios the LLM sees those skills in `list_actions` enumeration — silently contaminating the catalog. Observation: B30 worker 1 had S6's `list_comprehension_generator` skill bleed into S3's skill list because `reyn/local/` was not reset.
+
+Note: `reyn/local/` is the **workspace-local skill directory** (= `Skill resolution order` step 2 in CLAUDE.md). It is gitignored by default and lives under cwd, so a worktree-isolated worker cleaning its cwd's `reyn/local/` does not affect any other worker.
+
 ---
 
 ### 6.5.7 Calibration adjustments for plan-mode
