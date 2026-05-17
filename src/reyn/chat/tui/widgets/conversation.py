@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import time
 
+from rich.cells import cell_len
 from rich.markdown import Markdown as RichMarkdown
 from rich.text import Text
 from textual.app import ComposeResult
@@ -62,17 +63,43 @@ _FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
 # turn anchors below are drop-aware so even pathological sessions that DO
 # cross the boundary don't break Ctrl+P/N navigation.
 _RICHLOG_MAX_LINES = 20_000
+_NAME_COL_COLS = 4  # display-cell width reserved for the speaker label column
+
+
+def _pad_to_cells(s: str, target_cells: int) -> str:
+    """Right-pad ``s`` with spaces so its terminal column width >= target.
+
+    ``str.ljust`` counts code points, but terminal columns count display
+    cells — a CJK character (or full-width punctuation, or an emoji)
+    occupies 2 columns per glyph. Using ``ljust(4)`` on an agent name
+    like ``"アリア"`` leaves it at 6 cells when the next column expects
+    a fixed 4-cell offset, breaking the dash-rule alignment between
+    user (``"you "``) and agent headers.
+
+    Returns ``s`` unchanged when it already meets or exceeds the target;
+    truncation would split a wide glyph and is left to the caller.
+    """
+    width = cell_len(s)
+    if width >= target_cells:
+        return s
+    return s + " " * (target_cells - width)
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
-    """Timestamp + label + dash rule for a new message turn."""
+    """Timestamp + label + dash rule for a new message turn.
+
+    Column layout: ``HH:MM`` (5) + 2 spaces + label (>=4 cells) + 1 space +
+    dashes. The dash count flexes with the actual cell width of ``label``
+    so wide-character agent names don't push the line past _DASH_TOTAL.
+    """
     t = Text()
     t.append(time.strftime("%H:%M"), style="dim #666666")
     t.append("  ")
-    padded = label.ljust(4)  # "you " / "reyn" — fixed 4-char column
+    padded = _pad_to_cells(label, _NAME_COL_COLS)
+    name_cells = cell_len(padded)
     t.append(padded, style=name_style)
     t.append(" ")
-    dashes = max(1, _DASH_TOTAL - 5 - 2 - 4 - 1)  # = 26
+    dashes = max(1, _DASH_TOTAL - 5 - 2 - name_cells - 1)
     t.append("─" * dashes, style=dash_style)
     return t
 
