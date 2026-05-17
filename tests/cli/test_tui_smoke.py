@@ -639,10 +639,11 @@ async def test_event_filter_cycling_rotates_through_groups():
 
 @pytest.mark.asyncio
 async def test_docs_cursor_advances_with_j_keypress():
-    """Tier 2: docs tab j keypress advances _docs_cursor and stays in bounds.
+    """Tier 2: docs tab j keypress advances _docs_cursor and wraps modulo length.
 
     Pins the contract that pressing j on the docs tab moves the cursor
-    forward by one and never overflows past the last file.
+    forward by one, and that stepping past the last file wraps back to
+    the first (Vim-list behaviour) — same for k from the top.
     """
     app = _make_app()
     async with app.run_test(headless=True) as pilot:
@@ -660,12 +661,12 @@ async def test_docs_cursor_advances_with_j_keypress():
         assert panel._docs_cursor == 1
         panel._docs_move(+1)
         assert panel._docs_cursor == 2
-        # Bounded — does not overflow past the last file.
+        # Wraparound — stepping past the last file returns to index 0.
         panel._docs_move(+1)
-        assert panel._docs_cursor == 2
-        # Reverse navigation works too.
+        assert panel._docs_cursor == 0
+        # Reverse from the top wraps to the last file.
         panel._docs_move(-1)
-        assert panel._docs_cursor == 1
+        assert panel._docs_cursor == 2
 
 
 # ── test: right panel — tab cycling ──────────────────────────────────────────

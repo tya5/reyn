@@ -401,12 +401,17 @@ class RightPanel(Widget):
     # ── events / memory cursor + preview integration ─────────────────────────
 
     def _events_move(self, delta: int) -> None:
-        """Move the events tab cursor and refresh; sync preview if open."""
-        if not self._events_visible:
+        """Move the events tab cursor and refresh; sync preview if open.
+
+        Cursor wraps around modulo the list length — `j` past the last
+        item returns to index 0, `k` from the top jumps to the last
+        item (Vim-list behaviour).
+        """
+        n = len(self._events_visible)
+        if n == 0:
+            self._events_cursor = 0
             return
-        self._events_cursor = max(
-            0, min(len(self._events_visible) - 1, self._events_cursor + delta),
-        )
+        self._events_cursor = (self._events_cursor + delta) % n
         self._invalidate()
         if self._preview_visible:
             self._update_preview()
@@ -472,12 +477,15 @@ class RightPanel(Widget):
         pane.show_text(title, self._render_as_yaml(ev))
 
     def _memory_move(self, delta: int) -> None:
-        """Move the memory tab cursor; sync preview if open."""
-        if not self._memory_entries:
+        """Move the memory tab cursor; sync preview if open.
+
+        Cursor wraps around modulo the list length (Vim-list behaviour).
+        """
+        n = len(self._memory_entries)
+        if n == 0:
+            self._memory_cursor = 0
             return
-        self._memory_cursor = max(
-            0, min(len(self._memory_entries) - 1, self._memory_cursor + delta),
-        )
+        self._memory_cursor = (self._memory_cursor + delta) % n
         self._invalidate()
         if self._preview_visible:
             self._update_preview()
@@ -508,12 +516,15 @@ class RightPanel(Widget):
     # ── agents tab cursor + preview integration ──────────────────────────────
 
     def _agents_move(self, delta: int) -> None:
-        """Move the agents tab cursor; sync preview if open."""
-        if not self._agents_items:
+        """Move the agents tab cursor; sync preview if open.
+
+        Cursor wraps around modulo the list length (Vim-list behaviour).
+        """
+        n = len(self._agents_items)
+        if n == 0:
+            self._agents_cursor = 0
             return
-        self._agents_cursor = max(
-            0, min(len(self._agents_items) - 1, self._agents_cursor + delta),
-        )
+        self._agents_cursor = (self._agents_cursor + delta) % n
         self._invalidate()
         if self._preview_visible:
             self._update_preview()
@@ -1202,9 +1213,17 @@ class RightPanel(Widget):
     # ── docs navigation ───────────────────────────────────────────────────────
 
     def _docs_move(self, delta: int) -> None:
-        if not self._docs_files:
+        """Move the docs cursor over the flat file list; sync preview / scroll.
+
+        Cursor wraps around modulo the file count (Vim-list behaviour).
+        Wrapping is over the flat `_docs_files` order — sections are a
+        rendering concern, not a separate navigation axis here.
+        """
+        n = len(self._docs_files)
+        if n == 0:
+            self._docs_cursor = 0
             return
-        self._docs_cursor = max(0, min(len(self._docs_files) - 1, self._docs_cursor + delta))
+        self._docs_cursor = (self._docs_cursor + delta) % n
         self._invalidate()
         if self._preview_visible:
             self._update_preview()
