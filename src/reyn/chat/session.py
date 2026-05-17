@@ -22,6 +22,7 @@ from reyn.budget.budget import (
     format_refusal_message,
     format_warn_message,
 )
+from reyn.chat.error_format import classify_router_error
 from reyn.chat.outbox import OutboxMessage
 from reyn.chat.services import (
     AutoResumeHandler,
@@ -1385,7 +1386,7 @@ class ChatSession:
             return
         except Exception as exc:
             await self._put_outbox(OutboxMessage(
-                kind="error", text=f"router failed: {exc}",
+                kind="error", text=classify_router_error(exc),
                 meta={"chain_id": chain_id},
             ))
             return
