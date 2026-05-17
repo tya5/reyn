@@ -326,9 +326,17 @@ class ConversationView(Widget):
         # Always remember the full text — independent of fold thresholds.
         self._last_reply_full = text
         log = self._log()
+        # Detect that a prior fold is about to be invalidated. The single-slot
+        # ``_last_long_reply`` is replaced (or cleared) by every new agent
+        # reply, so any old fold hint up-screen still reads "type /expand to
+        # show" while /expand itself silently no-ops. Flag it inline so the
+        # user can tell the previous fold is no longer reachable.
+        had_prev_fold = self._last_long_reply is not None
         lines = text.split("\n")
         if len(lines) <= _FOLD_THRESHOLD_LINES:
             log.write(RichMarkdown(text))
+            if had_prev_fold:
+                self._write_fold_expired_marker()
             self._last_long_reply = None
             return
         preview = "\n".join(lines[:_FOLD_THRESHOLD_LINES])
@@ -342,7 +350,22 @@ class ConversationView(Widget):
         hint.append("/expand", style=f"bold {_CORAL}")
         hint.append(" to show ]", style=f"dim {_CORAL}")
         log.write(hint)
+        if had_prev_fold:
+            self._write_fold_expired_marker()
         self._last_long_reply = text
+
+    def _write_fold_expired_marker(self) -> None:
+        """Emit a dim marker noting that an earlier fold's /expand is gone.
+
+        The fold stash is a single slot — every new agent reply either
+        clears it (short reply) or replaces it (next long reply). Either
+        way the earlier fold's /expand becomes unreachable; this marker
+        makes that visible chronologically so users don't keep typing
+        /expand into a no-op.
+        """
+        marker = Text()
+        marker.append("  [ ↑ earlier fold cleared ]", style=f"dim {_CORAL}")
+        self._log().write(marker)
 
     def expand_last_reply(self) -> bool:
         """Append the full text of the most recently truncated reply.
