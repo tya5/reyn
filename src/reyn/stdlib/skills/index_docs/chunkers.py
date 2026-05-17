@@ -8,8 +8,10 @@ Override pattern (ADR-0033 §2.1): project-specific chunkers (Python AST,
 custom Markdown) replace this module via skill.md ``module:`` override.
 
 R-PURE-MODE-REDEFINE Class A split (postprocessor steps):
-  ``extract_and_split`` (mode: safe) — glob enum + pure chunking, no file
-    content read; safe step.
+  ``extract_and_split`` (mode: safe) — moved to companion module
+    ``chunkers_safe.py``; this module's ``import os`` / ``import
+    reyn.api.unsafe.file`` would otherwise be inherited by the safe-mode
+    AST validator (which walks all module imports), forcing it to fail.
   ``write_chunks_with_lock`` (mode: unsafe, minimal) — irreducible minimum:
     source file content read, advisory lock acquire/release, .jsonl write.
 
@@ -194,27 +196,10 @@ def cost_preflight(artifact: dict) -> dict:
 _CHUNKS_JSONL_PATH = "artifacts/chunks.jsonl"
 
 
-def extract_and_split(artifact: dict) -> list:
-    """Postprocessor python step (mode: safe): glob enum — enumerates source files.
-
-    Receives the LLM's finish artifact (= chunk_strategy). Enumerates files
-    matching the path glob and returns an ordered list of source file paths.
-    Does NOT read file content — content read is deferred to the unsafe step
-    ``write_chunks_with_lock``.
-
-    Glob ownership rationale (R-PURE-MODE audit): ``_glob_files`` exposes
-    filesystem path state (list of paths) but not file content. This is the
-    same pattern as ``gather_samples`` which calls ``_api_glob_files`` as a
-    preprocessor step. Contract-compliant for mode: safe.
-
-    Returns a list of source-file path dicts placed at ``data.chunk_list``:
-        [{"source_path": str}, ...]
-    """
-    data = artifact.get("data") or {}
-    path = str(data.get("path") or "")
-
-    file_paths = _glob_files(path)
-    return [{"source_path": fp} for fp in file_paths]
+# ``extract_and_split`` was moved to ``chunkers_safe.py`` so the safe-mode
+# AST validator, which walks all module-level imports via ``ast.walk(tree)``,
+# does not reject it because of this module's legitimate ``os`` /
+# ``reyn.api.unsafe.file`` imports used by the surrounding unsafe-mode steps.
 
 
 def write_chunks_with_lock(artifact: dict) -> dict:
