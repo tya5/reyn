@@ -606,45 +606,146 @@ def _drop_required_field(params: dict, field_name: str) -> dict:
     return out
 
 
+def _collect_all_session_ars_entries(
+    skill_meta_map: "dict[str, dict] | None" = None,
+    mcp_tool_map: "dict[str, dict] | None" = None,
+    available_agents: "list[dict] | None" = None,
+) -> "list[tuple[str, dict]]":
+    """Collect (qualified_name, properties) for all session-visible schemed actions.
+
+    D2-wrapper scope expansion (B38): B37's D2-wrapper fix was hot-list-only,
+    causing schema-blind LLM calls for any action absent from the hot list
+    (N=4 same-batch B37 observations: file__write, rag.operation__drop_source,
+    agent.peer__researcher all hallucinated non-canonical keys).
+
+    Collects the full session-visible ARS set from four sources:
+
+    1. **Static operations**: all entries in ``KNOWN_STATIC_QUALIFIED_NAMES``
+       (file / web / memory.operation / reyn.source / rag.operation /
+       mcp.operation / exec). Schemas come from the target ToolDefinition in
+       the default registry via ``resolve_describe_action``. Always populated;
+       no session state required.
+
+    2. **Session skills**: keyed by qualified name ``skill__<name>`` in
+       ``skill_meta_map``, which carries the skill's ``input_schema``. Only
+       skills with a non-empty input schema contribute.
+
+    3. **Session MCP tools**: keyed by ``mcp.tool__<server>.<tool>`` in
+       ``mcp_tool_map``, which carries the tool's ``input_schema`` from the
+       MCP server's declared tool schema.
+
+    4. **Session peer agents**: derived from ``available_agents`` using the
+       same ``delegate_to_agent`` schema logic as ``_resource_alias_metadata``.
+       The ``to`` field is curried by the router, so it is dropped from the
+       exposed schema.
+
+    Returns a deduplicated list of ``(qualified_name, properties_dict)`` pairs
+    where ``properties_dict`` is non-empty (= only actions with a known formal
+    schema contribute). P7-clean: no hardcoded action names; all data comes
+    from the registry or caller-supplied session state.
+    """
+    # Late imports to avoid circular dependency at module load time.
+    from reyn.tools import get_default_registry
+    from reyn.tools.universal_catalog import build_qualified_name
+    from reyn.tools.universal_dispatch import (
+        KNOWN_STATIC_QUALIFIED_NAMES,
+        resolve_describe_action,
+    )
+
+    entries: list[tuple[str, dict]] = []
+    seen: set[str] = set()
+
+    # Source 1: static operations — always available from the registry.
+    registry = get_default_registry()
+    for qn in KNOWN_STATIC_QUALIFIED_NAMES:
+        try:
+            resolved = resolve_describe_action(qn)
+            tool = registry.lookup(resolved.target_tool_name)
+        except Exception:
+            continue
+        if tool is None:
+            continue
+        props = tool.parameters.get("properties") or {}
+        if not props:
+            continue
+        if qn not in seen:
+            entries.append((qn, dict(props)))
+            seen.add(qn)
+
+    # Source 2: session skills from skill_meta_map.
+    for qn, meta in (skill_meta_map or {}).items():
+        if qn in seen:
+            continue
+        schema = meta.get("input_schema") or {}
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        if not props:
+            continue
+        entries.append((qn, dict(props)))
+        seen.add(qn)
+
+    # Source 3: session MCP tools from mcp_tool_map.
+    for qn, meta in (mcp_tool_map or {}).items():
+        if qn in seen:
+            continue
+        schema = meta.get("input_schema") or {}
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        if not props:
+            continue
+        entries.append((qn, dict(props)))
+        seen.add(qn)
+
+    # Source 4: session peer agents from available_agents.
+    # Derive schema from ``delegate_to_agent`` minus the curried ``to`` field,
+    # same as ``_resource_alias_metadata`` does for hot-list aliases.
+    if available_agents:
+        delegate_tool = registry.lookup("delegate_to_agent")
+        if delegate_tool is not None:
+            base_props = dict(
+                _drop_required_field(dict(delegate_tool.parameters), "to")
+                .get("properties") or {}
+            )
+            if base_props:
+                for agent in available_agents:
+                    if not isinstance(agent, dict) or not agent.get("name"):
+                        continue
+                    qn = build_qualified_name("agent.peer", agent["name"])
+                    if qn in seen:
+                        continue
+                    entries.append((qn, base_props))
+                    seen.add(qn)
+
+    return entries
+
+
 def _enrich_invoke_action_description(
     tools: list[dict],
-    hot_list_aliases: list[dict],
+    ars_entries: "list[tuple[str, dict]]",
 ) -> list[dict]:
-    """Propagate hot-list alias schemas into invoke_action's description.
+    """Append an ACTION ARG SCHEMAS block to invoke_action's description.
 
-    D2-wrapper (B37): direct hot-list alias entries carry the target
-    action's real parameter schema (D2-min/D2-full). When the LLM routes
-    via the ``invoke_action`` wrapper instead of a direct alias, it sees
-    only ``args: {type: object}`` with no properties — so it hallucinates
-    non-canonical keys (B36 N=3 observations: W4-S1 ``text`` vs
-    ``content``, W4-S6 ``source_id`` vs ``source``, W5-S3 ``message``
-    via wrapper vs canonical ``request``).
+    D2-wrapper scope expansion (B38): extends the B37 fix from hot-list-only
+    to all session-visible actions. ``ars_entries`` is a list of
+    ``(qualified_name, properties_dict)`` pairs produced by
+    ``_collect_all_session_ars_entries`` — a superset of what the hot list
+    covered.
 
-    Fix: append a compact per-action schema block to invoke_action's
-    description. This is data-driven from the existing hot_list_aliases
-    list (no hardcoded action names — P7-clean). Only actions whose
-    aliases carry non-empty ``properties`` contribute a line (= the same
-    condition D2-min/D2-full uses to build the alias schema).
+    The ARS block gives the LLM canonical arg key names for any action it
+    might route via ``invoke_action``, regardless of whether that action is
+    in the current hot list. This eliminates schema-blind hallucination
+    (B37 N=4: file__write -> ``text`` not ``content``,
+    rag.operation__drop_source -> ``source_id`` / ``source_name`` not
+    ``source``, agent.peer__researcher -> ``message`` not ``request``).
 
-    The schema block uses the same format the LLM would see on a direct
-    alias, presented as a lookup table so the LLM can reference it when
-    it chooses invoke_action and needs to supply ``args``.
+    P7-clean: no hardcoded action names; all data is data-driven from
+    ``ars_entries`` supplied by the caller.
     """
-    if not hot_list_aliases:
+    if not ars_entries:
         return tools
 
     # Build compact schema lines: "  <action_name>: {key1, key2, ...}"
-    # Only include actions whose aliases carry non-empty properties
-    # (= those enriched by D2-min/D2-full). Actions with no schema
-    # (empty properties) get no line — adding them would just be noise.
     schema_lines: list[str] = []
-    for alias in hot_list_aliases:
-        fn = alias.get("function") or {}
-        name = fn.get("name", "")
-        if not name:
-            continue
-        props = ((fn.get("parameters") or {}).get("properties")) or {}
-        if not props:
+    for name, props in ars_entries:
+        if not name or not props:
             continue
         keys = ", ".join(sorted(props.keys()))
         schema_lines.append(f"  {name}: {{{keys}}}")
@@ -653,7 +754,7 @@ def _enrich_invoke_action_description(
         return tools
 
     hint = (
-        "\n\nACTION ARG SCHEMAS (canonical keys for current hot-list actions):\n"
+        "\n\nACTION ARG SCHEMAS (canonical keys for all session-visible actions):\n"
         + "\n".join(schema_lines)
         + "\nUse these exact key names in args when calling invoke_action."
     )
@@ -828,6 +929,58 @@ class RouterLoop:
                         _idx, _provider, _model_class,
                     )
                 )
+        # D2-wrapper scope expansion (B38): build session-level resource
+        # metadata maps when universal wrappers are enabled — regardless of
+        # whether a tracker is present. These maps feed both the hot-list
+        # alias builder (below) AND _collect_all_session_ars_entries (which
+        # needs skill / MCP tool schemas to populate the full ARS block).
+        _skill_meta_map: dict[str, dict] = {}
+        _mcp_tool_map: dict[str, dict] = {}
+        if _univ_enabled:
+            # Lever D (B23-PRE-1): build short_description map from
+            # available skills so aliases embed the target's purpose.
+            # FP-0034 D2-full step 2: also capture per-skill
+            # ``input_schema`` (when the skill's entry artifact has
+            # a structured shape) so ``skill__<name>`` hot-list
+            # aliases expose the actual input parameters instead
+            # of the empty ``properties: {}, additionalProperties:
+            # True`` stub.
+            _short_desc_map: dict[str, str] = {}
+            for _s in host.list_available_skills():
+                if not isinstance(_s, dict) or "name" not in _s:
+                    continue
+                _qn = f"skill__{_s['name']}"
+                _sd = _s.get("description") or _s.get("short_description") or ""
+                if _sd:
+                    _short_desc_map[_qn] = str(_sd)
+                if "input_schema" in _s:
+                    _skill_meta_map[_qn] = {
+                        "description": str(_sd) if _sd else "",
+                        "input_schema": _s["input_schema"],
+                        "input_wrapped": bool(_s.get("input_wrapped", True)),
+                    }
+            # FP-0034 D2-full step 3: per-MCP-tool inputSchema lookup
+            # so ``mcp.tool__<server>.<tool>`` aliases expose the
+            # tool's declared args directly. host.get_mcp_servers()
+            # returns the FP-0032 expanded shape with nested tools.
+            for _srv in (host.get_mcp_servers() or []):
+                if not isinstance(_srv, dict):
+                    continue
+                _server_name = _srv.get("name")
+                if not _server_name:
+                    continue
+                for _t in (_srv.get("tools") or []):
+                    if not isinstance(_t, dict):
+                        continue
+                    _tool_name = _t.get("name")
+                    _input_schema = _t.get("inputSchema") or _t.get("input_schema")
+                    if not _tool_name or not _input_schema:
+                        continue
+                    _qn = f"mcp.tool__{_server_name}.{_tool_name}"
+                    _mcp_tool_map[_qn] = {
+                        "description": str(_t.get("description") or ""),
+                        "input_schema": _input_schema,
+                    }
         # FP-0034 Phase 2 step 5: hot list aliases for frequent actions.
         # Build only when universal wrappers are on and a tracker is present.
         _hot_list_aliases: list[dict] | None = None
@@ -848,52 +1001,6 @@ class RouterLoop:
                 )
                 _top_names = _tracker.get_top_n(_n, _seed)
                 if _top_names:
-                    # Lever D (B23-PRE-1): build short_description map from
-                    # available skills so aliases embed the target's purpose.
-                    # FP-0034 D2-full step 2: also capture per-skill
-                    # ``input_schema`` (when the skill's entry artifact has
-                    # a structured shape) so ``skill__<name>`` hot-list
-                    # aliases expose the actual input parameters instead
-                    # of the empty ``properties: {}, additionalProperties:
-                    # True`` stub.
-                    _short_desc_map: dict[str, str] = {}
-                    _skill_meta_map: dict[str, dict] = {}
-                    for _s in host.list_available_skills():
-                        if not isinstance(_s, dict) or "name" not in _s:
-                            continue
-                        _qn = f"skill__{_s['name']}"
-                        _sd = _s.get("description") or _s.get("short_description") or ""
-                        if _sd:
-                            _short_desc_map[_qn] = str(_sd)
-                        if "input_schema" in _s:
-                            _skill_meta_map[_qn] = {
-                                "description": str(_sd) if _sd else "",
-                                "input_schema": _s["input_schema"],
-                                "input_wrapped": bool(_s.get("input_wrapped", True)),
-                            }
-                    # FP-0034 D2-full step 3: per-MCP-tool inputSchema lookup
-                    # so ``mcp.tool__<server>.<tool>`` aliases expose the
-                    # tool's declared args directly. host.get_mcp_servers()
-                    # returns the FP-0032 expanded shape with nested tools.
-                    _mcp_tool_map: dict[str, dict] = {}
-                    for _srv in (host.get_mcp_servers() or []):
-                        if not isinstance(_srv, dict):
-                            continue
-                        _server_name = _srv.get("name")
-                        if not _server_name:
-                            continue
-                        for _t in (_srv.get("tools") or []):
-                            if not isinstance(_t, dict):
-                                continue
-                            _tool_name = _t.get("name")
-                            _input_schema = _t.get("inputSchema") or _t.get("input_schema")
-                            if not _tool_name or not _input_schema:
-                                continue
-                            _qn = f"mcp.tool__{_server_name}.{_tool_name}"
-                            _mcp_tool_map[_qn] = {
-                                "description": str(_t.get("description") or ""),
-                                "input_schema": _input_schema,
-                            }
                     _hot_list_aliases = _build_hot_list_aliases(
                         _top_names,
                         short_description_lookup=_short_desc_map or None,
@@ -910,12 +1017,19 @@ class RouterLoop:
             search_actions_visible=_search_visible,
             hot_list_aliases=_hot_list_aliases,
         )
-        # D2-wrapper (B37): propagate hot-list alias schemas into
-        # invoke_action's description so the LLM can see canonical arg
-        # names when it routes via the wrapper (surface B) rather than a
-        # direct alias (surface A). No-op when no hot-list aliases built.
-        if _univ_enabled and _hot_list_aliases:
-            tools = _enrich_invoke_action_description(tools, _hot_list_aliases)
+        # D2-wrapper scope expansion (B38): propagate schemas for ALL
+        # session-visible actions into invoke_action's description so the
+        # LLM can see canonical arg key names when it routes via the wrapper,
+        # regardless of hot-list state. B37's D2-wrapper was hot-list-only;
+        # B38 expands the scope to the full static operation catalog plus
+        # session-visible skills / MCP tools / peer agents.
+        if _univ_enabled:
+            _ars_entries = _collect_all_session_ars_entries(
+                skill_meta_map=_skill_meta_map or None,
+                mcp_tool_map=_mcp_tool_map or None,
+                available_agents=host.list_available_agents() or None,
+            )
+            tools = _enrich_invoke_action_description(tools, _ars_entries)
         if self._exclude_tools:
             tools = [
                 t for t in tools
