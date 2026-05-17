@@ -97,7 +97,10 @@ Full tutorial: [docs/guide/getting-started/02-your-first-skill.md](docs/guide/ge
 
 ```bash
 # Index any glob into a named source — one source per chunking strategy.
-reyn run index_docs '{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}'
+# The CLI also accepts the bare data dict
+#   '{"source":..., "path":..., "description":...}'
+# and auto-wraps it with the artifact envelope.
+reyn run index_docs '{"type":"index_docs_input","data":{"source":"my_docs","path":"docs/**/*.md","description":"Project documentation"}}'
 
 # Chat — the LLM calls `recall` automatically when an indexed source covers the topic.
 reyn chat
