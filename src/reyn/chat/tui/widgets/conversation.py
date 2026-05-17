@@ -543,11 +543,18 @@ class ConversationView(Widget):
     # ── cost suffix (A4) ──────────────────────────────────────────────────────
 
     def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
-        """Append a dim per-turn cost suffix. Caller decides when (opt-in)."""
-        t = Text()
-        t.append("                              ")  # right-leaning padding
-        t.append(f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
-                 style="dim #666666")
+        """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
+
+        Uses Rich's ``justify="right"`` so the suffix tracks the actual content
+        width at render time. A hard-coded space prefix would either centre the
+        suffix on wider terminals or push it off-screen when the right panel is
+        open and the conv pane shrinks.
+        """
+        t = Text(
+            f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
+            style="dim #666666",
+            justify="right",
+        )
         self._write_log(t)
 
     # ── turn navigation (B4) ──────────────────────────────────────────────────
