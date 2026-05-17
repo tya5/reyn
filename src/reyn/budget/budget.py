@@ -283,7 +283,7 @@ def _parse_iso_ts(ts_str: str) -> float:
 class BudgetTracker:
     """Process-wide accumulator + hybrid-cap enforcer.
 
-    Counters live in memory and reset on process restart. `:budget reset`
+    Counters live in memory and reset on process restart. `/budget reset`
     clears them mid-process. The tracker is single-thread / asyncio-safe
     by virtue of running in a single event loop (no internal locking).
 
@@ -599,7 +599,7 @@ class BudgetTracker:
 
         PR25: daily / monthly counters are NOT reset here — they auto-reset
         at period boundary and are backed by the persistent ledger. Returns
-        a dict describing what was reset (for `:budget reset` output).
+        a dict describing what was reset (for `/budget reset` output).
         """
         before = {
             "agent_tokens": dict(self._agent_tokens),
@@ -751,7 +751,7 @@ class BudgetTracker:
                 self._chain_skill_tokens[(str(entry[0]), str(entry[1]))] = int(entry[2])
 
     def snapshot(self) -> dict:
-        """Return a structured view used by `:cost` / `:budget` formatters."""
+        """Return a structured view used by `/cost` / `/budget` formatters."""
         return {
             "agent_tokens": dict(self._agent_tokens),
             "agent_cost_usd": dict(self._agent_cost_usd),
@@ -1041,12 +1041,12 @@ def format_refusal_message(check: BudgetCheck, *, agent: Optional[str] = None) -
     lines.append("")
     lines.append("What you can do:")
     lines.append("  • Raise the limit in `reyn.local.yaml` (cost: section)")
-    lines.append("  • Reset counters with `:budget reset`")
+    lines.append("  • Reset counters with `/budget reset`")
     if check.hard_dimension and check.hard_dimension.startswith(("daily_", "monthly_")):
         lines.append("  • Daily / monthly limits reset automatically at period boundary")
     else:
         lines.append("  • Restart `reyn chat` (limits are per-process)")
-    lines.append("  • See current usage with `:budget`")
+    lines.append("  • See current usage with `/budget`")
     return "\n".join(lines)
 
 
@@ -1099,14 +1099,14 @@ def format_warn_message(dimension: str, ctx: dict) -> str:
 
 
 def format_cost_line(snapshot: dict, agent: str) -> str:
-    """`:cost` 1-line output for the attached agent."""
+    """`/cost` 1-line output for the attached agent."""
     tokens = snapshot["agent_tokens"].get(agent, 0)
     cost = snapshot["agent_cost_usd"].get(agent, 0.0)
     return f"{agent}: {tokens:,} tokens, ${cost:.4f}  (this session)"
 
 
 def format_budget_full(snapshot: dict, attached: str | None) -> str:
-    """`:budget` full breakdown across all dimensions."""
+    """`/budget` full breakdown across all dimensions."""
     cfg: CostConfig = snapshot["config"]
     lines: list[str] = ["Usage (process invocation):", ""]
 
@@ -1209,5 +1209,5 @@ def format_budget_full(snapshot: dict, attached: str | None) -> str:
                 lines.append(f"    {model}:  {used}  (no cap)")
         lines.append("")
 
-    lines.append("  Reset counters with `:budget reset`.")
+    lines.append("  Reset counters with `/budget reset`.")
     return "\n".join(lines)
