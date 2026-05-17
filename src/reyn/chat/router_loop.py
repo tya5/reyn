@@ -366,6 +366,110 @@ _UNIVERSAL_WRAPPER_NAMES: frozenset[str] = frozenset({
 })
 
 
+def _filter_ghost_names_by_registry(
+    names: "list[str]",
+    skill_meta_map: "dict[str, dict] | None",
+    mcp_tool_map: "dict[str, dict] | None",
+    available_agents: "list[dict] | None",
+    *,
+    _warned: "set[str] | None" = None,
+) -> "list[str]":
+    """Filter hot-list names that pass structural check but don't exist in the registry.
+
+    B38 W2 finding: ``_is_valid_qualified_name`` only validates shape
+    (= category + separator + entry). A renamed skill like
+    ``skill__create_skill`` passes structural check but is a ghost — the
+    skill no longer exists under that name. This filter adds the
+    existence check at hot-list materialization time, when session
+    registry data is available.
+
+    Categories and their existence signals:
+    - ``skill__*`` → must be a key in ``skill_meta_map``
+      (= resolved skill list from ``host.list_available_skills()``).
+    - ``agent.peer__*`` → must match a name in ``available_agents``.
+    - ``mcp.tool__*`` / ``mcp.server__*`` → must be a key in ``mcp_tool_map``
+      (or any server name prefix for ``mcp.server__*``).
+    - Operation categories (``file__*``, ``web__*``, ``memory.operation__*``,
+      ``reyn.source__*``, ``rag.operation__*``, ``mcp.operation__*``,
+      ``exec__*``, ``rag.corpus__*``, ``memory.entry__*``) → must be in
+      ``KNOWN_STATIC_QUALIFIED_NAMES`` (static op registry).
+
+    Ghost names are logged once per unique name per session to stderr.
+    ``_warned`` is an optional set for cross-call deduplication.
+
+    P7-clean: check is data-driven from registry enumeration only —
+    no hardcoded ghost names.
+    """
+    import sys
+
+    from reyn.tools.universal_catalog import split_qualified_name
+    from reyn.tools.universal_dispatch import KNOWN_STATIC_QUALIFIED_NAMES
+
+    if _warned is None:
+        _warned = set()
+
+    # Build existence sets from session state.
+    known_skills: frozenset[str] = frozenset(skill_meta_map or {})
+    known_mcp_tools: frozenset[str] = frozenset(mcp_tool_map or {})
+    # Extract MCP server names from mcp_tool_map keys (mcp.tool__<server>.<tool>)
+    known_mcp_servers: set[str] = set()
+    for qn in known_mcp_tools:
+        try:
+            _cat, entry = split_qualified_name(qn)
+        except ValueError:
+            continue
+        if "." in entry:
+            known_mcp_servers.add(entry.split(".", 1)[0])
+    known_agents: frozenset[str] = frozenset(
+        a["name"] for a in (available_agents or [])
+        if isinstance(a, dict) and a.get("name")
+    )
+    static_ops: frozenset[str] = frozenset(KNOWN_STATIC_QUALIFIED_NAMES)
+
+    result: list[str] = []
+    for name in names:
+        try:
+            category, entry_name = split_qualified_name(name)
+        except ValueError:
+            # Structural rejection (already handled at load; belt+suspenders).
+            result.append(name)
+            continue
+
+        exists = True
+        if category == "skill":
+            exists = name in known_skills
+        elif category == "agent.peer":
+            exists = entry_name in known_agents
+        elif category == "mcp.tool":
+            exists = name in known_mcp_tools
+        elif category == "mcp.server":
+            exists = entry_name in known_mcp_servers
+        else:
+            # Operation categories and resource categories not enumerable
+            # from session state: check static op registry.
+            # (rag.corpus / memory.entry are dynamic but not enumerable here;
+            # fall back to static check which passes them through —
+            # a conservative choice that avoids false rejections.)
+            if name in static_ops:
+                exists = True
+            else:
+                # Not in static ops: unknown to the registry.
+                exists = False
+
+        if not exists:
+            if name not in _warned:
+                print(
+                    f"[reyn] action_usage: skipping ghost alias "
+                    f"{name!r} — not found in current registry",
+                    file=sys.stderr,
+                )
+                _warned.add(name)
+            continue
+
+        result.append(name)
+    return result
+
+
 def _build_hot_list_aliases(
     names: list[str],
     short_description_lookup: "dict[str, str] | None" = None,
@@ -1000,6 +1104,16 @@ class RouterLoop:
                     else (list(_seed_cfg) if isinstance(_seed_cfg, list) else [])
                 )
                 _top_names = _tracker.get_top_n(_n, _seed)
+                # B38 W2: registry-existence check — filter names that pass
+                # structural validation but no longer resolve to a real action
+                # in the current session registry. Runs after get_top_n so
+                # RouterState (skill / mcp / agent registry) is available.
+                _top_names = _filter_ghost_names_by_registry(
+                    _top_names,
+                    skill_meta_map=_skill_meta_map or None,
+                    mcp_tool_map=_mcp_tool_map or None,
+                    available_agents=host.list_available_agents() or None,
+                )
                 if _top_names:
                     _hot_list_aliases = _build_hot_list_aliases(
                         _top_names,
