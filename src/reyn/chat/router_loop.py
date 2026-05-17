@@ -372,6 +372,7 @@ def _filter_ghost_names_by_registry(
     mcp_tool_map: "dict[str, dict] | None",
     available_agents: "list[dict] | None",
     *,
+    known_skill_names: "frozenset[str] | None" = None,
     _warned: "set[str] | None" = None,
 ) -> "list[str]":
     """Filter hot-list names that pass structural check but don't exist in the registry.
@@ -409,7 +410,13 @@ def _filter_ghost_names_by_registry(
         _warned = set()
 
     # Build existence sets from session state.
-    known_skills: frozenset[str] = frozenset(skill_meta_map or {})
+    # Skills: use the broader ``known_skill_names`` set when provided
+    # (= covers empty-input-schema skills too); fall back to
+    # ``skill_meta_map`` keys for backwards-compat.
+    if known_skill_names is not None:
+        known_skills: frozenset[str] = known_skill_names
+    else:
+        known_skills = frozenset(skill_meta_map or {})
     known_mcp_tools: frozenset[str] = frozenset(mcp_tool_map or {})
     # Extract MCP server names from mcp_tool_map keys (mcp.tool__<server>.<tool>)
     known_mcp_servers: set[str] = set()
@@ -1050,10 +1057,12 @@ class RouterLoop:
             # of the empty ``properties: {}, additionalProperties:
             # True`` stub.
             _short_desc_map: dict[str, str] = {}
+            _known_skill_names: set[str] = set()
             for _s in host.list_available_skills():
                 if not isinstance(_s, dict) or "name" not in _s:
                     continue
                 _qn = f"skill__{_s['name']}"
+                _known_skill_names.add(_qn)
                 _sd = _s.get("description") or _s.get("short_description") or ""
                 if _sd:
                     _short_desc_map[_qn] = str(_sd)
@@ -1113,6 +1122,7 @@ class RouterLoop:
                     skill_meta_map=_skill_meta_map or None,
                     mcp_tool_map=_mcp_tool_map or None,
                     available_agents=host.list_available_agents() or None,
+                    known_skill_names=frozenset(_known_skill_names) or None,
                 )
                 if _top_names:
                     _hot_list_aliases = _build_hot_list_aliases(
