@@ -43,6 +43,11 @@ if TYPE_CHECKING:
     from reyn.chat.session import ChatSession
 
 
+# Debounce window for the "(nothing in-flight to cancel)" line — repeat
+# Ctrl+C presses within this many seconds are absorbed silently.
+_IDLE_CANCEL_DEDUP_S = 1.5
+
+
 class ReynTUIApp(App):
     """Main Textual application for `reyn chat`."""
 
@@ -123,6 +128,10 @@ class ReynTUIApp(App):
         self._outbox_task: asyncio.Task | None = None
         self._panel_visible = False
         self._cancel_event: asyncio.Event = asyncio.Event()
+        # Most-recent "(nothing in-flight to cancel)" timestamp, used to
+        # suppress repeated identical lines from accumulating in the conv
+        # log when the user mashes Ctrl+C on an idle session.
+        self._last_idle_cancel_ts: float = 0.0
         # run_id → {skill_name, agent_name, start_time, phase, phase_visits}
         self._skill_exec: dict[str, dict] = {}
         # Per-turn cost tracking (A4 — opt-in via /cost-inline)
@@ -682,9 +691,16 @@ class ReynTUIApp(App):
             and cancelled_plans == 0
             and cancelled_streams == 0
         ):
-            self._voice_status(
-                "(nothing in-flight to cancel)", style="dim #555555",
-            )
+            # Suppress repeat lines: when the user mashes Ctrl+C on an idle
+            # session, log a single "(nothing in-flight to cancel)" then
+            # debounce for ``_IDLE_CANCEL_DEDUP_S`` so subsequent presses
+            # don't litter the conv log with identical lines.
+            now = _now_monotonic()
+            if now - self._last_idle_cancel_ts > _IDLE_CANCEL_DEDUP_S:
+                self._voice_status(
+                    "(nothing in-flight to cancel)", style="dim #555555",
+                )
+                self._last_idle_cancel_ts = now
             return
         parts: list[str] = []
         if cancelled_skills:
