@@ -207,12 +207,15 @@ class ConversationView(Widget):
         within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
         if not (same_speaker and within_window):
             log = self._log()
-            # Record turn anchor for agent turns (B4 navigation)
-            if speaker == "reyn":
-                self._turn_anchors.append(len(log.lines))
-                # Cap to last 200 to avoid unbounded growth (long sessions)
-                if len(self._turn_anchors) > 200:
-                    self._turn_anchors = self._turn_anchors[-200:]
+            # Record a turn anchor whenever a new speaker header appears
+            # — agent replies, user inputs, and system / slash-command
+            # results. Ctrl+P / Ctrl+N then walk through every header in
+            # order, which matches the user's mental model of "jump to
+            # the previous turn" better than "jump only to agent replies".
+            self._turn_anchors.append(len(log.lines))
+            # Cap to last 200 to avoid unbounded growth (long sessions)
+            if len(self._turn_anchors) > 200:
+                self._turn_anchors = self._turn_anchors[-200:]
             log.write(_msg_header(label_text, name_style, dash_style))
         self._last_speaker = speaker
         self._last_speaker_at = now
