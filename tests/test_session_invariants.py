@@ -1196,7 +1196,9 @@ async def test_run_skill_awaitable_returns_status_data_no_outbox(
     history_before = len(session.history)
 
     spec = {"skill": "direct_llm", "input": {"type": "llm_request", "data": {}}}
-    ret = await session._run_skill_awaitable(spec, chain_id="chain-fp0011-001")
+    ret = await session._skill_runner.run_skill_awaitable(
+        spec, chain_id="chain-fp0011-001",
+    )
 
     # Contract 1: return shape exposes status + data verbatim.
     assert ret == {

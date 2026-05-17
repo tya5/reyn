@@ -401,6 +401,229 @@ class SkillRunner:
         self._accumulate(result)
         return result
 
+    async def run_skill_awaitable(self, spec: dict, *, chain_id: str) -> dict:
+        """Run a user-invoked skill to completion and return its tool-result dict.
+
+        Used by the router's ``invoke_skill`` tool when the skill is dispatched
+        in blocking mode (= synchronous tool_result instead of the spawn-ack
+        path that :meth:`spawn_for_router` produces). Enforces the same
+        allowlist + budget pre-checks as :meth:`spawn`, then loads the
+        skill, builds an Agent, runs it, accumulates cost, and returns:
+
+            {"status": "finished" | "error", "data": <final_output>}
+
+        FP-0011: narration is the router LLM's responsibility — this method
+        does NOT push to outbox. The caller returns the dict to the router
+        loop which lets the LLM narrate from ``data`` on its next turn.
+        """
+        skill_name = spec.get("skill")
+        input_artifact = spec.get("input")
+        if not skill_name or not isinstance(input_artifact, dict):
+            return {
+                "status": "error",
+                "data": {"error": f"invalid skill spec: {spec}"},
+            }
+
+        # PR15: allowlist check — same defense as spawn().
+        if (
+            self._allowed_skills is not None
+            and skill_name not in self._allowed_skills
+        ):
+            self._events.emit(
+                "skill_spawn_refused",
+                reason="allowlist", skill=skill_name, agent=self._agent_name,
+            )
+            return {
+                "status": "error",
+                "data": {
+                    "error": (
+                        f"skill {skill_name!r} is not in allowed_skills for "
+                        f"agent {self._agent_name!r}; refused"
+                    )
+                },
+            }
+
+        # PR22: budget cap pre-check.
+        check = self._budget.check_pre_spawn(chain_id=chain_id, skill=skill_name)
+        if not check.allowed:
+            self._events.emit(
+                "budget_exceeded",
+                dimension=check.hard_dimension,
+                detail=check.detail,
+                skill=skill_name,
+                chain_id=chain_id,
+            )
+            return {
+                "status": "error",
+                "data": {"error": check.detail or "budget exceeded"},
+            }
+        self._budget.record_spawn(chain_id=chain_id, skill=skill_name)
+
+        run_id = (
+            f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+            f"_{skill_name}_{uuid.uuid4().hex[:4]}"
+        )
+        self._events.emit(
+            "skill_run_spawned", run_id=run_id, skill=skill_name,
+        )
+
+        # P6 audit completeness: when skill_run_spawned fires we must pair
+        # it with a terminal event (skill_run_failed or skill_run_completed)
+        # on every exit path below.
+        try:
+            skill_dir, skill_root = resolve_skill_path(skill_name)
+        except SkillNotFoundError:
+            self._events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"skill not found: {skill_name}",
+            )
+            return {
+                "status": "error",
+                "data": {"error": f"skill not found: {skill_name}"},
+            }
+
+        try:
+            skill = load_dsl_skill(
+                str(skill_dir / "skill.md"), skill_root=str(skill_root),
+            )
+        except Exception as exc:
+            self._events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"failed to load: {exc}",
+            )
+            return {
+                "status": "error",
+                "data": {"error": f"failed to load {skill_name}: {exc}"},
+            }
+
+        from reyn.chat.forwarder import ChatEventForwarder
+        agent = self._build_agent_fn(
+            run_id=run_id, skill_name=skill_name,
+            subscribers=[
+                ChatEventForwarder(skill_name, self._outbox, run_id=run_id),
+            ],
+        )
+
+        try:
+            result = await agent.run(
+                skill, input_artifact,
+                output_language=self._output_language,
+                chain_id=chain_id,
+                skill_registry=self._get_skill_registry(),
+                state_log=self._state_log,
+            )
+        except asyncio.CancelledError:
+            return {"status": "error", "data": {"error": "cancelled"}}
+        except Exception as exc:
+            self._events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=str(exc),
+            )
+            return {"status": "error", "data": {"error": str(exc)}}
+
+        if result.status == "budget_exceeded":
+            self._events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error="budget_exceeded",
+            )
+            return {
+                "status": "error",
+                "data": {"error": result.error or "budget exceeded"},
+            }
+
+        self._accumulate(result)
+        self._events.emit(
+            "skill_run_completed", run_id=run_id, skill=skill_name,
+            status=result.status,
+        )
+
+        # FP-0011: the router LLM narrates inline on its post-invoke_skill
+        # turn — we only return the canonical tool_result envelope.
+        return {
+            "status": result.status or "finished",
+            "data": result.data or {},
+        }
+
+    async def spawn_resumed_skill(self, decision: "object") -> None:
+        """Default launcher used by ``AutoResumeHandler._resume_and_collect``.
+
+        Loads the skill named by ``decision.plan.skill_name``, builds an
+        Agent, and spawns ``Agent.run`` as a tracked asyncio task with the
+        resume_plan threaded in. Separate from :meth:`spawn` so the
+        auto-resume hook can be tested with a stub launcher
+        (see ``tests/test_session_auto_resume.py``).
+        """
+        plan = decision.plan
+        skill_name = plan.skill_name
+        run_id = plan.run_id
+        meta = _run_meta(run_id, skill_name)
+        try:
+            skill_dir, skill_root = resolve_skill_path(skill_name)
+            skill = load_dsl_skill(
+                str(skill_dir / "skill.md"), skill_root=str(skill_root),
+            )
+        except (SkillNotFoundError, Exception) as exc:
+            self._events.emit(
+                "skill_run_failed", run_id=run_id, skill=skill_name,
+                error=f"resume failed to load: {exc}",
+            )
+            await self._put_outbox(OutboxMessage(
+                kind="error", text=f"resume failed: {exc}", meta=meta,
+            ))
+            return
+
+        from reyn.chat.forwarder import ChatEventForwarder
+        agent = self._build_agent_fn(
+            run_id=run_id, skill_name=skill_name,
+            subscribers=[
+                ChatEventForwarder(skill_name, self._outbox, run_id=run_id),
+            ],
+        )
+
+        async def _runner():
+            try:
+                await agent.run(
+                    skill, plan.skill_input,
+                    output_language=self._output_language,
+                    skill_registry=self._get_skill_registry(),
+                    state_log=self._state_log,
+                    resume_plan=plan,
+                    run_id=run_id,
+                )
+            except asyncio.CancelledError:
+                await self._put_outbox(OutboxMessage(
+                    kind="status", text="cancelled", meta=meta,
+                ))
+                raise
+            except Exception as exc:  # noqa: BLE001 — surface to outbox
+                self._events.emit(
+                    "skill_run_failed", run_id=run_id, skill=skill_name,
+                    error=str(exc),
+                )
+                await self._put_outbox(OutboxMessage(
+                    kind="error", text=f"resume failed: {exc}", meta=meta,
+                ))
+
+        self.running_skills_started_at[run_id] = time.monotonic()
+        # R-D14: resumed skill_run is generally not chain-tagged (the
+        # original chain has long-since either completed or been wedged
+        # by the timeout watchdog). If a future re-issue path needs to
+        # carry chain_id across resume, plumb it through ``decision``.
+        self.running_skills_chain[run_id] = None
+        await self._put_outbox(OutboxMessage(
+            kind="status", text="resuming…", meta=meta,
+        ))
+        task = asyncio.create_task(_runner())
+        self.running_skills[run_id] = task
+
+        def _cleanup(_t: asyncio.Task, rid: str = run_id) -> None:
+            self.running_skills.pop(rid, None)
+            self.running_skills_started_at.pop(rid, None)
+            self.running_skills_chain.pop(rid, None)
+            self._drop_interventions_for_run(rid)
+
+        task.add_done_callback(_cleanup)
+
     # ── internal ──────────────────────────────────────────────────────────────
 
     async def _run_one_skill(
