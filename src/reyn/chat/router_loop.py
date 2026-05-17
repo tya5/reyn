@@ -394,6 +394,7 @@ def _filter_ghost_names_by_registry(
     available_agents: "list[dict] | None",
     *,
     known_skill_names: "frozenset[str] | None" = None,
+    known_memory_entries: "frozenset[str] | None" = None,
     _warned: "set[str] | None" = None,
 ) -> "list[str]":
     """Filter hot-list names that pass structural check but don't exist in the registry.
@@ -411,10 +412,19 @@ def _filter_ghost_names_by_registry(
     - ``agent.peer__*`` → must match a name in ``available_agents``.
     - ``mcp.tool__*`` / ``mcp.server__*`` → must be a key in ``mcp_tool_map``
       (or any server name prefix for ``mcp.server__*``).
+    - ``memory.entry__*`` → must be in ``known_memory_entries`` (=
+      qualified names enumerated by ``_enumerate_shared_memory_entries``
+      at hot-list build time). When the set is None, memory.entry names
+      pass through unchecked — caller is responsible for supplying the
+      enumerated set when the seed includes dynamic memory entries.
     - Operation categories (``file__*``, ``web__*``, ``memory.operation__*``,
       ``reyn.source__*``, ``rag.operation__*``, ``mcp.operation__*``,
-      ``exec__*``, ``rag.corpus__*``, ``memory.entry__*``) → must be in
-      ``KNOWN_STATIC_QUALIFIED_NAMES`` (static op registry).
+      ``exec__*``) → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (static
+      op registry).
+    - ``rag.corpus__*`` is currently routed through the static check; it
+      is also a dynamic category and the same fix shape as memory.entry
+      applies if its caller starts seeding dynamic corpus aliases — see
+      the PR for the memory.entry case for the pattern.
 
     Ghost names are logged once per unique name per session to stderr.
     ``_warned`` is an optional set for cross-call deduplication.
@@ -472,12 +482,22 @@ def _filter_ghost_names_by_registry(
             exists = name in known_mcp_tools
         elif category == "mcp.server":
             exists = entry_name in known_mcp_servers
+        elif category == "memory.entry":
+            # Dynamic category enumerated per-session from .reyn/memory/*.md
+            # by ``_enumerate_shared_memory_entries``. Static op registry
+            # does NOT contain user-saved memory entry slugs. When the
+            # caller passes ``known_memory_entries``, check membership;
+            # when it does not, pass through unchecked (= preserves the
+            # prior behaviour for callers that haven't been updated yet).
+            if known_memory_entries is not None:
+                exists = name in known_memory_entries
+            else:
+                exists = True
         else:
-            # Operation categories and resource categories not enumerable
-            # from session state: check static op registry.
-            # (rag.corpus / memory.entry are dynamic but not enumerable here;
-            # fall back to static check which passes them through —
-            # a conservative choice that avoids false rejections.)
+            # Operation categories not enumerable from session state:
+            # check static op registry. (``rag.corpus__*`` is also a
+            # dynamic category but no caller currently seeds it; if/when
+            # one does, mirror the memory.entry pattern above.)
             if name in static_ops:
                 exists = True
             else:
@@ -1241,6 +1261,11 @@ class RouterLoop:
                     mcp_tool_map=_mcp_tool_map or None,
                     available_agents=host.list_available_agents() or None,
                     known_skill_names=frozenset(_known_skill_names) or None,
+                    # Dynamic memory.entry__<slug> names enumerated above
+                    # from .reyn/memory/*.md. Empty set means "no entries
+                    # exist this session" — filter rejects any stale
+                    # memory.entry name still in the action_usage tracker.
+                    known_memory_entries=frozenset(_memory_entries),
                 )
                 if _top_names:
                     _hot_list_aliases = _build_hot_list_aliases(

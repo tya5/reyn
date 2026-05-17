@@ -22,6 +22,13 @@ Test plan:
   R9. Warning logged once per unique ghost name (deduplication).
   R10. Integration: ActionUsageTracker freq-loaded jsonl with 1 valid skill +
        1 ghost skill → hot-list excludes ghost.
+  R11. memory.entry name in known_memory_entries passes through (dynamic
+       enumeration from .reyn/memory/*.md).
+  R12. memory.entry name NOT in known_memory_entries is filtered (stale name
+       from action_usage tracker after the entry was deleted).
+  R13. memory.entry pass-through when known_memory_entries=None (backwards
+       compat for callers that haven't been updated; static_ops fall-through
+       used to reject all memory.entry — this branch now passes them).
 
 No mocks. Uses real _filter_ghost_names_by_registry + real ActionUsageTracker
 + real KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
@@ -308,4 +315,74 @@ def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) ->
     )
     assert "skill__nonexistent_xyz" not in filtered, (
         "Ghost skill not in skill_meta_map must be removed by registry check."
+    )
+
+
+# ── R11. memory.entry passes when in known_memory_entries ─────────────────────
+
+
+def test_r11_memory_entry_passes_when_in_known_set() -> None:
+    """Tier 2: memory.entry__<slug> in known_memory_entries passes the filter.
+
+    Regression guard for the 2026-05-17 N4+B38 W2 interaction: PR #138
+    seeded dynamic memory.entry aliases into the hot-list, but the B38 W2
+    ghost-filter that landed later did not know about dynamic categories.
+    Result: all memory.entry aliases were rejected via the static_ops
+    fall-through. This test pins the fix that adds the known-set check.
+    """
+    filtered = _filter_ghost_names_by_registry(
+        ["memory.entry__user_project_phoenix"],
+        skill_meta_map=None,
+        mcp_tool_map=None,
+        available_agents=None,
+        known_memory_entries=frozenset({"memory.entry__user_project_phoenix"}),
+    )
+    assert filtered == ["memory.entry__user_project_phoenix"], (
+        "memory.entry name in known set must pass the filter."
+    )
+
+
+# ── R12. memory.entry filtered when not in known_memory_entries ───────────────
+
+
+def test_r12_memory_entry_filtered_when_absent_from_known_set() -> None:
+    """Tier 2: memory.entry__<slug> NOT in known_memory_entries is filtered.
+
+    Scenario: user deleted .reyn/memory/<slug>.md between sessions, but
+    the action_usage tracker still has it from prior freq history. The
+    filter must reject the stale name so the LLM doesn't see a ghost
+    alias that would dispatch to a non-existent entry.
+    """
+    filtered = _filter_ghost_names_by_registry(
+        ["memory.entry__deleted_slug"],
+        skill_meta_map=None,
+        mcp_tool_map=None,
+        available_agents=None,
+        known_memory_entries=frozenset(),  # zero entries this session
+    )
+    assert filtered == [], (
+        "memory.entry name not in known set must be removed."
+    )
+
+
+# ── R13. memory.entry pass-through when known_memory_entries is None ──────────
+
+
+def test_r13_memory_entry_passes_when_known_set_is_none() -> None:
+    """Tier 2: when known_memory_entries=None, memory.entry names pass through.
+
+    Backwards-compat behaviour for callers that have not been updated to
+    enumerate memory entries. The prior implementation fell through to
+    static_ops which rejected ALL memory.entry names; the fix passes
+    them unchecked when the caller hasn't supplied an enumerated set.
+    """
+    filtered = _filter_ghost_names_by_registry(
+        ["memory.entry__some_slug"],
+        skill_meta_map=None,
+        mcp_tool_map=None,
+        available_agents=None,
+        # known_memory_entries omitted (= None)
+    )
+    assert filtered == ["memory.entry__some_slug"], (
+        "memory.entry name passes through when caller does not supply known set."
     )
