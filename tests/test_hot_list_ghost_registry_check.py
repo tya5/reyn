@@ -26,9 +26,6 @@ Test plan:
        enumeration from .reyn/memory/*.md).
   R12. memory.entry name NOT in known_memory_entries is filtered (stale name
        from action_usage tracker after the entry was deleted).
-  R13. memory.entry pass-through when known_memory_entries=None (backwards
-       compat for callers that haven't been updated; static_ops fall-through
-       used to reject all memory.entry — this branch now passes them).
 
 No mocks. Uses real _filter_ghost_names_by_registry + real ActionUsageTracker
 + real KNOWN_STATIC_QUALIFIED_NAMES. No RouterLoop instantiation required.
@@ -61,13 +58,21 @@ def _call_filter(
     skill_meta_map: dict | None = None,
     mcp_tool_map: dict | None = None,
     available_agents: list[dict] | None = None,
+    known_memory_entries: frozenset[str] | None = None,
 ) -> list[str]:
-    """Convenience wrapper with empty defaults."""
+    """Convenience wrapper with empty defaults.
+
+    ``known_memory_entries`` defaults to an empty frozenset (= no entries),
+    which is the realistic state for tests that aren't exercising the
+    memory.entry path. Test-internal default — the production signature
+    requires the parameter, see ``_filter_ghost_names_by_registry``.
+    """
     return _filter_ghost_names_by_registry(
         names,
         skill_meta_map=skill_meta_map,
         mcp_tool_map=mcp_tool_map,
         available_agents=available_agents,
+        known_memory_entries=known_memory_entries if known_memory_entries is not None else frozenset(),
     )
 
 
@@ -235,6 +240,7 @@ def test_r9_ghost_warning_logged_once_per_unique_name(capsys: pytest.CaptureFixt
     # First call: warning emitted.
     _filter_ghost_names_by_registry(
         [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
+        known_memory_entries=frozenset(),
         _warned=warned,
     )
     captured = capsys.readouterr()
@@ -246,6 +252,7 @@ def test_r9_ghost_warning_logged_once_per_unique_name(capsys: pytest.CaptureFixt
     # Second call with same _warned: no additional warning.
     _filter_ghost_names_by_registry(
         [ghost], skill_meta_map=skill_meta_map, mcp_tool_map=None, available_agents=None,
+        known_memory_entries=frozenset(),
         _warned=warned,
     )
     captured2 = capsys.readouterr()
@@ -308,6 +315,7 @@ def test_r10_integration_tracker_ghost_excluded_from_hot_list(tmp_path: Path) ->
         skill_meta_map=skill_meta_map,
         mcp_tool_map=None,
         available_agents=None,
+        known_memory_entries=frozenset(),
     )
 
     assert "skill__word_stats_demo" in filtered, (
@@ -365,24 +373,3 @@ def test_r12_memory_entry_filtered_when_absent_from_known_set() -> None:
     )
 
 
-# ── R13. memory.entry pass-through when known_memory_entries is None ──────────
-
-
-def test_r13_memory_entry_passes_when_known_set_is_none() -> None:
-    """Tier 2: when known_memory_entries=None, memory.entry names pass through.
-
-    Backwards-compat behaviour for callers that have not been updated to
-    enumerate memory entries. The prior implementation fell through to
-    static_ops which rejected ALL memory.entry names; the fix passes
-    them unchecked when the caller hasn't supplied an enumerated set.
-    """
-    filtered = _filter_ghost_names_by_registry(
-        ["memory.entry__some_slug"],
-        skill_meta_map=None,
-        mcp_tool_map=None,
-        available_agents=None,
-        # known_memory_entries omitted (= None)
-    )
-    assert filtered == ["memory.entry__some_slug"], (
-        "memory.entry name passes through when caller does not supply known set."
-    )

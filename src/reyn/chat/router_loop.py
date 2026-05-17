@@ -394,7 +394,7 @@ def _filter_ghost_names_by_registry(
     available_agents: "list[dict] | None",
     *,
     known_skill_names: "frozenset[str] | None" = None,
-    known_memory_entries: "frozenset[str] | None" = None,
+    known_memory_entries: "frozenset[str]",
     _warned: "set[str] | None" = None,
 ) -> "list[str]":
     """Filter hot-list names that pass structural check but don't exist in the registry.
@@ -414,9 +414,8 @@ def _filter_ghost_names_by_registry(
       (or any server name prefix for ``mcp.server__*``).
     - ``memory.entry__*`` → must be in ``known_memory_entries`` (=
       qualified names enumerated by ``_enumerate_shared_memory_entries``
-      at hot-list build time). When the set is None, memory.entry names
-      pass through unchecked — caller is responsible for supplying the
-      enumerated set when the seed includes dynamic memory entries.
+      at hot-list build time). Required parameter — caller must supply
+      the enumerated set (possibly empty when no entries exist).
     - Operation categories (``file__*``, ``web__*``, ``memory.operation__*``,
       ``reyn.source__*``, ``rag.operation__*``, ``mcp.operation__*``,
       ``exec__*``) → must be in ``KNOWN_STATIC_QUALIFIED_NAMES`` (static
@@ -485,14 +484,10 @@ def _filter_ghost_names_by_registry(
         elif category == "memory.entry":
             # Dynamic category enumerated per-session from .reyn/memory/*.md
             # by ``_enumerate_shared_memory_entries``. Static op registry
-            # does NOT contain user-saved memory entry slugs. When the
-            # caller passes ``known_memory_entries``, check membership;
-            # when it does not, pass through unchecked (= preserves the
-            # prior behaviour for callers that haven't been updated yet).
-            if known_memory_entries is not None:
-                exists = name in known_memory_entries
-            else:
-                exists = True
+            # does NOT contain user-saved memory entry slugs; the caller
+            # is required to supply ``known_memory_entries`` (= empty
+            # frozenset is valid for sessions with zero entries).
+            exists = name in known_memory_entries
         else:
             # Operation categories not enumerable from session state:
             # check static op registry. (``rag.corpus__*`` is also a
