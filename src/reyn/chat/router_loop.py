@@ -516,6 +516,11 @@ class RouterLoop:
             host, "get_universal_wrappers_enabled", None,
         )
         _univ_enabled = bool(_univ_enabled_getter()) if _univ_enabled_getter else False
+        # Same getattr-fallback pattern: hosts without get_cwd (= FakeRouterHost
+        # in LLMReplay tests) skip the Environment section so the SP byte
+        # content stays unchanged for cached fixtures.
+        _cwd_getter = getattr(host, "get_cwd", None)
+        _cwd_str = _cwd_getter() if _cwd_getter else None
         # FP-0034 Phase 2 step 1: D14 visibility gate for search_actions.
         # Only show search_actions when (a) wrappers are on, (b) the
         # operator configured an embedding model class, AND (c) the
@@ -650,6 +655,7 @@ class RouterLoop:
                 # in LLMReplay tests) default to False so SP byte content stays
                 # unchanged for cached fixtures.
                 universal_wrappers_enabled=_univ_enabled,
+                cwd=_cwd_str,
             )
         # ChatSession._handle_user_message appends the user turn to history
         # BEFORE invoking _run_router_loop, so by the time we get here the
