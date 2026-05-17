@@ -13,6 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual.app import ComposeResult, RenderResult
 from textual.message import Message
 from textual.widget import Widget
@@ -42,13 +43,17 @@ class _PanelHeader(Static):
 
     def render(self) -> RenderResult:
         try:
-            return self._panel._panel_header_markup()
+            markup = self._panel._panel_header_markup()
+            t = Text.from_markup(markup)
+            w = self.content_region.width
+            if w > 0:
+                t.truncate(w)
+            return t
         except Exception as exc:
             logger.warning("right_panel header render failed: %s", exc)
             return ""
 
     def invalidate(self) -> None:
-        self._layout_cache.clear()
         self.refresh()
 
 
@@ -73,7 +78,6 @@ class _PanelContent(Static):
 
     def invalidate(self) -> None:
         """Force a re-render on the next frame."""
-        self._layout_cache.clear()
         self.refresh(layout=True)
 
 
