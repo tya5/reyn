@@ -267,6 +267,12 @@ class OutboxRouter:
         Hides the sticky ``⟳ thinking…`` indicator first: while the
         agent is waiting for a human answer, "thinking" is misleading
         — the system is blocked on user input, not on the model.
+
+        Computes ``queued_extra`` from the session's intervention registry
+        so the widget can render a persistent ``+N more pending`` badge.
+        The sticky ``awaiting answer (N queued)`` status gets overwritten
+        by the next ``thinking…`` event, so we need an inline persistent
+        signal instead.
         """
         conv.hide_status()
         iv_id = msg.meta.get("intervention_id", "")
@@ -274,7 +280,20 @@ class OutboxRouter:
         choices = None
         if raw_choices:
             choices = [(c["label"], c["id"]) for c in raw_choices]
-        self._app._mount_intervention(conv, msg.text, iv_id, choices)
+        # Best-effort queue depth — the registry owns the canonical count;
+        # any failure (no session attached, attribute missing on a stubbed
+        # session in tests) falls back to 0 so we never break the mount.
+        queued_extra = 0
+        try:
+            session = self._app._get_session()
+            registry = getattr(session, "_interventions", None) if session else None
+            if registry is not None:
+                queued_extra = max(0, registry.queued_count() - 1)
+        except Exception:
+            queued_extra = 0
+        self._app._mount_intervention(
+            conv, msg.text, iv_id, choices, queued_extra=queued_extra,
+        )
 
     def _on_intervention_resolved(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,

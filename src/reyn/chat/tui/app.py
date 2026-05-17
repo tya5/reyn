@@ -230,6 +230,7 @@ class ReynTUIApp(App):
         text: str,
         iv_id: str,
         choices: list[tuple[str, str]] | None = None,
+        queued_extra: int = 0,
     ) -> None:
         """Mount an InterventionWidget inline in the conversation view.
 
@@ -237,6 +238,10 @@ class ReynTUIApp(App):
         rendered. The user's answer (chip label or free text) is routed via
         session._maybe_answer_oldest_intervention — which matches hotkeys /
         choice labels against the pending intervention.
+
+        ``queued_extra`` surfaces the number of additional pending
+        interventions waiting behind the head one (caller-computed) so the
+        widget can render a persistent ``+N more pending`` badge.
         """
         async def _callback(answer: str) -> None:
             session = self._get_session()
@@ -248,6 +253,7 @@ class ReynTUIApp(App):
             choices=choices,
             answer_callback=_callback,
             iv_id=iv_id,
+            queued_extra=queued_extra,
         )
 
     def _maybe_refresh_status(self, header: ReynHeader | None = None) -> None:
