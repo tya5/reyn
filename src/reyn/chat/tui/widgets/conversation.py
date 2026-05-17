@@ -56,6 +56,12 @@ from .streaming_row import StreamingRow
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
 _FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
+# RichLog ring-buffer size. Bumped from the historical 5000 → 20000 to push
+# the truncation boundary well past realistic session lengths (~400-800
+# turns at typical reply sizes). Storage stays modest at average line width;
+# turn anchors below are drop-aware so even pathological sessions that DO
+# cross the boundary don't break Ctrl+P/N navigation.
+_RICHLOG_MAX_LINES = 20_000
 
 
 def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
@@ -147,8 +153,17 @@ class ConversationView(Widget):
         self._last_speaker_at: float = 0.0
         # Empty-state (B5)
         self._has_first_message = False
-        # Turn navigation (B4) — log line indexes where each agent turn begins
+        # Turn navigation (B4) — absolute line positions for each turn header.
+        # "Absolute" = ``log._start_line + len(log.lines)`` at write time, NOT
+        # the bare ``len(log.lines)`` value. RichLog uses a ring buffer; once
+        # the session crosses _RICHLOG_MAX_LINES, ``log._start_line`` grows
+        # and ``log.lines`` shifts. Bare-index anchors silently rot the moment
+        # the first line is dropped; absolute positions stay stable and we
+        # convert back to the current ``log.lines`` index on read.
         self._turn_anchors: list[int] = []
+        # One-shot flag so the "earlier history trimmed" warning fires at most
+        # once per session (= the first time Ctrl+P/N is used after trim).
+        self._trim_warned = False
         # B3 — full text of the last truncated agent reply (or None when the
         # most recent reply fit within _FOLD_THRESHOLD_LINES).
         self._last_long_reply: str | None = None
@@ -164,7 +179,8 @@ class ConversationView(Widget):
     # ── composition ──────────────────────────────────────────────────────────
 
     def compose(self) -> ComposeResult:
-        yield RichLog(highlight=False, markup=False, wrap=True, max_lines=5000, id="log")
+        yield RichLog(highlight=False, markup=False, wrap=True,
+                      max_lines=_RICHLOG_MAX_LINES, id="log")
         # B5: empty-state hint, removed on first message
         yield Static(
             "  Type [bold]/[/] for commands  ·  [bold]Ctrl+B[/] panel  ·  "
@@ -212,7 +228,7 @@ class ConversationView(Widget):
             # results. Ctrl+P / Ctrl+N then walk through every header in
             # order, which matches the user's mental model of "jump to
             # the previous turn" better than "jump only to agent replies".
-            self._turn_anchors.append(len(log.lines))
+            self._turn_anchors.append(self._absolute_line_position(log))
             # Cap to last 200 to avoid unbounded growth (long sessions)
             if len(self._turn_anchors) > 200:
                 self._turn_anchors = self._turn_anchors[-200:]
@@ -567,14 +583,65 @@ class ConversationView(Widget):
         """Scroll the log to the next agent turn anchor."""
         self._jump_to_relative_anchor(+1)
 
+    @staticmethod
+    def _absolute_line_position(log: RichLog) -> int:
+        """Return the absolute write-position (drop-aware) for the next line.
+
+        ``log._start_line`` is RichLog's cumulative dropped-lines counter
+        (private but stable). Combined with ``len(log.lines)``, it yields
+        a monotonic absolute index that survives the ring-buffer trim —
+        unlike the bare ``len(log.lines)`` value, which silently rebases
+        the moment ``max_lines`` is exceeded.
+        """
+        return getattr(log, "_start_line", 0) + len(log.lines)
+
+    def _resolve_anchors_to_current_view(self, log: RichLog) -> list[int]:
+        """Project stored absolute anchors back into current ``log.lines`` indexes.
+
+        Anchors whose target line has been trimmed (= ``absolute - start < 0``)
+        are silently dropped: jumping to a turn that no longer exists in the
+        log would scroll to whatever line happens to occupy that slot now,
+        which is exactly the bug the bare-index version exhibited.
+        """
+        start = getattr(log, "_start_line", 0)
+        return [a - start for a in self._turn_anchors if a - start >= 0]
+
+    def _maybe_warn_about_trimmed_history(self, log: RichLog) -> None:
+        """Surface a one-shot dim status when older history has been trimmed.
+
+        We only fire once per session — repeated Ctrl+P presses past the
+        top would otherwise spam the sticky status with the same message.
+        ``/clear`` resets the flag so a fresh session can warn again.
+        """
+        if self._trim_warned:
+            return
+        start = getattr(log, "_start_line", 0)
+        if start <= 0:
+            return
+        self._trim_warned = True
+        sticky = self._sticky()
+        if sticky is not None:
+            try:
+                sticky.show(
+                    f"↑ earlier history trimmed ({start:,} lines)",
+                    kind="general",
+                )
+            except Exception:
+                pass
+
     def _jump_to_relative_anchor(self, delta: int) -> None:
         if not self._turn_anchors:
             return
         log = self._log()
+        anchors = self._resolve_anchors_to_current_view(log)
+        if not anchors:
+            self._maybe_warn_about_trimmed_history(log)
+            return
+        # If the trim swallowed some anchors, surface that to the user.
+        if len(anchors) < len(self._turn_anchors):
+            self._maybe_warn_about_trimmed_history(log)
         # Find the nearest anchor >= or <= current scroll y
         cur_y = log.scroll_y
-        # Pick the most recent one before/after cur_y
-        anchors = self._turn_anchors
         if delta < 0:
             target = None
             for a in reversed(anchors):
@@ -610,6 +677,7 @@ class ConversationView(Widget):
         self._last_speaker = ""
         self._last_speaker_at = 0.0
         self._turn_anchors.clear()
+        self._trim_warned = False
         self._last_long_reply = None
         # Hide sticky status
         self.hide_status()
