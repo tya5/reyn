@@ -45,7 +45,7 @@ class InputBar(Widget):
         Binding("tab", "confirm_picker", "Confirm", priority=True, show=False),
         Binding("up", "key_up", "Up", priority=True, show=False),
         Binding("down", "key_down", "Down", priority=True, show=False),
-        Binding("escape", "dismiss_picker", "Esc", priority=True, show=False),
+        Binding("escape", "dismiss_picker", "Dismiss", priority=True, show=False),
         Binding("ctrl+j", "newline", "Newline", priority=True, show=False),
         Binding("ctrl+u", "clear_input", "Clear input", priority=True, show=False),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True, show=False),

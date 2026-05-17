@@ -24,6 +24,7 @@ _KEY_PRETTY: dict[str, str] = {
     "ctrl+shift+o": "⌃⇧O",
     "ctrl+shift+w": "⌃⇧W",
     "enter": "Enter", "tab": "Tab", "escape": "Esc", "space": "Space",
+    "up": "↑", "down": "↓", "left": "←", "right": "→",
 }
 _CONVERSATION_KEYS = {"ctrl+p", "ctrl+n", "ctrl+shift+n", "ctrl+shift+p"}
 _PANEL_KEYS = {
@@ -33,9 +34,15 @@ _PANEL_KEYS = {
 _EVENTS_KEYS = {"f", "t"}
 _DOCS_KEYS = {"j", "k", "space", "/"}
 _GROUP_ORDER = [
-    "GLOBAL", "CONVERSATION", "PANEL",
+    "GLOBAL", "INPUT", "CONVERSATION", "PANEL",
     "EVENTS (gated)", "DOCS (gated)", "OTHER",
 ]
+
+# Keys whose app-level binding is voice-mode-gated (active only during
+# recording) and whose dominant chat-time meaning lives on InputBar.
+# Surface InputBar's description for these so the Keys tab reflects what
+# the user experiences 99 % of the time, not the voice-mode override.
+_INPUT_OWNED_KEYS = {"enter", "escape", "tab", "up", "down"}
 
 
 def _key_group_for(key: str) -> str:
@@ -64,17 +71,39 @@ def _pretty_key(key: str) -> str:
 
 def render_keys(app: "App") -> str:
     """Return Rich markup listing bindings grouped by context."""
+    # Local import keeps right_panel/keys_tab decoupled from widget-init
+    # order (InputBar imports from chat.slash, which would otherwise be
+    # pulled in at module-load time).
+    from ..input_bar import InputBar
+
     groups: dict[str, list[tuple[str, str]]] = {g: [] for g in _GROUP_ORDER}
     seen: set[str] = set()
+    # App-level bindings first — they take precedence on same-key conflicts
+    # (the InputBar's ctrl+c / ctrl+d / ctrl+l shadow app's, but app's
+    # description is the load-bearing one users see in the footer hint).
+    # Exception: _INPUT_OWNED_KEYS — defer to InputBar so the listed
+    # description matches the non-voice-mode behavior.
     for raw in app.BINDINGS:
         b = raw if isinstance(raw, Binding) else Binding(*raw)
         if b.key in seen or not b.description:
+            continue
+        if b.key in _INPUT_OWNED_KEYS:
             continue
         seen.add(b.key)
         group = _key_group_for(b.key)
         if group not in groups:
             group = "OTHER"
         groups[group].append((_pretty_key(b.key), b.description))
+    # InputBar-level bindings: chat-input affordances (Enter / Tab / arrows
+    # / Esc / Ctrl+J Newline / Ctrl+U Clear input). Without surfacing
+    # these the Keys tab silently omitted "how do I insert a newline"
+    # and "how do I wipe the buffer" — both load-bearing for the input box.
+    for raw in InputBar.BINDINGS:
+        b = raw if isinstance(raw, Binding) else Binding(*raw)
+        if b.key in seen or not b.description:
+            continue
+        seen.add(b.key)
+        groups["INPUT"].append((_pretty_key(b.key), b.description))
 
     lines: list[str] = []
     # Key column width: max key length within the group, capped at 6
