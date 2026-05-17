@@ -192,7 +192,14 @@ async def test_slash_picker_tab_confirms():
 
 @pytest.mark.asyncio
 async def test_slash_picker_escape_dismisses():
-    """Escape hides the picker but leaves text intact."""
+    """Escape hides the picker AND clears the slash prefix from input.
+
+    The picker is only visible while the user is typing /<name-partial>
+    (no space, no newline — see ``_update_picker``), so the entire input
+    is the slash prefix being discovered. Esc treats it as "abandon
+    slash entry" (Slack/Discord convention) — leaving "/l" behind made
+    Esc feel like a no-op.
+    """
     from textual.widgets import TextArea
 
     from reyn.chat.tui.widgets.slash_picker import SlashPicker
@@ -208,7 +215,7 @@ async def test_slash_picker_escape_dismisses():
         await pilot.pause()
         assert not picker.visible_
         ta = app.query_one("#input", TextArea)
-        assert ta.text == "/l"
+        assert ta.text == ""
 
 
 # ── test: conversation view ───────────────────────────────────────────────────
