@@ -606,6 +606,88 @@ async def test_preview_pane_vim_keys_scroll_richlog():
         assert deltas["col"] == [+1, -1]
 
 
+# ── test: right panel — preview pane peek-next/prev without refocus ──────────
+
+@pytest.mark.asyncio
+async def test_preview_pane_shift_jk_moves_parent_tab_cursor():
+    """Tier 2: J / K / n / p inside a focused _PreviewPane move the parent tab cursor.
+
+    The user expectation is: preview is open, focus is on the preview pane
+    (via Tab cycling or close-preview restore), pressing J / n advances to
+    the *next* doc / event / memory / agent item without first having to
+    refocus the upper list. Pins that contract per active tab so a future
+    refactor of the dispatch can't silently regress it. Lowercase j / k
+    remain scroll-inside-preview and must not move the cursor.
+    """
+    from reyn.chat.tui.widgets.right_panel.shells import _PreviewPane
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#right_panel")
+        pane = panel.query_one("#preview-pane", _PreviewPane)
+
+        class _FakeKey:
+            def __init__(self, key: str) -> None:
+                self.key = key
+
+            def prevent_default(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        # ── docs tab: J advances _docs_cursor, K reverses it ──
+        panel._panel_type = "docs"
+        panel._docs_files = [Path("/tmp/a.md"), Path("/tmp/b.md"), Path("/tmp/c.md")]
+        panel._docs_groups = {"": panel._docs_files}
+        panel._docs_cursor = 0
+
+        pane.on_key(_FakeKey("J"))
+        assert panel._docs_cursor == 1, "J should advance the docs cursor"
+        pane.on_key(_FakeKey("n"))  # bonus alias
+        assert panel._docs_cursor == 2, "n alias should also advance"
+        pane.on_key(_FakeKey("J"))  # wrap forward
+        assert panel._docs_cursor == 0
+        pane.on_key(_FakeKey("K"))  # wrap backward
+        assert panel._docs_cursor == 2
+        pane.on_key(_FakeKey("p"))  # bonus alias for previous
+        assert panel._docs_cursor == 1
+
+        # Lowercase j / k must NOT move the parent cursor (still scroll-inside).
+        before = panel._docs_cursor
+        pane.on_key(_FakeKey("j"))
+        pane.on_key(_FakeKey("k"))
+        assert panel._docs_cursor == before, "lowercase j/k must not move parent cursor"
+
+        # ── events tab: same contract on the events cursor ──
+        panel._panel_type = "events"
+        panel._events_visible = [{"type": "e0"}, {"type": "e1"}, {"type": "e2"}]
+        panel._events_cursor = 0
+        pane.on_key(_FakeKey("J"))
+        assert panel._events_cursor == 1
+        pane.on_key(_FakeKey("K"))
+        assert panel._events_cursor == 0
+
+        # ── memory tab ──
+        panel._panel_type = "memory"
+        panel._memory_entries = [object(), object(), object()]
+        panel._memory_cursor = 0
+        pane.on_key(_FakeKey("J"))
+        assert panel._memory_cursor == 1
+        pane.on_key(_FakeKey("K"))
+        assert panel._memory_cursor == 0
+
+        # ── agents tab ──
+        panel._panel_type = "agents"
+        panel._agents_items = [{"kind": "x"}, {"kind": "y"}]
+        panel._agents_cursor = 0
+        pane.on_key(_FakeKey("J"))
+        assert panel._agents_cursor == 1
+        pane.on_key(_FakeKey("K"))
+        assert panel._agents_cursor == 0
+
+
 # ── test: right panel — event filter cycling ─────────────────────────────────
 
 @pytest.mark.asyncio
