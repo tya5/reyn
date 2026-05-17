@@ -132,8 +132,11 @@ scenarios:
           - reply contains a poem or poem-like text
           - reply is in a natural poetic form with at least two lines
       events:
-        must_emit:
+        # B28-Q2: LLM may answer the poem inline (chat_turn_completed_inline)
+        # or dispatch via direct_llm skill (routing_decided). Accept either.
+        must_emit_any:
           - { type: routing_decided, count: ">=1" }
+          - { type: chat_turn_completed_inline, count: ">=1" }
         must_not_emit:
           - { type: permission_denied }
       artifacts:

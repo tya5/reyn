@@ -89,6 +89,11 @@ class ExpectedEvents:
     must_emit: list[EventAssertion] = field(default_factory=list)
     must_not_emit: list[EventAssertion] = field(default_factory=list)
     sequence: list[str] = field(default_factory=list)  # ordered subsequence of event types
+    # B28-Q2: OR-of-listed semantics — the scenario passes if ANY ONE of the
+    # listed event types appears in the event log.  Use when the LLM may take
+    # either a catalog-dispatch path (routing_decided) OR an inline-reply path
+    # (chat_turn_completed_inline) depending on its routing decision.
+    must_emit_any: list[EventAssertion] = field(default_factory=list)
 
 
 # ── artifacts ─────────────────────────────────────────────────────────────
@@ -212,7 +217,17 @@ def _parse_expected_events(raw: Any, context: str) -> ExpectedEvents:
     sequence = raw.get("sequence", [])
     if not isinstance(sequence, list):
         raise ScenarioLoadError(f"{context}: 'sequence' must be a list of event type strings")
-    return ExpectedEvents(must_emit=must_emit, must_not_emit=must_not_emit, sequence=sequence)
+    # B28-Q2: must_emit_any — OR-of-listed semantics (pass if any one fires).
+    must_emit_any = [
+        _parse_event_assertion(item, f"{context}/must_emit_any[{i}]")
+        for i, item in enumerate(raw.get("must_emit_any", []))
+    ]
+    return ExpectedEvents(
+        must_emit=must_emit,
+        must_not_emit=must_not_emit,
+        sequence=sequence,
+        must_emit_any=must_emit_any,
+    )
 
 
 def _parse_expected_reply(raw: Any, context: str) -> ExpectedReply:

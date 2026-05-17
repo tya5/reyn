@@ -117,6 +117,7 @@ def verify_events(
         bool(expected.must_emit)
         or bool(expected.must_not_emit)
         or bool(expected.sequence)
+        or bool(expected.must_emit_any)
     )
 
     if not events and has_assertions:
@@ -151,6 +152,20 @@ def verify_events(
                 "found_count": len(matching),
             })
 
+    # ── must_emit_any check (B28-Q2: OR-of-listed semantics) ───────────────
+    # Passes if at least one of the listed assertions matches at least one event.
+    if expected.must_emit_any:
+        any_matched = any(
+            any(_event_matches_assertion(e, assertion) for e in events)
+            for assertion in expected.must_emit_any
+        )
+        if not any_matched:
+            failures.append({
+                "check": "must_emit_any",
+                "types": [a.type for a in expected.must_emit_any],
+                "reason": "none of the listed event types was found in the event log",
+            })
+
     # ── sequence check ──────────────────────────────────────────────────────
     if expected.sequence:
         seq = expected.sequence
@@ -178,5 +193,6 @@ def verify_events(
             "must_emit_count": len(expected.must_emit),
             "must_not_emit_count": len(expected.must_not_emit),
             "sequence_length": len(expected.sequence),
+            "must_emit_any_count": len(expected.must_emit_any),
         },
     )

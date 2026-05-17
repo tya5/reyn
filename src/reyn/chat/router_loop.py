@@ -666,6 +666,14 @@ class RouterLoop:
         if not history or history[-1].get("role") != "user" or history[-1].get("content") != user_text:
             messages.append({"role": "user", "content": user_text})
 
+        # B28-Q2 Case A: per-turn counters for chat_turn_completed_inline.
+        # _routing_decided_fired: set to True the first time routing_decided
+        #   is emitted in this turn (= invoke_action or hot_list_alias path).
+        # _tool_calls_attempted: count of tool_call rounds where the LLM
+        #   invoked at least one tool (including non-catalog tools).
+        _routing_decided_fired: bool = False
+        _tool_calls_attempted: int = 0
+
         for _iteration in range(self.max_iterations):
             resolved_model = host.resolve_model(self.router_model)
             # ADR-0025: memo lookup — a recorded LLMToolCallResult for
@@ -720,6 +728,8 @@ class RouterLoop:
             if result.usage:
                 self._total_usage += result.usage
             if result.tool_calls:
+                # B28-Q2: count non-empty tool_call rounds for chat_turn_completed_inline.
+                _tool_calls_attempted += 1
                 # F5 fix (dogfood batch 1): dedupe duplicate async
                 # tool_calls within the same round. Weak models
                 # occasionally emit `delegate_to_agent` twice in one
@@ -884,6 +894,7 @@ class RouterLoop:
                             outcome=_rd_outcome,
                             chain_id=self.chain_id,
                         )
+                        _routing_decided_fired = True  # B28-Q2: track for inline exclusivity
                 # No delegation — accumulate messages for next iteration.
                 # Use deduped tool_calls so the assistant message and tool
                 # result messages stay in sync (matching tool_call_ids).
@@ -932,6 +943,16 @@ class RouterLoop:
                 return self._total_usage  # no retry
 
             # Text reply — emit and stop
+            # B28-Q2 Case A: emit chat_turn_completed_inline when no catalog
+            # dispatch happened in this turn (= routing_decided never fired).
+            # Mutually exclusive with routing_decided per turn (P6 audit).
+            if _univ_enabled and not _routing_decided_fired:
+                host.events.emit(
+                    "chat_turn_completed_inline",
+                    chain_id=self.chain_id,
+                    decision="inline_reply",
+                    tool_calls_attempted=_tool_calls_attempted,
+                )
             await self.host.put_outbox(
                 kind="agent",
                 text=result.content or "",
