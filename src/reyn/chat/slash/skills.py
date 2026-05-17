@@ -1,9 +1,14 @@
 """/skills slash command."""
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 
 from reyn.chat.slash import reply, slash
+
+# See help.py for rationale — 65 = common 80-col terminal minus the
+# combined body indent (7) + conv pane / RichLog padding overhead.
+_TARGET_WIDTH = 65
 
 
 def _list_skills(root: Path) -> list[str]:
@@ -33,8 +38,25 @@ async def skills_cmd(session: "object", args: str) -> None:
 
     lines: list[str] = ["available skills:"]
     for label, names in sources:
-        if names:
-            lines.append(f"  {label}: " + ", ".join(names))
+        if not names:
+            continue
+        prefix = f"  {label}: "
+        body = ", ".join(names)
+        if len(prefix) + len(body) <= _TARGET_WIDTH:
+            lines.append(prefix + body)
+        else:
+            # Hanging indent: wrap continuations under the comma-list so
+            # the source label stays anchored and the long list doesn't
+            # break to column 0 mid-word.
+            wrapped = textwrap.fill(
+                body,
+                width=_TARGET_WIDTH,
+                initial_indent=prefix,
+                subsequent_indent=" " * len(prefix),
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            lines.append(wrapped)
     if len(lines) == 1:
         lines.append("  (none found)")
 
