@@ -1,0 +1,131 @@
+{
+  "batch": "B33",
+  "worker": "6/7",
+  "head": "08ccc27",
+  "agent": "dogfood-b33-6",
+  "date": "2026-05-17",
+  "scenarios_run": [
+    {
+      "id": "plan_compare_two_concepts",
+      "set": "plan_mode",
+      "outcome": "inconclusive",
+      "plan_emitted": 1,
+      "plan_step_started": 3,
+      "plan_step_completed": 3,
+      "plan_aggregated": 1,
+      "plan_run_interrupted": 0,
+      "invoke_skill_spawn_ack_exit": 0,
+      "notes": "plan lifecycle correct, citations reference plan step IDs not doc headers. control_ir_failed x4 (recall/index_query NoneType error)"
+    },
+    {
+      "id": "plan_explain_with_code_references",
+      "set": "plan_mode",
+      "outcome": "refuted",
+      "plan_emitted": 0,
+      "notes": "Router used invoke_action -> list_actions(filter=plan) instead of plan tool. Same as B32."
+    },
+    {
+      "id": "plan_summary_across_n_files",
+      "set": "plan_mode",
+      "outcome": "refuted",
+      "plan_emitted": 1,
+      "plan_step_started": 6,
+      "plan_step_completed": 6,
+      "plan_aggregated": 1,
+      "invoke_skill_spawn_ack_exit": 0,
+      "notes": "PLAN-STEP-PATH residual confirmed: reyn_src_read called with bare filenames (principles.md not docs/concepts/principles.md). All step content tiny (<=197 chars). Reply: files not found."
+    },
+    {
+      "id": "narr-1-mcp-search",
+      "set": "fp_0011_narration",
+      "outcome": "blocked",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 1,
+      "notes": "Blocked: mcp_search requires --allow-unsafe-python. H3 fired, error narrated."
+    },
+    {
+      "id": "narr-3-skill-builder",
+      "set": "fp_0011_narration",
+      "outcome": "inconclusive",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_run_completed_status": "finished",
+      "skill_completion_injected": 1,
+      "notes": "skill_builder succeeded (lint_passed=true, 5 files). Reply thin: skill_name only, no skill_path/files_written/file_count/lint_passed extracted."
+    },
+    {
+      "id": "s-fp11-1-builder-invalid-spec",
+      "set": "fp_0011_0012_retest",
+      "outcome": "blocked",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 0,
+      "notes": "Skill run >60s, HTTP timeout. workflow_aborted via phase_no_progress (build_skill loop). skill_run_failed recorded but skill_completion_injected NOT fired (NEW-1 bug candidate)."
+    },
+    {
+      "id": "s-fp11-2-eval-missing-target",
+      "set": "fp_0011_0012_retest",
+      "outcome": "inconclusive",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 1,
+      "d1_error_surfaced": true,
+      "d1_no_fabricated_score": true,
+      "notes": "Error surfaced but wrong error type (None values validation, not target-not-found). D1 anti-optimism partially satisfied."
+    },
+    {
+      "id": "s-fp11-3-mcp-search-empty",
+      "set": "fp_0011_0012_retest",
+      "outcome": "blocked",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 1,
+      "notes": "mcp_search blocked by --allow-unsafe-python. Cannot reach empty-result path."
+    },
+    {
+      "id": "s-fp12-spawn-1-builder-success-ack",
+      "set": "fp_0011_0012_retest",
+      "outcome": "inconclusive",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_run_completed_status": "finished",
+      "skill_completion_injected": 1,
+      "d5_anti_double_dispatch": true,
+      "tasks_pointer_present": false,
+      "notes": "H3 means no spawn-ack message generated; user gets completion narration directly. /tasks pointer absent (design tension with H3)."
+    },
+    {
+      "id": "s-fp12-completion-1-mcp-search-narrate",
+      "set": "fp_0011_0012_retest",
+      "outcome": "blocked",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 1,
+      "notes": "mcp_search blocked by --allow-unsafe-python."
+    },
+    {
+      "id": "s-fp12-completion-2-error-narrate",
+      "set": "fp_0011_0012_retest",
+      "outcome": "verified",
+      "invoke_skill_spawn_ack_exit": 1,
+      "skill_completion_injected": 1,
+      "task_completed_message_injected": true,
+      "d1_error_surfaced": true,
+      "d1_no_false_success": true,
+      "d5_anti_double_dispatch": true,
+      "notes": "KEY H3 SCENARIO. Reply: 'Skill skill_builder failed because the user requested a skill with an invalid graph specification containing a cycle.' B32 hallucination resolved."
+    }
+  ],
+  "summary": {
+    "verified": 1,
+    "inconclusive": 4,
+    "refuted": 2,
+    "blocked": 4,
+    "h3_spawn_ack_exit_fires": 8,
+    "h3_scenarios_with_spawn": 8,
+    "plan_emitted_count": 2,
+    "plan_emitted_total": 3,
+    "brier_estimate_plan_mode": 0.396
+  },
+  "new_findings": [
+    "NEW-1: skill_completion_injected not firing for workflow_aborted via phase_no_progress (s-fp11-1). Fires for LLM-abort at plan_skill (s-fp12-completion-2). Needs investigation.",
+    "NEW-2: PLAN-STEP-PATH still present (B30-MED-3). reyn_src_read with bare filenames in plan_summary_across_n_files.",
+    "NEW-3: recall control_ir_failed (NoneType base_dir) in plan_compare_two_concepts x4. RAG index not initialized.",
+    "NEW-4: mcp_search infrastructure gap — 4 scenarios blocked by missing --allow-unsafe-python server flag.",
+    "NEW-5: H3 eliminates spawn-ack message entirely in sync A2A calls. s-fp12-spawn-1 /tasks pointer dimension is untestable with current test setup."
+  ]
+}

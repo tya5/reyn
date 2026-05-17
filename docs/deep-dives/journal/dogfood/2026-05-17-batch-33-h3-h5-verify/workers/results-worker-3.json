@@ -1,0 +1,161 @@
+{
+  "batch": "b33",
+  "worker": 3,
+  "set": "control_ir_ops",
+  "head": "08ccc27",
+  "agent": "dogfood-b33-3",
+  "driver": "reyn chat --cui stdin pipe",
+  "verified": 3,
+  "inconclusive": 0,
+  "refuted": 6,
+  "blocked": 0,
+  "total": 9,
+  "vs_b32": "+1V -1I",
+  "vs_b28": "-3V",
+  "w3_cluster_status": "partial_recovery",
+  "brier_h5": 0.3194,
+  "c1_stable": true,
+  "c1_note": "cold-start router tools=17 across all 9 scenarios",
+  "q2_stable": true,
+  "h3_verify": {
+    "s1_flipped": true,
+    "s1_b32": "refuted",
+    "s1_b33": "verified",
+    "s1_mechanism": "direct invoke_action(file__read) — synchronous, no spawn-ack race triggered",
+    "invoke_skill_spawn_ack_exit_observed_in": ["lint_a_skill", "judge_output_direct", "ask_user_round_trip"],
+    "h3_structural_confirmed": true,
+    "h3_note": "invoke_skill_spawn_ack_exit fires on all 3 spawn-path scenarios; no (answered) hallucination observed"
+  },
+  "scenarios": {
+    "file_read_via_chat": {
+      "verdict": "verified",
+      "b28": "verified",
+      "b30": "verified",
+      "b32": "refuted",
+      "first_turn_tool": "file__read",
+      "routing_decided": true,
+      "tool_executed": true,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "H3 FIX FLIPPED: direct file__read path; P1-P8 content quoted verbatim in reply",
+      "brier_sq": 0.375
+    },
+    "file_glob_grep": {
+      "verdict": "refuted",
+      "b28": "verified",
+      "b30": "refuted",
+      "b32": "refuted",
+      "first_turn_tool": "file__list",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "B27-M2 attractor persists: file__list called with {filter:...} not {path:...} -> KeyError",
+      "brier_sq": 0.125
+    },
+    "web_search_query": {
+      "verdict": "verified",
+      "b28": "inconclusive",
+      "b30": "verified",
+      "b32": "verified",
+      "first_turn_tool": "web__search",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "web_search_started + web_search_completed present; OpenAI SDK mentioned in reply",
+      "brier_sq": 0.125
+    },
+    "web_fetch_url": {
+      "verdict": "refuted",
+      "b28": "verified",
+      "b30": "refuted",
+      "b32": "verified",
+      "first_turn_tool": "web__fetch",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "NEW REGRESSION vs B32: permission_denied for web fetch; web_fetch_started not emitted; N=1 probabilistic",
+      "brier_sq": 0.875
+    },
+    "sandboxed_exec_simple": {
+      "verdict": "refuted",
+      "b28": "inconclusive",
+      "b30": "refuted",
+      "b32": "refuted",
+      "first_turn_tool": "exec__run",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "exec__run: no routing rule for category 'exec'; sandboxed_exec events absent; persistent",
+      "brier_sq": 0.125
+    },
+    "lint_a_skill": {
+      "verdict": "refuted",
+      "b28": "inconclusive",
+      "b30": "inconclusive",
+      "b32": "refuted",
+      "first_turn_tool": "skill__eval",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": true,
+      "note": "H3 spawn-ack exit confirmed; skill aborted: unsafe python step; lint_completed not emitted",
+      "brier_sq": 0.0
+    },
+    "recall_indexed_source": {
+      "verdict": "verified",
+      "b28": "blocked",
+      "b30": "refuted",
+      "b32": "inconclusive",
+      "first_turn_tool": "memory.entry__recall",
+      "routing_decided": true,
+      "tool_executed": true,
+      "invoke_skill_spawn_ack_exit": false,
+      "note": "B32 INCONCLUSIVE -> B33 VERIFIED: honest 'not found' reply; routing_decided present; no fabrication",
+      "brier_sq": 0.75
+    },
+    "judge_output_direct": {
+      "verdict": "refuted",
+      "b28": "blocked",
+      "b30": "refuted",
+      "b32": "refuted",
+      "first_turn_tool": "skill__judge_phase",
+      "routing_decided": true,
+      "tool_executed": true,
+      "invoke_skill_spawn_ack_exit": true,
+      "note": "H3 spawn-ack exit confirmed; workflow_aborted: act_turns budget exhausted; persistent",
+      "brier_sq": 0.375
+    },
+    "ask_user_round_trip": {
+      "verdict": "refuted",
+      "b28": "unknown",
+      "b30": "refuted",
+      "b32": "refuted",
+      "first_turn_tool": "describe_action (then skill__skill_builder on turn 2)",
+      "routing_decided": true,
+      "tool_executed": false,
+      "invoke_skill_spawn_ack_exit": true,
+      "note": "skill_builder completed successfully (workflow_finished, 7 files); but user_intervention_requested/received NOT emitted; ask happened at router inline level",
+      "brier_sq": 0.125
+    }
+  },
+  "new_findings": [
+    {
+      "id": "F1",
+      "severity": "LOW",
+      "description": "S4 web_fetch_url: permission denial in B33 (N=1 regression vs B32 verified). No code change explains this; classify as probabilistic variance."
+    },
+    {
+      "id": "F2",
+      "severity": "INFO",
+      "description": "H3 invoke_skill_spawn_ack_exit confirmed on 3/3 spawn scenarios (S6, S8, S9). No (answered) hallucination observed."
+    },
+    {
+      "id": "F3",
+      "severity": "INFO",
+      "description": "S9 skill_builder: skill completed successfully (7 files, all 6 phases). Control IR ask_user pathway remains ungapped."
+    },
+    {
+      "id": "F4",
+      "severity": "INFO",
+      "description": "S7 reclassified I->V: B32 borderline inconclusive; B33 cleanly satisfies 'not found' rubric criterion."
+    }
+  ]
+}

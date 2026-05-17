@@ -1,0 +1,133 @@
+{
+  "worker": "2/7",
+  "batch": "B33",
+  "run_id": "b33-worker2-v2",
+  "agent": "dogfood-b33-2",
+  "head": "08ccc27",
+  "aggregate": {
+    "verified": 0,
+    "inconclusive": 0,
+    "refuted": 9,
+    "blocked": 0,
+    "total": 9,
+    "verified_rate": 0.0,
+    "brier_score": 0.1076
+  },
+  "h3_fires": {
+    "applicable_scenarios": 4,
+    "fires": 4,
+    "scenarios": [
+      "skill_builder_web_summariser",
+      "word_stats_demo_sentence",
+      "word_stats_demo_multiline",
+      "eval_run_direct_llm"
+    ],
+    "event": "invoke_skill_spawn_ack_exit",
+    "old_race_pattern_skill_run_interrupted": 0
+  },
+  "wipe_check": {
+    "session_restored_count": 0,
+    "wipe_complete": true
+  },
+  "b30_new_1_2": {
+    "skill__index_docs_in_cold_start": false,
+    "skill__eval_in_cold_start": false,
+    "note": "Not visible in any of 28 LLM request tool arrays"
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "overall": "refuted",
+      "reply": "refuted",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.0,
+      "root_cause": "LLM tried nonexistent rag.operation__create_index, no invoke_skill"
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "overall": "refuted",
+      "reply": "verified",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.094,
+      "root_cause": "Used file__read via invoke_action directly, not invoke_skill. Reply correct."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "overall": "refuted",
+      "reply": "refuted",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.0,
+      "root_cause": "Same direct-action pattern, reply judge score below threshold"
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "overall": "refuted",
+      "reply": "inconclusive",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "inconclusive",
+      "brier": 0.375,
+      "h3_fires": true,
+      "root_cause": "skill_run_failed (phase loop), reply empty (send_to_agent_impl capture gap post-H3)"
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "overall": "refuted",
+      "reply": "inconclusive",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.219,
+      "h3_fires": true,
+      "root_cause": "Reply empty (capture gap), skill_run_completed.status=finished vs success schema mismatch"
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "overall": "refuted",
+      "reply": "refuted",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.125,
+      "h3_fires": true,
+      "root_cause": "Judge 0.3 (estimated stats), skill_run_completed status mismatch"
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "overall": "refuted",
+      "reply": "inconclusive",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.031,
+      "h3_fires": true,
+      "root_cause": "Router dispatched direct_llm not eval (eval not in hot-list), reply empty (capture gap)"
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "overall": "refuted",
+      "reply": "verified",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.125,
+      "root_cause": "Reply verified. llm_called event never emitted in router path. No compaction triggered."
+    },
+    {
+      "id": "chained_find_then_index",
+      "overall": "refuted",
+      "reply": "refuted",
+      "events": "refuted",
+      "artifacts": "refuted",
+      "predicted": "refuted",
+      "brier": 0.0,
+      "root_cause": "Same as S1: rag.operation__create_index nonexistent, no invoke_skill"
+    }
+  ]
+}

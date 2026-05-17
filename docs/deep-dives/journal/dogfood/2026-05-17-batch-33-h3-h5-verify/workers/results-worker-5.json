@@ -1,0 +1,76 @@
+{
+  "worker": "5/7",
+  "scenario_set": "multi_agent_and_mcp",
+  "head": "08ccc27",
+  "agent": "dogfood-b33-5",
+  "date": "2026-05-17",
+  "summary": {
+    "V": 0,
+    "I": 2,
+    "R": 5,
+    "B": 0,
+    "avg_brier": 0.2857
+  },
+  "h3_fix_verified": true,
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "verdict": "inconclusive",
+      "brier": 0.125,
+      "events_ok": true,
+      "invoke_skill_spawn_ack_exit": true,
+      "notes": "Registry unreachable. mcp_search ran. H3 fix confirmed. No alternatives in reply."
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "verdict": "refuted",
+      "brier": 0.125,
+      "events_ok": true,
+      "notes": "chat_turn_completed_inline satisfied must_emit_any. Reply non-actionable."
+    },
+    {
+      "id": "agent_delegation_simple",
+      "verdict": "refuted",
+      "brier": 1.125,
+      "events_ok": true,
+      "critical_finding": "peer_agent_not_found_hallucination",
+      "notes": "researcher agent missing but tool_returned=dispatched. LLM fabricated FP-0001 summary as 'AI fine-tuning agent'."
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "verdict": "inconclusive",
+      "brier": 0.375,
+      "events_ok": true,
+      "notes": "3-line summary produced but via fabricated delegation. Both agents missing."
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "verdict": "refuted",
+      "brier": 0.000,
+      "events_ok": true,
+      "notes": "mcp_search dispatched for A2A documentation question. Prediction matched."
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "verdict": "refuted",
+      "brier": 0.125,
+      "events_ok": true,
+      "notes": "mcp_search dispatched instead of mcp_install. No permission gate."
+    },
+    {
+      "id": "cron_schedule_status",
+      "verdict": "refuted",
+      "brier": 0.125,
+      "events_ok": false,
+      "events_failure": "routing_decided not fired (required)",
+      "notes": "Inline answer about OS crontab. Reyn cron not surfaced."
+    }
+  ],
+  "key_findings": [
+    "F1: H3 fix confirmed — invoke_skill_spawn_ack_exit fired on all skill-spawn paths",
+    "F2 NEW: peer-agent-not-found silent hallucination attractor (S3, S4) — HIGH severity",
+    "F3: mcp_search routing attractor persists for non-search requests (S5, S6) — not resolved since B32",
+    "F4: cron_schedule_status routing_decided not fired — Reyn cron not surfaced to LLM",
+    "F5: mcp_search blocked without --allow-unsafe-python — dogfood recipe gap"
+  ]
+}
