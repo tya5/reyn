@@ -545,17 +545,17 @@ class ConversationView(Widget):
     def render_cost_suffix(self, tokens: int, cost_usd: float, elapsed_s: float) -> None:
         """Append a dim per-turn cost suffix, right-aligned. Caller decides when (opt-in).
 
-        Uses Rich's ``justify="right"`` so the suffix tracks the actual content
-        width at render time. A hard-coded space prefix would either centre the
-        suffix on wider terminals or push it off-screen when the right panel is
-        open and the conv pane shrinks.
+        Both pieces are load-bearing: ``Text(..., justify="right")`` only
+        right-aligns when the renderer is told a width to fill, and
+        ``RichLog.write`` defaults to ``expand=False`` — without
+        ``expand=True`` the suffix silently renders at column 0.
         """
         t = Text(
             f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
             style="dim #666666",
             justify="right",
         )
-        self._write_log(t)
+        self._log().write(t, expand=True)
 
     # ── turn navigation (B4) ──────────────────────────────────────────────────
 
