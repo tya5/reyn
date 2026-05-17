@@ -46,6 +46,17 @@ class OutboxRouter:
 
     def __init__(self, app: "ReynTUIApp") -> None:
         self._app = app
+        # Tracker for the single in-flight transient-status auto-hide timer.
+        # Every transient sticky status (``/cost-inline on``, ``/copy …``,
+        # ``/docs-filter …``, etc.) arms ``app.set_timer(_, conv.hide_status)``
+        # to auto-clear after ~2 s. Before this tracker, every arming created
+        # a NEW timer and the previous one kept ticking — so a user firing two
+        # transients in quick succession (or transient → live ``⟳ thinking…``)
+        # would have the old timer silently hide the LIVE indicator a couple
+        # of seconds later. Holding a single handle lets us cancel the prior
+        # timer before installing a new one, and cancel it outright when a
+        # live thinking-status arrives so it can't kill the agent's spinner.
+        self._transient_status_timer = None  # type: ignore[assignment]
         # Dispatch table — each entry maps a `msg.kind` to its handler.
         # Methods on `self` are bound, so we can reference them directly.
         self.HANDLERS: dict[str, Callable[..., str | None]] = {
@@ -70,6 +81,44 @@ class OutboxRouter:
             # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
         }
+
+    # ── transient sticky helpers ──────────────────────────────────────────────
+
+    def _cancel_transient_timer(self) -> None:
+        """Cancel any in-flight auto-hide timer for the transient sticky.
+
+        Called before arming a new one, and whenever a live thinking
+        indicator takes over the sticky (= we must not allow the old
+        auto-hide to fire and kill the live spinner).
+        """
+        timer = self._transient_status_timer
+        if timer is None:
+            return
+        try:
+            timer.stop()
+        except Exception:
+            pass
+        self._transient_status_timer = None
+
+    def _show_transient_status(
+        self,
+        conv: ConversationView,
+        text: str,
+        *,
+        kind: str = "general",
+        duration: float = 2.5,
+    ) -> None:
+        """Show a transient sticky status that auto-hides after ``duration`` s.
+
+        Single entry point for ``show + set_timer(hide)`` so the previous
+        timer (if any) is always cancelled first. The previous behaviour
+        of arming a fresh timer per call meant a transient fired right
+        before an agent reply would hide the live ``⟳ thinking…`` ~2 s
+        into the agent's run.
+        """
+        self._cancel_transient_timer()
+        conv.show_status(text, kind=kind)
+        self._transient_status_timer = self._app.set_timer(duration, conv.hide_status)
 
     # ── main loop ─────────────────────────────────────────────────────────────
 
@@ -135,12 +184,22 @@ class OutboxRouter:
     def _on_attach_request(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`__attach_request__` — agent switched; refresh header label."""
+        """`__attach_request__` — agent switched; refresh header label.
+
+        Also clears the sticky status: a ``⟳ thinking…`` left by the
+        previous agent's in-flight turn would otherwise persist with
+        the new agent's name attached in the header, confusing the user
+        about WHICH agent is actively running. Any pending transient
+        auto-hide timer is cancelled too — the new agent should not
+        inherit a ghost timer from the old one's flow.
+        """
         app = self._app
         new_name = msg.text
         if new_name and app._agent_registry is not None:
             app._agent_name = new_name
             header.refresh_status(agent_name=new_name)
+            self._cancel_transient_timer()
+            conv.hide_status()
 
     def _on_matrix(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -173,16 +232,14 @@ class OutboxRouter:
         else:
             app._cost_inline_enabled = not app._cost_inline_enabled
         state = "on" if app._cost_inline_enabled else "off"
-        conv.show_status(f"cost-inline {state}", kind="general")
-        app.set_timer(2.5, conv.hide_status)
+        self._show_transient_status(conv, f"cost-inline {state}", duration=2.5)
 
     def _on_expand_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
         """`__expand_last_reply__` — /expand slash; flush truncated reply."""
         if not conv.expand_last_reply():
-            conv.show_status("nothing to expand", kind="general")
-            self._app.set_timer(2.0, conv.hide_status)
+            self._show_transient_status(conv, "nothing to expand", duration=2.0)
 
     def _on_copy_last_reply(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -205,14 +262,13 @@ class OutboxRouter:
         if arg.lower() == "list":
             count = conv.recent_reply_count()
             if count == 0:
-                conv.show_status("no replies buffered yet", kind="general")
+                self._show_transient_status(conv, "no replies buffered yet")
             else:
-                conv.show_status(
+                self._show_transient_status(
+                    conv,
                     f"{count} reply{'s' if count != 1 else ''} buffered "
                     f"— /copy 1..{count}",
-                    kind="general",
                 )
-            self._app.set_timer(2.5, conv.hide_status)
             return
 
         # Parse N. Empty → latest (n=1); digits → that index. Anything else
@@ -223,47 +279,44 @@ class OutboxRouter:
         elif arg.isdigit():
             n = int(arg)
             if n <= 0:
-                conv.show_status(
-                    "/copy index must be ≥ 1 (1 = newest)", kind="error",
+                self._show_transient_status(
+                    conv, "/copy index must be ≥ 1 (1 = newest)", kind="error",
                 )
-                self._app.set_timer(2.5, conv.hide_status)
                 return
         else:
-            conv.show_status(
-                "usage: /copy [N] or /copy list", kind="error",
+            self._show_transient_status(
+                conv, "usage: /copy [N] or /copy list", kind="error",
             )
-            self._app.set_timer(2.5, conv.hide_status)
             return
 
         text = conv.reply_at(n)
         if text is None:
             buffered = conv.recent_reply_count()
             if buffered == 0:
-                conv.show_status("nothing to copy yet", kind="general")
+                self._show_transient_status(conv, "nothing to copy yet")
             else:
-                conv.show_status(
+                self._show_transient_status(
+                    conv,
                     f"reply {n} not in buffer "
                     f"(only {buffered} available — /copy list)",
                     kind="error",
                 )
-            self._app.set_timer(2.5, conv.hide_status)
             return
 
         ok, label = _copy_to_clipboard(text)
         if ok:
             n_chars = len(text)
             tag = "latest" if n == 1 else f"#{n}"
-            conv.show_status(
-                f"copied reply {tag} ({n_chars} chars) via {label}",
-                kind="general",
+            self._show_transient_status(
+                conv, f"copied reply {tag} ({n_chars} chars) via {label}",
             )
         else:
-            conv.show_status(
+            self._show_transient_status(
+                conv,
                 "no clipboard tool found "
                 "(install pbcopy / xclip / wl-copy / xsel)",
                 kind="error",
             )
-        self._app.set_timer(2.5, conv.hide_status)
 
     def _on_docs_filter(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -278,8 +331,7 @@ class OutboxRouter:
         except Exception:
             pass
         msg_text = f"docs filter: {substr}" if substr else "docs filter cleared"
-        conv.show_status(msg_text, kind="general")
-        app.set_timer(2.0, conv.hide_status)
+        self._show_transient_status(conv, msg_text, duration=2.0)
 
     def _on_stream_start(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
@@ -287,7 +339,11 @@ class OutboxRouter:
         """`__stream_start__` — begin a streaming agent reply row."""
         app = self._app
         app._current_stream_id = msg.meta.get("msg_id", id(msg))
-        # Hide the "thinking…" sticky now that the reply is starting
+        # Hide the "thinking…" sticky now that the reply is starting. Cancel
+        # any pending transient timer too — a transient that fired right
+        # before the reply must not auto-hide a fresh sticky armed later
+        # in this same turn.
+        self._cancel_transient_timer()
         conv.hide_status()
         conv.begin_stream(app._current_stream_id, app._agent_name)
 
@@ -392,7 +448,13 @@ class OutboxRouter:
     def _on_status(
         self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
     ) -> None:
-        """`status` — route to sticky bar (not the log)."""
+        """`status` — route to sticky bar (not the log).
+
+        A live ``⟳ thinking…`` must outlive any pending transient timer
+        from a slash command that fired just before this turn started —
+        otherwise the auto-hide kills the agent's spinner mid-thought.
+        """
+        self._cancel_transient_timer()
         conv.show_status(msg.text, kind="thinking")
 
     def _on_trace(
