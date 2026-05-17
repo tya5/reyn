@@ -475,8 +475,33 @@ class RightPanel(Widget):
             return
         self._events_cursor = (self._events_cursor + delta) % n
         self._invalidate()
+        self._scroll_events_into_view()
         if self._preview_visible:
             self._update_preview()
+
+    def _scroll_events_into_view(self) -> None:
+        """Scroll #panel-scroll so the events cursor line is visible.
+
+        Each event renders as one row (PR #79 trimmed timestamp to
+        HH:MM:SS; the type fits next to it on the same line). The
+        ``user_message_received`` rows have an extra `↳` reply line —
+        approximated as 1 here; the small over-/under-scroll on those
+        is barely noticeable.
+        """
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            # Assume 1 line per event; +1 for content padding-top.
+            y = 1 + self._events_cursor
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception as exc:
+            logger.warning("right_panel scroll_events_into_view failed: %s", exc)
 
     def _render_as_yaml(self, value: Any) -> Any:
         """Format ``value`` as a YAML block + Rich syntax highlighter.
