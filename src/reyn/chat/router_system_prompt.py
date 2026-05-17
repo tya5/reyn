@@ -45,8 +45,11 @@ def build_system_prompt(
         memory_index: ``{"status": "ok"|"not_found", "content": str}``.
         file_permissions: optional ``{"read": [paths], "write": [paths]}``.
             When non-empty (either list), a Files section is rendered.
-        mcp_servers: optional list of ``{"name": ..., "description": ...}``.
-            When non-empty, an MCP servers section is rendered.
+        mcp_servers: accepted for backward compat but no longer used —
+            FP-0034 wrapper-only removed the static ``## MCP servers``
+            section in favour of runtime discovery via
+            ``list_actions(category=['mcp.server','mcp.tool'])``. Kept
+            on the signature so existing callers don't break.
         output_language: BCP-47-style language code (e.g. "ja", "en"),
             or None when unset. When set, the Behaviour section emits a
             strict "Always reply in language: <code>" directive so the
@@ -63,8 +66,6 @@ def build_system_prompt(
             (= backward compat for callers that have not yet wired up
             the manifest, e.g. tests and non-chat execution paths).
     """
-    mcp_section = _render_mcp(mcp_servers)
-
     parts: list[str] = []
 
     # ==========================================================================
@@ -417,42 +418,6 @@ def _render_files(file_permissions: dict | None) -> list[str]:
         lines.append(f"read scope:  {', '.join(read_paths)}")
     if write_paths:
         lines.append(f"write scope: {', '.join(write_paths)}")
-    return lines
-
-
-def _render_mcp(
-    mcp_servers: list[dict] | None,
-) -> list[str]:
-    """Return lines for the MCP servers and tools section, or [] when nothing to render.
-
-    FP-0032: renders a flat list of available mcp_tools (dotted form
-    <server>.<tool>) alongside each server, mirroring the "Available skills"
-    flat list pattern. When a server's ``tools`` list is absent (= not yet
-    async-enumerated), falls back to the prior server-only line with a hint
-    to use list_actions(category=['mcp.tool']) (wrapper-only).
-    """
-    if not mcp_servers:
-        return []
-    discovery_hint = (
-        "(use list_actions(category=['mcp.tool']) to discover tools)"
-    )
-    lines: list[str] = []
-    for server in mcp_servers:
-        name = server.get("name", "(unnamed)")
-        desc = server.get("description") or "(no description)"
-        tools = server.get("tools") or []
-        if tools:
-            lines.append(f"- {name}: {desc}")
-            for t in tools:
-                tool_name = t.get("name", "(unnamed)")
-                tool_desc = t.get("description") or ""
-                dotted = f"{name}.{tool_name}"
-                if tool_desc:
-                    lines.append(f"    {dotted}  — {tool_desc}")
-                else:
-                    lines.append(f"    {dotted}")
-        else:
-            lines.append(f"- {name}: {desc}  {discovery_hint}")
     return lines
 
 

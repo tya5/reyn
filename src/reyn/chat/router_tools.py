@@ -836,11 +836,13 @@ def build_tools(
     # callers that don't pass an ActionRetrievalConfig (= LLMReplay
     # fixture-safe path).
     #
-    # search_actions is gated separately by §D14 (= embedding configured).
-    # Phase 1 keeps it OFF unconditionally because (a) the handler is a
-    # NotImplementedError stub awaiting Phase 2's ActionEmbeddingIndex,
-    # and (b) embedding_class plumbing through RouterHostAdapter is also
-    # a Phase 2 task — visibility + handler must land together.
+    # search_actions is visibility-gated per §D14: only exposed when
+    # ``action_retrieval.embedding_class`` is configured (= operator opt-in)
+    # AND the ActionEmbeddingIndex is ready. RouterLoop computes
+    # ``search_actions_visible`` from both signals and passes it here.
+    # When not configured the handler still degrades gracefully (returns
+    # ``{"items": [], "total": 0}``), but we don't expose the tool to
+    # avoid LLM confusion about a capability that isn't wired up.
     if universal_wrappers_enabled:
         # Default 3 wrappers always exposed when the flag is on.
         # search_actions is added conditionally per §D14 only when the
