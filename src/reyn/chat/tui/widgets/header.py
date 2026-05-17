@@ -19,7 +19,6 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Label
 
-
 # Trailing date suffix on a model id: ``-YYYYMMDD`` (8 digits) or the
 # ``-YYYY-MM-DD`` form. Both rotate per release and add 9-11 cells to
 # the header without changing within a session. Stripping them recovers

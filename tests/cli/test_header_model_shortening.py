@@ -32,7 +32,6 @@ from reyn.chat.tui.app import ReynTUIApp
 from reyn.chat.tui.widgets import ReynHeader
 from reyn.chat.tui.widgets.header import _shorten_model_id
 
-
 # ── Tier 1: pure-function bucket coverage ────────────────────────────────────
 
 
