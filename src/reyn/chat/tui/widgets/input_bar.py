@@ -10,6 +10,7 @@ Keybindings (handled here):
   Enter         → If picker has matches: insert "/cmdname " (confirm).
                   Otherwise: submit the message.
   Ctrl+J        → Insert a newline.
+  Ctrl+U        → Clear the whole input (single or multi-line).
   Tab           → Same as confirm-from-picker (no-op when picker is closed).
   Up / Down     → Picker selection when picker visible; otherwise input
                   history when the cursor is on the first/last row.
@@ -43,6 +44,7 @@ class InputBar(Widget):
         Binding("down", "key_down", "Down", priority=True, show=False),
         Binding("escape", "dismiss_picker", "Esc", priority=True, show=False),
         Binding("ctrl+j", "newline", "Newline", priority=True, show=False),
+        Binding("ctrl+u", "clear_input", "Clear input", priority=True, show=False),
         Binding("ctrl+l", "clear_conversation", "Clear", priority=True, show=False),
         Binding("ctrl+d", "quit_app", "Quit", priority=True, show=False),
         Binding("ctrl+c", "cancel", "Cancel", priority=True, show=False),
@@ -225,6 +227,22 @@ class InputBar(Widget):
         ta = self._textarea()
         if ta is not None:
             ta.insert("\n")
+
+    def action_clear_input(self) -> None:
+        """Ctrl+U — wipe the whole input.
+
+        The TextArea's default Ctrl+U only deletes from the cursor back
+        to the start of the current line, which is unintuitive for a
+        multi-line composer. Operators expect Ctrl+U to clear the entire
+        buffer (matching readline-on-a-single-line semantics for the
+        common case).
+        """
+        ta = self._textarea()
+        if ta is not None:
+            ta.clear()
+        picker = self._picker()
+        if picker is not None and picker.visible_:
+            picker.hide()
 
     def action_clear_conversation(self) -> None:
         self.post_message(self.ClearConversation())
