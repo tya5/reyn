@@ -75,7 +75,14 @@ class StreamingRow(Widget):
     def __init__(self, *, prefix: str = "", id: str | None = None) -> None:
         super().__init__(id=id)
         self._prefix = prefix
-        self._chunks: list[str] = []
+        # Running concatenation. Previously ``_chunks: list[str]`` was joined
+        # via ``"".join(...)`` inside every render flush — that's O(N) per
+        # flush and ``_flush_render`` fires at ~60 fps, so the total cost
+        # grew O(N²) over an N-chunk stream (a 4000-token reply meant ~8 M
+        # byte copies before seal). Appending to a single string + relying
+        # on CPython's amortised O(1) single-owner string growth keeps the
+        # cost linear.
+        self._accumulated: str = ""
         self._sealed = False
         self._dirty = False
         self._static: Static | None = None
@@ -85,6 +92,12 @@ class StreamingRow(Widget):
         self._cursor_visible: bool = True
         self._last_chunk_at: float = 0.0
         self._cursor_tick_count: int = 0
+        # Handle for the 16 ms render-coalescing interval, stored so
+        # ``seal()`` can stop it. Without this the timer kept firing at
+        # 60 Hz into a sealed (and possibly removed) widget for the rest
+        # of the session — a 20-turn dogfood produced 20 × 60 = 1200 dead
+        # callbacks/s on the event loop.
+        self._interval_handle = None  # type: ignore[assignment]
 
     def compose(self) -> ComposeResult:
         self._static = Static(id="streaming_text")
@@ -97,10 +110,12 @@ class StreamingRow(Widget):
         complete the Markdown swap now that the DOM is ready.
         """
         self._mounted = True
-        self.set_interval(_RENDER_INTERVAL_S, self._flush_render)
+        self._interval_handle = self.set_interval(_RENDER_INTERVAL_S, self._flush_render)
         if self._sealed:
-            # seal() ran before we were mounted — apply the Markdown swap now.
+            # seal() ran before we were mounted — apply the Markdown swap now,
+            # then stop the interval so it doesn't fire into a sealed widget.
             self._apply_markdown_swap()
+            self._stop_interval()
         else:
             self._flush_render()
 
@@ -115,10 +130,26 @@ class StreamingRow(Widget):
             self._dirty = False
             self._static.update(self._build_renderable())
 
+    def _stop_interval(self) -> None:
+        """Cancel the 16 ms render-coalescing interval, if running.
+
+        Idempotent: safe to call on a row that was never mounted or whose
+        timer was already stopped. Called from ``seal()`` and from the
+        deferred-seal branch of ``on_mount``.
+        """
+        handle = self._interval_handle
+        if handle is None:
+            return
+        try:
+            handle.stop()
+        except Exception:
+            pass
+        self._interval_handle = None
+
     def _build_renderable(self) -> Text:
         t = Text()
         t.append(self._prefix, style="bold " + _AMBER)
-        t.append("".join(self._chunks))
+        t.append(self._accumulated)
         if not self._sealed:
             idle = (monotonic() - self._last_chunk_at) if self._last_chunk_at != 0.0 else 0.0
             if idle > 5.0:
@@ -136,7 +167,7 @@ class StreamingRow(Widget):
         Must only be called after the widget is mounted (self._mounted=True).
         Falls back to frozen raw text if the Markdown import fails.
         """
-        full = "".join(self._chunks)
+        full = self._accumulated
         try:
             from textual.widgets import Markdown  # type: ignore[import]
 
@@ -158,15 +189,21 @@ class StreamingRow(Widget):
         if self._sealed:
             return
         self._last_chunk_at = monotonic()
-        self._chunks.append(text)
+        # CPython amortises ``s += x`` to O(1) when ``s`` is single-owner.
+        # The flush path now reads this directly instead of joining a list
+        # of chunks on every render tick.
+        self._accumulated += text
         self._dirty = True
 
     def seal(self) -> None:
         """Mark the stream as complete and swap to a Markdown widget.
 
-        If the widget is already mounted, the swap happens immediately.
-        If called before mount (very fast stream), the swap is deferred to
-        on_mount() which runs as soon as Textual composes the widget.
+        If the widget is already mounted, the swap happens immediately and
+        the 16 ms render interval is cancelled — without that cancel the
+        timer kept firing at 60 Hz into a sealed (and possibly removed)
+        widget for the rest of the session.
+        If called before mount (very fast stream), both the swap and the
+        cancel are deferred to on_mount().
         """
         if self._sealed:
             return
@@ -175,7 +212,8 @@ class StreamingRow(Widget):
 
         if self._mounted:
             self._apply_markdown_swap()
-        # else: on_mount() will call _apply_markdown_swap() when ready.
+            self._stop_interval()
+        # else: on_mount() will call _apply_markdown_swap() + _stop_interval().
 
     def full_text(self) -> str:
-        return "".join(self._chunks)
+        return self._accumulated
