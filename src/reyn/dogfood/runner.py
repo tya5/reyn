@@ -325,9 +325,71 @@ async def run_scenario_set(
     # Collect per-scenario results across N repetitions; worst-case wins
     per_scenario_results: dict[str, list[ScenarioRunResult]] = {}
 
+    # Import verifier triad once — all three live in the same package so a
+    # single ImportError means the package is not installed.
+    try:
+        from reyn.dogfood.verifiers import (
+            verify_artifacts,
+            verify_events,
+            verify_reply,
+        )
+        _verifiers_available = True
+    except ImportError:
+        _verifiers_available = False
+
     for _rep in range(max(1, n)):
         for scenario in scenario_set.scenarios:
             result = await effective_runner_fn(scenario)
+
+            # ── Verifier triad ──────────────────────────────────────────────
+            # Invoke verify_reply / verify_events / verify_artifacts and
+            # write outcomes + detail back onto the result so the 4-band
+            # aggregate reflects real verdicts rather than the "inconclusive"
+            # default that runner_fn returns.
+            #
+            # Guard: only fire when the scenario declares at least one
+            # expected_* block.  Scenarios with no assertions are used in
+            # legacy / exploratory runs where the runner_fn's outcomes are
+            # authoritative (e.g. blocked from a failed live run).  Invoking
+            # the verifier for such scenarios would replace meaningful
+            # outcomes with "blocked" (= no assertion declared), which is
+            # misleading.
+            _has_expected = (
+                scenario.expected_reply is not None
+                or scenario.expected_events is not None
+                or scenario.expected_artifacts is not None
+            )
+            if _verifiers_available and _has_expected:
+                # reply verifier is async (may invoke LLM judge)
+                reply_result = await verify_reply(
+                    scenario.expected_reply,
+                    result.reply_text,
+                )
+                # events and artifacts verifiers are synchronous
+                events_result = verify_events(
+                    scenario.expected_events,
+                    result.events,
+                )
+                artifacts_result = verify_artifacts(
+                    scenario.expected_artifacts,
+                    result.artifacts,
+                )
+
+                result.reply_outcome = reply_result.outcome
+                result.events_outcome = events_result.outcome
+                result.artifacts_outcome = artifacts_result.outcome
+                result.detail.update({
+                    "reply": reply_result.detail,
+                    "events": events_result.detail,
+                    "artifacts": artifacts_result.detail,
+                })
+                # Recompute overall_outcome from the updated sub-outcomes.
+                result.overall_outcome = _worst_outcome(
+                    result.reply_outcome,
+                    result.events_outcome,
+                    result.artifacts_outcome,
+                )
+
             # Attach outcome_prediction from the scenario definition if
             # the runner_fn didn't already populate it.
             if (
