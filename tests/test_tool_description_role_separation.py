@@ -28,25 +28,48 @@ from reyn.tools.universal_catalog import (
 
 # ── invoke_action description tests ────────────────────────────────────────────
 
-def test_invoke_action_description_contains_spawn_ack_priority_1() -> None:
-    """Tier 2: invoke_action description carries spawn-ack Priority 1 (/tasks MUST).
+def test_invoke_action_description_signals_os_owned_spawn_ack() -> None:
+    """Tier 2: invoke_action description tells the LLM that the OS — not it —
+    composes the spawn-ack user-visible reply.
 
-    B23-PRE-1: spawn-ack Priority block moved from SP to invoke_action.description.
+    2026-05-17 N3 update: the spawn-ack Priority 1-4 block previously lived
+    in this description (B23-PRE-1 role-separation) but was structurally
+    unreachable code (router_loop exits the loop before the LLM is asked
+    to compose anything for the spawn-ack turn — see ``_SPAWN_ACK_MSG`` in
+    ``router_loop.py`` for the deterministic OS message that replaced it).
+
+    The description must now signal that the LLM will NOT be asked to
+    compose the spawn-ack reply, so it doesn't internalise a dead policy.
     """
     desc = _INVOKE_ACTION_DESCRIPTION
-    assert "Priority 1" in desc
-    assert "/tasks" in desc
-    # Hard failure signal
-    assert "hard failure" in desc or "non-negotiable" in desc
+    assert "SPAWN-ACK" in desc, (
+        "description must still mention the spawn-ack shape so the LLM "
+        "recognises {status: 'spawned'} in non-router contexts; got: "
+        f"{desc[:200]!r}"
+    )
+    assert "OS emits" in desc or "router exits" in desc, (
+        "description must clarify that the OS owns the spawn-ack reply, "
+        "not the LLM. Either 'OS emits' or 'router exits' phrasing is "
+        f"acceptable; got: {desc[:300]!r}"
+    )
 
 
-def test_invoke_action_description_contains_fabrication_by_construction() -> None:
-    """Tier 2: invoke_action description carries anti-fabrication rule.
-
-    B23-PRE-1: fabrication-by-construction rule moved from SP spawn-ack block.
+def test_invoke_action_description_no_dead_priority_block() -> None:
+    """Tier 2 regression guard: the description must NOT carry the obsolete
+    'Priority 1/2/3/4' spawn-ack block. That block was dead code (the router
+    exits before the LLM sees it) and reintroducing it would re-confuse the
+    LLM about whether it's responsible for the spawn-ack reply.
     """
     desc = _INVOKE_ACTION_DESCRIPTION
-    assert "fabrication by construction" in desc
+    assert "Priority 1" not in desc, (
+        "description must not reintroduce the dead 'Priority 1' spawn-ack "
+        f"block; got: {desc[:400]!r}"
+    )
+    assert "fabrication by construction" not in desc, (
+        "description must not reintroduce the dead 'fabrication by "
+        f"construction' clause from the obsolete spawn-ack block; got: "
+        f"{desc[:400]!r}"
+    )
 
 
 def test_invoke_action_description_contains_optimism_bias() -> None:

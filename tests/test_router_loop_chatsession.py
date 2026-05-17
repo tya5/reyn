@@ -136,13 +136,23 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     ``test_skill_completed_inbox_enqueued_on_finish`` in
     test_session_invariants.py.
 
+    2026-05-17 N3 update: prior to this revision the spawn-ack turn
+    produced NO agent message at all — the user saw silence between
+    request and the eventual ``[task_completed]``. The OS now emits a
+    deterministic synthetic acknowledgment via ``put_outbox(kind="agent")``
+    before the early-exit. This restores the user-visible feedback
+    without re-introducing the B32 race condition: the message is
+    OS-composed (= not LLM-composed), so it cannot fabricate skill
+    output that hasn't happened yet. See ``_SPAWN_ACK_MSG`` in
+    ``router_loop.py`` for the i18n template.
+
     Script: round 1 invoke_action returning a spawn-ack; no round 2
     needed (= router exits on spawn-ack via the H3 check). Mock
     chat-mode dispatch via ``host.spawn_skill``.
 
     Assertions: spawn fired; ``invoke_skill_spawn_ack_exit`` event
-    emitted; outbox carries no agent message in this turn (ack arrives
-    later via the inbox path tested elsewhere).
+    emitted; outbox carries exactly one deterministic OS-composed
+    agent message hinting at ``/tasks``.
     """
     monkeypatch.chdir(tmp_path)
     session = _make_session(tmp_path)
@@ -180,15 +190,26 @@ def test_user_message_invoke_skill_e2e(tmp_path, monkeypatch):
     _run(run())
 
     assert spawn_called["called"], "Skill should have been spawned"
-    # H3 contract: outbox carries no agent message on the spawn turn.
-    # The acknowledgment / narration arrives later via skill_completed
-    # inbox → _handle_skill_completed.
+    # Post-N3 contract: spawn-ack turn emits exactly ONE deterministic
+    # OS-composed agent message hinting at /tasks. The full
+    # narration of the skill output still comes later via the
+    # skill_completed inbox → _handle_skill_completed path; this
+    # message is just the user-visible "your request started" signal.
     msgs = _drain_outbox(session)
     agent_msgs = [m for m in msgs if m.kind == "agent"]
-    assert len(agent_msgs) == 0, (
-        f"Post-H3 contract: spawn-ack turn should NOT produce an outbox "
-        f"agent message (ack comes via skill_completed inbox). Got: "
-        f"{[m.text[:80] for m in agent_msgs]}"
+    assert len(agent_msgs) == 1, (
+        f"Post-N3 contract: spawn-ack turn must emit exactly one "
+        f"OS-composed agent message. Got: {[m.text[:80] for m in agent_msgs]}"
+    )
+    ack = agent_msgs[0]
+    assert "/tasks" in ack.text, (
+        f"Spawn-ack message must mention /tasks (the user's only "
+        f"in-flight tracking surface). Got: {ack.text!r}"
+    )
+    assert ack.meta.get("source") == "spawn_ack", (
+        f"Spawn-ack message must carry meta.source='spawn_ack' so "
+        f"downstream consumers can distinguish it from LLM-composed "
+        f"replies. Got meta={ack.meta!r}"
     )
     # H3 audit event: the spawn-ack exit must have fired exactly once.
     emitted = [

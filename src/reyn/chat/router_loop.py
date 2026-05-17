@@ -50,6 +50,27 @@ _EMPTY_RESPONSE_MSG: dict[str, str] = {
 }
 
 
+# Localized OS-level acknowledgment emitted when a skill spawns asynchronously
+# (= invoke_skill / invoke_action returns ``{status: "spawned", ...}``). The
+# H3 ablation exits the router loop before any further LLM call, so without
+# this OS-injected message the user sees silence between request and the
+# eventual ``[task_completed]`` arrival. The previous (pre-H3) LLM-composed
+# spawn-ack was hallucinating skill output that hadn't happened yet (B32
+# W3 S1); this deterministic OS message carries the same UX guarantee
+# (= "/tasks" hint) without LLM composition, so the race condition does
+# not re-emerge.  P7-clean: no skill names, no qualified action names.
+_SPAWN_ACK_MSG: dict[str, str] = {
+    "ja": (
+        "スキルをバックグラウンドで実行しています。"
+        " `/tasks` で進行状況を確認できます。"
+    ),
+    "en": (
+        "Skill is running in the background."
+        " Use `/tasks` to monitor progress."
+    ),
+}
+
+
 def _strip_frontmatter(content: str) -> str:
     """Remove a leading YAML frontmatter block (``---\\n...\\n---\\n``) from
     a memory file's text and return the body alone.
@@ -1367,6 +1388,18 @@ class RouterLoop:
                         "invoke_skill_spawn_ack_exit",
                         spawn_ack_count=_spawn_ack_count,
                         chain_id=self.chain_id,
+                    )
+                    # OS-level synthetic spawn-ack — see _SPAWN_ACK_MSG
+                    # rationale. Without this, the H3 early-exit leaves
+                    # the user with no feedback until [task_completed]
+                    # arrives.  Deterministic (= not LLM-composed) so the
+                    # B32 W3 S1 hallucination race cannot re-emerge.
+                    lang = getattr(host, "output_language", None)
+                    ack_text = _SPAWN_ACK_MSG.get(lang, _SPAWN_ACK_MSG["en"])
+                    await host.put_outbox(
+                        kind="agent",
+                        text=ack_text,
+                        meta={"chain_id": self.chain_id, "source": "spawn_ack"},
                     )
                     return self._total_usage
                 # No delegation — accumulate messages for next iteration.
