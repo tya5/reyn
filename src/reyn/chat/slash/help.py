@@ -36,7 +36,6 @@ async def help_cmd(session: "object", args: str) -> None:
     # the summary align to this column so they read as continuations
     # rather than orphan commands.
     data_col = 2 + 1 + name_w + 2
-    summary_width = max(20, _TARGET_WIDTH - data_col)
     indent = " " * data_col
 
     lines = ["Slash commands:"]
