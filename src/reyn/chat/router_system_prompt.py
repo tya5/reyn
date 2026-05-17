@@ -180,7 +180,7 @@ def build_system_prompt(
         )
         parts.append("")
         parts.append(
-            "- **skill** — project-defined workflows (e.g. skill__code_review)."
+            "- **skill** — project-defined workflows (e.g. skill__index_docs)."
         )
         parts.append(
             "- **agent.peer** — peer agents in this network (e.g. agent.peer__alice)."
@@ -276,7 +276,7 @@ def build_system_prompt(
     parts.append("")
     parts.extend([
         "  ROUTING RULE (ABSOLUTE): When the user message contains an action"
-        " name (= valid invoke_action action_name, e.g. skill__code_review),"
+        " name (= valid invoke_action action_name, e.g. skill__index_docs),"
         " call invoke_action immediately. NO clarifying questions. NO text replies.",
         "",
     ])

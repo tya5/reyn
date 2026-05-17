@@ -110,7 +110,7 @@ def test_plan_router_render_exact_parameters():
                     "[\"invoke_action\"] — the step LLM picks the "
                     "concrete action_name (e.g. "
                     "\"reyn.source__read\", \"web__search\", "
-                    "\"skill__code_review\"). Use [] for steps that "
+                    "\"skill__index_docs\"). Use [] for steps that "
                     "only need prior step outputs as context — the "
                     "step LLM reasons from those natively. "
                     "depends_on: ids of prior steps whose output this "

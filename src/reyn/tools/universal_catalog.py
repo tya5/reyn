@@ -90,7 +90,7 @@ def split_qualified_name(qualified_name: str) -> tuple[str, str]:
     further ``__`` sequences (which stay inside the entry portion).
 
     Examples:
-        ``skill__code_review``       → ("skill", "code_review")
+        ``skill__index_docs``  → ("skill", "index_docs")
         ``mcp.tool__brave.search``   → ("mcp.tool", "brave.search")
         ``mcp.operation__drop_server`` → ("mcp.operation", "drop_server")
         ``rag.corpus__meetings``     → ("rag.corpus", "meetings")
@@ -222,7 +222,7 @@ _LIST_ACTIONS_DESCRIPTION = (
     "invoke_action directly. For semantic/natural-language search, use "
     "search_actions (when available) instead. "
     "PREFERRED OVER: Guessing action names — list_actions returns the "
-    "canonical qualified names (e.g. skill__code_review) that invoke_action "
+    "canonical qualified names (e.g. skill__index_docs) that invoke_action "
     "and describe_action expect. "
     "POST_CALL: After list_actions reveals at least one matching action, you "
     "MUST follow with describe_action or invoke_action. Do NOT reply directly "
@@ -344,7 +344,7 @@ _DESCRIBE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to describe "
-                "(e.g. 'skill__code_review', 'mcp.tool__brave.search', "
+                "(e.g. 'skill__index_docs', 'mcp.tool__brave.search', "
                 "'rag.corpus__meetings')."
             ),
         },
@@ -401,7 +401,7 @@ _INVOKE_ACTION_PARAMETERS: dict[str, Any] = {
             "type": "string",
             "description": (
                 "Qualified name of the action/resource to invoke "
-                "(e.g. 'skill__code_review', 'mcp.tool__brave.search')."
+                "(e.g. 'skill__index_docs', 'mcp.tool__brave.search')."
             ),
         },
         "args": {
@@ -467,7 +467,7 @@ def _missing_action_name_error() -> dict[str, Any]:
         "reason": "action_name parameter was not provided",
         "suggestions": [],
         "hint": (
-            "Provide action_name (qualified, e.g. 'skill__code_review') "
+            "Provide action_name (qualified, e.g. 'skill__index_docs') "
             "from list_actions or search_actions output."
         ),
     }
