@@ -125,12 +125,17 @@ def _get_perm_resolver():
         config = _load_config()
         root = _get_project_root()
         perm_config = getattr(config, "permissions", {}) or {}
+        # Mirror the CLI path: unsafe python steps require an explicit opt-in.
+        # In the web gateway (non-interactive) the equivalent of --allow-unsafe-python
+        # is python.unsafe: allow in reyn.yaml / reyn.local.yaml permissions.
+        unsafe_python_allowed = perm_config.get("python.unsafe") == "allow"
         _perm_resolver = PermissionResolver(
             config_permissions=perm_config,
             project_root=root,
             # Web gateway: non-interactive. Permission prompts become denials
             # unless pre-approved in reyn.yaml / .reyn/approvals.yaml.
             interactive=False,
+            unsafe_python_allowed=unsafe_python_allowed,
         )
     return _perm_resolver
 
