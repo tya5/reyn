@@ -29,6 +29,7 @@ def build_system_prompt(
     project_context: str = "",
     indexed_sources_section: str | None = None,
     universal_wrappers_enabled: bool = False,  # FP-0034 PR-3b-v
+    cwd: str | None = None,
 ) -> str:
     """Render the system prompt for the tool_use router loop.
 
@@ -65,6 +66,12 @@ def build_system_prompt(
             When None (default), no Indexed sources section is emitted
             (= backward compat for callers that have not yet wired up
             the manifest, e.g. tests and non-chat execution paths).
+        cwd: current working directory the agent is running from. When
+            provided, an ## Environment section tells the LLM to treat
+            unqualified references like "this repo" / "this code" /
+            "the codebase" as the project at ``cwd``. When None
+            (default), the section is omitted — preserves SP byte
+            content for tests that don't plumb cwd through.
     """
     parts: list[str] = []
 
@@ -128,6 +135,28 @@ def build_system_prompt(
         "For chitchat or self-questions, reply without tools.",
         "",
     ])
+
+    # ── 3.4. Environment (CWD context, P7-clean) ─────────────────────────────
+    # Tells the LLM where it is running so unqualified references like
+    # "this repo" / "this code" / "the codebase" / "ここのコード" map to
+    # the workspace at cwd. Without this the LLM defaults to its training
+    # prior ("please share the repository URL") even when the user is
+    # obviously inside a checked-out repo. P7: no skill-specific strings,
+    # only environment facts and routing hints to existing categories.
+    if cwd:
+        parts.append("## Environment")
+        parts.append("")
+        parts.append(f"cwd: {cwd}")
+        parts.append("")
+        parts.append(
+            "When the user refers to \"this repo\", \"this code\", \"the codebase\","
+            " \"this project\", \"ここ\", or any other unqualified reference to"
+            " surrounding source, interpret it as the project at the cwd above."
+            " Do NOT ask for a repository URL or path — discover the contents"
+            " with list_actions(category=['file']) → invoke_action(file__list, ...)"
+            " → invoke_action(file__read, ...) within the cwd's read scope."
+        )
+        parts.append("")
 
     # ── 3.5. Universal catalog (FP-0034 §D9, opt-in via action_retrieval) ────
     # When the operator has enabled the universal catalog (= reyn.yaml

@@ -298,6 +298,18 @@ class RouterHostAdapter:
         """
         return self._project_context or ""
 
+    def get_cwd(self) -> str:
+        """Current working directory the agent process is running from.
+
+        Threaded into the router's system prompt so unqualified user
+        references like "this repo" / "this code" / "the codebase" map
+        to the project at this path. Without it the LLM falls back to
+        its training prior ("please share the repository URL") even when
+        the user is obviously inside a checked-out repo.
+        """
+        import os
+        return os.getcwd()
+
     def get_universal_wrappers_enabled(self) -> bool:
         """Return whether FP-0034 universal catalog wrappers are enabled.
 
