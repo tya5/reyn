@@ -264,10 +264,12 @@ _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], 
     "memory.operation__remember_agent":  ("remember_agent",  _passthrough_args),
     "memory.operation__forget":          ("forget_memory",   _passthrough_args),
 
-    # reyn.source category — current surface (read/list).
-    # §D20 also specifies glob / grep; not yet implemented (future PR).
+    # reyn.source category — §D20 surface: read / list / glob / grep.
+    # FP-0038 closed the glob / grep gap (= S2 + S3).
     "reyn.source__read": ("reyn_src_read", _passthrough_args),
     "reyn.source__list": ("reyn_src_list", _passthrough_args),
+    "reyn.source__glob": ("reyn_src_glob", _passthrough_args),
+    "reyn.source__grep": ("reyn_src_grep", _passthrough_args),
 
     # rag.operation category
     "rag.operation__recall":      ("recall",       _passthrough_args),

@@ -123,6 +123,100 @@ async def _handle_read(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     return read_text(target, path)
 
 
+_REYN_SRC_GLOB_DESCRIPTION = (
+    "Find files in Reyn's own repository by glob pattern (e.g. "
+    "'docs/**/*.md', 'src/**/router*.py'). Returns up to 200 "
+    "repo-root-relative paths, alphabetically sorted. Use this when "
+    "you need to enumerate files matching a structural pattern; for "
+    "content search use reyn_src_grep, for a single named file use "
+    "reyn_src_read."
+)
+
+_REYN_SRC_GLOB_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pattern": {
+            "type": "string",
+            "description": "Glob pattern (e.g. '**/*.py', 'docs/**/*.md').",
+        },
+    },
+    "required": ["pattern"],
+}
+
+_REYN_SRC_GREP_DESCRIPTION = (
+    "Search file contents in Reyn's own repository by regex. Returns "
+    "up to 50 matches as {path, line, snippet}. `path` scopes the "
+    "search (default = whole repo); `glob` further narrows by filename "
+    "(e.g. '**/*.py'). Use this for 'where in the Reyn source is X "
+    "handled' style questions; for structural enumeration use "
+    "reyn_src_glob, for reading one known file use reyn_src_read."
+)
+
+_REYN_SRC_GREP_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "pattern": {
+            "type": "string",
+            "description": "Regex pattern (Python `re` syntax).",
+        },
+        "path": {
+            "type": "string",
+            "description": (
+                "Repo-relative directory or file to scope the search. "
+                "Default = repo root. Use '' for repo root."
+            ),
+        },
+        "glob": {
+            "type": "string",
+            "description": (
+                "Optional filename glob filter (e.g. '**/*.py'). "
+                "When omitted, all text files under `path` are searched."
+            ),
+        },
+        "case_sensitive": {
+            "type": "boolean",
+            "description": "Default false (= case-insensitive).",
+        },
+        "max_results": {
+            "type": "integer",
+            "description": "Cap on match count. Default 50.",
+        },
+    },
+    "required": ["pattern"],
+}
+
+
+async def _handle_glob(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Handler for reyn_src_glob."""
+    from reyn.chat.reyn_src import glob_entries, resolve_reyn_root
+
+    pattern = args.get("pattern", "")
+    try:
+        root = resolve_reyn_root()
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    return glob_entries(root, pattern)
+
+
+async def _handle_grep(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Handler for reyn_src_grep."""
+    from reyn.chat.reyn_src import grep_entries, resolve_reyn_root
+
+    pattern = args.get("pattern", "")
+    try:
+        root = resolve_reyn_root()
+    except RuntimeError as exc:
+        return {"error": str(exc)}
+    return grep_entries(
+        root,
+        pattern=pattern,
+        path=args.get("path", ""),
+        glob=args.get("glob"),
+        case_sensitive=bool(args.get("case_sensitive", False)),
+        max_results=int(args.get("max_results", 50) or 50),
+    )
+
+
 REYN_SRC_LIST = ToolDefinition(
     name="reyn_src_list",
     description=_REYN_SRC_LIST_DESCRIPTION,
@@ -139,6 +233,26 @@ REYN_SRC_READ = ToolDefinition(
     parameters=_REYN_SRC_READ_PARAMETERS,
     gates=ToolGates(router="allow", phase="deny"),
     handler=_handle_read,
+    purity="read_only",
+    category="dev",
+)
+
+REYN_SRC_GLOB = ToolDefinition(
+    name="reyn_src_glob",
+    description=_REYN_SRC_GLOB_DESCRIPTION,
+    parameters=_REYN_SRC_GLOB_PARAMETERS,
+    gates=ToolGates(router="allow", phase="deny"),
+    handler=_handle_glob,
+    purity="read_only",
+    category="dev",
+)
+
+REYN_SRC_GREP = ToolDefinition(
+    name="reyn_src_grep",
+    description=_REYN_SRC_GREP_DESCRIPTION,
+    parameters=_REYN_SRC_GREP_PARAMETERS,
+    gates=ToolGates(router="allow", phase="deny"),
+    handler=_handle_grep,
     purity="read_only",
     category="dev",
 )
