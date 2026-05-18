@@ -132,6 +132,7 @@ async def reply_error(session: "object", text: str) -> None:
 # ── trigger registration of built-in commands ─────────────────────────────
 # Sub-modules register on import; importing them here makes the registry
 # fully populated as soon as `reyn.chat.slash` is imported.
+from reyn.chat.slash import agent as _agent_mod  # noqa: E402, F401
 from reyn.chat.slash import agents as _agents_mod  # noqa: E402, F401
 from reyn.chat.slash import budget as _budget_mod  # noqa: E402, F401
 from reyn.chat.slash import chat as _chat_mod  # noqa: E402, F401
