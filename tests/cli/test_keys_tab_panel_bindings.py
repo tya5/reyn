@@ -169,3 +169,44 @@ async def test_panel_next_content_gated_on_panel_visible() -> None:
         app._panel_visible = True
         assert app.check_action("panel_next_content", None) is True
         assert app.check_action("panel_prev_content", None) is True
+
+
+@pytest.mark.asyncio
+async def test_focus_toggle_panel_allowed_when_intervention_pending() -> None:
+    """Tier 2: Ctrl+O is allowed when an intervention is mounted, even with
+    the panel hidden — the user needs a keyboard path to the chip buttons.
+
+    Previously ``focus_toggle_panel`` was gated purely on ``_panel_visible``,
+    so a user facing a permission prompt with the panel closed had to press
+    Ctrl+B first (open panel) → Ctrl+O (focus chip). The chips are the
+    primary affordance for the prompt; gating their focus on panel
+    visibility broke the keyboard-only path.
+    """
+    from reyn.chat.tui.widgets import ConversationView
+
+    app = ReynTUIApp(
+        registry=None,
+        agent_name="test",
+        model="test",
+        budget_tracker=None,
+    )
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        # No intervention, panel hidden → gated off (= existing behavior)
+        assert app._panel_visible is False
+        assert app.check_action("focus_toggle_panel", None) is False
+
+        # Mount an intervention, panel still hidden → now allowed
+        conv = app.query_one("#conversation", ConversationView)
+        conv.mount_intervention(
+            question="Allow?",
+            choices=[{"label": "[y]es", "id": "yes", "hotkey": "y"}],
+            answer_callback=None,
+            iv_id="iv_test",
+        )
+        await pilot.pause()
+        assert app.check_action("focus_toggle_panel", None) is True
+
+        # Panel visible → still allowed regardless of intervention presence
+        app._panel_visible = True
+        assert app.check_action("focus_toggle_panel", None) is True
