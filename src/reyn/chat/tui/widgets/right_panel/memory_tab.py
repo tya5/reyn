@@ -43,8 +43,15 @@ def render_memory(
     def _render_scope(entries: list, label: str, label_color: str) -> None:
         lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
         if not entries:
+            # Two short lines instead of one long one — the previous
+            # single line ``(empty — ask reyn to "remember <fact>")``
+            # (45 cells incl. indent) clipped to ``(empty — ask reyn to
+            # "re…`` at the default 33%-panel content width (~22 cells).
+            # Splitting preserves both the "empty" signal and the
+            # call-to-action and survives narrow panes.
+            lines.append("[#555555]    (empty)[/]")
             lines.append(
-                "[#555555]    (empty — ask reyn to \"remember <fact>\")[/]"
+                "[#555555]    try: \"remember <fact>\"[/]"
             )
             lines.append("")
             return
