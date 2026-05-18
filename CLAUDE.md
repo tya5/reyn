@@ -120,7 +120,7 @@ Key constraints (full rationale in the doc):
 ## PR workflow (READ BEFORE OPENING / REVIEWING A PR)
 
 This repo is touched by multiple Claude sessions (lead-coder, e2e-coder,
-per-PR coders) authenticating as the same `gh` user. Two rules keep that
+per-PR coders) authenticating as the same `gh` user. Three rules keep that
 coherent:
 
 1. **Finish your own Test plan before merge.** PR authors run every
@@ -138,6 +138,19 @@ coherent:
    workflow contract). The `Co-Authored-By: Claude` commit trailer
    does not propagate to PR comments, so this prefix is the only
    cross-session signal.
+3. **If broker MCP is connected, supplement PR comments with
+   `post_message` for time-sensitive coordination.** When a session
+   would otherwise wait for the peer's next manual polling to notice
+   a block or revision-ready signal, send a parallel broker message
+   (= `post_message(to=<peer>, ...)` with a short summary). Typical
+   uses: "revision pushed, ready for re-review", "block raised on
+   #N", "I'm picking up #M, please pause on it". **PR comments
+   remain the authoritative audit trail** — review decisions (block /
+   accept / merge), revision rationale, and review evidence all stay
+   in PR body / comments / commit messages. Broker is only for
+   reducing reviewer-side latency. When broker is unavailable or the
+   peer is offline, fall back to PR comment alone — the workflow
+   still works.
 
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
