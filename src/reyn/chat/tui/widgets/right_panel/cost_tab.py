@@ -27,7 +27,20 @@ def _cost_str(bucket: dict) -> str:
 
 
 def _tok(p: int, c: int) -> str:
-    return f"[#dddddd]{p + c:,}[/] [#555555]({p:,}p + {c:,}c)[/]"
+    """Render token total + prompt/completion breakdown across two lines.
+
+    At a 33%-width panel (~22 cells of content area), the previous
+    single-line format ``{total:,} ({p:,}p + {c:,}c)`` reliably clipped
+    the breakdown — e.g. ``3,932 (3,…``. Split into two lines so the
+    breakdown wraps under the value column instead of overflowing.
+    Large totals (1M+ tokens) may still exceed the breakdown line at
+    very narrow widths; accepted trade-off — the total is the
+    load-bearing number and stays visible on line 1.
+    """
+    return (
+        f"[#dddddd]{p + c:,}[/]\n"
+        f"[#555555]      ({p:,}p + {c:,}c)[/]"
+    )
 
 
 def _sparkline(values: list[float], width: int = 32) -> str:
