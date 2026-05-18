@@ -29,23 +29,60 @@ _USAGE = (
 
 
 def _plan_completer(session: "ChatSession", arg_partial: str = "") -> list[str]:
-    """Surface active plan IDs after ``/plan discard `` or ``/plan resume ``.
+    """Surface plan IDs or step IDs for the ``/plan`` arg the user is typing.
 
-    Returns an empty list (= fall back to plain hint mode) when:
-      - no args yet (= the usage hint is what the user needs first)
-      - the subcommand is ``list`` (no plan_id arg)
-      - the session doesn't expose ``running_plans`` (= test stubs, headless)
+    Two contexts handled:
 
-    Otherwise returns the active plan_ids verbatim so the TUI picker
-    surfaces them under the hint row. The TUI side already prefix-filters
-    by the partial the user is currently typing.
+    * ``/plan discard <pid_partial>`` and ``/plan resume <pid_partial>``
+      → return active plan IDs from ``session.running_plans``.
+    * ``/plan resume <plan_id> --from <step_partial>`` → return step IDs
+      from the named plan's decomposition artifact.
+
+    Returns an empty list (= fall back to plain hint mode) when none of
+    the patterns above match (``list`` subcommand, no args yet, or the
+    session / artifact isn't readable for any reason).
     """
     parts = arg_partial.split()
     sub = parts[0] if parts else ""
-    if sub not in ("discard", "resume"):
-        return []
+    if sub == "discard":
+        try:
+            return list(session.running_plans.keys())
+        except Exception:
+            return []
+    if sub == "resume":
+        # Past ``--from`` → step_id context; before it → plan_id context.
+        if "--from" in parts[1:]:
+            try:
+                plan_id = parts[1]
+                return _step_ids_for_plan(session, plan_id)
+            except Exception:
+                return []
+        try:
+            return list(session.running_plans.keys())
+        except Exception:
+            return []
+    return []
+
+
+def _step_ids_for_plan(
+    session: "ChatSession", plan_id: str,
+) -> list[str]:
+    """Load the decomposition artifact for ``plan_id`` and return step IDs.
+
+    Returns an empty list on any failure (= no such plan, artifact
+    missing, read error) so a broken / stale plan_id falls back to
+    plain hint mode rather than breaking the picker.
+    """
+    from pathlib import Path
+
+    from reyn.plan import read_decomposition
+
     try:
-        return list(session.running_plans.keys())
+        agent_state_dir = (
+            Path(".reyn") / "agents" / session.agent_name / "state"
+        )
+        decomposition = read_decomposition(agent_state_dir, plan_id)
+        return [s.id for s in decomposition.steps]
     except Exception:
         return []
 
@@ -307,10 +344,19 @@ async def _resume_from_step(session: "ChatSession", args: str) -> None:
 
     step_order = [s.id for s in decomposition.steps]
     if step_id not in step_order:
+        # Format known steps as a vertical bulleted list rather than a
+        # Python ``repr`` of the list — the prior ``known: ['step1',
+        # 'step2', 'step3']`` was a single very long quoted-string line
+        # that broke into the ErrorBox header truncation and forced the
+        # user to expand to read. A bulleted list reads naturally in
+        # the expanded view, scales to longer step IDs, and surfaces
+        # in the picker's hint-mode step completer as a discoverability
+        # path so this error is rarer to begin with.
+        steps_block = "\n".join(f"    - {s}" for s in step_order)
         await reply_error(
             session,
-            f"plan {plan_id}: step {step_id!r} not in plan "
-            f"(known: {step_order})",
+            f"plan {plan_id}: step {step_id!r} not in plan\n"
+            f"  known steps:\n{steps_block}",
         )
         return
 
