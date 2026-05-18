@@ -138,6 +138,62 @@ async def test_intervention_mount_sets_awaiting_and_rings_bell() -> None:
         )
 
 
+# ── intervention persists "awaiting" sticky until resolved ──────────────────
+
+
+@pytest.mark.asyncio
+async def test_intervention_mount_shows_awaiting_sticky() -> None:
+    """Tier 2: ``_on_intervention`` shows a persistent "awaiting answer"
+    sticky; ``_on_intervention_resolved`` hides it.
+
+    The InterventionWidget is mounted inline in the conv pane and can
+    scroll off-screen in a long session — without a sticky at the
+    bottom, a user scrolled up to review prior turns loses the
+    "agent is waiting for me" signal. The sticky is general-kind so
+    no thinking spinner / elapsed timer is shown (the agent is paused,
+    not working).
+    """
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        header = app.query_one("#header", ReynHeader)
+        app._get_session = lambda: None  # type: ignore[method-assign]
+        _instrument_alert(app)
+        router = OutboxRouter(app)
+
+        # Mount intervention → sticky shows
+        router._on_intervention(
+            OutboxMessage(
+                kind="intervention",
+                text="proceed?",
+                meta={"intervention_id": "iv1"},
+            ),
+            conv, header,
+        )
+        await pilot.pause()
+        sticky = conv._sticky()
+        assert sticky is not None
+        assert sticky._active, "sticky must be active while intervention pending"
+        assert "awaiting" in sticky._body.lower(), (
+            f"sticky body must signal awaiting state; got {sticky._body!r}"
+        )
+
+        # Resolve → sticky hides
+        router._on_intervention_resolved(
+            OutboxMessage(
+                kind="intervention_resolved",
+                text="",
+                meta={"iv_id": "iv1"},
+            ),
+            conv, header,
+        )
+        await pilot.pause()
+        assert not sticky._active, (
+            "sticky must be cleared once the intervention is resolved"
+        )
+
+
 # ── error triggers both signals ──────────────────────────────────────────────
 
 
