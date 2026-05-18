@@ -202,6 +202,10 @@ class ConversationView(Widget):
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
+        # Last turn-flash position written by ``_flash_turn_position`` —
+        # (n, total) tuple. Used to suppress duplicate "↑ turn N / M"
+        # log lines when the user mashes Ctrl+P/N within the same anchor.
+        self._last_turn_flash: tuple[int, int] | None = None
         # Empty-state (B5)
         self._has_first_message = False
         # Turn navigation (B4) — absolute line positions for each turn header.
@@ -883,6 +887,30 @@ class ConversationView(Widget):
             log.scroll_to(y=target, animate=False)
         except Exception:
             pass
+        # Show "turn N / M" feedback so users in long sessions can tell
+        # where they are. Without this Ctrl+P/N scrolls silently and a
+        # 90-turn history is just a parade of "21:55" headers with no
+        # cursor signal. (StickyStatus with kind="general" was the
+        # intuitive surface but doesn't render reliably from this code
+        # path — open question, see workload notes; the log marker is
+        # the working compromise.)
+        try:
+            idx = anchors.index(target)
+        except ValueError:
+            return
+        self._flash_turn_position(idx + 1, len(anchors))
+
+    def _flash_turn_position(self, n: int, total: int) -> None:
+        """Write a dim ``↑ turn N / M`` line to the conv log.
+
+        Deduped by ``_last_turn_flash`` so rapid Ctrl+P/N presses that
+        land on the same anchor don't spam the log with identical lines.
+        Cleared on Ctrl+L so post-clear navigation flashes fresh.
+        """
+        if self._last_turn_flash == (n, total):
+            return
+        self._last_turn_flash = (n, total)
+        self._write_log(Text(f"  ↑ turn {n} / {total}", style="dim italic #666666"))
 
     def clear(self) -> None:
         """Ctrl+L: clear the log + reset state. Does not affect engine state."""
@@ -897,6 +925,7 @@ class ConversationView(Widget):
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
+        self._last_turn_flash = None
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
