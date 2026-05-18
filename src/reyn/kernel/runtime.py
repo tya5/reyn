@@ -84,7 +84,7 @@ class OSRuntime:
         self._chain_id = chain_id
         self._budget_tracker = budget_tracker
         self._budget_skill_name = skill_name or skill.name
-        self.events = EventLog(subscribers=subscribers)
+        self.events = EventLog(subscribers=subscribers, run_id=run_id)
         self.workspace = Workspace(
             self.events,
             permission_resolver=permission_resolver,

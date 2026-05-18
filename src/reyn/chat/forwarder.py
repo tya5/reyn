@@ -37,14 +37,17 @@ class ChatEventForwarder:
     def on_phase_started(self, data: dict) -> None:
         phase = data.get("phase", "?")
         # No [skill_name] prefix — renderer prepends it from meta provenance.
-        self._enqueue(f"phase started: {phase}")
+        self._enqueue(f"phase started: {phase}", source_run_id=data.get("run_id"))
 
     def on_phase_completed(self, data: dict) -> None:
         phase = data.get("phase", "?")
         nxt = data.get("next", "?")
         conf = data.get("confidence")
         suffix = f"  (confidence={conf})" if conf is not None else ""
-        self._enqueue(f"{phase} → {nxt}{suffix}")
+        self._enqueue(
+            f"{phase} → {nxt}{suffix}",
+            source_run_id=data.get("run_id"),
+        )
 
     # ── Workflow terminal events (FP-0011 / FP-0012) ─────────────────────
     # FP-0011 removed skill_narrator and the `skill_done` outbox kind that
@@ -55,10 +58,10 @@ class ChatEventForwarder:
     # call finish_skill_row without changing the outbox contract.
 
     def on_workflow_finished(self, data: dict) -> None:
-        self._enqueue("skill done: finished")
+        self._enqueue("skill done: finished", source_run_id=data.get("run_id"))
 
     def on_workflow_aborted(self, data: dict) -> None:
-        self._enqueue("skill done: aborted")
+        self._enqueue("skill done: aborted", source_run_id=data.get("run_id"))
 
     # ── In-phase detail signals (skill internal progress) ────────────────────
     # Without these, the SkillActivityRow showed only the phase name
@@ -76,7 +79,7 @@ class ChatEventForwarder:
         the response arrives or the phase advances.
         """
         model = data.get("model") or "?"
-        self._enqueue(f"detail: llm: {model}")
+        self._enqueue(f"detail: llm: {model}", source_run_id=data.get("run_id"))
 
     def on_llm_response_received(self, data: dict) -> None:
         """LLM call finished — clear the detail (= we're between calls).
@@ -85,7 +88,7 @@ class ChatEventForwarder:
         after the response arrived, misleading users about whether the
         model is still working.
         """
-        self._enqueue("detail: ")
+        self._enqueue("detail: ", source_run_id=data.get("run_id"))
 
     def on_act_executed(self, data: dict) -> None:
         """Control IR ops just ran — show a short summary as detail.
@@ -97,14 +100,32 @@ class ChatEventForwarder:
         """
         op_count = data.get("op_count")
         if op_count:
-            self._enqueue(f"detail: act: {op_count} op{'s' if op_count != 1 else ''}")
+            self._enqueue(
+                f"detail: act: {op_count} op{'s' if op_count != 1 else ''}",
+                source_run_id=data.get("run_id"),
+            )
 
-    def _enqueue(self, text: str) -> None:
+    def _enqueue(self, text: str, *, source_run_id: str | None = None) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.
+        #
+        # Issue #134 — sub-skill attribution: prefer the event's own
+        # ``run_id`` (= the skill run that actually emitted the event)
+        # over ``self.run_id`` (= the run that constructed this
+        # forwarder).  When the two differ, stamp ``parent_run_id`` so
+        # TUI consumers can render nested rows.  Falls back to the
+        # forwarder's own run_id when the event carries none (= pre-
+        # issue-#134 emit sites + non-runtime events).
+        effective_run_id = source_run_id or self.run_id
         meta: dict = {"skill_name": self.skill_name}
-        if self.run_id:
-            meta["run_id"] = self.run_id
-            meta["run_id_short"] = self.run_id[-4:]
+        if effective_run_id:
+            meta["run_id"] = effective_run_id
+            meta["run_id_short"] = effective_run_id[-4:]
+        if (
+            source_run_id is not None
+            and self.run_id is not None
+            and source_run_id != self.run_id
+        ):
+            meta["parent_run_id"] = self.run_id
         try:
             self.outbox.put_nowait(OutboxMessage(kind="trace", text=text, meta=meta))
         except asyncio.QueueFull:

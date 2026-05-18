@@ -16,6 +16,7 @@ class EventLog:
         subscribers: list[Callable[[Event], None]] | None = None,
         *,
         agent_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self._events: list[Event] = []
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
@@ -23,6 +24,13 @@ class EventLog:
         # payload when set. None preserves prior behaviour for callers
         # (= tests + emit_cli_event) that don't have a session identity.
         self._agent_id = agent_id
+        # Issue #134: run_id is auto-injected into every event payload
+        # when set, mirroring the agent_id pattern. The skill run that
+        # emits the event is recorded so that subscribers (= forwarder /
+        # TUI) can distinguish events from a parent skill versus a
+        # sub-skill spawned via the ``run_skill`` op (which currently
+        # inherits the parent's subscriber list).
+        self._run_id = run_id
 
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
@@ -38,6 +46,11 @@ class EventLog:
         """
         return self._agent_id
 
+    @property
+    def run_id(self) -> str | None:
+        """The run_id this EventLog stamps onto emitted events (issue #134)."""
+        return self._run_id
+
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 
@@ -49,6 +62,12 @@ class EventLog:
         # the upstream origin's identity).
         if self._agent_id and "agent_id" not in data:
             data = {**data, "agent_id": self._agent_id}
+        # Issue #134: stamp run_id with the same caller-wins convention
+        # as agent_id. Lets subscribers route events to the correct
+        # skill row when a child skill spawned via ``run_skill`` shares
+        # the parent's subscriber list.
+        if self._run_id and "run_id" not in data:
+            data = {**data, "run_id": self._run_id}
         event = Event(type=type, data=data)
         self._events.append(event)
         for sub in self._subscribers:
