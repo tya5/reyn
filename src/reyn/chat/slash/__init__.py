@@ -23,6 +23,11 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Iterable
 
 HandlerFn = Callable[..., Awaitable[None]]
+# CompleterFn signature: ``(session, arg_partial: str = "") -> list[str]``.
+# ``arg_partial`` is the string typed after the slash command and the
+# trailing space (e.g. for ``/plan discard ab`` the partial is
+# ``"discard ab"``). Completers that don't need it (e.g. ``/attach``
+# which always lists agent names) can ignore the arg via a default.
 CompleterFn = Callable[..., list[str]]
 
 
@@ -34,7 +39,7 @@ class SlashCommand:
     summary: str            # one-line description shown in /help and palette
     handler: HandlerFn      # async (session, args: str) -> None
     aliases: tuple[str, ...] = ()
-    completer: CompleterFn | None = None  # optional: (session) -> list[str]
+    completer: CompleterFn | None = None  # optional: (session, arg_partial="") -> list[str]
     hidden: bool = False    # if True, omit from /help and the Tab palette
                             # (still dispatchable when typed by name)
 

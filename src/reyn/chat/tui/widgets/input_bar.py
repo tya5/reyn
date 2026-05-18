@@ -354,13 +354,20 @@ class InputBar(Widget):
     def _run_completer(
         self, cmd: SlashCommand, arg_partial: str,
     ) -> list[str]:
-        """Resolve ``cmd.completer(session)`` and prefix-filter by partial.
+        """Resolve ``cmd.completer(session, arg_partial)`` and filter by partial.
 
         Reaches up to ``self.app`` to fetch the active session — a small
         layer leak that avoids threading a session-getter through every
         widget constructor for the single arg-completion path. Returns
         an empty list (= caller falls back to plain hint mode) on any
         exception so a broken completer can't break the picker.
+
+        Filtering uses the LAST whitespace-delimited token of
+        ``arg_partial`` rather than the whole string, so multi-arg
+        commands like ``/plan discard ab`` filter the completions
+        (= plan_ids) by ``"ab"`` and not by ``"discard ab"`` — the
+        subcommand prefix is consumed in choosing the completer's
+        context, not in the prefix match.
         """
         try:
             session = self.app._get_session()  # type: ignore[attr-defined]
@@ -369,12 +376,15 @@ class InputBar(Widget):
         if session is None or cmd.completer is None:
             return []
         try:
-            all_completions = cmd.completer(session)
+            all_completions = cmd.completer(session, arg_partial)
         except Exception:
             return []
-        if arg_partial:
-            return [c for c in all_completions if c.startswith(arg_partial)]
-        return list(all_completions)
+        # Empty trailing space (= "discard " with nothing after) → no
+        # filter, show everything. Otherwise filter by the last word.
+        if not arg_partial or arg_partial.endswith(" "):
+            return list(all_completions)
+        last_word = arg_partial.rsplit(" ", 1)[-1]
+        return [c for c in all_completions if c.startswith(last_word)]
 
     def _confirm_picker(self, picker: SlashPicker, ta: TextArea) -> None:
         cmd = picker.selected_command()
