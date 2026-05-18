@@ -79,7 +79,12 @@ def get_default_registry() -> ToolRegistry:
     )
     from reyn.tools.plan import PLAN
     from reyn.tools.recall import RECALL
-    from reyn.tools.reyn_src import REYN_SRC_LIST, REYN_SRC_READ
+    from reyn.tools.reyn_src import (
+        REYN_SRC_GLOB,
+        REYN_SRC_GREP,
+        REYN_SRC_LIST,
+        REYN_SRC_READ,
+    )
     from reyn.tools.sandboxed_exec import SANDBOXED_EXEC
     from reyn.tools.shell import SHELL
 
@@ -136,6 +141,10 @@ def get_default_registry() -> ToolRegistry:
     registry.register(PLAN)
     registry.register(REYN_SRC_LIST)
     registry.register(REYN_SRC_READ)
+    # FP-0038 (#171) S2 + S3: glob / grep for Reyn's own repo, mirroring
+    # the file__glob / file__grep surfaces but scoped to the OS source tree.
+    registry.register(REYN_SRC_GLOB)
+    registry.register(REYN_SRC_GREP)
     # ── Phase-only coarse-name ops (gates.router=deny, gates.phase=allow) ─
     # ADR-0026 Phase 4: Control IR ``kind: file/mcp/run_skill`` values map
     # 1:1 to these coarse ToolDefinitions; ControlIRExecutor dispatches via

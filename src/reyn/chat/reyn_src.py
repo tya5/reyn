@@ -178,9 +178,158 @@ def read_text(target: Path, path_arg: str) -> dict:
     return {"path": path_arg, "content": content}
 
 
+_MAX_GLOB_MATCHES = 200
+_MAX_GREP_RESULTS = 50
+_GREP_SNIPPET_CHARS = 200
+# Same skip-set the listing path applies (= canonical exclusion for
+# noise / build artifacts). Used by both glob and grep so the surfaces
+# are uniformly "Reyn source as a human reader would see it".
+_SKIP_DIR_NAMES: frozenset[str] = frozenset({
+    ".git", ".reyn", ".github", ".claude", ".pytest_cache",
+    ".ruff_cache", ".mypy_cache", "__pycache__", "venv", ".venv",
+    "site", "build", "dist", "node_modules",
+})
+
+
+def _iter_files_under(root: Path):
+    """Yield files under ``root``, skipping noise dirs.
+
+    Walks ``root`` recursively with ``Path.rglob`` then filters out any
+    file whose ancestry includes a name in ``_SKIP_DIR_NAMES``. Matches
+    `list_entries`'s skip discipline so glob / grep results don't include
+    things a `reyn.source__list` browse wouldn't.
+    """
+    for p in root.rglob("*"):
+        if not p.is_file():
+            continue
+        # Skip if any ancestor dir name is in the skip set.
+        try:
+            rel_parts = p.relative_to(root).parts
+        except ValueError:
+            continue
+        if any(part in _SKIP_DIR_NAMES for part in rel_parts):
+            continue
+        yield p
+
+
+def glob_entries(root: Path, pattern: str) -> dict:
+    """Build the ``reyn_src_glob`` result dict.
+
+    Returns ``{pattern, matches: [str, ...], count: int}`` where each
+    match is a repo-root-relative path. Capped at ``_MAX_GLOB_MATCHES``
+    so a careless ``**`` doesn't blow up the LLM context.
+    """
+    cleaned = (pattern or "").strip()
+    if not cleaned:
+        return {"error": "reyn_src_glob: pattern must be non-empty."}
+    matches: list[str] = []
+    try:
+        for p in root.glob(cleaned):
+            if not p.is_file():
+                continue
+            try:
+                rel_parts = p.relative_to(root).parts
+            except ValueError:
+                continue
+            if any(part in _SKIP_DIR_NAMES for part in rel_parts):
+                continue
+            matches.append(str(p.relative_to(root)))
+            if len(matches) >= _MAX_GLOB_MATCHES:
+                break
+    except (ValueError, OSError) as exc:
+        return {"error": f"reyn_src_glob: pattern {pattern!r} failed: {exc}"}
+    matches.sort()
+    return {"pattern": pattern, "matches": matches, "count": len(matches)}
+
+
+def grep_entries(
+    root: Path,
+    pattern: str,
+    path: str = "",
+    glob: str | None = None,
+    case_sensitive: bool = False,
+    max_results: int = _MAX_GREP_RESULTS,
+) -> dict:
+    """Build the ``reyn_src_grep`` result dict.
+
+    Returns ``{pattern, matches: [{path, line, snippet}, ...], count: int,
+    truncated: bool}``. ``path`` scopes the search to a sub-tree (default
+    repo root). ``glob`` filters which files are searched (default = all
+    text files under scope).
+    """
+    import re
+
+    if not pattern:
+        return {"error": "reyn_src_grep: pattern must be non-empty."}
+    try:
+        compiled = re.compile(
+            pattern,
+            flags=0 if case_sensitive else re.IGNORECASE,
+        )
+    except re.error as exc:
+        return {"error": f"reyn_src_grep: invalid regex {pattern!r}: {exc}"}
+
+    try:
+        scope_root = safe_resolve_inside(root, path)
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+    # Resolve which files to scan
+    if scope_root.is_file():
+        candidates = [scope_root]
+    elif glob:
+        try:
+            candidates = [
+                p for p in scope_root.glob(glob)
+                if p.is_file()
+                and not any(part in _SKIP_DIR_NAMES for part in p.relative_to(root).parts)
+            ]
+        except (ValueError, OSError) as exc:
+            return {"error": f"reyn_src_grep: glob {glob!r} failed: {exc}"}
+    else:
+        candidates = list(_iter_files_under(scope_root))
+
+    matches: list[dict] = []
+    truncated = False
+    for fp in candidates:
+        if len(matches) >= max_results:
+            truncated = True
+            break
+        # Skip files larger than the read cap — same discipline as read_text.
+        try:
+            if fp.stat().st_size > _MAX_READ_BYTES:
+                continue
+        except OSError:
+            continue
+        try:
+            text = fp.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for line_no, line in enumerate(text.splitlines(), start=1):
+            if compiled.search(line):
+                snippet = line.strip()[:_GREP_SNIPPET_CHARS]
+                matches.append({
+                    "path": str(fp.relative_to(root)),
+                    "line": line_no,
+                    "snippet": snippet,
+                })
+                if len(matches) >= max_results:
+                    truncated = True
+                    break
+
+    return {
+        "pattern": pattern,
+        "matches": matches,
+        "count": len(matches),
+        "truncated": truncated,
+    }
+
+
 __all__ = [
     "resolve_reyn_root",
     "safe_resolve_inside",
     "list_entries",
     "read_text",
+    "glob_entries",
+    "grep_entries",
 ]
