@@ -95,6 +95,7 @@ class Agent:
         resume_plan: "Any | None" = None,
         run_id: str | None = None,
         parent_run_id: str | None = None,
+        plan_step: dict | None = None,
     ) -> RunResult:
         # On resume, callers pass the original run_id so the WAL events
         # stay scoped to the same skill run (= step events from before
@@ -145,6 +146,7 @@ class Agent:
             parent_run_id=parent_run_id,
             sandbox_config=self._sandbox_config,
             secret_store=self._secret_store,
+            plan_step=plan_step,
         )
         return await self._runtime.run(initial_input, output_language=output_language)
 

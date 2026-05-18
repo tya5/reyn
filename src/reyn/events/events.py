@@ -17,6 +17,7 @@ class EventLog:
         *,
         agent_id: str | None = None,
         run_id: str | None = None,
+        plan_step: dict | None = None,
     ) -> None:
         self._events: list[Event] = []
         self._subscribers: list[Callable[[Event], None]] = list(subscribers or [])
@@ -31,6 +32,15 @@ class EventLog:
         # sub-skill spawned via the ``run_skill`` op (which currently
         # inherits the parent's subscriber list).
         self._run_id = run_id
+        # Issue #214 (= #180 #2 split): plan_step is auto-injected when
+        # a skill OSRuntime is constructed within the scope of a plan
+        # step. Subscribers (= ChatEventForwarder) read ``plan_step`` on
+        # the first ``phase_started`` to render "plan N/M" detail on the
+        # SkillActivityRow, so the user can correlate a spawned skill
+        # row with the originating step. Same caller-wins convention as
+        # agent_id / run_id. Shape: {"n_done": int, "n_total": int,
+        # "step_id": str}. None = top-level (not inside a plan step).
+        self._plan_step = plan_step
 
     @property
     def subscribers(self) -> list[Callable[[Event], None]]:
@@ -51,6 +61,11 @@ class EventLog:
         """The run_id this EventLog stamps onto emitted events (issue #134)."""
         return self._run_id
 
+    @property
+    def plan_step(self) -> dict | None:
+        """The plan_step this EventLog stamps onto emitted events (issue #214)."""
+        return self._plan_step
+
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 
@@ -68,6 +83,13 @@ class EventLog:
         # the parent's subscriber list.
         if self._run_id and "run_id" not in data:
             data = {**data, "run_id": self._run_id}
+        # Issue #214: stamp plan_step (= {n_done, n_total, step_id}) so
+        # ChatEventForwarder can render "plan N/M" detail on the
+        # SkillActivityRow of any skill spawned inside a plan step.
+        # Caller-wins matches the run_id / agent_id pattern — a skill
+        # explicitly emitting plan_step in data is preserved.
+        if self._plan_step and "plan_step" not in data:
+            data = {**data, "plan_step": self._plan_step}
         event = Event(type=type, data=data)
         self._events.append(event)
         for sub in self._subscribers:

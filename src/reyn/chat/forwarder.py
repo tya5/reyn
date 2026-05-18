@@ -28,6 +28,10 @@ class ChatEventForwarder:
         self.skill_name = skill_name
         self.outbox = outbox
         self.run_id = run_id
+        # Issue #214: track which run_ids have already received their
+        # "plan N/M" one-shot detail so we don't spam the row on every
+        # phase advance (= once per child skill at first phase_started).
+        self._plan_step_announced: set[str] = set()
 
     def __call__(self, event: Event) -> None:
         handler = getattr(self, f"on_{event.type}", None)
@@ -37,7 +41,30 @@ class ChatEventForwarder:
     def on_phase_started(self, data: dict) -> None:
         phase = data.get("phase", "?")
         # No [skill_name] prefix — renderer prepends it from meta provenance.
-        self._enqueue(f"phase started: {phase}", source_run_id=data.get("run_id"))
+        source_run_id = data.get("run_id")
+        # Issue #214: when the event carries plan_step, emit a one-shot
+        # "plan N/M" detail line for this run_id BEFORE the phase trace.
+        # The SkillActivityRow detail is replaced on the NEXT in-phase
+        # signal (on_llm_called / on_act_executed) — so the user sees
+        # "plan N/M" briefly on row mount, then it gets overwritten by
+        # real-time signals. That's the right tradeoff: plan context is
+        # most useful at row mount; once the skill is grinding, the
+        # in-phase signal carries more information.
+        plan_step = data.get("plan_step")
+        if (
+            plan_step
+            and source_run_id
+            and source_run_id not in self._plan_step_announced
+        ):
+            n_done = plan_step.get("n_done")
+            n_total = plan_step.get("n_total")
+            if n_done and n_total:
+                self._enqueue(
+                    f"detail: plan {n_done}/{n_total}",
+                    source_run_id=source_run_id,
+                )
+                self._plan_step_announced.add(source_run_id)
+        self._enqueue(f"phase started: {phase}", source_run_id=source_run_id)
 
     def on_phase_completed(self, data: dict) -> None:
         phase = data.get("phase", "?")
