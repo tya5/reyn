@@ -152,6 +152,25 @@ coherent:
    peer is offline, fall back to PR comment alone — the workflow
    still works.
 
+   **Broker semantic limits (= treat broker as best-effort hint):**
+   - **In-memory only**: broker process restart drops all queued
+     messages. If the broker maintainer announces a restart, every
+     session must rewrite any in-flight coordination signal as a PR
+     comment so the contract is preserved.
+   - **Up to ~30s lag**: watcher polls at ~30s intervals, so a
+     "block raised on #N" race with the peer's `git push` is not
+     fully closed by broker alone. Truly critical pause / block /
+     "do not merge" signals must land on the PR comment **and** via
+     broker — never broker alone.
+   - **No ack semantics**: `post_message` returns `queued` only.
+     The sender cannot tell whether the recipient has read or acted
+     on the message. For coordination that must be confirmed, ask
+     the peer to ack via broker reply, or verify the outcome on the
+     PR (= comment posted, push paused, etc.). Do not assume "I
+     posted, therefore they paused".
+
+   In one line: **broker = hint, PR = contract**.
+
 ## Pre-conclusion observation checklist (READ BEFORE WRITING ANY FINDING / 結論)
 
 **Active trigger**: when you are about to write any of the following — **STOP**
