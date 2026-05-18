@@ -58,7 +58,7 @@ def render_memory(
     # ranking doesn't push the SHARED / AGENT entries off the top
     # of a narrow panel.
     if hot_list:
-        lines.append(f"[bold #ffaa44]  HOT NOW[/]")
+        lines.append("[bold #ffaa44]  HOT NOW[/]")
         for entry in hot_list[:_HOT_LIST_MAX_VISIBLE]:
             try:
                 name = str(entry.get("qualified_name", ""))
