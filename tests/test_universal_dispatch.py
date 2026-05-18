@@ -396,7 +396,7 @@ def test_known_qualified_name_for_category() -> None:
     file_names = known_qualified_name_for_category("file")
     assert set(file_names) == {
         "file__read", "file__write", "file__delete", "file__list",
-        "file__grep", "file__glob",
+        "file__grep", "file__glob", "file__edit",
     }
     # Resource category returns empty
     assert known_qualified_name_for_category("skill") == ()

@@ -31,8 +31,6 @@ Not in PR-2:
   - The ``list_actions`` enumeration body (= PR-3 with caller-state
     integration)
   - ``mcp.operation__drop_server`` op handler (= PR-4 new op)
-  - ``file__edit``, ``reyn.source__glob/grep`` (= FP-0034
-    §D20 missing ops, future PRs; file__glob/grep implemented in B34)
 """
 from __future__ import annotations
 
@@ -244,16 +242,16 @@ _RESOURCE_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], d
 # Per-qualified-name rule (= category + specific entry_name → specific tool)
 # The key is the FULL qualified name. The value is the same tuple shape.
 _OPERATION_RULES: Final[dict[str, tuple[str, Callable[[str, Mapping[str, Any]], dict[str, Any]]]]] = {
-    # file category — current op surface (read/write/delete/list/grep/glob).
-    # FP-0034 §D20 also specifies edit, which is not yet implemented as a
-    # ToolDefinition; that route is intentionally absent so resolve_* raises
-    # UnknownActionError with suggestions for that specific op.
+    # file category — §D20 surface: read / write / delete / list / grep /
+    # glob / edit.  FP-0040 (#178) closed the edit gap with unique-string
+    # anchor + replace_all flag (= Claude Code style).
     "file__read":   ("read_file",       _passthrough_args),
     "file__write":  ("write_file",      _passthrough_args),
     "file__delete": ("delete_file",     _passthrough_args),
     "file__list":   ("list_directory",  _passthrough_args),
     "file__grep":   ("grep_files",      _passthrough_args),
     "file__glob":   ("glob_files",      _passthrough_args),
+    "file__edit":   ("edit_file",       _passthrough_args),
 
     # web category
     "web__search":  ("web_search",      _passthrough_args),
