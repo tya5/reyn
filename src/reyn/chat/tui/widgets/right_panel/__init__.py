@@ -48,7 +48,12 @@ _PANEL_LABELS: dict[str, str] = {
     "docs":    "Docs",
 }
 
-_LIVE_PANELS = {"events", "agents", "cost"}
+# Tabs that re-render on the periodic ``_REFRESH_INTERVAL`` tick so newly
+# arrived data shows up without the user having to switch tabs away and
+# back. Memory was missing — when reyn saved or deleted an entry mid-
+# session it stayed invisible in the Memory tab until next refresh
+# trigger (= manual tab switch).
+_LIVE_PANELS = {"events", "agents", "cost", "memory"}
 _REFRESH_INTERVAL = 2.0
 
 
