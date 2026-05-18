@@ -128,6 +128,27 @@ def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
     return t
 
 
+def _date_separator(date_str: str) -> Text:
+    """Dim ``── YYYY-MM-DD ───…`` line for day boundaries between turns.
+
+    Same total cell width as a regular turn header (_DASH_TOTAL) so the
+    layout stays consistent. Rendered in the same dim grey as the
+    timestamp column so the visual weight is below speaker headers but
+    above body text.
+    """
+    t = Text()
+    label = f" {date_str} "
+    # Two leading dashes to balance the line visually; remaining dashes
+    # extend to _DASH_TOTAL.
+    lead_dashes = 2
+    label_cells = cell_len(label)
+    trail_dashes = max(1, _DASH_TOTAL - lead_dashes - label_cells)
+    t.append("─" * lead_dashes, style="dim #666666")
+    t.append(label, style="dim #666666")
+    t.append("─" * trail_dashes, style="dim #666666")
+    return t
+
+
 def _meta_prefix(meta: dict) -> str:
     """Build [skill#abcd] prefix from meta, same logic as renderer.py."""
     skill = meta.get("skill_name")
@@ -202,6 +223,11 @@ class ConversationView(Widget):
         # Header-grouping state (B1)
         self._last_speaker: str = ""
         self._last_speaker_at: float = 0.0
+        # Last date (YYYY-MM-DD) we wrote a header for. When a new header
+        # crosses to a different calendar day, emit a dim date-separator
+        # line first so users can tell which day's "21:55" they're looking
+        # at in a multi-day session.
+        self._last_header_date: str = ""
         # Empty-state (B5)
         self._has_first_message = False
         # Turn navigation (B4) — absolute line positions for each turn header.
@@ -356,6 +382,14 @@ class ConversationView(Widget):
         within_window = (now - self._last_speaker_at) < _GROUP_WINDOW_S
         if not (same_speaker and within_window):
             log = self._log()
+            # Day boundary marker: when this header lands on a different
+            # calendar day than the previous one (or the session's first
+            # header), emit a dim "── YYYY-MM-DD ─────" line so users in a
+            # multi-day session can tell which "21:55" they're looking at.
+            today = time.strftime("%Y-%m-%d")
+            if today != self._last_header_date:
+                log.write(_date_separator(today))
+                self._last_header_date = today
             # Record a turn anchor whenever a new speaker header appears
             # — agent replies, user inputs, and system / slash-command
             # results. Ctrl+P / Ctrl+N then walk through every header in
@@ -897,6 +931,7 @@ class ConversationView(Widget):
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
+        self._last_header_date = ""
         self._turn_anchors.clear()
         self._trim_warned = False
         self._last_long_reply = None
