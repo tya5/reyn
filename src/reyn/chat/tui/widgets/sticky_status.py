@@ -92,6 +92,16 @@ class StickyStatus(Static):
         self._active = False
         self.remove_class("active")
 
+    def snapshot(self) -> dict:
+        """Return the current display state for inspection by callers / tests.
+
+        Exposes ``{"active": bool, "body": str, "kind": str}`` so callers
+        (and Tier 2 tests) can verify the sticky's state through a public
+        surface rather than reading the ``_active`` / ``_body`` / ``_kind``
+        private attributes directly (= ``testing.ja.md`` anti-pattern).
+        """
+        return {"active": self._active, "body": self._body, "kind": self._kind}
+
     # ── internal ──────────────────────────────────────────────────────────────
 
     def _tick(self) -> None:

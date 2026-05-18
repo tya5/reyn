@@ -459,6 +459,20 @@ class OutboxRouter:
         self._app._mount_intervention(
             conv, msg.text, iv_id, choices, queued_extra=queued_extra,
         )
+        # Persistent "blocked on user" indicator. The InterventionWidget is
+        # mounted inline and can scroll off-screen in a long session; the
+        # sticky stays at the bottom of the conv pane so the user can't
+        # lose the "agent is waiting for me" signal by scrolling up to
+        # review prior turns. Shown AFTER ``_mount_intervention`` because
+        # ``conv.mount_intervention`` internally calls ``hide_status`` to
+        # clear any prior thinking spinner — showing before that would be
+        # silently undone. Cleared on resolution (_on_intervention_resolved).
+        # General-kind so no ⟳ spinner / elapsed timer appears — the agent
+        # is paused, not working.
+        try:
+            conv.show_status("⚑ awaiting your answer", kind="general")
+        except Exception:
+            pass
         # Out-of-band signals: the agent is hard-blocked on a human answer,
         # so a user in a background terminal tab needs to know to come
         # back. The terminal title flips visible in the tab bar; the BEL
@@ -477,7 +491,15 @@ class OutboxRouter:
         calls ``self.remove()``.  The text-input path (Enter in the InputBar)
         routes through session._deliver_answer_to without touching the widget,
         so we need this outbox message to clean up the orphaned widget.
+
+        Also clears the "⚑ awaiting your answer" sticky set by
+        ``_on_intervention`` — both resolution paths flow through this
+        outbox message, so it's the single dismissal point.
         """
+        try:
+            conv.hide_status()
+        except Exception:
+            pass
         iv_id = msg.meta.get("iv_id", "")
         widget_id = f"iv_{iv_id[:8]}"
         try:
