@@ -45,8 +45,20 @@ def _iv_meta(iv: UserIntervention) -> dict:
     Mirrors the module-level helper in session.py (kept in sync).
     Includes structured choice data so TUI renderers can build chip buttons
     without re-parsing the formatted text string.
+
+    Issue #163 — adds ``prompt`` and ``detail`` as structured fields so
+    the TUI widget can render visual hierarchy (= amber-bold prompt + dim
+    detail) instead of one bold amber blob.  ``OutboxMessage.text`` stays
+    a concatenated string for backward-compat (CLI Panel renderer / log
+    fallback consume it unchanged).
     """
-    out: dict = {"intervention_id": iv.id, "intervention_kind": iv.kind}
+    out: dict = {
+        "intervention_id": iv.id,
+        "intervention_kind": iv.kind,
+        "prompt": iv.prompt,
+    }
+    if iv.detail:
+        out["detail"] = iv.detail
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = iv.run_id[-4:] if iv.run_id else ""

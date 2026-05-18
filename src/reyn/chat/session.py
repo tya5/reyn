@@ -330,8 +330,18 @@ def _iv_meta(iv: "UserIntervention") -> dict:
 
     Includes structured choice data so TUI renderers can build chip buttons
     without re-parsing the formatted text string.
+
+    Issue #163 — adds ``prompt`` and ``detail`` as structured fields so
+    the TUI widget can render visual hierarchy (kept in sync with the
+    sibling helper in ``services/intervention_handler.py``).
     """
-    out = {"intervention_id": iv.id, "intervention_kind": iv.kind}
+    out: dict = {
+        "intervention_id": iv.id,
+        "intervention_kind": iv.kind,
+        "prompt": iv.prompt,
+    }
+    if iv.detail:
+        out["detail"] = iv.detail
     if iv.run_id:
         out["run_id"] = iv.run_id
         out["run_id_short"] = _run_short(iv.run_id)
