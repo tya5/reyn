@@ -443,7 +443,12 @@ def render_agents(
         # Blank separator between agent blocks (matches the interleave below).
         if agent_idx > 0:
             y_counter += 1
-        # Root label of this agent's RichTree is one line.
+        # Root label of this agent's RichTree is one line. Record its y
+        # for cursor navigation BEFORE bumping y_counter past it — j/k
+        # in the panel uses item_ys / flat_items to land the cursor on
+        # selectable rows, and the agent-name row is the most natural
+        # selectable target (= "this is the agent I want to act on").
+        agent_label_y = y_counter
         y_counter += 1
         is_attached = name == attached
         in_loaded = name in loaded
@@ -480,11 +485,32 @@ def render_agents(
             status_glyph, status_text, status_style = (
                 "○ ", "idle", "#555555",
             )
+        # Apply ``reverse`` text-style on the cursor row so it stands out
+        # without adding a column-prefix shift (= the attached ``▶ ``
+        # marker already occupies column 0). Same non-color shape-cue
+        # pattern intervention chip focus uses (PR #181).
+        is_cursor = len(flat_items) == cursor
+        cursor_suffix = " reverse" if is_cursor else ""
         label = RichText()
-        label.append("▶ " if is_attached else "  ", style="#555555")
-        label.append(name, style="bold " + _CORAL if is_attached else "#dddddd")
-        label.append("  ")
-        label.append(status_glyph + status_text, style=status_style)
+        label.append(
+            "▶ " if is_attached else "  ",
+            style="#555555" + cursor_suffix,
+        )
+        label.append(
+            name,
+            style=("bold " + _CORAL if is_attached else "#dddddd") + cursor_suffix,
+        )
+        label.append("  ", style="" + cursor_suffix)
+        label.append(
+            status_glyph + status_text, style=status_style + cursor_suffix,
+        )
+        flat_items.append({
+            "kind": "agent",
+            "name": name,
+            "attached": is_attached,
+            "loaded": in_loaded,
+        })
+        item_ys.append(agent_label_y)
 
         tree = RichTree(label, guide_style="#333333")
 
