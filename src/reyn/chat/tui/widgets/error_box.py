@@ -16,6 +16,7 @@ Press Esc to dismiss (handled by ConversationView / app.py via the
 """
 from __future__ import annotations
 
+from rich.markup import escape as _markup_escape
 from textual.app import ComposeResult
 from textual.widget import Widget
 from textual.widgets import Label, Static
@@ -109,7 +110,18 @@ class ErrorBox(Widget):
         return ""
 
     def _header_text(self) -> str:
-        prefix = self._prefix()
+        """Build the header line for a textual ``Label`` (Rich-markup aware).
+
+        The error message and prefix are escaped via ``rich.markup.escape``
+        because they originate from arbitrary error text — e.g. the
+        agent-name validator emits ``"must be 1-32 chars of [a-z0-9_-]
+        starting with [a-z0-9]"``, and the character class brackets were
+        being consumed as Rich markup tags. That left the rendered header
+        as ``"must be 1-32 chars of  starting…"`` (charset silently
+        missing) and similar truncation for any error mentioning a regex,
+        a list literal, or anything else bracket-shaped.
+        """
+        prefix = _markup_escape(self._prefix())
         arrow = "▼" if self._expanded else "▶"
         # Header is a 1-line Label, so use the first message line as the
         # synopsis. Only append the "…" overflow indicator when that first
@@ -122,6 +134,7 @@ class ErrorBox(Widget):
             msg = first_line[:71] + "…"
         else:
             msg = first_line
+        msg = _markup_escape(msg)
         if prefix:
             return f"✗ {prefix}: {msg}  {arrow}"
         return f"✗ {msg}  {arrow}"
@@ -138,12 +151,15 @@ class ErrorBox(Widget):
             detail_text = "\n".join(visible)
             if overflow > 0:
                 detail_text += f"\n… {overflow} more"
-            yield Static(detail_text, classes="eb-details")
+            # ``Static`` also evaluates Rich markup, so escape the same way
+            # the header does — bracketed content in tracebacks / regex
+            # rules would otherwise vanish.
+            yield Static(_markup_escape(detail_text), classes="eb-details")
             yield Label("Ctrl+B → events for full trace", classes="eb-hint")
         else:
             # No details supplied — fall back to the full (untruncated) message
             # so long errors are still readable when the box is expanded.
-            yield Static(self._message, classes="eb-details")
+            yield Static(_markup_escape(self._message), classes="eb-details")
             yield Label("Ctrl+B → events for full trace", classes="eb-hint")
 
     # ── interaction ───────────────────────────────────────────────────────────
