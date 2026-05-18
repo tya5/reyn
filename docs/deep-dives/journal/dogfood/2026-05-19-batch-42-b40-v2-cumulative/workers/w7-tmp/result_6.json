@@ -1,0 +1,170 @@
+{
+  "generated_at": "2026-05-18T23:30:00.911905+00:00",
+  "scenarios_file": "docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/workers/w7-tmp/scenario_6.yaml",
+  "agent": "dogfood-b42-7-s6",
+  "web_url": "http://127.0.0.1:8207",
+  "n_shot": 1,
+  "max_turns": 5,
+  "results": [
+    {
+      "scenario_id": "scenario_6_file_and_doc_lookup_chain",
+      "description": "Mixed research + file reference chain. Exercises tool invocation across turns and checks that tool results are carried into subsequent answers without context loss.\n",
+      "kind": "research_chain",
+      "agent_name": "dogfood-b42-7-s6",
+      "prompts": [
+        "What ADRs exist in this project?",
+        "Summarize the most recent one.",
+        "What problem was it solving?",
+        "Is there a related ADR that covers the same area?",
+        "What would be the next logical ADR to write given the current state?"
+      ],
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What ADRs exist in this project?",
+          "message_id": "56388acf64314fa5bc046afacac4a0ad",
+          "elapsed_s": 4.858,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 2,
+          "prompt": "Summarize the most recent one.",
+          "message_id": "6be50b910c624515946a02c8eb603592",
+          "elapsed_s": 2.145,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 3,
+          "prompt": "What problem was it solving?",
+          "message_id": "eb7b2b44b8fc4d6b946bd04f133e5f69",
+          "elapsed_s": 1.078,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 4,
+          "prompt": "Is there a related ADR that covers the same area?",
+          "message_id": "db4bb41c8f694012986a4c9e1b22d886",
+          "elapsed_s": 1.754,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 5,
+          "prompt": "What would be the next logical ADR to write given the current state?",
+          "message_id": "2d019d4e868d44c097805ae7bc515df7",
+          "elapsed_s": 2.933,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        }
+      ],
+      "events_file": "/tmp/reyn-worktrees/b42-7/.reyn/events/agents/dogfood-b42-7-s6/chat/2026-05/2026-05-19T082946.jsonl",
+      "token_entries": [
+        {
+          "ts": "2026-05-19T08:29:50+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 4936,
+          "cost_usd": 0.0004999
+        },
+        {
+          "ts": "2026-05-19T08:29:50+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 4995,
+          "cost_usd": 0.0004994999999999999
+        },
+        {
+          "ts": "2026-05-19T08:29:52+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5466,
+          "cost_usd": 0.0005535
+        },
+        {
+          "ts": "2026-05-19T08:29:53+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5517,
+          "cost_usd": 0.0005517
+        },
+        {
+          "ts": "2026-05-19T08:29:55+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5339,
+          "cost_usd": 0.0005399
+        },
+        {
+          "ts": "2026-05-19T08:29:57+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5372,
+          "cost_usd": 0.0005432
+        },
+        {
+          "ts": "2026-05-19T08:30:00+09:00",
+          "agent": "dogfood-b42-7-s6",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5408,
+          "cost_usd": 0.0005468
+        }
+      ],
+      "tool_sequence": [
+        "file__glob",
+        "list_actions"
+      ],
+      "empty_stop_events": 0,
+      "shot": 1
+    }
+  ],
+  "summary": {
+    "n_scenarios": 1,
+    "n_turns": 5,
+    "n_empty": 0,
+    "empty_rate": 0.0,
+    "latency_p50": 2.15,
+    "latency_p90": 4.86,
+    "empty_by_turn_position": {
+      "1": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "2": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "3": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "4": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "5": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      }
+    },
+    "total_llm_calls": 7,
+    "total_tokens": 37033
+  }
+}

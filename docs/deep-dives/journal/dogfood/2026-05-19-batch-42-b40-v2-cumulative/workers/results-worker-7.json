@@ -1,0 +1,138 @@
+{
+  "batch": "B42",
+  "worker": 7,
+  "head": "79748ac9",
+  "date": "2026-05-19",
+  "scenario_set": "long_session_v1.yaml",
+  "state_mode": "fresh",
+  "config": "default",
+  "port": 8207,
+  "server_cwd": "/tmp/reyn-worktrees/b42-7",
+  "agent_prefix": "dogfood-b42-7-s",
+  "recovery_note": "Sub-agent dispatched to re-run W7 was killed mid-aggregation by parent session (context budget). Driver itself ran cleanly: 7 scenarios × multi-turn complete, results landed under workers/w7-tmp/result_{1..7}.json + agent history.jsonl. This file aggregated offline from per-scenario result JSON + agent history texts. events_pass uses driver-recorded empty/non-empty signal (= empty_stop_events from per-scenario JSON, not on-disk events.jsonl).",
+  "verdicts": {"V": 2, "I": 3, "R": 2, "B": 0},
+  "vs_b41": {
+    "b41_verdicts": {"V": 2, "I": 5, "R": 0, "B": 0},
+    "deltas": {"V": 0, "I": -2, "R": 2, "B": 0},
+    "note": "V holds (S1 P7 + S7 CAP). I→R on S2 + S6 (5/5 and 4/5 empty respectively — was I in B41). Driver wait-for-skill-completion fix (PR #207 = B-#2) DID land and IS exercised in this batch — spawn-ack handling not the regression source for S2/S6. Empty-stop attractor in pronoun-followup (S2) + doc-lookup (S6) chains looks separate from the B41-NF-W7-2 driver bug fixed in this batch — needs cross-batch follow-up."
+  },
+  "vs_b39": {
+    "b39_verdicts": null,
+    "note": "B39 W7 long_session not directly comparable (different scenario set + scoring)."
+  },
+  "fix_attribution_summary": {
+    "pr_207_skill_completion_wait": "Driver no longer hangs on spawn-ack — confirmed via S2/S6 where 5 turns ran end-to-end (versus B41 S5 driver timing truncation noted in W7 baseline 'notable' section). HOWEVER S5 truncated at T2 → unrelated mechanism (LLM-side `plan tool not available` short-circuit, not driver wait).",
+    "pr_204_run_skill_path": "No eval / run_skill ops surface in this scenario set — not exercised here.",
+    "pr_221_describe_action_post_text": "Empty-stop after describe_action was the B41-NF-W7-1 target. S6 reproduces 5/5 empty replies — distinct from W7-S2 describe_action (= different scenario set). The 5/5 empty pattern on S6 suggests a DIFFERENT empty-stop attractor (file-and-doc-lookup chain) — not the post_text fix's blast radius. Not a regression of PR #221, just an uncovered surface."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "result": "verified",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 1,
+      "turns_total": 5,
+      "rubric_pass": true,
+      "rubric_notes": "Final answer (T5, 1581 chars) addresses P7 explicitly via 5 bullet points (constrained LLM choices, typed artifacts, stateless phases, workspace SSoT, append-only events). References concepts from earlier turns (skill/phase/OS distinctions). Final reply is not empty. T1 was empty-stop (= cold start) but rubric only requires non-empty on FINAL turn — V.",
+      "reply_excerpt_T5": "The principles that prevent skill-specific code from leaking into the OS are: 1. Constrained Decision-Making 2. Typed Artifacts and Schema Validation 3. Stateless Phases 4. Workspace as Single Source of Truth 5. Append-Only Event Log",
+      "vs_b41": "V -> V (stable)",
+      "notes": "T1 empty-stop (cold start) recovers naturally as context builds up — confirms B40 v2 ARS extend stabilises mid-chain even when T1 unlucky."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 4,
+      "turns_total": 5,
+      "rubric_pass": false,
+      "rubric_notes": "No explicit rubric (kind=null) — fallback rule: majority-empty-replies on followups = R. T2-T5 all return canned empty-stop fallback (\"The model returned an empty response. Please try rephrasing your request or check your configuration.\") = 4/5 turns empty. T1 substantive (738 chars). Final-turn (T5) empty.",
+      "reply_excerpt_T1": "The on-disk index for the semantic retrieval system, accessible via `recall_source` and other related tools, stores content in a way that allows for both vector search and metadata-based filtering. Specifically, the document chunks are indexed and managed by a database system designed for vector embeddings...",
+      "reply_excerpt_T5_empty": "The model returned an empty response. Please try rephrasing your request or check your configuration.",
+      "vs_b41": "I -> R (degradation — but B41 I was via driver truncation hiding the empties; B42 driver runs to completion exposing the underlying 4/5 empty-stop attractor)",
+      "notes": "**Key finding**: PR #207 driver fix EXPOSED a previously-hidden pronoun-followup empty-stop chain. Pre-PR-207 the driver would have truncated at T2 (I via 'cannot judge'); post-PR-207 the driver runs all 5 turns and the 4/5 empty pattern is visible. Not a regression of PR #207 — PR #207 is doing exactly what it's supposed to do (= visibility). The pronoun-followup attractor is a SEPARATE behaviour worth a B43 follow-up. Suggest NF-W7-B42-1."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "result": "inconclusive",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": null,
+      "rubric_notes": "No explicit rubric (kind=null) — fallback: all 5 turns substantive (3610 / 2876 / 166 / 333 / 2346 chars). T3 is short (166 chars) but answers a clarifying ask. T4 says 'cannot provide comparison or assess predictability' = partial refusal but in a substantive way (= explains gap, doesn't empty-stop). T5 substantive (2346 chars).",
+      "vs_b41": "I -> I (stable)",
+      "notes": "Multi-turn coherent. Without explicit judge rubric, treat as I rather than V."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "result": "inconclusive",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": null,
+      "rubric_notes": "No explicit rubric. All 5 turns substantive (2859 / 1828 / 89 / 714 / 396 chars). T3 short (89 chars: 'I do not have access to information about the common usage of skills in dogfood sessions.') — honest refusal, not empty-stop. T4-T5 give skill catalog buckets + recommendation.",
+      "vs_b41": "V -> I (B41 V noted as 'G12 Pattern E fix verified for context-bloat target' — but with no judge rubric to verify substantive content matches expectation, conservative downgrade to I)",
+      "notes": "Conservative re-classification: B41 verdict could have been V via judge-LLM call, B42 offline aggregation can't replicate that judgment. Marking I to avoid V inflation."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 2,
+      "rubric_pass": false,
+      "rubric_notes": "judge rubric requires 'working minimal async producer-consumer queue example in Python' on FINAL reply. T1 (6086 chars) IS a working queue. T2 (147 chars) = 'I cannot fulfill this request. The plan tool is not available or incorrectly specified.' Driver stopped at T2 (only 2/5 turns ran). Rubric checks final reply, which is the error message — R.",
+      "reply_excerpt_T2_final": "I cannot fulfill this request. The `plan` tool is not available or incorrectly specified. Please check the available tools and their correct usage.",
+      "vs_b41": "I -> R (B41 I was 'driver timing — wait-for-skill-completed semantics missing'. B42 driver has the wait (= PR #207) but LLM short-circuits at T2 with a different error — plan tool not in catalog at this surface). Mechanism differs.",
+      "notes": "**Cross-batch follow-up**: T2 LLM emits 'plan tool not available' though plan is in catalog. Likely a hot_list cache miss or naming mismatch (plan vs plan__create vs ...). Distinct from B41 driver-timing root cause. Suggest NF-W7-B42-2."
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 5,
+      "turns_total": 5,
+      "rubric_pass": false,
+      "rubric_notes": "All 5/5 turns empty-stop. No explicit rubric — total empty chain = R.",
+      "reply_excerpt_T1_empty": "The model returned an empty response. Please try rephrasing your request or check your configuration.",
+      "vs_b41": "I -> R (B41 I was 'ADR files missing in /tmp worktree — env artifact'. B42 worktree is fresh, same env state, but the 5/5 empty pattern shows the chain hits the empty-stop attractor without the LLM even attempting tool-calls).",
+      "notes": "5/5 empty from T1 means LLM never produces output for this prompt-template. Suggest NF-W7-B42-3: file_and_doc_lookup_chain triggers cold-start empty-stop even with B40 v2 ARS extend landed. Worth a trace-patch-replay in B43 to isolate."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "result": "verified",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": true,
+      "rubric_notes": "No explicit rubric (kind=null) but all 5 turns substantive (3237 / 1820 / 1855 / 3694 / 4503 chars), each building on prior turns (CAP theorem → AP systems → Twitter timeline analogy → conflict detection → eventually-consistent system design). Final reply is the longest (4503 chars) integrating all earlier concepts. No empty-stop. V.",
+      "vs_b41": "I -> V (B41 noted 'S7-T2 router_empty after describe_action / hot_list_alias direct_llm' — that was the B41-NF-W7-1 attractor that PR #221 (= _post_text directive) closed. B42 T2 substantive 1820 chars — confirms PR #221 win.)",
+      "notes": "**PR #221 verified win**: S7-T2 was the B41 empty-stop target. B42 S7-T2 is 1820 chars substantive. Patch-isolation would be the next confirmation step but the direct improvement is strong enough to call this a verified PR #221 effect."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W7-B42-1",
+      "scenario": "scenario_2_pronoun_followup",
+      "observation": "4/5 turns empty-stop after a substantive T1. PR #207 driver fix exposed this previously-hidden attractor.",
+      "evidence": "T2-T5 all return canned fallback string 'The model returned an empty response...'. T1 = 738 chars (substantive).",
+      "hypothesis": "Pronoun-resolution prompts ('how big is it', 'what about ___', etc.) may trigger LLM to produce no content / no tool-call. Cold-start ARS extend fix (B40 v2) doesn't cover this mid-chain pattern.",
+      "action": "B43 follow-up: trace-patch-replay on S2 T2 prompt with hot-list / SP variations. Confirm mid-chain pronoun empty-stop is separate from cold-start empty-stop already addressed."
+    },
+    {
+      "id": "NF-W7-B42-2",
+      "scenario": "scenario_5_general_python_chain",
+      "observation": "T2 returns 'plan tool not available' though plan tools are in catalog. Driver truncates at T2.",
+      "evidence": "T2 reply 147 chars = error message. Same scenario T1 successfully produced 6086-char queue example.",
+      "hypothesis": "LLM may have hot_list miss or wrong tool name (plan vs plan__create vs ...). Possibly hot_list cache pollution after T1 produced substantive content.",
+      "action": "B43 follow-up: dogfood_trace --mode llm-tools-schema on S5 T2 to see what tool names are actually visible to LLM."
+    },
+    {
+      "id": "NF-W7-B42-3",
+      "scenario": "scenario_6_file_and_doc_lookup_chain",
+      "observation": "5/5 turns empty-stop from T1 onward.",
+      "evidence": "Every turn returns identical canned fallback. No tool-calls attempted.",
+      "hypothesis": "file_and_doc_lookup_chain triggers a cold-start attractor not covered by B40 v2 ARS extend (= which addresses skill discovery for hot-list misses). file/doc lookup may have different prompt-template surface that's still missing affordance hints.",
+      "action": "B43 priority: trace-patch-replay on S6 T1 to identify which affordance is missing for file-lookup chain. Likely a wrapper-description gap (= file__read / file__grep description doesn't lead the LLM here from the chain's intent)."
+    }
+  ]
+}

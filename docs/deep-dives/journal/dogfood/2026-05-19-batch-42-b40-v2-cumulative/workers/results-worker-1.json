@@ -1,0 +1,85 @@
+{
+  "batch": "B42",
+  "worker": 1,
+  "head": "79748ac9",
+  "date": "2026-05-19",
+  "scenario_set": "chat_router_smoke.yaml",
+  "state_mode": "fresh",
+  "config": "hot_list_n=10 mirror (B39/B41 W1 was default; this worker uses mirror per B42 plan)",
+  "verdicts": {"V": 3, "I": 0, "R": 4, "B": 0},
+  "vs_b41": {"V_delta": 1, "note": "S6 multi_turn_pronoun_reference recovered R->V. B42 turn2 reply contains actual code [x*2 for x in range(5)] inline, satisfying rubric. All other scenarios stable vs B41."},
+  "vs_b39": {"V_delta": 1, "note": "B39 V=2: S1 V + S2 V. B42 V=3: S2 V + S4 V + S6 V. S1 regressed (B39->B41->B42 all inline, but B39 counted artifact-pass=false as OK; B41/B42 count as R per strict artifact check). S4 recovered R->V (B40 v2 ARS fix maintained). S6 recovered R->V (narration now surfaces code snippet inline)."},
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "V",
+      "events_summary": "user_message_received x1, chat_turn_completed_inline x1, compaction_check x1. No routing_decided, no skill_run_spawned.",
+      "reply_excerpt": "こんにちは！私はReynエージェントです。Reynはモデル駆動のフェーズ実行エンジンで、Markdown DSLを使用しています。私にできることは以下の通りです。コードのレビュー: `skill__code_review`...",
+      "notes": "Inline reply mentioning skill names — rubric content PASS. No direct_llm artifact created (inline path). Artifact requirement {skill:direct_llm, present:true} fails. Consistent with B41 R. B39 counted as V despite artifact_pass=false per 'not blocking for inline' note — B41/B42 applying stricter artifact check."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "V",
+      "b41_verdict": "V",
+      "b39_verdict": "V",
+      "events_summary": "user_message_received x1, tool_called x1, web_search_started x1, web_search_completed x1, tool_returned x1, hot_list_updated x1, routing_decided x1 (action:web__search, source:hot_list_alias), compaction_check x1.",
+      "reply_excerpt": "「冪等」（べきとう）とは、ある操作を1回行っても、複数回行っても、結果が同じであることを意味する数学用語です。英語では \"idempotence\" と言います。",
+      "notes": "Correctly explains idempotency. routing_decided emitted (web__search via hot_list_alias). no permission_denied. No direct_llm artifact (web__search path) but rubric and events pass. Stable V across B39/B41/B42."
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_summary": "user_message_received x1, tool_called x1 (list_actions), tool_returned x1, hot_list_updated x1, chat_turn_completed_inline x1, compaction_check x1. No routing_decided.",
+      "reply_excerpt": "skill__direct_llm: Catalogue-gap fallback: hand a single-shot natural-language task straight to\nskill__eval: Run a single eval case...",
+      "notes": "Reply lists skill names — rubric PASS. routing_decided NOT emitted (must_emit fails). LLM uses list_actions tool then replies inline. Persistent R across B39/B41/B42. outcome_prediction refuted=1.0 matches."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "V",
+      "b41_verdict": "V",
+      "b39_verdict": "R",
+      "events_summary": "user_message_received x1, tool_called x1, skill_run_spawned x1, tool_returned x1, hot_list_updated x1, routing_decided x1 (action:skill__word_stats_demo, source:invoke_action), invoke_skill_spawn_ack_exit x1, compaction_check x1, skill_run_completed x1 (status:finished), skill_completion_injected x1, workflow lifecycle events, artifact_created x3.",
+      "reply_excerpt": "Skill is running in the background. Use `/tasks` to monitor progress.\n\nThe `word_stats_demo` skill has finished. It analyzed the text ... and reported that it contains 44 characters across 1 line, with an estimated token count of around 7.",
+      "notes": "B40 v2 ARS fix maintained. routing_decided{skill__word_stats_demo} emitted. Full skill lifecycle present. word_stats_demo artifact at .reyn/artifacts/word_stats_demo/review/v01_text_review.json. Reply contains character stats. KEY WIN maintained from B41."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_summary": "user_message_received x1, chat_turn_completed_inline x1, compaction_check x1. No routing_decided.",
+      "reply_excerpt": "かしこまりました。どのようなテーマや雰囲気の詩がお好みですか？ 例えば、自然、愛、孤独、希望など、具体的なイメージがあれば教えてください。",
+      "notes": "chat_turn_completed_inline present (satisfies must_emit_any). Reply asks for theme instead of writing poem — rubric FAIL (no poem with at least two lines). Persistent clarification-seeking attractor for creative requests. Stable R across B39/B41/B42."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "V",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_summary": "Turn1: user_message_received x1, chat_turn_completed_inline x1 (good inline explanation). Turn2: user_message_received x1, tool_called x1, skill_run_spawned x1, routing_decided x1 (action:skill__direct_llm), skill_run_completed x1 (status:finished), skill_completion_injected x1, chat_turn_completed_inline x1. No permission_denied.",
+      "reply_excerpt": "Turn2: Skill is running in the background. Use `/tasks` to monitor progress.\n\nPythonのリスト内包表記の例として `[x*2 for x in range(5)]` が実行されました。これは、0から4までの各数値を2倍した新しいリストを生成します。",
+      "notes": "RECOVERY R->V vs B41. Turn2 reply now contains actual code snippet `[x*2 for x in range(5)]` inline in narration — rubric 'second reply contains a Python code example' PASSES. B41/B39 had pure narration collapse ('コード例を交えて説明しました') with no actual code. This batch the code snippet is surfaced. Hypothesis: non-deterministic LLM variation. Direct observation: code is present in reply text."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_summary": "user_message_received x1, chat_turn_completed_inline x1, compaction_check x1. No permission_denied.",
+      "reply_excerpt": "どのような画像を生成しますか？ 画像の内容、スタイル、色などを詳しく教えてください。",
+      "notes": "Agent solicits image details instead of declining. Rubric requires polite decline or explanation capability unavailable — FAIL. Persistent baseline attractor. Stable R across B39/B41/B42."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B42-W1-NF1",
+      "severity": "LOW",
+      "description": "S6 narration collapse may be non-deterministic: B42 turn2 reply surfaces code snippet `[x*2 for x in range(5)]` inline, satisfying rubric (R->V recovery). B39/B41 had pure-text narration collapse with no code. N=1 per batch — cannot confirm as structural fix vs LLM noise.",
+      "pre_conclusion_note": "Hypothesis only. 1/3 batches shows code-in-narration. No fix was landed between B41 and B42 targeting narration. Recommend N>=3 verification before classifying as stable."
+    }
+  ]
+}

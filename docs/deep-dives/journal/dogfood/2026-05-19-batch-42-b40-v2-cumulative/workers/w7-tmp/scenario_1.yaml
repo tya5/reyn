@@ -1,0 +1,37 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_1_reyn_research_chain
+  description: 'Multi-turn Reyn deep-dive. Each question assumes the prior answer.
+    Natural context growth from successive concept lookups.
+
+    '
+  kind: research_chain
+  covers:
+  - cli/reyn-chat
+  - stdlib-skills/direct-llm
+  - os-core/phase-engine/act-decide-loop
+  prompts:
+  - What is Reyn and what problem does it solve?
+  - How does its skill system work?
+  - What is the difference between a Phase and a Skill in that system?
+  - Where does the OS fit in the architecture you just described?
+  - What principles prevent skill-specific code from leaking into the OS?
+  expected:
+    reply:
+      kind: judge
+      rubric:
+      - final answer addresses skill-specific leakage prevention (P7 or equivalent)
+      - references concepts established in earlier turns without re-explaining from
+        scratch
+      - does not produce an empty reply on the final turn
+    events:
+      must_emit: []
+  outcome_prediction:
+    verified: 0.5
+    inconclusive: 0.0
+    refuted: 0.5
+    blocked: 0.0

@@ -1,0 +1,106 @@
+{
+  "batch": "B42",
+  "date": "2026-05-19",
+  "head_at_dispatch": "79748ac9",
+  "head_purpose": "B41 carry-over fixes landed: PR #204 (run_skill path), PR #207 (driver wait-for-skill-completion), PR #221 (describe_action _post_text). B42 measures cumulative effect.",
+  "scenarios_total": 54,
+  "verdict_totals": {
+    "verified": 21,
+    "inconclusive": 13,
+    "refuted": 18,
+    "blocked": 2
+  },
+  "verified_rate": 0.389,
+  "comparison_caveats": [
+    "**W2 + W6 verdicts are offline rubric-only** (events_pass=null) because batch crashed before workers wrote per-scenario results JSON; recovery sub-agents reconstructed verdicts from on-disk history.jsonl + scenario YAML rubric. This INFLATES V vs B41/B39 baselines where events_pass was a hard gate. Treat W2 ΔV=+4 (1→5) as 'rubric satisfied but events gate not verified offline'.",
+    "**Scenario set differs from B41 W6**: B41 ran 11 W6 scenarios; B42 dispatched 7 (= plan_mode 3 + fp_0011 subset 4). Direct ΔV not apples-to-apples on W6.",
+    "**W7 verdicts offline-aggregated**: driver ran cleanly (per-scenario result_N.json + history.jsonl present), but final results-worker-7.json was written manually post-crash. The events_pass uses driver's empty-stop counter, not on-disk events.jsonl gate."
+  ],
+  "delta_vs_b41": {
+    "b41_v": 13,
+    "b42_v": 21,
+    "delta_v": 8,
+    "b41_rate": 0.224,
+    "b42_rate": 0.389,
+    "delta_rate": 0.165,
+    "interpretation": "Apparent +8V improvement, BUT after caveat decomposition:\n  - W2 ΔV=+4 (1→5): rubric-only offline analysis inflates this; events-gated re-run needed to confirm.\n  - W3 ΔV=+2 (3→5): control_ir_ops scenarios — events were run live, no caveat.\n  - W4 ΔV=+2 (4→6): permissions_and_safety — events were run live, no caveat.\n  - W1/W5/W6/W7 ΔV=0 or net 0.\nConservative estimate: real ΔV ≈ +4 (W3 + W4) confirmed, +4 (W2) provisional pending events re-verification."
+  },
+  "delta_vs_b39": {
+    "b39_v": 21,
+    "b42_v": 21,
+    "delta_v": 0,
+    "note": "Same absolute V count vs B39 (21/58 in B39 → 21/54 in B42). Rate improvement (36.2% → 38.9%) is partly driven by smaller B42 denominator and partly by the W2 offline-rubric inflation noted above."
+  },
+  "workers": {
+    "W1_chat_router_smoke": {"v": 3, "i": 0, "r": 4, "b": 0, "scenarios": 7, "delta_vs_b41_v": 1, "notable": "S6 multi_turn_pronoun_reference R→V (B40 v2 stable); B40 v2 ARS extend held across batch."},
+    "W2_stdlib_skills_core": {"v": 5, "i": 0, "r": 3, "b": 1, "scenarios": 9, "delta_vs_b41_v": 4, "notable": "**CAVEAT: rubric-only offline analysis** — events gate not assessable from history.jsonl. Sub-agent explicitly flagged V inflation risk. s9 chained_find_then_index BLOCKED (crash-truncated dispatch — not a fix regression). s2/s3/s4/s5/s6 V via substantive replies but events_pass=null."},
+    "W3_control_ir_ops": {"v": 5, "i": 1, "r": 3, "b": 0, "scenarios": 9, "delta_vs_b41_v": 2, "notable": "ΔV=+2 vs B41. file_read + judge_output_direct + recall_indexed_source held V; new wins on file_glob_grep + web_search."},
+    "W4_permissions_and_safety": {"v": 6, "i": 2, "r": 0, "b": 0, "scenarios": 8, "delta_vs_b41_v": 2, "notable": "S1 I→V (LLM-safety-caution noise resolved). S6 V holds (B40 v2 attractor stable). Best worker by V rate."},
+    "W5_multi_agent_and_mcp": {"v": 0, "i": 4, "r": 3, "b": 0, "scenarios": 7, "delta_vs_b41_v": 0, "notable": "Identical aggregate counts vs B41. S6 mechanism CHANGED: B41 skill spawned then failed allow-unsafe-python; B42 'tool not in catalog' before spawning. **Possible interaction with PR #204** (run_skill path resolution) — needs investigation but NOT attributing as regression without trace evidence."},
+    "W6_plan_mode_fp0011_mixed": {"v": 0, "i": 3, "r": 3, "b": 1, "scenarios": 7, "delta_vs_b41_v": -1, "notable": "**CAVEAT: rubric-only offline analysis** + scenario set differs from B41 W6 (4 fewer scenarios). s6 BLOCKED = B41-NF-W7-2 driver completion-event loss REPRODUCED (= PR #207 fixed the wait, but skill_builder invalid-spec path still has a separate completion-event drop mechanism). All 3 plan_mode scenarios R (fabrication, file-not-found in plan-step file reads)."},
+    "W7_long_session_v1": {"v": 2, "i": 3, "r": 2, "b": 0, "scenarios": 7, "delta_vs_b41_v": 0, "notable": "ΔV=0 vs B41 but composition CHANGED. S1 V (P7 final, B40 v2 cold-start recovery). **S7 PR #221 verified win**: T2 1820 chars substantive (B41-NF-W7-1 empty-stop closed). S2 I→R (PR #207 driver fix EXPOSED previously-hidden 4/5-empty pronoun-followup attractor — separate from cold-start). S6 I→R (5/5 empty file_and_doc_lookup chain — uncovered surface)."}
+  },
+  "fix_verification_summary": {
+    "PR_204_run_skill_path_resolution": {
+      "status": "no scenarios exercise the eval/short-form path in this batch's scenario set",
+      "evidence": "W3 control_ir_ops doesn't exercise run_skill with short-form; W2 stdlib s7 eval scenario routed correctly but postprocessor schema validation fails (= B41-NF-S7 downstream bug, separate).",
+      "regression_check": "No regressions attributable to PR #204 detected. W5-S6 'tool not in catalog' message looks suspicious but pre-PR-204 trace not available to attribute conclusively."
+    },
+    "PR_207_driver_wait_for_skill_completion": {
+      "status": "PARTIALLY verified — driver wait works for ack-only patterns; B41-NF-W7-2 base case fixed",
+      "evidence": "W7 S1-S7 all ran 5+ turns (vs B41 W7 some scenarios truncated at T2-T3 per B41 W7 'notable' field). Spawn-ack handling no longer hangs the driver.",
+      "regression_check": "PR #207 EXPOSED a separate empty-stop attractor in W7-S2 (pronoun followup) by running the chain to completion. Not a regression of PR #207 — PR #207 is doing exactly what intended (= visibility). The exposed attractor is uncovered surface for B43.",
+      "blocked_case": "W6-S6 (skill_builder invalid-spec) still shows 'driver lost completion event' — PR #207 didn't cover the completion-event drop for skills that throw during validation. Distinct mechanism from the spawn-ack case PR #207 fixed."
+    },
+    "PR_221_describe_action_post_text": {
+      "status": "VERIFIED win on W7-S7-T2",
+      "evidence": "B41-NF-W7-1 target was S7-T2 empty-stop after describe_action. B41 had T2 empty; B42 S7-T2 = 1820 chars substantive answer. Patch-isolation deferred to future trace-replay but direct improvement strong enough.",
+      "regression_check": "W7-S6 5/5 empty chain looks suspicious but scenarios differ (S6 = file_and_doc_lookup, not describe_action). NOT a PR #221 regression — just uncovered surface."
+    }
+  },
+  "new_findings_for_b43": [
+    {
+      "id": "NF-W7-B42-1",
+      "scenario": "scenario_2_pronoun_followup",
+      "hypothesis": "Mid-chain pronoun-resolution prompts trigger empty-stop NOT covered by B40 v2 ARS extend (= cold-start fix). Separate attractor.",
+      "verify_method": "trace-patch-replay on S2 T2 with hot-list / SP variations."
+    },
+    {
+      "id": "NF-W7-B42-2",
+      "scenario": "scenario_5_general_python_chain",
+      "hypothesis": "After T1 produces substantive content, T2 'plan tool not available' suggests hot_list cache pollution or wrong tool-name visibility.",
+      "verify_method": "dogfood_trace --mode llm-tools-schema on S5 T2."
+    },
+    {
+      "id": "NF-W7-B42-3",
+      "scenario": "scenario_6_file_and_doc_lookup_chain",
+      "hypothesis": "file_and_doc_lookup_chain triggers cold-start empty-stop NOT covered by B40 v2 ARS extend. Wrapper-description gap (= file__read/file__grep description doesn't lead LLM from chain's intent).",
+      "verify_method": "trace-patch-replay on S6 T1 + SP/tool-description ablation."
+    },
+    {
+      "id": "NF-W5-B42-1",
+      "scenario": "mcp_install_permission_gate",
+      "hypothesis": "PR #204 path resolution change may have shifted skill__mcp_install alias dispatch from 'spawns then fails' to 'tool not in catalog'.",
+      "verify_method": "revert PR #204 + re-run S6 + diff event mechanism."
+    },
+    {
+      "id": "NF-W6-B42-1",
+      "scenario": "plan_mode trio",
+      "hypothesis": "Plan-step file-access reports file-not-found / fabricated paths consistently across 3 plan_mode scenarios. Possible plan-runtime sandbox / cwd issue.",
+      "verify_method": "trace single plan_mode scenario with REYN_LLM_TRACE_DUMP + inspect plan-step file_read events."
+    },
+    {
+      "id": "NF-W6-B42-2",
+      "scenario": "s-fp11-1-builder-invalid-spec",
+      "hypothesis": "skill_builder invalid-spec path drops completion event (B41-NF-W7-2 reproduction) — distinct from spawn-ack timing PR #207 fixed.",
+      "verify_method": "events.jsonl trace through skill_builder validation-error code path."
+    }
+  ],
+  "principles_applied_in_b42": [
+    "feedback_subagent_scope_bounding: 7 workers dispatched with hard caps (≤50-60 tool uses, ≤15-25 min, 1 deliverable). Recovery sub-agents also bounded (≤30 tool uses, ≤10 min each).",
+    "feedback_batch_report_past_comparison: per-worker delta_vs_b41 + comparison_caveats section included.",
+    "feedback_no_strong_model: all worker reyn.local.yaml configs use flash-lite; no strong-model invocations.",
+    "feedback_retest_scope_own_fix_only: fix_verification_summary scoped to PR #204/207/221 (my fixes); PR #158 / lazy MCP / session isolation explicitly excluded from claim language.",
+    "feedback_pre_conclusion_observation_checklist: 'verified win' on PR #221 (W7-S7-T2) cites direct evidence (B41 T2 empty → B42 T2 1820 chars) before claim; 'partially verified' on PR #207 explicit about exposed-attractor caveat."
+  ]
+}

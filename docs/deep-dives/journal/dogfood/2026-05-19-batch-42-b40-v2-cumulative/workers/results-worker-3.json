@@ -1,0 +1,140 @@
+{
+  "batch": "B42",
+  "worker": 3,
+  "head": "79748ac9",
+  "date": "2026-05-19",
+  "agent_prefix": "dogfood-b42-3-sN",
+  "port": 8203,
+  "worktree": "/private/tmp/reyn-worktrees/b42-3",
+  "state_mode": "fresh",
+  "scenario_set": "control_ir_ops.yaml",
+  "config": {
+    "hot_list_n": 20,
+    "reyn_local_yaml": false
+  },
+  "verdicts": {
+    "V": 5,
+    "I": 1,
+    "R": 3,
+    "B": 0
+  },
+  "vs_b41": {
+    "b41_verdicts": { "V": 3, "I": 1, "R": 5, "B": 0 },
+    "deltas": { "V": 2, "I": 0, "R": -2, "B": 0 }
+  },
+  "vs_b39": {
+    "b39_verdicts": { "V": 3, "I": 0, "R": 6, "B": 0 },
+    "deltas": { "V": 2, "I": 1, "R": -3, "B": 0 }
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "short_id": "s1",
+      "verdict": "V",
+      "b41_verdict": "V",
+      "b39_verdict": "V",
+      "events_observed": ["routing_decided (file__read)", "tool_executed", "permission_granted"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The content of `docs/concepts/principles.md` describes Reyn's eight design principles. These principles cover stateless phases, skill structure, OS control, LLM constraints, workspace as a single source of truth, event logging for auditing, OS agnosticism to skills, and phase instructions focusing solely on domain logic.",
+      "notes": "Consistent V across B39/B41/B42. routing_decided + tool_executed present. Reply mentions P1-P8 and their descriptions. All rubric criteria met."
+    },
+    {
+      "id": "file_glob_grep",
+      "short_id": "s2",
+      "verdict": "I",
+      "b41_verdict": "I",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed x2"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I couldn't find any `skill.md` files under `src/` that mention 'judge_output'.",
+      "notes": "B41 routing fix (file__glob + file__grep via hot_list_alias) maintained in B42. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — environment premise mismatch. Verdict stays I (routing correct, rubric structurally unverifiable)."
+    },
+    {
+      "id": "web_search_query",
+      "short_id": "s3",
+      "verdict": "V",
+      "b41_verdict": "R",
+      "b39_verdict": "V",
+      "events_observed": ["routing_decided", "web_search_started", "web_search_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "It looks like you're asking for the OpenAI Python SDK changelog for 2026. However, the search results did not contain specific changelog information for that year. The results include changelogs for other projects like CrewAI and mentions of the OpenAI SDK in the context of other libraries.",
+      "notes": "B41 was R due to router_empty_response_detected (post-search LLM empty stop). B42: no empty stop, LLM synthesised search results, references OpenAI Python SDK. All required events present. Rubric met. Delta: R→V recovery."
+    },
+    {
+      "id": "web_fetch_url",
+      "short_id": "s4",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "tool_failed"],
+      "events_missing": ["web_fetch_started"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I am unable to access external websites directly due to permission restrictions.",
+      "notes": "Consistent structural R across all batches. web_fetch tool fails at permission layer before web_fetch_started is emitted. Permission restriction prevents external site access."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "short_id": "s5",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The command failed because the Python interpreter could not be found due to file system sandbox restrictions. The error message indicates that the library `libpython3.12.dylib` could not be loaded because the file system sandbox blocked access to it.",
+      "notes": "All required events present (sandboxed_exec_started + sandboxed_exec_completed), but sandbox environment failure: libpython3.12.dylib blocked by macOS sandbox. Does not report output '4'. Consistent structural R (environment limitation)."
+    },
+    {
+      "id": "lint_a_skill",
+      "short_id": "s6",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_interrupted"],
+      "events_missing": ["lint_completed"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The `eval` skill run encountered an error. The output failed schema validation because the required properties 'overall_score', 'passed', 'passed_criteria', 'spec_path', and 'summary' were missing.",
+      "notes": "Consistent structural R. skill_run_spawned present but skill_run_interrupted before lint_completed. eval skill fails final output schema validation. index_events skill target resolution also fails. lint_completed never emitted."
+    },
+    {
+      "id": "recall_indexed_source",
+      "short_id": "s7",
+      "verdict": "V",
+      "b41_verdict": "V",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided (rag.operation__recall)", "tool_failed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I encountered an error when trying to recall documentation about 'phase rollback'. The error message indicates that 'sources' was not found. This might mean that there are no documentation sources indexed for searching.",
+      "notes": "Consistent V since B41. routing_decided with rag.operation__recall, no validation_error, no permission_denied. Tool fails gracefully (KeyError 'sources' — no sources configured in fresh environment). Reply satisfies rubric alternate branch: 'clearly reports that no indexed sources were found'. Maintained V."
+    },
+    {
+      "id": "judge_output_direct",
+      "short_id": "s8",
+      "verdict": "V",
+      "b41_verdict": "V",
+      "b39_verdict": "V",
+      "events_observed": ["routing_decided", "skill_run_spawned", "tool_executed x2", "workflow_finished", "postprocessor_step_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The artifact passed all criteria, including having a non-empty description and declaring at least one phase, with an overall score of 1.0.",
+      "notes": "Consistent V across B39/B41/B42. workflow_finished + postprocessor_step_completed confirmed. No validation_error, no permission_denied. Reply mentions 'passed', score 1.0, and both evaluation criteria. Watch item maintained stable."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "short_id": "s9",
+      "verdict": "R",
+      "b41_verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided (Turn 2)", "skill_run_spawned", "workflow_finished", "lint_completed"],
+      "events_missing": ["user_intervention_requested", "user_intervention_received"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The `skill_builder` skill has finished and successfully scaffolded a new skill named `my_demo_skill`. This involved creating four files, including the main `skill.md` and several artifact files, and all linting checks passed.",
+      "notes": "Structural R: Turn 1 LLM replied inline asking for skill name (no skill_run_spawned, no ask_user op). Turn 2 sent 'my_demo_skill', skill_builder invoked and completed successfully (workflow_finished, lint_completed). skill_run_spawned present in Turn 2 but user_intervention_requested + user_intervention_received never emitted — ask happened via inline chat, not the ask_user Control IR op. Reply rubric partially met (my_demo_skill named, scaffolding completed), but required events missing. Consistent structural R."
+    }
+  ],
+  "new_findings": []
+}
