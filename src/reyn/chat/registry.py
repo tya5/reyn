@@ -909,6 +909,12 @@ class AgentRegistry:
                 # User typed `/attach <other>` while this agent was attached.
                 if msg.text and self.exists(msg.text):
                     await self.attach(msg.text)
+                    # Issue #191: forward the message to the REPL so the
+                    # TUI's _on_attach_request handler fires and the
+                    # header / sticky status reflect the new agent. The
+                    # registry consumed the message as a control signal,
+                    # but TUI needs the same signal for render update.
+                    await self.repl_outbox.put(msg)
                 continue
             if name == self._attached:
                 await self.repl_outbox.put(msg)
