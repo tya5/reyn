@@ -1394,6 +1394,13 @@ class ChatSession:
         # budget without resetting.
         self._reset_router_turn_counter()
 
+        # FP-0037 issue #160: lazy MCP tool discovery cache. First user
+        # turn probes every configured MCP server's tool list once;
+        # subsequent turns no-op. Zero startup latency; first-turn cost
+        # is bounded by per_server_timeout (default 5s, parallel).
+        # When no MCP servers are configured this is a near-free no-op.
+        await self._router_host.ensure_mcp_tools_cached()
+
         try:
             await self._run_router_loop(text, chain_id)
         except RouterCapExceeded as exc:
