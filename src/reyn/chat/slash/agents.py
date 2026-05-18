@@ -104,9 +104,12 @@ async def attach_cmd(session: "ChatSession", args: str) -> None:
         await reply_error(session, _NO_REGISTRY_ATTACH)
         return
     if not session._registry.exists(name):
+        # The user is already in the TUI — direct them at the slash form,
+        # not the CLI shell command, so they don't have to drop out of
+        # chat to create the agent.
         await reply_error(
             session,
-            f"agent {name!r} not found; create with `reyn agent new {name}`",
+            f"agent {name!r} not found; use /agent new {name} to create it",
         )
         return
     if name == session._registry.attached_name:
