@@ -9,13 +9,20 @@ Five capabilities migrated from chat/router_tools.py ToolSpec literals:
 
 All five carry gates(router="allow", phase="allow") — this is the
 Type C closure for memory write (ADR-0026 §1, §3): the capabilities
-were previously router-only; setting phase="allow" closes the gap so
-phase-side Control IR can invoke them once M4 wires the phase dispatch
-path to consume the registry.
+were previously router-only; phase="allow" is registered as a metadata
+closure so the registry advertises memory write as phase-eligible.
 
-Phase-side dispatch wiring deferred to M4. ToolDefinitions are
-registered and gates are open, but the ControlIRExecutor does not yet
-consume the registry; M4 closes this final step.
+Status (post-FP-0039 audit, 2026-05-18): coarse-kind phase dispatch
+(= file / mcp / run_skill / shell / lint / ask_user / web_fetch /
+web_search / mcp_install / recall / sandboxed_exec) is wired through
+``invoke_tool(get_default_registry(), op.kind, ...)`` in
+``ControlIRExecutor._invoker``.  The fine-grained memory names
+(``list_memory`` / ``read_memory_body`` / ``remember_*`` / ``forget_memory``)
+are NOT in ``OP_KIND_MODEL_MAP``, so phase Control IR cannot emit them
+today — the phase=allow gate is reachable only if Control IR schema is
+later migrated to accept fine-grained ``op.kind`` values (= a separate
+future FP).  Until then these registrations function as documentation +
+defensive guards, not as live phase-dispatch paths.
 
 MemoryService access path — design-revisit finding:
   ToolContext.workspace is a reyn.workspace.Workspace instance which
@@ -24,12 +31,11 @@ MemoryService access path — design-revisit finding:
   injected file-op callbacks). The handlers below duplicate the
   router_loop.py logic directly against workspace file primitives —
   they use ctx.workspace.read_file / write_file / delete_file — rather
-  than routing through MemoryService. This is the correct short-term
-  strategy during M3; M4 cleanup should either:
+  than routing through MemoryService. If fine-grained phase dispatch
+  ever lands, follow-up work should either:
     (a) surface MemoryService (or equivalent callbacks) on ToolContext, or
     (b) inline workspace-level file ops as the canonical implementation
         and remove the MemoryService indirection.
-  Until M4 this duplication is intentional and documented here.
 """
 from __future__ import annotations
 
@@ -179,11 +185,11 @@ def _memory_dir(workspace_base: Path, state_dir: Path, layer: str) -> Path:
     layer="agent"  → not resolved here (agent dir unknown without ToolContext
                      phase_state; returns state_dir/memory as fallback).
 
-    Design-revisit (M4): phase_state should carry agent_workspace_dir so the
+    Design-revisit: phase_state should carry agent_workspace_dir so the
     "agent" layer resolves correctly for phase-side callers. Router-side callers
-    receive this via ctx.router_state (not yet populated in M3). For now the
-    agent layer always resolves relative to .reyn/agents/ using the agent name
-    from phase_state or router_state if available, falling back to state_dir.
+    receive this via ctx.router_state. For now the agent layer always resolves
+    relative to .reyn/agents/ using the agent name from phase_state or
+    router_state if available, falling back to state_dir.
     """
     if layer == "shared":
         return state_dir / "memory"

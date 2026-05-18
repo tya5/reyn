@@ -5,15 +5,19 @@ Phase-side `run_skill` op kind continues to work via OP_KIND_MODEL_MAP
 backward-compat (= ADR-0026 Open Q #7 hybrid recommendation: alias
 preserved + deprecation in a later release).
 
-M4 Phase 3 status (schema_enricher landed; handler activation pending):
-  schema_enricher (_enrich_router_schema) is now wired into the
-  INVOKE_SKILL ToolDefinition. render_for_router(state=...) injects the
-  `name` enum from RouterCallerState.available_skills per-call, matching
-  the prior inline literal in router_tools.py.
-
-  Handler activation (= replacing the existing legacy adapter with a
-  unified-registry dispatch path) requires RouterCallerState.run_skill_fn
-  which was not added in Wave 1. Handler activation is deferred to Phase 3.5.
+Dispatch status (post-FP-0039 audit, 2026-05-18):
+  - schema_enricher (_enrich_router_schema) is wired into the INVOKE_SKILL
+    ToolDefinition.  render_for_router(state=...) injects the `name` enum
+    from RouterCallerState.available_skills per-call.
+  - The coarse phase-side counterpart ``RUN_SKILL_OP`` (kind="run_skill")
+    is wired end-to-end through ``invoke_tool(get_default_registry(), ...)``
+    in ``ControlIRExecutor._invoker``, delegating to
+    ``op_runtime/run_skill.py:handle``.
+  - Router-side INVOKE_SKILL handler dispatch still goes through the
+    legacy adapter in router_loop.py rather than ``invoke_tool``.  Moving
+    that path to the unified registry would require surfacing
+    ``run_skill_fn`` on RouterCallerState — a follow-up if router-side
+    unification becomes load-bearing.
 
 Per-call enum enrichment:
   The `name` field in _INVOKE_SKILL_PARAMETERS is a plain string (no enum).
