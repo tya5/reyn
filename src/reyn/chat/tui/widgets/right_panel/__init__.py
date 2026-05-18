@@ -1477,7 +1477,10 @@ class RightPanel(Widget):
         if self._panel_type == "agents":
             return f"[bold {_CORAL}]Agents[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "memory":
-            return f"[bold {_CORAL}]Memory[/]  [#555555]j↓ k↑ space=open[/]"
+            return (
+                f"[bold {_CORAL}]Memory[/]"
+                f"  [#555555]j↓ k↑ space=open c=copy[/]"
+            )
         if self._panel_type == "cost":
             return f"[bold {_CORAL}]Cost[/]  [#555555]j↓ k↑[/]"
         if self._panel_type == "docs":
