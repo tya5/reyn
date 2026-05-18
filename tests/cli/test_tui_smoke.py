@@ -427,6 +427,45 @@ async def test_intervention_chip_without_hotkey_falls_back_to_id():
 
 
 @pytest.mark.asyncio
+async def test_intervention_chip_preserves_hotkey_brackets():
+    """Tier 2: chip labels render with hotkey brackets intact.
+
+    Default Textual Label / Button parses Rich markup, so "[y]es" is
+    treated as a (malformed) style tag and the "[y]" is silently
+    dropped — chips end up displayed as "es", "lws", "o", "ever" with
+    no hotkey hint, violating the producer's "[h] hint" convention.
+    """
+    from textual.widgets import Button
+
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        conv.mount_intervention(
+            question="Allow?",
+            choices=[
+                {"label": "[y]es", "id": "yes", "hotkey": "y"},
+                {"label": "[A]lways", "id": "always", "hotkey": "A"},
+                {"label": "[n]o", "id": "no", "hotkey": "n"},
+            ],
+            answer_callback=None,
+            iv_id="iv_markup",
+        )
+        await pilot.pause()
+        yes_btn = app.query_one("#chip_yes", Button)
+        always_btn = app.query_one("#chip_always", Button)
+        no_btn = app.query_one("#chip_no", Button)
+        # ``Button.label`` is a Rich-rendered ``Text`` object; ``plain``
+        # gives the visible characters minus any style tagging.
+        assert "[y]es" in yes_btn.label.plain
+        assert "[A]lways" in always_btn.label.plain
+        assert "[n]o" in no_btn.label.plain
+
+
+@pytest.mark.asyncio
+
+
+@pytest.mark.asyncio
 async def test_intervention_free_text_answer():
     """InterventionWidget with free-text input calls callback on submit."""
 

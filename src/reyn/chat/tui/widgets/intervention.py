@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.message import Message
 from textual.widget import Widget
@@ -161,11 +162,19 @@ class InterventionWidget(Widget):
         return f"[{hotkey}] {label}"
 
     def compose(self) -> ComposeResult:
-        yield Label(f"  {self._question}", classes="iv-question")
+        # ``markup=False`` on the question Label and ``Text(...)`` wrapping
+        # on chip Buttons keeps the literal "[y]" / "[A]" hotkey brackets
+        # visible. Default markup parsing treats them as unknown style
+        # tags and silently strips them — chip labels were rendering as
+        # "es", "lways", "o", "ever" with no hotkey hint.
+        yield Label(
+            f"  {self._question}", classes="iv-question", markup=False,
+        )
         if self._queued_extra > 0:
             yield Label(
                 f"  +{self._queued_extra} more pending",
                 classes="iv-queued",
+                markup=False,
             )
         if self._choices:
             with Widget(classes="iv-chips"):
@@ -175,15 +184,20 @@ class InterventionWidget(Widget):
                     display = self._format_chip_label(label, hotkey)
                     variant = "primary" if choice["default"] else "default"
                     yield Button(
-                        display,
+                        Text(display),
                         id=f"chip_{choice['id']}",
                         variant=variant,
                     )
                 # "free response" chip always at end
-                yield Button("free response…", id="chip__free", variant="default")
+                yield Button(
+                    Text("free response…"),
+                    id="chip__free",
+                    variant="default",
+                )
             yield Label(
                 "↓ type a free answer in the chat input below, or click a button",
                 classes="iv-hint",
+                markup=False,
             )
         else:
             yield Input(placeholder="type your answer…", id="iv_input")
