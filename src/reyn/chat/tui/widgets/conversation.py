@@ -1063,7 +1063,12 @@ def _format_message(msg: OutboxMessage) -> Text | None:
     body = f"{meta_pfx}{msg.text}"
 
     if msg.kind in {"__end__", "__attach_request__", "intervention",
-                    "agent", "system", "status", "error", "trace", "skill_done"}:
+                    "agent", "system", "status", "error", "trace", "skill_done",
+                    # Issue #192: hot_list_updated is a data signal (= meta
+                    # carries the full ranking); no display copy in the conv
+                    # pane. Consumed by the Memory tab augmentation
+                    # (tui-coder follow-up).
+                    "hot_list_updated"}:
         return None
     # Unknown kind — show raw with subtle prefix
     t = Text()

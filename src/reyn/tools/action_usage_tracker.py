@@ -32,6 +32,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Callable
 
 # OS default seed: universal file/web ops + Reyn flagship skills.
 # Referenced by ActionRetrievalConfig when hot_list_seed="default".
@@ -75,11 +76,26 @@ class ActionUsageTracker:
     No locking is applied; callers must not share instances across threads.
     """
 
-    def __init__(self, persist_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        persist_path: Path | None = None,
+        *,
+        on_ranking_changed: Callable[[list[dict]], None] | None = None,
+    ) -> None:
         # in-memory state
         self._freq: dict[str, int] = {}       # qualified_name → event count
         self._last_ts: dict[str, float] = {}  # qualified_name → latest event timestamp
         self._persist_path = persist_path
+        # Issue #192: optional callback fired when the full sorted ranking
+        # order changes after a record(). Caller wires this to emit a
+        # ``hot_list_updated`` event so the TUI can refresh its Memory
+        # tab augmentation without periodic polling. None = no callback.
+        # Diff granularity is the QUALIFIED-NAME ORDER — score-only
+        # changes within a stable order (e.g. the top item's freq bumps
+        # but everything stays in place) do NOT fire, so the consumer
+        # only sees re-rendering signals.
+        self._on_ranking_changed = on_ranking_changed
+        self._prior_ranking_order: list[str] | None = None
         if persist_path is not None:
             self._load_from_disk()
 
@@ -188,6 +204,14 @@ class ActionUsageTracker:
 
         Updates in-memory freq + recency, then appends to JSONL if
         persist_path is configured.
+
+        Issue #192: when ``on_ranking_changed`` is set and the new full
+        sorted ranking order differs from the cached prior order, the
+        callback is fired with the full ranking ``[{qualified_name,
+        freq, last_ts}, ...]``. Score-only changes (= same order) do
+        not fire — the UI only re-renders on visible reorderings.
+        Callback failures are swallowed; record() must never crash
+        because the observer raised.
         """
         ts = time.time()
         self._freq[qualified_name] = self._freq.get(qualified_name, 0) + 1
@@ -195,6 +219,36 @@ class ActionUsageTracker:
         if prev is None or ts > prev:
             self._last_ts[qualified_name] = ts
         self._append_to_disk(qualified_name, ts)
+        if self._on_ranking_changed is not None:
+            ranking = self.full_ranking()
+            new_order = [r["qualified_name"] for r in ranking]
+            if new_order != self._prior_ranking_order:
+                self._prior_ranking_order = new_order
+                try:
+                    self._on_ranking_changed(ranking)
+                except Exception:
+                    pass  # advisory only; never crash record()
+
+    def full_ranking(self) -> list[dict]:
+        """Return the full sorted ranking with freq + last_ts per entry.
+
+        Sorted by the same score formula ``get_top_n`` uses (= freq *
+        (1 + 1/(1+age_days))) descending, with qualified_name ascending
+        as the tie-breaker. Caller consumes this for full-ranking
+        rendering (= Memory tab augmentation per issue #192).
+        """
+        now = time.time()
+        scored: list[tuple[float, str, int, float]] = []
+        for qn, freq in self._freq.items():
+            last = self._last_ts.get(qn, now)
+            age_days = max(0.0, (now - last) / _SECONDS_PER_DAY)
+            score = freq * (1.0 + 1.0 / (1.0 + age_days))
+            scored.append((score, qn, freq, last))
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return [
+            {"qualified_name": qn, "freq": freq, "last_ts": last_ts}
+            for _, qn, freq, last_ts in scored
+        ]
 
     def get_top_n(self, n: int, seed: list[str]) -> list[str]:
         """Return up to *n* qualified_names, freq+recency ranked, with seed fill.
