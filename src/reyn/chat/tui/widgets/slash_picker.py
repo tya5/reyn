@@ -68,6 +68,12 @@ class SlashPicker(Static):
         # stays empty so Enter / Tab / arrows fall through to the normal
         # text-submit path and the user's typed args are preserved.
         self._hint_cmd: SlashCommand | None = None
+        # Optional completion strings rendered below the hint row when the
+        # command supplies a CompleterFn (e.g. /attach surfacing agent
+        # names). Same informational-only contract as hint mode — no
+        # selection caret, no keyboard intercept.
+        self._completions: list[str] = []
+        self._total_completions: int = 0
 
     # ── public API ────────────────────────────────────────────────────────────
 
@@ -92,6 +98,8 @@ class SlashPicker(Static):
         self._matches = list(matches)[:_MAX_VISIBLE]
         self._selected = 0
         self._hint_cmd = None
+        self._completions = []
+        self._total_completions = 0
         self.remove_class("hint-active")
         if self._matches:
             self.add_class("visible")
@@ -117,6 +125,29 @@ class SlashPicker(Static):
         self._total_matches = 0
         self._selected = 0
         self._hint_cmd = cmd
+        self._completions = []
+        self._total_completions = 0
+        self.remove_class("visible")
+        self.add_class("hint-active")
+        self._repaint()
+
+    def set_completions(
+        self, cmd: SlashCommand, completions: list[str],
+    ) -> None:
+        """Show ``cmd``'s hint plus a list of arg-name completions.
+
+        Like ``set_hint`` but additionally renders the strings returned by
+        ``cmd.completer(session)`` (already prefix-filtered upstream) as
+        dim rows below the summary. Still informational only — no
+        selection caret, no keyboard intercept; the user reads, types,
+        and Enter submits the typed text.
+        """
+        self._matches = []
+        self._total_matches = 0
+        self._selected = 0
+        self._hint_cmd = cmd
+        self._total_completions = len(completions)
+        self._completions = list(completions)[:_MAX_VISIBLE]
         self.remove_class("visible")
         self.add_class("hint-active")
         self._repaint()
@@ -125,6 +156,8 @@ class SlashPicker(Static):
         self._matches = []
         self._selected = 0
         self._hint_cmd = None
+        self._completions = []
+        self._total_completions = 0
         self.remove_class("visible")
         self.remove_class("hint-active")
         self._repaint()
@@ -262,4 +295,19 @@ class SlashPicker(Static):
         t.append(name, style="dim #888888")
         t.append("  ")
         t.append(summary, style="dim #888888")
+        # Completion rows (if the command supplied a CompleterFn — e.g.
+        # /attach surfacing agent names). Indented under the hint row,
+        # one per line, dim, informational only.
+        if self._completions:
+            indent = " " * (2 + len(name) + 2)
+            for c in self._completions:
+                t.append("\n")
+                t.append(indent + c, style="dim #888888")
+            hidden = self._total_completions - len(self._completions)
+            if hidden > 0:
+                t.append("\n")
+                t.append(
+                    indent + f"+{hidden} more — keep typing to filter",
+                    style="dim #555555",
+                )
         self.update(t)
