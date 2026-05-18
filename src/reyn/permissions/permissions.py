@@ -337,8 +337,8 @@ class PermissionResolver:
         # (e.g. "Allow fetching this URL?"), use it as the prompt header
         # so light-users see a natural-language ask instead of the
         # internal config key. Fallback "Permission request — {key}"
-        # preserves backward-compat for any caller that hasn't migrated
-        # yet (= shell / python / mcp / tool gates currently).
+        # preserves backward-compat — no in-tree caller currently relies
+        # on it; reserved for future test / external caller compat.
         iv = UserIntervention(
             kind="permission.generic",
             prompt=user_prompt or f"Permission request — {key}",

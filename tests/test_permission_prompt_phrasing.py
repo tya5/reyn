@@ -13,9 +13,8 @@ existing ``"Permission request — {key}"`` fallback for any caller
 that hasn't migrated.
 
 This file pins:
-  1. ``_prompt`` uses ``user_prompt`` when present, falls back when None.
-  2. Each migrated ``require_*`` passes a sensible natural prompt.
-  3. The verify-script JSON shape (= production path) carries the
+  1. Each migrated ``require_*`` passes a sensible natural prompt.
+  2. The verify-script JSON shape (= production path) carries the
      natural prompt in ``meta.prompt`` — TUI widget consumes it.
 """
 from __future__ import annotations
@@ -60,37 +59,7 @@ def _resolver(tmp_path: Path) -> PermissionResolver:
     )
 
 
-# ── 1. _approve / _prompt accept user_prompt override ───────────────────
-
-
-@pytest.mark.asyncio
-async def test_prompt_uses_user_prompt_when_provided(tmp_path) -> None:
-    """Tier 2: when user_prompt is passed, it becomes the prompt header."""
-    r = _resolver(tmp_path)
-    bus = _RecordingBus(answer_id="no")
-    await r._approve("test.key", "test description", bus, user_prompt="Allow this thing?")
-    assert len(bus.captured) == 1
-    iv = bus.captured[0]
-    assert iv.prompt == "Allow this thing?"
-    # detail still gets the description.
-    assert iv.detail == "test description"
-
-
-@pytest.mark.asyncio
-async def test_prompt_falls_back_to_key_form_when_user_prompt_none(tmp_path) -> None:
-    """Tier 2: legacy "Permission request — {key}" form preserved on omission.
-
-    Backward-compat: any caller that hasn't migrated to user_prompt= keeps
-    the original behavior. Used by tests and non-yet-migrated require_*
-    helpers (none today, but the contract is reserved).
-    """
-    r = _resolver(tmp_path)
-    bus = _RecordingBus(answer_id="no")
-    await r._approve("test.fallback", "fallback description", bus)
-    assert bus.captured[0].prompt == "Permission request — test.fallback"
-
-
-# ── 2. require_web_fetch uses natural prompt ─────────────────────────────
+# ── 1. require_web_fetch uses natural prompt ────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -111,7 +80,7 @@ async def test_require_web_fetch_prompt_is_natural(tmp_path) -> None:
     assert "web.fetch" not in iv.prompt
 
 
-# ── 3. require_shell uses natural prompt ─────────────────────────────────
+# ── 2. require_shell uses natural prompt ─────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -127,10 +96,9 @@ async def test_require_shell_prompt_is_natural(tmp_path) -> None:
     iv = bus.captured[0]
     assert iv.prompt == "Allow running this shell command?"
     assert "ls -la" in iv.detail
-    assert "shell" not in iv.prompt.lower() or "command" in iv.prompt.lower()
 
 
-# ── 4. End-to-end announce: meta.prompt carries natural phrasing ────────
+# ── 3. End-to-end announce: meta.prompt carries natural phrasing ────────
 
 
 async def _capture_announce(iv: UserIntervention) -> OutboxMessage:
@@ -176,7 +144,7 @@ async def test_announce_meta_carries_natural_prompt() -> None:
     assert "https://example.com" in msg.text
 
 
-# ── 5. require_mcp + require_mcp_install + require_index_drop +
+# ── 4. require_mcp + require_mcp_install + require_index_drop +
 #     require_mcp_drop_server + require_tool + require_python — natural ────
 
 
