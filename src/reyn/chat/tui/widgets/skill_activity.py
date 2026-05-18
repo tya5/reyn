@@ -8,7 +8,7 @@ Design:
 
   Rendering during run::
 
-      ▶ skill_name#abcd  · current_phase  ●●○  2.1s
+      ▶ skill_name#abcd  · current_phase  2.1s
 
   Rendering after finish(success=True, reason="3 phases")::
 
@@ -21,7 +21,6 @@ Design:
 Caller contract:
   - Instantiate with run_id + skill_name.
   - Call set_phase() as each OS transition fires.
-  - Call set_progress() when step counts are known.
   - Call finish() once on skill completion or abort.
   - No messages are posted; caller owns lifetime and mounting.
 """
@@ -86,7 +85,6 @@ class SkillActivityRow(Widget):
         # Running state
         self._phase: str = ""
         self._visit: int = 1
-        self._progress: tuple[int, int] | None = None  # (current, total)
         # Optional in-phase detail (= what's happening WITHIN the phase right
         # now — "calling llm", "running act op", etc.). Without this the row
         # showed only the phase name during a 10–30 s LLM call inside that
@@ -146,11 +144,6 @@ class SkillActivityRow(Widget):
         self._detail = detail
         self._refresh()
 
-    def set_progress(self, current: int, total: int) -> None:
-        """Set progress dot counts (e.g. 2 of 3 steps done)."""
-        self._progress = (current, total)
-        self._refresh()
-
     def finish(self, success: bool = True, reason: str = "") -> None:
         """Transition to the completed line and stop the timer."""
         if self._finished:
@@ -175,17 +168,6 @@ class SkillActivityRow(Widget):
         secs = time.monotonic() - self._start
         return f"{secs:.1f}s"
 
-    def _dots(self) -> str:
-        """Build progress dots string, e.g. '●●○'."""
-        if self._progress is None:
-            return ""
-        current, total = self._progress
-        if total <= 0:
-            return ""
-        filled = min(current, total)
-        empty = total - filled
-        return "●" * filled + "○" * empty
-
     def _build_running(self) -> Text:
         t = Text()
         # Animated braille spinner — replaces the static ▶ so "still
@@ -201,10 +183,6 @@ class SkillActivityRow(Widget):
             t.append(self._phase, style=f"italic {_CORAL}")
             if self._visit > 1:
                 t.append(f" v{self._visit}", style="dim")
-        # progress dots
-        dots = self._dots()
-        if dots:
-            t.append(f"  {dots}", style="dim")
         # Elapsed — colour-coded so a slow / stuck skill stands out:
         #   < 30 s → dim (= normal)
         #   30–60s → amber (= "taking a while")
