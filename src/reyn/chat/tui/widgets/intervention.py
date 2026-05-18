@@ -77,7 +77,11 @@ class InterventionWidget(Widget):
         height: 1;
     }
     InterventionWidget Label.iv-hint {
-        color: #555555;
+        /* #888888 on the widget bg (#1e1510) is ~4.1:1, close to WCAG AA
+           4.5:1 for normal text; the prior #555555 was 2.41:1 (clearly
+           sub-AA). The hint is secondary copy but rendered at body size,
+           so the AA floor applies. */
+        color: #888888;
         padding-top: 1;
         height: auto;
         width: 1fr;
