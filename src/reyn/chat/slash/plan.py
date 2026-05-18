@@ -28,7 +28,33 @@ _USAGE = (
 )
 
 
-@slash("plan", summary="Manage active plan-mode runs (list / discard / resume)")
+def _plan_completer(session: "ChatSession", arg_partial: str = "") -> list[str]:
+    """Surface active plan IDs after ``/plan discard `` or ``/plan resume ``.
+
+    Returns an empty list (= fall back to plain hint mode) when:
+      - no args yet (= the usage hint is what the user needs first)
+      - the subcommand is ``list`` (no plan_id arg)
+      - the session doesn't expose ``running_plans`` (= test stubs, headless)
+
+    Otherwise returns the active plan_ids verbatim so the TUI picker
+    surfaces them under the hint row. The TUI side already prefix-filters
+    by the partial the user is currently typing.
+    """
+    parts = arg_partial.split()
+    sub = parts[0] if parts else ""
+    if sub not in ("discard", "resume"):
+        return []
+    try:
+        return list(session.running_plans.keys())
+    except Exception:
+        return []
+
+
+@slash(
+    "plan",
+    summary="Manage active plan-mode runs (list / discard / resume)",
+    completer=_plan_completer,
+)
 async def plan_cmd(session: "ChatSession", args: str) -> None:
     """Dispatch to sub-command based on the first argument."""
     parts = args.strip().split(maxsplit=1)
