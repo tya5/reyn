@@ -683,6 +683,23 @@ class ReynTUIApp(App):
                 task.cancel()
                 cancelled_plans += 1
 
+        # Stop any SkillActivityRow spinners + clear the right-panel agents
+        # tab. ``task.cancel()`` only stops the asyncio producer; no
+        # ``workflow_finished`` / ``workflow_aborted`` trace is forwarded
+        # after cancel, so without this loop the rows spin forever and the
+        # agents tab shows ``● running`` indefinitely (~minutes observed).
+        # Snapshot the keys first — ``finish_skill_row`` mutates _skill_rows.
+        if conv is not None and self._skill_exec:
+            for run_id in list(self._skill_exec.keys()):
+                try:
+                    conv.finish_skill_row(
+                        run_id, success=False, reason="cancelled",
+                    )
+                except Exception:
+                    pass
+                self._skill_exec.pop(run_id, None)
+            self._push_exec_state()
+
         # Seal any orphan streaming rows. The router cancel above stops the
         # producer but no `__stream_end__` is emitted, so the StreamingRow's
         # blinking cursor would otherwise persist forever. Snapshot first —
