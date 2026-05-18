@@ -374,6 +374,12 @@ class ReynTUIApp(App):
                 # that's still running when the user types another
                 # message keeps the message that actually started it.
                 "triggered_by": self._latest_user_message,
+                # Stamped by ChatEventForwarder._enqueue (PR #198) on
+                # every sub-skill trace. Empty when this is a root
+                # skill. Used by the conv pane (issue #210 child row
+                # indent) and the right-panel agents tab (RichTree
+                # nesting under parent).
+                "parent_run_id": msg.meta.get("parent_run_id", ""),
             }
             self._skill_exec[run_id] = existing
             # Mirror to the persistent map so recent_skill (= post-skill_done)
@@ -421,7 +427,11 @@ class ReynTUIApp(App):
         if text.startswith("phase started: "):
             phase = text[len("phase started: "):].strip()
             # Lazy-create the row if first trace
-            conv.start_skill_row(run_id, skill_name)
+            conv.start_skill_row(
+                run_id,
+                skill_name,
+                parent_run_id=msg.meta.get("parent_run_id", ""),
+            )
             # Track phase visit count from existing exec state
             existing = self._skill_exec.get(run_id) or {}
             visit = int(existing.get("phase_visits", 0)) + 1
@@ -449,7 +459,11 @@ class ReynTUIApp(App):
             # If no row exists yet (edge case: a malformed forwarder
             # delivered phase_completed before phase_started), lazy-mount
             # to keep behaviour robust.
-            conv.start_skill_row(run_id, skill_name)
+            conv.start_skill_row(
+                run_id,
+                skill_name,
+                parent_run_id=msg.meta.get("parent_run_id", ""),
+            )
             visit = int(existing.get("phase_visits", 1)) or 1
             conv.update_skill_phase(run_id, transition, visit=visit)
             self._last_focal_tab = "agents"

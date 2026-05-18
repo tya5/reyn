@@ -525,7 +525,22 @@ def render_agents(
             return ("  ", "")
 
         if agent_skills:
-            for run_id, info in agent_skills:
+            # Topological order: roots first, then children. Issue #210
+            # nests sub-skill rows under their parent's RichTree node when
+            # the parent is also a currently-running skill (= still in
+            # ``exec_state``). Parent finished / parent on a different
+            # agent → render the child as a root row to avoid an
+            # orphaned tree branch pointing at nothing. The OS only
+            # stamps ``parent_run_id`` for **direct** parents (no
+            # multi-hop lineage), so a single roots-then-children pass
+            # is sufficient.
+            agent_skill_ids = {rid for rid, _info in agent_skills}
+            nodes_by_run_id: dict[str, Any] = {}
+
+            def _emit_skill_row(
+                run_id: str, info: dict, parent_node: Any,
+            ) -> None:
+                nonlocal y_counter
                 elapsed = int(now - info.get("start_time", now))
                 pfx, name_style = _cursor_prefix(len(flat_items))
                 skill_label = RichText()
@@ -544,10 +559,11 @@ def render_agents(
                     info.get("skill_name", "?"),
                     style=name_style or "#dddddd",
                 )
-                skill_node = tree.add(skill_label)
-                # Record the y of this item's selectable row, then bump
-                # past the skill row (and an optional phase child row).
+                skill_node = parent_node.add(skill_label)
+                nodes_by_run_id[run_id] = skill_node
                 item_ys.append(y_counter)
+                # Track the y advance: one for the skill row, plus one for
+                # the optional phase child below.
                 y_counter += 1
 
                 phase = info.get("phase", "")
@@ -572,7 +588,29 @@ def render_agents(
                     # Empty string when unknown (= e.g. session restored
                     # from disk, or skill spawned by a non-chat caller).
                     "triggered_by": info.get("triggered_by", ""),
+                    # Issue #210: surface parent linkage in flat_items so
+                    # the preview pane / future actions can route by it.
+                    "parent_run_id": info.get("parent_run_id", ""),
                 })
+
+            # Pass 1: root skills (no parent OR parent not on this agent
+            # / already finished).
+            roots: list[tuple[str, dict]] = []
+            children: list[tuple[str, dict]] = []
+            for run_id, info in agent_skills:
+                parent_id = info.get("parent_run_id", "")
+                if parent_id and parent_id in agent_skill_ids:
+                    children.append((run_id, info))
+                else:
+                    roots.append((run_id, info))
+            for run_id, info in roots:
+                _emit_skill_row(run_id, info, tree)
+            # Pass 2: children nest under their parent's skill_node.
+            for run_id, info in children:
+                parent_node = nodes_by_run_id.get(
+                    info.get("parent_run_id", ""), tree,
+                )
+                _emit_skill_row(run_id, info, parent_node)
 
         # Plan-mode (ADR-0022 / 0023). Surfaced as a sibling of running
         # skills — same agent can simultaneously run skills + plans.
