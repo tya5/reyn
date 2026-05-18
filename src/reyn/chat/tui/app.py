@@ -1260,7 +1260,20 @@ class ReynTUIApp(App):
 
     def check_action(self, action: str, parameters):
         """Gate panel-scoped bindings to when the panel is visible/relevant."""
-        if action in {"focus_toggle_panel", "panel_next_content", "panel_prev_content"}:
+        if action == "focus_toggle_panel":
+            # Allowed when the panel is visible OR when an intervention
+            # is mounted — the action's first branch focuses the chip
+            # buttons, and gating it on panel_visible alone left users
+            # with no keyboard path to the chips when the panel was
+            # closed (forcing Ctrl+B first, then Ctrl+O).
+            if self._panel_visible:
+                return True
+            try:
+                conv = self.query_one("#conversation", ConversationView)
+                return bool(list(conv.query(InterventionWidget)))
+            except Exception:
+                return False
+        if action in {"panel_next_content", "panel_prev_content"}:
             return self._panel_visible
         if action in {"event_filter_cycle", "event_tail_cycle"}:
             if not self._panel_visible:
