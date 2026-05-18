@@ -52,6 +52,7 @@ def get_default_registry() -> ToolRegistry:
     # Wave 2 additions (ADR-0026 M3 Wave 2)
     from reyn.tools.file import (
         DELETE_FILE,
+        EDIT_FILE,
         FILE_OP,
         GLOB_FILES,
         GREP_FILES,
@@ -114,6 +115,9 @@ def get_default_registry() -> ToolRegistry:
     registry.register(LIST_DIRECTORY)
     registry.register(GREP_FILES)
     registry.register(GLOB_FILES)
+    # FP-0040 (#178): partial-edit op so the LLM can patch by unique-string
+    # anchor instead of full-file read+write round-trip.
+    registry.register(EDIT_FILE)
     # MCP ops (Wave 2 — Type C closure: phase-side discover)
     # FP-0032: DESCRIBE_MCP_TOOL added as D4 (mirror of describe_skill).
     registry.register(CALL_MCP_TOOL)

@@ -49,6 +49,15 @@ _DELETE_FILE_DESCRIPTION = (
     "Delete a file under the agent's write scope."
 )
 
+_EDIT_FILE_DESCRIPTION = (
+    "Replace a unique string in a file under the agent's write scope. "
+    "`old_string` MUST appear exactly once in the file; if it appears "
+    "multiple times, the call fails with a count — re-call with a longer "
+    "context-including snippet, or pass `replace_all=true` to replace "
+    "every occurrence. Use this for partial edits instead of read+write "
+    "for the whole file."
+)
+
 _GREP_FILES_DESCRIPTION = (
     "Search for a regex pattern across files under the agent's read scope. "
     "Use this when you need to find text or code patterns in files — "
@@ -97,6 +106,33 @@ _DELETE_FILE_PARAMETERS: dict[str, Any] = {
         "path": {"type": "string"},
     },
     "required": ["path"],
+}
+
+_EDIT_FILE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "path": {"type": "string"},
+        "old_string": {
+            "type": "string",
+            "description": (
+                "Exact text to replace. Must appear exactly once unless "
+                "replace_all is true; include surrounding context to "
+                "make it unique."
+            ),
+        },
+        "new_string": {
+            "type": "string",
+            "description": "Replacement text.",
+        },
+        "replace_all": {
+            "type": "boolean",
+            "description": (
+                "When true, every occurrence of old_string is replaced. "
+                "Default false (= require uniqueness)."
+            ),
+        },
+    },
+    "required": ["path", "old_string", "new_string"],
 }
 
 _GREP_FILES_PARAMETERS: dict[str, Any] = {
@@ -220,6 +256,30 @@ async def _handle_delete(args: Mapping[str, Any], ctx: ToolContext) -> ToolResul
     return await execute_op(op, legacy_ctx, caller="control_ir")
 
 
+async def _handle_edit(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
+    """Adapter for edit_file — delegates to op_runtime file handler.
+
+    Builds FileIROp(op="edit"). The op_runtime handler enforces:
+      * old_string must appear in the file (= 0 matches → error)
+      * old_string must be unique unless replace_all=true (= multi-match
+        without replace_all → error with count)
+      * write permission gating (same tier as write_file / delete_file)
+    """
+    from reyn.op_runtime import execute_op
+    from reyn.schemas.models import FileIROp
+
+    op = FileIROp(
+        kind="file",
+        op="edit",
+        path=args["path"],
+        old_string=args["old_string"],
+        new_string=args["new_string"],
+        replace_all=bool(args.get("replace_all", False)),
+    )
+    legacy_ctx = _build_legacy_op_context(ctx)
+    return await execute_op(op, legacy_ctx, caller="control_ir")
+
+
 async def _handle_list(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
     """Adapter for list_directory — delegates to op_runtime file handler.
 
@@ -327,6 +387,16 @@ DELETE_FILE = ToolDefinition(
     parameters=_DELETE_FILE_PARAMETERS,
     gates=ToolGates(router="allow", phase="allow"),
     handler=_handle_delete,
+    category="io",
+    purity="side_effect",
+)
+
+EDIT_FILE = ToolDefinition(
+    name="edit_file",
+    description=_EDIT_FILE_DESCRIPTION,
+    parameters=_EDIT_FILE_PARAMETERS,
+    gates=ToolGates(router="allow", phase="allow"),
+    handler=_handle_edit,
     category="io",
     purity="side_effect",
 )
