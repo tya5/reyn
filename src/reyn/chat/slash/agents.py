@@ -54,7 +54,16 @@ async def agents_cmd(session: "ChatSession", args: str) -> None:
         return
     attached = session._registry.attached_name
     loaded = set(session._registry.loaded_names())
-    lines = ["agents:"]
+    # Header with column labels + legend. Compact ``HH:MM`` for today's
+    # activity (vs full ``YYYY-MM-DDTHH:MM`` for older entries) keeps the
+    # column readable when most agents were active in the current session.
+    from datetime import date as _date
+
+    today = _date.today()
+    lines = [
+        "agents:  (* = attached, · = loaded, blank = not yet loaded)",
+        f"    {'name':<24} {'last_active':<17} role",
+    ]
     for n in names:
         try:
             profile = session._registry.load_profile(n)
@@ -63,10 +72,14 @@ async def agents_cmd(session: "ChatSession", args: str) -> None:
         except Exception:
             role = "(profile load failed)"
         last = session._registry.last_activity_at(n)
-        last_str = last.strftime("%Y-%m-%dT%H:%M") if last else "—"
+        if last is None:
+            last_str = "—"
+        elif last.date() == today:
+            last_str = last.strftime("%H:%M")
+        else:
+            last_str = last.strftime("%Y-%m-%d %H:%M")
         mark = "*" if n == attached else (" " if n not in loaded else "·")
         lines.append(f"  {mark} {n:<24} {last_str:<17} {role[:60]}")
-    lines.append("(* = attached, · = loaded, blank = not yet loaded)")
     await reply(session, "\n".join(lines))
 
 
