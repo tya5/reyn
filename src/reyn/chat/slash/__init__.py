@@ -142,6 +142,7 @@ from reyn.chat.slash import donut as _donut_mod  # noqa: E402, F401
 from reyn.chat.slash import expand as _expand_mod  # noqa: E402, F401
 from reyn.chat.slash import help as _help_mod  # noqa: E402, F401
 from reyn.chat.slash import matrix as _matrix_mod  # noqa: E402, F401
+from reyn.chat.slash import memory as _memory_mod  # noqa: E402, F401
 from reyn.chat.slash import plan as _plan_mod  # noqa: E402, F401
 from reyn.chat.slash import skill as _skill_mod  # noqa: E402, F401
 from reyn.chat.slash import skills as _skills_mod  # noqa: E402, F401
