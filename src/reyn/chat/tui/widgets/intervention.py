@@ -194,9 +194,24 @@ class InterventionWidget(Widget):
         if btn_id == "chip__free":
             self._show_free_input()
             return
-        # Find the choice whose chip_ prefix matches
+        # Find the choice whose chip_ prefix matches, then submit its
+        # *hotkey* — InterventionRegistry.deliver_answer routes through
+        # match_choice() which compares against hotkey, NOT id. Sending
+        # the id (e.g. "yes" instead of "y") silently fails the match,
+        # leaves iv.future unresolved, and the widget removes itself —
+        # the agent then waits forever for an answer the user already
+        # gave. Fall back to the id only when the choice has no hotkey
+        # (= producer-side anomaly; user gets the "unknown choice" hint
+        # instead of a silent deadlock).
         choice_id = btn_id.removeprefix("chip_")
-        await self._submit(choice_id)
+        choice = next(
+            (c for c in self._choices if c["id"] == choice_id),
+            None,
+        )
+        if choice is None:
+            return
+        hotkey = choice["hotkey"]
+        await self._submit(hotkey if hotkey else choice_id)
 
     async def on_key(self, event) -> None:  # textual.events.Key
         """Activate a chip when its hotkey is pressed.
@@ -218,7 +233,10 @@ class InterventionWidget(Widget):
         for choice in self._choices:
             if choice["hotkey"] and choice["hotkey"] == key_char:
                 event.stop()
-                await self._submit(choice["id"])
+                # Submit the hotkey (= what match_choice expects) rather
+                # than the id — same deadlock concern as the chip-click
+                # path. See on_button_pressed for the full rationale.
+                await self._submit(choice["hotkey"])
                 return
 
     def _show_free_input(self) -> None:
