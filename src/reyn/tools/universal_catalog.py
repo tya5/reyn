@@ -871,6 +871,18 @@ async def _handle_describe_action(
             "category": target.category,
             "purity": target.purity,
         },
+        # B41-NF-W7-1: post-call directive appended outside the JSON
+        # tool-result by the router-loop message-construction layer so the
+        # LLM sees a textual instruction after the metadata. Without this,
+        # follow-up queries that call describe_action (e.g. "tell me more
+        # about the simplest one") trigger 10/10 empty-stop in N=10 replay
+        # because the LLM treats the structured metadata as a self-contained
+        # answer. Variant F patch test (= directive appended outside the
+        # JSON) yielded 1/10 empty-stop on the same trace.
+        "_post_text": (
+            "The action metadata is above. The user is waiting for your "
+            "natural-language reply explaining this action. Write the reply now."
+        ),
     }
 
 
