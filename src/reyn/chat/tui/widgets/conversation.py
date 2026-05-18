@@ -1024,6 +1024,16 @@ class ConversationView(Widget):
         for row in list(self._skill_rows.values()):
             row.finish(success=True, reason="cleared")
         self._skill_rows.clear()
+        # Remove any leftover ErrorBox widgets. They mount as children of
+        # the conv pane (not lines in the RichLog), so ``_log().clear()``
+        # above doesn't touch them — without this loop the boxes float on
+        # an otherwise-blank conv pane until the user hits Esc per box.
+        for box in self._error_boxes:
+            try:
+                box.remove()
+            except Exception:
+                pass
+        self._error_boxes.clear()
         # Reset header-grouping + turn anchors + fold stash
         self._last_speaker = ""
         self._last_speaker_at = 0.0
