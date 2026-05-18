@@ -80,6 +80,7 @@ class OutboxRouter:
             # trace text from ChatEventForwarder (workflow_finished /
             # workflow_aborted events) and handled in app._handle_trace_for_skill_row.
             "error":                    self._on_error,
+            "hot_list_updated":         self._on_hot_list_updated,
         }
 
     # ── transient sticky helpers ──────────────────────────────────────────────
@@ -573,6 +574,36 @@ class OutboxRouter:
         # Reset on the next user submit.
         self._app.set_title_state("error")
         self._app.alert()
+
+    def _on_hot_list_updated(
+        self, msg: OutboxMessage, conv: ConversationView, header: ReynHeader,
+    ) -> None:
+        """`hot_list_updated` — refresh the app's cached hot-list ranking.
+
+        The forwarder emits this whenever the qualified-name **order**
+        changes (= ``ActionUsageTracker.record()`` detects a top-N diff;
+        score-only bumps within a stable order are suppressed upstream).
+        The Memory tab reads the cached ranking when it next paints
+        ("Hot now" sub-section), so we trigger a panel refresh here
+        instead of waiting for the user to switch tabs.
+
+        ``meta["ranking"]`` is a list of dicts
+        ``[{"qualified_name": str, "freq": int, "last_ts": str}, ...]``,
+        full ranking (= not top-N). Missing / malformed → empty list.
+        """
+        raw = msg.meta.get("ranking") if msg.meta else None
+        ranking = list(raw) if isinstance(raw, list) else []
+        # Push to the right panel's cache. ``update_hot_list`` triggers
+        # an invalidate only when the Memory tab is currently visible —
+        # other tabs see the new ranking the next time the user
+        # switches to Memory (state is already cached on the panel).
+        try:
+            from .widgets import RightPanel
+            self._app.query_one(
+                "#right_panel", RightPanel,
+            ).update_hot_list(ranking)
+        except Exception:
+            pass
 
 
 __all__ = ["OutboxRouter"]

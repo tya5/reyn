@@ -14,10 +14,14 @@ _TYPE_COLORS: dict[str, str] = {
 }
 
 
+_HOT_LIST_MAX_VISIBLE = 8
+
+
 def render_memory(
     project_root: Path | None,
     *,
     cursor: int = 0,
+    hot_list: list[dict] | None = None,
 ) -> tuple[str, list[Any], list[int]]:
     """Return Rich markup + the flat ordered list of MemoryEntry items
     + the y-coordinate (= 0-indexed line number) of each entry's name row.
@@ -30,6 +34,14 @@ def render_memory(
     the rendered output. Section labels, per-type subheaders and blank
     separators all bump the y, so the orchestrator can't predict it
     arithmetically — we record it here, where the structure is known.
+
+    ``hot_list`` (issue #192): the latest ARS qualified-name ranking
+    from ``ChatLifecycleForwarder.on_hot_list_updated``. When non-empty,
+    a "Hot now" sub-section renders above SHARED / AGENT scopes so the
+    user can see why the router preferred skill X over Y on the last
+    turn. The hot list is **not** part of ``flat_entries`` — entries
+    listed there are MemoryEntry items, and the hot list carries
+    qualified action names which are a different kind of object.
     """
     if project_root is None:
         return "[#555555]  (no project root)[/]", [], []
@@ -39,6 +51,32 @@ def render_memory(
     lines: list[str] = []
     flat_entries: list[Any] = []
     entry_ys: list[int] = []
+
+    # Hot now section (issue #192). Renders only when the list is
+    # populated — keeps the cold-start layout (= no router activity
+    # yet) untouched. Capped at _HOT_LIST_MAX_VISIBLE so a long
+    # ranking doesn't push the SHARED / AGENT entries off the top
+    # of a narrow panel.
+    if hot_list:
+        lines.append(f"[bold #ffaa44]  HOT NOW[/]")
+        for entry in hot_list[:_HOT_LIST_MAX_VISIBLE]:
+            try:
+                name = str(entry.get("qualified_name", ""))
+                freq = int(entry.get("freq", 0))
+            except (AttributeError, ValueError, TypeError):
+                continue
+            if not name:
+                continue
+            lines.append(
+                f"[#ffaa44]    🔥 [/][#dddddd]{_esc(name)}[/]  "
+                f"[#666666]×{freq}[/]"
+            )
+        overflow = len(hot_list) - _HOT_LIST_MAX_VISIBLE
+        if overflow > 0:
+            lines.append(
+                f"[#555555]    … {overflow} more[/]"
+            )
+        lines.append("")
 
     def _render_scope(entries: list, label: str, label_color: str) -> None:
         lines.append(f"[bold {label_color}]  {_esc(label)}[/]")
