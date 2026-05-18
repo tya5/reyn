@@ -174,9 +174,10 @@ async def test_intervention_mount_shows_awaiting_sticky() -> None:
         await pilot.pause()
         sticky = conv._sticky()
         assert sticky is not None
-        assert sticky._active, "sticky must be active while intervention pending"
-        assert "awaiting" in sticky._body.lower(), (
-            f"sticky body must signal awaiting state; got {sticky._body!r}"
+        state = sticky.snapshot()
+        assert state["active"], "sticky must be active while intervention pending"
+        assert "awaiting" in state["body"].lower(), (
+            f"sticky body must signal awaiting state; got {state['body']!r}"
         )
 
         # Resolve → sticky hides
@@ -189,7 +190,7 @@ async def test_intervention_mount_shows_awaiting_sticky() -> None:
             conv, header,
         )
         await pilot.pause()
-        assert not sticky._active, (
+        assert not sticky.snapshot()["active"], (
             "sticky must be cleared once the intervention is resolved"
         )
 
