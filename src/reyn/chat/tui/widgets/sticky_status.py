@@ -19,7 +19,7 @@ import time
 from rich.text import Text
 from textual.widgets import Static
 
-from reyn.chat.tui._palette import _CORAL
+from reyn.chat.tui._palette import _AMBER, _CORAL
 
 _TICK_INTERVAL_S = 0.1  # elapsed timer refresh rate
 
@@ -112,7 +112,15 @@ class StickyStatus(Static):
     def _repaint(self) -> None:
         elapsed = max(0.1, time.monotonic() - self._start)
         t = Text()
-        t.append(self._glyph + " ", style=_CORAL)
+        # On 8-color terminals, hex _CORAL (#C8553D) degrades to ANSI bright
+        # red — confusable with error indicators. The thinking sticky shows
+        # while the agent is working, so route its glyph through _AMBER
+        # (which degrades to ANSI yellow / bright yellow) — neutrally
+        # signalling "in progress" rather than "alert". Other kinds (tool,
+        # general) keep _CORAL since they're typically transient flashes,
+        # not the load-bearing "is the agent working?" indicator.
+        glyph_color = _AMBER if self._kind == "thinking" else _CORAL
+        t.append(self._glyph + " ", style=glyph_color)
         t.append(self._body, style="dim italic")
         t.append(f" · {elapsed:.1f}s", style="dim italic")
         if self._kind == "thinking":
