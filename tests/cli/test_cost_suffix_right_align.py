@@ -74,7 +74,7 @@ async def test_render_cost_suffix_is_right_aligned():
 
         # Right-alignment proof: the line is much wider than the suffix itself,
         # and the suffix sits in the rightmost portion of that width.
-        suffix_visible = "⌁ 100t · $0.0050 · 1.2s"
+        suffix_visible = "⌁ 100t │ $0.0050 │ 1.2s"
         # The rendered line should be padded out to the log content width,
         # which (at size=(120, 30) with no right panel open) is well wider
         # than the suffix. We assert the suffix is in the right half.
