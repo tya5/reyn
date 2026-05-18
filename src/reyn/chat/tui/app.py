@@ -258,6 +258,7 @@ class ReynTUIApp(App):
         iv_id: str,
         choices: list[tuple[str, str] | dict] | None = None,
         queued_extra: int = 0,
+        detail: str | None = None,
     ) -> None:
         """Mount an InterventionWidget inline in the conversation view.
 
@@ -285,6 +286,7 @@ class ReynTUIApp(App):
             answer_callback=_callback,
             iv_id=iv_id,
             queued_extra=queued_extra,
+            detail=detail,
         )
 
     def set_title_state(self, state: str | None) -> None:

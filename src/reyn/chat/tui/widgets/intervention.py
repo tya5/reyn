@@ -93,6 +93,17 @@ class InterventionWidget(Widget):
         height: auto;
         width: 1fr;
     }
+    InterventionWidget Label.iv-detail {
+        /* Issue #163: detail is secondary copy beneath the prompt.
+           #aaaaaa on #1e1510 is ~6.3:1 (passes WCAG AA for body text).
+           Italic + slightly muted color separates the "what is being
+           asked" header from the "what specific resource" detail. */
+        color: #aaaaaa;
+        text-style: italic;
+        padding-bottom: 1;
+        height: auto;
+        width: 1fr;
+    }
     """
 
     class Answered(Message):
@@ -110,10 +121,16 @@ class InterventionWidget(Widget):
         answer_callback: Callable[[str], Awaitable[None]] | None = None,
         iv_id: str = "",
         queued_extra: int = 0,
+        detail: str | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id or f"iv_{iv_id[:8]}")
         self._question = question
+        # Issue #163: detail is the secondary line (= "web fetch: <url>")
+        # rendered with the ``iv-detail`` CSS class beneath the prompt.
+        # None / empty skips the Label entirely so old callers that
+        # don't supply detail keep the prior single-line layout.
+        self._detail = detail
         # Normalise both legacy 2-tuples and richer dict shapes into a single
         # internal list-of-dicts so compose() / hotkey lookup stays uniform.
         self._choices: list[dict[str, Any]] = [
@@ -174,6 +191,14 @@ class InterventionWidget(Widget):
         yield Label(
             f"  {self._question}", classes="iv-question", markup=False,
         )
+        if self._detail:
+            # Issue #163: render detail as a separate Label with the
+            # ``iv-detail`` class (italic + muted color) so the user can
+            # visually parse "what is being asked" vs "what specific
+            # resource is involved".
+            yield Label(
+                f"  {self._detail}", classes="iv-detail", markup=False,
+            )
         if self._queued_extra > 0:
             yield Label(
                 f"  +{self._queued_extra} more pending",

@@ -456,8 +456,22 @@ class OutboxRouter:
                 queued_extra = max(0, registry.queued_count() - 1)
         except Exception:
             queued_extra = 0
+        # Issue #163: prefer the structured ``prompt`` from meta over the
+        # concatenated ``msg.text`` so the widget renders just the
+        # question (= "Permission request — web.fetch") without the
+        # bolted-on detail / choices lines. ``meta.detail`` is forwarded
+        # as a separate Label with italic-muted styling.  Old emit sites
+        # that don't set meta.prompt fall back to msg.text — backward-
+        # compat for the CLI Panel path and any legacy producers.
+        question_text = str(msg.meta.get("prompt") or msg.text)
+        detail_text = msg.meta.get("detail")
         self._app._mount_intervention(
-            conv, msg.text, iv_id, choices, queued_extra=queued_extra,
+            conv,
+            question_text,
+            iv_id,
+            choices,
+            queued_extra=queued_extra,
+            detail=str(detail_text) if detail_text else None,
         )
         # Persistent "blocked on user" indicator. The InterventionWidget is
         # mounted inline and can scroll off-screen in a long session; the
