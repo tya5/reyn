@@ -145,6 +145,114 @@ def _extract_reply(body: dict) -> tuple[str | None, str | None]:
     return reply_text, None
 
 
+# ── B-#2 (B41-NF-W7-2): wait-for-skill-completion semantics ─────────────────
+#
+# When a turn's A2A POST returns a spawn-ack reply (= the router exited the
+# loop on skill spawn before the skill itself completed), the long-session
+# driver previously moved on to the next turn immediately. For skills whose
+# completion latency exceeds the HTTP timeout (e.g. read_local_files at 69.5s
+# in B41 W7-S5), this lost the actual skill output and recorded only the
+# 69-char spawn-ack as the turn reply. Subsequent turns then had no skill
+# output in their context and degraded into inline-only routing.
+#
+# Fix: detect spawn-ack reply by substring, then poll the agent's events
+# file for ``skill_completion_injected`` (= router completed narration) up
+# to a configurable deadline. If found, re-extract the actual narration
+# from agent history.jsonl as the turn reply.
+
+_SPAWN_ACK_MARKERS = (
+    # Substring-level detection so minor OS wording tweaks don't break the
+    # match. See `_SPAWN_ACK_MSG` in src/reyn/chat/router_loop.py for the
+    # canonical en/ja forms.
+    "is running in the background",
+    "バックグラウンドで実行しています",
+)
+
+
+def _is_spawn_ack(reply_text: str) -> bool:
+    """Return True when *reply_text* looks like the router's skill-spawn-ack."""
+    if not reply_text:
+        return False
+    return any(marker in reply_text for marker in _SPAWN_ACK_MARKERS)
+
+
+def _wait_for_skill_completion(
+    events_path: Path,
+    *,
+    since_ts: float,
+    deadline_s: float,
+    poll_interval_s: float = 0.5,
+) -> bool:
+    """Poll *events_path* for a ``skill_completion_injected`` event newer than
+    *since_ts*, returning True once observed or False after *deadline_s*.
+
+    The events file is append-only JSONL written by the chat session; the
+    driver's role here is read-only observation. Returns False on file
+    absence (= agent may not have emitted any events yet — caller decides
+    whether to keep waiting).
+    """
+    end_ts = time.time() + deadline_s
+    while time.time() < end_ts:
+        events = _read_events(events_path) if events_path.exists() else []
+        for ev in events:
+            if ev.get("type") != "skill_completion_injected":
+                continue
+            ev_ts = ev.get("timestamp")
+            if ev_ts is None:
+                continue
+            # Events timestamps are ISO-8601 with timezone; convert to unix.
+            try:
+                ev_ts_unix = _iso_to_unix(ev_ts)
+            except ValueError:
+                continue
+            if ev_ts_unix >= since_ts:
+                return True
+        time.sleep(poll_interval_s)
+    return False
+
+
+def _iso_to_unix(iso_ts: str) -> float:
+    """Convert an ISO-8601 timestamp (with timezone) to unix seconds."""
+    # ``datetime.fromisoformat`` handles "+09:00" style offsets natively in
+    # 3.11+. The events log writer uses ``isoformat()`` on a tz-aware datetime.
+    import datetime as _dt
+    return _dt.datetime.fromisoformat(iso_ts).timestamp()
+
+
+def _read_latest_assistant_text(history_path: Path) -> str | None:
+    """Return the text of the last ``role=assistant`` entry in *history_path*.
+
+    Used post-skill-completion to recover the router's narration that was
+    produced after the original HTTP response returned with spawn-ack only.
+    Returns None when no assistant entry is present or the file is missing.
+    """
+    if not history_path.exists():
+        return None
+    try:
+        text = history_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    latest: str | None = None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if rec.get("role") != "assistant":
+            continue
+        content = rec.get("content")
+        if isinstance(content, str) and content.strip():
+            latest = content
+    return latest
+
+
+def _history_path(reyn_root: Path, agent_name: str) -> Path:
+    return reyn_root / "agents" / agent_name / "history.jsonl"
+
+
 # ── Events log reader ───────────────────────────────────────────────────────
 
 def _events_dir(reyn_root: Path, agent_name: str) -> Path:
@@ -243,6 +351,7 @@ def run_scenario(
     timeout: float,
     reyn_root: Path,
     turn_sleep: float = 0.5,
+    skill_completion_timeout: float = 180.0,
 ) -> dict:
     """
     Execute one scenario: send prompts in order to the A2A endpoint,
@@ -303,6 +412,44 @@ def run_scenario(
                 })
             else:
                 reply_text = reply_text or ""
+                # B-#2 (B41-NF-W7-2) wait-for-skill-completion: when the
+                # router returned a spawn-ack (= it exited the loop before
+                # the spawned skill finished), poll the events log for
+                # ``skill_completion_injected`` and re-read the router
+                # narration from the agent's history. Falls back to the
+                # original spawn-ack reply on timeout so the turn metric is
+                # never lost.
+                if _is_spawn_ack(reply_text):
+                    events_file_for_wait = _latest_events_file(agent_name, reyn_root)
+                    completed = False
+                    if events_file_for_wait is not None:
+                        completed = _wait_for_skill_completion(
+                            events_file_for_wait,
+                            since_ts=t0,
+                            deadline_s=skill_completion_timeout,
+                        )
+                    if completed:
+                        # Brief settle window for the router narration turn
+                        # to land in history.jsonl after the
+                        # skill_completion_injected event fires.
+                        time.sleep(0.5)
+                        narrated = _read_latest_assistant_text(
+                            _history_path(reyn_root, agent_name)
+                        )
+                        if narrated and narrated.strip() and not _is_spawn_ack(narrated):
+                            reply_text = narrated
+                            turn_rec["spawn_ack_resolved"] = True
+                        else:
+                            turn_rec["spawn_ack_resolved"] = False
+                            turn_rec["spawn_ack_resolved_reason"] = (
+                                "no narrated assistant message found"
+                            )
+                    else:
+                        turn_rec["spawn_ack_resolved"] = False
+                        turn_rec["spawn_ack_resolved_reason"] = (
+                            f"timeout after {skill_completion_timeout}s "
+                            "waiting for skill_completion_injected"
+                        )
                 empty = not reply_text.strip()
                 turn_rec.update({
                     "status": "ok" if http_status < 400 else f"http_{http_status}",
@@ -562,6 +709,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--turn-sleep", type=float, default=0.5, metavar="SEC",
         help="Sleep between turns in seconds (default: 0.5). Simulates human pace.",
     )
+    p.add_argument(
+        "--skill-completion-timeout", type=float, default=180.0, metavar="SEC",
+        help=(
+            "When the A2A POST returns a skill spawn-ack, wait up to this many "
+            "seconds for the background skill's completion narration before "
+            "moving to the next turn (default: 180). Setting to 0 disables the "
+            "wait (= record the spawn-ack reply verbatim, restoring pre-B41 "
+            "behavior). B41-NF-W7-2."
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -674,6 +831,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout=args.timeout,
                 reyn_root=reyn_root,
                 turn_sleep=args.turn_sleep,
+                skill_completion_timeout=args.skill_completion_timeout,
             )
             result["shot"] = shot_idx
             all_results.append(result)
