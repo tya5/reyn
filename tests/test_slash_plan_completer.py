@@ -72,3 +72,23 @@ async def test_plan_completer_tolerates_session_without_running_plans():
         pass
 
     assert _plan_completer(_SessionWithoutRunningPlans(), "discard ") == []
+
+
+@pytest.mark.asyncio
+async def test_plan_completer_step_ids_empty_when_plan_unknown():
+    """Tier 2: missing decomposition → empty list (= falls back to hint mode).
+
+    The ``resume <plan_id> --from`` branch loads the decomposition
+    artifact for the named plan. When that file doesn't exist (= stale
+    plan_id, fresh session, agent without state) the completer must
+    return ``[]`` so the picker falls back to plain hint mode rather
+    than raising.
+    """
+    class _Session:
+        agent_name = "nonexistent_agent"
+        running_plans: dict = {}
+
+    result = _plan_completer(_Session(), "resume plan_does_not_exist --from ")
+    assert result == []
+
+
