@@ -74,6 +74,7 @@ class OSRuntime:
         parent_run_id: str | None = None,
         sandbox_config: "SandboxConfig | None" = None,
         secret_store: "ScopedSecretStore | None" = None,
+        plan_step: dict | None = None,
     ) -> None:
         self.skill = skill
         self.model = model
@@ -84,7 +85,9 @@ class OSRuntime:
         self._chain_id = chain_id
         self._budget_tracker = budget_tracker
         self._budget_skill_name = skill_name or skill.name
-        self.events = EventLog(subscribers=subscribers, run_id=run_id)
+        self.events = EventLog(
+            subscribers=subscribers, run_id=run_id, plan_step=plan_step,
+        )
         self.workspace = Workspace(
             self.events,
             permission_resolver=permission_resolver,

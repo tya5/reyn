@@ -872,11 +872,25 @@ async def execute_plan(
             step_succeeded = False
             desc_preview = (step.description or step.id)[:60]
             attempt = 0
+            # Issue #214 (= #180 #2 split): set the plan_step contextvar
+            # for the duration of this step's sub-loop. The ContextVar
+            # propagates through any asyncio.Task the sub-loop spawns
+            # (= invoke_skill → skill_runner → Agent.run), so the spawned
+            # skill's OSRuntime / EventLog stamps "plan N/M" into every
+            # event and the TUI's SkillActivityRow can render the plan
+            # context as detail. ``n_done`` is the 1-based step number
+            # currently executing (= already-completed count + 1).
+            from reyn.skill._plan_step_context import set_plan_step
             while attempt <= step_retry_limit:
                 try:
-                    sub_usage = await sub_loop.run(
-                        user_text=step.description, history=[],
-                    )
+                    with set_plan_step(
+                        n_done=n_done + 1,
+                        n_total=n_total,
+                        step_id=step.id,
+                    ):
+                        sub_usage = await sub_loop.run(
+                            user_text=step.description, history=[],
+                        )
                     if sub_usage is not None:
                         total_usage.prompt_tokens += sub_usage.prompt_tokens
                         total_usage.completion_tokens += sub_usage.completion_tokens

@@ -178,6 +178,9 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
         # /skill list and future cascade-discard can walk the tree.
         parent_run_id=ctx.parent_skill_run_id,
         secret_store=scoped_store,
+        # Issue #214: forward plan_step so the sub-skill's EventLog
+        # stamps "plan N/M" context into every emit. None = not in a plan.
+        plan_step=ctx.plan_step,
     )
 
     # PR20: per-run events live at
