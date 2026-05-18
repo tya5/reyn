@@ -58,6 +58,14 @@ from .streaming_row import StreamingRow
 
 _DASH_TOTAL = 38  # matches the banner separator width
 _GROUP_WINDOW_S = 60.0  # consecutive turns within this window share a header
+# Speaker-identity glyphs prepended to header labels — non-color cue so
+# turn boundaries stay legible in greyscale / for color-blind users.
+# The header name color (cyan / amber / grey) is still the primary
+# signal; the glyph is a redundant shape signal so neither channel
+# alone is load-bearing.
+_GLYPH_USER = "▶"
+_GLYPH_AGENT = "◆"
+_GLYPH_SYSTEM = "·"
 _FOLD_THRESHOLD_LINES = 30  # B3: agent replies above this fold inline
 # /copy ring-buffer depth. Far enough back that the user can grab "the
 # reply two turns ago" — the typical "wait, that one was useful" recovery
@@ -464,7 +472,9 @@ class ConversationView(Widget):
         """
         self._snap_to_bottom()
         self._consume_empty_hint()
-        self._maybe_write_header("you", "you", "bold #4abbb5", "#666666")
+        self._maybe_write_header(
+            "you", f"{_GLYPH_USER} you", "bold #4abbb5", "#666666",
+        )
         self._write_body(Text(text))
         self._write_log(Text(""))
 
@@ -480,7 +490,9 @@ class ConversationView(Widget):
         """
         self._consume_empty_hint()
         self.hide_status()
-        self._maybe_write_header("system", "system", "bold #888888", "#666666")
+        self._maybe_write_header(
+            "system", f"{_GLYPH_SYSTEM} system", "bold #888888", "#666666",
+        )
         for line in (msg.text or "").splitlines() or [""]:
             self._write_body(Text(line))
         self._write_log(Text(""))
@@ -500,7 +512,9 @@ class ConversationView(Widget):
         # _AMBER for agent identity (header label) — distinct from _CORAL
         # which is reserved for interactive affordances (/expand, picker
         # selection caret, panel cursor ▶) and "you are here" indicators.
-        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#666666")
+        self._maybe_write_header(
+            "reyn", f"{_GLYPH_AGENT} {label}", "bold " + _AMBER, "#666666",
+        )
         if msg.text:
             self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
@@ -630,7 +644,9 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         label = agent_name if agent_name else "reyn"
         # Same agent-identity styling as _render_agent_markdown (_AMBER).
-        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#666666")
+        self._maybe_write_header(
+            "reyn", f"{_GLYPH_AGENT} {label}", "bold " + _AMBER, "#666666",
+        )
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
