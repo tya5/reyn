@@ -1,0 +1,171 @@
+{
+  "generated_at": "2026-05-18T23:30:07.458261+00:00",
+  "scenarios_file": "docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/workers/w7-tmp/scenario_1.yaml",
+  "agent": "dogfood-b42-7-s1",
+  "web_url": "http://127.0.0.1:8207",
+  "n_shot": 1,
+  "max_turns": 5,
+  "results": [
+    {
+      "scenario_id": "scenario_1_reyn_research_chain",
+      "description": "Multi-turn Reyn deep-dive. Each question assumes the prior answer. Natural context growth from successive concept lookups.\n",
+      "kind": "research_chain",
+      "agent_name": "dogfood-b42-7-s1",
+      "prompts": [
+        "What is Reyn and what problem does it solve?",
+        "How does its skill system work?",
+        "What is the difference between a Phase and a Skill in that system?",
+        "Where does the OS fit in the architecture you just described?",
+        "What principles prevent skill-specific code from leaking into the OS?"
+      ],
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What is Reyn and what problem does it solve?",
+          "message_id": "3171a2dd4cb842b2a006104fec2c9ddd",
+          "elapsed_s": 4.862,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 2,
+          "prompt": "How does its skill system work?",
+          "message_id": "a8360b993f6143f6878e776d376fe910",
+          "elapsed_s": 4.102,
+          "status": "ok",
+          "reply_len": 1164,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 3,
+          "prompt": "What is the difference between a Phase and a Skill in that system?",
+          "message_id": "2b1db3e23a8944668b68407c9127b65f",
+          "elapsed_s": 1.579,
+          "status": "ok",
+          "reply_len": 534,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 4,
+          "prompt": "Where does the OS fit in the architecture you just described?",
+          "message_id": "9873e340d17e4740922c819e392327ed",
+          "elapsed_s": 5.847,
+          "status": "ok",
+          "reply_len": 1050,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 5,
+          "prompt": "What principles prevent skill-specific code from leaking into the OS?",
+          "message_id": "789b79a804c34f8db602e7b7b9cc7454",
+          "elapsed_s": 2.922,
+          "status": "ok",
+          "reply_len": 1581,
+          "empty": false,
+          "http_status": 200
+        }
+      ],
+      "events_file": "/tmp/reyn-worktrees/b42-7/.reyn/events/agents/dogfood-b42-7-s1/chat/2026-05/2026-05-19T082947.jsonl",
+      "token_entries": [
+        {
+          "ts": "2026-05-19T08:29:49+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 4995,
+          "cost_usd": 0.0005199
+        },
+        {
+          "ts": "2026-05-19T08:29:50+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 15167,
+          "cost_usd": 0.0015167
+        },
+        {
+          "ts": "2026-05-19T08:29:53+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5490,
+          "cost_usd": 0.0005549999999999999
+        },
+        {
+          "ts": "2026-05-19T08:29:55+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 12550,
+          "cost_usd": 0.0013279
+        },
+        {
+          "ts": "2026-05-19T08:29:57+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5851,
+          "cost_usd": 0.0006217
+        },
+        {
+          "ts": "2026-05-19T08:30:04+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6092,
+          "cost_usd": 0.0006773
+        },
+        {
+          "ts": "2026-05-19T08:30:07+09:00",
+          "agent": "dogfood-b42-7-s1",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6421,
+          "cost_usd": 0.0007363
+        }
+      ],
+      "tool_sequence": [
+        "invoke_action",
+        "invoke_action",
+        "reyn.source__read"
+      ],
+      "empty_stop_events": 0,
+      "shot": 1
+    }
+  ],
+  "summary": {
+    "n_scenarios": 1,
+    "n_turns": 5,
+    "n_empty": 0,
+    "empty_rate": 0.0,
+    "latency_p50": 4.1,
+    "latency_p90": 5.85,
+    "empty_by_turn_position": {
+      "1": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "2": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "3": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "4": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "5": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      }
+    },
+    "total_llm_calls": 7,
+    "total_tokens": 56566
+  }
+}

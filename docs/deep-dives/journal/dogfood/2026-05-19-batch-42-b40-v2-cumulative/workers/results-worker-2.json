@@ -1,0 +1,169 @@
+{
+  "batch": "B42",
+  "worker": 2,
+  "head": "79748ac9",
+  "date": "2026-05-19",
+  "scenario_set": "stdlib_skills_core.yaml",
+  "state_mode": "fresh",
+  "config": "default",
+  "port": 8202,
+  "server_cwd": "/tmp/reyn-worktrees/b42-2",
+  "agent_prefix": "dogfood-b42-2-s",
+  "reconstruction_note": "Crash recovery: events.jsonl absent on-disk; reconstructed from /tmp/reyn-worktrees/b42-2/.reyn/agents/dogfood-b42-2-s{1..8,8b}/history.jsonl. events_pass set to null everywhere (not assessable offline). verdict based purely on rubric_pass per recovery instructions. s8b agent dir contains only profile.yaml (no history.jsonl — never ran). s9 (chained_find_then_index) agent dir absent — scenario blocked, crash truncated dispatch.",
+  "verdicts": {"V": 5, "I": 0, "R": 3, "B": 1},
+  "vs_b41": {
+    "b41_verdicts": {"V": 1, "I": 0, "R": 8, "B": 0},
+    "delta_v": 4,
+    "delta_i": 0,
+    "delta_r": -5,
+    "delta_b": 1,
+    "note": "Apparent V surge from 1->5 vs B41 is largely artifact of offline-rubric-only scoring (events_pass=null) for B42 W2. B41 events_pass was assessable and gated several scenarios. Honest comparison: only S5 word_stats_demo_sentence (V in both) is directly comparable. S2/S3/S4/S6 rubric-text-only PASS in B42, but the original B41 R verdict factored event-level requirements which we cannot assess here. B1 introduces a new B (blocked) class — S9 was never dispatched due to mid-batch crash."
+  },
+  "vs_b39": {
+    "b39_verdicts": {"V": 1, "I": 3, "R": 5, "B": 0},
+    "delta_v": 4,
+    "delta_i": -3,
+    "delta_r": -2,
+    "delta_b": 1,
+    "note": "Same caveat as vs_b41: B42 W2 rubric-only scoring inflates V vs B39's full events+rubric. S5 stable V across B39/B41/B42. S1 stable R (unsafe-python gate persists). S7 stable R (eval output schema validation persists). S9 B in B42 only (crash, not regression)."
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "result": "refuted",
+      "events_pass": null,
+      "rubric_pass": false,
+      "rubric_notes": "Rubric: (1) reply confirms indexing completed/started — FAIL (reports skill encountered an error). (2) mentions source name / indexed files / chunk count — FAIL. (3) does not claim error occurred — FAIL (explicitly states error). Two attempts in history, both hit unsafe-python gate. R.",
+      "reply_excerpt": "The `index_docs` skill failed because it declared an unsafe Python step. You need to re-run the command with the `--allow-unsafe-python` flag to proceed.",
+      "vs_b41": "R -> R (stable, same unsafe-python gate)",
+      "vs_b39": "R -> R (stable, same unsafe-python gate)",
+      "notes": "skill_completion events present (status=error, allow-unsafe-python message). 2 chains in history both ended in same error mode. Persistent attractor: unsafe-python gate on index_docs."
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "result": "verified",
+      "events_pass": null,
+      "rubric_pass": true,
+      "rubric_notes": "Rubric: (1) explains purpose of file (cron scheduling / job management) — PASS (describes CronScheduler class managing CronJob objects for cron-based skill execution). (2) demonstrates understanding of file's role in codebase — PASS (covers asyncio concurrency, start/stop/run_now/compute_next_run methods, dependency injection). (3) does not fabricate / says so if MCP unavailable — PASS (content matches real scheduler.py structure). V on rubric. Note: chain 1 went via plan_completed (multi-step plan with parse_code/extract_classes_methods/explain_functionality steps); chain 2 (re-ask in English) produced inline reply.",
+      "reply_excerpt": "`src/reyn/cron/scheduler.py` には、cron 式を使用して指定された間隔でスキルをスケジュールおよび実行する `CronScheduler` クラスが定義されています。... 主な機能: start(), stop(), run_now(name), compute_next_run(job)...",
+      "vs_b41": "R -> V (rubric-only; B41 events likely gated this — caution attribution)",
+      "vs_b39": "I -> V (rubric-only; same caveat)",
+      "notes": "Chain 1 used plan dispatch (plan_id=eb69b044) — interesting departure from prior batches which routed to read_local_files skill or inline. extract_classes_methods step returned empty but explain_functionality recovered. Final synthesis quality high. Cannot confirm read_local_files artifact present without events."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "result": "verified",
+      "events_pass": null,
+      "rubric_pass": true,
+      "rubric_notes": "Rubric: (1) describes at least one file in src/reyn/op_runtime/ — PASS (describes ~19 files: __init__.py, ask_user.py, context.py, embed.py, file.py, mcp.py, run_skill.py, etc.). (2) references Control IR ops or operation handling — PASS (explicitly mentions 'Control IR ops', 'op handlers', and individual op names: embed, ask_user, judge_output, run_skill, etc.). (3) does not claim permission error unless MCP unavailable — PASS (no permission error claimed). V on rubric. First chain returned router_empty_response; second chain produced thorough reply.",
+      "reply_excerpt": "This directory contains files related to the execution of operations (ops) within the Reyn system. ... `__init__.py`: ... `ask_user.py`: Handles the `ask_user` op ... `embed.py`: Implements the `embed` op ... `run_skill.py`: Handles the `run_skill` op ...",
+      "vs_b41": "R -> V (rubric-only; caveat)",
+      "vs_b39": "R -> V (rubric-only; caveat)",
+      "notes": "First chain (d027301905c4) router_empty_response — known attractor. Auto-retry / re-ask produced detailed enumeration of op_runtime/ contents. Reply is more comprehensive than past batches but cannot verify artifact presence offline."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "result": "verified",
+      "events_pass": null,
+      "rubric_pass": true,
+      "rubric_notes": "Rubric: (1) reports skill was generated / lint passed — PASS (both chains report lint_passed=true in skill_completion). (2) mentions skill name or output path — PASS (mentions web_article_summariser and reyn/local/web_article_summariser). (3) does not claim total failure without concrete error — PASS (success narration). V on rubric. Two successful runs in history (chain 1: 8 files written; chain 2: 7 files written; both lint_passed).",
+      "reply_excerpt": "The `web_article_summariser` skill has been successfully created and saved to `reyn/local/web_article_summariser`. This skill is designed to fetch web articles and provide a concise summary of their content.",
+      "vs_b41": "R -> V (rubric-only; caveat — B41 events check likely gated this)",
+      "vs_b39": "R -> V (rubric-only; caveat)",
+      "notes": "Chain 1 started with router_empty_response then skill_completion(finished). Chain 2 normal spawn_ack then skill_completion(finished). Skill files written to reyn/local/web_article_summariser/. lint_passed=true on both runs."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "result": "verified",
+      "events_pass": null,
+      "rubric_pass": true,
+      "rubric_notes": "Rubric: (1) contains at least one computed statistic — PASS (44 characters, 1 line). (2) references actual text analysed — PASS (skill_completion result.commentary references 'This text'; reply summarises). (3) statistics consistent with input length — PASS ('The quick brown fox jumps over the lazy dog.' = 44 chars, 1 line). V.",
+      "reply_excerpt": "The `word_stats_demo` skill has finished running and analyzed the provided text. The result indicates that the text contains 44 characters across 1 line, and is described as a concise statement suitable for a brief message.",
+      "vs_b41": "V -> V (stable, B40 v2 fix maintained)",
+      "vs_b39": "V -> V (stable)",
+      "notes": "Clean run: spawn_ack -> skill_completion(finished) -> narration. word_stats_demo artifact name in completion. 44-char stat is correct."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "result": "verified",
+      "events_pass": null,
+      "rubric_pass": true,
+      "rubric_notes": "Rubric: (1) mentions word/character count for multi-line text — PASS (133 chars across 3 lines, longest line 87 chars). (2) references precomputed statistics rather than estimating — PASS (reply quotes the skill's commentary verbatim: '133 characters across 3 lines, longest line containing 87 characters, estimated 480 tokens'). V on rubric. Caveat: actual input has 4 lines, skill reported 3 — but rubric does not require correct count, only that precomputed stats are referenced.",
+      "reply_excerpt": "The `word_stats_demo` skill has finished and analyzed the provided text. It reported that the text has 133 characters across 3 lines, with the longest line containing 87 characters, and an estimated 480 tokens.",
+      "vs_b41": "R -> V (rubric-only; caveat — B41 events likely gated this)",
+      "vs_b39": "I -> V (rubric-only; caveat)",
+      "notes": "Stat slightly off (3 lines reported vs 4 in input — skill counted blank-line-delimited paragraphs or stripped final newline) but rubric is about referencing precomputed stats. Reply quotes skill output faithfully."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "result": "refuted",
+      "events_pass": null,
+      "rubric_pass": false,
+      "rubric_notes": "Rubric: (1) reports eval result including pass/fail or score — FAIL (no pass/fail or score reported). (2) references criterion (translation of hello / こんにちは) — FAIL. (3) does not fabricate score — PASS-by-default (no score fabricated, but no result either). R.",
+      "reply_excerpt": "The `eval` skill run failed because the output did not match the expected schema. The required properties `overall_score`, `passed`, `passed_criteria`, `spec_path`, and `summary` were missing.",
+      "vs_b41": "R -> R (stable; mechanism: postprocessor output_schema validation fail)",
+      "vs_b39": "R -> R (stable)",
+      "notes": "skill_completion status=error with detailed schema validation message: 'Postprocessor output failed schema validation (output_schema): overall_score / passed / passed_criteria / spec_path / summary required'. This is the B41-NF-S7 eval postprocessor schema mismatch attractor. PR #115 D2-wrapper revert hypothesis (per session_resume) targets this family. Persistent."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "result": "refuted",
+      "events_pass": null,
+      "rubric_pass": false,
+      "rubric_notes": "Rubric: (1) final reply answers the routing/catalog question coherently — FAIL (session never reached 5th prompt; final reply answers architecture question in English, not routing). (2) reply mentions skill routing or chat router mechanism — FAIL (final reply is architecture overview; no routing/router mention beyond passing reference to OS-provided candidate list). (3) does not produce bare error — PASS. R.",
+      "reply_excerpt": "Reyn Agent OS is an operating system designed for managing Large Language Model (LLM) workflows, emphasizing predictability, auditability, and constraint-based decision-making. ... OS (Operating System) ... Skill ... Phase ... Workspace ... Event ... P1-P8 ...",
+      "vs_b41": "R -> R (stable but mechanism differs: B41 sequence reached intended turns; B42 history shows session only progressed 2-3 of 5 intended prompts before crash truncated dispatch)",
+      "vs_b39": "I -> R (B39 was I; B42 truncated session yields R by rubric — caveat: B42 result distorted by crash, not by skill regression)",
+      "notes": "history.jsonl shows 5 chain_ids but only 3 distinct user prompts: arch (twice, second with router_empty_response), 'hello' (greeting), arch (third time), 'Reyn Agent OS architecture' (short re-ask). Intended 5-prompt sequence (arch, control_ir_ops, workspace+events, index_docs+eval, routing) never executed — session was likely killed at crash. NOT a behavioral regression — distortion from crash. Marking R per rubric letter but documenting the artifact."
+    },
+    {
+      "id": "chained_find_then_index",
+      "result": "blocked",
+      "events_pass": null,
+      "rubric_pass": null,
+      "rubric_notes": "Scenario never dispatched: no agent directory dogfood-b42-2-s9 exists under /tmp/reyn-worktrees/b42-2/.reyn/agents/. Mid-batch crash truncated dispatch before s9. B (blocked).",
+      "reply_excerpt": null,
+      "vs_b41": "R -> B (crash blocked dispatch, not regression)",
+      "vs_b39": "R -> B (crash blocked dispatch, not regression)",
+      "notes": "No history.jsonl present. Cannot assess rubric or events. Blocked by infrastructure (crash), not by skill behavior."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B42-W2-NF1",
+      "severity": "INFO",
+      "scenario": "all",
+      "observation": "events.jsonl was not persisted to disk before crash, so events_pass cannot be assessed offline. Reconstruction is rubric-only — verdict V counts are upper-bounds (B41/B39 events check may have gated several R verdicts here).",
+      "evidence": "Per recovery instructions: events.jsonl absent. history.jsonl present for s1..s8. s8b only has profile.yaml. s9 absent entirely.",
+      "hypothesis": "Crash recovery infrastructure (per FP-0036) should persist events.jsonl on partial-batch crash, or worker reconstruction should be possible from history alone with events_pass=null marker as done here.",
+      "action": "Out of scope for W2 recovery. Flag for lead-coder / FP-0036 framework hardening."
+    },
+    {
+      "id": "B42-W2-NF2",
+      "severity": "MED",
+      "scenario": "eval_run_direct_llm",
+      "observation": "eval postprocessor output schema validation persistently fails: 'overall_score / passed / passed_criteria / spec_path / summary' all required but missing. B40 v2 routing fix landed eval routing improvements but downstream postprocessor mismatch (B41-NF-S7) remains. Persists across B39/B41/B42.",
+      "evidence": "skill_completion for run_id=20260518T230935Z_eval_5fc9 status=error with full schema-validation error message reproduced verbatim.",
+      "hypothesis": "Per session_resume_2026_05_17_b39_revert_pending.md: PR #115 D2-wrapper revert may unblock eval-skill-path-resolution downstream. Independent verification pending — out of W2 recovery scope.",
+      "action": "Flag for lead-coder. Tracks against existing B41-NF-S7."
+    },
+    {
+      "id": "B42-W2-NF3",
+      "severity": "INFO",
+      "scenario": "read_local_files_explain_source",
+      "observation": "Turn 1 took plan_completed path (multi-step plan parse_code/extract_classes_methods/explain_functionality) rather than direct read_local_files skill dispatch. Different routing behavior than past batches.",
+      "evidence": "history.jsonl chain b479bcfccd83 has meta.source=plan_completion (plan_id=eb69b044) with 3 step_results.",
+      "hypothesis": "Lazy MCP cache or plan-mode catalog interaction may be redirecting file-explanation queries to plan dispatch rather than read_local_files. Possibly a behavioral shift introduced by recent merges. Cannot attribute without events.",
+      "action": "Note for cross-worker comparison. Not in W2 scope to investigate."
+    },
+    {
+      "id": "B42-W2-NF4",
+      "severity": "HIGH",
+      "scenario": "chained_find_then_index",
+      "observation": "Mid-batch crash blocked s9 dispatch entirely. Crash happened after s8 (which itself completed with truncated prompt sequence).",
+      "evidence": "No /tmp/reyn-worktrees/b42-2/.reyn/agents/dogfood-b42-2-s9 directory. s8 history shows 9 lines (5 chains) but only 2-3 of intended 5 prompts.",
+      "hypothesis": "FP-0036 dispatch loop may have crashed during s8 long-session execution (10K bytes history, long chat compactor scenario stressing memory/state).",
+      "action": "Flag for FP-0036 framework hardening: per-scenario timeout + per-batch crash recovery so single-scenario crash does not block downstream scenarios."
+    }
+  ]
+}

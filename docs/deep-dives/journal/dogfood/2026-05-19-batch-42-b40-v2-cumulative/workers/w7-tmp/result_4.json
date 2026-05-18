@@ -1,0 +1,175 @@
+{
+  "generated_at": "2026-05-18T23:30:04.080901+00:00",
+  "scenarios_file": "docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/workers/w7-tmp/scenario_4.yaml",
+  "agent": "dogfood-b42-7-s4",
+  "web_url": "http://127.0.0.1:8207",
+  "n_shot": 1,
+  "max_turns": 5,
+  "results": [
+    {
+      "scenario_id": "scenario_4_repetitive_context_bloat",
+      "description": "Deliberately repetitive: re-asks close variants of the same question. Forces context to grow without new entropy — the classic G12 Pattern E trigger. This is the primary attractor-detection scenario.\n",
+      "kind": "repetitive_context",
+      "agent_name": "dogfood-b42-7-s4",
+      "prompts": [
+        "What skills are available in Reyn?",
+        "List the available skills again, but this time include a one-line description for each.",
+        "Which of those skills are used most commonly in dogfood sessions?",
+        "Summarize the skill list one more time in bullet form.",
+        "Which skill would you recommend for a first-time Reyn user?"
+      ],
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What skills are available in Reyn?",
+          "message_id": "2be9ebd8842f434b928eef6d4bd8bb09",
+          "elapsed_s": 7.486,
+          "status": "ok",
+          "reply_len": 2859,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 2,
+          "prompt": "List the available skills again, but this time include a one-line description for each.",
+          "message_id": "b09c03d586574c0c982368f8db4fc5da",
+          "elapsed_s": 3.419,
+          "status": "ok",
+          "reply_len": 1828,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 3,
+          "prompt": "Which of those skills are used most commonly in dogfood sessions?",
+          "message_id": "1f78b63667604b08b32fd52bc4029bab",
+          "elapsed_s": 2.323,
+          "status": "ok",
+          "reply_len": 89,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 4,
+          "prompt": "Summarize the skill list one more time in bullet form.",
+          "message_id": "9d56552fcfd749498888643a06f5fbcc",
+          "elapsed_s": 1.728,
+          "status": "ok",
+          "reply_len": 714,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 5,
+          "prompt": "Which skill would you recommend for a first-time Reyn user?",
+          "message_id": "15422a86f8ee41feb0b9bf5111a4a1c9",
+          "elapsed_s": 1.788,
+          "status": "ok",
+          "reply_len": 396,
+          "empty": false,
+          "http_status": 200
+        }
+      ],
+      "events_file": "/tmp/reyn-worktrees/b42-7/.reyn/events/agents/dogfood-b42-7-s4/chat/2026-05/2026-05-19T082945.jsonl",
+      "token_entries": [
+        {
+          "ts": "2026-05-19T08:29:49+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5021,
+          "cost_usd": 0.0005291
+        },
+        {
+          "ts": "2026-05-19T08:29:52+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 9471,
+          "cost_usd": 0.0011775
+        },
+        {
+          "ts": "2026-05-19T08:29:54+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6081,
+          "cost_usd": 0.0006126
+        },
+        {
+          "ts": "2026-05-19T08:29:56+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 7203,
+          "cost_usd": 0.0008627999999999999
+        },
+        {
+          "ts": "2026-05-19T08:29:59+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6574,
+          "cost_usd": 0.0006628
+        },
+        {
+          "ts": "2026-05-19T08:30:01+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6802,
+          "cost_usd": 0.0007444
+        },
+        {
+          "ts": "2026-05-19T08:30:04+09:00",
+          "agent": "dogfood-b42-7-s4",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6908,
+          "cost_usd": 0.0007180999999999999
+        }
+      ],
+      "tool_sequence": [
+        "list_actions",
+        "list_actions",
+        "list_actions",
+        "list_actions",
+        "list_actions",
+        "list_actions",
+        "list_actions"
+      ],
+      "empty_stop_events": 0,
+      "shot": 1
+    }
+  ],
+  "summary": {
+    "n_scenarios": 1,
+    "n_turns": 5,
+    "n_empty": 0,
+    "empty_rate": 0.0,
+    "latency_p50": 2.32,
+    "latency_p90": 7.49,
+    "empty_by_turn_position": {
+      "1": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "2": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "3": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "4": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "5": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      }
+    },
+    "total_llm_calls": 7,
+    "total_tokens": 48060
+  }
+}

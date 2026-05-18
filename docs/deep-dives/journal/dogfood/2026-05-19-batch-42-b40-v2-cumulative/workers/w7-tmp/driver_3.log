@@ -1,0 +1,3 @@
+[info] 1 scenarios × 1 shot(s) × ≤5 turns
+[info] target: http://127.0.0.1:8207/a2a/agents/<agent>
+[info]   scenario_3_cross_reference_compare ... done (5 turns, empty=0%)

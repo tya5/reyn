@@ -1,0 +1,22 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_7_concept_explanation_chain
+  description: 'Explains a broad software concept across turns, each building on the
+    last. Covers non-Reyn territory (distributed systems) to prevent project-context
+    shortcuts and exercise general reasoning under growing context.
+
+    '
+  kind: general_topic
+  covers:
+  - cli/reyn-chat
+  - stdlib-skills/direct-llm
+  prompts:
+  - Explain eventual consistency in distributed systems.
+  - What is the CAP theorem and how does it relate to what you just described?
+  - Give a concrete example of a system that chooses availability over consistency.
+  - How would you detect inconsistency in that system at runtime?
+  - What repair strategies exist once an inconsistency is detected?

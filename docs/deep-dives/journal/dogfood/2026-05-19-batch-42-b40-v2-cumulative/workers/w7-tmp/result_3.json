@@ -1,0 +1,300 @@
+{
+  "generated_at": "2026-05-18T23:30:45.563211+00:00",
+  "scenarios_file": "docs/deep-dives/journal/dogfood/2026-05-19-batch-42-b40-v2-cumulative/workers/w7-tmp/scenario_3.yaml",
+  "agent": "dogfood-b42-7-s3",
+  "web_url": "http://127.0.0.1:8207",
+  "n_shot": 1,
+  "max_turns": 5,
+  "results": [
+    {
+      "scenario_id": "scenario_3_cross_reference_compare",
+      "description": "Introduces two systems early, then forces a comparison later. Exercises context recall across 4+ turns.\n",
+      "kind": "cross_reference",
+      "agent_name": "dogfood-b42-7-s3",
+      "prompts": [
+        "Describe how LangGraph structures multi-agent workflows.",
+        "Now describe how Reyn structures multi-agent workflows.",
+        "What is async/await in Python and why does it matter for agents?",
+        "Given what you said about both LangGraph and Reyn, which approach handles async tool calls more predictably?",
+        "What would a developer need to change when migrating from LangGraph to Reyn?"
+      ],
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "Describe how LangGraph structures multi-agent workflows.",
+          "message_id": "161747fdebb746c98f6118ce21059faa",
+          "elapsed_s": 35.853,
+          "status": "ok",
+          "reply_len": 3610,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 2,
+          "prompt": "Now describe how Reyn structures multi-agent workflows.",
+          "message_id": "e4c7fe8425e1450c8f1b48914d4d4d29",
+          "elapsed_s": 6.754,
+          "status": "ok",
+          "reply_len": 2876,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 3,
+          "prompt": "What is async/await in Python and why does it matter for agents?",
+          "message_id": "c36943d3bdaa455aadd706aa410668e5",
+          "elapsed_s": 10.287,
+          "spawn_ack_resolved": false,
+          "spawn_ack_resolved_reason": "no narrated assistant message found",
+          "status": "ok",
+          "reply_len": 237,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 4,
+          "prompt": "Given what you said about both LangGraph and Reyn, which approach handles async tool calls more predictably?",
+          "message_id": "3341ffd2956040e8b739391e6a91e25a",
+          "elapsed_s": 1.578,
+          "status": "ok",
+          "reply_len": 333,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 5,
+          "prompt": "What would a developer need to change when migrating from LangGraph to Reyn?",
+          "message_id": "47f1919435204a5994a8a434497aca5b",
+          "elapsed_s": 3.237,
+          "status": "ok",
+          "reply_len": 2346,
+          "empty": false,
+          "http_status": 200
+        }
+      ],
+      "events_file": "/tmp/reyn-worktrees/b42-7/.reyn/events/agents/dogfood-b42-7-s3/chat/2026-05/2026-05-19T082946.jsonl",
+      "token_entries": [
+        {
+          "ts": "2026-05-19T08:29:50+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5305,
+          "cost_usd": 0.0006397
+        },
+        {
+          "ts": "2026-05-19T08:29:51+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2000,
+          "cost_usd": 0.0002084
+        },
+        {
+          "ts": "2026-05-19T08:29:52+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2049,
+          "cost_usd": 0.0002049
+        },
+        {
+          "ts": "2026-05-19T08:29:53+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2015,
+          "cost_usd": 0.000215
+        },
+        {
+          "ts": "2026-05-19T08:29:55+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2885,
+          "cost_usd": 0.00035539999999999997
+        },
+        {
+          "ts": "2026-05-19T08:29:56+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2017,
+          "cost_usd": 0.00021339999999999998
+        },
+        {
+          "ts": "2026-05-19T08:29:58+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2094,
+          "cost_usd": 0.00021779999999999998
+        },
+        {
+          "ts": "2026-05-19T08:29:59+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2234,
+          "cost_usd": 0.0002498
+        },
+        {
+          "ts": "2026-05-19T08:30:00+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2035,
+          "cost_usd": 0.0002122
+        },
+        {
+          "ts": "2026-05-19T08:30:01+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2154,
+          "cost_usd": 0.0002364
+        },
+        {
+          "ts": "2026-05-19T08:30:02+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2289,
+          "cost_usd": 0.0002556
+        },
+        {
+          "ts": "2026-05-19T08:30:09+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2909,
+          "cost_usd": 0.00033739999999999996
+        },
+        {
+          "ts": "2026-05-19T08:30:10+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 3180,
+          "cost_usd": 0.000342
+        },
+        {
+          "ts": "2026-05-19T08:30:15+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2734,
+          "cost_usd": 0.0004186
+        },
+        {
+          "ts": "2026-05-19T08:30:17+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 2417,
+          "cost_usd": 0.0002624
+        },
+        {
+          "ts": "2026-05-19T08:30:21+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 7240,
+          "cost_usd": 0.0009519999999999999
+        },
+        {
+          "ts": "2026-05-19T08:30:23+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 7458,
+          "cost_usd": 0.0008075999999999999
+        },
+        {
+          "ts": "2026-05-19T08:30:28+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 16514,
+          "cost_usd": 0.0018449
+        },
+        {
+          "ts": "2026-05-19T08:30:34+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 7958,
+          "cost_usd": 0.0008089999999999999
+        },
+        {
+          "ts": "2026-05-19T08:30:38+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "openai/gemini-2.5-flash-lite",
+          "tokens": 4281,
+          "cost_usd": 0.0
+        },
+        {
+          "ts": "2026-05-19T08:30:39+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 8544,
+          "cost_usd": 0.000864
+        },
+        {
+          "ts": "2026-05-19T08:30:41+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 8635,
+          "cost_usd": 0.0008842
+        },
+        {
+          "ts": "2026-05-19T08:30:45+09:00",
+          "agent": "dogfood-b42-7-s3",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 9136,
+          "cost_usd": 0.0010588
+        }
+      ],
+      "tool_sequence": [
+        "plan",
+        "recall",
+        "reyn_src_list",
+        "reyn_src_list",
+        "recall",
+        "reyn_src_read",
+        "recall",
+        "reyn_src_list",
+        "web_search",
+        "web_fetch",
+        "web_fetch",
+        "invoke_action",
+        "invoke_action",
+        "invoke_action",
+        "invoke_action",
+        "invoke_action",
+        "invoke_action",
+        "invoke_action"
+      ],
+      "empty_stop_events": 0,
+      "shot": 1
+    }
+  ],
+  "summary": {
+    "n_scenarios": 1,
+    "n_turns": 5,
+    "n_empty": 0,
+    "empty_rate": 0.0,
+    "latency_p50": 6.75,
+    "latency_p90": 35.85,
+    "empty_by_turn_position": {
+      "1": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "2": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "3": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "4": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "5": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      }
+    },
+    "total_llm_calls": 23,
+    "total_tokens": 108083
+  }
+}

@@ -1,0 +1,37 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_5_general_python_chain
+  description: 'General Python topic — no Reyn context. Tests that the agent handles
+    long sessions on non-project topics without falling back on project knowledge
+    or producing empty replies.
+
+    '
+  kind: general_topic
+  covers:
+  - cli/reyn-chat
+  - stdlib-skills/direct-llm
+  prompts:
+  - Explain Python's asyncio event loop in simple terms.
+  - What is the difference between asyncio.gather and asyncio.wait?
+  - When would you choose asyncio over threading?
+  - How does Python's GIL interact with async code?
+  - Give me a minimal example of an async producer-consumer queue.
+  expected:
+    reply:
+      kind: judge
+      rubric:
+      - final reply contains a working minimal async producer-consumer queue example
+        in Python
+      - the code uses asyncio.Queue or equivalent
+      - does not produce an empty reply on the final turn
+    events:
+      must_emit: []
+  outcome_prediction:
+    verified: 0.75
+    inconclusive: 0.0
+    refuted: 0.25
+    blocked: 0.0

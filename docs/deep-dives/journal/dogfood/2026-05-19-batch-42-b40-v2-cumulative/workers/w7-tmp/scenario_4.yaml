@@ -1,0 +1,26 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_4_repetitive_context_bloat
+  description: 'Deliberately repetitive: re-asks close variants of the same question.
+    Forces context to grow without new entropy — the classic G12 Pattern E trigger.
+    This is the primary attractor-detection scenario.
+
+    '
+  kind: repetitive_context
+  covers:
+  - cli/reyn-chat
+  - memory-rag/chat-compaction
+  - stdlib-skills/chat-compactor
+  prompts:
+  - What skills are available in Reyn?
+  - List the available skills again, but this time include a one-line description
+    for each.
+  - Which of those skills are used most commonly in dogfood sessions?
+  - Summarize the skill list one more time in bullet form.
+  - Which skill would you recommend for a first-time Reyn user?
+  - Can you re-confirm which skills are available? I want to make sure I have the
+    full list.
