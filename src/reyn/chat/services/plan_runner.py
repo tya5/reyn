@@ -90,7 +90,7 @@ class PlanRunner:
                 try:
                     await self._put_outbox(OutboxMessage(
                         kind="system",
-                        text=f"以下の計画で実行します:\n{plan_summary}",
+                        text=f"Executing plan:\n{plan_summary}",
                         meta={"plan_id": plan_id, "source": "plan_summary"},
                     ))
                 except Exception as exc:  # noqa: BLE001
@@ -129,6 +129,36 @@ class PlanRunner:
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "plan task enqueue_plan_completed failed for %s: %r",
+                        plan_id, exc,
+                    )
+                # Issue #180 finding #3: emit a persistent log marker so
+                # the conv pane shows a "plan complete" line after the
+                # sticky disappears. Without this, the only visible plan
+                # signal is the initial "Executing plan:" summary; users
+                # have no confirmation the run finished cleanly.
+                n_total = int(getattr(result, "n_steps", 0) or 0)
+                n_failed = len(getattr(result, "step_failures", ()) or ())
+                n_succeeded = max(0, n_total - n_failed)
+                if n_failed == 0:
+                    marker = (
+                        f"plan complete: {n_succeeded}/{n_total} "
+                        f"steps succeeded · {plan_id}"
+                    )
+                else:
+                    marker = (
+                        f"plan complete with errors: "
+                        f"{n_succeeded}/{n_total} steps succeeded, "
+                        f"{n_failed} failed · {plan_id}"
+                    )
+                try:
+                    await self._put_outbox(OutboxMessage(
+                        kind="system",
+                        text=marker,
+                        meta={"plan_id": plan_id, "source": "plan_complete"},
+                    ))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "plan task complete marker emit failed for %s: %r",
                         plan_id, exc,
                     )
             # Artifact cleanup mirrors the legacy dispatch_plan_tool finally.
