@@ -99,6 +99,13 @@ async def attach_cmd(session: "ChatSession", args: str) -> None:
     if name == session._registry.attached_name:
         await reply(session, f"already attached to {name!r}")
         return
+    # Surface the switch in the conv pane. Without this, ``/attach``
+    # produced no in-pane feedback — the user had to run ``/agents``
+    # to confirm the switch happened. The actual attach is still
+    # driven by the ``__attach_request__`` sentinel below; this is a
+    # separate, visible breadcrumb. (The header label refresh is
+    # blocked by a separate registry-forwarder bug — see #191.)
+    await reply(session, f"attached to {name!r}")
     # Sentinel kind — see repl._input_loop for the receiver.
     await session._put_outbox(OutboxMessage(
         kind="__attach_request__", text=name,
