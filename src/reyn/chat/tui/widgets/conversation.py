@@ -136,6 +136,41 @@ def _msg_header(label: str, name_style: str, dash_style: str) -> Text:
     return t
 
 
+def _is_lifecycle_marker(text: str) -> bool:
+    """Heuristic: ``ChatLifecycleForwarder`` marker text starts with ``[↑``
+    and ends with ``]``, and is single-line.
+
+    Lifecycle markers (= compaction, future attach-budget signals) are
+    state-change announcements, not speech — rendering them as a full
+    speaker-tagged system block (= timestamp + ``· system`` header + dash
+    rule + indented body) gives them more visual weight than they
+    deserve. The conv pane routes them through ``_render_lifecycle_marker``
+    so they appear as a dim inline divider, matching the date-separator
+    style.
+    """
+    t = text.strip()
+    return t.startswith("[↑") and t.endswith("]") and "\n" not in t
+
+
+def _render_lifecycle_marker(text: str) -> Text:
+    """Dim ``── ↑ <body> ────…`` inline divider for a lifecycle marker.
+
+    Shape mirrors ``_date_separator`` — same total cell width (``_DASH_TOTAL``)
+    and same ``dim #666666`` styling so the visual rhythm stays consistent
+    with day-boundary markers and other inline dividers.
+    """
+    stripped = text.strip().lstrip("[").rstrip("]").strip()
+    label = f" {stripped} "
+    t = Text()
+    lead_dashes = 2
+    label_cells = cell_len(label)
+    trail_dashes = max(1, _DASH_TOTAL - lead_dashes - label_cells)
+    t.append("─" * lead_dashes, style="dim #666666")
+    t.append(label, style="dim #666666")
+    t.append("─" * trail_dashes, style="dim #666666")
+    return t
+
+
 def _date_separator(date_str: str) -> Text:
     """Dim ``── YYYY-MM-DD ───…`` line for day boundaries between turns.
 
@@ -486,14 +521,22 @@ class ConversationView(Widget):
         when running multiple commands in a row.
 
         Rendered as plain text (newlines preserved, no Markdown) under a
-        neutral ``system`` header in dim grey.
+        neutral ``system`` header in dim grey. **Exception**: lifecycle
+        markers (= ``[↑ ... ]`` shape from ``ChatLifecycleForwarder``)
+        skip the speaker header and render as a dim inline divider —
+        they're state-change announcements, not speech, and don't
+        deserve the same visual weight as a slash-command output.
         """
         self._consume_empty_hint()
         self.hide_status()
+        text = msg.text or ""
+        if _is_lifecycle_marker(text):
+            self._write_log(_render_lifecycle_marker(text))
+            return
         self._maybe_write_header(
             "system", f"{_GLYPH_SYSTEM} system", "bold #888888", "#666666",
         )
-        for line in (msg.text or "").splitlines() or [""]:
+        for line in text.splitlines() or [""]:
             self._write_body(Text(line))
         self._write_log(Text(""))
 
