@@ -32,7 +32,7 @@ Turn navigation (B4):
 
 Cost suffix (A4):
   When the App enables cost-inline mode, _render_agent_cost_suffix() is
-  called after a turn ends and writes a dim "⌁ Δ tokens · $0.XXXX" line.
+  called after a turn ends and writes a dim "⌁ Δ tokens │ $0.XXXX" line.
 """
 from __future__ import annotations
 
@@ -786,9 +786,16 @@ class ConversationView(Widget):
         right-aligns when the renderer is told a width to fill, and
         ``RichLog.write`` defaults to ``expand=False`` — without
         ``expand=True`` the suffix silently renders at column 0.
+
+        Separator is ``│`` (U+2502, narrow, unambiguous width) rather than
+        ``·`` (U+00B7, East Asian Width "Ambiguous") so Rich's cell-width
+        accounting matches what the terminal actually paints — the previous
+        ``·`` rendered as 2 cells on some terminals, pushing the elapsed
+        tail past the right edge and clipping ``14.3s`` to ``·`` alone.
+        Matches the header's existing ``│`` separator for visual consistency.
         """
         t = Text(
-            f"⌁ {tokens}t · ${cost_usd:.4f} · {elapsed_s:.1f}s",
+            f"⌁ {tokens}t │ ${cost_usd:.4f} │ {elapsed_s:.1f}s",
             style="dim #666666",
             justify="right",
         )
