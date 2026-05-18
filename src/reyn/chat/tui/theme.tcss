@@ -137,6 +137,11 @@ InterventionWidget Button:hover {
 }
 
 InterventionWidget Button:focus {
+    /* Reverse video gives a shape cue (= whole chip flips fg/bg) so
+       Tab-focus is identifiable in greyscale / for color-blind users —
+       the previous "background lightens slightly" cue was a 1.28:1
+       contrast change relative to the hover state, indistinguishable
+       without color vision. */
     background: #e0664e;
-    text-style: bold;
+    text-style: bold reverse;
 }
