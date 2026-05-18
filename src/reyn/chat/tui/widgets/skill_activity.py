@@ -238,10 +238,14 @@ class SkillActivityRow(Widget):
             t.append(self._elapsed(), style="dim")
             if self._reason:
                 t.append(f" · {self._reason}", style="dim")
-            # Pad and append the panel hint. `B` alone isn't bound — Ctrl+B
-            # is the real panel-toggle binding, and the panel remembers its
-            # last focal tab so it lands on agents/events automatically.
-            t.append("            ", style="")
+            # Use the same dot separator as the rest of the row rather
+            # than a fixed 12-space gap — the gap pushed the line past
+            # the conv pane width (~70 cols with the right panel open),
+            # causing "Ctrl+B → agents" to wrap to a second line as an
+            # orphan hint. `B` alone isn't bound — Ctrl+B is the real
+            # panel-toggle binding, and the panel remembers its last
+            # focal tab so it lands on agents/events automatically.
+            t.append("  · ", style="dim")
             t.append("Ctrl+B → agents", style="dim")
         else:
             t.append("✗ ", style="bold red")
@@ -252,7 +256,7 @@ class SkillActivityRow(Widget):
             t.append("  · ", style="dim")
             failed_msg = f"failed: {self._reason}" if self._reason else "failed"
             t.append(failed_msg, style="dim")
-            t.append("            ", style="")
+            t.append("  · ", style="dim")
             t.append("Ctrl+B → events", style="dim")
         return t
 
