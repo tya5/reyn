@@ -97,13 +97,37 @@ class ChatEventForwarder:
         ``op_count`` from the event payload is the count of ops in that
         batch. Useful as a "the skill is actively working" signal during
         heavy preprocessor turns.
+
+        Issue #161 finding #3: when ``op_kinds`` is present, surface the
+        distinct kinds in parentheses so the user can tell "parent ran
+        a write_file batch" vs "parent spawned a sub-skill". Without
+        this distinction every ``act: N ops`` looked identical.
         """
         op_count = data.get("op_count")
-        if op_count:
-            self._enqueue(
-                f"detail: act: {op_count} op{'s' if op_count != 1 else ''}",
-                source_run_id=data.get("run_id"),
-            )
+        if not op_count:
+            return
+        op_kinds = data.get("op_kinds") or []
+        # De-duplicate while preserving first-occurrence order so the
+        # detail reads naturally (e.g. ``run_skill, write_file`` rather
+        # than ``run_skill, run_skill, write_file``). Bounded to the
+        # first 3 distinct kinds with a tail ellipsis so the line stays
+        # short even on large batches.
+        seen: list[str] = []
+        for k in op_kinds:
+            if k and k not in seen:
+                seen.append(k)
+            if len(seen) >= 4:
+                break
+        kinds_suffix = ""
+        if seen:
+            display = seen[:3]
+            tail = "…" if len(seen) > 3 else ""
+            kinds_suffix = f" ({', '.join(display)}{tail})"
+        self._enqueue(
+            f"detail: act: {op_count} op{'s' if op_count != 1 else ''}"
+            f"{kinds_suffix}",
+            source_run_id=data.get("run_id"),
+        )
 
     def _enqueue(self, text: str, *, source_run_id: str | None = None) -> None:
         # Fire-and-forget: trace messages are advisory, never block the skill.

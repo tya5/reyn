@@ -414,6 +414,7 @@ class PhaseExecutor:
                 "act_executed",
                 phase=phase,
                 op_count=len(act.ops),
+                op_kinds=[op.kind for op in act.ops],
                 act_turn=act_turn_count,
                 ops=[op.model_dump() for op in act.ops],
                 results=ir_results,
