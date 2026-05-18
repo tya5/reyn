@@ -80,10 +80,12 @@ async def main() -> int:
     print()
 
     # Construct the UserIntervention that _prompt would build for a
-    # web.fetch request. Mirrors permissions.py:_prompt exactly.
+    # web.fetch request. Mirrors permissions.py:_prompt exactly,
+    # post-#224 natural-language phrasing (= require_web_fetch passes
+    # ``user_prompt="Allow fetching this URL?"`` to _approve).
     iv = UserIntervention(
         kind="permission.generic",
-        prompt="Permission request — web.fetch",
+        prompt="Allow fetching this URL?",
         detail="web fetch: https://example.com",
         choices=generic_yn_choices(),
         run_id="dogfood-verify-run",
@@ -98,7 +100,7 @@ async def main() -> int:
     all_ok &= _check("kind == 'intervention'", msg.kind == "intervention")
     all_ok &= _check(
         "text contains the prompt header",
-        "Permission request — web.fetch" in msg.text,
+        "Allow fetching this URL?" in msg.text,
     )
     all_ok &= _check(
         "text contains the detail line",
@@ -113,8 +115,8 @@ async def main() -> int:
     print()
     print("2. meta.prompt + meta.detail (structured TUI rendering, post-#163):")
     all_ok &= _check(
-        "meta.prompt == bare prompt header (no 'Question: ' prefix for permission kind)",
-        msg.meta.get("prompt") == "Permission request — web.fetch",
+        "meta.prompt == natural-language question (post-#224 phrasing)",
+        msg.meta.get("prompt") == "Allow fetching this URL?",
         detail=f"got: {msg.meta.get('prompt')!r}",
     )
     all_ok &= _check(

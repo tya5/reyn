@@ -298,7 +298,14 @@ class PermissionResolver:
 
     # ── Core approval (non-file ops) ──────────────────────────────────────────
 
-    async def _approve(self, key: str, description: str, bus: InterventionBus) -> bool:
+    async def _approve(
+        self,
+        key: str,
+        description: str,
+        bus: InterventionBus,
+        *,
+        user_prompt: str | None = None,
+    ) -> bool:
         if self._is_config_approved(key):
             return True
         # Composite keys (e.g. "skill_router/python.safe/./mod.py:fn") accept
@@ -316,12 +323,25 @@ class PermissionResolver:
             return v
         if not self._interactive:
             return False
-        return await self._prompt(key, description, bus)
+        return await self._prompt(key, description, bus, user_prompt=user_prompt)
 
-    async def _prompt(self, key: str, description: str, bus: InterventionBus) -> bool:
+    async def _prompt(
+        self,
+        key: str,
+        description: str,
+        bus: InterventionBus,
+        *,
+        user_prompt: str | None = None,
+    ) -> bool:
+        # Issue #224: when the caller passes a user-facing question
+        # (e.g. "Allow fetching this URL?"), use it as the prompt header
+        # so light-users see a natural-language ask instead of the
+        # internal config key. Fallback "Permission request — {key}"
+        # preserves backward-compat for any caller that hasn't migrated
+        # yet (= shell / python / mcp / tool gates currently).
         iv = UserIntervention(
             kind="permission.generic",
-            prompt=f"Permission request — {key}",
+            prompt=user_prompt or f"Permission request — {key}",
             detail=description or key,
             choices=generic_yn_choices(),
         )
@@ -668,7 +688,12 @@ class PermissionResolver:
                 f"Add `permissions:\\n  shell: true` to the skill.md frontmatter."
                 f" (cmd: {cmd!r})"
             )
-        if not await self._approve("shell", f"shell command: {cmd!r}", bus):
+        if not await self._approve(
+            "shell",
+            f"shell command: {cmd!r}",
+            bus,
+            user_prompt="Allow running this shell command?",
+        ):
             raise PermissionError(f"shell access denied (cmd: {cmd!r})")
 
     async def require_mcp(
@@ -686,7 +711,12 @@ class PermissionResolver:
                 f"MCP server {server!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  mcp: [{server}]` to the skill.md frontmatter."
             )
-        if not await self._approve(f"mcp.{server}", f"MCP server: {server!r}", bus):
+        if not await self._approve(
+            f"mcp.{server}",
+            f"MCP server: {server!r}",
+            bus,
+            user_prompt=f"Allow access to MCP server {server!r}?",
+        ):
             raise PermissionError(f"MCP server {server!r} access denied")
 
     async def require_mcp_install(
@@ -727,7 +757,12 @@ class PermissionResolver:
             self._persist(approval_key, True)
             return
 
-        if not await self._approve(approval_key, f"install MCP server: {server_id!r}", bus):
+        if not await self._approve(
+            approval_key,
+            f"install MCP server: {server_id!r}",
+            bus,
+            user_prompt=f"Install MCP server {server_id!r}?",
+        ):
             raise PermissionError(
                 f"MCP server install of {server_id!r} denied by user."
             )
@@ -770,7 +805,10 @@ class PermissionResolver:
             return
 
         if not await self._approve(
-            approval_key, f"drop index source: {source!r}", bus
+            approval_key,
+            f"drop index source: {source!r}",
+            bus,
+            user_prompt=f"Drop indexed source {source!r}?",
         ):
             raise PermissionError(
                 f"Index drop of '{source}' denied by user."
@@ -817,7 +855,10 @@ class PermissionResolver:
             return
 
         if not await self._approve(
-            approval_key, f"remove MCP server: {server!r}", bus,
+            approval_key,
+            f"remove MCP server: {server!r}",
+            bus,
+            user_prompt=f"Remove MCP server {server!r}?",
         ):
             raise PermissionError(
                 f"MCP server drop of {server!r} denied by user."
@@ -864,7 +905,12 @@ class PermissionResolver:
             # returns True instead of auto-denying the non-interactive branch.
             if not self._interactive and self._unsafe_python_allowed:
                 self._session.setdefault(key, True)
-            if not await self._approve(key, f"unsafe python step: {module}:{function}", bus):
+            if not await self._approve(
+                key,
+                f"unsafe python step: {module}:{function}",
+                bus,
+                user_prompt=f"Run unsafe python {module}.{function}?",
+            ):
                 raise PermissionError(
                     f"unsafe python step {module}:{function} denied by user"
                 )
@@ -878,7 +924,12 @@ class PermissionResolver:
         # siblings succeed — semantically backwards.
         if not self._interactive and self._unsafe_python_allowed:
             self._session.setdefault(key, True)
-        if not await self._approve(key, f"safe python step: {module}:{function}", bus):
+        if not await self._approve(
+            key,
+            f"safe python step: {module}:{function}",
+            bus,
+            user_prompt=f"Run python {module}.{function}?",
+        ):
             raise PermissionError(
                 f"safe python step {module}:{function} denied by user"
             )
@@ -892,7 +943,12 @@ class PermissionResolver:
                 f"tool {tool!r} not declared in skill permissions. "
                 f"Add `permissions:\\n  tool: [{tool}]` to the skill.md frontmatter."
             )
-        if not await self._approve(f"tool.{tool}", f"tool: {tool!r}", bus):
+        if not await self._approve(
+            f"tool.{tool}",
+            f"tool: {tool!r}",
+            bus,
+            user_prompt=f"Allow tool {tool!r}?",
+        ):
             raise PermissionError(f"tool {tool!r} access denied")
 
     async def require_web_fetch(self, url: str, bus: InterventionBus) -> None:
@@ -916,5 +972,10 @@ class PermissionResolver:
             raise PermissionError(
                 "web fetch denied by config (web.fetch: deny)"
             )
-        if not await self._approve("web.fetch", f"web fetch: {url}", bus):
+        if not await self._approve(
+            "web.fetch",
+            f"web fetch: {url}",
+            bus,
+            user_prompt="Allow fetching this URL?",
+        ):
             raise PermissionError("web fetch denied")
