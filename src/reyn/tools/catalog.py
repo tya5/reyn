@@ -3,37 +3,25 @@
 Covers the 4 catalog-browse capabilities:
   list_skills, describe_skill, list_agents, describe_agent.
 
-Type C closure: both router and phase are allowed (gates.phase="allow"),
-enabling skill-author phases to browse the registry in M4. Phase-side
-dispatch wiring (= injecting these tools into Control IR
-available_control_ops) is deferred to M4.
+Type C closure: both router and phase are allowed (gates.phase="allow").
+The phase=allow gate is a metadata closure — phase Control IR currently
+emits only coarse op.kind values defined in OP_KIND_MODEL_MAP, and the
+fine-grained catalog names (``list_skills`` / ``describe_skill`` /
+``list_agents`` / ``describe_agent``) are not in that map, so the phase
+path of these handlers is unreachable today.  Reachable phase invocation
+would require a separate Control IR schema migration to fine-grained
+``op.kind`` values (out of scope for ADR-0026 M4).
 
-Design-revisit finding (M4 requirement):
-  Each handler requires access to the session-scoped registries
-  (skill registry → list_available_skills / describe_skill; agent
-  registry → list_available_agents / describe_agent). These are
-  supplied by RouterLoopHost and are NOT reachable from ToolContext
-  today. Concretely:
+Router-side dispatch (post-FP-0039 audit, 2026-05-18):
+  Each handler delegates to a session-scoped function bound on
+  ``ctx.router_state`` (``list_skills_fn`` / ``describe_skill_fn`` /
+  ``list_agents_fn`` / ``describe_agent_fn``).  RouterLoop populates
+  these from its own bound methods at dispatch time — see
+  ``router_host_adapter.py`` for the typed wiring.
 
-    * router caller: RouterLoop.host.list_available_skills() /
-                     RouterLoop.host.list_available_agents()
-    * phase caller:  OpContext does not expose a skill/agent registry
-                     at all.
-
-  A typed RouterCallerState / PhaseCallerState sub-object on
-  ToolContext (ADR-0026 Open Question #3) is the clean path. That
-  sub-object has landed in M4 Phase 2. Production population of
-  RouterCallerState.skill_registry / agent_registry fields (=
-  router_loop wiring) is M4 Phase 3. Until Phase 3, these handlers
-  raise NotImplementedError.
-
-  RouterLoop continues to dispatch list_skills / describe_skill /
-  list_agents / describe_agent via the existing
-  ``if name == "list_skills"`` branches in router_loop.py
-  (_invoke_router_tool). The ToolDefinitions here serve M3's goal:
-  description + parameters + gates registered in the unified registry
-  for render / gate / drift checks. M4 Phase 3 will wire the handlers
-  to consume RouterCallerState.skill_registry / agent_registry.
+  Pre-Phase-3 ``if name == "list_skills"`` literal branches in
+  router_loop.py have been removed; the registry handler is the
+  single dispatch path.
 
 Description strings are byte-identical to the ToolSpec literals in
 src/reyn/chat/router_tools.py lines 250–324 (Wave 2 validation target).
@@ -77,7 +65,7 @@ _LIST_SKILLS_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_list_skills(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Delegate to RouterCallerState.list_skills_fn (M4 Phase 3 wiring).
+    """Delegate to RouterCallerState.list_skills_fn.
 
     The caller (= RouterLoop) populates router_state.list_skills_fn with
     a bound method (= RouterLoop._list_skills) at dispatch time. This
@@ -134,7 +122,7 @@ _DESCRIBE_SKILL_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_describe_skill(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Delegate to RouterCallerState.describe_skill_fn (M4 Phase 3 wiring).
+    """Delegate to RouterCallerState.describe_skill_fn.
 
     The caller (= RouterLoop) populates router_state.describe_skill_fn with
     a bound method (= RouterLoop._describe_skill) at dispatch time. This
@@ -188,7 +176,7 @@ _LIST_AGENTS_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_list_agents(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Delegate to RouterCallerState.list_agents_fn (M4 Phase 3 wiring).
+    """Delegate to RouterCallerState.list_agents_fn.
 
     The caller (= RouterLoop) populates router_state.list_agents_fn with
     a bound method (= RouterLoop._list_agents) at dispatch time. This
@@ -243,7 +231,7 @@ _DESCRIBE_AGENT_PARAMETERS: dict[str, Any] = {
 
 
 async def _handle_describe_agent(args: Mapping[str, Any], ctx: ToolContext) -> ToolResult:
-    """Delegate to RouterCallerState.describe_agent_fn (M4 Phase 3 wiring).
+    """Delegate to RouterCallerState.describe_agent_fn.
 
     The caller (= RouterLoop) populates router_state.describe_agent_fn with
     a bound method (= RouterLoop._describe_agent) at dispatch time. This

@@ -10,25 +10,22 @@ Three capabilities are registered here:
 Per ADR-0026 Open Q #6, router-side fine-grained names are canonical:
 call_mcp_tool / list_mcp_servers / list_mcp_tools / describe_mcp_tool.
 
-## Phase-side dispatch status (M3 metadata-only)
+## Phase-side dispatch status (post-FP-0039 audit, 2026-05-18)
 
-All three ToolDefinitions have gates.phase="allow", which closes the
-Type C gap at the *metadata* level: the registry declares them available
-to phase, and render_for_phase() will include them in available_control_ops.
+All four ToolDefinitions have gates.phase="allow".  The coarse-kind path
+(= ``op.kind="mcp"`` → CALL_MCP_TOOL semantics via MCPIROp) is wired
+end-to-end through ``invoke_tool(get_default_registry(), op.kind, ...)``
+in ``ControlIRExecutor._invoker``.
 
-However, the phase-side Control IR executor does not yet consume the
-unified registry for dispatch. Phase-side wiring for list_mcp_servers and
-list_mcp_tools is deferred to M4 (the op_runtime dispatcher currently only
-handles the "mcp" kind via MCPIROp which maps to call_mcp_tool semantics).
-
-CALL_MCP_TOOL is already wired end-to-end because it maps 1-to-1 to the
-existing op_runtime/mcp.py "mcp" kind handler via MCPIROp.
-
-For LIST_MCP_SERVERS and LIST_MCP_TOOLS: the ToolDefinition is registered
-with gates.phase="allow" (closing the Type C metadata gap), but phase-side
-Control IR execution of these ops is not yet plumbed — a phase that emits
-list_mcp_servers / list_mcp_tools control_ir ops will not be dispatched by
-the current executor. That dispatch wiring is the M4 task.
+The fine-grained discovery names (``list_mcp_servers`` / ``list_mcp_tools``
+/ ``describe_mcp_tool``) are NOT in ``OP_KIND_MODEL_MAP``, so phase Control
+IR cannot emit them today.  Their phase=allow gate is a metadata closure:
+the registry advertises them as phase-eligible (consumed by future
+``render_for_phase()`` enumerations), but the phase paths in the handlers
+below are unreachable until a separate FP migrates Control IR schema to
+fine-grained ``op.kind`` values.  The handlers therefore keep clear
+"not yet wired" error stubs as defensive guards for any caller that
+manages to bypass the schema-level rejection.
 
 ## Router-side dispatch
 
@@ -138,8 +135,10 @@ async def _handle_list_mcp_servers(
     """Adapter for list_mcp_servers.
 
     Router path: delegates to host.mcp_list_servers() via ctx.router_state.
-    Phase path: registered with gates.phase=allow (Type C metadata closure),
-    but phase-side Control IR executor wiring is deferred to M4.
+    Phase path: registered with gates.phase=allow (Type C metadata closure)
+    but unreachable today — phase Control IR emits only coarse op.kind
+    values defined in OP_KIND_MODEL_MAP, and ``list_mcp_servers`` is not
+    in that map.  See module docstring for the full status.
 
     The router_state is expected to carry a host object with an async
     mcp_list_servers() method (= RouterHostAdapter or compatible).
@@ -149,12 +148,14 @@ async def _handle_list_mcp_servers(
         result = await host.mcp_list_servers()
         return {"servers": result}
 
-    # Phase path — M4 will wire phase-side execution; for now surface a
-    # clear error so any premature phase invocation is immediately visible.
+    # Phase path — unreachable in normal flow; defensive guard for any
+    # caller that bypasses Control IR schema rejection.
     return {
         "error": (
-            "list_mcp_servers phase-side dispatch not yet wired "
-            "(M4 task). ToolDefinition registered for metadata closure only."
+            "list_mcp_servers has no phase-side dispatch path. "
+            "Phase Control IR emits only coarse op.kind values; "
+            "fine-grained MCP discovery from phase requires a separate "
+            "Control IR schema migration (out of scope for ADR-0026 M4)."
         )
     }
 
@@ -165,8 +166,8 @@ async def _handle_list_mcp_tools(
     """Adapter for list_mcp_tools.
 
     Router path: delegates to host.mcp_list_tools(server) via ctx.router_state.
-    Phase path: registered with gates.phase=allow (Type C metadata closure),
-    but phase-side Control IR executor wiring is deferred to M4.
+    Phase path: registered with gates.phase=allow (Type C metadata closure)
+    but unreachable today — see module docstring for full status.
 
     FP-0032: returns ``mcp_tools`` key (not ``tools``) to avoid structural
     collision with OpenAI tool-definition shape. Each entry is trimmed to
@@ -188,8 +189,10 @@ async def _handle_list_mcp_tools(
 
     return {
         "error": (
-            "list_mcp_tools phase-side dispatch not yet wired "
-            "(M4 task). ToolDefinition registered for metadata closure only."
+            "list_mcp_tools has no phase-side dispatch path. "
+            "Phase Control IR emits only coarse op.kind values; "
+            "fine-grained MCP discovery from phase requires a separate "
+            "Control IR schema migration (out of scope for ADR-0026 M4)."
         )
     }
 
@@ -370,7 +373,8 @@ async def _handle_describe_mcp_tool(
     then filters to the requested mcp_tool_name. The dotted form
     ``<server>.<tool>`` is resolved to the bare tool name for the lookup.
 
-    Phase path: deferred to M4 (metadata closure only — same as list_mcp_tools).
+    Phase path: metadata closure only — same as list_mcp_tools. See module
+    docstring for full status.
     """
     if ctx.caller_kind == "router":
         host = _require_host(ctx)
@@ -394,8 +398,10 @@ async def _handle_describe_mcp_tool(
 
     return {
         "error": (
-            "describe_mcp_tool phase-side dispatch not yet wired "
-            "(M4 task). ToolDefinition registered for metadata closure only."
+            "describe_mcp_tool has no phase-side dispatch path. "
+            "Phase Control IR emits only coarse op.kind values; "
+            "fine-grained MCP discovery from phase requires a separate "
+            "Control IR schema migration (out of scope for ADR-0026 M4)."
         )
     }
 
