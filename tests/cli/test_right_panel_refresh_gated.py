@@ -118,10 +118,13 @@ async def test_refresh_live_invalidates_when_visible_and_live_tab() -> None:
 async def test_refresh_live_skips_non_live_tabs_even_when_visible() -> None:
     """Tier 2: the existing ``_LIVE_PANELS`` gate still applies when visible.
 
-    Tabs like ``keys`` / ``docs`` / ``memory`` are content-static (or
-    only change on user interaction); periodic re-invalidation would
-    waste paint cycles for no signal. The visibility gate is additive
-    — it tightens the filter, doesn't replace it.
+    Tabs like ``keys`` / ``docs`` are content-static (only change on
+    code or user interaction); periodic re-invalidation would waste
+    paint cycles for no signal. ``memory`` was previously static but
+    is now live (saves / deletes during a session need to surface
+    without a manual tab swap — see :func:`...test_memory_panel_refreshes_live`).
+    The visibility gate is additive — it tightens the filter, doesn't
+    replace it.
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -137,4 +140,31 @@ async def test_refresh_live_skips_non_live_tabs_even_when_visible() -> None:
 
         assert calls == [], (
             "non-live tab must still skip invalidation even when visible"
+        )
+
+
+@pytest.mark.asyncio
+async def test_memory_panel_refreshes_live_when_visible() -> None:
+    """Tier 2: the Memory tab is in ``_LIVE_PANELS`` so it refreshes on tick.
+
+    Memory entries are saved / deleted mid-session (= the agent's
+    ``remember`` tool or ``/memory`` slash commands). Without periodic
+    refresh, new entries are invisible in the Memory tab until the user
+    swaps to another tab and back. Pins membership in ``_LIVE_PANELS``
+    so a future refactor doesn't silently regress.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        panel = app.query_one("#right_panel", RightPanel)
+        panel.display = True
+        await pilot.pause()
+        panel._panel_type = "memory"  # in _LIVE_PANELS
+
+        calls = _instrument_invalidate(panel)
+        panel._refresh_live()
+        panel._refresh_live()
+
+        assert len(calls) == 2, (
+            f"memory tab must invalidate on the live tick; got {len(calls)} calls"
         )
