@@ -1,0 +1,153 @@
+{
+  "metadata": {
+    "batch": "B41",
+    "worker": 7,
+    "generated_at": "2026-05-18T12:28:06.376955+00:00",
+    "worktree": "/tmp/reyn-worktrees/b41-7",
+    "port": 8107,
+    "head": "dd896f2c",
+    "scenario_file": "dogfood/scenarios/long_session_v1.yaml",
+    "b39_baseline": {
+      "V": 7,
+      "I": 0,
+      "R": 0,
+      "B": 0
+    },
+    "notes": "Long-session protocol: single-agent per scenario, history accumulates across turns, fresh_reset between scenarios."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "agent": "dogfood-b41-7-s1",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "empty_count": 0,
+      "turn_reply_lens": [
+        217,
+        493,
+        702,
+        659,
+        1327
+      ],
+      "latency_p50_s": 6.0,
+      "notes": "All inline replies. T5 correctly named OS-as-controller, phase isolation, workspace-as-truth, event log as key principles. References prior turns without re-explaining. No empty stop."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "agent": "dogfood-b41-7-s2",
+      "verdict": "I",
+      "clean_turns": "5/5 by len, but T2=router_empty_response (functional empty)",
+      "empty_count": 0,
+      "functional_empty_count": 1,
+      "turn_reply_lens": [
+        1184,
+        101,
+        122,
+        164,
+        124
+      ],
+      "latency_p50_s": 18.7,
+      "notes": "T2 reply_len=101 = exact router_empty_response message (functional empty, not content). T3-T5: agent refuses to answer factual questions about event types, disk storage, and JSONL format — should be answerable from project context. Pronoun chain coherence broken at T2."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "agent": "dogfood-b41-7-s3",
+      "verdict": "I",
+      "clean_turns": "4/5 by len (T5=router_empty_response in history)",
+      "empty_count": 0,
+      "functional_empty_count": 2,
+      "turn_reply_lens": [
+        40,
+        241,
+        69,
+        226,
+        101
+      ],
+      "latency_p50_s": 52.6,
+      "notes": "T1-T2 routed through plan; plan returned empty for both LangGraph and Reyn descriptions. T4 comparison turn correctly says context was lost. T5 (migration question) = router_empty_response. Cross-reference comparison never happened due to empty plan steps."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "agent": "dogfood-b41-7-s4",
+      "verdict": "V",
+      "clean_turns": "5/5",
+      "empty_count": 0,
+      "turn_reply_lens": [
+        1161,
+        1824,
+        147,
+        1280,
+        326
+      ],
+      "latency_p50_s": 7.4,
+      "notes": "Primary G12 Pattern E target. Zero empty stops across 5 repetitive re-ask turns. Reply sizes vary (T3=147 for 'most commonly used' question, which agent correctly flagged as unknown). No context-bloat empty-stop observed. G12 fix appears effective here."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "agent": "dogfood-b41-7-s5",
+      "verdict": "I",
+      "clean_turns": "5/5 by len (T1,T2,T4,T5 are spawn_ack or summary)",
+      "empty_count": 0,
+      "functional_empty_count": 2,
+      "turn_reply_lens": [
+        69,
+        375,
+        370,
+        69,
+        69
+      ],
+      "latency_p50_s": 45.1,
+      "notes": "T1 and T2 spawn async skills; driver polls next turn before skill completes. T4+T5 (GIL and queue questions) = 69-char spawn_ack only. Rubric requires actual asyncio.Queue code on final turn — only spawn_ack received. Async skill timing mismatch causes rubric failure."
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "agent": "dogfood-b41-7-s6",
+      "verdict": "I",
+      "clean_turns": "5/5",
+      "empty_count": 0,
+      "turn_reply_lens": [
+        34,
+        77,
+        104,
+        66,
+        372
+      ],
+      "latency_p50_s": 12.3,
+      "notes": "T1: agent incorrectly stated 'there are no ADRs in this project'. ADRs exist at docs/deep-dives/decisions/ (0001..0033+). Entire 5-turn chain cascades from this T1 factual error. ADR lookup tool was not invoked; agent relied on inline knowledge only."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "agent": "dogfood-b41-7-s7",
+      "verdict": "I",
+      "clean_turns": "5/5 by len",
+      "empty_count": 0,
+      "functional_empty_count": 2,
+      "turn_reply_lens": [
+        264,
+        453,
+        424,
+        393,
+        69
+      ],
+      "latency_p50_s": 24.9,
+      "notes": "T2 router_empty_response (CAP theorem query returned empty before skill completed). T5 (repair strategies) = spawn_ack only (skill running when driver polled). Content T1-T4 substantive but T5 final turn has no content. Pattern E not observed but async timing gap affects final turn."
+    }
+  ],
+  "summary": {
+    "V": 2,
+    "I": 5,
+    "R": 0,
+    "B": 0,
+    "delta_vs_b39": "V: +0-5=-5 (7V→2V), regression confirmed",
+    "total_turns": 35,
+    "total_empty_by_driver": 0,
+    "total_functional_empty": 5,
+    "g12_pattern_e_observation": "S4 (primary target): zero empty stops even under repetitive context growth. G12 fix appears effective for this scenario type.",
+    "primary_regression_causes": [
+      "router_empty_response: S2-T2, S7-T2 (routing layer empty before skill dispatch)",
+      "spawn_ack_timing: S5-T4+T5, S7-T5 (async skill not done when driver polls next turn)",
+      "factual_error: S6-T1 (agent fabricated 'no ADRs' without tool lookup)",
+      "plan_empty_steps: S3-T1+T2 (plan subagent returned empty for both LangGraph+Reyn)"
+    ]
+  }
+}

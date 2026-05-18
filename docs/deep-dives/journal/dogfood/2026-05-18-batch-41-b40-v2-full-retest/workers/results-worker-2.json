@@ -1,0 +1,136 @@
+{
+  "batch": "B41",
+  "worker": 2,
+  "head": "dd896f2c",
+  "date": "2026-05-18",
+  "agent_prefix": "dogfood-b41-2-s{id}",
+  "port": 8102,
+  "worktree": "/tmp/reyn-worktrees/b41-2",
+  "state_mode": "fresh",
+  "scenario_set": "stdlib_skills_core",
+  "config": "default hot_list_n=20, no reyn.local.yaml",
+  "verdicts": {
+    "V": 1,
+    "I": 0,
+    "R": 8,
+    "B": 0
+  },
+  "vs_b39": {
+    "b39_verdicts": "V:1,I:3,R:5,B:0",
+    "b41_verdicts": "V:1,I:0,R:8,B:0",
+    "delta_V": 0,
+    "delta_I": -3,
+    "delta_R": "+3",
+    "delta_B": 0,
+    "note": "Net regression: 3 scenarios moved from I→R. S6 (word_stats_demo_multiline) and S8 (chat_compactor) likely regressed; S7 root cause changed from affordance-competition to FileNotFoundError for direct_llm/skill.md. No improvements."
+  },
+  "scenarios": [
+    {
+      "id": "index_docs_basic",
+      "short_id": "s1",
+      "verdict": "R",
+      "events_summary": "skill_run_spawned=1, routing_decided=1(skill__index_docs), skill_run_failed=1 (unsafe python step), no skill_run_completed",
+      "reply_excerpt": "The index_docs skill encountered an error because it declared an unsafe Python step (./chunkers.py:gather_samples) and the --allow-unsafe-python flag was not provided.",
+      "trace_req_count": null,
+      "notes": "Same failure as B39: index_docs requires --allow-unsafe-python flag not set in dogfood env. Consistent blocker across batches."
+    },
+    {
+      "id": "read_local_files_explain_source",
+      "short_id": "s2",
+      "verdict": "R",
+      "events_summary": "routing_decided=1(file__read hot_list_alias), no skill_run_spawned, no skill_run_completed, no read_local_files artifact",
+      "reply_excerpt": "This file defines CronJob and CronScheduler classes...",
+      "trace_req_count": null,
+      "notes": "Router dispatched file__read (hot_list_alias direct action) instead of skill__read_local_files. Reply is correct content but structural events fail. Affordance-competition: file__read in hot-list wins over read_local_files skill."
+    },
+    {
+      "id": "read_local_files_multi_file",
+      "short_id": "s3",
+      "verdict": "R",
+      "events_summary": "routing_decided=21(file__list + file__read hot_list_alias), no skill_run_spawned, no skill_run_completed, no read_local_files artifact",
+      "reply_excerpt": "All files in the src/reyn/op_runtime/ directory are related to the runtime operations...",
+      "trace_req_count": null,
+      "notes": "Same pattern as S2: router used file__list + 20x file__read hot_list_alias instead of skill__read_local_files. 21 routing_decided events total."
+    },
+    {
+      "id": "skill_builder_web_summariser",
+      "short_id": "s4",
+      "verdict": "R",
+      "events_summary": "skill_run_spawned=1(skill_builder), routing_decided=1, workflow_aborted=1, skill_run_failed=1; 204 skill run events across 8 phases",
+      "reply_excerpt": "The model returned an empty response. Please try rephrasing your request or check your configuration.",
+      "trace_req_count": null,
+      "notes": "workflow_aborted: Phase build_skill produced identical output to one rejected by verify_skill, triggering no-progress abort. Empty router reply (router_empty_response_detected). 8 phases ran before abort."
+    },
+    {
+      "id": "word_stats_demo_sentence",
+      "short_id": "s5",
+      "verdict": "V",
+      "events_summary": "routing_decided=1(skill__word_stats_demo), skill_run_spawned=1, skill_run_completed(status=finished)=1, phase_started=1, llm_called=1, no permission_denied",
+      "reply_excerpt": "The word_stats_demo skill has finished processing the text. It analyzed 'The quick brown fox jumps over the lazy dog.' and reported that the text contains 44 characters, 9 words, and an estimated 12 tokens.",
+      "trace_req_count": 16,
+      "notes": "Full pass: all structural events present, reply has specific computed stats (44 chars, 9 words), word_stats_demo artifact present (text_review type)."
+    },
+    {
+      "id": "word_stats_demo_multiline",
+      "short_id": "s6",
+      "verdict": "R",
+      "events_summary": "routing_decided=1(skill__word_stats_demo), skill_run_spawned=1, skill_run_completed(status=finished)=1; events pass but reply rubric fails",
+      "reply_excerpt": "The word_stats_demo skill has finished. It analyzed your text and provided commentary on its length and estimated token count.",
+      "trace_req_count": 16,
+      "notes": "Structural events pass (identical pattern to S5). Reply fails rubric: (1) no specific word count or character count mentioned, (2) says 'estimated token count' instead of referencing precomputed stats. LLM commentary was vague for multi-line input vs specific for single-line (S5). Different LLM output quality despite same skill execution path."
+    },
+    {
+      "id": "eval_run_direct_llm",
+      "short_id": "s7",
+      "verdict": "R",
+      "events_summary": "routing_decided=1(skill__eval), skill_run_spawned=1, skill_run_failed=1(PostprocessorError); tool_failed: FileNotFoundError direct_llm/skill.md",
+      "reply_excerpt": "skill__eval の実行中にエラーが発生しました。schema validation に失敗したため、結果を検証できませんでした。",
+      "trace_req_count": 33,
+      "notes": "DIFFERENT ROOT CAUSE vs B39: B39 was R due to direct_llm affordance competition (wrong routing). B41 R is due to eval dispatching skill__eval correctly but run_skill op inside eval failing with FileNotFoundError: 'direct_llm/skill.md' (relative path resolution from skill CWD). Then postprocessor schema validation also fails (missing overall_score, passed properties). Dual failure."
+    },
+    {
+      "id": "chat_compactor_long_session",
+      "short_id": "s8",
+      "verdict": "R",
+      "events_summary": "5 turns of compaction_check(outcome=too_few_turns), no skill_run_spawned, no llm_called, no direct_llm artifact",
+      "reply_excerpt": "Reyn Chat におけるルーティングの仕組みについて、Universal Action Catalog、Skill Routing...",
+      "trace_req_count": null,
+      "notes": "All 5 turns resolved as inline chat (chat_turn_completed_inline) with no skill dispatch. compaction_check fired each turn but always too_few_turns (threshold not reached with 5 turns of ~3KB replies). No skill_run_spawned means llm_called events absent (only tracked inside skill runs). Expected direct_llm artifact missing. Reply content is high quality but structural events fail."
+    },
+    {
+      "id": "chained_find_then_index",
+      "short_id": "s9",
+      "verdict": "R",
+      "events_summary": "Turn1: routing_decided=2(file__glob hot_list_alias), no skill. Turn2: skill_run_spawned=2(index_docs), skill_run_failed=2(unsafe python step)",
+      "reply_excerpt": "The index_docs skill encountered an error because it tried to run an unsafe Python step without the --allow-unsafe-python flag.",
+      "trace_req_count": null,
+      "notes": "Turn 1 list via file__glob (direct action, not skill). Turn 2 attempted index_docs twice but both failed on same unsafe python step blocker as S1. Two separate skill_run_spawned + skill_run_failed pairs (run_id suffix differs: _206f and _0f11)."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W2-1",
+      "title": "S7 root cause changed: affordance-competition (B39) → FileNotFoundError + postprocessor schema fail (B41)",
+      "severity": "HIGH",
+      "description": "B39 S7 was refuted because LLM chose direct_llm skill over eval. B41 S7 has different failure: eval was correctly dispatched (routing correct) but run_skill op inside eval fails with FileNotFoundError: 'direct_llm/skill.md'. This suggests a skill resolution path issue for run_skill when called from within another skill's phase. Separately, the postprocessor also fails schema validation (missing overall_score and passed required properties). These are two independent bugs."
+    },
+    {
+      "id": "NF-W2-2",
+      "title": "S6 word_stats_demo_multiline: events pass but reply degrades vs S5",
+      "severity": "MED",
+      "description": "S5 and S6 exercise the same word_stats_demo skill with identical execution path (same events, same phases). S5 reply includes specific numbers (44 chars, 9 words). S6 reply is vague ('provided commentary on its length and estimated token count'). This suggests the LLM's commentary generation is inconsistent for multi-line vs single-line input — the python precomputed stats are available but the LLM may not be surfacing them in the reply for multi-line text."
+    },
+    {
+      "id": "NF-W2-3",
+      "title": "index_docs unsafe-python blocker is a systematic B41 suppressant for S1 and S9",
+      "severity": "HIGH",
+      "description": "Both S1 and S9 (turn 2) fail identically: index_docs declares an unsafe python step (./chunkers.py:gather_samples) but --allow-unsafe-python was not provided. This is a persistent blocker since B39. The dogfood environment does not pass this flag. V for these scenarios requires either (a) allowing unsafe python in dogfood config, or (b) fixing index_docs to not require it."
+    },
+    {
+      "id": "NF-W2-4",
+      "title": "read_local_files scenarios (S2, S3) show file__ hot_list_alias dominance",
+      "severity": "MED",
+      "description": "S2 and S3 both see the router pick file__read / file__list (hot_list_alias) over skill__read_local_files. The reply content is correct but structural events (skill_run_spawned, artifact) fail. This is the same affordance-competition pattern as previously documented — direct file ops outcompete the skill in the hot-list."
+    }
+  ]
+}

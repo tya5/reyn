@@ -1,0 +1,182 @@
+{
+  "batch": 41,
+  "worker": 5,
+  "head": "dd896f2c",
+  "scenario_set": "multi_agent_and_mcp.yaml",
+  "run_date": "2026-05-18",
+  "port": 8105,
+  "server_cwd": "/tmp/reyn-worktrees/b41-5",
+  "agent_prefix": "dogfood-b41-5-s",
+  "hot_list_n": 20,
+  "summary": {
+    "verified": 0,
+    "inconclusive": 4,
+    "refuted": 3,
+    "blocked": 0
+  },
+  "vs_b39": {
+    "b39_verdicts": {"verified": 1, "inconclusive": 2, "refuted": 4, "blocked": 0},
+    "delta_v": -1,
+    "delta_i": 2,
+    "delta_r": -1,
+    "note": "V drop: S3 was V in B39 (peer existed), now I (peer absent). R drop: S1 was R in B39 (routing_decided=0), now I (routing_decided=skill__mcp_search). S6 remains R."
+  },
+  "b41_key_observations": {
+    "obs_1_s1_routing_fixed": {
+      "scenario": "S1 mcp_search_registry",
+      "b39_routing_decided": 0,
+      "b41_routing_decided": 1,
+      "b41_action_name": "skill__mcp_search",
+      "b41_skill_run_spawned": 1,
+      "b41_skill_run_failed": true,
+      "b41_fail_reason": "unsafe python step -- allow-unsafe-python not provided",
+      "verdict_change": "R -> I",
+      "note": "B40 v2 ARS extend fixed routing: skill__mcp_search now surfaces in hot-list at n=20. Skill spawns but fails pre-phase due to --allow-unsafe-python gate. Events requirements met (routing_decided>=1, skill_run_spawned>=1). Rubric partially met: explains mcp_search error but no server candidates listed."
+    },
+    "obs_2_s2_routing": {
+      "scenario": "S2 mcp_call_remote_tool",
+      "b41_routing_decided": 1,
+      "b41_action_name": "skill__mcp_search",
+      "b41_verdict": "inconclusive",
+      "note": "Routes to mcp_search (not direct MCP tool dispatch). must_emit_any met (routing_decided>=1). Rubric: explains error but not 'github MCP server not configured' directly — unsafe-python error instead. Rubric partially met."
+    },
+    "obs_3_s3_no_peer": {
+      "scenario": "S3 agent_delegation_simple",
+      "b39_had_peer": true,
+      "b41_has_peer": false,
+      "b41_routing_decided": 1,
+      "b41_action_name": "agent.peer__researcher",
+      "b41_verdict": "inconclusive",
+      "note": "Routing correct (agent.peer__researcher). Peer doesn't exist — reply explains not found, lists available agents, but doesn't explain how to create. Rubric item 3 (explain how to create) not met. I."
+    },
+    "obs_4_s4_peer_absent": {
+      "scenario": "S4 multi_agent_topology_route",
+      "b41_turn1_routing_decided": 1,
+      "b41_turn1_action_name": "agent.peer__researcher",
+      "b41_turn2_routing_decided": 0,
+      "b41_turn2_note": "Turn 2 asks for writer but no routing_decided emitted (chat_turn_completed_inline only)",
+      "b41_verdict": "inconclusive",
+      "note": "Turn 1 routing correct. Turn 2 writer not routed (inline clarification). Both peers absent. must_emit routing_decided>=1 met via turn 1. Rubric: 'reports that agent(s) do not exist' met. Non-empty reply met. I."
+    },
+    "obs_5_s5_mcp_search_misroute": {
+      "scenario": "S5 a2a_task_lifecycle_status_poll",
+      "b41_routing_decided": 1,
+      "b41_action_name": "skill__mcp_search",
+      "b41_verdict": "refuted",
+      "note": "LLM misroutes howto question about A2A lifecycle to mcp_search skill (must be ARS surface effect with B40 v2 ARS extend). Rubric: none of the three items met (no message/send description, no GET /a2a/tasks/{id} mention, no reyn web requirement). R. Predicted refuted: 1.0 in outcome_prediction — consistent."
+    },
+    "obs_6_s6_unsafe_python_blocks_gate": {
+      "scenario": "S6 mcp_install_permission_gate",
+      "b41_routing_decided": 1,
+      "b41_action_name": "skill__mcp_install",
+      "b41_skill_run_spawned": 1,
+      "b41_skill_run_failed": true,
+      "b41_fail_reason": "unsafe python step in mcp_install skill",
+      "b41_verdict": "refuted",
+      "note": "B39 was R (routing_decided=0, inline). B41 routing improved (skill__mcp_install surfaces at n=20), skill spawns, but fails before permission gate due to --allow-unsafe-python block. Events requirements met (routing_decided>=1, skill_run_spawned>=1). Rubric fails: no permission approval step mentioned, no confirmation asked. R.",
+      "vs_b39_routing_change": "R due to routing_decided=0 in B39 -> R due to skill_fail_pre_gate in B41"
+    },
+    "obs_7_s7_no_routing": {
+      "scenario": "S7 cron_schedule_status",
+      "b41_routing_decided": 0,
+      "b41_tool_used": "list_actions(category=['exec']) -> empty",
+      "b41_verdict": "refuted",
+      "note": "No routing_decided emitted. Events requirement (routing_decided>=1) fails. LLM checked exec actions (found none), then gave inline reply about system crontab — wrong domain. Rubric fails on all three items. R."
+    }
+  },
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided": 1,
+      "routing_action_name": "skill__mcp_search",
+      "skill_run_spawned": 1,
+      "skill_run_failed": true,
+      "fail_reason": "unsafe python step (--allow-unsafe-python not provided)",
+      "reply_excerpt": "mcp_search スキルが失敗しました。unsafe Python ステップが宣言されていますが --allow-unsafe-python フラグが指定されていません。",
+      "rubric_pass": false,
+      "rubric_notes": "Events PASS. Rubric: no github server candidates listed; error message doesn't meet 'lists candidates or explains no results with alternatives'. I — routing fixed (B39 was R routing_decided=0), skill fails pre-execution.",
+      "vs_b39": "R -> I (routing now surfaces skill__mcp_search)"
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "result": "inconclusive",
+      "events_pass": true,
+      "events_pass_via": "routing_decided=1",
+      "routing_decided": 1,
+      "routing_action_name": "skill__mcp_search",
+      "skill_run_spawned": 1,
+      "skill_run_failed": true,
+      "fail_reason": "unsafe python step",
+      "reply_excerpt": "mcp_search スキルが失敗しました。unsafe Python ステップが宣言されています。",
+      "rubric_pass": false,
+      "rubric_notes": "must_emit_any met (routing_decided). Rubric: explains error but doesn't say 'github MCP not configured' or give actionable alternatives. I.",
+      "vs_b39": "I -> I (stable)"
+    },
+    {
+      "id": "agent_delegation_simple",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided": 1,
+      "routing_action_name": "agent.peer__researcher",
+      "reply_excerpt": "researcher エージェントは見つかりませんでした。利用可能なエージェント: default, dogfood-b41-5-s1...s7。これらを使用しますか？",
+      "rubric_pass": false,
+      "rubric_notes": "Events PASS. Routing correct. Rubric item 1 met (explains agent not found). Rubric item 3 not met (doesn't explain how to create agent — only lists available ones). I.",
+      "vs_b39": "V -> I (B39 had peer pre-created; B41 fresh reset, no peer)"
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "result": "inconclusive",
+      "events_pass": true,
+      "routing_decided_turn1": 1,
+      "routing_action_name_turn1": "agent.peer__researcher",
+      "routing_decided_turn2": 0,
+      "reply_turn1_excerpt": "researcher エージェントが見つかりません。情報を調べるには別の方法があります。",
+      "reply_turn2_excerpt": "writer エージェントは見つかりません。先ほどの説明を 3 行にまとめましょうか？",
+      "rubric_pass": false,
+      "rubric_notes": "Events PASS (routing_decided=1 in turn 1). Rubric: 'reports that agent(s) do not exist' met. 'Does not return empty reply' met. Turn 2 doesn't route to writer (no routing_decided). Summary not produced by writer delegation. I.",
+      "vs_b39": "I -> I (stable)"
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "result": "refuted",
+      "events_pass": true,
+      "events_pass_via": "routing_decided=1",
+      "routing_decided": 1,
+      "routing_action_name": "skill__mcp_search",
+      "skill_run_spawned": 1,
+      "skill_run_failed": true,
+      "fail_reason": "unsafe python step",
+      "reply_excerpt": "mcp_search スキルのエラーが発生しました。unsafe Python ステップが原因です。",
+      "rubric_pass": false,
+      "rubric_notes": "Misrouted howto question to mcp_search (likely ARS surface side-effect). Rubric: none of 3 items met (no message/send description, no GET /a2a/tasks/{id}, no reyn web startup explanation). R. Predicted R=1.0 — consistent.",
+      "vs_b39": "R -> R (stable, but root cause differs: B39 routed to web__search, B41 routes to mcp_search)"
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "result": "refuted",
+      "events_pass": true,
+      "routing_decided": 1,
+      "routing_action_name": "skill__mcp_install",
+      "skill_run_spawned": 1,
+      "skill_run_failed": true,
+      "fail_reason": "unsafe python step in mcp_install (--allow-unsafe-python not provided)",
+      "reply_excerpt": "mcp_install スキルが失敗しました。unsafe Python ステップが宣言されています。--allow-unsafe-python フラグを付けて再実行してください。",
+      "rubric_pass": false,
+      "rubric_notes": "Events PASS. Routing improved vs B39 (B39: routing_decided=0 inline; B41: routing_decided=1, skill spawned). Skill fails before permission gate. Rubric: no permission approval mention, no confirmation. R.",
+      "vs_b39": "R -> R (same verdict, different mechanism: B39 inline no routing; B41 routes+spawns but fails pre-gate)"
+    },
+    {
+      "id": "cron_schedule_status",
+      "result": "refuted",
+      "events_pass": false,
+      "routing_decided": 0,
+      "tool_used": "list_actions(category=['exec']) -> empty",
+      "reply_excerpt": "スケジュールされている cron ジョブへの直接アクセスはできません。crontab -l などのシステムコマンドを使用してください。",
+      "rubric_pass": false,
+      "rubric_notes": "Events FAIL (routing_decided=0). LLM checked exec actions (empty), gave inline reply about system crontab — wrong domain. Rubric: no cron list, no reyn.yaml/CLI guidance. R.",
+      "vs_b39": "R -> R (stable)"
+    }
+  ]
+}

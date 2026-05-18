@@ -1,0 +1,108 @@
+{
+  "batch": "B41",
+  "worker": 1,
+  "head": "dd896f2c",
+  "date": "2026-05-18",
+  "agent_prefix": "dogfood-b41-1-sN",
+  "port": 8101,
+  "worktree": "/private/tmp/reyn-worktrees/b41-1",
+  "state_mode": "fresh",
+  "scenario_set": "dogfood/scenarios/chat_router_smoke.yaml",
+  "config": "default (= no reyn.local.yaml, hot_list_n=20)",
+  "verdicts": {"V": 2, "I": 0, "R": 5, "B": 0},
+  "vs_b39": {
+    "b39_verdicts": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "V_delta": 0, "I_delta": 0, "R_delta": 0, "B_delta": 0,
+    "note": "B39 had: S1 V, S2 V, S3 R, S4 R, S5 R, S6 R, S7 R. B41: S1 regressed V->R (inline routing), S4 recovered R->V (B40 v2 ARS fix confirmed). Net ΔV=0. S4 is the confirmed B40 v2 win; S1 regression offsets it."
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "verdict": "R",
+      "events_summary": "user_message_received x2, chat_turn_completed_inline x2 (inline reply, no routing_decided, no skill dispatch)",
+      "reply_excerpt": "I am a Reyn agent. I can help you with a variety of tasks using the tools available to me. Here are some of the things I can do: Search and explore available actions...",
+      "trace_req_count": 3,
+      "notes": "Answered inline without routing to direct_llm skill. No routing_decided event emitted. No direct_llm artifact created. Reply content is helpful but routing path mismatches rubric. Regression from B39 V (B39 may have dispatched to direct_llm). Note: extra request_count due to test message sent during debugging."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "verdict": "V",
+      "events_summary": "routing_decided x2, skill_run_spawned x2, skill_run_completed x2 (status: finished), artifact_created x4",
+      "reply_excerpt": "Skill is running in the background. Use `/tasks` to monitor progress.\n\n「冪等」とはどういう意味ですか?... 冪等（べきとう）とは、ある操作を1回行っても、複数回行っても、その結果が同じ",
+      "trace_req_count": 6,
+      "notes": "direct_llm skill correctly dispatched. routing_decided{skill__direct_llm} emitted. Full workflow lifecycle observed. Artifact at .reyn/artifacts/direct_llm/respond/v01_direct_llm_response.json. Trace count inflated by second test turn sent during setup."
+    },
+    {
+      "id": "skill_discovery_request",
+      "verdict": "R",
+      "events_summary": "user_message_received x2, chat_turn_completed_inline x2 (tool_called x2 for list_actions, but no routing_decided)",
+      "reply_excerpt": "Skill Name: skill__direct_llm\nDescription: Catalogue-gap fallback: hand a single-shot natural-language task straight to...\n\nSkill Name: skill__eval\nDescription: Run a single eval case...",
+      "trace_req_count": 4,
+      "notes": "Agent used list_actions tool inline to enumerate skills — reply content PASSES rubric (mentions skill names). However routing_decided event required by must_emit was NOT emitted. Path: chat_turn_completed_inline with tool use, not skill dispatch. Event requirement fail."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "verdict": "V",
+      "events_summary": "routing_decided x1 (action: skill__word_stats_demo), skill_run_spawned x1, skill_run_completed x1 (status: finished), artifact_created x3, python_step_started/completed x1 each",
+      "reply_excerpt": "Skill is running in the background. Use `/tasks` to monitor progress.\n\nThe `word_stats_demo` skill has finished processing the text... 44 characters across 1 line...",
+      "trace_req_count": 3,
+      "notes": "B40 v2 ARS fix confirmed: empty-schema skill word_stats_demo now surfaced and selected. routing_decided{skill__word_stats_demo} emitted. Full skill lifecycle (spawn/python_step/complete) observed. Artifact at .reyn/artifacts/word_stats_demo/review/v01_text_review.json with character stats. KEY WIN for B40 v2."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "verdict": "R",
+      "events_summary": "user_message_received x1, chat_turn_completed_inline x1 (must_emit_any: chat_turn_completed_inline present = PASS), no routing_decided",
+      "reply_excerpt": "かしこまりました。どのようなテーマで短い詩を書きましょうか？",
+      "trace_req_count": 1,
+      "notes": "Event must_emit_any satisfied (chat_turn_completed_inline present). However reply rubric fails: agent asked for a theme instead of writing the poem. Reply does not contain poem or poem-like text with at least two lines. Inline handling but non-compliant reply content."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "verdict": "R",
+      "events_summary": "Turn1: chat_turn_completed_inline (good explanation with code). Turn2: routing_decided{skill__direct_llm}, skill_run_spawned, skill_run_completed (status: finished). No permission_denied.",
+      "reply_excerpt": "Turn2: Skill is running in the background. Use `/tasks` to monitor progress.\n\nPythonのリスト内包表記について、コード例を交えて説明しました。既存のリストから条件に合う要素を...",
+      "trace_req_count": 5,
+      "notes": "G12 narration collapse NOT fixed for this scenario. Turn1 replied well (code example inline). Turn2 dispatched to direct_llm skill but reply is a summary narrative ('I explained with code examples') rather than a new code demonstration. Rubric requires second reply to contain a Python code example — FAIL."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "verdict": "R",
+      "events_summary": "user_message_received x1, chat_turn_completed_inline x1, no permission_denied",
+      "reply_excerpt": "どのような画像を生成しますか？詳細を教えてください。",
+      "trace_req_count": 1,
+      "notes": "Agent asked for image details instead of declining. Rubric requires polite decline or explanation that capability is unavailable. Instead agent implicitly accepted the image generation request. No permission_denied event (correct — not a permission issue). Reply rubric FAIL."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B41-W1-F1",
+      "severity": "HIGH",
+      "description": "S4 B40 v2 ARS fix confirmed: word_stats_demo (empty-schema skill) now correctly selected when explicitly named. routing_decided{skill__word_stats_demo} + full skill lifecycle emitted. This is the primary hypothesis under test.",
+      "evidence": "events: routing_decided.data.action_name=skill__word_stats_demo; skill_run_completed.data.status=finished; artifact at .reyn/artifacts/word_stats_demo/review/v01_text_review.json"
+    },
+    {
+      "id": "B41-W1-F2",
+      "severity": "HIGH",
+      "description": "S1 regressed V->R: simple_capability_question now answered via chat_turn_completed_inline (no skill dispatch) instead of routing to direct_llm. No routing_decided or direct_llm artifact. Root cause unclear — B39 dispatched to direct_llm for same prompt but B41 does not.",
+      "evidence": "events: only chat_turn_completed_inline, no routing_decided, no skill_run_spawned for s1 agent. B39 note says S1 V."
+    },
+    {
+      "id": "B41-W1-F3",
+      "severity": "MED",
+      "description": "S6 narration collapse persists after G12 fix. Turn2 reply is a summary of actions taken ('コード例を交えて説明しました') not a code demonstration. G12 (answered) signal fix may not have addressed the skill_completion_injected path for direct_llm narration.",
+      "evidence": "Turn2 reply text: 'Pythonのリスト内包表記について、コード例を交えて説明しました'; skill_run_completed{status:finished}; artifact created at .reyn/artifacts/direct_llm/respond/ with actual response content"
+    },
+    {
+      "id": "B41-W1-F4",
+      "severity": "MED",
+      "description": "S7 out-of-scope request not declined: agent asks for image details implying it can generate images. Direct_llm system prompt may not include capability boundary information. This is a persistent baseline behavior.",
+      "evidence": "Reply: 'どのような画像を生成しますか？詳細を教えてください。'; chat_turn_completed_inline with no skill dispatch; no graceful decline observed."
+    },
+    {
+      "id": "B41-W1-F5",
+      "severity": "LOW",
+      "description": "S5 poem request triggers counter-question (asking for theme) instead of generating a poem. Consistent with LLM clarification-seeking behavior when request lacks specificity. Event path (chat_turn_completed_inline) satisfies must_emit_any but reply fails poem rubric.",
+      "evidence": "Reply: 'かしこまりました。どのようなテーマで短い詩を書きましょうか？'; chat_turn_completed_inline present."
+    }
+  ]
+}

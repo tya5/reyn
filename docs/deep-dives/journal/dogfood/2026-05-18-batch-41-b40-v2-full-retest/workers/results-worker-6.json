@@ -1,0 +1,168 @@
+{
+  "worker": 6,
+  "batch": "B41",
+  "timestamp": "2026-05-18T12:30:04.396262+00:00",
+  "total": 11,
+  "summary": {
+    "V": 1,
+    "I": 8,
+    "R": 2,
+    "B": 0
+  },
+  "summary_raw_judge": {
+    "V": 1,
+    "I": 7,
+    "R": 3,
+    "B": 0,
+    "note": "fp11-2 raw=R, corrected to I (judge false-positive: 'overall_score' keyword in error-message text, not fabricated data)"
+  },
+  "b39_verdicts": {
+    "V": 3,
+    "I": 4,
+    "R": 4,
+    "B": 0
+  },
+  "delta_v_corrected": -2,
+  "delta_r_corrected": -2,
+  "r_web_chain_status": "RESTORED (3/3 R-WEB scenarios now I — routing to skill__mcp_search confirmed via routing_decided + skill_run_spawned events)",
+  "scenarios": {
+    "plan_compare_two_concepts": {
+      "verdict": "I",
+      "b39_verdict": "V",
+      "notes": [
+        "plan_emitted=1 step_started=3 step_completed=3 plan_aggregated=1 — plan lifecycle fired correctly",
+        "reply: couldn't read both docs (control_ir_failed index_query on recall tool), no concrete 3-5 points listed",
+        "rubric: events PASS, reply quality FAIL — partial"
+      ],
+      "elapsed": 72.6,
+      "reply_preview": "申し訳ありませんが、docs/concepts/permission-model.md と docs/concepts/workspace.md の両方のドキュメントの内容を取得できませんでした。"
+    },
+    "plan_explain_with_code_references": {
+      "verdict": "R",
+      "b39_verdict": "I",
+      "notes": [
+        "plan_emitted=0 — LLM answered inline from tool description without invoking plan tool",
+        "events: only user_message_received + chat_turn_completed_inline + compaction_check (3 events)",
+        "reply mentions plan.py and planner.py but from tool description, not from reading files"
+      ],
+      "elapsed": 40.3,
+      "reply_preview": "I can see the `plan` tool in the available actions. Here's an explanation based on its description and common usage patterns..."
+    },
+    "plan_summary_across_n_files": {
+      "verdict": "R",
+      "b39_verdict": "R",
+      "notes": [
+        "plan_emitted=0, reply_len=0 — LLM called tool but returned empty reply (2.3s)",
+        "events: user_message_received + tool_called + tool_returned + compaction_check",
+        "tool_called fired but no plan tool — likely describe_actions or similar, then empty stop"
+      ],
+      "elapsed": 2.3,
+      "reply_preview": ""
+    },
+    "narr-1-mcp-search": {
+      "verdict": "I",
+      "b39_verdict": "R",
+      "verdict_shift": "R→I (B40 v2 fix CONFIRMED)",
+      "notes": [
+        "routing_decided action_name=skill__mcp_search (ARS Source 2b hit with hot_list_n=10)",
+        "skill_run_spawned for skill_builder + skill_run_failed (unsafe python in test env)",
+        "B40 v2 fix: ARS extended to surface skill__mcp_search — routing restored from B39 miss",
+        "inconclusive: MCP registry / unsafe python flag not available in test environment"
+      ],
+      "elapsed": 10.9,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress. The `mcp_search` skill encountered an error because it's trying to run an 'unsafe' Python step..."
+    },
+    "narr-3-skill-builder": {
+      "verdict": "I",
+      "b39_verdict": "I",
+      "notes": [
+        "builder_spawned=True (routing to skill__skill_builder worked)",
+        "builder_completed=False within 60s window — async pattern, still running at HTTP response",
+        "phase_rollback in skill_run events (review_plan→design_artifacts) — normal iteration, not loop_limit",
+        "B39 loop_limit_exceeded NOT observed in B41 — loop issue may have been resolved or not triggered"
+      ],
+      "elapsed": 60.0,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress."
+    },
+    "s-fp11-1-builder-invalid-spec": {
+      "verdict": "I",
+      "b39_verdict": "R",
+      "verdict_shift": "R→I (async pattern — can't assess anti-optimism from spawn ack only)",
+      "notes": [
+        "skill_builder spawned (routing correct), returned spawn ack within 60s",
+        "reply=spawn ack only: anti-optimism not assessable from spawn-ack phase",
+        "lint_plan_completed issue_count=0 — builder accepted invalid spec (design flaw confirmed)",
+        "FP-0012 async path: completion narration would need a 2nd turn to assess D1"
+      ],
+      "elapsed": 60.0,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress."
+    },
+    "s-fp11-2-eval-missing-target": {
+      "verdict": "I",
+      "verdict_raw_judge": "R",
+      "b39_verdict": "I",
+      "notes": [
+        "JUDGE CORRECTION: raw R was false-positive — 'overall_score'/'passed' keywords in error message, not fabricated data",
+        "eval invoked, skill_run_failed with PostprocessorError (schema validation failed — missing required fields)",
+        "skill_completion_injected with status=error",
+        "reply correctly surfaces error: 'output failed schema validation because properties like overall_score, passed, passed_criteria were missing'",
+        "anti-optimism: WORKING — error surfaced, no fabricated score values in reply"
+      ],
+      "elapsed": 43.3,
+      "reply_preview": "Skill is running in the background. ... The 'eval' skill run has completed with an error. The output failed schema validation because properties like 'overall_score', 'passed', and 'passed_criteria' were missing."
+    },
+    "s-fp11-3-mcp-search-empty": {
+      "verdict": "I",
+      "b39_verdict": "R",
+      "verdict_shift": "R→I (B40 v2 fix CONFIRMED)",
+      "notes": [
+        "routing_decided action_name=skill__mcp_search (ARS Source 2b with hot_list_n=10)",
+        "skill_run_spawned + skill_run_failed (unsafe python flag)",
+        "Same routing restoration pattern as narr-1 — B40 v2 fix confirmed on 2nd R-WEB scenario",
+        "inconclusive: MCP registry unreachable in test env"
+      ],
+      "elapsed": 15.2,
+      "reply_preview": "The `mcp_search` skill encountered an error because it declared an unsafe Python step without the `--allow-unsafe-python` flag..."
+    },
+    "s-fp12-spawn-1-builder-success-ack": {
+      "verdict": "I",
+      "b39_verdict": "I",
+      "notes": [
+        "skill_builder spawned, no double invoke (invoke_skill_calls=0 at event-read time)",
+        "has_tasks_pointer=True (/tasks in reply)",
+        "spawn ack correct: 'Skill is running in the background. Use /tasks to monitor progress.'",
+        "completion narration: not in 60s window (async pattern) — D3 inconclusive",
+        "D2 spawn ack: PASS, D5 no double dispatch: PASS"
+      ],
+      "elapsed": 60.0,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress."
+    },
+    "s-fp12-completion-1-mcp-search-narrate": {
+      "verdict": "I",
+      "b39_verdict": "R",
+      "verdict_shift": "R→I (B40 v2 fix CONFIRMED)",
+      "notes": [
+        "routing_decided action_name=skill__mcp_search (ARS Source 2b)",
+        "skill_run_spawned + skill_run_failed (unsafe python)",
+        "3rd and final R-WEB scenario routing restored",
+        "B40 v2 fix: 3/3 mcp_search scenarios now route correctly to skill__mcp_search"
+      ],
+      "elapsed": 4.7,
+      "reply_preview": "The `mcp_search` skill encountered an error because it tried to execute an unsafe Python step..."
+    },
+    "s-fp12-completion-2-error-narrate": {
+      "verdict": "V",
+      "b39_verdict": "I",
+      "verdict_shift": "I→V",
+      "notes": [
+        "skill_builder spawned, no double invoke",
+        "workflow_aborted (plan_skill rollback — no previous phase) = error path reached",
+        "skill_run_failed + skill_completion_injected with status=error",
+        "reply surfaces error correctly: 'encountered an error during plan_skill phase and had to roll back'",
+        "anti-optimism on async error path: WORKING (D1+D3 on async path)"
+      ],
+      "elapsed": 45.3,
+      "reply_preview": "The skill builder encountered an error during the 'plan_skill' phase and had to roll back. The process could not be completed."
+    }
+  }
+}
