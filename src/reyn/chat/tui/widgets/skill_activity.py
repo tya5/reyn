@@ -76,11 +76,19 @@ class SkillActivityRow(Widget):
         run_id: str,
         skill_name: str,
         id: str | None = None,
+        label_prefix: str = "",
     ) -> None:
         super().__init__(id=id)
         self._run_id = run_id
         self._skill_name = skill_name
         self._short_id = run_id[:4]
+        # ``label_prefix`` (e.g. ``"  └─ "``) renders before the spinner /
+        # ✓ glyph so a sub-skill row visibly nests under its parent in
+        # the conv pane. Empty (= root skill) keeps the original layout.
+        # Parents and children share the same widget — only the prefix
+        # differs — so spinner / detail / finish styling stay consistent
+        # across the hierarchy.
+        self._label_prefix = label_prefix
 
         # Running state
         self._phase: str = ""
@@ -170,6 +178,8 @@ class SkillActivityRow(Widget):
 
     def _build_running(self) -> Text:
         t = Text()
+        if self._label_prefix:
+            t.append(self._label_prefix, style="dim #666666")
         # Animated braille spinner — replaces the static ▶ so "still
         # alive" is obvious even when the response was streamed and the
         # user is wondering "is this skill still doing things?".
@@ -206,6 +216,8 @@ class SkillActivityRow(Widget):
 
     def _build_finished(self) -> Text:
         t = Text()
+        if self._label_prefix:
+            t.append(self._label_prefix, style="dim #666666")
         if self._success:
             t.append("✓ ", style="bold green")
             t.append(

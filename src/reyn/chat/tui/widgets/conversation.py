@@ -728,20 +728,38 @@ class ConversationView(Widget):
 
     # ── skill activity rows (C1+A1) ──────────────────────────────────────────
 
-    def start_skill_row(self, run_id: str, skill_name: str) -> SkillActivityRow:
+    def start_skill_row(
+        self,
+        run_id: str,
+        skill_name: str,
+        *,
+        parent_run_id: str = "",
+    ) -> SkillActivityRow:
         """Mount (or return existing) SkillActivityRow for a skill run.
 
         Suppresses the noisy `· phase started: …` trace stream by giving it
         a single ambient widget that updates in-place.
+
+        ``parent_run_id`` (issue #210): when non-empty AND a row for that
+        parent is currently mounted, the new row renders with a ``  └─ ``
+        prefix so sub-skill spawns visibly nest under their parent in the
+        conv pane. If the parent's row has already finished (= rotated
+        out of ``_skill_rows``) the child renders as a normal root row —
+        an orphaned ``└─`` connector pointing at a vanished line would
+        be more confusing than no indent at all.
         """
         existing = self._skill_rows.get(run_id)
         if existing is not None:
             return existing
         self._consume_empty_hint()
+        label_prefix = ""
+        if parent_run_id and parent_run_id in self._skill_rows:
+            label_prefix = "  └─ "
         row = SkillActivityRow(
             run_id=run_id,
             skill_name=skill_name,
             id=f"skillrow_{run_id[:8]}",
+            label_prefix=label_prefix,
         )
         self._skill_rows[run_id] = row
         self.mount(row)
