@@ -361,6 +361,72 @@ async def test_intervention_mounts_in_conversation():
 
 
 @pytest.mark.asyncio
+async def test_intervention_chip_click_submits_hotkey():
+    """Tier 2: chip click delivers the hotkey (not the id) so the producer
+    contract — InterventionRegistry.match_choice matches by hotkey — holds.
+
+    Sending the id (e.g. "yes" instead of "y") would silently miss
+    match_choice, leave iv.future unresolved, and the widget removes
+    itself — agent deadlocks. This test pins the chip-click → hotkey
+    contract that the bug fix introduced.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        collected: list[str] = []
+
+        async def _cb(ans: str) -> None:
+            collected.append(ans)
+
+        conv.mount_intervention(
+            question="Allow?",
+            choices=[
+                {"label": "[y]es", "id": "yes", "hotkey": "y"},
+                {"label": "[n]o", "id": "no", "hotkey": "n"},
+            ],
+            answer_callback=_cb,
+            iv_id="iv_perm",
+        )
+        await pilot.pause()
+        await pilot.click("#chip_yes")
+        await pilot.pause()
+        assert collected == ["y"], (
+            f"chip click should submit hotkey 'y' (matches match_choice), "
+            f"got {collected!r} — sending id 'yes' would deadlock the agent"
+        )
+
+
+@pytest.mark.asyncio
+async def test_intervention_chip_without_hotkey_falls_back_to_id():
+    """Tier 2: when a chip's choice has no hotkey, the click falls back
+    to submitting the id rather than producing nothing — preserves the
+    "unknown choice" hint path instead of silent deadlock.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True) as pilot:
+        await pilot.pause()
+        conv = app.query_one("#conversation", ConversationView)
+        collected: list[str] = []
+
+        async def _cb(ans: str) -> None:
+            collected.append(ans)
+
+        conv.mount_intervention(
+            question="Pick:",
+            choices=[
+                {"label": "anonymous", "id": "anon", "hotkey": ""},
+            ],
+            answer_callback=_cb,
+            iv_id="iv_no_hotkey",
+        )
+        await pilot.pause()
+        await pilot.click("#chip_anon")
+        await pilot.pause()
+        assert collected == ["anon"]
+
+
+@pytest.mark.asyncio
 async def test_intervention_free_text_answer():
     """InterventionWidget with free-text input calls callback on submit."""
 
