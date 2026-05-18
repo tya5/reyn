@@ -137,6 +137,14 @@ class RightPanel(Widget):
         # Memory tab state — flat cursor over all entries
         self._memory_cursor: int = 0
         self._memory_entries: list[Any] = []
+        # Latest ARS hot-list ranking from ChatLifecycleForwarder (issue
+        # #192). ``[{"qualified_name": str, "freq": int, "last_ts": str},
+        # ...]`` full ranking. Fed by ``update_hot_list`` (= driven from
+        # ``OutboxRouter._on_hot_list_updated``). The Memory tab renders
+        # a "Hot now" sub-section above SHARED / AGENT scopes when the
+        # list is non-empty; otherwise the section is omitted entirely
+        # so the existing layout is unchanged on cold-start.
+        self._hot_list_ranking: list[dict] = []
         # y-coord (0-indexed line) of each memory entry's name row in the
         # rendered output. Populated by `render_memory`; used by
         # `_scroll_memory_into_view` to keep the cursor visible as j/k
@@ -254,6 +262,19 @@ class RightPanel(Widget):
         """
         self._exec_state = dict(state)
         if self._panel_type == "agents":
+            self._invalidate()
+
+    def update_hot_list(self, ranking: list[dict]) -> None:
+        """Receive the latest ARS hot-list ranking from the TUI app.
+
+        Called from ``OutboxRouter._on_hot_list_updated`` whenever the
+        forwarder emits a ``hot_list_updated`` outbox message (= the
+        qualified-name order changed). Triggers a re-render only when
+        the Memory tab is visible — the cached ranking is consumed on
+        the next paint of any other tab via the same field.
+        """
+        self._hot_list_ranking = list(ranking)
+        if self._panel_type == "memory":
             self._invalidate()
 
     def _panel_resize(self, delta: int) -> None:
@@ -1542,7 +1563,9 @@ class RightPanel(Widget):
                 return rendered
             if self._panel_type == "memory":
                 rendered, flat_entries, entry_ys = render_memory(
-                    self._project_root, cursor=self._memory_cursor,
+                    self._project_root,
+                    cursor=self._memory_cursor,
+                    hot_list=self._hot_list_ranking,
                 )
                 self._memory_entries = flat_entries
                 self._memory_entry_ys = entry_ys
