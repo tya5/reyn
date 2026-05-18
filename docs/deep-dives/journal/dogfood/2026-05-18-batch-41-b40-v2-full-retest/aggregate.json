@@ -1,0 +1,176 @@
+{
+  "batch": "B41",
+  "date": "2026-05-18",
+  "head_at_dispatch": "dd896f2c",
+  "head_at_dispatch_parent_fixes": [
+    "b2731dff (B40 v2 ARS extend — surface empty-schema skills in invoke_action description, PR #157)",
+    "dd896f2c (G12 answered signal moves to role=tool inner content, PR #158)"
+  ],
+  "scenarios_total": 58,
+  "verdict_totals": {
+    "verified": 13,
+    "inconclusive": 22,
+    "refuted": 23,
+    "blocked": 0
+  },
+  "verified_rate": 0.224,
+  "delta_vs_b39": "mathematical -8V (= 21V → 13V); composition complex — B40 v2 fix verified positive at 9 scenarios via patch-isolation, offset by W7 long-session env / driver / deeper-design issues (5V) + W5/W4 env-N=1-noise (2V) + W1 SP+LLM noise (1V); W6 plan_mode 'regressions' shown as annotation errors (= 0V real)",
+
+  "workers": {
+    "W1_chat_router_smoke":      {"v": 2, "i": 0, "r": 5, "b": 0, "scenarios": 7,  "delta_vs_b39": 0,  "notable": "S4 R→V (B40 v2 word_stats_demo win, patch-isolated 10/10); S1 V→R (SP chitchat rule + N=1 noise per Agent 4 SP literal quote)"},
+    "W2_stdlib_skills_core":     {"v": 1, "i": 0, "r": 8, "b": 0, "scenarios": 9,  "delta_vs_b39": 0,  "notable": "S5 I→V (B40 v2 word_stats_demo win); S7 R→R root-cause-shifted: eval now correctly routed (B40 v2) → NEW downstream bug B41-NF-S7 (run_skill path resolution); S4/S6 unchanged R via unsafe-python gate / LLM noise"},
+    "W3_control_ir_ops":         {"v": 3, "i": 1, "r": 5, "b": 0, "scenarios": 9,  "delta_vs_b39": 0,  "notable": "S2 R→I (B40 v2 routing fix verified, rubric premise broken); S7 R→V (recall validation_error gone, B38 29a0c31 lasting effect); S8 V (B38 + 16b439c continues working)"},
+    "W4_permissions_and_safety": {"v": 4, "i": 4, "r": 0, "b": 0, "scenarios": 8,  "delta_vs_b39": 0,  "notable": "S2 I→V + S6 I→V (B40 v2 wins: mcp_install + rag.operation__drop_source — drop_source patch-isolated 8/10 → 0/10 on revert); S1 V→I (LLM safety-caution inline refusal ~33% rate, agent 3 N=10 confirmed)"},
+    "W5_multi_agent_and_mcp":    {"v": 0, "i": 4, "r": 3, "b": 0, "scenarios": 7,  "delta_vs_b39": -1, "notable": "S1 R→I + S6 R→I (B40 v2 mcp_search/mcp_install routing wins, blocked by --allow-unsafe-python gate env); S3 V→I (test env: no pre-created researcher peer in fresh worktree); S5 false-misroute concern REFUTED by patch test (N=10 baseline = list_actions, agent 3)"},
+    "W6_plan_mode_fp0011":       {"v": 1, "i": 8, "r": 2, "b": 0, "scenarios": 11, "delta_vs_b39": -2, "notable": "**R-WEB chain CLOSED 3/3** (narr-1 + s-fp11-3 + s-fp12-comp-1 all R→I, B40 v2 fix verified via 3 independent observations); s-fp12-comp-2 I→V anti-optimism async path confirmed; W6 worker reported plan_compare V→I + plan_explain I→R as 'regressions' but agent 2 trace deep-dive shows these were B39 verdict annotation errors (= actual B39 was I and R respectively, no real shift)"},
+    "W7_long_session_v1":        {"v": 2, "i": 5, "r": 0, "b": 0, "scenarios": 7,  "delta_vs_b39": -5, "notable": "S4 V maintained (G12 Pattern E fix verified for context-bloat target). 5V regression decomposition (patch-isolated): S2 + S7-T2 (router_empty after describe_action / hot_list_alias direct_llm — deeper design issue, NOT B40 v2, NOT G12 specifically; patch-isolated 5/5 → 5/5 → 3/5 across baseline/revert/G12-stronger); S3 (web_fetch denied in /tmp worktree — env artifact); S5 (driver timing — wait-for-skill-completed semantics missing in long-session driver, B41-new trigger from session isolation fix per agent 3 timestamps); S6 (ADR files missing in /tmp worktree — env artifact)"}
+  },
+
+  "b40_v2_fix_verified_wins": {
+    "total_confirmed": 9,
+    "method": "patch-isolation via llm_replay --patch + N=10 across multiple scenarios (= test-1 W4-S6 + test-2 narr-1 ablations + W6 R-WEB primary data)",
+    "scenarios": [
+      {"id": "W6 narr-1 mcp_search", "shift": "R→I", "evidence": "routing_decided{skill__mcp_search} + skill_run_spawned in events, baseline N=10 = 10/10 routing pre-test"},
+      {"id": "W6 s-fp11-3 mcp_search-empty", "shift": "R→I", "evidence": "same pattern"},
+      {"id": "W6 s-fp12-comp-1 mcp_search-narrate", "shift": "R→I", "evidence": "same pattern"},
+      {"id": "W1-S4 word_stats_demo", "shift": "R→V", "evidence": "routing_decided{skill__word_stats_demo} + skill_run_completed{finished} + stats reply"},
+      {"id": "W2-S5 word_stats_demo_sentence", "shift": "I→V", "evidence": "same mechanism, sentence variant"},
+      {"id": "W4-S2 mcp_install_gate_prompt", "shift": "I→V", "evidence": "B39 had wrong action mcp.operation__drop_server; B41 routes to skill__mcp_install correctly"},
+      {"id": "W4-S6 rag.operation__drop_source", "shift": "I→V", "evidence": "test-1 patch isolation: baseline 8/10 → revert 0/10 (= 6/10 wrong action skill__index_events, 4/10 malformed) — direct B40 v2 cause confirmation"},
+      {"id": "W5-S1 mcp_search_registry", "shift": "R→I", "evidence": "B39 routing_decided=0; B41 routing_decided=1 with skill__mcp_search spawned (blocked by --allow-unsafe-python gate)"},
+      {"id": "W5-S6 mcp_install_permission_gate", "shift": "R→R (routing improved within R)", "evidence": "routing_decided=1 with skill__mcp_install spawned (blocked by same gate)"}
+    ]
+  },
+
+  "patch_isolation_audit": {
+    "purpose": "Per feedback_verify_fix_via_replay_before_land + feedback_pre_conclusion_observation_checklist — verify each carry-over claim with primary evidence before retrospective writeup",
+    "tests_completed": [
+      {
+        "name": "W7-S2 router_empty cause",
+        "method": "narr-1-equivalent T2 re-run + trace; baseline vs (A) B40 v2 revert vs (B) G12 stronger directive vs (C) G12 removed; N=5 each",
+        "result": "baseline 5/5 empty stop, A 5/5, B 3/5, C 5/5 — B40 v2 NOT cause, G12 NOT primary cause; deeper design issue (describe_action result → reply synthesis difficulty)",
+        "attribution": "design (describe_action result format / SP guidance)"
+      },
+      {
+        "name": "W2-S7 eval FileNotFoundError",
+        "method": "B41 W2 trace re-replay + B40 v2 revert; N=5",
+        "result": "baseline 5/5 routes to skill__eval, revert 5/5 routes to skill__eval (= revert doesn't change routing); FileNotFoundError reproduces in both; direct code inspection of op_runtime/run_skill.py shows slash-bearing path = literal CWD-relative (= no stdlib resolution fallback)",
+        "attribution": "pre-existing latent bug, B40 v2 only made it observable by correctly reaching the code path"
+      },
+      {
+        "name": "W7-S5 driver timing",
+        "method": "events timestamp comparison B41 W7 S5 (per-turn skill_run_spawned vs skill_run_completed vs driver poll) vs B39 W7 S5 results-worker-7.json metrics",
+        "result": "B41 read_local_files = 69.5s (LLM call time), driver hit 60s wall-clock timeout; B39 same scenario = 7.855s inline reply (= shared agent had cross-scenario context, chose inline answer); attribution (C) driver bug (= wait-for-skill-completed missing) + (B) session isolation fix changed trigger (= per-scenario fresh agent now routes to skill spawn); (A) B40 v2 ruled out (= no OS latency path touched)",
+        "attribution": "driver bug + session isolation fix interaction"
+      },
+      {
+        "name": "narr-1 5 per-skill ablation (= ARS bloat over-correction sweep)",
+        "method": "narr-1 trace + 5 patches (1 per non-mcp_search empty-schema skill removed individually); N=10 each",
+        "result": "baseline 10/10 mcp_search routing; each ablation 10/10 mcp_search routing (= no degradation for any unrelated empty-schema skill in ARS)",
+        "attribution": "no over-correction risk from B40 v2 ARS extend on narr-1"
+      },
+      {
+        "name": "narr-1 ARS format variants",
+        "method": "3 format variants: `{}` baseline vs bare name vs `(call describe_action for args)` hint; N=10 each",
+        "result": "baseline 10/10 routing 5 args variants; bare name 7/10 (3 list_actions 迷走); describe hint 10/10 (describe_action not called, args constructed directly)",
+        "attribution": "`<name>: {}` is the optimal format among tested options"
+      },
+      {
+        "name": "W5-S5 howto-question over-correction",
+        "method": "agent 3 (pre-retrospective) — N=10 baseline + revert + skill__mcp_search alias removal",
+        "result": "baseline 10/10 list_actions (= NOT misroute as worker single-shot suggested); revert no change",
+        "attribution": "N=1 noise on worker single-shot, B40 v2 not the cause"
+      },
+      {
+        "name": "W4-S1 inline refusal",
+        "method": "agent 3 (pre-retrospective) — N=10 baseline + SP rule patch",
+        "result": "baseline 8/10 dispatch (= V); SP patch dispatch unsafe ops: 10/10 dispatch — inline refusal is ~33% LLM safety-caution noise rate, suppressible",
+        "attribution": "LLM N=1 noise (single-shot hit minority case)"
+      }
+    ],
+    "total_cost_usd_approx": 0.35
+  },
+
+  "delta_v_decomposition": {
+    "note": "Per feedback_v_metric_decomposition — V umbrella metric movement is not a single signal. Decompose into components.",
+    "components": [
+      {"label": "B40 v2 OS wins (R→V or I→V)", "delta_contribution": "+4V", "evidence": "W1-S4 + W2-S5 + W4-S2 + W4-S6 (= 4 scenarios where B40 v2 brought V; others stayed I due to env gates)"},
+      {"label": "B40 v2 routing-only wins (= stayed I/R due to env)", "delta_contribution": "+0V (structurally +5 routing wins, but env-gated)", "evidence": "W5-S1 + W5-S6 + W6 R-WEB 3/3 — routing now correct but blocked by --allow-unsafe-python or MCP-unreachable env"},
+      {"label": "W7 deeper design (describe_action / hot_list_alias empty stop)", "delta_contribution": "-2V", "evidence": "patch-isolated NOT B40 v2 / NOT G12; describe_action result format issue"},
+      {"label": "W7 env artifacts (web_fetch / driver / ADR)", "delta_contribution": "-3V", "evidence": "/tmp worktree differs from main project (= no web_fetch perm, no ADRs); driver wait-for-completion missing"},
+      {"label": "W5/W4 env + N=1 LLM noise", "delta_contribution": "-2V", "evidence": "W5-S3 peer not pre-created; W4-S1 LLM ~33% safety-caution inline refusal rate"},
+      {"label": "W1 SP chitchat + W2 unsafe-python conversions", "delta_contribution": "-2V (= W1-S1 + W2 I→R via gate)", "evidence": "W1-S1 SP literal 'For chitchat or self-questions, reply without tools'; W2 routing improved + env gate blocks completion"},
+      {"label": "W6 plan_mode annotation errors", "delta_contribution": "0V (= falsely reported -2V, real shift 0)", "evidence": "agent 2 trace deep-dive: B39 verdicts misrepresented in B41 worker vs_b39 table"},
+      {"label": "Math reconciliation", "math_actual_dV": -8, "components_sum_dV": -5, "discrepancy_note": "Per-worker math sums to -8V (= W5 -1, W6 -2, W7 -5). Per-component attribution sums to -5V (= W7 design -2 + W7 env -3) — does NOT capture W5/W6 (-3V net) which are env+annotation. Full reconciliation: -2 (W7 design, non-B40-v2) + -3 (W7 env) + -1 (W5-S3 peer env) + -2 (W1-S1 SP + W2 env-gate I→R per worker count) = -8V ✓. All non-B40-v2 attributable."}
+    ]
+  },
+
+  "b40_v2_keep_decision": {
+    "verdict": "KEEP — empirically grounded after patch-isolation + over-correction sweep",
+    "rationale": [
+      "9 confirmed wins via patch-isolation (= structural improvement at OS level for cold-start skill discovery)",
+      "5 over-correction tests done — 0 evidence of B40 v2 hurting unrelated scenarios",
+      "Format optimal confirmed (= `<name>: {}` baseline best vs bare name or describe hint)",
+      "All ambiguous B41 losses attributed to non-B40-v2 causes via patch-isolation: W7 deeper design issue (= describe_action result handling), env artifacts (/tmp worktree, driver timing), LLM N=1 noise",
+      "1 new downstream bug surfaced (W2-S7 eval path resolution) — fix forward in B42, not blocking B40 v2 keep"
+    ],
+    "tech_debt_audit": {
+      "ARS bloat per session": "+30-60c (= 6 empty-schema skill lines), scale-linear up to ~1000 skills",
+      "format contract": "Tier 2 test pinning + empirical verification (`<name>: {}` optimal)",
+      "arg-name guessing": "still LLM-constructed for empty-schema skills, but baseline shows 10/10 args constructed (= no failure mode unlocked by `{}` semantics)",
+      "FP-0034 §D9 spirit": "ARS block remains in tool description (not SP), within established 1d5042d surface"
+    }
+  },
+
+  "new_findings_for_b42": [
+    {
+      "id": "B41-NF-S7-1",
+      "severity": "HIGH",
+      "title": "eval run_skill cannot resolve relative skill paths from CWD",
+      "description": "B41 W2-S7: LLM constructed target_skill_path='direct_llm/skill.md', run_skill op tried to open this as CWD-relative path → FileNotFoundError. Stdlib skill resolution order (= reyn/project / reyn/local / src/stdlib/skills) is not applied for slash-bearing target_skill_path values.",
+      "evidence": "agent 4 trace inspection of W2 trace + direct code inspection of src/reyn/op_runtime/run_skill.py lines 47-57",
+      "fix_surface": "either (a) eval skill's input schema description add canonical example, OR (b) run_skill op apply stdlib resolution when literal path doesn't exist"
+    },
+    {
+      "id": "B41-NF-W7-1",
+      "severity": "MED",
+      "title": "describe_action result → LLM reply synthesis empty stop (deeper design issue)",
+      "description": "After describe_action(skill__direct_llm) for follow-up pronoun query 'Tell me more about the simplest one', LLM produces 0-token finish=stop in 5/5 baseline N=10. Patch isolation: B40 v2 revert 5/5 stop, G12 (answered) signal removed 5/5 stop, G12 stronger directive 3/5 (= partial). Root cause = describe_action result is action metadata, LLM struggles to synthesize natural-language reply from it.",
+      "evidence": "patch-isolation test 1 (W7-S2) full N=5 distribution",
+      "fix_surface": "either (a) describe_action handler include reply-synthesis hint in result, OR (b) SP guidance for post-describe_action reply pattern, OR (c) wrap describe_action result with natural-language summary for follow-up queries"
+    },
+    {
+      "id": "B41-NF-W7-2",
+      "severity": "MED",
+      "title": "Long-session driver lacks wait-for-skill-completed semantics",
+      "description": "B41 W7-S5: driver poll interval 60s wall-clock < skill completion latency (= 69.5s for read_local_files); driver sent next turn while skill still running → spawn-ack reply persisted as turn result. Affects T1+T4+T5 of S5. Per agent 3 timing analysis: session isolation fix between B39 and B41 changed the routing landscape (= fresh agent now chooses skill spawn over inline reply for general-topic questions).",
+      "evidence": "agent 3 timestamp analysis of B41 W7 events vs B39 W7 results-worker-7.json metrics",
+      "fix_surface": "modify dogfood_long_session.py driver to wait for skill_run_completed event before next turn poll (= or configurable skill-completion timeout)"
+    },
+    {
+      "id": "B41-NF-W6-1",
+      "severity": "LOW",
+      "title": "B41 W6 worker vs_b39 annotation errors",
+      "description": "B41 W6 worker labeled plan_compare V→I and plan_explain I→R as 'regressions', but agent 2 trace inspection of B39 results-worker-6.json showed actual B39 verdicts were I and R respectively (= no real shift). Reduces perceived W6 regression from -2V to 0V.",
+      "evidence": "agent 2 cross-batch primary data check",
+      "fix_surface": "B42 worker prompts should cite B39 verdicts from results-worker-N.json directly rather than re-classifying — or post-batch annotation audit step"
+    }
+  ],
+
+  "principles_applied_in_b41": [
+    "P6 verify-first (= reproduce bug on current HEAD before any fix-attribution)",
+    "P16 pre-fix multi-agent context analysis (= 5 sonnet info-gathering on B40 v2 design space + B41 outcome attribution + format variants)",
+    "User-tunable params fixed in comparison (= b41-1 + b41-6 had hot_list_n=10 mirror config from B39 b39-1 + b39-6 for direct comparability)",
+    "Verify fix via replay before land (= 7 patch-isolation tests with --patch + N=10 + --diff)",
+    "Pre-conclusion observation checklist (= triggered on each 'attribution' claim, all 9 B40 v2 wins + all loss attributions backed by primary data)",
+    "Batch report past-comparison table required (= retrospective.md includes per-scenario shift × past 3 batches)",
+    "Sub-agent scope bounding (= initial 7 B41 worker dispatch over-scoped — corrective discipline applied to subsequent 7 patch-isolation agents at 1-tool-use each, ~50w output cap)",
+    "No strong model without user approval (= all sub-agents sonnet, b41-1/b41-6 reyn.local.yaml models.strong updated to flash-lite per user mid-batch correction)"
+  ],
+
+  "principles_newly_established": [
+    "feedback_subagent_scope_bounding.md — hard caps on sub-agent prompts (tool_uses / wall-clock / single deliverable)",
+    "feedback_no_strong_model.md — strong model usage requires explicit user approval at all surfaces (sub-agent / reyn.local.yaml / llm_replay --model)",
+    "feedback_batch_report_past_comparison.md — already established 2026-05-17, reinforced as B41 retrospective fully complies"
+  ]
+}

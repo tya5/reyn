@@ -1,0 +1,149 @@
+{
+  "batch": "B41",
+  "worker": 3,
+  "head": "dd896f2c",
+  "date": "2026-05-18",
+  "agent_prefix": "dogfood-b41-3-sN",
+  "port": 8103,
+  "worktree": "/private/tmp/reyn-worktrees/b41-3",
+  "state_mode": "fresh",
+  "scenario_set": "control_ir_ops",
+  "config": {
+    "hot_list_n": 20,
+    "reyn_local_yaml": false
+  },
+  "verdicts": {
+    "V": 3,
+    "I": 1,
+    "R": 5,
+    "B": 0
+  },
+  "vs_b39": {
+    "b39_verdicts": { "V": 3, "I": 0, "R": 6, "B": 0 },
+    "deltas": { "V": 0, "I": 1, "R": -1, "B": 0 }
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "short_id": "s1",
+      "verdict": "V",
+      "b39_verdict": null,
+      "events_observed": ["routing_decided", "tool_executed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_summary": "LLM returned full contents of docs/concepts/principles.md, mentioned P1-P8 with descriptions.",
+      "notes": "Correct file read via chat router. All rubric criteria met."
+    },
+    {
+      "id": "file_glob_grep",
+      "short_id": "s2",
+      "verdict": "I",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_summary": "LLM correctly used file__glob then file__grep (hot_list_alias source). Reported no skill.md under src/ mentions judge_output.",
+      "notes": "B39 R was due to wrong tool routing (file__list vs file__glob). B41: correct file__glob + file__grep routing confirmed. Rubric unmet because no skill.md under src/ actually contains 'judge_output' — scenario premise mismatch with environment. Verdict I (routing fix confirmed, rubric unverifiable due to environment). Delta: R→I."
+    },
+    {
+      "id": "web_search_query",
+      "short_id": "s3",
+      "verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "web_search_started", "web_search_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": ["router_empty_response_detected"],
+      "reply_summary": "System reported empty response. Web search events emitted but LLM produced no reply text.",
+      "notes": "Web search ops executed successfully (correct events), but post-search LLM step produced empty response. router_empty_response_detected. Rubric not met — no search results reported."
+    },
+    {
+      "id": "web_fetch_url",
+      "short_id": "s4",
+      "verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "tool_failed"],
+      "events_missing": ["web_fetch_started"],
+      "events_forbidden_seen": [],
+      "reply_summary": "LLM reported permission restriction preventing external website access.",
+      "notes": "web_fetch tool failed with permission error. web_fetch_started event not emitted (required). Consistent structural R."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "short_id": "s5",
+      "verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_summary": "Sandbox library error: libpython3.12.dylib outside sandbox. Did not report output '4'.",
+      "notes": "All required events present but sandbox environment failure. Consistent structural R (sandbox dylib issue)."
+    },
+    {
+      "id": "lint_a_skill",
+      "short_id": "s6",
+      "verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided", "skill_run_spawned", "skill_run_failed", "workflow_aborted"],
+      "events_missing": ["lint_completed"],
+      "events_forbidden_seen": [],
+      "reply_summary": "eval skill encountered error: target skill (index_events) not found.",
+      "notes": "Lint via eval skill. Skill resolution failed. lint_completed never emitted. Consistent structural R."
+    },
+    {
+      "id": "recall_indexed_source",
+      "short_id": "s7",
+      "verdict": "V",
+      "b39_verdict": "R",
+      "events_observed": ["routing_decided (rag.operation__recall)"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_summary": "LLM correctly reported no sources configured for recall, offered web search alternative.",
+      "notes": "B39 R was due to validation_error + LLM omitting required args. B41: routing_decided with rag.operation__recall, tool_failed with KeyError 'sources' (no sources configured — expected in fresh environment), NO validation_error. Reply satisfies rubric branch: 'clearly reports that no indexed sources were found'. Delta: R→V."
+    },
+    {
+      "id": "judge_output_direct",
+      "short_id": "s8",
+      "verdict": "V",
+      "b39_verdict": "V",
+      "events_observed": ["routing_decided", "skill_run_spawned", "tool_executed", "workflow_finished", "postprocessor_step_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_summary": "Artifact evaluated and passed all criteria. Score 1.0, both criteria met, verdict 'passed'.",
+      "notes": "S8 redesign (B38/B39) maintained V. workflow_finished + postprocessor wrap confirmed. No validation_error. Rubric fully met."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "short_id": "s9",
+      "verdict": "R",
+      "b39_verdict": "R",
+      "events_observed": ["tool_called (describe_action)"],
+      "events_missing": ["skill_run_spawned", "user_intervention_requested", "user_intervention_received"],
+      "events_forbidden_seen": ["router_empty_response_detected"],
+      "reply_summary": "Turn 1: empty response after describe_action call. Turn 2: LLM asked about skill goal (not my_demo_skill reference).",
+      "notes": "LLM called describe_action for skill__skill_builder but never invoked the skill. No user_intervention events. Consistent structural R."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "NF-W3-1",
+      "severity": "LOW",
+      "scenario": "file_glob_grep",
+      "description": "S2 routing fix confirmed: B41 correctly routes to file__glob + file__grep (B39 R was wrong tool). However rubric is permanently unverifiable in this environment because no skill.md under src/ contains 'judge_output'. Scenario premise should be updated to use a search term that actually exists.",
+      "recommendation": "Update S2 input to search for a term that exists in skill.md files under src/ (e.g., 'entry_phase' or 'judge') to make rubric verifiable."
+    },
+    {
+      "id": "NF-W3-2",
+      "severity": "INFO",
+      "scenario": "recall_indexed_source",
+      "description": "S7 improved R→V: B39 had validation_error + arg omission. B41 has no validation_error — tool correctly reaches recall op but fails on KeyError 'sources' (no sources configured). LLM gracefully reports the environment state. This is a positive signal: validation path is clean.",
+      "recommendation": "Monitor across batches. If 'sources' config can be set up, S7 may reach a stronger V."
+    },
+    {
+      "id": "NF-W3-3",
+      "severity": "MED",
+      "scenario": "web_search_query",
+      "description": "S3: web_search_started + web_search_completed emitted (op correct) but post-search LLM step returns empty (router_empty_response_detected). This is the same post-tool empty-stop pattern as documented in feedback_envelope_layer_fix.md. The web search itself works; the follow-up synthesis step fails.",
+      "recommendation": "Investigate envelope layer for post-web-search turns. May benefit from same (answered) injection pattern as post-tool empty-stop fix."
+    }
+  ]
+}
