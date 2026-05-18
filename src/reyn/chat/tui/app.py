@@ -563,6 +563,16 @@ class ReynTUIApp(App):
                 await self._dispatch_slash_no_session(text, conv)
         else:
             if session is not None:
+                # Optimistic sticky: the skill_runner emits its first
+                # ``status="thinking…"`` ~0.5s after submit (= when the
+                # LLM request is about to leave). Without this line the
+                # sticky bar is blank in that gap, which is most
+                # noticeable right after a Ctrl+C cancel (the user just
+                # cleared the previous spinner and wants instant
+                # confirmation the new turn is starting). When the
+                # natural ``thinking…`` message arrives, it overwrites
+                # with identical text — no flicker.
+                conv.show_status("thinking…", kind="thinking")
                 await session.submit_user_text(text)
             else:
                 from rich.text import Text as RichText
