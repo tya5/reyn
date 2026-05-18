@@ -1699,10 +1699,25 @@ class RouterLoop:
                     "tool_calls": tool_calls,
                 })
                 for tc, r in zip(tool_calls, tool_results):
+                    # B41-NF-W7-1: tool handlers may attach `_post_text` to
+                    # the result dict to surface a textual directive after
+                    # the JSON-serialised content (= a place the LLM reads
+                    # as instruction, not as part of the structured data).
+                    # The field is stripped before JSON serialisation and
+                    # appended outside the JSON body. P3-clean: OS handles
+                    # the serialisation contract, tool handler declares
+                    # intent via an optional field.
+                    post_text: str | None = None
+                    if isinstance(r, dict) and isinstance(r.get("_post_text"), str):
+                        post_text = r["_post_text"]
+                        r = {k: v for k, v in r.items() if k != "_post_text"}
+                    content_str = json.dumps(r, default=str)
+                    if post_text:
+                        content_str = f"{content_str}\n\n---\n{post_text}"
                     messages.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
-                        "content": json.dumps(r, default=str),
+                        "content": content_str,
                     })
                 continue
 
