@@ -131,6 +131,13 @@ class ErrorBox(Widget):
     def compose(self) -> ComposeResult:
         yield Label(self._header_text(), classes="eb-header")
 
+        # The trace hint only makes sense when this error came from a
+        # skill / op run — slash-command usage errors (= no skill_name,
+        # no run_id_short) don't emit events, so pointing the user at
+        # ``Ctrl+B → events`` would send them to a tab that has no row
+        # for the failure they just saw.
+        has_trace = bool(self._skill_name or self._run_id_short)
+
         if self._details:
             lines = self._details.splitlines()
             visible = lines[:5]
@@ -139,12 +146,18 @@ class ErrorBox(Widget):
             if overflow > 0:
                 detail_text += f"\n… {overflow} more"
             yield Static(detail_text, classes="eb-details")
-            yield Label("Ctrl+B → events for full trace", classes="eb-hint")
+            if has_trace:
+                yield Label(
+                    "Ctrl+B → events for full trace", classes="eb-hint",
+                )
         else:
             # No details supplied — fall back to the full (untruncated) message
             # so long errors are still readable when the box is expanded.
             yield Static(self._message, classes="eb-details")
-            yield Label("Ctrl+B → events for full trace", classes="eb-hint")
+            if has_trace:
+                yield Label(
+                    "Ctrl+B → events for full trace", classes="eb-hint",
+                )
 
     # ── interaction ───────────────────────────────────────────────────────────
 
