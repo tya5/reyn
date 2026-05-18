@@ -216,9 +216,10 @@ class CompactionController:
             },
         }
 
+        new_turn_count = len(candidates)
         self._events.emit(
             "compaction_started",
-            new_turn_count=len(candidates),
+            new_turn_count=new_turn_count,
             covers_through_seq=candidates[-1].seq,
             had_previous=previous_summary is not None,
         )
@@ -240,6 +241,7 @@ class CompactionController:
         self._append_history(summary_msg)
         self._events.emit(
             "compaction_completed",
+            new_turn_count=new_turn_count,
             covers_through_seq=covers,
             section_lengths={
                 k: len(v) if isinstance(v, list) else len(str(v))
