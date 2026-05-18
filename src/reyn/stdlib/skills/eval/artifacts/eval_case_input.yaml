@@ -14,7 +14,12 @@ schema:
       description: Path to the eval.md spec file (for reference in the output).
     target_skill_path:
       type: string
-      description: Path to the target skill's skill.md file.
+      description: |
+        Reference to the target skill. Three accepted forms:
+        - bare skill name: "direct_llm" (resolves via reyn/local → reyn/project → stdlib/skills)
+        - short qualified: "direct_llm/skill.md" (same resolution applied to the leading segment)
+        - explicit relative path: "reyn/local/my_app/skill.md" (passed through as-is)
+        Prefer the bare name for stdlib skills.
     skill_root:
       type: string
       description: Skill-tree root to use when loading the target skill. Defaults to the skill's parent directory.

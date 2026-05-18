@@ -14,6 +14,52 @@ from .context import OpContext
 _log = logging.getLogger(__name__)
 
 
+def _resolve_skill_ref(skill_ref: str) -> tuple[str, Path, str | None]:
+    """Resolve a sub-skill reference to ``(skill_md_path, path_for_hash, skill_root)``.
+
+    Accepts three reference shapes on the ``op.skill`` field:
+
+    1. **Bare name** — e.g. ``"direct_llm"``. Resolved via
+       ``resolve_skill_path`` search order (reyn/local → reyn/project →
+       stdlib/skills).
+    2. **Short ``<name>/skill.md``** — e.g. ``"direct_llm/skill.md"``.
+       B41-NF-S7-1: eval router LLMs construct this shape when describing a
+       stdlib skill (= ``target_skill_path`` field name implies a path so the
+       LLM appends ``/skill.md`` to the bare name). Without this fallback every
+       such invocation hits ``FileNotFoundError`` relative to CWD. Resolved
+       by stripping the trailing ``/skill.md`` and applying
+       ``resolve_skill_path`` to the leading segment; on resolution miss the
+       literal-path interpretation is preserved for pre-B41 callers who
+       genuinely pass a 2-segment relative path.
+    3. **Multi-segment literal path** — e.g.
+       ``"reyn/local/my_app/skill.md"``. Passed through to
+       ``load_dsl_skill`` as written.
+    """
+    from reyn.skill.skill_paths import resolve_skill_path
+
+    parts = skill_ref.split("/")
+    if "/" not in skill_ref and not skill_ref.endswith(".md"):
+        # form 1
+        skill_dir, inferred_root = resolve_skill_path(skill_ref)
+        skill_md_path = str(skill_dir / "skill.md")
+        path_for_hash = skill_dir / "skill.md"
+        skill_root = str(inferred_root) if inferred_root else None
+        return skill_md_path, path_for_hash, skill_root
+    if len(parts) == 2 and parts[1] == "skill.md" and parts[0]:
+        # form 2: ``<name>/skill.md`` — try stdlib resolution by the
+        # leading segment first.
+        try:
+            skill_dir, inferred_root = resolve_skill_path(parts[0])
+            skill_md_path = str(skill_dir / "skill.md")
+            path_for_hash = skill_dir / "skill.md"
+            skill_root = str(inferred_root) if inferred_root else None
+            return skill_md_path, path_for_hash, skill_root
+        except FileNotFoundError:
+            pass  # fall through to form 3 literal-path interpretation
+    # form 3
+    return skill_ref, Path(skill_ref), None
+
+
 def _compute_skill_hash(skill_path: Path) -> str:
     """Return the sha256 hex digest of a skill.md file's raw bytes.
 
@@ -33,7 +79,6 @@ def _compute_skill_hash(skill_path: Path) -> str:
 
 async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor", "control_ir"]) -> dict:
     from reyn.compiler import load_dsl_skill
-    from reyn.skill.skill_paths import resolve_skill_path
     from reyn.skill.sub_skill_runner import invoke_sub_skill
 
     # Resolve sub-skill: prefer preloaded preprocessor sub-skills (set up at compile time)
@@ -44,16 +89,7 @@ async def handle(op: RunSkillIROp, ctx: OpContext, caller: Literal["preprocessor
 
     skill_md_path_for_hash: Path | None = None
     if sub_skill is None:
-        skill_ref = op.skill
-        if "/" not in skill_ref and not skill_ref.endswith(".md"):
-            skill_dir, inferred_root = resolve_skill_path(skill_ref)
-            skill_md_path = str(skill_dir / "skill.md")
-            skill_md_path_for_hash = skill_dir / "skill.md"
-            skill_root = str(inferred_root) if inferred_root else None
-        else:
-            skill_md_path = skill_ref
-            skill_md_path_for_hash = Path(skill_ref)
-            skill_root = None
+        skill_md_path, skill_md_path_for_hash, skill_root = _resolve_skill_ref(op.skill)
         sub_skill = load_dsl_skill(skill_md_path, skill_root=skill_root)
     else:
         # Pre-loaded preprocessor sub-skill: derive path from the skill spec if
