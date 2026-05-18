@@ -488,7 +488,16 @@ def render_events(
     if filter_set:
         visible = [ev for ev in all_events if ev.get("type") in filter_set]
     else:
-        visible = all_events
+        visible = list(all_events)
+
+    # File-path iteration order doesn't match wall-clock: the events root
+    # holds agents/<id>/events/*.jsonl alongside direct/<id>/skill_runs/*
+    # and rglob walks alphabetically, so a stale ``direct/`` test run lands
+    # at the end of ``all_events`` and dominates the tail window even
+    # though those events are from yesterday. Sort by event timestamp
+    # (ISO-8601 strings sort chronologically) so ``visible[-tail:]``
+    # reflects recency rather than filesystem layout.
+    visible.sort(key=lambda ev: ev.get("timestamp", ""))
 
     if not visible:
         # Two distinct empty states:

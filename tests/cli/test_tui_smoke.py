@@ -695,6 +695,60 @@ async def test_preview_pane_shift_jk_moves_parent_tab_cursor():
         assert panel._agents_cursor == 0
 
 
+# ── test: right panel — events tab chronological sort ───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_events_tab_returns_in_timestamp_order(tmp_path):
+    """Tier 2: render_events returns events sorted by timestamp.
+
+    File-path iteration order doesn't match wall-clock (e.g. ``agents/``
+    < ``direct/`` alphabetically, so a stale ``direct/`` run lands at
+    the end of all_events and dominates the tail window). Pin that the
+    tail window reflects recency rather than filesystem layout.
+    """
+    import json as _json
+
+    from reyn.chat.tui.widgets.right_panel.events_tab import render_events
+
+    events_root = tmp_path / ".reyn" / "events"
+    # Two source dirs — ``agents/`` is alphabetically earlier but holds the
+    # NEWER events; ``direct/`` is alphabetically later but holds the OLDER
+    # events. The unsorted code path would surface the old ``direct/``
+    # events as the "tail" because they were extended last.
+    (events_root / "agents" / "default").mkdir(parents=True)
+    (events_root / "direct" / "stale").mkdir(parents=True)
+    (events_root / "agents" / "default" / "today.jsonl").write_text(
+        _json.dumps({
+            "type": "phase_started", "timestamp": "2026-05-18T10:00:00Z",
+            "data": {"phase": "p_today"},
+        }) + "\n",
+        encoding="utf-8",
+    )
+    (events_root / "direct" / "stale" / "old.jsonl").write_text(
+        _json.dumps({
+            "type": "phase_started", "timestamp": "2026-05-16T03:00:00Z",
+            "data": {"phase": "p_old"},
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    _, visible = render_events(
+        tmp_path, event_filter_idx=0, event_tail_idx=0, cursor=0,
+        cache={}, filelist_cache=None,
+    )
+    timestamps = [ev.get("timestamp", "") for ev in visible]
+    # render_events returns the windowed slice reversed (= newest first
+    # for cursor 0 = "most recent"). The chronological-sort contract is
+    # therefore "descending in the visible list".
+    assert timestamps == sorted(timestamps, reverse=True), (
+        f"events should be in reverse-chronological order, got {timestamps!r}"
+    )
+    # The newer event (today) should be at position 0 (= newest first)
+    # regardless of which directory it came from.
+    assert visible[0]["data"]["phase"] == "p_today"
+
+
 # ── test: right panel — event filter cycling ─────────────────────────────────
 
 @pytest.mark.asyncio
