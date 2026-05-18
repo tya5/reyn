@@ -37,6 +37,31 @@ class ChatLifecycleForwarder:
         if handler:
             handler(event.data)
 
+    # ── Hot list (issue #192) ────────────────────────────────────────────
+
+    def on_hot_list_updated(self, data: dict) -> None:
+        """Forward the new full ranking to the outbox as a structured signal.
+
+        Emits ``OutboxMessage(kind="hot_list_updated", text="",
+        meta={"ranking": [...]})`` carrying the full sorted ranking
+        ``[{qualified_name, freq, last_ts}, ...]``. The Memory tab (=
+        tui-coder follow-up) subscribes to this kind to refresh its
+        per-entry "hot" badges / sub-section without polling.
+
+        ``text`` is empty because this is a data signal, not a display
+        line — the conv pane's ``_format_message`` falls through to its
+        unknown-kind handler which is suppressed for non-display kinds.
+        """
+        ranking = data.get("ranking") or []
+        try:
+            self.outbox.put_nowait(OutboxMessage(
+                kind="hot_list_updated",
+                text="",
+                meta={"ranking": list(ranking)},
+            ))
+        except asyncio.QueueFull:
+            pass
+
     # ── Compaction (issue #162) ──────────────────────────────────────────
 
     def on_compaction_completed(self, data: dict) -> None:

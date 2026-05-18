@@ -600,8 +600,21 @@ class ChatSession:
         ):
             try:
                 from reyn.tools.action_usage_tracker import ActionUsageTracker
+                # Issue #192: wire a callback that emits ``hot_list_updated``
+                # on every reorder of the ranking. Lambda defers
+                # ``self._chat_events`` resolution to call time (it's
+                # constructed below at the EventLog init); record() runs
+                # only during user turns, well after construction completes.
+                def _on_hot_list_changed(ranking: list[dict]) -> None:
+                    try:
+                        self._chat_events.emit(
+                            "hot_list_updated", ranking=ranking,
+                        )
+                    except Exception:
+                        pass
                 self._action_usage_tracker = ActionUsageTracker(
                     persist_path=Path(".reyn") / "state" / "action_usage.jsonl",
+                    on_ranking_changed=_on_hot_list_changed,
                 )
             except Exception:
                 self._action_usage_tracker = None
