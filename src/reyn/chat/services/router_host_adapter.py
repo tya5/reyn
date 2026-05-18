@@ -189,6 +189,10 @@ class RouterHostAdapter:
         self._allowed_mcp = allowed_mcp
         self._perm = permission_resolver
         self._mcp_servers = mcp_servers
+        # Lazy per-session cache for MCP tools — populated by
+        # ensure_mcp_tools_cached() on the first user turn; None means
+        # "not yet probed". See FP-0037 issue #160.
+        self._mcp_tools_cache: dict[str, list[dict]] | None = None
         self._project_context = project_context
         self._events = events
         self._resolver = resolver
@@ -814,19 +818,89 @@ class RouterHostAdapter:
         return raw if isinstance(raw, dict) else {}
 
     def _get_mcp_servers_for_router(self) -> list[dict]:
-        """Return [{name, description}, ...] for configured MCP servers. [] if none."""
+        """Return [{name, description, tools?}, ...] for configured MCP servers.
+
+        ``tools`` is included when `ensure_mcp_tools_cached()` has populated
+        the per-session tools cache; absent otherwise. Callers downstream
+        (= `_enumerate_category("mcp.tool")` in `universal_catalog.py` and
+        `router_loop.py`'s `mcp.tool__*` alias builder) iterate `tools`
+        defensively so the missing-tools case is graceful.
+
+        Issue #160 / FP-0037 context: chat startup intentionally does NOT
+        probe MCP servers (= zero-startup-latency goal). The first user
+        turn calls `ensure_mcp_tools_cached()` to fill the cache once per
+        session; subsequent turns read it without additional probes.
+        """
         servers = self._mcp_servers_flat()
         if not servers:
             return []
+        tools_cache = self._mcp_tools_cache or {}
         result: list[dict] = []
         for name, cfg in servers.items():
             if not isinstance(cfg, dict):
                 continue
-            result.append({
+            entry: dict = {
                 "name": name,
                 "description": cfg.get("description", ""),
-            })
+            }
+            cached_tools = tools_cache.get(name)
+            if cached_tools is not None:
+                entry["tools"] = cached_tools
+            result.append(entry)
         return result
+
+    async def ensure_mcp_tools_cached(
+        self, *, per_server_timeout: float = 5.0,
+    ) -> None:
+        """Probe every configured MCP server's tool list and cache the
+        results for the session lifetime.
+
+        Called by `ChatSession._handle_user_message` at the start of each
+        user turn. The first call populates the cache (= lazy, post-startup,
+        per FP-0037 issue #160). Subsequent calls are no-ops.
+
+        Probes run in parallel via `asyncio.gather` with `return_exceptions=True`
+        so a single slow / unreachable server does not block the others.
+        Per-server timeout caps each probe; on timeout or exception the
+        server is cached as an empty list (= still cached, so we don't
+        re-probe a known-broken server every turn).
+
+        The result feeds `_get_mcp_servers_for_router` which is consumed
+        by `_enumerate_category("mcp.tool")` (= list_actions visibility)
+        and the `mcp.tool__*` direct-alias builder in `router_loop.py`.
+        """
+        import asyncio
+
+        if self._mcp_tools_cache is not None:
+            return
+        servers = self._mcp_servers_flat()
+        if not servers:
+            self._mcp_tools_cache = {}
+            return
+
+        async def _probe_one(server_name: str) -> tuple[str, list[dict]]:
+            try:
+                tools = await asyncio.wait_for(
+                    self._mcp_list_tools_cb(server_name),
+                    timeout=per_server_timeout,
+                )
+            except (TimeoutError, asyncio.TimeoutError):
+                return server_name, []
+            except Exception:  # noqa: BLE001 — adapter must never raise
+                return server_name, []
+            # _mcp_list_tools may return [{"error": "..."}] on failure;
+            # treat as empty so the cache shape stays uniform.
+            cleaned = [
+                t for t in (tools or [])
+                if isinstance(t, dict) and "error" not in t and t.get("name")
+            ]
+            return server_name, cleaned
+
+        results = await asyncio.gather(
+            *(_probe_one(name) for name in servers),
+            return_exceptions=False,  # _probe_one handles its own errors
+        )
+        self._mcp_tools_cache = dict(results)
 
     def make_router_op_context(self) -> Any:
         """Build an OpContext for router-initiated file / MCP / web ops.
