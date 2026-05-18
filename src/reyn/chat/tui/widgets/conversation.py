@@ -464,7 +464,7 @@ class ConversationView(Widget):
         """
         self._snap_to_bottom()
         self._consume_empty_hint()
-        self._maybe_write_header("you", "you", "bold #4abbb5", "#1f5856")
+        self._maybe_write_header("you", "you", "bold #4abbb5", "#666666")
         self._write_body(Text(text))
         self._write_log(Text(""))
 
@@ -480,7 +480,7 @@ class ConversationView(Widget):
         """
         self._consume_empty_hint()
         self.hide_status()
-        self._maybe_write_header("system", "system", "bold #888888", "#444444")
+        self._maybe_write_header("system", "system", "bold #888888", "#666666")
         for line in (msg.text or "").splitlines() or [""]:
             self._write_body(Text(line))
         self._write_log(Text(""))
@@ -500,7 +500,7 @@ class ConversationView(Widget):
         # _AMBER for agent identity (header label) — distinct from _CORAL
         # which is reserved for interactive affordances (/expand, picker
         # selection caret, panel cursor ▶) and "you are here" indicators.
-        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#666666")
         if msg.text:
             self._write_agent_markdown_with_fold(msg.text)
         self._write_log(Text(""))
@@ -630,7 +630,7 @@ class ConversationView(Widget):
         self._consume_empty_hint()
         label = agent_name if agent_name else "reyn"
         # Same agent-identity styling as _render_agent_markdown (_AMBER).
-        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#5a2020")
+        self._maybe_write_header("reyn", label, "bold " + _AMBER, "#666666")
         row = StreamingRow(prefix="", id=f"stream_{msg_id[:8]}")
         self._stream_rows[msg_id] = row
         self.mount(row)
