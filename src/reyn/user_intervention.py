@@ -79,6 +79,15 @@ class UserIntervention:
     suggestions: list[str] = field(default_factory=list)               # ask_user only
     run_id: str | None = None
     skill_name: str | None = None
+    # issue #268: identifies the channel that initiated this intervention
+    # (= "tui:<session>" / "a2a:<run_id>" / etc.). When the origin channel
+    # closes while the iv is unresolved, the iv becomes **stalled** in
+    # the agent layer — other channels can observe / discard / claim it
+    # via ``ChatSession.list_stalled_interventions`` /
+    # ``discard_pending_intervention`` / ``claim_pending_intervention``.
+    # ``None`` (= legacy default) skips the origin-pin routing entirely
+    # so existing in-tree callers + tests see no change in behaviour.
+    origin_channel_id: str | None = None
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
     future: asyncio.Future = field(default=None)  # type: ignore[assignment]
 
@@ -95,7 +104,7 @@ class UserIntervention:
         unchanged through ``AgentSnapshot.outstanding_interventions`` and
         the WAL ``intervention_dispatched.iv_dict`` field.
         """
-        return {
+        out: dict = {
             "kind": self.kind,
             "prompt": self.prompt,
             "detail": self.detail,
@@ -108,6 +117,9 @@ class UserIntervention:
             "skill_name": self.skill_name,
             "id": self.id,
         }
+        if self.origin_channel_id is not None:
+            out["origin_channel_id"] = self.origin_channel_id
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserIntervention":
@@ -131,6 +143,7 @@ class UserIntervention:
             suggestions=list(data.get("suggestions") or []),
             run_id=data.get("run_id"),
             skill_name=data.get("skill_name"),
+            origin_channel_id=data.get("origin_channel_id"),
             id=data.get("id") or uuid.uuid4().hex,
         )
 
