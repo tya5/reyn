@@ -592,7 +592,44 @@ async def serve_stdio(
     from mcp.server.stdio import stdio_server
 
     server = build_server(registry, timeout=timeout)
-    init_options = server.create_initialization_options()
+    # issue #271 M3: capability advertising. Declare what this server
+    # actually emits + handles so MCP clients can negotiate features
+    # before issuing send_to_agent calls. Reality must match the claim
+    # (= avoid the #267 Z-b "capability claim vs reality" mismatch
+    # pattern by deriving each entry from a concrete production wire):
+    #
+    #   - NotificationOptions: tools/prompts/resources lists are STATIC
+    #     (= ``_list_tools`` returns the same 2 tools every call, no
+    #     notify_list_changed call sites in src/reyn/mcp_server.py).
+    #   - experimental ``reyn.progress.skill_lifecycle``: PR #279 wired
+    #     ``_MCPProgressBridge`` to subscribe chat_events + emit
+    #     ``notifications/progress`` for phase_started / llm_called /
+    #     act_executed during send_to_agent.
+    #   - experimental ``reyn.cancellation.cooperative``: PR #279 wired
+    #     ``notifications/cancelled`` propagation through
+    #     asyncio.CancelledError → in-flight skill interruption.
+    from mcp.server import NotificationOptions
+
+    init_options = server.create_initialization_options(
+        notification_options=NotificationOptions(
+            prompts_changed=False,
+            resources_changed=False,
+            tools_changed=False,
+        ),
+        experimental_capabilities={
+            "reyn.progress.skill_lifecycle": {
+                "version": 1,
+                "events": [
+                    "phase_started",
+                    "llm_called",
+                    "act_executed",
+                ],
+            },
+            "reyn.cancellation.cooperative": {
+                "version": 1,
+            },
+        },
+    )
     try:
         async with stdio_server() as (read_stream, write_stream):
             await server.run(read_stream, write_stream, init_options)
