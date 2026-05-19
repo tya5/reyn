@@ -33,7 +33,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from reyn.chat.session import ChatSession
-from reyn.config import SafetyConfig, TimeoutConfig
+from reyn.config import OnLimitConfig, SafetyConfig, TimeoutConfig
 from reyn.events.agent_snapshot import AgentSnapshot
 from reyn.events.state_log import StateLog
 from reyn.llm.llm import LLMToolCallResult
@@ -130,6 +130,7 @@ def _make_session(
     agent_name: str = "test_agent",
     chain_timeout_seconds: float = 60.0,
     registry: _FakeRegistry | None = None,
+    on_limit: OnLimitConfig | None = None,
 ) -> ChatSession:
     """Build a ChatSession with WAL + per-test snapshot path via public kwargs.
 
@@ -137,8 +138,17 @@ def _make_session(
     ``enforce_listener_presence=True`` short-circuit does not fire — these
     tests exercise the chat-side intervention flow and resolve answers
     via ``deliver_answer`` themselves.
+
+    Tests that want the legacy "abort immediately on limit hit" behaviour
+    (= chain-timeout fires + emits chain_timeout_fired) pass
+    ``on_limit=OnLimitConfig(mode="unattended")`` explicitly; otherwise
+    the default ``interactive`` + ``ask_timeout=0`` is applied and the
+    registered listener keeps the prompt awaiting forever.
     """
-    safety = SafetyConfig(timeout=TimeoutConfig(chain_seconds=chain_timeout_seconds))
+    safety_kwargs = {"timeout": TimeoutConfig(chain_seconds=chain_timeout_seconds)}
+    if on_limit is not None:
+        safety_kwargs["on_limit"] = on_limit
+    safety = SafetyConfig(**safety_kwargs)
     session = ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
@@ -338,9 +348,16 @@ async def test_chain_timeout_fires_upstream_error_and_emits_event(tmp_path, monk
     peer_session = ChatSession(agent_name="slow_peer")
     registry.register("slow_peer", peer_session)
 
-    # Short timeout so it fires fast.
+    # Short timeout so it fires fast. Use unattended mode so the chain
+    # timeout fires as an abort + emits chain_timeout_fired event, rather
+    # than awaiting the new ``interactive`` default's user prompt that
+    # nothing would resolve in this test (the registered placeholder
+    # listener stays silent under ``ask_timeout=0``).
     session = _make_session(
-        tmp_path, registry=registry, chain_timeout_seconds=0.05
+        tmp_path,
+        registry=registry,
+        chain_timeout_seconds=0.05,
+        on_limit=OnLimitConfig(mode="unattended"),
     )
     session.is_attached = True
 
