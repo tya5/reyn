@@ -86,6 +86,24 @@ _PLAN_MAX_STEPS = 7
 # Overridable via ``reyn.yaml plan.retry_limit``.
 _PLAN_STEP_RETRY_LIMIT = 3
 
+# B42-NF-W6-1: continuation directive passed to RouterLoop's empty-stop
+# retry path. RouterLoop only consults this when the
+# ``REYN_EMPTY_STOP_RETRY=1`` env var is set, so the production code wires
+# the directive in unconditionally but no runtime behaviour changes
+# unless the operator opts in. The wording follows the existing plan-step
+# system prompt voice ("report what this step found") and adds an
+# explicit imperative trailer that trace-patch-replay confirmed flips
+# the post-tool empty-stop attractor (= 0/10 → 10/10 narration recovery
+# on the W6-S1 plan step). Cross-provider issue (= documented for Gemini,
+# Claude, GPT) — see Anthropic handling-stop-reasons docs + Hermes-agent
+# #9400 for prior art.
+_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE = (
+    "Now write your step report. Summarise the relevant content from the "
+    "tool result above in 2-5 paragraphs, citing concrete details (file "
+    "paths, header names, function names, line numbers, exact values). "
+    "Do not call another tool. Write the report text now."
+)
+
 # Exception types that must NOT be retried and must be re-raised to their
 # own safety-layer ask/abort path. Retrying them would cause double-ask or
 # bypass budget enforcement invariants.
@@ -861,6 +879,10 @@ async def execute_plan(
                 # 3 plan invocations because steps re-emitted plan).
                 exclude_tools={"plan"},
                 memo_provider=memo_provider,
+                # B42-NF-W6-1: directive used when ``REYN_EMPTY_STOP_RETRY=1``
+                # is set (= operator opt-in). Production wiring lands in the
+                # codebase but no default behaviour change.
+                empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
             )
             # FP-0031-C: auto-retry on transient step failures.
             # FP-0031-D: when retry budget is exhausted, ask the user via
@@ -939,6 +961,9 @@ async def execute_plan(
                             system_prompt_override=sys_prompt,
                             exclude_tools={"plan"},
                             memo_provider=memo_provider,
+                            # B42-NF-W6-1: same directive as the initial
+                            # sub_loop construction above.
+                            empty_stop_retry_directive=_PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE,
                         )
                         continue
                     # FP-0031-D: retry budget exhausted — ask user for extension.
