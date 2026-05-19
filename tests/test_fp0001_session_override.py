@@ -82,12 +82,20 @@ class _RecordingHandler:
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "test_agent") -> ChatSession:
-    """Build a ChatSession with I/O redirected to tmp_path."""
-    return ChatSession(
+    """Build a ChatSession with I/O redirected to tmp_path.
+
+    issue #254 Phase 1: register a placeholder listener so the registry's
+    ``enforce_listener_presence=True`` short-circuit does not fire — these
+    tests exercise the chain-scoped override path and may dispatch to the
+    fallback registry path when no override is set.
+    """
+    session = ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / f"{agent_name}_state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
+    session.register_intervention_listener("test")
+    return session
 
 
 def _make_iv(*, run_id: str | None = None, prompt: str = "Q?") -> UserIntervention:
@@ -104,7 +112,7 @@ def _build_registry(tmp_path: Path, agent_specs: list[tuple[str, str]]) -> Agent
         agent_dir = tmp_path / ".reyn" / "agents" / profile.name
         agent_dir.mkdir(parents=True, exist_ok=True)
         bt = BudgetTracker(CostConfig())
-        return ChatSession(
+        session = ChatSession(
             agent_name=profile.name,
             agent_role=profile.role,
             output_language="en",
@@ -112,6 +120,8 @@ def _build_registry(tmp_path: Path, agent_specs: list[tuple[str, str]]) -> Agent
             state_log=state_log,
             snapshot_path=agent_dir / "state" / "snapshot.json",
         )
+        session.register_intervention_listener("test")
+        return session
 
     registry = AgentRegistry(
         project_root=tmp_path,

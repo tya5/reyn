@@ -790,6 +790,12 @@ class ChatSession:
         )
         self._interventions = InterventionRegistry(
             on_announce=self._announce_intervention,
+            # issue #254 Phase 1: fail-closed when no listener is wired
+            # (= no TUI mounted, no A2A override, no test fixture
+            # registered). Without this, ``handle_limit_exceeded`` with
+            # ``ask_timeout_seconds=0`` would await an unresolvable future
+            # in test / headless contexts.
+            enforce_listener_presence=True,
         )
 
         # FP-0019 Wave 2 part 1: InterventionHandler — ask_user dispatch service.
@@ -1800,6 +1806,27 @@ class ChatSession:
     def unregister_intervention_override(self, chain_id: str) -> None:
         """Remove an override. Idempotent."""
         self._intervention_overrides.pop(chain_id, None)
+
+    # ── Listener registration (issue #254 Phase 1) ──────────────────────────
+
+    def register_intervention_listener(self, listener_id: str) -> None:
+        """Declare that *listener_id* will route user answers back into
+        the session (= call ``_maybe_answer_oldest_intervention`` /
+        ``_deliver_answer_to`` when the user responds).
+
+        Without an active listener, ``_dispatch_intervention`` would
+        enqueue a prompt that nothing will resolve — under
+        ``ask_timeout_seconds=0`` that turns into an infinite await.
+        Callers in real entry points register on mount (TUI app on
+        compose, A2A async-task wiring, etc.); tests register a
+        placeholder when they intend to drive the answer themselves via
+        ``_maybe_answer_oldest_intervention``. issue #254 Phase 1.
+        """
+        self._interventions.register_listener(listener_id)
+
+    def unregister_intervention_listener(self, listener_id: str) -> None:
+        """Remove *listener_id* from the active set. Idempotent."""
+        self._interventions.unregister_listener(listener_id)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
         """Thin wrapper → InterventionHandler.dispatch.

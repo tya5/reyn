@@ -35,12 +35,20 @@ from reyn.user_intervention import (
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path`` via public kwargs."""
-    return ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via public kwargs.
+
+    issue #254 Phase 1: register a placeholder listener so the registry's
+    ``enforce_listener_presence=True`` short-circuit does not fire — these
+    tests dispatch interventions and verify WAL persistence, treating the
+    test itself as the listener that will resolve via ``deliver_answer``.
+    """
+    session = ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
+    session.register_intervention_listener("test")
+    return session
 
 
 def _iv(*, run_id: str | None = None, choices: list[InterventionChoice] | None = None,

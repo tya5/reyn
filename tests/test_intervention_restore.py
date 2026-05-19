@@ -32,12 +32,19 @@ from reyn.events.state_log import StateLog
 
 
 def _make_session(tmp_path: Path, *, agent_name: str = "alpha") -> ChatSession:
-    """Build a ChatSession redirected to ``tmp_path`` via public kwargs."""
-    return ChatSession(
+    """Build a ChatSession redirected to ``tmp_path`` via public kwargs.
+
+    issue #254 Phase 1: register a placeholder listener so the registry's
+    ``enforce_listener_presence=True`` short-circuit does not fire — these
+    tests exercise restore + answer paths, acting as their own listener.
+    """
+    session = ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
+    session.register_intervention_listener("test")
+    return session
 
 
 def _snapshot_with_intervention(
@@ -96,6 +103,7 @@ async def test_registry_restore_all_includes_outstanding_interventions(tmp_path,
     # consistent with how the chat REPL builds them in production.
     def _factory(profile: AgentProfile):
         s = ChatSession(agent_name=profile.name, state_log=state_log)
+        s.register_intervention_listener("test")
         return s
     registry = AgentRegistry(
         project_root=tmp_path,

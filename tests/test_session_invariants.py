@@ -131,15 +131,23 @@ def _make_session(
     chain_timeout_seconds: float = 60.0,
     registry: _FakeRegistry | None = None,
 ) -> ChatSession:
-    """Build a ChatSession with WAL + per-test snapshot path via public kwargs."""
+    """Build a ChatSession with WAL + per-test snapshot path via public kwargs.
+
+    issue #254 Phase 1: register a placeholder listener so the registry's
+    ``enforce_listener_presence=True`` short-circuit does not fire — these
+    tests exercise the chat-side intervention flow and resolve answers
+    via ``deliver_answer`` themselves.
+    """
     safety = SafetyConfig(timeout=TimeoutConfig(chain_seconds=chain_timeout_seconds))
-    return ChatSession(
+    session = ChatSession(
         agent_name=agent_name,
         state_log=StateLog(tmp_path / "state.wal"),
         safety=safety,
         registry=registry,
         snapshot_path=tmp_path / f"{agent_name}_snapshot.json",
     )
+    session.register_intervention_listener("test")
+    return session
 
 
 def _wal_events(tmp_path: Path) -> list[dict]:

@@ -37,11 +37,67 @@ class InterventionRegistry:
         self,
         *,
         on_announce: Callable[[UserIntervention], Awaitable[None]],
+        enforce_listener_presence: bool = False,
     ) -> None:
+        """Construct an InterventionRegistry.
+
+        Parameters
+        ----------
+        on_announce:
+            Async callback invoked when an intervention is ready to be shown
+            to the user. The session supplies its ``_announce_intervention``
+            method here; tests supply a mock.
+        enforce_listener_presence:
+            When True, ``dispatch()`` short-circuits with an empty
+            ``InterventionAnswer`` if no listener is registered (= "no one
+            will call ``deliver_answer``, prompt would hang forever"). Caller
+            interprets the empty answer as a refusal — matching the existing
+            cancellation contract — and falls through to its legacy abort
+            path. Default False preserves the pre-issue-#254 behaviour for
+            direct registry users (= tests at this layer that construct a
+            registry without a real listener and feed answers manually via
+            ``deliver_answer``).
+
+            ChatSession (and any future top-level entry that owns its own
+            listener wiring) opts in via this flag so a missing listener
+            (= headless deploy, test without TUI mount, A2A peer offline)
+            fails closed instead of waiting on an unresolvable future.
+            issue #254 Phase 1.
+        """
         self._on_announce = on_announce
         self._active: dict[str, UserIntervention] = {}
         # Preserves FIFO emission order; gives head-of-queue semantics.
         self._order: deque[str] = deque()
+        # issue #254 Phase 1: listener-presence guard against forever-await.
+        self._enforce_listener_presence = enforce_listener_presence
+        self._listeners: set[str] = set()
+
+    # ── Listener registration (issue #254 Phase 1) ───────────────────────────
+
+    def register_listener(self, listener_id: str) -> None:
+        """Mark *listener_id* as actively able to resolve interventions.
+
+        A listener is any entity that has committed to eventually calling
+        ``deliver_answer`` for queued interventions — in practice the
+        attached TUI app, an A2A peer override, or a test fixture that
+        will drive ``_maybe_answer_oldest_intervention`` manually. The
+        registry uses the set's emptiness to decide whether ``dispatch``
+        should short-circuit (when ``enforce_listener_presence=True``).
+        Calling twice with the same id is idempotent.
+        """
+        self._listeners.add(listener_id)
+
+    def unregister_listener(self, listener_id: str) -> None:
+        """Remove *listener_id* from the active set. Idempotent."""
+        self._listeners.discard(listener_id)
+
+    def has_active_listener(self) -> bool:
+        """Return True iff at least one listener is currently registered."""
+        return bool(self._listeners)
+
+    def listener_count(self) -> int:
+        """Return the number of currently-registered listeners."""
+        return len(self._listeners)
 
     # ── Bus interface (called by ChatInterventionBus from skills) ────────────
 
@@ -53,7 +109,19 @@ class InterventionRegistry:
         dangling queue entries.  On ``asyncio.CancelledError`` the future is
         cancelled and an empty ``InterventionAnswer`` is returned to the
         caller (same contract as the original ``_dispatch_intervention``).
+
+        issue #254 Phase 1: when ``enforce_listener_presence=True`` was set
+        at construction AND no listener is registered, return an empty
+        ``InterventionAnswer`` immediately instead of enqueuing + awaiting
+        an unresolvable future. The caller (= ``handle_limit_exceeded`` /
+        permission gate) sees this as a refusal and falls through to abort,
+        matching the existing cancellation contract.
         """
+        if self._enforce_listener_presence and not self._listeners:
+            # No listener will call deliver_answer → prompt would hang
+            # forever. Match the cancellation contract: return empty answer
+            # so the caller treats it as a refusal.
+            return InterventionAnswer(text="")
         self._active[iv.id] = iv
         self._order.append(iv.id)
         try:
