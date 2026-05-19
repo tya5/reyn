@@ -363,11 +363,179 @@ async def _handle_message_send(
         logger.exception("a2a message/send: backing impl raised")
         return _jsonrpc_error(req_id, _INTERNAL_ERROR, f"Internal error: {e}")
 
+    # B42-NF-W6-2: A2A spec-compliant auto-escalation. When sync mode
+    # times out with a skill still running, return a Task envelope (=
+    # kind="task" with id) instead of a partial Message — the standard
+    # A2A discriminator that tells the caller to poll
+    # ``GET /a2a/tasks/{id}``. Without this, a long-running skill spawned
+    # via sync ``message/send`` loses its completion narration: the
+    # spawn-ack returns but no subsequent request arrives to drive the
+    # skill_completion_injected inbox drain, so the run becomes a silent
+    # tombstone (B42 W6-S6 reproduction).
+    running_ids = result.get("running_skill_run_ids") or []
+    if result.get("partial") and running_ids:
+        return await _escalate_to_task(
+            req_id, agent_name, running_ids, registry, run_registry,
+        )
+
     reply_msg = _build_message_response(
         reply_text=result.get("reply", ""),
         partial=bool(result.get("partial", False)),
     )
     return _jsonrpc_result(req_id, reply_msg)
+
+
+async def _escalate_to_task(
+    req_id: Any,
+    agent_name: str,
+    running_skill_run_ids: list[str],
+    registry,
+    run_registry,
+) -> dict:
+    """Auto-escalate a sync ``message/send`` that timed out with a still-
+    running skill into an A2A Task envelope.
+
+    Per A2A v0.2.0 spec, ``message/send`` may return either a ``Message``
+    (= synchronous reply) or a ``Task`` (= async, polled later) result.
+    The server chooses based on operation duration. This helper performs
+    the Task-path leg: register a ``RunEntry`` (so ``GET /a2a/tasks/{id}``
+    can serve status), spawn a monitor task that pumps the session until
+    the skill's completion narration lands, and return the Task envelope.
+
+    The caller (= A2A peer) inspects ``result.kind`` to decide whether to
+    consume parts directly or follow up with ``tasks/get`` polling. This
+    is the spec discriminator: peers MUST handle both shapes.
+    """
+    from reyn.chat.session import _new_chain_id  # noqa: PLC0415
+
+    # Use the skill's run_id as the task_id so polling GET /a2a/tasks/{id}
+    # naturally aligns with the running skill identity. When multiple
+    # skills are in flight (rare; the LLM normally spawns at most one per
+    # turn), use the first — the others remain trackable via session
+    # state but only the headline gets the task envelope.
+    task_id = running_skill_run_ids[0]
+    chain_id = _new_chain_id()
+
+    # Register the entry so the GET /a2a/tasks/{run_id} endpoint can
+    # serve status. We pre-create with the skill's run_id to keep the
+    # caller-visible id stable across the escalation boundary.
+    entry = run_registry.create(
+        agent_name=agent_name,
+        chain_id=chain_id,
+    )
+    # The run_registry assigns its own uuid; record the skill run_id in
+    # the entry's chain_id field so a monitor task can correlate. The
+    # caller-facing task id remains entry.run_id (= polled via /a2a/tasks).
+    monitor_task_id = entry.run_id
+
+    async def _monitor() -> None:
+        """Pump the session until the running skill completes, then mark
+        the run_registry entry with the harvested narration.
+
+        Uses MessageBus.request with a long timeout so the completion
+        narration is consumed and emitted as a router reply. The reply
+        text becomes the Task ``result`` field, available on subsequent
+        ``GET /a2a/tasks/{id}`` calls.
+        """
+        try:
+            # Wait until the running skill's asyncio task is done, plus a
+            # final pump pass to consume the skill_completion_injected
+            # inbox message and surface the narration. send_to_agent_impl
+            # with kind="user" and a synthetic ping text wakes the loop
+            # so it can drain the queued completion message.
+            session = await _get_session_for_monitor(registry, agent_name)
+            await _await_skill_completion(session, task_id, deadline_s=600.0)
+            narration = _harvest_completion_narration(session, task_id)
+            run_registry.update(
+                monitor_task_id,
+                status="completed",
+                result=narration or "(no narration captured)",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("a2a auto-escalation monitor raised")
+            run_registry.update(monitor_task_id, status="failed", error=str(exc))
+
+    monitor = asyncio.create_task(_monitor())
+    run_registry.attach_task(monitor_task_id, monitor)
+
+    return _jsonrpc_result(
+        req_id,
+        {
+            "kind": "task",
+            "id": monitor_task_id,
+            "status": "running",
+            "agent_name": agent_name,
+        },
+    )
+
+
+async def _get_session_for_monitor(registry, agent_name: str):
+    """Resolve the ChatSession instance for the monitor task.
+
+    Mirrors ``mcp_server._get_session`` but kept local so the import
+    surface of this router stays small.
+    """
+    return registry.get_or_load(agent_name)
+
+
+async def _await_skill_completion(
+    session, skill_run_id: str, *, deadline_s: float = 600.0,
+) -> None:
+    """Poll ``session.running_skills`` until ``skill_run_id`` is no longer
+    active, OR the deadline fires.
+
+    The skill's asyncio.Task being done() is the OS-level signal that the
+    skill reached a terminal state (success / error / interrupted). After
+    that, a final session iteration drains the queued ``skill_completed``
+    inbox entry so the narration LLM turn fires.
+    """
+    deadline = asyncio.get_event_loop().time() + deadline_s
+    while True:
+        running = getattr(session, "running_skills", {}) or {}
+        task = running.get(skill_run_id)
+        if task is None or task.done():
+            break
+        if asyncio.get_event_loop().time() >= deadline:
+            return
+        await asyncio.sleep(0.5)
+    # Final inbox drain: pump iterations until quiescent so the
+    # skill_completion_injected inbox entry is consumed and the
+    # narration turn lands in history.
+    for _ in range(20):  # bounded; each iteration consumes one inbox msg
+        if session.inbox.empty():
+            break
+        await session.run_one_iteration()
+
+
+def _harvest_completion_narration(session, skill_run_id: str) -> str:
+    """Pull the most recent narration text from session history.
+
+    Heuristic: the narration is the latest ``role="agent"`` history
+    entry whose preceding entry is a ``meta.source="skill_completion"``
+    user-role injection for this ``skill_run_id``. Falls back to "the
+    last non-spawn-ack agent message" if the injection-pair cannot be
+    located (= defensive against future history-shape tweaks).
+    """
+    history = list(getattr(session, "history", []) or [])
+    # Walk backwards looking for a skill_completion injection for this run_id
+    for i in range(len(history) - 1, 0, -1):
+        msg = history[i]
+        prev = history[i - 1]
+        meta = getattr(msg, "meta", None) or {}
+        prev_meta = getattr(prev, "meta", None) or {}
+        if (
+            getattr(msg, "role", None) == "agent"
+            and meta.get("source") != "spawn_ack"
+            and prev_meta.get("source") == "skill_completion"
+            and prev_meta.get("run_id") == skill_run_id
+        ):
+            return getattr(msg, "text", "") or ""
+    # Fallback: latest non-spawn-ack agent message.
+    for msg in reversed(history):
+        meta = getattr(msg, "meta", None) or {}
+        if getattr(msg, "role", None) == "agent" and meta.get("source") != "spawn_ack":
+            return getattr(msg, "text", "") or ""
+    return ""
 
 
 async def _handle_answer_injection(

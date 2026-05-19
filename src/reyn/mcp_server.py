@@ -246,10 +246,22 @@ async def send_to_agent_impl(
             "its task continues in the background; call again to receive the rest.)"
         )
 
+    # B42-NF-W6-2: surface still-running skill run_ids so the A2A sync
+    # path can auto-escalate to a Task envelope (= A2A spec-compliant
+    # async response) when the timeout fires before quiescence. Empty
+    # list when no skill is in flight (the common case).
+    running_skill_run_ids: list[str] = []
+    if not idle:
+        running_skills_attr: dict = getattr(session, "running_skills", {})
+        for rid, task in running_skills_attr.items():
+            if not task.done():
+                running_skill_run_ids.append(rid)
+
     return {
         "reply": reply_text,
         "partial": (not idle),
         "agent": agent_name,
+        "running_skill_run_ids": running_skill_run_ids,
     }
 
 
