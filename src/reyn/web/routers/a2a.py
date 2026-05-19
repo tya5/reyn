@@ -408,24 +408,25 @@ async def _escalate_to_task(
     """
     from reyn.chat.session import _new_chain_id  # noqa: PLC0415
 
-    # Use the skill's run_id as the task_id so polling GET /a2a/tasks/{id}
-    # naturally aligns with the running skill identity. When multiple
-    # skills are in flight (rare; the LLM normally spawns at most one per
-    # turn), use the first — the others remain trackable via session
-    # state but only the headline gets the task envelope.
-    task_id = running_skill_run_ids[0]
+    # The skill's run_id is what the monitor uses internally to detect
+    # completion (= it polls session.running_skills[skill_run_id]). When
+    # multiple skills are in flight (rare; the LLM normally spawns at most
+    # one per turn), the monitor watches the first — the others remain
+    # trackable via session state but only the headline gets the task
+    # envelope.
+    skill_run_id = running_skill_run_ids[0]
     chain_id = _new_chain_id()
 
-    # Register the entry so the GET /a2a/tasks/{run_id} endpoint can
-    # serve status. We pre-create with the skill's run_id to keep the
-    # caller-visible id stable across the escalation boundary.
+    # Allocate a fresh RunRegistry entry. The entry.run_id is a NEW uuid
+    # (distinct from the skill's run_id) that becomes the caller-facing
+    # task id polled via ``GET /a2a/tasks/{entry.run_id}``. This indirection
+    # is intentional: the A2A task lifecycle (= caller-facing) is owned by
+    # the RunRegistry; the skill's run_id (= OS-internal) stays inside the
+    # monitor's await-loop and never leaks to the caller.
     entry = run_registry.create(
         agent_name=agent_name,
         chain_id=chain_id,
     )
-    # The run_registry assigns its own uuid; record the skill run_id in
-    # the entry's chain_id field so a monitor task can correlate. The
-    # caller-facing task id remains entry.run_id (= polled via /a2a/tasks).
     monitor_task_id = entry.run_id
 
     async def _monitor() -> None:
@@ -436,16 +437,33 @@ async def _escalate_to_task(
         narration is consumed and emitted as a router reply. The reply
         text becomes the Task ``result`` field, available on subsequent
         ``GET /a2a/tasks/{id}`` calls.
+
+        On deadline expiry (= the skill is still running after the
+        monitor's wait window), the entry is marked ``status="timeout"``
+        rather than ``"completed"`` so the caller doesn't conflate "we
+        gave up waiting" with "the skill produced a real result". Plain
+        success path remains ``status="completed"``.
         """
         try:
             # Wait until the running skill's asyncio task is done, plus a
             # final pump pass to consume the skill_completion_injected
-            # inbox message and surface the narration. send_to_agent_impl
-            # with kind="user" and a synthetic ping text wakes the loop
-            # so it can drain the queued completion message.
+            # inbox message and surface the narration.
             session = await _get_session_for_monitor(registry, agent_name)
-            await _await_skill_completion(session, task_id, deadline_s=600.0)
-            narration = _harvest_completion_narration(session, task_id)
+            completed = await _await_skill_completion(
+                session, skill_run_id, deadline_s=600.0,
+            )
+            if not completed:
+                run_registry.update(
+                    monitor_task_id,
+                    status="timeout",
+                    error=(
+                        f"skill {skill_run_id} did not complete within "
+                        f"the monitor deadline; the underlying skill "
+                        f"task continues in the session"
+                    ),
+                )
+                return
+            narration = _harvest_completion_narration(session, skill_run_id)
             run_registry.update(
                 monitor_task_id,
                 status="completed",
@@ -480,7 +498,7 @@ async def _get_session_for_monitor(registry, agent_name: str):
 
 async def _await_skill_completion(
     session, skill_run_id: str, *, deadline_s: float = 600.0,
-) -> None:
+) -> bool:
     """Poll ``session.running_skills`` until ``skill_run_id`` is no longer
     active, OR the deadline fires.
 
@@ -488,6 +506,13 @@ async def _await_skill_completion(
     skill reached a terminal state (success / error / interrupted). After
     that, a final session iteration drains the queued ``skill_completed``
     inbox entry so the narration LLM turn fires.
+
+    Returns ``True`` when the skill task reached terminal state within
+    the deadline (= caller can safely harvest narration); ``False`` when
+    the deadline expired with the task still running (= caller should
+    mark the run_registry entry as ``status="timeout"`` rather than
+    ``"completed"`` to avoid conflating "we gave up waiting" with a real
+    completion).
     """
     deadline = asyncio.get_event_loop().time() + deadline_s
     while True:
@@ -496,7 +521,7 @@ async def _await_skill_completion(
         if task is None or task.done():
             break
         if asyncio.get_event_loop().time() >= deadline:
-            return
+            return False
         await asyncio.sleep(0.5)
     # Final inbox drain: pump iterations until quiescent so the
     # skill_completion_injected inbox entry is consumed and the
@@ -505,6 +530,7 @@ async def _await_skill_completion(
         if session.inbox.empty():
             break
         await session.run_one_iteration()
+    return True
 
 
 def _harvest_completion_narration(session, skill_run_id: str) -> str:

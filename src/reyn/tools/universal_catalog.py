@@ -1026,19 +1026,33 @@ def _resource_description(
     returns the dispatcher's generic instruction text — uninformative for
     the LLM trying to narrate "tell me more about <resource>".
 
-    Covered (= same set as ``_resource_input_schema``):
+    Covered (= categories with per-resource description metadata on the
+    host side):
       - ``skill__<name>`` — pulls ``description`` from
         ``ctx.router_state.host.list_available_skills()``.
-      - ``agent.peer__<name>`` — pulls ``description`` from
-        ``ctx.router_state.host.list_available_agents()``.
+      - ``agent.peer__<name>`` — pulls ``description`` (or ``role``
+        fallback) from ``ctx.router_state.host.list_available_agents()``.
       - ``mcp.tool__<server>.<tool>`` — pulls ``description`` from the
         tool's MCP-server entry (FP-0032 expanded shape).
       - ``mcp.server__<name>`` — pulls server-level ``description`` from
         ``ctx.router_state.mcp_servers``.
-      - ``rag.corpus__<name>`` — None (no per-corpus description surface
-        today; caller falls back to the ``recall`` tool description).
-      - ``memory.entry__<name>`` — None (memory entries don't carry a
-        description; caller falls back to ``read_memory_body``).
+
+    Falls through to ``target.description`` (= caller default) for:
+      - ``rag.corpus__<name>`` — no per-corpus description metadata
+        surface today; caller falls back to the ``recall`` tool
+        description (= acceptable generic context for LLM narration).
+      - ``memory.entry__<name>`` — memory entries don't carry description
+        fields; caller falls back to ``read_memory_body`` description.
+      - Operation categories (= ``file__/web__/exec__/...``): the target
+        ToolDefinition IS the action, so ``target.description`` is
+        already the correct per-action text.
+
+    Coverage delta vs ``_resource_input_schema``: that helper covers
+    5 categories (skill / agent.peer / mcp.server / **rag.corpus** /
+    mcp.tool). This helper covers 4 (= same set minus rag.corpus) because
+    the host-side per-corpus description surface doesn't exist; if a
+    ``list_available_corpora()`` surface is added later, this helper
+    should grow a matching branch.
 
     Returns ``None`` for unrecognised categories or when per-resource
     metadata isn't reachable (= test sites with stub router_state, etc.).

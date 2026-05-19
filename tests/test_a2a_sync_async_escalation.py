@@ -11,9 +11,11 @@ Pinned invariants:
 - The escalation only fires when ``partial=True`` AND
   ``running_skill_run_ids`` is non-empty. Plain partial (= timeout
   without skill in flight) still returns a Message envelope per spec.
-- ``_await_skill_completion`` returns once the supplied skill's
-  asyncio.Task is done (= terminal state) and drains any queued inbox
-  messages so the narration LLM turn can fire.
+- ``_await_skill_completion`` returns ``True`` once the supplied
+  skill's asyncio.Task is done (= terminal state) within the deadline,
+  draining any queued inbox messages so the narration LLM turn can
+  fire. Returns ``False`` on deadline expiry so the caller can mark
+  the entry ``status="timeout"`` (distinct from a real completion).
 - ``_harvest_completion_narration`` returns the latest router-narration
   text following a ``meta.source="skill_completion"`` injection for the
   matching run_id; falls through to the latest non-spawn-ack agent
@@ -75,8 +77,10 @@ class _Session:
 
 
 @pytest.mark.asyncio
-async def test_await_skill_completion_returns_when_task_done():
-    """Tier 2: returns once the skill's asyncio.Task transitions to done()."""
+async def test_await_skill_completion_returns_true_when_task_done():
+    """Tier 2: returns True once the skill's asyncio.Task transitions to
+    done() within the deadline (= caller can safely harvest narration).
+    """
     finished_event = asyncio.Event()
 
     async def _skill_body() -> None:
@@ -92,35 +96,43 @@ async def test_await_skill_completion_returns_when_task_done():
 
     asyncio.create_task(_trigger())
 
-    await asyncio.wait_for(
+    result = await asyncio.wait_for(
         _await_skill_completion(session, "run-1", deadline_s=2.0),
         timeout=3.0,
     )
+    assert result is True
     assert task.done()
 
 
 @pytest.mark.asyncio
-async def test_await_skill_completion_returns_immediately_when_no_such_run_id():
-    """Tier 2: unknown run_id → return immediately (no hang).
+async def test_await_skill_completion_returns_true_immediately_when_no_such_run_id():
+    """Tier 2: unknown run_id → return True immediately (no hang).
 
     Defensive: the run may have completed before the monitor task got
     scheduled, in which case the entry is already gone from
-    ``running_skills``. Must not hang waiting for a phantom task.
+    ``running_skills``. Must not hang waiting for a phantom task. The
+    completed-before-monitor case is semantically a success (= we
+    skipped the wait but the run did finish), so True is correct.
     """
     session = _Session(running_skills={})
     # Should complete well under the deadline
-    await asyncio.wait_for(
+    result = await asyncio.wait_for(
         _await_skill_completion(session, "phantom", deadline_s=1.0),
         timeout=2.0,
     )
+    assert result is True
 
 
 @pytest.mark.asyncio
-async def test_await_skill_completion_deadline_caps_wait():
-    """Tier 2: deadline fires before task.done() → return without raising.
+async def test_await_skill_completion_returns_false_on_deadline():
+    """Tier 2 (Note 2 reliability fix): deadline fires before task.done()
+    → return False so the caller can mark the run_registry entry
+    ``status="timeout"`` rather than ``"completed"``.
 
-    The monitor is non-blocking (= we don't want the task envelope's
-    background runner to hang forever if the skill genuinely wedges).
+    Without this distinction, a long-running skill that exceeds the
+    monitor's wait window would be reported as completed with empty
+    narration — conflating "we gave up waiting" with a real completion
+    result.
     """
     never = asyncio.Event()  # never set
     async def _stuck() -> None:
@@ -128,11 +140,11 @@ async def test_await_skill_completion_deadline_caps_wait():
     task = asyncio.create_task(_stuck())
     session = _Session(running_skills={"run-x": task})
 
-    # Should return within the deadline plus a small grace.
-    await asyncio.wait_for(
+    result = await asyncio.wait_for(
         _await_skill_completion(session, "run-x", deadline_s=0.2),
         timeout=1.0,
     )
+    assert result is False
     task.cancel()
     try:
         await task
