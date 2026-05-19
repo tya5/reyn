@@ -193,6 +193,32 @@ class RouterCapExceeded(Exception):
         self.last_reason = last_reason
 
 
+class AgentRequestBus:
+    """``RequestBus`` adapter that subscribes to a ChatSession (= Agent).
+
+    issue #254 Phase 3: OS-layer callers (= ``handle_limit_exceeded``,
+    permission gates, ``ask_user`` op) hold a ``RequestBus``-typed
+    reference; this adapter forwards ``request(iv)`` to the Agent's
+    ``handle_intervention(iv)`` so the Agent owns the routing decision.
+
+    Phase 3 ships behaviour parity (= ``handle_intervention`` just
+    forwards to ``_dispatch_intervention``); Phase 4 will add
+    ``self_answer`` / ``parent_delegate`` branches on the Agent side
+    without changing this adapter's surface.
+
+    The adapter satisfies the ``RequestBus`` runtime_checkable Protocol
+    so OS code typed against ``bus: RequestBus`` (or the legacy
+    ``InterventionBus`` alias) accepts it without further wiring.
+    """
+
+    def __init__(self, session: "ChatSession") -> None:
+        self._session = session
+
+    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+        """``RequestBus.request`` — delegate to the Agent's intervention handler."""
+        return await self._session.handle_intervention(iv)
+
+
 class ChatInterventionBus:
     """``UserChannel`` implementation that routes through ChatSession's
     outbox/inbox to the attached TUI listener.
@@ -1865,6 +1891,51 @@ class ChatSession:
                     return await override.request(iv)
         # Default: route through the regular InterventionHandler.
         return await self._intervention_handler.dispatch(iv)
+
+    # ── Agent-layer intervention entry point (issue #254 Phase 3) ───────────
+
+    async def handle_intervention(self, iv: UserIntervention) -> InterventionAnswer:
+        """Agent-layer entry point for incoming intervention requests.
+
+        This is the Agent's ``RequestBus`` subscriber-side handler.
+        Conceptually the Agent decides what to do with the request:
+
+          - **self_answer**: agent has a policy that answers without
+            consulting the user (e.g. "I've already extended this limit
+            5 times, refuse")
+          - **parent_agent.delegate**: forward to a chain-upstream agent
+            so the originating user-facing agent owns the decision
+          - **user_channel.deliver**: route the prompt to the agent's
+            attached user surface (TUI / stdin / A2A peer)
+
+        Phase 3 ships ONLY behaviour parity (= forward unconditionally to
+        the existing ``_dispatch_intervention`` path, which already
+        encodes the chain-override → channel.deliver routing for A2A
+        async tasks + ChatInterventionBus fall-through for the default
+        TUI path). Phase 4 will add ``self_answer`` / ``parent_delegate``
+        branches to this method.
+
+        Callers that obtain a ``RequestBus``-typed view of an Agent use
+        ``ChatSession.as_request_bus()`` (which returns an
+        ``AgentRequestBus`` adapter forwarding ``request(iv)`` here).
+        """
+        return await self._dispatch_intervention(iv)
+
+    def as_request_bus(self) -> "AgentRequestBus":
+        """Return a ``RequestBus``-typed adapter for this ChatSession.
+
+        OS-layer callers (= ``handle_limit_exceeded``, permission gates,
+        ``ask_user`` op) can hold an ``AgentRequestBus`` without
+        importing ChatSession or knowing about the Agent's downstream
+        routing choices. The adapter forwards ``request(iv)`` to
+        ``handle_intervention(iv)``.
+
+        issue #254 Phase 3 — the type-level realisation of the [A]
+        contract from Phase 2: OS owns a ``RequestBus``, the bus is
+        backed by an Agent (= ChatSession), the Agent owns the routing
+        decision and the downstream ``UserChannel`` selection.
+        """
+        return AgentRequestBus(self)
 
     async def _ask_budget_extension(
         self,
