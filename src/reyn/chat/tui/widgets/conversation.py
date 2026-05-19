@@ -324,9 +324,20 @@ class ConversationView(Widget):
         # most sophisticated piece of the TUI, which is hidden by default and
         # otherwise has zero discoverability on first run.
         yield Static(
+            # Three-line layout (each ~40-50 cells) so the hint stays
+            # legibly stacked at the narrowest reachable conv-pane
+            # width. The previous single line 2 carried the slash
+            # mechanic + tab list + keybind set on one line at ~95
+            # cells, which wrapped to 4–5 ragged lines when the right
+            # panel was expanded toward its max width and the conv pane
+            # shrank to ~50 cols. Splitting into purpose / contents /
+            # keybind preserves the side-panel discoverability the test
+            # at ``test_empty_hint_discoverability.py`` defends, while
+            # making each line short enough that wrap is at worst 2
+            # clean lines per stanza on any terminal we expect.
             "  Type [bold]/[/] for commands  ·  [bold]/help[/] for a guide\n"
-            "  [bold]Ctrl+B[/] side panel ([dim]keys · events · agents · memory · cost · docs[/])  ·  "
-            "[bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn",
+            "  [bold]Ctrl+B[/] side panel ·  [bold]Ctrl+L[/] clear  ·  [bold]Ctrl+P/N[/] turn\n"
+            "  [dim]panel tabs: keys · events · agents · memory · cost · docs[/]",
             id="empty-hint",
             markup=True,
         )
