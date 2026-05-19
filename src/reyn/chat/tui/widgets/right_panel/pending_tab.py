@@ -21,7 +21,6 @@ from rich.text import Text as RichText
 
 from .base import _CORAL
 
-
 # ── kind-specific row renderers ──────────────────────────────────────────────
 #
 # Each renderer receives a ``PendingOpView``-shaped dict (= field
