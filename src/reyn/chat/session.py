@@ -1898,28 +1898,106 @@ class ChatSession:
         """Agent-layer entry point for incoming intervention requests.
 
         This is the Agent's ``RequestBus`` subscriber-side handler.
-        Conceptually the Agent decides what to do with the request:
+        Phase 4 implements the 3-way routing decision the Agent makes
+        on every incoming request:
 
-          - **self_answer**: agent has a policy that answers without
-            consulting the user (e.g. "I've already extended this limit
-            5 times, refuse")
-          - **parent_agent.delegate**: forward to a chain-upstream agent
-            so the originating user-facing agent owns the decision
-          - **user_channel.deliver**: route the prompt to the agent's
-            attached user surface (TUI / stdin / A2A peer)
+          1. **self_answer** (= ``_try_self_answer`` hook): the agent
+             has a policy that answers without consulting the user
+             (e.g. "I've already extended this limit 5 times, refuse").
+             Default policy is None — no self-answer — so the request
+             falls through. Future incremental PRs add per-kind
+             policies (e.g. "max_phase_visits hit + N prior extensions
+             → refuse silently") via subclassing or config-driven
+             policy injection.
+          2. **parent_agent.delegate** (= ``_resolve_parent_agent`` hook):
+             forward to a chain-upstream agent so the originating
+             user-facing agent owns the decision. Default returns None
+             — no parent resolution — so the request falls through.
+             Phase 5+ adds the chain-walk via the running_skills_chain
+             registry + an agent-lookup factory.
+          3. **user_channel.deliver** (= default branch): route the
+             prompt through ``_dispatch_intervention``, which preserves
+             the chain-override path (A2A peer) + the regular
+             ``InterventionHandler.dispatch`` (TUI) fall-through. This
+             is the only branch active by default in Phase 4, so the
+             behaviour is identical to Phase 3 for unmodified agents.
 
-        Phase 3 ships ONLY behaviour parity (= forward unconditionally to
-        the existing ``_dispatch_intervention`` path, which already
-        encodes the chain-override → channel.deliver routing for A2A
-        async tasks + ChatInterventionBus fall-through for the default
-        TUI path). Phase 4 will add ``self_answer`` / ``parent_delegate``
-        branches to this method.
+        Each branch emits an ``intervention_routed`` event so observers
+        (= TUI events tab, debug traces, future routing-policy A/B
+        analysis) can see which routing decision fired without
+        instrumenting the hook implementations themselves.
 
         Callers that obtain a ``RequestBus``-typed view of an Agent use
         ``ChatSession.as_request_bus()`` (which returns an
         ``AgentRequestBus`` adapter forwarding ``request(iv)`` here).
         """
+        # Branch 1: self_answer policy.
+        self_ans = await self._try_self_answer(iv)
+        if self_ans is not None:
+            self._chat_events.emit(
+                "intervention_routed",
+                route="self_answer",
+                iv_kind=iv.kind,
+                iv_id=iv.id,
+            )
+            return self_ans
+
+        # Branch 2: parent-agent delegation.
+        parent = self._resolve_parent_agent(iv)
+        if parent is not None:
+            self._chat_events.emit(
+                "intervention_routed",
+                route="parent_delegate",
+                iv_kind=iv.kind,
+                iv_id=iv.id,
+            )
+            return await parent.handle_intervention(iv)
+
+        # Branch 3: default — deliver to user via existing dispatch path.
+        self._chat_events.emit(
+            "intervention_routed",
+            route="user_channel",
+            iv_kind=iv.kind,
+            iv_id=iv.id,
+        )
         return await self._dispatch_intervention(iv)
+
+    async def _try_self_answer(
+        self, iv: UserIntervention,
+    ) -> InterventionAnswer | None:
+        """Hook for self-answer routing policies (issue #254 Phase 4).
+
+        Return an ``InterventionAnswer`` to bypass the user and resolve
+        the request from agent-internal state; return ``None`` to fall
+        through to subsequent routing branches.
+
+        Default implementation returns ``None`` (= no self-answer
+        policy). Subclasses or future config-driven policy injection
+        override this to encode per-kind policies. The default keeps
+        Phase 4 behaviour identical to Phase 3 for unmodified agents.
+
+        Examples of future overrides (NOT in this PR):
+          - "max_phase_visits limit hit + we've already auto-extended
+            ``N`` times this chain → refuse with text='no'"
+          - "permission.shell on a command in the always-allow set →
+            return InterventionAnswer(choice_id='always')"
+        """
+        return None
+
+    def _resolve_parent_agent(
+        self, iv: UserIntervention,
+    ) -> "ChatSession | None":
+        """Hook for parent-agent delegation routing (issue #254 Phase 4).
+
+        Return a ChatSession to forward the request to a chain-upstream
+        agent; return ``None`` to fall through to user_channel delivery.
+
+        Default implementation returns ``None`` (= no parent resolution).
+        Phase 5+ will walk ``running_skills_chain`` to find the
+        originating agent and look it up via an agent-registry factory;
+        Phase 4 only establishes the routing branch.
+        """
+        return None
 
     def as_request_bus(self) -> "AgentRequestBus":
         """Return a ``RequestBus``-typed adapter for this ChatSession.
