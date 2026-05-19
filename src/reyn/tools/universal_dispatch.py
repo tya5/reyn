@@ -146,10 +146,13 @@ def _list_mcp_tools_args(
 def _call_mcp_tool_args(
     entry_name: str, args: Mapping[str, Any],
 ) -> dict[str, Any]:
-    """``mcp.tool__<server>.<tool>`` → ``call_mcp_tool({server, tool, args})``.
+    """``mcp.tool__<server>.<tool>`` → ``call_mcp_tool({server, mcp_tool_name, args})``.
 
     Entry name has the form ``<server>.<tool>``. First ``.`` separates
     server from tool. The MCP tool's own args are passed under ``args``.
+    The output key is ``mcp_tool_name`` to match the ``call_mcp_tool``
+    handler's parameter schema (FP-0032). Returning ``tool`` raised
+    ``KeyError: mcp_tool_name`` in ``_handle_call_mcp_tool``.
     """
     if "." not in entry_name:
         raise UnknownActionError(
@@ -157,7 +160,7 @@ def _call_mcp_tool_args(
             "mcp.tool entry name must have form <server>.<tool>",
         )
     server, tool = entry_name.split(".", 1)
-    return {"server": server, "tool": tool, "args": dict(args)}
+    return {"server": server, "mcp_tool_name": tool, "args": dict(args)}
 
 
 def _read_memory_body_args(
