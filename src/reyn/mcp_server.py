@@ -210,8 +210,21 @@ async def send_to_agent_impl(
     async with _get_agent_lock(agent_name):
         baseline = len(session.history)
         bus = MessageBus()
+        # issue #268 Phase 2: when the override exposes a stable
+        # ``channel_id`` (= A2AInterventionBus does), register it as
+        # an intervention listener so the agent layer's origin-pin
+        # check (= ``ChatSession.handle_intervention`` Branch 3)
+        # treats the A2A channel as alive while the bus is active.
+        # ``getattr`` lets future buses without channel_id participate
+        # via the override path without forcing them to expose one.
+        override_channel_id: str | None = None
         if intervention_override is not None:
             session.register_intervention_override(chain_id, intervention_override)
+            override_channel_id = getattr(
+                intervention_override, "channel_id", None,
+            )
+            if override_channel_id is not None:
+                session.register_intervention_listener(override_channel_id)
         try:
             replies = await bus.request(
                 session,
@@ -223,6 +236,8 @@ async def send_to_agent_impl(
         finally:
             if intervention_override is not None:
                 session.unregister_intervention_override(chain_id)
+                if override_channel_id is not None:
+                    session.unregister_intervention_listener(override_channel_id)
         new_replies = _new_agent_history_entries(
             session, baseline, chain_id=chain_id,
         )

@@ -45,11 +45,36 @@ class A2AInterventionBus:
         self._run_id = run_id
         self._registry = registry
 
+    @property
+    def channel_id(self) -> str:
+        """Stable channel identifier for issue #268 origin-pin routing.
+
+        Format: ``a2a:<run_id>``. Used by:
+          - bus stamping of ``iv.origin_channel_id`` on each ``deliver``
+            (= so the iv carries provenance for cross-channel observe /
+            discard / claim)
+          - listener registration in ``_handle_async_mode._run`` so the
+            ``ChatSession.handle_intervention`` origin-pin check sees
+            this channel as alive while the A2A task is running
+        """
+        return f"a2a:{self._run_id}"
+
     async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
         """``UserChannel.deliver`` — route the prompt to the A2A peer
         via RunRegistry + optional webhook, then block until the peer's
         POST resolves ``iv.future``.
+
+        issue #268 Phase 2: stamps ``iv.origin_channel_id`` so the
+        agent layer can later attribute the iv to this A2A task (=
+        used by stall detection + cross-channel observe / claim).
+        Pre-existing stamping (= if a caller already set the field)
+        is respected — overwrite would clobber an explicit origin
+        from an upstream layer.
         """
+        # issue #268 Phase 2: stamp origin channel for cross-channel routing.
+        if iv.origin_channel_id is None:
+            iv.origin_channel_id = self.channel_id
+
         entry = self._registry.get(self._run_id)
         if entry is None:
             raise RuntimeError(
