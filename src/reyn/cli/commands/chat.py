@@ -88,6 +88,25 @@ def register(sub) -> None:
             "for dogfood / scripted runs against fresh .reyn/ workspaces."
         ),
     )
+    # Issue #276 Phase A — TUI thin client mode connecting to a remote
+    # `reyn web` server. When set, the local ChatSession / AgentRegistry
+    # / state restore are skipped; the TUI streams from
+    # ``ws://<host>[:port]/ws/chat/<agent>``. Right panel features that
+    # depend on local files (events / memory / pending) render
+    # "remote — limited" placeholders per #276 Phase C-(b) scoped
+    # disable; full parity via REST is future work (Phase C-(a)).
+    p.add_argument(
+        "--connect",
+        metavar="WS_URL",
+        default=None,
+        help=(
+            "Connect to a remote `reyn web` server over WebSocket "
+            "(e.g. --connect ws://localhost:8080). The positional "
+            "agent_name selects which agent on the server. Requires "
+            "`pip install reyn[web]`. Right panel features that need "
+            "local file access render in 'remote — limited' v1 mode."
+        ),
+    )
     add_common_args(p)
     p.set_defaults(func=run)
 
@@ -141,7 +160,66 @@ def _reset_project_state(project_root: Path, *, confirm: bool = True) -> bool:
     return True
 
 
+def _run_connect_mode(args: argparse.Namespace, base_url: str) -> None:
+    """Issue #276 Phase A — connect to a remote `reyn web` server.
+
+    Skips local ChatSession / AgentRegistry / state restore. The TUI
+    streams frames from ``ws://<host>[:port]/ws/chat/<agent_name>``;
+    user input is forwarded to the server as ``user_message`` frames.
+
+    Right-panel features that need local file access (events / memory
+    / pending) surface "remote — limited" placeholders via each tab's
+    existing remote-mode handling (e.g. PR #280 Pending tab
+    ``remote_mode=True``). Phase C-(a) future iteration via REST
+    will lift the limit; v1 takes the scoped-disable path per the
+    #276 owner decision.
+    """
+    from reyn.chat.tui.app import run_tui
+    from reyn.chat.tui.ws_client import connect as ws_connect
+    from reyn.llm.llm import run_async
+
+    agent_name = args.agent_name or "default"
+    # No project root probe — remote mode doesn't read local .reyn/
+    # state. Use cwd so any path-shaped attribute access on the
+    # registry resolves to *something* sensible.
+    project_root = Path.cwd()
+
+    async def _main() -> None:
+        try:
+            registry = await ws_connect(
+                base_url, agent_name, project_root=project_root,
+            )
+        except ImportError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        except ConnectionError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            await run_tui(
+                registry,
+                agent_name=agent_name,
+                # Model / budget unknown in remote mode — the server
+                # owns them. Show empty fields rather than guessing.
+                model="",
+                budget_tracker=None,
+                banner=getattr(args, "banner", False),
+            )
+        finally:
+            await registry.shutdown()
+
+    run_async(_main())
+
+
 def run(args: argparse.Namespace) -> None:
+    # Issue #276 Phase A — TUI thin client mode short-circuits before
+    # any local session / state setup. Bifurcates at the top of run()
+    # so the local-mode block stays untouched (= backwards-compat 100%).
+    connect_url = getattr(args, "connect", None)
+    if connect_url:
+        _run_connect_mode(args, connect_url)
+        return
+
     from reyn.budget.budget import BudgetTracker
     from reyn.chat.profile import AgentProfile
     from reyn.chat.registry import DEFAULT_AGENT_NAME, AgentRegistry
