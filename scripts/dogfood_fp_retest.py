@@ -202,7 +202,26 @@ def _run_one_shot(
         status, narration = "http_error:no_body", ""
     else:
         reply, rpc_err = extract_reply(body)
-        if rpc_err is not None:
+        # B42-NF-W6-2: server may auto-escalate to a Task envelope when
+        # a skill is still running at the sync timeout (A2A spec v0.2.0
+        # Message-vs-Task discriminator). Follow up with GET /a2a/tasks
+        # polling so the completion narration is captured.
+        if rpc_err and rpc_err.startswith("task_envelope:"):
+            from spike_lib.http import poll_task  # noqa: PLC0415
+            task_id = rpc_err.split(":", 1)[1]
+            base_url = f"http://localhost:{port}"
+            poll_result, poll_err = poll_task(
+                base_url, task_id,
+                deadline_s=max(http_timeout, 300.0),
+                poll_interval_s=2.0,
+            )
+            if poll_err is not None:
+                status, narration = f"task_poll_error:{poll_err}", ""
+            else:
+                narration = poll_result or ""
+                status = "ok" if narration.strip() else "empty_stop"
+                elapsed = round(time.time() - t0, 2)
+        elif rpc_err is not None:
             status, narration = f"rpc_error:{rpc_err}", ""
         else:
             narration = reply or ""
