@@ -105,6 +105,18 @@ def render_keys(app: "App") -> str:
         seen.add(b.key)
         groups["INPUT"].append((_pretty_key(b.key), b.description))
 
+    # Right-panel resize keys (h / l) are handled via ``RightPanel.on_key``
+    # rather than a declared ``Binding`` object, so the BINDINGS iterations
+    # above never see them and the Keys tab silently omitted them. Surface
+    # them explicitly so the user can discover panel resize without
+    # reading the source.
+    if "h" not in seen:
+        groups["PANEL"].append((_pretty_key("h"), "Widen panel"))
+        seen.add("h")
+    if "l" not in seen:
+        groups["PANEL"].append((_pretty_key("l"), "Narrow panel"))
+        seen.add("l")
+
     lines: list[str] = []
     # Key column width: max key length within the group, capped at 6
     # (longest pretty key is ⇧Tab / Enter / Space = 5 chars + 1 pad).
