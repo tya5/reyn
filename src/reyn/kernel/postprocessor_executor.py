@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from reyn.permissions.permissions import PermissionResolver
     from reyn.python_runner import PythonRunner
     from reyn.schemas.models import PreprocessorStep, Skill
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace
 
 logger = logging.getLogger(__name__)
@@ -143,7 +143,7 @@ class PostprocessorExecutor:
         resolver: "ModelResolver",
         subscribers: list,
         permission_resolver: "PermissionResolver | None" = None,
-        intervention_bus: "InterventionBus | None" = None,
+        intervention_bus: "RequestBus | None" = None,
         python_runner: "PythonRunner | None" = None,
         python_allowed_modules: list[str] | None = None,
         max_phase_visits: int = 0,

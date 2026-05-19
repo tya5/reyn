@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from reyn.permissions.permissions import PermissionDecl, PermissionResolver
     from reyn.schemas.models import Skill
     from reyn.secrets.store import ScopedSecretStore
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace
 
 
@@ -63,7 +63,7 @@ class OpContext:
     agent_id: str | None = None
 
     # User interventions (ask_user, permission prompts in PR7)
-    intervention_bus: "InterventionBus | None" = None
+    intervention_bus: "RequestBus | None" = None
     current_phase: str = ""
 
     # PR20: caller provenance threaded from the parent Agent so sub-skill

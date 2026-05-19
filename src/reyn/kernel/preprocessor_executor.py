@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import Phase, PreprocessorStep, Skill
     from reyn.secrets.store import ScopedSecretStore
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace
 
 
@@ -103,7 +103,7 @@ class PreprocessorExecutor:
         resolver: "ModelResolver",
         max_phase_visits: int = 25,
         permission_resolver: "PermissionResolver | None" = None,
-        intervention_bus: "InterventionBus | None" = None,
+        intervention_bus: "RequestBus | None" = None,
         python_runner: PythonRunner | None = None,
         python_allowed_modules: list[str] | None = None,
         caller: str = "direct",

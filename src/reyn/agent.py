@@ -16,7 +16,7 @@ from reyn.kernel.runtime import OSRuntime, RunResult
 from reyn.llm.model_resolver import ModelResolver
 from reyn.permissions.permissions import PermissionResolver
 from reyn.schemas.models import Skill
-from reyn.user_intervention import InterventionBus
+from reyn.user_intervention import RequestBus
 
 if TYPE_CHECKING:
     from reyn.events.state_log import StateLog
@@ -41,7 +41,7 @@ class Agent:
         model: str,
         strict: bool = False,
         subscribers: list[Callable] | None = None,
-        intervention_bus: InterventionBus | None = None,
+        intervention_bus: RequestBus | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,

@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
 
 
 # Default time the server blocks waiting for the agent to finish a turn
@@ -170,7 +170,7 @@ async def send_to_agent_impl(
     agent_name: str,
     message: str,
     timeout: float = DEFAULT_SEND_TIMEOUT_SECONDS,
-    intervention_override: "InterventionBus | None" = None,
+    intervention_override: "RequestBus | None" = None,
 ) -> dict:
     """Backing implementation of the ``send_to_agent`` tool.
 

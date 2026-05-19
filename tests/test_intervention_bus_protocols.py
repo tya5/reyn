@@ -292,18 +292,28 @@ def test_a2a_intervention_bus_does_not_import_skill_completed_handler() -> None:
     )
 
 
-# ── 6. Phase 2 does not change __all__ exports of legacy names ─────────
+# ── 6. __all__ exports new layer names; legacy alias dropped in Phase 5 ──
 
 
-def test_user_intervention_all_exports_include_new_and_legacy_names() -> None:
+def test_user_intervention_all_exports_include_new_layer_names() -> None:
     """Tier 2: ``__all__`` carries ``RequestBus`` and ``UserChannel`` as
-    new exports while keeping ``InterventionBus`` for backwards-compat.
-    Drop the old name only in Phase 5 cleanup.
+    the canonical new layer names.
+
+    Updated in Phase 5: ``InterventionBus`` is no longer in ``__all__``
+    (= dropped from the explicit exports, but the module-level binding
+    is retained so external code that imports the legacy name keeps
+    working). Verified by the deprecated-alias test in
+    ``tests/test_intervention_legacy_alias_deprecated.py``.
     """
     import reyn.user_intervention as mod
 
     assert "RequestBus" in mod.__all__
     assert "UserChannel" in mod.__all__
-    assert "InterventionBus" in mod.__all__, (
-        "InterventionBus must stay in __all__ for Phase 2 backwards-compat"
+    # Phase 5: InterventionBus removed from __all__ but still importable
+    # as a module attribute (= the alias binding remains).
+    assert "InterventionBus" not in mod.__all__, (
+        "InterventionBus must NOT be in __all__ post-Phase-5 (= deprecated alias)"
+    )
+    assert hasattr(mod, "InterventionBus"), (
+        "InterventionBus module-level binding must remain for backwards-compat"
     )

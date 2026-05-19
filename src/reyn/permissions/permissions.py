@@ -44,7 +44,7 @@ from reyn.intervention_choices import (
     python_choices,
 )
 from reyn.user_intervention import (
-    InterventionBus,
+    RequestBus,
     UserIntervention,
 )
 
@@ -208,8 +208,8 @@ class PermissionDecl:
 
 class PermissionResolver:
     """
-    Resolves permission requests against config, saved approvals, and an
-    `InterventionBus` for user prompts.
+    Resolves permission requests against config, saved approvals, and a
+    ``RequestBus`` for user prompts.
 
     The bus is supplied per-call (`require_*`, `startup_guard`, …) by the
     caller, since the bus is tied to the Agent that's running while the
@@ -302,7 +302,7 @@ class PermissionResolver:
         self,
         key: str,
         description: str,
-        bus: InterventionBus,
+        bus: RequestBus,
         *,
         user_prompt: str | None = None,
     ) -> bool:
@@ -329,7 +329,7 @@ class PermissionResolver:
         self,
         key: str,
         description: str,
-        bus: InterventionBus,
+        bus: RequestBus,
         *,
         user_prompt: str | None = None,
     ) -> bool:
@@ -410,7 +410,7 @@ class PermissionResolver:
         self._session[f"{skill_name}/{kind}/{p}"] = True
 
     async def _prompt_file_access(
-        self, path: str, scope: str, skill_name: str, kind: str, bus: InterventionBus,
+        self, path: str, scope: str, skill_name: str, kind: str, bus: RequestBus,
     ) -> bool:
         """Prompt the user to approve a file access. Returns True if approved.
 
@@ -450,12 +450,12 @@ class PermissionResolver:
         return False
 
     async def _prompt_file_write(
-        self, path: str, scope: str, skill_name: str, bus: InterventionBus,
+        self, path: str, scope: str, skill_name: str, bus: RequestBus,
     ) -> bool:
         return await self._prompt_file_access(path, scope, skill_name, "file.write", bus)
 
     async def startup_guard(
-        self, skill: "Skill", skill_name: str, bus: InterventionBus,
+        self, skill: "Skill", skill_name: str, bus: RequestBus,
     ) -> None:
         """
         Pre-flight permission check: scan all phase declarations, collect paths that
@@ -565,7 +565,7 @@ class PermissionResolver:
             await self._prompt_python(key, req["module"], req["function"], req["mode"], bus)
 
     async def _prompt_python(
-        self, key: str, module: str, function: str, mode: str, bus: InterventionBus,
+        self, key: str, module: str, function: str, mode: str, bus: RequestBus,
     ) -> bool:
         """Approve a python step; persist on yes."""
         if not self._interactive:
@@ -680,7 +680,7 @@ class PermissionResolver:
         return False
 
     async def require_shell(
-        self, decl: PermissionDecl, cmd: str, bus: InterventionBus,
+        self, decl: PermissionDecl, cmd: str, bus: RequestBus,
     ) -> None:
         if not decl.shell:
             raise PermissionError(
@@ -697,7 +697,7 @@ class PermissionResolver:
             raise PermissionError(f"shell access denied (cmd: {cmd!r})")
 
     async def require_mcp(
-        self, decl: PermissionDecl, server: str, bus: InterventionBus,
+        self, decl: PermissionDecl, server: str, bus: RequestBus,
     ) -> None:
         # PR37: per-agent allowlist check (narrower than project config).
         # None means no per-agent restriction; list means server must be in it.
@@ -720,7 +720,7 @@ class PermissionResolver:
             raise PermissionError(f"MCP server {server!r} access denied")
 
     async def require_mcp_install(
-        self, decl: PermissionDecl, server_id: str, bus: InterventionBus,
+        self, decl: PermissionDecl, server_id: str, bus: RequestBus,
     ) -> None:
         """Gate MCP server installation (ADR-0029).
 
@@ -768,7 +768,7 @@ class PermissionResolver:
             )
 
     async def require_index_drop(
-        self, decl: PermissionDecl, source: str, bus: InterventionBus,
+        self, decl: PermissionDecl, source: str, bus: RequestBus,
     ) -> None:
         """Gate index source drop (ADR-0033, mirrors require_mcp_install).
 
@@ -815,7 +815,7 @@ class PermissionResolver:
             )
 
     async def require_mcp_drop_server(
-        self, decl: PermissionDecl, server: str, bus: InterventionBus,
+        self, decl: PermissionDecl, server: str, bus: RequestBus,
     ) -> None:
         """Gate MCP server drop (FP-0034 §D23, mirrors require_mcp_install).
 
@@ -866,7 +866,7 @@ class PermissionResolver:
 
     async def require_python(
         self, decl: PermissionDecl, module: str, function: str,
-        bus: InterventionBus,
+        bus: RequestBus,
         skill_name: str = "",
     ) -> PythonPermission:
         """Resolve which python permission entry applies; raise if denied.
@@ -936,7 +936,7 @@ class PermissionResolver:
         return perm
 
     async def require_tool(
-        self, decl: PermissionDecl, tool: str, bus: InterventionBus,
+        self, decl: PermissionDecl, tool: str, bus: RequestBus,
     ) -> None:
         if tool not in decl.tool:
             raise PermissionError(
@@ -951,7 +951,7 @@ class PermissionResolver:
         ):
             raise PermissionError(f"tool {tool!r} access denied")
 
-    async def require_web_fetch(self, url: str, bus: InterventionBus) -> None:
+    async def require_web_fetch(self, url: str, bus: RequestBus) -> None:
         """Tier 1 gate for web_fetch — no declaration required, full 4-layer approval.
 
         FP-0022: web_fetch was previously gated only by catalog-level config

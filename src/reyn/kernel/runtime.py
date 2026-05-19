@@ -33,7 +33,7 @@ from reyn.kernel.runtime_types import (
 from reyn.llm.model_resolver import ModelResolver
 from reyn.llm.pricing import TokenUsage
 from reyn.permissions.permissions import PermissionResolver
-from reyn.user_intervention import InterventionBus
+from reyn.user_intervention import RequestBus
 from reyn.workspace.workspace import Workspace
 
 # LoopLimitExceededError / PhaseBudgetExceededError / WorkflowAbortedError /
@@ -53,7 +53,7 @@ class OSRuntime:
         model: str,
         strict: bool = False,
         subscribers: list[Callable] | None = None,
-        intervention_bus: "InterventionBus | None" = None,
+        intervention_bus: "RequestBus | None" = None,
         run_id: str | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,

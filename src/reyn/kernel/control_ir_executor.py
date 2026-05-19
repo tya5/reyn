@@ -33,7 +33,7 @@ from reyn.schemas.models import (
     ControlIROp,
     ControlIROpSpec,
 )
-from reyn.user_intervention import InterventionBus
+from reyn.user_intervention import RequestBus
 from reyn.workspace.workspace import Workspace
 
 
@@ -76,7 +76,7 @@ class ControlIRExecutor:
         self,
         workspace: Workspace,
         events: EventLog,
-        intervention_bus: InterventionBus | None = None,
+        intervention_bus: RequestBus | None = None,
         shell_allowed: bool = False,
         resolver: ModelResolver | None = None,
         permission_resolver: PermissionResolver | None = None,

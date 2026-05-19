@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import CandidateOutput, Skill
     from reyn.skill.skill_registry import SkillRegistry
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
     from reyn.workspace.workspace import Workspace
 
 _log = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class RunOrchestrator:
       preprocessor       — PreprocessorExecutor; deterministic enrichment.
       state              — RunState (Component A); mutable run-scope state.
       safety             — SafetyConfig; limit policies.
-      intervention_bus   — InterventionBus | None; safety-limit checkpoints.
+      intervention_bus   — RequestBus | None; safety-limit checkpoints.
       resume_plan        — ResumePlan | None; for forward-replay on resume.
       run_id             — str | None; identifies this run.
       parent_run_id      — str | None; for nested skill runs.
@@ -101,7 +101,7 @@ class RunOrchestrator:
         preprocessor: "PreprocessorExecutor",
         state: "RunState",
         safety: "SafetyConfig",
-        intervention_bus: "InterventionBus | None",
+        intervention_bus: "RequestBus | None",
         resume_plan: Any,
         run_id: str | None,
         parent_run_id: str | None,

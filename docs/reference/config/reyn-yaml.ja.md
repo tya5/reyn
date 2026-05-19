@@ -870,7 +870,7 @@ self_improvement:
 
 | フィールド | 型 | デフォルト | 説明 |
 |-------|------|---------|-------------|
-| `on_propose` | 文字列 | `ask_user` | 改善を適用しようとする際の動作。`ask_user` — InterventionBus 経由でユーザーに確認（安全なデフォルト）。`auto` — プロンプトをスキップして直接適用（CI / 無人実行向け）。`disabled` — `skill_improvement_dry_run` イベントをログに記録し変更を適用しない。 |
+| `on_propose` | 文字列 | `ask_user` | 改善を適用しようとする際の動作。`ask_user` — intervention `RequestBus` 経由でユーザーに確認（安全なデフォルト）。`auto` — プロンプトをスキップして直接適用（CI / 無人実行向け）。`disabled` — `skill_improvement_dry_run` イベントをログに記録し変更を適用しない。 |
 | `max_versions` | int | `10` | `.reyn/skill-versions/<name>/` に保持する `v<N>.md` スナップショットの上限。上限を超えると最古バージョンが削除されます（current バージョンは削除されません）。`0` でプルーニングを無効化。 |
 
 ## `python` ブロック
