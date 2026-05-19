@@ -1612,8 +1612,19 @@ class RouterLoop:
                             )
                             _rd_source = "invoke_action"
                         elif "__" in _rd_name:
+                            # Issue #241: distinguish "real hot-list alias the
+                            # LLM correctly used" (= name actually surfaced in
+                            # tools[]) from "ARS-only direct call the salvage
+                            # path covers" (= name appeared only in the
+                            # invoke_action.description ARS block, salvaged
+                            # by PR #240). Pre-#241, both cases were tagged
+                            # ``"hot_list_alias"`` regardless, muddying the
+                            # audit chain for downstream readers (B42 W5-S6).
                             _rd_action = _rd_name
-                            _rd_source = "hot_list_alias"
+                            if _rd_name in self._catalog:
+                                _rd_source = "hot_list_alias"
+                            else:
+                                _rd_source = "ars_direct"
                         else:
                             continue  # non-catalog tool — skip
                         if not _rd_action:
