@@ -40,7 +40,6 @@ from reyn.chat.tui.ws_client import (
     _WSSessionProxy,
 )
 
-
 # ── _parse_frame ─────────────────────────────────────────────────────────────
 
 
