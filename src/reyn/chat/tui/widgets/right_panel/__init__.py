@@ -1525,11 +1525,21 @@ class RightPanel(Widget):
             rbr = "[#555555]][/]"
             kf = f"{lbr}[{_CORAL}]f[/]{rbr}"
             kt = f"{lbr}[{_CORAL}]t[/]{rbr}"
+            # Compact form (~36 cells with "all" filter, 8 more for the
+            # longest "internal" filter). Previous text was ~54 cells and
+            # truncated past ``[t`` at the new 36-col minimum panel width
+            # (= the user lost the entire keybind half of the header).
+            # Trade-off:
+            #   * drop the ``ilter:`` / ``ail:`` glue text — the
+            #     ``[f]:<name>`` / ``[t]:<n>`` shape still reads naturally
+            #   * drop ``=move`` / ``space=open`` glue — ``j/k`` and
+            #     ``sp=open`` carry the same information in fewer cells,
+            #     matching the docs / memory tab idiom
             return (
                 f"[bold {_CORAL}]Events[/]"
-                f"  {kf}[#555555]ilter:[/]{filter_label}"
-                f"  {kt}[#555555]ail:[/][#aaaaaa]{tail}[/]"
-                f"  [#555555]j/k=move  space=open[/]"
+                f"  {kf}[#555555]:[/]{filter_label}"
+                f"  {kt}[#555555]:[/][#aaaaaa]{tail}[/]"
+                f"  [#555555]j/k sp=open[/]"
             )
         return ""
 
