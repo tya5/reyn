@@ -186,12 +186,20 @@ class UserChannel(Protocol):
     async def deliver(self, iv: UserIntervention) -> InterventionAnswer: ...
 
 
-# issue #254 Phase 2: ``InterventionBus`` is retained as an alias of
-# ``RequestBus`` so existing callers / imports (= every site that types a
-# parameter as ``bus: InterventionBus`` today) keep working unchanged.
-# Phase 5 will eventually drop the alias once all callers have migrated
-# to the more precise ``RequestBus`` (or higher-level wrappers that hide
-# the bus entirely).
+# issue #254 Phase 5 (deprecated alias):
+#
+# ``InterventionBus`` was the original name for what is now ``RequestBus``
+# (= the OS↔upper-layer "send a request, await an answer" contract).
+# All in-tree production callers have migrated to ``RequestBus`` directly
+# (verified at test time by
+# ``tests/test_intervention_legacy_alias_deprecated.py``);
+# the module-level binding is retained so external code (= third-party
+# skills, plugins, restored snapshots) that imports the legacy name
+# keeps working.
+#
+# **Do not add new usage** — type new code as ``RequestBus``. The alias
+# is intentionally absent from ``__all__`` so ``from reyn.user_intervention
+# import *`` no longer pulls it.
 InterventionBus = RequestBus
 
 
@@ -276,8 +284,11 @@ class StdinInterventionBus:
 
 
 __all__ = [
+    # NB: ``InterventionBus`` (= legacy alias of ``RequestBus``) is
+    # intentionally absent from ``__all__`` as of issue #254 Phase 5.
+    # The module-level binding still exists for backwards-compat; new
+    # code should import ``RequestBus`` directly.
     "InterventionAnswer",
-    "InterventionBus",
     "InterventionChoice",
     "RequestBus",
     "StdinInterventionBus",

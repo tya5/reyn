@@ -888,7 +888,7 @@ self_improvement:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `on_propose` | string | `ask_user` | What `skill_improver` does when about to apply improvements. `ask_user` — pause and prompt the user via the InterventionBus (safe default). `auto` — skip the prompt and apply directly (for CI / unattended runs). `disabled` — log a `skill_improvement_dry_run` event and do NOT apply changes. |
+| `on_propose` | string | `ask_user` | What `skill_improver` does when about to apply improvements. `ask_user` — pause and prompt the user via the intervention `RequestBus` (safe default). `auto` — skip the prompt and apply directly (for CI / unattended runs). `disabled` — log a `skill_improvement_dry_run` event and do NOT apply changes. |
 | `max_versions` | int | `10` | Maximum `v<N>.md` snapshots kept under `.reyn/skill-versions/<name>/`. Oldest version is deleted when the cap is exceeded (the current version is never deleted). `0` = disable pruning. |
 
 ## `python` block

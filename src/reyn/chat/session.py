@@ -64,8 +64,8 @@ from reyn.skill.skill_paths import SkillNotFoundError, resolve_skill_path, stdli
 from reyn.skill.skill_registry import SkillRegistry
 from reyn.user_intervention import (
     InterventionAnswer,
-    InterventionBus,
     InterventionChoice,
+    RequestBus,
     UserIntervention,
 )
 
@@ -1011,7 +1011,7 @@ class ChatSession:
         # Allows A2A async-mode tasks to redirect ask_user prompts to
         # their RunRegistry-backed A2AInterventionBus while the agent's
         # default ChatInterventionBus continues to serve chat-mode interactions.
-        self._intervention_overrides: dict[str, "InterventionBus"] = {}
+        self._intervention_overrides: dict[str, "RequestBus"] = {}
 
         self._a2a_handler = A2AHandler(
             event_log=self._chat_events,
@@ -1608,7 +1608,7 @@ class ChatSession:
     def _build_agent(
         self,
         *,
-        intervention_bus: InterventionBus | None = None,
+        intervention_bus: RequestBus | None = None,
         mcp_servers: dict | None = None,
         subscribers: list | None = None,
     ) -> Agent:
@@ -1844,10 +1844,17 @@ class ChatSession:
         """Thin wrapper → InterventionHandler.announce."""
         await self._intervention_handler.announce(iv)
 
-    def register_intervention_override(self, chain_id: str, bus: "InterventionBus") -> None:
-        """Register an InterventionBus for ask_user prompts emitted by
+    def register_intervention_override(self, chain_id: str, bus: "RequestBus") -> None:
+        """Register a ``RequestBus`` for ask_user prompts emitted by
         skills spawned under this chain_id. Caller must pair with
-        unregister_intervention_override in a try/finally."""
+        ``unregister_intervention_override`` in a try/finally.
+
+        Issue #254 Phase 5: parameter type tightened from the legacy
+        ``InterventionBus`` alias to the canonical ``RequestBus`` name —
+        functionally identical since the alias points at the same
+        Protocol, but the type hint now reflects the OS↔Agent contract
+        layer the override participates in.
+        """
         self._intervention_overrides[chain_id] = bus
 
     def unregister_intervention_override(self, chain_id: str) -> None:

@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from reyn.kernel.llm_call_recorder import LLMCallRecorder
     from reyn.kernel.run_state import RunState
     from reyn.schemas.models import Skill
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
 
 _log = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class PhaseExecutor:
       events             — EventLog; all state-change events emitted here.
       skill              — Skill definition (phases, permissions, graph).
       safety             — SafetyConfig; phase_seconds budget + on_limit policy.
-      intervention_bus   — InterventionBus | None; for safety-limit checkpoints.
+      intervention_bus   — RequestBus | None; for safety-limit checkpoints.
 
     Public surface: execute() → (NormalizationResult, LLMOutput, retry_count).
     """
@@ -72,7 +72,7 @@ class PhaseExecutor:
         events,
         skill: "Skill",
         safety,
-        intervention_bus: "InterventionBus | None",
+        intervention_bus: "RequestBus | None",
         run_id: str | None = None,
         strict: bool = False,
         build_frame_fn,

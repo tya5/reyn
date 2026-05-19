@@ -32,8 +32,8 @@ from typing import Optional
 
 from reyn.config import OnLimitConfig
 from reyn.user_intervention import (
-    InterventionBus,
     InterventionChoice,
+    RequestBus,
     UserIntervention,
 )
 
@@ -101,7 +101,7 @@ def _yes_no_choices() -> list[InterventionChoice]:
 
 async def handle_limit_exceeded(
     *,
-    bus: Optional[InterventionBus],
+    bus: Optional[RequestBus],
     on_limit: OnLimitConfig,
     kind: str,
     run_id: str,

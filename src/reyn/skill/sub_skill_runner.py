@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from reyn.permissions.permissions import PermissionResolver
     from reyn.schemas.models import Skill
     from reyn.secrets.store import ScopedSecretStore
-    from reyn.user_intervention import InterventionBus
+    from reyn.user_intervention import RequestBus
 
 
 @dataclass
@@ -39,7 +39,7 @@ async def invoke_sub_skill(
     model: str,
     subscribers: list,
     resolver: "ModelResolver",
-    intervention_bus: "InterventionBus | None" = None,
+    intervention_bus: "RequestBus | None" = None,
     permission_resolver: "PermissionResolver | None" = None,
     output_language: str | None = None,
     max_phase_visits: int = 25,
