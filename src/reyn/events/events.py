@@ -69,6 +69,21 @@ class EventLog:
     def add_subscriber(self, fn: Callable[[Event], None]) -> None:
         self._subscribers.append(fn)
 
+    def remove_subscriber(self, fn: Callable[[Event], None]) -> bool:
+        """Detach a previously added subscriber.
+
+        Returns True iff the subscriber was found and removed. Used by
+        scoped consumers that subscribe for the duration of one call
+        (= e.g. issue #271 M1 MCP progress bridge: subscribe in
+        ``_call_tool``, unsubscribe in ``finally``) so the subscriber
+        list doesn't grow unboundedly across many calls.
+        """
+        try:
+            self._subscribers.remove(fn)
+            return True
+        except ValueError:
+            return False
+
     def emit(self, type: str, **data) -> Event:
         # FP-0016 Component E: stamp the session's agent_id onto every
         # event payload so the P6 audit trail can answer "which agent
