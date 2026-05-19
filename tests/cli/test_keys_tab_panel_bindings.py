@@ -140,6 +140,73 @@ async def test_keys_tab_groups_panel_keys_under_panel_section() -> None:
         )
 
 
+@pytest.mark.asyncio
+async def test_keys_tab_renders_h_l_resize_keys() -> None:
+    """Tier 2: ``h`` (widen panel) and ``l`` (narrow panel) appear in the rendered output.
+
+    These keys are handled via ``RightPanel.on_key`` rather than declared
+    ``Binding`` objects, so the binding-iteration paths in ``render_keys``
+    never see them. ``render_keys`` appends synthetic entries explicitly
+    so the user can discover panel resize without reading the source.
+
+    Defends against a future refactor that drops the synthetic append
+    (= the symptom would be a silent regression in discoverability).
+    """
+    app = ReynTUIApp(
+        registry=None,
+        agent_name="test",
+        model="test",
+        budget_tracker=None,
+    )
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        rendered = render_keys(app)
+
+        # Synthetic entries: bare ``h`` / ``l`` (single-letter keys keep
+        # their literal form through ``_pretty_key``).
+        assert "Widen panel" in rendered, (
+            f"Keys tab must render the 'Widen panel' (h) description; got:\n{rendered}"
+        )
+        assert "Narrow panel" in rendered, (
+            f"Keys tab must render the 'Narrow panel' (l) description; got:\n{rendered}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_h_l_resize_keys_group_under_panel_section() -> None:
+    """Tier 2: ``h`` and ``l`` resize keys land in the PANEL group.
+
+    Same intent as the ``ctrl+w`` family test above — guard against a
+    future refactor that drops them into ``OTHER`` or a different group.
+    """
+    app = ReynTUIApp(
+        registry=None,
+        agent_name="test",
+        model="test",
+        budget_tracker=None,
+    )
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
+        await pilot.pause()
+        rendered = render_keys(app)
+
+        panel_idx = rendered.find("[PANEL]")
+        widen_idx = rendered.find("Widen panel")
+        narrow_idx = rendered.find("Narrow panel")
+        assert panel_idx >= 0, "[PANEL] group header missing"
+        # Next group after PANEL is the one that follows in _GROUP_ORDER.
+        # Easier: just assert both Widen/Narrow appear AFTER the PANEL
+        # header, since render_keys emits group headers in _GROUP_ORDER
+        # and we don't want to over-pin the exact next-header label.
+        assert widen_idx > panel_idx, (
+            f"'Widen panel' (h) must render under the PANEL group; "
+            f"panel_idx={panel_idx} widen_idx={widen_idx}"
+        )
+        assert narrow_idx > panel_idx, (
+            f"'Narrow panel' (l) must render under the PANEL group; "
+            f"panel_idx={panel_idx} narrow_idx={narrow_idx}"
+        )
+
+
 # ── check_action gating preserves the panel-visibility contract ─────────────
 
 
