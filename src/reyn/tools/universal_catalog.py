@@ -862,9 +862,24 @@ async def _handle_describe_action(
         else dict(target.parameters)
     )
 
+    # B42-NF-W7-1: prefer the per-resource description over the dispatcher's
+    # generic description (= ``invoke_skill`` / ``delegate_to_agent`` /
+    # ``call_mcp_tool`` instruction text). Without this, describe_action on
+    # a skill__/agent.peer__/mcp.tool__ resource returns the dispatcher's
+    # "how to invoke a skill" wording instead of the resource's actual
+    # description — the LLM has nothing meaningful to relay and empty-stops
+    # on pronoun-followups like "tell me more about the simplest one"
+    # (N=10 trace replay: 9/10 empty → 0/10 empty after substituting the
+    # actual skill.md description).
+    resource_desc = _resource_description(qualified_name, ctx, registry)
+    description = (
+        resource_desc if resource_desc is not None
+        else target.description
+    )
+
     return {
         "qualified_name": qualified_name,
-        "description": target.description,
+        "description": description,
         "input_schema": input_schema,
         "metadata": {
             "target_tool_name": resolved.target_tool_name,
@@ -993,6 +1008,113 @@ def _resource_input_schema(
     # mismatch (memory.entry's transform sends {name} but read_memory_body
     # wants {layer, slug}); fall back to target.parameters so the LLM at
     # least sees the dispatcher's shape and can recover via list_actions.
+    return None
+
+
+def _resource_description(
+    qualified_name: str,
+    ctx: ToolContext,
+    registry: Any,
+) -> "str | None":
+    """Return the per-resource description for a resource-category action,
+    or ``None`` for operation categories (= caller falls back to
+    ``target.description``, which is the correct text for operation
+    categories whose target IS the action).
+
+    Mirrors ``_resource_input_schema`` for the description field. B42-NF-W7-1
+    fix: without per-resource descriptions, describe_action on a resource
+    returns the dispatcher's generic instruction text — uninformative for
+    the LLM trying to narrate "tell me more about <resource>".
+
+    Covered (= same set as ``_resource_input_schema``):
+      - ``skill__<name>`` — pulls ``description`` from
+        ``ctx.router_state.host.list_available_skills()``.
+      - ``agent.peer__<name>`` — pulls ``description`` from
+        ``ctx.router_state.host.list_available_agents()``.
+      - ``mcp.tool__<server>.<tool>`` — pulls ``description`` from the
+        tool's MCP-server entry (FP-0032 expanded shape).
+      - ``mcp.server__<name>`` — pulls server-level ``description`` from
+        ``ctx.router_state.mcp_servers``.
+      - ``rag.corpus__<name>`` — None (no per-corpus description surface
+        today; caller falls back to the ``recall`` tool description).
+      - ``memory.entry__<name>`` — None (memory entries don't carry a
+        description; caller falls back to ``read_memory_body``).
+
+    Returns ``None`` for unrecognised categories or when per-resource
+    metadata isn't reachable (= test sites with stub router_state, etc.).
+    """
+    rs = getattr(ctx, "router_state", None)
+
+    try:
+        category, entry_name = split_qualified_name(qualified_name)
+    except ValueError:
+        return None
+
+    if category == "skill":
+        host = getattr(rs, "host", None) if rs is not None else None
+        if host is None or not hasattr(host, "list_available_skills"):
+            return None
+        try:
+            for skill in host.list_available_skills():
+                if not isinstance(skill, Mapping):
+                    continue
+                if skill.get("name") == entry_name:
+                    desc = skill.get("description")
+                    return str(desc) if desc else None
+        except Exception:
+            return None
+        return None
+
+    if category == "agent.peer":
+        host = getattr(rs, "host", None) if rs is not None else None
+        if host is None or not hasattr(host, "list_available_agents"):
+            return None
+        try:
+            for agent in host.list_available_agents():
+                if not isinstance(agent, Mapping):
+                    continue
+                if agent.get("name") == entry_name:
+                    desc = agent.get("description") or agent.get("role")
+                    return str(desc) if desc else None
+        except Exception:
+            return None
+        return None
+
+    if category == "mcp.tool":
+        mcp_servers = (
+            getattr(rs, "mcp_servers", None) if rs is not None else None
+        )
+        if not mcp_servers or "." not in entry_name:
+            return None
+        server_name, tool_name = entry_name.split(".", 1)
+        for srv in mcp_servers:
+            if not isinstance(srv, Mapping):
+                continue
+            if srv.get("name") != server_name:
+                continue
+            for t in (srv.get("tools") or []):
+                if not isinstance(t, Mapping):
+                    continue
+                if t.get("name") != tool_name:
+                    continue
+                desc = t.get("description")
+                return str(desc) if desc else None
+            return None
+        return None
+
+    if category == "mcp.server":
+        mcp_servers = (
+            getattr(rs, "mcp_servers", None) if rs is not None else None
+        )
+        if not mcp_servers:
+            return None
+        for srv in mcp_servers:
+            if isinstance(srv, Mapping) and srv.get("name") == entry_name:
+                desc = srv.get("description")
+                return str(desc) if desc else None
+        return None
+
+    # rag.corpus / memory.entry / unknown — fall through to target.description
     return None
 
 
