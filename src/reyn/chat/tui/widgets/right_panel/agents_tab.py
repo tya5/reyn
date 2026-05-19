@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import time as _time
+from datetime import date as _date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,26 @@ from rich.text import Text as RichText
 from rich.tree import Tree as RichTree
 
 from .base import _CORAL, logger
+
+
+def _compact_ts(ts: str) -> str:
+    """Return a short timestamp string for the recent-skill row.
+
+    ``ts`` is the raw form persisted by the event store (= e.g.
+    ``"2026-05-19 07:15:42"`` from ``isoformat()[:19].replace("T", " ")``).
+    A 19-char timestamp on every recent row wrapped the entire line to
+    4-5 panel rows at the default 33 % panel width; collapsing today's
+    date to ``HH:MM:SS`` recovers 11 cells per row and keeps the line on
+    a single panel line. Older runs keep the full ``YYYY-MM-DD HH:MM:SS``
+    so day-level context is still visible when scrolling history.
+    """
+    if not ts or len(ts) < 10:
+        return ts
+    today_iso = _date.today().isoformat()
+    if ts.startswith(today_iso):
+        # Skip the leading date + the single space, keep ``HH:MM:SS``.
+        return ts[11:]
+    return ts
 
 if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
@@ -709,7 +730,7 @@ def render_agents(
                 elif status != "ok":
                     line.append(f"  ({status})", style="#aa6655")
                 if s["ts"]:
-                    line.append(f"  {s['ts']}", style="#444444")
+                    line.append(f"  {_compact_ts(s['ts'])}", style="#444444")
                 recent_node.add(line)
                 item_ys.append(y_counter)
                 y_counter += 1
@@ -735,7 +756,7 @@ def render_agents(
                 elif p["status"] == "partial":
                     line.append(f"  ({p['n_failed']} failed)", style="#aa6655")
                 if p["ts"]:
-                    line.append(f"  {p['ts']}", style="#444444")
+                    line.append(f"  {_compact_ts(p['ts'])}", style="#444444")
                 node = recent_node.add(line)
                 item_ys.append(y_counter)
                 y_counter += 1
