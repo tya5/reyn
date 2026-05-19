@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import json
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -1066,6 +1067,8 @@ class RouterLoop:
         exclude_tools: set[str] | None = None,
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
+        empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
+        llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1101,6 +1104,24 @@ class RouterLoop:
         self._memo_provider = memo_provider
         # FP-0024-A: BM25 skill pre-filter config. None = use OS defaults.
         self._skill_search_config = skill_search_config
+        # B42-NF-W6-1: directive used as a continuation prompt when an empty
+        # stop is detected after a tool-call round. None (= default) preserves
+        # the existing chat-router "observe + surface" policy. The plan
+        # executor passes a plan-step-appropriate directive ("now report what
+        # you found") so the post-tool empty-stop attractor that hits 10/10
+        # on Gemini 2.5 Flash Lite (and is documented across providers — see
+        # platform.claude.com handling-stop-reasons docs) can be broken with
+        # one retry. Even when set, the actual retry behaviour is gated by
+        # the ``REYN_EMPTY_STOP_RETRY`` env var so operators opt in per
+        # process — the directive plumbing lands in the codebase but no
+        # default runtime behaviour change.
+        self._empty_stop_retry_directive = empty_stop_retry_directive
+        # Tier 2 test seam: when set, ``run()`` calls this callable instead of
+        # the module-level ``call_llm_tools``. Allows real-fake injection
+        # (= scripted async callable) without ``unittest.mock.patch`` — per
+        # testing.ja.md hard rule that forbids ``MagicMock / AsyncMock /
+        # patch``. Production callers leave this as ``None``.
+        self._llm_caller = llm_caller
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -1408,6 +1429,13 @@ class RouterLoop:
         #   invoked at least one tool (including non-catalog tools).
         _routing_decided_fired: bool = False
         _tool_calls_attempted: int = 0
+        # B42-NF-W6-1: empty-stop retry counter. The empty-stop handler
+        # consults this before injecting a continuation prompt + looping,
+        # so retries are bounded at 1 per turn (= no infinite loops if
+        # the LLM keeps returning empty stops even with the continuation
+        # prompt; the second empty stop falls through to the standard
+        # "observe + surface" path).
+        _empty_stop_retries: int = 0
 
         for _iteration in range(self.max_iterations):
             resolved_model = host.resolve_model(self.router_model)
@@ -1438,7 +1466,12 @@ class RouterLoop:
                     )
                     result = memo
             if result is None:
-                result = await call_llm_tools(
+                # Tier 2 testability: tests inject a real-fake callable via
+                # ``_llm_caller`` (= no unittest.mock.patch needed). None
+                # falls through to the module-level ``call_llm_tools`` so
+                # production callers don't have to know about the seam.
+                _llm = self._llm_caller or call_llm_tools
+                result = await _llm(
                     model=resolved_model,
                     messages=messages,
                     tools=tools,
@@ -1748,6 +1781,16 @@ class RouterLoop:
             # This is a provider-level glitch (observed at ~50% rate with weak
             # models — B7-G12 measurement).  Reyn does NOT retry, change context,
             # or switch models.  Responsibility: observe + surface to user.
+            #
+            # B42-NF-W6-1: when a continuation directive is configured AND the
+            # ``REYN_EMPTY_STOP_RETRY`` env var opts in, attempt ONE retry per
+            # turn with the directive appended as a synthetic user message
+            # before re-entering the loop. The retry path matches the
+            # Anthropic-recommended "continuation prompts as last resort"
+            # pattern (= platform.claude.com handling-stop-reasons docs) and
+            # the Hermes-agent #9400 community implementation. Without the
+            # env var, behaviour is unchanged from the original "observe +
+            # surface" policy.
             if _is_empty_router_response(result):
                 # P6: emit audit event — state change must be observable.
                 self.host.events.emit(
@@ -1760,6 +1803,25 @@ class RouterLoop:
                     caller_hint="router",
                     model=host.resolve_model(self.router_model),
                 )
+                # B42-NF-W6-1 detect-and-retry: env-var-gated, directive-gated,
+                # max 1 retry per turn. Trace-patch-replay verified 0/10 →
+                # 10/10 narration recovery on the W6-S1 plan-step empty stop.
+                if (
+                    self._empty_stop_retry_directive
+                    and _empty_stop_retries < 1
+                    and os.environ.get("REYN_EMPTY_STOP_RETRY") == "1"
+                ):
+                    _empty_stop_retries += 1
+                    messages.append({
+                        "role": "user",
+                        "content": self._empty_stop_retry_directive,
+                    })
+                    self.host.events.emit(
+                        "router_empty_response_retry_injected",
+                        directive_length=len(self._empty_stop_retry_directive),
+                        chain_id=self.chain_id,
+                    )
+                    continue  # re-enter the loop with the directive in messages
                 lang = getattr(host, "output_language", None)
                 failure_text = _EMPTY_RESPONSE_MSG.get(
                     lang, _EMPTY_RESPONSE_MSG["en"]
