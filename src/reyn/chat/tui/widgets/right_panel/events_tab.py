@@ -4,7 +4,31 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rich.cells import cell_len
+
 from .base import _CORAL, _esc, logger
+
+
+def _truncate_to_cells(s: str, max_cells: int) -> tuple[str, bool]:
+    """Truncate ``s`` to fit within ``max_cells`` display columns.
+
+    Returns ``(truncated_string, was_truncated)``. CJK characters consume
+    2 cells each so a naive ``s[:N]`` overshoots the column budget by
+    roughly 2× for full-width content. ``rich.cells.cell_len`` is
+    East-Asian-Width aware and matches what Textual will actually
+    render.
+    """
+    if cell_len(s) <= max_cells:
+        return s, False
+    out_chars: list[str] = []
+    used = 0
+    for ch in s:
+        w = cell_len(ch)
+        if used + w > max_cells:
+            break
+        out_chars.append(ch)
+        used += w
+    return "".join(out_chars), True
 
 _EVENT_COLORS: dict[str, str] = {
     "phase_started":               "#44cc88",
@@ -560,7 +584,15 @@ def render_events(
                 if reply is None:
                     lines.append("[#444444]       ↳ [/][#555555](awaiting…)[/]")
                 else:
-                    short = _esc(reply[:72]) + ("…" if len(reply) > 72 else "")
+                    # Cell-width truncate (not ``[:72]``) so CJK / wide
+                    # characters obey the 40-cell preview budget instead
+                    # of overflowing to ~80 cells and wrapping the
+                    # ``↳`` line across 2-3 panel rows. 40 cells matches
+                    # the ``_event_hint`` cap used elsewhere in this
+                    # file and fits the 36-col panel min with the 7-cell
+                    # ``↳`` indent.
+                    truncated, was_truncated = _truncate_to_cells(reply, 40)
+                    short = _esc(truncated) + ("…" if was_truncated else "")
                     lines.append(f"[#444444]       ↳ [/][#777777]{short}[/]")
 
     del filter_name
