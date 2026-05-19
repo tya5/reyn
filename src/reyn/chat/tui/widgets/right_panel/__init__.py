@@ -422,6 +422,20 @@ class RightPanel(Widget):
         if event.tab and event.tab.id in PANEL_TYPES:
             self._panel_type = event.tab.id
             self._invalidate()
+            # ``#panel-scroll`` is shared across tabs — when we switch to a
+            # cursor-bearing tab whose cursor sits below the viewport
+            # currently displayed (= a different tab's scroll position),
+            # the cursor row goes invisible until the user presses j/k.
+            # Re-anchor the viewport on the new tab's cursor so the ``▶``
+            # marker is visible immediately.
+            scroll_helper = {
+                "events": self._scroll_events_into_view,
+                "agents": self._scroll_agents_into_view,
+                "memory": self._scroll_memory_into_view,
+                "docs":   self._scroll_docs_into_view,
+            }.get(self._panel_type)
+            if scroll_helper is not None:
+                scroll_helper()
             if self._preview_visible:
                 self._update_preview()
 
