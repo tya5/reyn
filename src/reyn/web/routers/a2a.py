@@ -93,9 +93,31 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
       * ``name`` — the Reyn agent name (= addressable identity).
       * ``description`` — the agent's ``role`` text from profile.yaml.
       * ``url`` — the JSON-RPC endpoint to POST to.
-      * ``capabilities`` — streaming and pushNotifications are now True
-        (= FP-0001 adds async task lifecycle + SSE + webhook support).
-        ``stateTransitionHistory`` remains False (= no plans to implement).
+      * ``capabilities`` — issue #267 Gap 3 Z-b interim disclosure:
+        ``streaming`` and ``pushNotifications`` are currently advertised
+        as ``False`` to honestly reflect the **partial implementation
+        state**, not the FP-0001 design intent. Concretely:
+
+          - ``streaming``: SSE endpoint exists (``GET /a2a/tasks/{run_id}/events``)
+            but ``RunRegistry.append_event`` has no in-tree producer
+            (= history_events stays empty in production), so streaming
+            never delivers in-flight events. Claim was ``True`` pre-#267
+            but the empty stream was misleading. issue #267 Gap 1 tracks
+            the producer-wiring work; this claim flips back to ``True``
+            via Gap 3 Z-a once SSE is functional.
+          - ``pushNotifications``: webhook fires on exactly three
+            triggers (= ``completed`` / ``failed`` / ``input-required``).
+            spec-conformance-strict peers reading the ``True`` claim
+            would expect notifications for any state change, which we
+            don't deliver. issue #267 Gap 2 tracks the trigger
+            expansion; same Gap 3 Z-a re-evaluation criteria.
+
+        ``stateTransitionHistory`` remains ``False`` (= no plans to
+        implement). The interim ``False`` state is **honest
+        disclosure**: peers can rely on what we declare. Existing
+        webhook-using peers can still POST + receive on the three
+        trigger events; the capability advertising doesn't gate
+        functionality, only the spec-level negotiation.
       * ``skills`` — A2A's ``skill`` is an outward-facing capability,
         not Reyn's internal skill graph. We expose a single coarse-
         grained skill (``chat``) since each Reyn agent's actual
@@ -110,8 +132,13 @@ def _build_agent_card(agent_name: str, role: str, base_url: str) -> dict:
         "version": _REYN_A2A_VERSION,
         "protocolVersion": _A2A_PROTOCOL_VERSION,
         "capabilities": {
-            "streaming": True,
-            "pushNotifications": True,
+            # issue #267 Gap 3 Z-b: interim ``False`` until implementation
+            # catches up (= Gap 1 SSE producer / Gap 2 webhook trigger
+            # expansion). See docstring above for the full disclosure
+            # rationale. Gap 3 Z-a will re-evaluate flipping these back
+            # to ``True`` once Gap 1 + Gap 2 land.
+            "streaming": False,
+            "pushNotifications": False,
             "stateTransitionHistory": False,
         },
         "defaultInputModes": ["text/plain"],

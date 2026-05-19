@@ -203,8 +203,20 @@ def test_stream_task_events_returns_not_found_for_missing_run() -> None:
 
 
 def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> None:
-    """Tier 2: FP-0001 flips Agent Card capabilities to streaming=True and
-    pushNotifications=True. stateTransitionHistory stays False."""
+    """Tier 2: Agent Card capabilities currently advertise the interim
+    state from issue #267 Gap 3 Z-b:
+
+      - streaming: False (= SSE producer not wired, history_events empty)
+      - pushNotifications: False (= webhook fires only on 3 lifecycle events)
+      - stateTransitionHistory: False (= no plans to implement)
+
+    FP-0001 originally flipped streaming + pushNotifications to True for
+    the design intent, but the implementation gaps (= issue #267 Gap 1 +
+    Gap 2) make those claims misleading. Gap 3 Z-b is the interim
+    honest disclosure; Gap 3 Z-a will flip them back to True once Gap 1
+    + Gap 2 land. Test name kept for git-blame continuity with the
+    FP-0001 history.
+    """
     from fastapi.testclient import TestClient
 
     from reyn.budget.budget import BudgetTracker, CostConfig
@@ -247,8 +259,14 @@ def test_agent_card_shows_streaming_and_push_notifications_true(tmp_path) -> Non
         r = client.get("/a2a/agents/demo/.well-known/agent-card.json")
         assert r.status_code == 200, r.text
         caps = r.json()["capabilities"]
-        assert caps["streaming"] is True, "streaming must be True after FP-0001"
-        assert caps["pushNotifications"] is True, "pushNotifications must be True after FP-0001"
+        assert caps["streaming"] is False, (
+            "streaming must be False until issue #267 Gap 1 lands "
+            "(= SSE producer wiring). Gap 3 Z-b interim disclosure."
+        )
+        assert caps["pushNotifications"] is False, (
+            "pushNotifications must be False until issue #267 Gap 2 lands "
+            "(= webhook trigger expansion). Gap 3 Z-b interim disclosure."
+        )
         assert caps["stateTransitionHistory"] is False, "stateTransitionHistory must remain False"
     finally:
         app.dependency_overrides.clear()
