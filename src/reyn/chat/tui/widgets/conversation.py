@@ -903,6 +903,7 @@ class ConversationView(Widget):
         iv_id: str = "",
         queued_extra: int = 0,
         detail: str | None = None,
+        source_agent: str | None = None,
     ) -> InterventionWidget:
         self._consume_empty_hint()
         # The run is now blocked on the user's answer; "thinking…" is no
@@ -926,6 +927,7 @@ class ConversationView(Widget):
             iv_id=iv_id,
             queued_extra=queued_extra,
             detail=detail,
+            source_agent=source_agent,
         )
         self.mount(widget)
         # Only yank the user down to the new widget when they were

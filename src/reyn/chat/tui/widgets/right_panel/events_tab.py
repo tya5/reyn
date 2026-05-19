@@ -65,6 +65,10 @@ _EVENT_COLORS: dict[str, str] = {
     "chat_stopped":                "#dddddd",
     "user_intervention_requested": "#ffcc88",
     "user_intervention_received":  "#ffcc88",
+    # Issue #261 — routing-decision event family (amber sibling so
+    # delegation / self-answer audit trail reads as same UX category
+    # as the user_intervention_* pair).
+    "intervention_routed":         "#ffcc88",
     "postprocessor_step_failed":    "#ff6644",
     "tool_executed":               "#cc88ff",
     "web_fetch_started":           "#888888",
@@ -171,6 +175,7 @@ _FILTER_GROUPS: list[tuple[str, frozenset]] = [
     ("user", frozenset({
         "user_message_received",
         "user_intervention_requested", "user_intervention_received",
+        "intervention_routed",  # issue #261 — routing decisions
         "chat_started", "chat_stopped",
     })),
     # Internal routing / housekeeping events — useful for debugging multi-agent
@@ -262,6 +267,16 @@ def _event_hint(ev: dict) -> str:
         return str(d.get("question", ""))[:40]
     if t == "user_intervention_received":
         return str(d.get("answer", ""))[:40]
+    if t == "intervention_routed":
+        # Issue #261: surface the Phase 4 routing decision. Format
+        # ``<route> <iv_kind> [<iv_id>]`` — short enough to fit the
+        # events tab's narrow column, distinct enough to debug
+        # "why did this prompt go self_answer instead of user_channel"
+        # in a follow-up routing-policy expansion.
+        route = str(d.get("route", "?"))
+        iv_kind = str(d.get("iv_kind", "?"))
+        iv_id_short = str(d.get("iv_id", ""))[:8]
+        return f"{route} {iv_kind} [{iv_id_short}]"
     if t in ("sandboxed_exec_started", "sandboxed_exec_completed"):
         argv = d.get("argv") or []
         cmd = " ".join(str(a) for a in argv[:3])

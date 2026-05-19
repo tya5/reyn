@@ -104,6 +104,14 @@ class InterventionWidget(Widget):
         height: auto;
         width: 1fr;
     }
+    InterventionWidget Label.iv-source-agent {
+        /* Issue #261: parent-delegation breadcrumb. Dim, no italic — the
+           prompt itself is the load-bearing line; this is context. */
+        color: #888888;
+        text-style: dim;
+        height: auto;
+        width: 1fr;
+    }
     """
 
     class Answered(Message):
@@ -122,6 +130,7 @@ class InterventionWidget(Widget):
         iv_id: str = "",
         queued_extra: int = 0,
         detail: str | None = None,
+        source_agent: str | None = None,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id or f"iv_{iv_id[:8]}")
@@ -131,6 +140,14 @@ class InterventionWidget(Widget):
         # None / empty skips the Label entirely so old callers that
         # don't supply detail keep the prior single-line layout.
         self._detail = detail
+        # Issue #261: when the ``parent_delegate`` branch fires on an
+        # upstream agent, the OutboxMessage carries ``source_agent``
+        # naming that agent. Render as ``[parent: <name>]`` above the
+        # prompt so the user can tell "this question came down from a
+        # parent agent" vs "the attached agent asked directly". Omitted
+        # entirely when None (= no delegation chain), matching the
+        # outbox meta opt-in shape.
+        self._source_agent = source_agent
         # Normalise both legacy 2-tuples and richer dict shapes into a single
         # internal list-of-dicts so compose() / hotkey lookup stays uniform.
         self._choices: list[dict[str, Any]] = [
@@ -188,6 +205,15 @@ class InterventionWidget(Widget):
         # visible. Default markup parsing treats them as unknown style
         # tags and silently strips them — chip labels were rendering as
         # "es", "lways", "o", "ever" with no hotkey hint.
+        if self._source_agent:
+            # Issue #261: source-agent badge for delegated prompts. Dim
+            # so the eye lands on the question first; the badge is
+            # context, not the prompt itself.
+            yield Label(
+                f"  [parent: {self._source_agent}]",
+                classes="iv-source-agent",
+                markup=False,
+            )
         yield Label(
             f"  {self._question}", classes="iv-question", markup=False,
         )

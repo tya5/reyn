@@ -401,6 +401,16 @@ def _iv_meta(iv: "UserIntervention") -> dict:
         ]
     if iv.suggestions:
         out["suggestions"] = list(iv.suggestions)
+    # Issue #261 — source_agent stamping for the parent_delegate branch.
+    # See ``source_agent_var`` in ``services/intervention_handler.py``
+    # for the chain semantics. Omitted when the var is at its default
+    # (``None``) so the meta shape stays identical to the non-delegated
+    # path (Phase 2 ``test_outbox_intervention_meta_shape_is_stable``
+    # contract).
+    from reyn.chat.services.intervention_handler import source_agent_var
+    src = source_agent_var.get()
+    if src:
+        out["source_agent"] = src
     return out
 
 
@@ -1951,7 +1961,21 @@ class ChatSession:
                 iv_kind=iv.kind,
                 iv_id=iv.id,
             )
-            return await parent.handle_intervention(iv)
+            # Issue #261 — stamp this agent as the source of the
+            # delegation so the parent's downstream ``user_channel``
+            # path can surface it on the outbox meta. Token-based
+            # set/reset preserves any outer-scope value (= multi-hop
+            # chains overwrite the immediate parent on each hop, then
+            # restore on return so the original caller's view is
+            # unchanged).
+            from reyn.chat.services.intervention_handler import (
+                source_agent_var,
+            )
+            token = source_agent_var.set(self.agent_name)
+            try:
+                return await parent.handle_intervention(iv)
+            finally:
+                source_agent_var.reset(token)
 
         # Branch 3: default — deliver to user via existing dispatch path.
         self._chat_events.emit(

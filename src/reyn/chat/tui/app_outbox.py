@@ -466,6 +466,11 @@ class OutboxRouter:
         # compat for the CLI Panel path and any legacy producers.
         question_text = str(msg.meta.get("prompt") or msg.text)
         detail_text = msg.meta.get("detail")
+        # Issue #261 — opt-in source_agent stamped by ChatSession's
+        # parent_delegate branch (see services/intervention_handler.py
+        # ``source_agent_var``). Absent on the default user_channel
+        # path, so the existing non-delegated flow is unaffected.
+        source_agent = msg.meta.get("source_agent")
         self._app._mount_intervention(
             conv,
             question_text,
@@ -473,6 +478,7 @@ class OutboxRouter:
             choices,
             queued_extra=queued_extra,
             detail=str(detail_text) if detail_text else None,
+            source_agent=str(source_agent) if source_agent else None,
         )
         # Persistent "blocked on user" indicator. The InterventionWidget is
         # mounted inline and can scroll off-screen in a long session; the
