@@ -827,11 +827,18 @@ class ConversationView(Widget):
         skill_name: str = "",
     ) -> ErrorBox:
         self._consume_empty_hint()
-        # Hide any sticky "thinking…" — the turn is over (it failed).
-        # Otherwise the elapsed counter keeps incrementing forever next
-        # to a stale message, e.g. "⟳ thinking · 87.4s" while the
-        # ErrorBox below already shows "router failed".
-        self.hide_status()
+        # Replace the sticky "thinking…" — the turn is over (it failed).
+        # When the user is at the tail, a bare ``hide_status`` is enough
+        # (they'll see the ErrorBox the next render tick). When they're
+        # scrolled up reading history, the sticky vanishing was their
+        # only feedback that something happened — leave a "✗ error
+        # below ↓" cue so they know to scroll down. The next user
+        # submit clears it via ``on_input_bar_user_submitted``'s own
+        # ``show_status("thinking…")``.
+        if self._user_scrolled:
+            self.show_status("✗ error below ↓", kind="general")
+        else:
+            self.hide_status()
         box = ErrorBox(
             message=message,
             details=details,
@@ -880,8 +887,19 @@ class ConversationView(Widget):
     ) -> InterventionWidget:
         self._consume_empty_hint()
         # The run is now blocked on the user's answer; "thinking…" is no
-        # longer accurate, hide the live counter while we wait.
-        self.hide_status()
+        # longer accurate. When the user is at the tail they'll see the
+        # widget on the next render — bare ``hide_status`` suffices.
+        # When they're scrolled up, the sticky was their only signal
+        # something was happening, and ``hide_status`` would silently
+        # erase it. Replace with a "⚑ intervention below ↓" cue so the
+        # user knows the run is waiting for them. The natural
+        # ``intervention_resolved`` outbox handler (in app_outbox.py)
+        # calls ``hide_status`` on both answer paths, so the cue clears
+        # itself when the user responds.
+        if self._user_scrolled:
+            self.show_status("⚑ intervention below ↓", kind="general")
+        else:
+            self.hide_status()
         widget = InterventionWidget(
             question=question,
             choices=choices,
@@ -893,11 +911,9 @@ class ConversationView(Widget):
         self.mount(widget)
         # Only yank the user down to the new widget when they were
         # already at the tail. If they've scrolled up to read history,
-        # an async intervention arriving must not jerk the view — they
-        # can see the prompt waiting at the bottom via the scrollbar /
-        # auto_scroll once they return on their own, and ``hide_status``
-        # above already replaced the live "thinking…" so they have a
-        # clear signal that the run is waiting for them.
+        # the sticky just got replaced with "⚑ intervention below ↓"
+        # (above) so they have a clear signal the run is waiting; the
+        # widget itself becomes visible on their next scroll-down.
         if not self._user_scrolled:
             try:
                 widget.scroll_visible()
