@@ -1,0 +1,151 @@
+{
+  "batch": "B43",
+  "worker": 7,
+  "head": "e96d479f",
+  "date": "2026-05-20",
+  "scenario_set": "long_session_v1.yaml",
+  "state_mode": "fresh",
+  "config": "REYN_EMPTY_STOP_RETRY=1 (B43 retry guard)",
+  "port": 8237,
+  "server_cwd": "/tmp/reyn-worktrees/b43-7",
+  "agent_prefix": "dogfood-b43-7-s",
+  "recovery_note": "First driver invocation used --agent-prefix with single agent (driver does not split per-scenario); produced all rpc_error 'Unknown agent'. Recovered by splitting long_session_v1.yaml into 7 per-scenario YAMLs and running 7 parallel drivers, each with a pre-created `reyn agent new dogfood-b43-7-s{1..7}`. Driver wait-for-skill-completion hit 180s timeout on 2 turns total (s5 T3 + s5 T4 + s7 T5) \u2014 those turns recorded as spawn-ack-only (skill never narrated within deadline).",
+  "verdicts": {
+    "V": 3,
+    "I": 1,
+    "R": 3,
+    "B": 0
+  },
+  "vs_b42": {
+    "b42_verdicts": {
+      "V": 2,
+      "I": 3,
+      "R": 2,
+      "B": 0
+    },
+    "deltas": {
+      "V": 1,
+      "I": -2,
+      "R": 1,
+      "B": 0
+    },
+    "note": "Mixed: V=2->3 (+1), I=3->1, R=2->3 (+1). s3 (I->V) and s4 (I->V) recover (now produce substantive answers across 4/5 turns). s1 (V->R) regression: T5 empty-response on the P7 final question (rubric fail). s5 (R->V) clear win: with REYN_EMPTY_STOP_RETRY=1, T5 reached non-empty narration (minimal asyncio.Queue example) \u2014 was 'plan tool not available' in B42. s7 (V->R) regression: T5 final reply was inline spawn-ack text without skill spawn \u2014 no narration. s2 (R->R) and s6 (I->I) stable. Empty-stop pattern shifted: s1+s2+s4 still show 'The model returned an empty response' marker on some turns (not 100% suppressed by retry guard)."
+  },
+  "vs_b41": {
+    "b41_verdicts": null,
+    "note": "B41 W7 baseline not directly comparable (scoring methodology shift); see B42 W7 results-worker-7.json vs_b41 block for full chain."
+  },
+  "fix_attribution_summary": {
+    "empty_stop_retry": "REYN_EMPTY_STOP_RETRY=1 set in server env. Driver-recorded empty rate = 0% (all turns returned a non-empty HTTP reply); however, the reply text 'The model returned an empty response' marker is still emitted by OS empty-stop handler on 4 turns (s1 T5, s2 T3-5, s4 T2) and is treated as empty by the rubric. Retry guard provides surface-level non-empty reply but does NOT prevent the underlying LLM empty-completion attractor on context-bloat / pronoun-followup turns.",
+    "skill_completion_inline_attractor": "s7 T5 + s5 T3 + s5 T4: LLM responded to user prompt with chat_turn_completed_inline (no tool spawn) but agent reply text was canonical spawn-ack 'Skill is running in the background.' Driver then waited 180s for a skill_completion_injected event that never came. Suggests an inline-reply path that mis-emits spawn-ack text (= candidate NF for B43-NF-W7-1)."
+  },
+  "scenarios": [
+    {
+      "id": "scenario_1_reyn_research_chain",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 1,
+      "turns_total": 5,
+      "rubric_pass": false,
+      "rubric_notes": "T1-T4 substantive (340/2023/873/1494 chars). T5 final on the P7 question returned the OS empty-stop sentinel 'The model returned an empty response. Please try rephrasing your request or check your configuration.' Rubric requires (a) addresses skill-specific leakage prevention (= P7) on the final turn, (b) references earlier-turn concepts, (c) does not produce empty on final \u2014 fails (c) and therefore (a). REGRESSION from B42 W7 V (P7 final answer present).",
+      "reply_excerpt_T5": "The model returned an empty response. Please try rephrasing your request or check your configuration.",
+      "vs_b42": "V -> R (regression)",
+      "notes": "Context length at T5 large (4 substantive prior turns ~5kB). Empty-stop attractor surfaces despite REYN_EMPTY_STOP_RETRY=1 \u2014 the retry guard handles empty-stop on the HTTP reply layer but the user-facing reply is the sentinel string, not a re-attempted completion. Candidate NF for B43-NF-W7-1 family."
+    },
+    {
+      "id": "scenario_2_pronoun_followup",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 3,
+      "turns_total": 5,
+      "rubric_pass": null,
+      "rubric_notes": "No formal rubric (expected: absent). Fallback rule = mostly substantive turns, not majority-empty. 3/5 turns (T3 events, T4 disk storage, T5 format) returned empty-stop sentinel; only T1-T2 substantive. Majority-empty \u2192 R. SAME as B42 W7 R (same attractor surface).",
+      "reply_excerpt_T5": "The model returned an empty response. Please try rephrasing your request or check your configuration.",
+      "vs_b42": "R -> R (stable, same attractor)",
+      "notes": "Pronoun-followup attractor (NF-W7-B42-1 family) is NOT suppressed by REYN_EMPTY_STOP_RETRY=1. Three consecutive empty-stops at T3/T4/T5 once the chain shifts from concrete (skills list) to pronoun-referenced abstract (events, format)."
+    },
+    {
+      "id": "scenario_3_cross_reference_compare",
+      "result": "verified",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 1,
+      "turns_total": 5,
+      "rubric_pass": true,
+      "rubric_notes": "No formal rubric (expected: absent). Fallback = mostly substantive. T1 empty-stop (cold-start, LangGraph topic without project context \u2014 same pattern as B42 W7 S1 T1 cold-start). T2-T5 all substantive (1128, 2239, 276, 2089 chars). Final T5 produces 2089-char comparative answer on LangGraph->Reyn migration. 4/5 substantive \u2192 V. Promotion from B42 W7 I.",
+      "reply_excerpt_T5": "I couldn't find any specific documentation or discussions about migrating from LangGraph to Reyn. Therefore, I cannot provide a detailed answer on what a developer would need to change. However, based on general knowledge of the two frameworks...",
+      "vs_b42": "I -> V (promotion)",
+      "notes": "Cross-reference comparison chain works end-to-end after the cold-start T1 empty. The empty-stop retry guard appears to help downstream turns where the cold-start would have cascaded in B42."
+    },
+    {
+      "id": "scenario_4_repetitive_context_bloat",
+      "result": "verified",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 1,
+      "turns_total": 5,
+      "rubric_pass": true,
+      "rubric_notes": "No formal rubric. Fallback = mostly substantive. T1 substantive (1772 chars), T2 empty-stop sentinel, T3 substantive (217), T4 substantive (1035), T5 substantive (389 \u2014 first-time-user skill recommendation). 4/5 substantive \u2192 V. Promotion from B42 W7 I.",
+      "reply_excerpt_T5": "For a first-time Reyn user, I would recommend **skill__simple_memo_app**. It's a straightforward application that allows users to create, view, and delete memos, providing a gentle introduction to how Reyn skills work...",
+      "vs_b42": "I -> V (promotion)",
+      "notes": "Repetitive-context attractor (G12 Pattern E target) survives a single empty-stop at T2 and recovers fully. Encouraging signal for REYN_EMPTY_STOP_RETRY=1 mid-chain stabilisation."
+    },
+    {
+      "id": "scenario_5_general_python_chain",
+      "result": "verified",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": true,
+      "rubric_notes": "Formal rubric: (a) final reply contains a working minimal async producer-consumer queue example, (b) uses asyncio.Queue, (c) does not produce empty on final. T1+T2+T5 narrated direct_llm skill outputs (234/281/252 chars). T3+T4 spawn-acked but driver timed out at 180s waiting for skill_completion_injected (skill ran but narration came after deadline OR did not arrive). T5 final reply: 'I used the `direct_llm` skill to provide a minimal example of an async producer-consumer queue in Python. The example demonstrates how to use `asyncio.Queue` with producer and consumer coroutines...' \u2192 satisfies (a)(b)(c). Promotion from B42 W7 R (B42-NF-W7-2 'plan tool not available').",
+      "reply_excerpt_T5": "I used the `direct_llm` skill to provide a minimal example of an async producer-consumer queue in Python. The example demonstrates how to use `asyncio.Queue` with producer and consumer coroutines to synchronize work...",
+      "vs_b42": "R -> V (promotion, clear win)",
+      "notes": "B42 W7 S5 truncated at T2 with 'plan tool not available' short-circuit. B43 S5 runs full chain and final narration delivers asyncio.Queue example. Strongest verified win for B43 W7. Caveat: T3 + T4 narrations missing \u2014 would need follow-up to confirm whether direct_llm completed but narration delivery was driver-side missed, or whether skill never finished within 180s for those 2 turns."
+    },
+    {
+      "id": "scenario_6_file_and_doc_lookup_chain",
+      "result": "inconclusive",
+      "events_pass": true,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": null,
+      "rubric_notes": "No formal rubric. Fallback = mostly substantive, not majority-empty. 5/5 substantive (32/98/193/236/243 chars). All replies are concise refusals ('I found no ADRs', 'I cannot answer this question'). Honest refusals \u2014 no tool affordance to read ADR files. Not empty-stop. \u2192 I (honest-refusal chain, scenario design exposes affordance gap, not LLM regression).",
+      "reply_excerpt_T5": "I cannot answer this question. I do not have the ability to understand the \"current state\" of the project or to determine what the \"next logical ADR\" would be. My capabilities are limited to executing...",
+      "vs_b42": "R -> I (improvement, no longer 5/5 empty)",
+      "notes": "B42 W7 S6 had 5/5 empty (B42-NF-W7-3). B43 S6 produces 5/5 honest refusals \u2014 agent recognises the affordance gap (no file/doc lookup tool in this run). Promotion R->I. The underlying scenario design issue (no read_local_files / list_directory affordance in agent profile) is unchanged, so V remains out of reach without scenario / affordance fix."
+    },
+    {
+      "id": "scenario_7_concept_explanation_chain",
+      "result": "refuted",
+      "events_pass": false,
+      "empty_stop_count_in_turns": 0,
+      "turns_total": 5,
+      "rubric_pass": null,
+      "rubric_notes": "No formal rubric. Fallback = mostly substantive, not majority-empty. T1-T4 narrated direct_llm skill outputs (282/419/294/377 chars covering eventual-consistency, CAP, CDN example, runtime detection). T5 final ('What repair strategies exist...') produced chat_turn_completed_inline with reply text == canonical spawn-ack 'Skill is running in the background. Use `/tasks` to monitor progress.' BUT no skill_run_spawned event for T5 (= LLM decided inline_reply with 0 tool_calls_attempted yet OS surfaced spawn-ack text). Driver waited 180s for skill_completion_injected that never came. Final user-visible reply == spawn-ack with no follow-up narration \u2192 empty-equivalent. REGRESSION from B42 W7 V (PR #221 win).",
+      "reply_excerpt_T5": "Skill is running in the background. Use `/tasks` to monitor progress.",
+      "vs_b42": "V -> R (regression)",
+      "notes": "New attractor: chat_turn_completed_inline with decision='inline_reply' and tool_calls_attempted=0 but the reply text is still the spawn-ack sentinel. Suggests an OS path that returns the spawn-ack text on an inline reply without actually spawning a skill \u2014 distinct from B42-NF-W7-1 (pronoun-followup) and B42-NF-W7-2 (plan tool). Candidate NF for B43-NF-W7-1 family."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B43-NF-W7-1",
+      "summary": "Empty-stop sentinel still surfaces as user-visible reply despite REYN_EMPTY_STOP_RETRY=1",
+      "details": "On 4 turns across s1/s2/s4, the agent reply text is the canonical 'The model returned an empty response. Please try rephrasing your request or check your configuration.' sentinel. REYN_EMPTY_STOP_RETRY=1 prevents the HTTP layer from returning an empty body (driver-recorded empty rate = 0%) but does not retry the LLM completion or substitute a real reply. Net effect: rubric-failing surface remains on context-bloat / pronoun-followup turns. Suggests retry guard hooks into HTTP-empty path, not LLM-completion-empty path.",
+      "scenarios_affected": [
+        "s1 T5",
+        "s2 T3/T4/T5",
+        "s3 T1",
+        "s4 T2"
+      ]
+    },
+    {
+      "id": "B43-NF-W7-2",
+      "summary": "Inline-reply path emits spawn-ack text without spawning a skill",
+      "details": "s7 T5 (and s5 T3, s5 T4) produced chat_turn_completed_inline events with decision='inline_reply' and tool_calls_attempted=0, but the agent reply text is the canonical spawn-ack 'Skill is running in the background. Use `/tasks` to monitor progress.' This mis-classifies as a spawn-ack to the driver and produces a 180s skill_completion wait that never resolves. Distinct from the spawn-ack attractor where a skill IS spawned (= PR #207 wait-for-completion target). Suggests an OS path where the LLM decided inline but the chat-router still emitted the spawn-ack canonical reply.",
+      "scenarios_affected": [
+        "s7 T5",
+        "s5 T3",
+        "s5 T4"
+      ]
+    }
+  ]
+}

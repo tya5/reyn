@@ -1,0 +1,128 @@
+{
+  "batch": "B43",
+  "worker": 3,
+  "head": "e96d479f",
+  "date": "2026-05-20",
+  "agent_prefix": "dogfood-b43-3-sN",
+  "port": 8233,
+  "worktree": "/tmp/reyn-worktrees/b43-3",
+  "state_mode": "fresh",
+  "scenario_set": "control_ir_ops.yaml",
+  "config": {
+    "hot_list_n": 20,
+    "reyn_local_yaml": false,
+    "empty_stop_retry": true
+  },
+  "verdicts": {
+    "V": 4,
+    "I": 2,
+    "R": 3,
+    "B": 0
+  },
+  "vs_b42": {
+    "b42_verdicts": { "V": 5, "I": 1, "R": 3, "B": 0 },
+    "deltas": { "V": -1, "I": 1, "R": 0, "B": 0 }
+  },
+  "scenarios": [
+    {
+      "id": "file_read_via_chat",
+      "short_id": "s1",
+      "verdict": "V",
+      "b42_verdict": "V",
+      "events_observed": ["routing_decided (file__read)", "tool_executed", "permission_granted"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The file `docs/concepts/principles.md` contains eight design principles for reyn's architecture: P1. Phase is stateless and reusable; P2. Skill defines structure and owns final output; P3. OS controls execution; ...",
+      "notes": "Consistent V vs B42. routing_decided(file__read) + tool_executed present. Reply quotes P1-P8 with descriptions. All rubric criteria met."
+    },
+    {
+      "id": "file_glob_grep",
+      "short_id": "s2",
+      "verdict": "I",
+      "b42_verdict": "I",
+      "events_observed": ["routing_decided (file__glob)", "routing_decided (file__grep)", "tool_executed x2"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I couldn't find any `skill.md` files under the `src/` directory that mention 'judge_output'.",
+      "notes": "B41 routing fix (file__glob + file__grep via hot_list_alias) maintained in B43. Rubric criterion 1 (lists at least one file path) unmet — environment premise mismatch (no skill.md under src/ contains 'judge_output'). Routing correct, structural I held."
+    },
+    {
+      "id": "web_search_query",
+      "short_id": "s3",
+      "verdict": "V",
+      "b42_verdict": "V",
+      "events_observed": ["routing_decided (web__search)", "web_search_started", "web_search_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I found the following results for 'OpenAI Python SDK changelog 2026': openai-python/CHANGELOG.md at main - GitHub; Changelog - OpenAI API; OpenAI Release Notes - May 2026 ...",
+      "notes": "Consistent V vs B42. web_search_started + web_search_completed both present. Reply references OpenAI Python SDK. Rubric met. No empty stop with REYN_EMPTY_STOP_RETRY=1."
+    },
+    {
+      "id": "web_fetch_url",
+      "short_id": "s4",
+      "verdict": "R",
+      "b42_verdict": "R",
+      "events_observed": ["routing_decided (web__fetch)", "tool_failed (invoke_action)"],
+      "events_missing": ["web_fetch_started"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I'm sorry, but I encountered a permission error when trying to fetch the content from the provided URL. I cannot access external websites at the moment.",
+      "notes": "Consistent structural R vs B42. web_fetch tool fails at permission layer before web_fetch_started is emitted. Environment-level restriction on external site access. Rubric and must_emit both fail."
+    },
+    {
+      "id": "sandboxed_exec_simple",
+      "short_id": "s5",
+      "verdict": "R",
+      "b42_verdict": "R",
+      "events_observed": ["routing_decided (exec__sandboxed_exec)", "sandboxed_exec_started", "sandboxed_exec_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The command failed to execute because of a file system sandbox restriction when trying to load the Python library. This typically happens when the sandbox environment does not have the necessary permissions to access the required files or libraries.",
+      "notes": "All required events present, but macOS sandbox blocks libpython3.12.dylib. Output '4' not reported. Consistent structural R vs B42 (environment limitation)."
+    },
+    {
+      "id": "lint_a_skill",
+      "short_id": "s6",
+      "verdict": "R",
+      "b42_verdict": "R",
+      "events_observed": ["routing_decided (skill__eval)", "skill_run_spawned", "skill_run_failed", "tool_failed (run_skill)", "workflow_aborted"],
+      "events_missing": ["lint_completed"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The evaluation of the `index_events` skill encountered an error because the skill file was not found. The LLM aborted the workflow at the 'run_target' phase, and the specific error message is: 'The target skill skills/index_events.py was not found, aborting execution.'",
+      "notes": "Consistent structural R vs B42. eval skill spawned but run_target phase aborts — index_events skill target not resolvable. lint_completed never emitted. must_emit lint_completed fails."
+    },
+    {
+      "id": "recall_indexed_source",
+      "short_id": "s7",
+      "verdict": "I",
+      "b42_verdict": "V",
+      "events_observed": ["routing_decided (operation__recall)", "tool_failed (operation__recall)"],
+      "events_missing": [],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "I am sorry, I cannot fulfill this request as the `operation__recall` tool is not available.",
+      "notes": "Routing correct (operation__recall), no forbidden events. But reply asserts 'tool is not available' rather than 'no indexed sources found' (B42 rubric alt branch). Different wording attractor vs B42 — reply does not clearly satisfy rubric alt branch text. Downgraded V→I. Delta vs B42: V→I."
+    },
+    {
+      "id": "judge_output_direct",
+      "short_id": "s8",
+      "verdict": "V",
+      "b42_verdict": "V",
+      "events_observed": ["routing_decided (skill__judge_phase)", "skill_run_spawned", "tool_executed x3", "workflow_finished", "postprocessor_step_completed", "skill_run_completed"],
+      "events_missing": [],
+      "events_forbidden_seen": ["router_empty_response_detected (1, recovered)"],
+      "reply_excerpt": "The `judge_phase` skill has finished. The artifact at `dogfood/fixtures/judge_phase/sample_artifact.json` passed all criteria, with a score of 1.0.",
+      "notes": "First call returned empty (router_empty_response_detected). Retry produced full reply with verdict + score. workflow_finished + postprocessor_step_completed confirmed. Reply mentions 'passed', score 1.0. router_empty_response_detected is not in must_not_emit list. Maintained V vs B42 (one retry needed)."
+    },
+    {
+      "id": "ask_user_round_trip",
+      "short_id": "s9",
+      "verdict": "R",
+      "b42_verdict": "R",
+      "events_observed": ["routing_decided (skill__skill_builder)", "skill_run_spawned", "lint_completed x2", "phase_rollback x2", "skill_run_failed", "workflow_aborted"],
+      "events_missing": ["user_intervention_requested", "user_intervention_received", "workflow_finished"],
+      "events_forbidden_seen": [],
+      "reply_excerpt": "The skill `skill_builder` encountered an error and could not be completed. The 'build_skill' phase produced an output identical to the one rejected by 'verify_skill', and no changes were made, causing the process to abort to prevent a loop.",
+      "notes": "Turn 1 returned empty (router_empty_response_detected). Turn 2 ('my_demo_skill') spawned skill_builder which aborted at build_skill phase (no-progress rollback). user_intervention_requested + user_intervention_received never emitted — ask happened inline, not via ask_user Control IR op. Consistent structural R vs B42."
+    }
+  ],
+  "new_findings": []
+}
