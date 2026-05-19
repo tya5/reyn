@@ -1,0 +1,23 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_6_file_and_doc_lookup_chain
+  description: 'Mixed research + file reference chain. Exercises tool invocation across
+    turns and checks that tool results are carried into subsequent answers without
+    context loss.
+
+    '
+  kind: research_chain
+  covers:
+  - cli/reyn-chat
+  - control-ir-ops/file
+  - stdlib-skills/read-local-files
+  prompts:
+  - What ADRs exist in this project?
+  - Summarize the most recent one.
+  - What problem was it solving?
+  - Is there a related ADR that covers the same area?
+  - What would be the next logical ADR to write given the current state?

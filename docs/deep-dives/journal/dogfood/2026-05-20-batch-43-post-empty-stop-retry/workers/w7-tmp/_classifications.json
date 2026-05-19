@@ -1,0 +1,339 @@
+[
+  {
+    "sc": "scenario_1_reyn_research_chain",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "What is Reyn and what problem does it solve?",
+        "final_len": 340,
+        "empty": false,
+        "kind": "OK (340 chars)",
+        "final": "I am a Reyn agent.\n\nReyn is an LLM-driven phase execution engine. It aims to solve the problem of managing and orchestrating complex LLM workflows. It provides a framework that constrains LLM autonomy"
+      },
+      {
+        "turn": 2,
+        "prompt": "How does its skill system work?",
+        "final_len": 2023,
+        "empty": false,
+        "kind": "OK (2023 chars)",
+        "final": "Reyn's skill system is defined in Markdown files (`skill.md`). These files describe the skill's entry points, input/output schemas, and the graph of phases it executes. The phases themselves are also "
+      },
+      {
+        "turn": 3,
+        "prompt": "What is the difference between a Phase and a Skill in that s",
+        "final_len": 873,
+        "empty": false,
+        "kind": "OK (873 chars)",
+        "final": "I am a Reyn agent.\n\nIn Reyn's system:\n\n*   A **Skill** is a higher-level, self-contained unit of work that encapsulates a complete workflow or task. It's defined by a `skill.md` file and includes an e"
+      },
+      {
+        "turn": 4,
+        "prompt": "Where does the OS fit in the architecture you just described",
+        "final_len": 1494,
+        "empty": false,
+        "kind": "OK (1494 chars)",
+        "final": "I am a Reyn agent.\n\nThe **Reyn OS** is the orchestrator and manager of the entire execution process. It sits at a level above both Skills and Phases. Its primary responsibilities are:\n\n1.  **Orchestra"
+      },
+      {
+        "turn": 5,
+        "prompt": "What principles prevent skill-specific code from leaking int",
+        "final_len": 101,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration."
+      }
+    ],
+    "rubric": [
+      "final answer addresses skill-specific leakage prevention (P7 or equivalent)",
+      "references concepts established in earlier turns without re-explaining from scratch",
+      "does not produce an empty reply on the final turn"
+    ],
+    "kind": "research_chain"
+  },
+  {
+    "sc": "scenario_2_pronoun_followup",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "What stdlib skills does Reyn bundle?",
+        "final_len": 1361,
+        "empty": false,
+        "kind": "OK (1361 chars)",
+        "final": "I found the following skills:\n\n*   **skill__direct_llm**: A fallback for tasks not covered by other skills, directly using natural language.\n*   **skill__eval**: Runs evaluations for a skill against t"
+      },
+      {
+        "turn": 2,
+        "prompt": "Tell me more about the simplest one.",
+        "final_len": 198,
+        "empty": false,
+        "kind": "OK (198 chars)",
+        "final": "I found the \"skill__direct_llm\" skill. Its purpose is to serve as a fallback for tasks that aren't covered by other specific skills. It directly processes natural language input to fulfill requests."
+      },
+      {
+        "turn": 3,
+        "prompt": "What event types does it emit?",
+        "final_len": 101,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration."
+      },
+      {
+        "turn": 4,
+        "prompt": "Are those events stored somewhere on disk?",
+        "final_len": 101,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration."
+      },
+      {
+        "turn": 5,
+        "prompt": "What format are they stored in?",
+        "final_len": 102,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration.\n"
+      }
+    ],
+    "rubric": [],
+    "kind": "pronoun_followup"
+  },
+  {
+    "sc": "scenario_3_cross_reference_compare",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "Describe how LangGraph structures multi-agent workflows.",
+        "final_len": 101,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration."
+      },
+      {
+        "turn": 2,
+        "prompt": "Now describe how Reyn structures multi-agent workflows.",
+        "final_len": 1128,
+        "empty": false,
+        "kind": "OK (1128 chars)",
+        "final": "Hello! I'm a Reyn agent.\n\nReyn structures multi-agent workflows by enforcing a strict, observable loop:\n\n1.  **Constrained Decision-Making:** The LLM operates within a predefined set of choices provid"
+      },
+      {
+        "turn": 3,
+        "prompt": "What is async/await in Python and why does it matter for age",
+        "final_len": 2239,
+        "empty": false,
+        "kind": "OK (2239 chars)",
+        "final": "In Python, `async` and `await` are keywords used to define and work with asynchronous functions (coroutines).\n\n*   **`async def`**: This defines a function as a coroutine, meaning it can be paused and"
+      },
+      {
+        "turn": 4,
+        "prompt": "Given what you said about both LangGraph and Reyn, which app",
+        "final_len": 276,
+        "empty": false,
+        "kind": "OK (276 chars)",
+        "final": "I cannot provide a specific comparison between LangGraph and Reyn regarding their handling of async tool calls, as my search for information on \"LangGraph async tool calls\" did not yield relevant resu"
+      },
+      {
+        "turn": 5,
+        "prompt": "What would a developer need to change when migrating from La",
+        "final_len": 2089,
+        "empty": false,
+        "kind": "OK (2089 chars)",
+        "final": "I couldn't find any specific documentation or discussions about migrating from LangGraph to Reyn. Therefore, I cannot provide a detailed answer on what a developer would need to change.\n\nHowever, base"
+      }
+    ],
+    "rubric": [],
+    "kind": "cross_reference"
+  },
+  {
+    "sc": "scenario_4_repetitive_context_bloat",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "What skills are available in Reyn?",
+        "final_len": 1772,
+        "empty": false,
+        "kind": "OK (1772 chars)",
+        "final": "I found the following skills available in Reyn:\n\n*   **skill__direct_llm**: Catalogue-gap fallback: hand a single-shot natural-language task straight to\n*   **skill__eval**: Run a single eval case: sc"
+      },
+      {
+        "turn": 2,
+        "prompt": "List the available skills again, but this time include a one",
+        "final_len": 101,
+        "empty": true,
+        "kind": "EMPTY_RESPONSE_ERR",
+        "final": "The model returned an empty response. Please try rephrasing your request or check your configuration."
+      },
+      {
+        "turn": 3,
+        "prompt": "Which of those skills are used most commonly in dogfood sess",
+        "final_len": 217,
+        "empty": false,
+        "kind": "OK (217 chars)",
+        "final": "I can't determine the commonality of skill usage without access to session data or logs. My current capabilities allow me to list and describe available skills, but not to track their usage frequency "
+      },
+      {
+        "turn": 4,
+        "prompt": "Summarize the skill list one more time in bullet form.",
+        "final_len": 1035,
+        "empty": false,
+        "kind": "OK (1035 chars)",
+        "final": "*   **skill__direct_llm**: Fallback for direct LLM tasks.\n*   **skill__eval**: Runs eval cases to score skills.\n*   **skill__eval_builder**: Builds eval specifications.\n*   **skill__index_docs**: Crea"
+      },
+      {
+        "turn": 5,
+        "prompt": "Which skill would you recommend for a first-time Reyn user?",
+        "final_len": 389,
+        "empty": false,
+        "kind": "OK (389 chars)",
+        "final": "For a first-time Reyn user, I would recommend **skill__simple_memo_app**. It's a straightforward application that allows users to create, view, and delete memos, providing a gentle introduction to how"
+      }
+    ],
+    "rubric": [],
+    "kind": "repetitive_context"
+  },
+  {
+    "sc": "scenario_5_general_python_chain",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "Explain Python's asyncio event loop in simple terms.",
+        "final_len": 234,
+        "empty": false,
+        "kind": "OK (234 chars)",
+        "final": "I used the `direct_llm` skill to explain Python's asyncio event loop. It acts like a chef managing multiple tasks, efficiently switching between them when one is waiting for I/O, thus improving respon"
+      },
+      {
+        "turn": 2,
+        "prompt": "What is the difference between asyncio.gather and asyncio.wa",
+        "final_len": 281,
+        "empty": false,
+        "kind": "OK (281 chars)",
+        "final": "I used the `direct_llm` skill to explain the differences between `asyncio.gather` and `asyncio.wait`. `gather` returns all results and propagates the first exception, while `wait` returns sets of done"
+      },
+      {
+        "turn": 3,
+        "prompt": "When would you choose asyncio over threading?",
+        "final_len": 0,
+        "empty": true,
+        "kind": "SPAWN_ACK_ONLY (no narration)",
+        "final": ""
+      },
+      {
+        "turn": 4,
+        "prompt": "How does Python's GIL interact with async code?",
+        "final_len": 0,
+        "empty": true,
+        "kind": "SPAWN_ACK_ONLY (no narration)",
+        "final": ""
+      },
+      {
+        "turn": 5,
+        "prompt": "Give me a minimal example of an async producer-consumer queu",
+        "final_len": 252,
+        "empty": false,
+        "kind": "OK (252 chars)",
+        "final": "I used the `direct_llm` skill to provide a minimal example of an async producer-consumer queue in Python. The example demonstrates how to use `asyncio.Queue` with producer and consumer coroutines to s"
+      }
+    ],
+    "rubric": [
+      "final reply contains a working minimal async producer-consumer queue example in Python",
+      "the code uses asyncio.Queue or equivalent",
+      "does not produce an empty reply on the final turn"
+    ],
+    "kind": "general_topic"
+  },
+  {
+    "sc": "scenario_6_file_and_doc_lookup_chain",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "What ADRs exist in this project?",
+        "final_len": 32,
+        "empty": false,
+        "kind": "OK (32 chars)",
+        "final": "I found no ADRs in this project."
+      },
+      {
+        "turn": 2,
+        "prompt": "Summarize the most recent one.",
+        "final_len": 98,
+        "empty": false,
+        "kind": "OK (98 chars)",
+        "final": "I need to know which ADR is the most recent one. Can you please provide more details or context? \n"
+      },
+      {
+        "turn": 3,
+        "prompt": "What problem was it solving?",
+        "final_len": 193,
+        "empty": false,
+        "kind": "OK (193 chars)",
+        "final": "I am sorry, I cannot answer this question. The available tools do not have the ability to determine which ADR is the most recent one, nor do they have the ability to access the content of ADRs."
+      },
+      {
+        "turn": 4,
+        "prompt": "Is there a related ADR that covers the same area?",
+        "final_len": 236,
+        "empty": false,
+        "kind": "OK (236 chars)",
+        "final": "I cannot answer this question. I do not have the ability to search for ADRs or compare their content. If you can provide me with the content of the ADR, I might be able to help you identify related AD"
+      },
+      {
+        "turn": 5,
+        "prompt": "What would be the next logical ADR to write given the curren",
+        "final_len": 243,
+        "empty": false,
+        "kind": "OK (243 chars)",
+        "final": "I cannot answer this question. I do not have the ability to understand the \"current state\" of the project or to determine what the \"next logical ADR\" would be. My capabilities are limited to executing"
+      }
+    ],
+    "rubric": [],
+    "kind": "research_chain"
+  },
+  {
+    "sc": "scenario_7_concept_explanation_chain",
+    "turns": [
+      {
+        "turn": 1,
+        "prompt": "Explain eventual consistency in distributed systems.",
+        "final_len": 282,
+        "empty": false,
+        "kind": "OK (282 chars)",
+        "final": "The `direct_llm` skill has finished. It provided a summary of eventual consistency, explaining that it's a model where all data accesses eventually return the last updated value, prioritizing availabi"
+      },
+      {
+        "turn": 2,
+        "prompt": "What is the CAP theorem and how does it relate to what you j",
+        "final_len": 419,
+        "empty": false,
+        "kind": "OK (419 chars)",
+        "final": "The `direct_llm` skill has finished. It explained the CAP theorem, stating that distributed systems can only simultaneously guarantee two out of three properties: Consistency, Availability, and Partit"
+      },
+      {
+        "turn": 3,
+        "prompt": "Give a concrete example of a system that chooses availabilit",
+        "final_len": 294,
+        "empty": false,
+        "kind": "OK (294 chars)",
+        "final": "The `direct_llm` skill has finished. It provided an example of a Content Delivery Network (CDN) as a system that prioritizes availability over consistency, explaining that CDNs distribute content glob"
+      },
+      {
+        "turn": 4,
+        "prompt": "How would you detect inconsistency in that system at runtime",
+        "final_len": 377,
+        "empty": false,
+        "kind": "OK (377 chars)",
+        "final": "The `direct_llm` skill has finished. It outlined several methods for detecting runtime inconsistencies in a CDN, including edge node health checks, content verification using checksums, synthetic moni"
+      },
+      {
+        "turn": 5,
+        "prompt": "What repair strategies exist once an inconsistency is detect",
+        "final_len": 0,
+        "empty": true,
+        "kind": "SPAWN_ACK_ONLY (no narration)",
+        "final": ""
+      }
+    ],
+    "rubric": [],
+    "kind": "general_topic"
+  }
+]

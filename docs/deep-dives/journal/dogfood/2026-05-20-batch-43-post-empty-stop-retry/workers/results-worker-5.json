@@ -1,0 +1,165 @@
+{
+  "worker": 5,
+  "batch": 43,
+  "scenario_set": "multi_agent_and_mcp",
+  "purpose": "Multi-agent + MCP + A2A coverage (FP-0036)",
+  "port": 8235,
+  "worktree": "/tmp/reyn-worktrees/b43-5",
+  "env": {
+    "REYN_EMPTY_STOP_RETRY": "1"
+  },
+  "counts": {
+    "V": 2,
+    "I": 0,
+    "R": 5,
+    "B": 0
+  },
+  "n_scenarios": 7,
+  "past_batch_b42_comparison": {
+    "B42_W5": {
+      "V": 0,
+      "I": 4,
+      "R": 3,
+      "B": 0
+    },
+    "B43_W5": {
+      "V": 2,
+      "I": 0,
+      "R": 5,
+      "B": 0
+    },
+    "delta_V": 2,
+    "delta_R": 2,
+    "delta_I": -4,
+    "notes": "B43 W5 V=2 (+2 vs B42) driven by s2/s4 reply-quality (events gate satisfied AND rubric met). s1/s7 still R (event gate fail). s6 same NF-W5-B42-1 unsafe-python recurrence — out of scope (issue #229, e2e-coder). s5 new misroute → mcp_install (observe-only)."
+  },
+  "nf_observations": [
+    {
+      "tag": "NF-W5-B42-1-recur",
+      "scenario": "mcp_install_permission_gate (s6)",
+      "summary": "mcp_install skill declares unsafe-python step; --allow-unsafe-python not provided; skill_run_failed. Same shape as B42 W5 s6. Out-of-scope per task brief (e2e-coder territory, issue #229).",
+      "in_scope_for_b43": false
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "mcp_search_registry",
+      "agent": "dogfood-b43-5-s1",
+      "verdict": "R",
+      "verdict_reason": "events miss must_emit: routing_decided=0 + skill_run_spawned=0 (rubric requires both)",
+      "input": "MCP レジストリで github 関連のサーバーを探して。",
+      "http_status": 200,
+      "reply_len": 60,
+      "reply_preview": "I can't find any GitHub-related servers in the MCP registry.",
+      "event_counts": {
+        "routing_decided": 0,
+        "skill_run_spawned": 0,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 1,
+        "user_message_received": 1
+      }
+    },
+    {
+      "id": "mcp_call_remote_tool",
+      "agent": "dogfood-b43-5-s2",
+      "verdict": "V",
+      "verdict_reason": "must_emit_any satisfied (chat_turn_completed_inline=1); reply explains MCP server not configured, no silent fail",
+      "input": "github MCP サーバーを使って最近の PR を一覧して。",
+      "http_status": 200,
+      "reply_len": 134,
+      "reply_preview": "It seems there are no actions available under the \"mcp.server\" category. Therefore, I cannot list recent PRs using GitHub MCP servers.",
+      "event_counts": {
+        "routing_decided": 0,
+        "skill_run_spawned": 0,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 1,
+        "user_message_received": 1
+      }
+    },
+    {
+      "id": "agent_delegation_simple",
+      "agent": "dogfood-b43-5-s3",
+      "verdict": "R",
+      "verdict_reason": "routing_decided=1 OK but rubric 'explains how to create the agent' not satisfied — reply only says 'check name and try again'",
+      "input": "researcher エージェントに FP-0001 の概要を要約してもらって。",
+      "http_status": 200,
+      "reply_len": 95,
+      "reply_preview": "There was an error finding the 'researcher' agent. Please check the agent's name and try again.",
+      "event_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 0,
+        "chat_turn_completed_inline": 0,
+        "tool_called": 1,
+        "user_message_received": 1
+      }
+    },
+    {
+      "id": "multi_agent_topology_route",
+      "agent": "dogfood-b43-5-s4",
+      "verdict": "V",
+      "verdict_reason": "routing_decided=1 OK; both researcher+writer reported as not existing across 2 turns, no empty reply",
+      "input": "researcher エージェントに Reyn の Phase エンジンについて調べてもらって、その結果を教えて。",
+      "http_status": 200,
+      "reply_len": 128,
+      "reply_preview": "I'm sorry, but I cannot fulfill this request as the 'researcher' agent was not found. Please check the agent name and try again.",
+      "event_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 0,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 1,
+        "user_message_received": 2
+      }
+    },
+    {
+      "id": "a2a_task_lifecycle_status_poll",
+      "agent": "dogfood-b43-5-s5",
+      "verdict": "R",
+      "verdict_reason": "misrouted: model invoked mcp_install instead of describing A2A endpoint; rubric (message/send + GET /a2a/tasks/{id} + reyn web running) entirely unmet",
+      "input": "reyn web を起動して A2A エンドポイントにタスクを投げ、 GET /a2a/tasks/<id> でステータスを確認するにはどうすればいい?",
+      "http_status": 200,
+      "reply_len": 254,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress.\n\nThe `mcp_install` skill encountered an error because it declared an unsafe Python step without the `--allow-unsafe-python` flag. To proceed, you need to re-run with this flag enabled.",
+      "event_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 3,
+        "user_message_received": 1
+      }
+    },
+    {
+      "id": "mcp_install_permission_gate",
+      "agent": "dogfood-b43-5-s6",
+      "verdict": "R",
+      "verdict_reason": "NF-W5-B42-1 recurrence: mcp_install skill_run_failed on unsafe-python gate; reply explains --allow-unsafe-python flag but no recovery (= same shape as B42 W5 s6)",
+      "input": "postgres MCP サーバーをインストールして。",
+      "http_status": 200,
+      "reply_len": 267,
+      "reply_preview": "Skill is running in the background. Use `/tasks` to monitor progress.\n\nThe `mcp_install` skill encountered an error because it declared an unsafe Python step and the `--allow-unsafe-python` flag was not provided. To proceed, you need to re-run with this flag enabled.",
+      "event_counts": {
+        "routing_decided": 1,
+        "skill_run_spawned": 1,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 1,
+        "user_message_received": 1
+      }
+    },
+    {
+      "id": "cron_schedule_status",
+      "agent": "dogfood-b43-5-s7",
+      "verdict": "R",
+      "verdict_reason": "events miss must_emit: routing_decided=0 (only chat_turn_completed_inline=1); rubric event gate fails",
+      "input": "現在スケジュールされている cron ジョブの一覧を見せて。",
+      "http_status": 200,
+      "reply_len": 192,
+      "reply_preview": "I cannot directly access or list scheduled cron jobs. My capabilities are limited to the actions and tools available to me, and none of them provide access to system-level cron job management.",
+      "event_counts": {
+        "routing_decided": 0,
+        "skill_run_spawned": 0,
+        "chat_turn_completed_inline": 1,
+        "tool_called": 1,
+        "user_message_received": 1
+      }
+    }
+  ]
+}

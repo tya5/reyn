@@ -1,0 +1,186 @@
+{
+  "generated_at": "2026-05-19T21:37:15.310082+00:00",
+  "scenarios_file": "/Users/yasudatetsuya/Workspace/junk/claude_sandbox/sandbox_2/docs/deep-dives/journal/dogfood/2026-05-20-batch-43-post-empty-stop-retry/workers/w7-tmp/scenario_2.yaml",
+  "agent": "dogfood-b43-7-s2",
+  "web_url": "http://localhost:8237",
+  "n_shot": 1,
+  "max_turns": 5,
+  "results": [
+    {
+      "scenario_id": "scenario_2_pronoun_followup",
+      "description": "Aggressive pronoun reference chain. Every turn uses \"it\", \"that\", or \"those\" to reference the prior answer, forcing the LLM to maintain session context across turns.\n",
+      "kind": "pronoun_followup",
+      "agent_name": "dogfood-b43-7-s2",
+      "prompts": [
+        "What stdlib skills does Reyn bundle?",
+        "Tell me more about the simplest one.",
+        "What event types does it emit?",
+        "Are those events stored somewhere on disk?",
+        "What format are they stored in?"
+      ],
+      "turns": [
+        {
+          "turn": 1,
+          "prompt": "What stdlib skills does Reyn bundle?",
+          "message_id": "b8a4bc09ae2e43c182218bafce4d60ac",
+          "elapsed_s": 7.289,
+          "status": "ok",
+          "reply_len": 1361,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 2,
+          "prompt": "Tell me more about the simplest one.",
+          "message_id": "e7bb2ad119764b8e92604e825bbce60b",
+          "elapsed_s": 5.236,
+          "status": "ok",
+          "reply_len": 198,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 3,
+          "prompt": "What event types does it emit?",
+          "message_id": "9477ded834084783b2a3cd48e3868841",
+          "elapsed_s": 2.902,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 4,
+          "prompt": "Are those events stored somewhere on disk?",
+          "message_id": "eaec24e60a184e3f80e14f321568f001",
+          "elapsed_s": 8.918,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        },
+        {
+          "turn": 5,
+          "prompt": "What format are they stored in?",
+          "message_id": "6a77729d3e1040dab5ce25e82c7a1660",
+          "elapsed_s": 1.466,
+          "status": "ok",
+          "reply_len": 101,
+          "empty": false,
+          "http_status": 200
+        }
+      ],
+      "events_file": "/tmp/reyn-worktrees/b43-7/.reyn/events/agents/dogfood-b43-7-s2/chat/2026-05/2026-05-20T063648.jsonl",
+      "token_entries": [
+        {
+          "ts": "2026-05-20T06:36:51+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 4932,
+          "cost_usd": 0.0004977
+        },
+        {
+          "ts": "2026-05-20T06:36:54+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5920,
+          "cost_usd": 0.0006942999999999999
+        },
+        {
+          "ts": "2026-05-20T06:36:58+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5637,
+          "cost_usd": 0.0005702999999999999
+        },
+        {
+          "ts": "2026-05-20T06:37:00+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5875,
+          "cost_usd": 0.0006004
+        },
+        {
+          "ts": "2026-05-20T06:37:03+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5607,
+          "cost_usd": 0.0005673
+        },
+        {
+          "ts": "2026-05-20T06:37:03+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5802,
+          "cost_usd": 0.0005802
+        },
+        {
+          "ts": "2026-05-20T06:37:05+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5630,
+          "cost_usd": 0.0005675
+        },
+        {
+          "ts": "2026-05-20T06:37:13+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 6054,
+          "cost_usd": 0.0006054
+        },
+        {
+          "ts": "2026-05-20T06:37:15+09:00",
+          "agent": "dogfood-b43-7-s2",
+          "model": "gemini-2.5-flash-lite",
+          "tokens": 5664,
+          "cost_usd": 0.0005723999999999999
+        }
+      ],
+      "tool_sequence": [
+        "list_actions",
+        "describe_action",
+        "describe_action",
+        "list_actions"
+      ],
+      "empty_stop_events": 0,
+      "shot": 1
+    }
+  ],
+  "summary": {
+    "n_scenarios": 1,
+    "n_turns": 5,
+    "n_empty": 0,
+    "empty_rate": 0.0,
+    "latency_p50": 5.24,
+    "latency_p90": 8.92,
+    "empty_by_turn_position": {
+      "1": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "2": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "3": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "4": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      },
+      "5": {
+        "total": 1,
+        "empty": 0,
+        "rate": 0.0
+      }
+    },
+    "total_llm_calls": 9,
+    "total_tokens": 51121
+  }
+}

@@ -1,0 +1,23 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_3_cross_reference_compare
+  description: 'Introduces two systems early, then forces a comparison later. Exercises
+    context recall across 4+ turns.
+
+    '
+  kind: cross_reference
+  covers:
+  - cli/reyn-chat
+  - multi-agent/agent-registry
+  - stdlib-skills/direct-llm
+  prompts:
+  - Describe how LangGraph structures multi-agent workflows.
+  - Now describe how Reyn structures multi-agent workflows.
+  - What is async/await in Python and why does it matter for agents?
+  - Given what you said about both LangGraph and Reyn, which approach handles async
+    tool calls more predictably?
+  - What would a developer need to change when migrating from LangGraph to Reyn?

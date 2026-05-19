@@ -1,0 +1,120 @@
+{
+  "batch": "B43",
+  "worker": 1,
+  "head": "e96d479f",
+  "date": "2026-05-20",
+  "scenario_set": "chat_router_smoke.yaml",
+  "state_mode": "fresh",
+  "config": "default",
+  "port": 8231,
+  "env_vars": {"REYN_EMPTY_STOP_RETRY": "1"},
+  "user_params": {"hot_list_n": 10, "models_tier": "flash-lite"},
+  "verdicts": {"V": 3, "I": 0, "R": 4, "B": 0},
+  "vs_b42": {
+    "b42_verdicts": {"V": 3, "I": 0, "R": 4, "B": 0},
+    "deltas": {"V": 0, "I": 0, "R": 0, "B": 0},
+    "note": "Same V=3 as B42 W1 chat_router_smoke (per workers/results-worker-1.json in 2026-05-19-batch-42-b40-v2-cumulative). Per-scenario verdict identical (s1=R, s2=V, s3=R, s4=V, s5=R, s6=V, s7=R). No regression, no improvement. PR #265 (REYN_EMPTY_STOP_RETRY) loaded but the failing scenarios in this set are not empty-stop pattern — they are routing/inline-only (s1, s3, s5, s7), so retry did not affect them."
+  },
+  "vs_b41": {
+    "b41_verdicts": {"V": 2, "I": 0, "R": 5, "B": 0},
+    "deltas": {"V": 1, "I": 0, "R": -1, "B": 0},
+    "note": "B41 baseline V=2/7 per memory feedback_batch_report_past_comparison context; B43 holds the +1V gain from B42. Cumulative B43 stack (#248/#253/#257/#265/#255-263) has not yet moved chat_router_smoke beyond B42's level."
+  },
+  "scenarios": [
+    {
+      "id": "simple_capability_question",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Reply mentions skills/Python/file ops/memory at high level (helpful, no error) — reply rubric items pass. However artifacts.direct_llm.present=true is NOT met: events show only chat_turn_completed_inline (no routing_decided / skill_run_*). Inline answer path skipped direct_llm artifact creation. Strict reading of expected.artifacts → refuted.",
+      "reply_excerpt": "Reyn エージェントです。Reyn プロジェクトのワークフロー OS で、Python コードの実行、ファイル操作、Web 検索、メモリ管理などの操作を実行できます。",
+      "vs_b42": "R -> R (unchanged)",
+      "vs_b41": "R -> R (unchanged)",
+      "notes": "Inline-answer affordance — LLM answered directly without dispatching direct_llm skill, so artifact requirement fails. Same pattern as B42."
+    },
+    {
+      "id": "factual_query_direct_llm",
+      "result": "verified",
+      "events_pass": true,
+      "rubric_pass": true,
+      "rubric_notes": "Events: routing_decided=1, skill_run_spawned=1, skill_run_completed=1 (status=success), no permission_denied. Artifact direct_llm.respond created. Reply text is wrapper narration but skill artifact contains the actual idempotency explanation.",
+      "reply_excerpt": "Skill is running in the background. ... The direct_llm skill has finished. It provided a definition and explanation of the term \"idempotent\" (冪等).",
+      "vs_b42": "V -> V (unchanged)",
+      "vs_b41": "V -> V (unchanged)",
+      "notes": "Skill-dispatch path worked end-to-end."
+    },
+    {
+      "id": "skill_discovery_request",
+      "result": "refuted",
+      "events_pass": false,
+      "rubric_pass": true,
+      "rubric_notes": "Reply rubric PASSES — lists actual skill names (skill__direct_llm, skill__eval, skill__eval_builder, etc.). However events.must_emit requires routing_decided>=1 which is NOT emitted (only chat_turn_completed_inline + tool_called). Events check fails -> refuted.",
+      "reply_excerpt": "スキルには以下のものがあります。\n*   `skill__direct_llm`: 単発の自然言語タスクを直接実行します。\n*   `skill__eval`: ...",
+      "vs_b42": "R -> R (unchanged)",
+      "vs_b41": "R -> R (unchanged)",
+      "notes": "Inline-tool-call path (list_skills) without routing_decided event. Affordance gap: must_emit expects route via direct_llm skill but LLM uses inline tool."
+    },
+    {
+      "id": "explicit_skill_invocation_word_stats",
+      "result": "verified",
+      "events_pass": true,
+      "rubric_pass": true,
+      "rubric_notes": "Events: routing_decided=1, skill_run_spawned=1, skill_run_completed=1 (success), no permission_denied. Artifact word_stats_demo present. Reply mentions specific stats: '44 characters and 2 lines, longest line 25 characters'.",
+      "reply_excerpt": "The word_stats_demo skill has finished. It analyzed the provided text, noting that it contains 44 characters and 2 lines, with the longest line being 25 characters.",
+      "vs_b42": "V -> V (unchanged)",
+      "vs_b41": "V -> V (unchanged)",
+      "notes": "Explicit skill name in prompt -> dispatch is reliable."
+    },
+    {
+      "id": "catalog_routing_decided_emitted",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Events: chat_turn_completed_inline=1 satisfies must_emit_any. BUT reply rubric fails: 'reply contains a poem' NOT met — the reply asks 'どのようなテーマの詩がお好みですか?' (asking for theme back, not producing a poem).",
+      "reply_excerpt": "承知いたしました。どのようなテーマの詩がお好みですか？",
+      "vs_b42": "R -> R (unchanged)",
+      "vs_b41": "R -> R (unchanged)",
+      "notes": "Clarifying-question attractor — LLM asks for more info instead of just writing a short poem. Known B42 pattern, unchanged in B43."
+    },
+    {
+      "id": "multi_turn_pronoun_reference",
+      "result": "verified",
+      "events_pass": true,
+      "rubric_pass": true,
+      "rubric_notes": "Turn 2 dispatched direct_llm skill 5x (over-dispatch but completed). Artifact contains actual Python code examples (squares = [x**2 for x in range(10)], evens = [x for x in range(10) if x%2==0], etc.). Reply narration coherent with turn-1 topic (リスト内包表記). artifact-backed code examples satisfy rubric.",
+      "reply_excerpt": "Pythonのリスト内包表記について、基本的な例、条件付きの例、ネストされたループの例を含むコード例とともに説明が完了しました。... 数値を2乗する例、偶数のみを抽出する例、2つのリストの要素の組み合わせを作成する例のコードとともに説明が完了しました。",
+      "vs_b42": "V -> V (unchanged)",
+      "vs_b41": "V -> V (unchanged)",
+      "notes": "Turn-2 over-dispatched skill 5 times (5 skill_run_completed) — possibly retry-amplified by REYN_EMPTY_STOP_RETRY? Worth flagging for main agent. Wall-clock 19s for turn 2."
+    },
+    {
+      "id": "out_of_scope_graceful_decline",
+      "result": "refuted",
+      "events_pass": true,
+      "rubric_pass": false,
+      "rubric_notes": "Events: chat_turn_completed_inline=1, no permission_denied. BUT reply rubric fails: 'politely declines or explains capability not available' NOT met — reply asks 'どのような画像を生成しますか?' (asking for image details, implying it can generate), 'does not pretend to generate' also violated.",
+      "reply_excerpt": "どのような画像を生成しますか？ 画像の内容について、できるだけ詳しく教えてください。",
+      "vs_b42": "R -> R (unchanged)",
+      "vs_b41": "R -> R (unchanged)",
+      "notes": "Pretend-capability attractor — LLM doesn't decline. Known B42 pattern, unchanged in B43."
+    }
+  ],
+  "new_findings": [
+    {
+      "id": "B43-W1-N1",
+      "scenario": "multi_turn_pronoun_reference",
+      "observation": "Turn-2 produced 5 skill_run_completed for direct_llm (and 5 routing_decided + 5 control_decided). Single user request -> 5 skill dispatches. May be REYN_EMPTY_STOP_RETRY amplification or unrelated retry pattern. Wall-clock 19.3s vs other scenarios ~3-9s.",
+      "primary_data": "events file .reyn/events/agents/dogfood-b43-1-s6 — direct_llm skill_run_completed counted 5x across 5 separate skill_runs files (06:32:41/42/43/47/49).",
+      "severity": "MED",
+      "hypothesis_only": "Retry hypothesis is inference, not proven; could be original loop behaviour. Main agent: cross-check with B42 W1 s6 skill_run count."
+    },
+    {
+      "id": "B43-W1-N2",
+      "scenario": "out_of_scope_graceful_decline",
+      "observation": "s7 still failing — reply asks for image details rather than declining. PR #265 empty-stop retry did not affect this scenario (no empty stop occurred, normal inline reply).",
+      "primary_data": "reply text + events show chat_turn_completed_inline=1 with no retry events.",
+      "severity": "LOW",
+      "hypothesis_only": "Suggests B43 fix stack does not target the 'decline-vs-clarify' attractor; needs separate intervention."
+    }
+  ]
+}

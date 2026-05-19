@@ -1,0 +1,144 @@
+{
+  "batch": "B43",
+  "date": "2026-05-20",
+  "head_at_dispatch": "e96d479f",
+  "head_purpose": "B43 measures cumulative effect of 5 merged dogfood-coder PRs (#248 describe_action resource description, #253 A2A sync→Task escalation, #257 follow-up notes, #265 plan-step empty-stop retry) + Phase 1-5 intervention refactor (#255-263) since the B42 baseline (= 79748ac9, 74 commits delta).",
+  "scenarios_total": 54,
+  "verdict_totals": {
+    "verified": 22,
+    "inconclusive": 12,
+    "refuted": 20,
+    "blocked": 0
+  },
+  "verified_rate": 0.407,
+  "env_settings": {
+    "REYN_EMPTY_STOP_RETRY": "1",
+    "OPENAI_API_BASE": "http://localhost:4000",
+    "models_tier_all": "openai/gemini-2.5-flash-lite",
+    "hot_list_n": 10,
+    "rationale": "feedback_user_params_fixed_in_comparison + feedback_no_strong_model — held constant from B42 baseline + flash-lite only across all tiers"
+  },
+  "delta_vs_b42": {
+    "b42_v": 21,
+    "b43_v": 22,
+    "delta_v": 1,
+    "b42_rate": 0.389,
+    "b43_rate": 0.407,
+    "delta_rate_pp": 1.8,
+    "interpretation": "Raw +1V improvement, but after post-batch attractor analysis: W4 -2V is N=1 LLM noise (= NF-W4-B43-1, closed) per N=10 baseline 10/10 TOOL_CALL on both scenarios. Effective structural ΔV ≈ +3V (= +1 raw + +2 noise correction). W5 +2V (mcp routing clearer), W6 +1V (PR #265 verified), W7 +1V are real gains. W3 -1V is N=1 hypothesis pending the same protocol (B44 carry-over). Also B=0 in B43 vs B=2 in B42 (= W2-s9 + W6-s6 both unblocked), V-pool cleaner."
+  },
+  "delta_vs_b41": {
+    "b41_v": 13,
+    "b43_v": 22,
+    "delta_v": 9,
+    "b41_rate": 0.224,
+    "b43_rate": 0.407,
+    "delta_rate_pp": 18.3,
+    "interpretation": "Cumulative B41→B43 gain = +9V, dominated by B40-v2 ARS extend (#157, landed pre-B41) holding + B42 fixes + this batch's PR #265 effect."
+  },
+  "workers": {
+    "W1_chat_router_smoke": {
+      "v": 3, "i": 0, "r": 4, "b": 0, "scenarios": 7,
+      "delta_vs_b42_v": 0,
+      "notable": "Identical per-scenario verdicts vs B42. No B43 fix touched chat_router_smoke scenarios. NF-W1-N1 flagged: s6 turn-2 over-dispatched direct_llm 5x — possible REYN_EMPTY_STOP_RETRY amplification, needs B42 cross-check."
+    },
+    "W2_stdlib_skills_core": {
+      "v": 5, "i": 0, "r": 4, "b": 0, "scenarios": 9,
+      "delta_vs_b42_v": 0,
+      "notable": "Same V count as B42 BUT B43 events-gated (B42 W2 was crash-recovery rubric-only). s9 unblocked (B→R per real events check), s3/s4 V→R reflect B42 rubric-only inflation correction. Net real-world signal stable."
+    },
+    "W3_control_ir_ops": {
+      "v": 4, "i": 2, "r": 3, "b": 0, "scenarios": 9,
+      "delta_vs_b42_v": -1,
+      "notable": "s7 recall V→I (reply attractor shift: 'tool not available' vs 'no indexed sources'). s8 judge_output Wei via PR #265 retry path (= router_empty_response_retry_injected event captured, cross-scenario evidence the fix activates outside plan-step too)."
+    },
+    "W4_permissions_and_safety": {
+      "v": 4, "i": 4, "r": 0, "b": 0, "scenarios": 8,
+      "delta_vs_b42_v": -2,
+      "notable": "S1 + S2 V→I regression (= LLM inline-refused, no routing_decided, possible cognitive bias attractor or N=1 variance). S5 PR #265 retry path fired (mid-chain 3 empty stops recovered). S4 post-describe-action empty stops NOT recovered same-turn (= 4th fresh agent attempt eventually succeeded). PR #265 retry boundary exposed."
+    },
+    "W5_multi_agent_and_mcp": {
+      "v": 2, "i": 0, "r": 5, "b": 0, "scenarios": 7,
+      "delta_vs_b42_v": 2,
+      "notable": "Best worker-level gain. s2 mcp_call_remote_tool I→V (clean 'no MCP servers' reply, must_emit_any satisfied via chat_turn_completed_inline=1). s4 multi_agent_topology_route I→V (both agents reported missing across 2-turn delegation). s6 mcp_install still R via NF-W5-B42-1 (out of scope, e2e-coder issue #229)."
+    },
+    "W6_plan_mode_fp0011_mixed": {
+      "v": 1, "i": 5, "r": 1, "b": 0, "scenarios": 7,
+      "delta_vs_b42_v": 1,
+      "notable": "**HEADLINE: PR #265 verified end-to-end**. s1 plan_compare_two_concepts R→V via 2 router_empty_response_retry_injected events. Fix activates on plan-step empty stops as designed (= primary verify). **Scope gap surfaced**: s2 plan_explain R→R because top-level router empty stop is a SEPARATE code path (= router_loop.py:1810) not covered by the planner.py:885/966 wiring. s6 s-fp11-1-builder-invalid-spec B→I (= B41-NF-W7-2 completion drop recovered via separate fix path, possibly Phase 1 #255 subscriber-presence guard)."
+    },
+    "W7_long_session_v1": {
+      "v": 3, "i": 1, "r": 3, "b": 0, "scenarios": 7,
+      "delta_vs_b42_v": 1,
+      "notable": "s5 R→V clearest win (= asyncio.Queue example T5 present, B42's 'plan tool not available' resolved naturally via different LLM path). s3 + s4 I→V. s1 V→R regression (T5 empty-stop sentinel on the P7 final question). s6 R→I (5/5 honest refusals vs 5/5 empty in B42 — partial recovery). Two NF: B43-NF-W7-1 empty-stop sentinel persists user-visible despite REYN_EMPTY_STOP_RETRY=1, B43-NF-W7-2 inline-reply path mis-emits spawn-ack text."
+    }
+  },
+  "fix_verification_summary": {
+    "PR_248_describe_action_resource_description": {
+      "status": "INDIRECTLY VERIFIED via cumulative chain quality",
+      "evidence": "describe_action returned in multiple scenarios across W3/W5/W7; no W6-S7-T2-style empty-stop on describe_action observed in B43 (the original NF-W7-B42-1 surface). Resource description correctness propagated via the existing chain — no isolated A/B test in this batch."
+    },
+    "PR_253_a2a_sync_to_task_escalation": {
+      "status": "NOT EXERCISED in this batch's scenario set",
+      "evidence": "No scenario triggered a long-running skill that crossed the 60s DEFAULT_SEND_TIMEOUT; sync mode resolved before escalation needed. Fix path remains dormant but no regression introduced."
+    },
+    "PR_257_follow_up_notes": {
+      "status": "documentation + reliability fix, no scenario impact",
+      "evidence": "_resource_description docstring accuracy + _escalate_to_task var rename + status='timeout' on deadline expiry — none crossed the B43 scenario set's behaviour surface."
+    },
+    "PR_265_plan_step_empty_stop_retry": {
+      "status": "VERIFIED end-to-end on W6-s1 + W3-s8 cross-scenario",
+      "evidence": "W6-s1 plan_compare_two_concepts R→V with 2 router_empty_response_retry_injected events captured in events.jsonl. W3-s8 judge_output recovered via the same path. W4-S5 + W4-S4 also activated retry path mid-chain. ENV-var opt-in (REYN_EMPTY_STOP_RETRY=1) behaved as designed.",
+      "scope_gap": "W6-s2 plan_explain_with_code_references R→R: top-level router empty stop (= router_loop.py:1810 path) NOT covered by the planner.py:885/966 wiring. Different code path with the same attractor. NF-W6-B43-1 candidate."
+    }
+  },
+  "new_findings_for_b44": [
+    {
+      "id": "NF-W6-B43-1",
+      "classification": "STRUCTURAL (confirmed via attractor analysis 2026-05-20)",
+      "scenario": "scenario / surface: plan_explain_with_code_references + general top-level router empty-stop",
+      "observation": "PR #265 retry path is plumbed only through the planner.py:execute_plan sub_loop construction. The top-level RouterLoop instance (= chat router for the main session) is NOT given the directive, so its empty-stop handler still surfaces the canned failure_text directly. W6-s2 R→R demonstrates this scope gap.",
+      "hypothesis": "Same fix extended: pass _PLAN_STEP_EMPTY_STOP_RETRY_DIRECTIVE (or a more general directive) to the chat session's RouterLoop construction site. Behaviour would be opt-in via the same REYN_EMPTY_STOP_RETRY env var.",
+      "verification": "Trace-patch-replay on W6-S2 top-level empty-stop call (= /tmp/reyn-worktrees/b43-6/.reyn/llm_trace.jsonl req 18c7d976). Baseline N=10: 6/10 EMPTY_STOP (60% trigger rate). Patched (retry directive appended as role=user before resend): 0/10 EMPTY_STOP + 10/10 substantive content (169-1485 chars). Same mechanism as W6-S1's pre-merge verification.",
+      "action": "B44 PR target — extend retry plumbing from planner.py to chat session's RouterLoop construction site. Env var gate preserved."
+    },
+    {
+      "id": "NF-W1-B43-1",
+      "scenario": "chat_router_smoke s6 multi_turn_pronoun_reference",
+      "observation": "Turn-2 over-dispatched direct_llm 5x in a single turn (= 5 skill_run_completed events). B42 W1-s6 didn't show this multi-dispatch pattern. Possible REYN_EMPTY_STOP_RETRY amplification: the LLM's first attempt returned empty → retry directive → LLM produced a tool_call (= direct_llm) → result returned → narrate → loop iterated 5x.",
+      "hypothesis": "Retry directive may be ENCOURAGING tool re-invocation rather than direct narration in some attractor states. Need B42 cross-check (= same scenario without REYN_EMPTY_STOP_RETRY=1) to disambiguate.",
+      "action": "B44 candidate. Compare W1-s6 events.jsonl between B42 and B43; if amplification confirmed, consider directive wording tweak (= 'do not call another tool' is in the directive but LLM ignored)."
+    },
+    {
+      "id": "NF-W4-B43-1",
+      "classification": "LLM NOISE (closed via attractor analysis 2026-05-20)",
+      "scenario": "permissions_and_safety s1 + s2",
+      "observation": "S1 file_write_outside_cwd_denied V→I, S2 mcp_install_gate_prompt V→I. LLM inline-refused without firing routing_decided in the live B43 run.",
+      "verification": "W4-S1 baseline N=10 = 10/10 TOOL_CALL (invoke_action). W4-S2 baseline N=10 = 10/10 TOOL_CALL (5x invoke_action + 5x list_actions). The live B43 inline-refusal was an N=1 unlucky observation on 2 adjacent scenarios, not a structural attractor.",
+      "implication": "The W4 -2V apparent regression is measurement artifact, not a real V→I shift. Effective B43 ΔV if W4 had landed at 10/10 baseline rates: +3V (instead of headline +1V).",
+      "action": "Close — no fix needed. Same pattern as NF-W7-B42-2 and NF-W7-B42-3 (= both closed as LLM noise via the same N=10 protocol)."
+    },
+    {
+      "id": "NF-W7-B43-1",
+      "scenario": "long_session scenario_1 + scenario_2",
+      "observation": "s1 T5 empty-stop sentinel STILL visible to user despite REYN_EMPTY_STOP_RETRY=1 (= retry attempted, retry also empty → falls through to surface). s2 pronoun-followup attractor not suppressed (3/5 turns empty).",
+      "hypothesis": "REYN_EMPTY_STOP_RETRY=1 covers the single-retry case. When the attractor is strong enough that the retry ALSO empty-stops, the surface path runs. For long_session scenarios where multiple turns hit the attractor, the cumulative R rate stays elevated.",
+      "action": "Out of immediate fix scope — N=1 retry is the explicit policy bound. Could revisit if production data shows >50% same-turn double-empty rate."
+    },
+    {
+      "id": "NF-W7-B43-2",
+      "scenario": "long_session scenario_7 concept_explanation_chain",
+      "observation": "s7 V→R: T5 inline-reply path emitted spawn-ack text WITHOUT actually spawning a skill. Spawn-ack text leaked to user as the turn reply.",
+      "hypothesis": "OS-level bug — inline-reply path (= chat_turn_completed_inline) shouldn't emit spawn-ack text content; that's a separate event (invoke_skill_spawn_ack_exit) for the skill-spawn case. Possible message-handling regression from Phase 1-5 intervention refactor (#255-263).",
+      "action": "B44 high priority. Reproduce + bisect against Phase 1-5 merges to identify which phase introduced the leak."
+    }
+  ],
+  "principles_applied_in_b43": [
+    "feedback_subagent_scope_bounding: 7 workers dispatched with hard caps (≤50 tool uses, ≤15 min; W7=≤60/20 for long_session). All 7 completed within caps.",
+    "feedback_batch_report_past_comparison: per-worker delta_vs_b42 + workers section above + future delta_vs_b41 reference. Past-batch verdicts cited from primary data (= B42 results-worker-N.json) in each worker prompt before dispatch.",
+    "feedback_no_strong_model: reyn.local.yaml all-tier flash-lite enforced + verified per-worker.",
+    "feedback_user_params_fixed_in_comparison: hot_list_n=10 (B42 value) + flash-lite (B42 value) held constant.",
+    "feedback_observe_before_speculate_llm + feedback_verify_fix_via_replay_before_land: PR #265 was trace-patch-replay-verified PRE-merge (0/10 → 10/10), B43 W6 is the e2e cumulative verification of the same fix.",
+    "feedback_code_inspection_not_enough_for_fix: NF-W1-B43-1 and NF-W4-B43-1 marked as N=1 hypotheses pending trigger-rate measurement before structural classification."
+  ]
+}

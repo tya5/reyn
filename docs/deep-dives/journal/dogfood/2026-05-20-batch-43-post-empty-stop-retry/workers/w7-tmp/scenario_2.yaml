@@ -1,0 +1,24 @@
+metadata:
+  name: long_session_v1
+  description: 7 multi-turn scenarios designed to expose context-bloat behavior
+  version: 1
+  default_turns: 5
+scenarios:
+- id: scenario_2_pronoun_followup
+  description: 'Aggressive pronoun reference chain. Every turn uses "it", "that",
+    or "those" to reference the prior answer, forcing the LLM to maintain session
+    context across turns.
+
+    '
+  kind: pronoun_followup
+  covers:
+  - cli/reyn-chat
+  - stdlib-skills/direct-llm
+  - os-core/event-system-p6/append-only-jsonl
+  prompts:
+  - What stdlib skills does Reyn bundle?
+  - Tell me more about the simplest one.
+  - What event types does it emit?
+  - Are those events stored somewhere on disk?
+  - What format are they stored in?
+  - Can you show me an example of that format?
