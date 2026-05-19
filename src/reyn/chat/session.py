@@ -193,6 +193,16 @@ class RouterCapExceeded(Exception):
         self.last_reason = last_reason
 
 
+# issue #268 Phase 2 continuation: canonical channel identifier for
+# chat-side interventions (= matches the listener_id that
+# ``ChatTUIApp.on_mount`` registers in src/reyn/chat/tui/app.py).
+# Production ChatInterventionBus instances stamp ivs with this id so
+# the agent layer's origin-pin check + cross-channel observe / claim
+# routing work end-to-end for TUI-initiated tasks. Module-level so
+# tests can import + assert against a single source of truth.
+DEFAULT_CHAT_CHANNEL_ID = "tui"
+
+
 @dataclass(frozen=True)
 class PendingOpView:
     """Read-only view of a pending / stalled operation surfaced across channels
@@ -286,15 +296,71 @@ class ChatInterventionBus:
     for Phase 5 removal).
     """
 
-    def __init__(self, session: "ChatSession", run_id: str | None, skill_name: str | None) -> None:
+    def __init__(
+        self,
+        session: "ChatSession",
+        run_id: str | None,
+        skill_name: str | None,
+        *,
+        channel_id: str | None = None,
+    ) -> None:
         self._session = session
         self._run_id = run_id
         self._skill_name = skill_name
+        # issue #268 Phase 2 continuation: optional channel_id stamping.
+        # Production wiring (= ChatSession._build_intervention_bus_for_skill)
+        # passes the session's canonical channel_id (e.g. "tui") so
+        # skill-emitted ivs carry provenance for cross-channel routing.
+        # Test fixtures that construct ChatInterventionBus directly
+        # without passing channel_id see unchanged behaviour (= no
+        # stamping → no stall check → existing dispatch path).
+        self._channel_id = channel_id
+
+    @property
+    def channel_id(self) -> str | None:
+        """Configured channel identifier for issue #268 origin-pin
+        routing. ``None`` means stamping is disabled for this instance
+        (= test-fixture default that doesn't engage the new mechanism).
+        """
+        return self._channel_id
 
     async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
         """``UserChannel.deliver`` — route the prompt to ChatSession's
         outbox/inbox so the attached TUI surfaces it to the user.
+
+        issue #268 Phase 2 continuation: when this bus was constructed
+        with a ``channel_id`` AND no chain-override is active for the
+        iv's run, stamp ``iv.origin_channel_id`` so the agent layer
+        can attribute the iv to this channel for cross-channel
+        observe / discard / claim routing. The override-aware skip
+        matters because the SAME ChatInterventionBus instance services
+        A2A-spawned skills (= ``_build_agent`` constructs one per
+        skill spawn regardless of caller), and A2AInterventionBus needs
+        a clean slot to stamp ``a2a:<run_id>`` downstream. Respects
+        pre-existing stamping (= upstream-set origin wins for
+        multi-hop delegation provenance).
         """
+        # issue #268 Phase 2 continuation: stamp origin channel for
+        # cross-channel routing (only when configured AND no chain
+        # override is going to claim this iv first). Use the bus's
+        # captured ``_run_id`` for the override lookup since
+        # ``iv.run_id`` isn't filled in until below.
+        if self._channel_id is not None and iv.origin_channel_id is None:
+            override_active = False
+            run_id_for_lookup = iv.run_id or self._run_id
+            if (
+                run_id_for_lookup is not None
+                and self._session._intervention_overrides
+            ):
+                chain_id = self._session.running_skills_chain.get(
+                    run_id_for_lookup,
+                )
+                if chain_id is not None:
+                    override_active = (
+                        chain_id in self._session._intervention_overrides
+                    )
+            if not override_active:
+                iv.origin_channel_id = self._channel_id
         if iv.run_id is None:
             iv.run_id = self._run_id
         if not iv.skill_name:
@@ -1025,6 +1091,7 @@ class ChatSession:
             # to what session._mcp_call_tool wires manually today.
             intervention_bus_factory=lambda: ChatInterventionBus(
                 self, run_id=None, skill_name="chat_router",
+                channel_id=DEFAULT_CHAT_CHANNEL_ID,
             ),
         )
 
@@ -1147,7 +1214,10 @@ class ChatSession:
         never imports ChatInterventionBus or holds a session reference.
         """
         return self._build_agent(
-            intervention_bus=ChatInterventionBus(self, run_id, skill_name),
+            intervention_bus=ChatInterventionBus(
+                self, run_id, skill_name,
+                channel_id=DEFAULT_CHAT_CHANNEL_ID,
+            ),
             mcp_servers=self._mcp_servers,
             subscribers=subscribers,
         )
@@ -2033,6 +2103,13 @@ class ChatSession:
         ChatInterventionBus, _handle_chat_limit_checkpoint, and
         _ask_budget_extension all call this method directly; keeping it
         as a session-level entry keeps those call sites stable.
+
+        issue #268 Phase 2 continuation: the origin-pin check (= stall
+        when iv.origin_channel_id is set but the listener has gone)
+        lives here so it fires for ALL iv flows, not just the
+        handle_intervention path. The check sits AFTER the chain-override
+        check so A2A-spawned ivs go to the A2A peer even if the local
+        TUI listener is absent.
         """
         # FP-0001: chain_id-scoped override path (A2A async tasks).
         if iv.run_id is not None and self._intervention_overrides:
@@ -2041,6 +2118,30 @@ class ChatSession:
                 override = self._intervention_overrides.get(chain_id)
                 if override is not None:
                     return await override.request(iv)
+        # issue #268 Phase 2 continuation: origin-pin stall check.
+        # When the iv carries an explicit ``origin_channel_id`` whose
+        # listener is no longer present (= the origin channel closed
+        # mid-call), park the iv in the stalled queue instead of
+        # delivering to a fall-through listener. Other channels
+        # observe / claim / discard via the cross-channel API. ivs
+        # without ``origin_channel_id`` (= legacy default or
+        # override-active spawn) skip this check.
+        if (
+            iv.origin_channel_id is not None
+            and iv.origin_channel_id not in self._interventions._listeners
+        ):
+            self._chat_events.emit(
+                "intervention_routed",
+                route="user_channel_stalled",
+                iv_kind=iv.kind,
+                iv_id=iv.id,
+                origin_channel_id=iv.origin_channel_id,
+            )
+            self._interventions._stalled[iv.id] = iv
+            try:
+                return await iv.future
+            except asyncio.CancelledError:
+                return InterventionAnswer(text="")
         # Default: route through the regular InterventionHandler.
         return await self._intervention_handler.dispatch(iv)
 
@@ -2119,46 +2220,14 @@ class ChatSession:
             finally:
                 source_agent_var.reset(token)
 
-        # Branch 3: user_channel — origin-pin check + dispatch or stall.
-        # issue #268 Phase 1: when the iv carries an explicit
-        # ``origin_channel_id`` that no longer maps to a registered
-        # listener (= the origin channel closed since the iv was
-        # created), park the iv in the stalled queue instead of
-        # delivering it to a different channel. Other channels
-        # observe / discard / claim via the cross-channel API
-        # (``list_stalled_interventions`` / ``discard_pending_intervention``
-        # / ``claim_pending_intervention``).
-        #
-        # Backwards-compat: iv with ``origin_channel_id=None`` (= legacy
-        # default) skips the stall check entirely and goes through the
-        # existing dispatch path unchanged.
-        if (
-            iv.origin_channel_id is not None
-            and iv.origin_channel_id not in self._interventions._listeners
-        ):
-            self._chat_events.emit(
-                "intervention_routed",
-                route="user_channel_stalled",
-                iv_kind=iv.kind,
-                iv_id=iv.id,
-                origin_channel_id=iv.origin_channel_id,
-            )
-            # Park in stalled queue. The iv has to be in _active first
-            # so mark_stalled can move it; if it's not, add it via the
-            # registry's _stalled directly (= bypass _active path
-            # because no listener is going to drain it).
-            self._interventions._stalled[iv.id] = iv
-            # Block on the iv's future — claim_pending_intervention /
-            # discard_pending_intervention will resolve / cancel it
-            # eventually. If neither happens, the awaiter (= safety
-            # limit handler with ask_timeout=0) waits indefinitely,
-            # which is the intended behaviour for "stall pending
-            # user action across channels".
-            try:
-                return await iv.future
-            except asyncio.CancelledError:
-                return InterventionAnswer(text="")
-
+        # Branch 3: user_channel — emit route decision + delegate to
+        # ``_dispatch_intervention``. issue #268 Phase 2 continuation
+        # moved the origin-pin stall check INTO ``_dispatch_intervention``
+        # so it fires uniformly for the bus-emit path too (= skill
+        # ask_user via ChatInterventionBus.deliver bypasses
+        # ``handle_intervention``); when the check fires, it emits its
+        # own ``user_channel_stalled`` event so the audit trail remains
+        # decisive (= one event per actual outcome).
         self._chat_events.emit(
             "intervention_routed",
             route="user_channel",
@@ -3152,7 +3221,10 @@ class ChatSession:
         op = MCPIROp(kind="mcp", server=server, tool=tool, args=args)
         ctx = self._make_router_op_context()
         # MCP handler requires intervention_bus; wire the session's bus
-        ctx.intervention_bus = ChatInterventionBus(self, run_id=None, skill_name="chat_router")
+        ctx.intervention_bus = ChatInterventionBus(
+            self, run_id=None, skill_name="chat_router",
+            channel_id=DEFAULT_CHAT_CHANNEL_ID,
+        )
         # Narrow mcp scope to just this server while preserving file perms from the
         # populated decl. PermissionDecl.mcp must include the server for require_mcp to pass.
         ctx.permission_decl = PermissionDecl(
