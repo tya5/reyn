@@ -454,9 +454,19 @@ class ConversationView(Widget):
             # order, which matches the user's mental model of "jump to
             # the previous turn" better than "jump only to agent replies".
             self._turn_anchors.append(self._absolute_line_position(log))
-            # Cap to last 200 to avoid unbounded growth (long sessions)
-            if len(self._turn_anchors) > 200:
-                self._turn_anchors = self._turn_anchors[-200:]
+            # No cap. The previous 200-entry cap silently dropped the
+            # oldest anchors in long sessions, so Ctrl+P/N's "N / M"
+            # readout showed an M smaller than the real turn count and
+            # the user thought they had walked the entire history when
+            # they had not. ``_resolve_anchors_to_current_view`` already
+            # filters anchors whose line position fell below
+            # ``log._start_line`` (= dropped by the RichLog ring
+            # buffer), so the effective navigation list stays bounded
+            # by ``_RICHLOG_MAX_LINES`` / typical-lines-per-turn even
+            # though the raw ``_turn_anchors`` list grows unbounded.
+            # The raw list cost is ~8 bytes per turn — a 24h session
+            # generating one turn per second is ~700 KB, negligible
+            # next to the RichLog itself.
             log.write(_msg_header(label_text, name_style, dash_style))
         self._last_speaker = speaker
         self._last_speaker_at = now
