@@ -193,6 +193,17 @@ class ReynTUIApp(App):
 
         inputbar.focus_input()
 
+        # issue #254 Phase 1: declare ourselves as the intervention listener
+        # for the attached session. Without this, ``ChatSession`` constructed
+        # with ``enforce_listener_presence=True`` would short-circuit
+        # ``_dispatch_intervention`` and prompts would never reach the TUI.
+        # ``_get_session()`` may return None during early lifecycle (no
+        # session yet attached); the answer-input path will re-register
+        # on session attach if that becomes a real case.
+        session = self._get_session()
+        if session is not None:
+            session.register_intervention_listener("tui")
+
         # Optional ASCII banner (neofetch style): gradient logo left, agent
         # info right. Off by default — daily use should focus the input bar
         # instantly. Opt-in via `reyn chat --banner` (see cli/commands/chat.py).
