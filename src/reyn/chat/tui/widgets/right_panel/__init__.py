@@ -25,6 +25,7 @@ from .docs_tab import build_docs_index, render_docs
 from .events_tab import _FILTER_GROUPS, _TAIL_CYCLE, render_events
 from .keys_tab import render_keys
 from .memory_tab import render_memory
+from .pending_tab import render_pending
 from .shells import (
     _PanelContent,
     _PanelHeader,
@@ -37,7 +38,9 @@ if TYPE_CHECKING:
     from reyn.chat.registry import AgentRegistry
 
 
-PANEL_TYPES: list[str] = ["keys", "events", "agents", "memory", "cost", "docs"]
+PANEL_TYPES: list[str] = [
+    "keys", "events", "agents", "memory", "cost", "docs", "pending",
+]
 
 _PANEL_LABELS: dict[str, str] = {
     "keys":    "Keys",
@@ -46,6 +49,9 @@ _PANEL_LABELS: dict[str, str] = {
     "memory":  "Memory",
     "cost":    "Cost",
     "docs":    "Docs",
+    # Issue #277: stalled / cross-channel pending operations surface
+    # (= #270 First instance = Phase A TUI surface split from #268).
+    "pending": "Pending",
 }
 
 # Tabs that re-render on the periodic ``_REFRESH_INTERVAL`` tick so newly
@@ -53,7 +59,7 @@ _PANEL_LABELS: dict[str, str] = {
 # back. Memory was missing — when reyn saved or deleted an entry mid-
 # session it stayed invisible in the Memory tab until next refresh
 # trigger (= manual tab switch).
-_LIVE_PANELS = {"events", "agents", "cost", "memory"}
+_LIVE_PANELS = {"events", "agents", "cost", "memory", "pending"}
 _REFRESH_INTERVAL = 2.0
 
 
@@ -158,6 +164,14 @@ class RightPanel(Widget):
         self._agents_items: list[dict] = []
         # y-coord of each agents-tab item; populated by `render_agents`.
         self._agents_item_ys: list[int] = []
+        # Pending tab state (issue #277) — j/k cursor over stalled
+        # PendingOpView items. ``_pending_items`` is the flat list
+        # returned by ``render_pending`` (= one dict per stalled op).
+        # ``_pending_item_ys`` records the y of each item's primary
+        # row in the rendered output (= for scroll-into-view).
+        self._pending_cursor: int = 0
+        self._pending_items: list[dict] = []
+        self._pending_item_ys: list[int] = []
 
     # ── composition ──────────────────────────────────────────────────────────
 
@@ -432,6 +446,8 @@ class RightPanel(Widget):
                 self._memory_move(+1)
             elif self._panel_type == "agents":
                 self._agents_move(+1)
+            elif self._panel_type == "pending":
+                self._pending_move(+1)
             else:
                 self._scroll_panel(+1)
         elif event.key == "k":
@@ -444,8 +460,22 @@ class RightPanel(Widget):
                 self._memory_move(-1)
             elif self._panel_type == "agents":
                 self._agents_move(-1)
+            elif self._panel_type == "pending":
+                self._pending_move(-1)
             else:
                 self._scroll_panel(-1)
+        elif event.key == "d" and self._panel_type == "pending":
+            # Issue #277 — Pending tab `d` = discard the cursor's iv.
+            event.prevent_default()
+            self._pending_action_discard()
+        elif event.key == "c" and self._panel_type == "pending":
+            # Issue #277 — Pending tab `c` = claim the cursor's iv to
+            # the local channel. Note: this *overrides* the generic
+            # ``c`` copy on Pending tab, since claim is the load-bearing
+            # action there. Copy can be done via ``/copy`` slash in
+            # other tabs.
+            event.prevent_default()
+            self._pending_action_claim()
         elif event.key == "l":
             event.prevent_default()
             self._panel_resize(-2)
@@ -483,10 +513,11 @@ class RightPanel(Widget):
             # Re-anchor the viewport on the new tab's cursor so the ``▶``
             # marker is visible immediately.
             scroll_helper = {
-                "events": self._scroll_events_into_view,
-                "agents": self._scroll_agents_into_view,
-                "memory": self._scroll_memory_into_view,
-                "docs":   self._scroll_docs_into_view,
+                "events":  self._scroll_events_into_view,
+                "agents":  self._scroll_agents_into_view,
+                "memory":  self._scroll_memory_into_view,
+                "docs":    self._scroll_docs_into_view,
+                "pending": self._scroll_pending_into_view,
             }.get(self._panel_type)
             if scroll_helper is not None:
                 scroll_helper()
@@ -757,6 +788,93 @@ class RightPanel(Widget):
         body_md = RichMarkdown(getattr(entry, "body", "") or "")
         title = getattr(entry, "slug", "") or getattr(entry, "name", "") or "memory"
         pane.show_text(title, RichGroup(head, body_md))
+
+    # ── pending tab cursor + actions (issue #277) ────────────────────────────
+
+    def _pending_move(self, delta: int) -> None:
+        """Move the Pending tab cursor; wrap around modulo list length."""
+        n = len(self._pending_items)
+        if n == 0:
+            self._pending_cursor = 0
+            return
+        self._pending_cursor = (self._pending_cursor + delta) % n
+        self._invalidate()
+        self._scroll_pending_into_view()
+
+    def _pending_action_discard(self) -> None:
+        """Discard the iv at the current cursor.
+
+        Calls ``ChatSession.discard_pending_intervention``. Flashes
+        a short status confirmation in the conv pane on success;
+        silently no-ops when the cursor isn't on a valid row.
+        """
+        if not (0 <= self._pending_cursor < len(self._pending_items)):
+            return
+        item = self._pending_items[self._pending_cursor]
+        iv_id = str(item.get("id") or "")
+        if not iv_id:
+            return
+        try:
+            session = self.app._get_session()  # type: ignore[attr-defined]
+        except Exception:
+            session = None
+        if session is None:
+            self._flash_status(
+                "pending: discard unavailable (no session)",
+            )
+            return
+        import asyncio
+        asyncio.create_task(
+            self._pending_run_action(
+                session.discard_pending_intervention(iv_id),
+                ok_msg=f"discarded {iv_id[:8]}",
+                fail_msg=f"discard failed: {iv_id[:8]}",
+            )
+        )
+
+    def _pending_action_claim(self) -> None:
+        """Claim the iv at the current cursor for the local TUI channel."""
+        if not (0 <= self._pending_cursor < len(self._pending_items)):
+            return
+        item = self._pending_items[self._pending_cursor]
+        iv_id = str(item.get("id") or "")
+        if not iv_id:
+            return
+        try:
+            session = self.app._get_session()  # type: ignore[attr-defined]
+        except Exception:
+            session = None
+        if session is None:
+            self._flash_status("pending: claim unavailable (no session)")
+            return
+        # Channel id naming follows the issue #268 convention
+        # (= ``tui:<session-tag>``); we use the agent name as the tag
+        # since the TUI has 1-agent-attached at a time.
+        channel_id = f"tui:{getattr(session, 'agent_name', 'default')}"
+        import asyncio
+        asyncio.create_task(
+            self._pending_run_action(
+                session.claim_pending_intervention(iv_id, channel_id),
+                ok_msg=f"claimed {iv_id[:8]}",
+                fail_msg=f"claim failed: {iv_id[:8]}",
+            )
+        )
+
+    async def _pending_run_action(
+        self, coro, *, ok_msg: str, fail_msg: str,
+    ) -> None:
+        """Run a discard / claim coroutine + flash result to status."""
+        try:
+            result = await coro
+        except Exception as exc:
+            logger.warning("pending tab action failed: %s", exc)
+            self._flash_status(fail_msg)
+            return
+        if result:
+            self._flash_status(ok_msg)
+            self._invalidate()
+        else:
+            self._flash_status(fail_msg)
 
     # ── agents tab cursor + preview integration ──────────────────────────────
 
@@ -1563,6 +1681,32 @@ class RightPanel(Widget):
         except Exception as exc:
             logger.warning("right_panel scroll_docs_into_view failed: %s", exc)
 
+    def _scroll_pending_into_view(self) -> None:
+        """Scroll #panel-scroll so the Pending tab cursor is visible.
+
+        Issue #277 — Pending tab j/k navigation. Uses the same shape
+        as the events / agents / memory / docs helpers and integrates
+        with the ``on_tabs_tab_activated`` dispatch table established
+        in TUI Right Panel exploration wave (PR #231).
+        """
+        try:
+            vs = self.query_one("#panel-scroll", VerticalScroll)
+            current = int(vs.scroll_y)
+            visible = vs.size.height
+            if visible <= 0:
+                return
+            if not (0 <= self._pending_cursor < len(self._pending_item_ys)):
+                return
+            y = self._pending_item_ys[self._pending_cursor]
+            if y < current:
+                vs.scroll_to(y=y, animate=False)
+            elif y >= current + visible:
+                vs.scroll_to(y=y - visible + 1, animate=False)
+        except Exception as exc:
+            logger.warning(
+                "right_panel scroll_pending_into_view failed: %s", exc,
+            )
+
     # ── render dispatch ───────────────────────────────────────────────────────
 
     def _panel_header_markup(self) -> str:
@@ -1581,6 +1725,14 @@ class RightPanel(Widget):
             return (
                 f"[bold {_CORAL}]Docs[/]"
                 f"  [#555555]j↓ k↑ space=open /=filter[/]"
+            )
+        if self._panel_type == "pending":
+            # Issue #277 — Pending tab keybinds: j/k cursor +
+            # ``d`` discard + ``c`` claim. Mirrors the Memory tab
+            # 1-key action idiom (= `c=copy`).
+            return (
+                f"[bold {_CORAL}]Pending[/]"
+                f"  [#555555]j↓ k↑ d=discard c=claim[/]"
             )
         if self._panel_type == "events":
             filter_name, _ = _FILTER_GROUPS[self._event_filter_idx]
@@ -1665,6 +1817,42 @@ class RightPanel(Widget):
                     self._project_root, self._docs_cursor, groups,
                     docs_filter=self._docs_filter,
                 )
+            if self._panel_type == "pending":
+                # Issue #277 — surface stalled / cross-channel ops.
+                # The session API ``list_stalled_interventions`` returns
+                # ``list[PendingOpView]``; we coerce to dicts in
+                # ``render_pending`` so dataclass / dict callers both work.
+                pending_ops: list = []
+                remote_mode = False
+                try:
+                    session = self.app._get_session()  # type: ignore[attr-defined]
+                except Exception:
+                    session = None
+                if session is None:
+                    # ``--connect`` (Phase A of #276) mode currently has
+                    # no local session — scoped disable per #277 + #276
+                    # Phase C-(b). When Phase C-(a) lands REST fetch,
+                    # this branch becomes the REST call site.
+                    remote_mode = True
+                else:
+                    try:
+                        pending_ops = session.list_stalled_interventions()
+                    except Exception as exc:
+                        logger.warning(
+                            "pending tab: list_stalled_interventions failed: %s",
+                            exc,
+                        )
+                        pending_ops = []
+                rendered, flat_items, item_ys = render_pending(
+                    pending_ops,
+                    cursor=self._pending_cursor,
+                    remote_mode=remote_mode,
+                )
+                self._pending_items = flat_items
+                self._pending_item_ys = item_ys
+                if self._pending_cursor >= len(flat_items):
+                    self._pending_cursor = max(0, len(flat_items) - 1)
+                return rendered
         except Exception as e:
             logger.warning("right_panel render dispatch failed: %s", e)
             return f"[red]error: {_esc(str(e))}[/red]"

@@ -98,6 +98,13 @@ class ReynHeader(Widget):
         self._tokens_cap: int | None = None
         self._cost_usd = 0.0
         self._cost_cap: float | None = None
+        # Issue #277 — count of stalled / cross-channel pending ops
+        # surfaced as ``[N pending]`` badge on the status line when > 0.
+        # Refreshed by ``set_stalled_count`` (called from the App layer
+        # on the ``_refresh_live`` tick or right after an explicit
+        # mutation). Omitted from the status entirely when 0 so the
+        # cold-default UX is unchanged.
+        self._stalled_count: int = 0
 
     def compose(self) -> ComposeResult:
         yield Label("Reyn", id="title")
@@ -160,6 +167,15 @@ class ReynHeader(Widget):
             cost_str += f" / ${self._cost_cap:.2f}"
         parts.append((tok_str, None))
         parts.append((cost_str, None))
+        # Issue #277 — pending-ops badge. Inserted before the clock so
+        # the canary stays in its expected (= rightmost) position.
+        # Amber-style colour to signal "user attention soft-required".
+        # Omitted entirely when count is 0 — cold-default layout
+        # unchanged.
+        if self._stalled_count > 0:
+            parts.append(
+                (f"[{self._stalled_count} pending]", "#ffaa44"),
+            )
         # Clock always present, last — the canary for "is the UI frozen?"
         parts.append((self._now_text(), None))
 
@@ -182,6 +198,7 @@ class ReynHeader(Widget):
         tokens_cap: int | None = None,
         cost_usd: float | None = None,
         cost_cap: float | None = None,
+        stalled_count: int | None = None,
     ) -> None:
         """Update status fields and re-render. Call from async context."""
         if agent_name is not None:
@@ -196,6 +213,8 @@ class ReynHeader(Widget):
             self._cost_usd = cost_usd
         if cost_cap is not None:
             self._cost_cap = cost_cap
+        if stalled_count is not None:
+            self._stalled_count = max(0, int(stalled_count))
         try:
             label = self.query_one("#status", Label)
             label.update(self._format_status())

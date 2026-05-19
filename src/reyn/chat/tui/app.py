@@ -358,9 +358,30 @@ class ReynTUIApp(App):
                 tokens_cap=snap.get("daily_tokens_cap"),
                 cost_usd=snap.get("daily_cost_usd", 0.0),
                 cost_cap=snap.get("daily_cost_usd_cap"),
+                stalled_count=self._poll_stalled_count(),
             )
         except Exception:
             pass
+
+    def _poll_stalled_count(self) -> int:
+        """Issue #277 — count of stalled / cross-channel pending ops.
+
+        Read from the attached session's intervention registry (= the
+        Phase 1 ``InterventionRegistry.stalled_count`` API). Returns 0
+        when no session is attached or the registry is unavailable
+        (= the header badge will be hidden, leaving the cold-default
+        layout unchanged).
+        """
+        try:
+            session = self._get_session()
+            if session is None:
+                return 0
+            registry = getattr(session, "_interventions", None)
+            if registry is None:
+                return 0
+            return int(registry.stalled_count())
+        except Exception:
+            return 0
 
     def _periodic_status_refresh(self) -> None:
         """Called every 1s by set_interval to keep status line current."""
