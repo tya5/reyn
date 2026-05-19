@@ -111,7 +111,16 @@ class ReynHeader(Widget):
 
     @staticmethod
     def _now_text() -> str:
-        return time.strftime("%Y-%m-%d %H:%M:%S")
+        # ``HH:MM:SS`` only (8 cells) — the date portion (10 cells +
+        # separator = 11 saved) pushed the header past the 80-col
+        # terminal boundary and clipped the clock half on cold-default
+        # widths. The clock's primary role here is the "is the UI
+        # frozen?" canary, which is the SECOND field — seconds are what
+        # change visibly. The date is already surfaced once in the conv
+        # pane via ``_date_separator`` at session start, so dropping it
+        # from the per-second header avoids the redundancy without
+        # losing day-level context.
+        return time.strftime("%H:%M:%S")
 
     def _tick_clock(self) -> None:
         try:
