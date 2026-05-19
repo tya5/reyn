@@ -279,39 +279,34 @@ def test_routing_decided_emitted_for_hot_list_alias():
 
 
 def test_routing_decided_outcome_error_on_tool_error():
-    """Tier 2: routing_decided outcome='error' when tool result contains error key."""
+    """Tier 2: routing_decided outcome='error' when the tool result is an error.
+
+    Issue #229 changed the resolvable-direct-call path (= ``skill__bad``)
+    to salvage into ``invoke_action``, which under this test's fake host
+    completes with ``status="finished"``. To still exercise the
+    error-outcome assertion, use a name that does NOT resolve through
+    ``universal_dispatch`` — e.g. an unknown category — so the salvage
+    returns the name unchanged and the dispatcher's standard
+    ``unknown_tool`` error path produces the error result.
+    """
     host = _FakeRouterHost(universal_wrappers_enabled=True)
 
-    # We need the tool handler to return an error dict.  The easiest path
-    # is to exercise _invoke_router_tool which is called by _execute_tool.
-    # invoke_action is handled by the universal_dispatch registry; when
-    # the action is not found the handler returns status="error".
-    # Rather than relying on that, we use a hot list alias (skill__bad)
-    # whose dispatch also reaches invoke_action, but here we drive it
-    # through a custom subclass that returns an error result directly.
-
-    class _ErrorHost(_FakeRouterHost):
-        """Overrides get_universal_wrappers_enabled + inject fake action handler."""
-
-    error_host = _ErrorHost(universal_wrappers_enabled=True)
-
-    # skill__bad will go through _invoke_router_tool → _invoke_via_registry
-    # ("invoke_action", {action_name: "skill__bad", args: {}}).
-    # The real registry's invoke_action handler will fail because "skill__bad"
-    # is not a registered action, returning {"status": "error", ...}.
-    # That makes outcome="error".
+    # ``bogus_category__action`` has no _OPERATION_RULES or _RESOURCE_RULES
+    # match → resolve_invoke_action raises → #229 salvage is a no-op →
+    # dispatch_tool rejects with ``unknown_tool`` → tool_result carries
+    # ``status="error"`` → routing_decided.outcome="error".
     _run_with_llm_sequence(
-        error_host,
+        host,
         [
-            _tool_result([{"name": "skill__bad", "args": {}}]),
+            _tool_result([{"name": "bogus_category__action", "args": {}}]),
             _text_result("done"),
         ],
     )
 
-    events = _routing_decided_events(error_host)
+    events = _routing_decided_events(host)
     assert len(events) == 1, f"Expected 1 routing_decided event, got {events}"
     ev = events[0]
-    assert ev["action_name"] == "skill__bad"
+    assert ev["action_name"] == "bogus_category__action"
     assert ev["outcome"] == "error", (
         f"Expected outcome='error' for unknown action, got {ev['outcome']!r}"
     )

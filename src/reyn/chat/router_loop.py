@@ -1009,10 +1009,21 @@ def _enrich_invoke_action_description(
     if not schema_lines:
         return tools
 
+    # Issue #229: the action names below are NOT directly callable as
+    # tool functions — they are operands for invoke_action. Weak models
+    # (B42 W5-S6 observed) read this block, treat ``skill__mcp_install``
+    # as a function name, and emit a direct ``function_call`` that the
+    # dispatcher rejects with ``unknown_tool``. The explicit instruction
+    # below is the structural countermeasure; the router-loop salvage
+    # in ``_maybe_salvage_qualified_direct_call`` is the safety net.
     hint = (
         "\n\nACTION ARG SCHEMAS (canonical keys for all session-visible actions):\n"
         + "\n".join(schema_lines)
-        + "\nUse these exact key names in args when calling invoke_action."
+        + "\n\nThe names above are NOT direct-callable tool functions — "
+        + "they are operands. Always invoke them as "
+        + "``invoke_action(action_name=\"<name>\", args={...})``; do NOT "
+        + "emit them as direct function calls.\n"
+        + "Use these exact key names in args when calling invoke_action."
     )
 
     # Find and patch invoke_action in-place (mutates a copy to avoid
@@ -1844,12 +1855,28 @@ class RouterLoop:
 
         Returns the tool_result content (will be JSON-serialized into the
         next round's messages).
+
+        Issue #229 fallback (= ARS-only direct call salvage):
+        weak LLMs sometimes read a qualified name from the ARS block
+        inside ``invoke_action.description`` and emit it as a direct
+        ``function_call`` rather than wrapping with
+        ``invoke_action(action_name=..., args=...)``.  The name lands
+        in ``self._catalog`` only when an actual hot-list alias was
+        surfaced; ARS-only entries don't get a top-level tool slot, so
+        the dispatcher would otherwise reject with ``unknown_tool``.
+        When the missed name resolves through ``universal_dispatch``,
+        rewrite the call as ``invoke_action(action_name=name, args=args)``
+        and dispatch via the wrapper path so the user-visible behavior
+        matches what the LLM intended.
         """
         name = tc["function"]["name"]
         try:
             args = json.loads(tc["function"]["arguments"])
         except (json.JSONDecodeError, KeyError):
             args = {}
+
+        if name not in self._catalog and "__" in name:
+            name, args = self._maybe_salvage_qualified_direct_call(name, args)
 
         dctx = DispatchContext(
             caller_kind="router",
@@ -1865,6 +1892,48 @@ class RouterLoop:
             ctx=dctx,
             invoker=functools.partial(self._invoke_router_tool, name),
         )
+
+    def _maybe_salvage_qualified_direct_call(
+        self, name: str, args: dict,
+    ) -> tuple[str, dict]:
+        """Issue #229: rewrite an ARS-only direct call into invoke_action.
+
+        Triggered when the LLM emitted ``<category>__<entry>`` as a
+        direct function call but the name isn't in ``self._catalog``
+        (= it wasn't a hot-list alias, only an ARS schema-hint entry).
+        Returns ``(name, args)`` unchanged when ``universal_dispatch``
+        cannot resolve the qualified name — the original ``unknown_tool``
+        rejection path then surfaces the error normally.
+
+        Audit event ``direct_alias_call_salvaged`` records the rewrite
+        so we can count how often this fires in dogfood and inform
+        whether the ARS block wording fix (= ``β`` in #229) reduces
+        the rate over time.
+        """
+        try:
+            from reyn.tools.universal_dispatch import (
+                UnknownActionError,
+                resolve_invoke_action,
+            )
+        except Exception:  # noqa: BLE001
+            return name, args
+        try:
+            resolve_invoke_action(name, args or {})
+        except UnknownActionError:
+            return name, args
+        except Exception:  # noqa: BLE001 — never crash the dispatch on a salvage attempt
+            return name, args
+        rewritten_args = {"action_name": name, "args": dict(args or {})}
+        try:
+            self.host.events.emit(
+                "direct_alias_call_salvaged",
+                original_name=name,
+                rewritten_to="invoke_action",
+                chain_id=self.chain_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return "invoke_action", rewritten_args
 
     # Capabilities dispatched via the unified ToolRegistry (ADR-0026 M4 Phase 3
     # step 2). Their handlers in `src/reyn/tools/` delegate via typed
