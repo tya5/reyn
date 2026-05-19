@@ -177,6 +177,46 @@ class RightPanel(Widget):
     def on_mount(self) -> None:
         self.set_interval(_REFRESH_INTERVAL, self._refresh_live)
 
+    def on_resize(self, event) -> None:
+        """Re-clamp ``_panel_width`` when the terminal window resizes.
+
+        Without this, ``_panel_width`` (an absolute column count cached
+        on h / l) survives a terminal shrink unchanged — a 145-col
+        panel on a 220-col terminal stayed at 145 cols after a
+        ``tmux resize-window -x 80``, overflowing the new 80-col
+        window and crushing the conv pane to ~0 cols. The user
+        couldn't see chat output until they reopened the panel
+        manually.
+
+        Clamp against the freshly-computed max (= 66 % of the new
+        terminal width, floor 40 cols) so the panel always stays
+        inside the terminal. Skip the work when the panel hasn't been
+        resized yet (= ``_panel_width == 0`` means it's still using
+        the CSS default of 33 % and Textual will reflow it
+        automatically).
+        """
+        del event  # unused; we re-read app.size below
+        if self._panel_width == 0:
+            return
+        max_width = self._max_panel_width()
+        if self._panel_width > max_width:
+            self._panel_width = max_width
+            try:
+                self.styles.width = self._panel_width
+            except Exception as exc:
+                logger.warning(
+                    "right_panel on_resize re-clamp failed: %s", exc,
+                )
+
+    def _max_panel_width(self) -> int:
+        """Return the upper bound for ``_panel_width`` against the current terminal.
+
+        66 % of terminal width, floor 40 cols (= same formula
+        ``_panel_resize`` uses). Centralised so the resize handler and
+        the manual resize path can't drift apart.
+        """
+        return max(40, int((self.app.size.width or 120) * 0.66))
+
     # ── focus indicator (X-focused on _PanelTop when tabs hold focus) ───────
 
     def on_descendant_focus(self, event) -> None:
@@ -280,7 +320,7 @@ class RightPanel(Widget):
     def _panel_resize(self, delta: int) -> None:
         if self._panel_width == 0:
             self._panel_width = self.size.width or 40
-        max_width = max(40, int((self.app.size.width or 120) * 0.66))
+        max_width = self._max_panel_width()
         # Min width is sized so the full 6-tab bar
         # (Keys/Events/Agents/Memory/Cost/Docs ≈ 36 cells incl. margins)
         # always fits. Below this the Textual Tabs widget silently scrolls
