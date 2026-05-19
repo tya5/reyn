@@ -71,6 +71,14 @@ class InterventionRegistry:
         # issue #254 Phase 1: listener-presence guard against forever-await.
         self._enforce_listener_presence = enforce_listener_presence
         self._listeners: set[str] = set()
+        # issue #268 Phase 1: stalled queue — iv whose origin channel
+        # closed while the iv was unresolved. Other channels can
+        # observe / discard / claim entries here via the ChatSession
+        # API; the iv's future stays unresolved until a claim moves it
+        # back to ``_active`` for a new origin channel or a discard
+        # cancels it. ``_active`` and ``_stalled`` are mutually
+        # exclusive — an iv is in one or the other, never both.
+        self._stalled: dict[str, UserIntervention] = {}
 
     # ── Listener registration (issue #254 Phase 1) ───────────────────────────
 
@@ -98,6 +106,92 @@ class InterventionRegistry:
     def listener_count(self) -> int:
         """Return the number of currently-registered listeners."""
         return len(self._listeners)
+
+    # ── Stalled queue operations (issue #268 Phase 1) ────────────────────────
+
+    def mark_stalled(self, iv_id: str) -> bool:
+        """Move *iv_id* from ``_active`` to ``_stalled``.
+
+        Called by ``ChatSession.handle_intervention`` when the iv's
+        ``origin_channel_id`` no longer maps to a registered listener
+        (= origin channel closed). Returns True iff the iv was in
+        ``_active`` and is now in ``_stalled``.
+
+        The iv's future stays unresolved. The stalled iv can be
+        observed (``list_stalled``), discarded (``discard_stalled``),
+        or claimed (``claim_stalled``) by other channels.
+        """
+        iv = self._active.pop(iv_id, None)
+        if iv is None:
+            return False
+        try:
+            self._order.remove(iv_id)
+        except ValueError:
+            pass
+        self._stalled[iv_id] = iv
+        return True
+
+    def list_stalled(self) -> list[UserIntervention]:
+        """Return all stalled interventions (= origin channel closed).
+
+        Read-only snapshot — caller iterates without holding the
+        registry's internal collection. Used by
+        ``ChatSession.list_stalled_interventions`` for the cross-channel
+        observe surface.
+        """
+        return list(self._stalled.values())
+
+    def stalled_count(self) -> int:
+        """Return the number of stalled interventions."""
+        return len(self._stalled)
+
+    def get_stalled(self, iv_id: str) -> UserIntervention | None:
+        """O(1) lookup of a stalled iv by id."""
+        return self._stalled.get(iv_id)
+
+    def discard_stalled(self, iv_id: str) -> bool:
+        """Cancel a stalled iv — set its future to an empty answer +
+        remove from the stalled queue.
+
+        Returns True iff the iv was in ``_stalled`` and was discarded
+        (= the future was either resolved with an empty answer or
+        cancelled). Matches the existing cancellation contract
+        (``InterventionAnswer(text="")``) so awaiters interpret the
+        outcome as a refusal.
+        """
+        iv = self._stalled.pop(iv_id, None)
+        if iv is None:
+            return False
+        if iv.future is not None and not iv.future.done():
+            try:
+                iv.future.set_result(InterventionAnswer(text=""))
+            except Exception:  # noqa: BLE001 — best-effort
+                # Future may be bound to a dead loop; cancel as fallback.
+                try:
+                    iv.future.cancel()
+                except Exception:  # noqa: BLE001
+                    pass
+        return True
+
+    def claim_stalled(self, iv_id: str, new_origin_channel_id: str) -> UserIntervention | None:
+        """Reactivate a stalled iv with a new origin channel.
+
+        Moves the iv from ``_stalled`` back to ``_active`` (= head of
+        the active queue, ready for re-dispatch), updates its
+        ``origin_channel_id`` to the caller's channel. Returns the iv
+        on success so the caller can drive the re-dispatch (= call
+        ``dispatch(iv)`` again to deliver to the new origin).
+
+        Returns ``None`` when ``iv_id`` is not in ``_stalled``.
+        """
+        iv = self._stalled.pop(iv_id, None)
+        if iv is None:
+            return None
+        iv.origin_channel_id = new_origin_channel_id
+        # NB: we don't re-enqueue into _active here — let the caller
+        # call dispatch() so the normal flow (= announce / await)
+        # applies. Returning the iv signals "ready to dispatch again".
+        return iv
 
     # ── Bus interface (called by ChatInterventionBus from skills) ────────────
 

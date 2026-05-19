@@ -193,6 +193,54 @@ class RouterCapExceeded(Exception):
         self.last_reason = last_reason
 
 
+@dataclass(frozen=True)
+class PendingOpView:
+    """Read-only view of a pending / stalled operation surfaced across channels
+    (= issue #268 Phase 1, #270 umbrella vocabulary).
+
+    First instance carries ``UserIntervention`` data; Phase B refactor
+    (= #270) generalises this dataclass to also describe MCP pending
+    calls / peer-delegation pending operations. The ``kind`` field is
+    the discriminator. Field shape is **pinned at Phase A landing**
+    per tui-coder commitment so the TUI Pending tab + ``/pending``
+    slash command code path doesn't churn as new kinds land.
+
+    Pinned fields (= TUI consume contract):
+      - ``id``: stable identifier (= iv.id for interventions)
+      - ``kind``: discriminator (= "intervention" for now, future
+        "mcp_call" / "peer_delegate")
+      - ``origin_channel_id``: where the op originated (= "tui:..." /
+        "a2a:..." etc.)
+      - ``created_at``: ISO timestamp string for age-rendering
+      - ``summary``: short human-readable description (= iv.prompt
+        first line for interventions)
+      - ``detail``: optional second line (= iv.detail for interventions)
+    """
+    id: str
+    kind: str
+    origin_channel_id: str
+    created_at: str
+    summary: str
+    detail: str = ""
+
+    @classmethod
+    def from_intervention(cls, iv: "UserIntervention") -> "PendingOpView":
+        """Build a view from a ``UserIntervention``. ``created_at`` is
+        the current time at view construction since iv doesn't carry
+        its own timestamp; the TUI uses this for relative age display
+        even though it's a view-time stamp.
+        """
+        from datetime import datetime, timezone  # noqa: PLC0415
+        return cls(
+            id=iv.id,
+            kind="intervention",
+            origin_channel_id=iv.origin_channel_id or "",
+            created_at=datetime.now(timezone.utc).isoformat(),
+            summary=iv.prompt,
+            detail=iv.detail or "",
+        )
+
+
 class AgentRequestBus:
     """``RequestBus`` adapter that subscribes to a ChatSession (= Agent).
 
@@ -1889,8 +1937,95 @@ class ChatSession:
         self._interventions.register_listener(listener_id)
 
     def unregister_intervention_listener(self, listener_id: str) -> None:
-        """Remove *listener_id* from the active set. Idempotent."""
+        """Remove *listener_id* from the active set. Idempotent.
+
+        issue #268 Phase 1: when a listener closes (= channel goes
+        away), any iv whose ``origin_channel_id`` equals this
+        ``listener_id`` will be observable in the stalled queue via
+        ``list_stalled_interventions``. The unregister itself does
+        NOT move active ivs to stalled — only the next
+        ``handle_intervention`` call (= a fresh iv from a still-running
+        skill) sees the change. For existing in-flight ivs that lose
+        their origin, the agent layer handles them through
+        ``handle_intervention``'s origin-pin check on its next pass.
+        """
         self._interventions.unregister_listener(listener_id)
+
+    # ── Cross-channel pending-op operations (issue #268 Phase 1) ──────────
+
+    def list_stalled_interventions(self) -> "list[PendingOpView]":
+        """Return a snapshot of all stalled interventions.
+
+        issue #268 Phase 1: any channel can call this to inspect the
+        agent's outstanding interventions whose origin channel closed.
+        The returned ``PendingOpView`` items carry enough info for the
+        TUI Pending tab + slash command to render + dispatch
+        discard/claim operations without exposing the underlying
+        ``UserIntervention`` object (= internal-only).
+
+        Read-only — caller iterates the returned list without holding
+        any registry-internal collection.
+        """
+        return [
+            PendingOpView.from_intervention(iv)
+            for iv in self._interventions.list_stalled()
+        ]
+
+    async def discard_pending_intervention(
+        self, iv_id: str, *, reason: str = "user_discarded",
+    ) -> bool:
+        """Discard a stalled intervention — cancel its future, remove
+        from the queue.
+
+        Returns True iff the iv was in the stalled queue and was
+        discarded. The future is resolved with an empty
+        ``InterventionAnswer`` so the awaiter sees a refusal.
+
+        issue #268 Phase 1: cross-channel discard. Used by a different
+        channel than the original origin to say "no one will answer,
+        give up". Future expansion (= per-kind discard hooks) can
+        plug into the policy layer at ``handle_intervention``.
+        """
+        ok = self._interventions.discard_stalled(iv_id)
+        if ok:
+            self._chat_events.emit(
+                "pending_intervention_discarded",
+                iv_id=iv_id,
+                reason=reason,
+            )
+        return ok
+
+    async def claim_pending_intervention(
+        self, iv_id: str, new_channel_id: str,
+    ) -> "PendingOpView | None":
+        """Claim a stalled intervention — rebind origin to the caller's
+        channel + re-dispatch through the active path.
+
+        Returns the ``PendingOpView`` of the claimed iv on success, or
+        ``None`` when ``iv_id`` is not in the stalled queue.
+
+        issue #268 Phase 1: cross-channel claim. The caller takes
+        responsibility for resolving the iv via its own input
+        surface. After claim:
+          - iv.origin_channel_id is updated to ``new_channel_id``
+          - the iv is removed from the stalled queue
+          - the dispatch path runs (= `_dispatch_intervention`)
+        """
+        iv = self._interventions.claim_stalled(iv_id, new_channel_id)
+        if iv is None:
+            return None
+        self._chat_events.emit(
+            "pending_intervention_claimed",
+            iv_id=iv_id,
+            new_origin_channel_id=new_channel_id,
+        )
+        # Re-dispatch on the new channel. We schedule this in the
+        # background so the caller of claim doesn't await the full
+        # iv resolution — the iv.future will resolve when the new
+        # channel's listener calls deliver_answer, independent of this
+        # method's return.
+        asyncio.ensure_future(self._dispatch_intervention(iv))
+        return PendingOpView.from_intervention(iv)
 
     async def _dispatch_intervention(self, iv: UserIntervention) -> InterventionAnswer:
         """Thin wrapper → InterventionHandler.dispatch.
@@ -1984,7 +2119,46 @@ class ChatSession:
             finally:
                 source_agent_var.reset(token)
 
-        # Branch 3: default — deliver to user via existing dispatch path.
+        # Branch 3: user_channel — origin-pin check + dispatch or stall.
+        # issue #268 Phase 1: when the iv carries an explicit
+        # ``origin_channel_id`` that no longer maps to a registered
+        # listener (= the origin channel closed since the iv was
+        # created), park the iv in the stalled queue instead of
+        # delivering it to a different channel. Other channels
+        # observe / discard / claim via the cross-channel API
+        # (``list_stalled_interventions`` / ``discard_pending_intervention``
+        # / ``claim_pending_intervention``).
+        #
+        # Backwards-compat: iv with ``origin_channel_id=None`` (= legacy
+        # default) skips the stall check entirely and goes through the
+        # existing dispatch path unchanged.
+        if (
+            iv.origin_channel_id is not None
+            and iv.origin_channel_id not in self._interventions._listeners
+        ):
+            self._chat_events.emit(
+                "intervention_routed",
+                route="user_channel_stalled",
+                iv_kind=iv.kind,
+                iv_id=iv.id,
+                origin_channel_id=iv.origin_channel_id,
+            )
+            # Park in stalled queue. The iv has to be in _active first
+            # so mark_stalled can move it; if it's not, add it via the
+            # registry's _stalled directly (= bypass _active path
+            # because no listener is going to drain it).
+            self._interventions._stalled[iv.id] = iv
+            # Block on the iv's future — claim_pending_intervention /
+            # discard_pending_intervention will resolve / cancel it
+            # eventually. If neither happens, the awaiter (= safety
+            # limit handler with ask_timeout=0) waits indefinitely,
+            # which is the intended behaviour for "stall pending
+            # user action across channels".
+            try:
+                return await iv.future
+            except asyncio.CancelledError:
+                return InterventionAnswer(text="")
+
         self._chat_events.emit(
             "intervention_routed",
             route="user_channel",
