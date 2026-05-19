@@ -23,26 +23,28 @@ References:
 - Hermes-agent #9400 — community implementation of the same pattern.
 - B42-NF-W6-1 trace-patch-replay evidence (0/10 baseline → 10/10 patched
   on the W6-S1 plan-step empty-stop attractor).
+
+testing.ja.md compliance:
+- Uses ``llm_caller=`` injection (= constructor seam on RouterLoop) instead
+  of ``unittest.mock.patch``. The injected ``_ScriptedLLM`` is a real
+  callable class with ``async def __call__``; signature drift would raise
+  TypeError, unlike a mock that silently accepts anything.
+- ``pytest.monkeypatch`` is used only for env-var setup (= acceptable per
+  the policy's distinction between fake-collaborator mocking and reversible
+  env / module-attribute setup).
 """
 from __future__ import annotations
-
-from unittest.mock import patch
 
 import pytest
 
 from reyn.chat.router_loop import RouterLoop
 from reyn.llm.llm import LLMToolCallResult
 from reyn.llm.pricing import TokenUsage
-
-# Reuse FakeRouterHost / _ScriptedLLM / text_result / tool_result from the
-# canonical RouterLoop test module — real classes (= no Mock / AsyncMock).
-from tests.test_router_loop import (  # noqa: E402
+from tests.test_router_loop import (
     FakeRouterHost,
     _ScriptedLLM,
     text_result,
-    tool_result,
 )
-
 
 _DIRECTIVE = (
     "Now write your step report. Summarise the relevant content from "
@@ -60,12 +62,18 @@ def _empty_stop_result() -> LLMToolCallResult:
     )
 
 
-def _make_loop(host: FakeRouterHost, directive: str | None) -> RouterLoop:
+def _make_loop(
+    host: FakeRouterHost,
+    directive: str | None,
+    *,
+    llm_caller,
+) -> RouterLoop:
     return RouterLoop(
         host=host,
         chain_id="chain-empty-stop-test",
         max_iterations=5,
         empty_stop_retry_directive=directive,
+        llm_caller=llm_caller,
     )
 
 
@@ -81,13 +89,10 @@ async def test_retry_path_injects_user_msg_when_env_var_set(monkeypatch):
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
-    loop = _make_loop(host, _DIRECTIVE)
-
-    # Script: empty stop → (retry) → text reply
     scripted = _ScriptedLLM([_empty_stop_result(), text_result("recovered")])
+    loop = _make_loop(host, _DIRECTIVE, llm_caller=scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("test", [])
+    await loop.run("test", [])
 
     # Two LLM calls (= 1 initial + 1 retry)
     assert scripted.call_count == 2
@@ -114,12 +119,10 @@ async def test_no_retry_when_env_var_unset(monkeypatch):
     """
     monkeypatch.delenv("REYN_EMPTY_STOP_RETRY", raising=False)
     host = FakeRouterHost()
-    loop = _make_loop(host, _DIRECTIVE)
-
     scripted = _ScriptedLLM([_empty_stop_result()])
+    loop = _make_loop(host, _DIRECTIVE, llm_caller=scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("test", [])
+    await loop.run("test", [])
 
     # Only 1 LLM call (= no retry).
     assert scripted.call_count == 1
@@ -143,12 +146,10 @@ async def test_no_retry_when_directive_is_none(monkeypatch):
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
-    loop = _make_loop(host, None)  # no directive
-
     scripted = _ScriptedLLM([_empty_stop_result()])
+    loop = _make_loop(host, None, llm_caller=scripted)  # no directive
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("test", [])
+    await loop.run("test", [])
 
     assert scripted.call_count == 1
     assert host.outbox[0]["meta"]["source"] == "router_empty_response"
@@ -167,13 +168,11 @@ async def test_retry_bounded_to_one_per_turn(monkeypatch):
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
-    loop = _make_loop(host, _DIRECTIVE)
-
     # Script: empty stop → empty stop on retry → loop must surface failure.
     scripted = _ScriptedLLM([_empty_stop_result(), _empty_stop_result()])
+    loop = _make_loop(host, _DIRECTIVE, llm_caller=scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("test", [])
+    await loop.run("test", [])
 
     # Exactly 2 LLM calls (= 1 initial + 1 retry, then surface).
     assert scripted.call_count == 2
@@ -192,7 +191,13 @@ async def test_retry_bounded_to_one_per_turn(monkeypatch):
 
 
 class _MessageCapturingScripted:
-    """Real callable that records each call's messages snapshot."""
+    """Real callable that records each call's messages snapshot.
+
+    Same shape as _ScriptedLLM (= real class with async __call__, signature
+    drift raises TypeError) but additionally captures the messages list each
+    time the callable is invoked. Per testing.ja.md this is an acceptable
+    real-fake pattern — no unittest.mock.* involved.
+    """
 
     def __init__(self, script):
         self._script = list(script)
@@ -215,12 +220,10 @@ async def test_retry_injects_directive_verbatim(monkeypatch):
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
-    loop = _make_loop(host, _DIRECTIVE)
-
     spy = _MessageCapturingScripted([_empty_stop_result(), text_result("ok")])
+    loop = _make_loop(host, _DIRECTIVE, llm_caller=spy)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", spy):
-        await loop.run("user query", [])
+    await loop.run("user query", [])
 
     assert spy.call_count == 2
     retry_msgs = spy.messages_per_call[1]
@@ -247,12 +250,10 @@ async def test_empty_stop_event_still_emitted_on_retry_path(monkeypatch):
     """
     monkeypatch.setenv("REYN_EMPTY_STOP_RETRY", "1")
     host = FakeRouterHost()
-    loop = _make_loop(host, _DIRECTIVE)
-
     scripted = _ScriptedLLM([_empty_stop_result(), text_result("recovered")])
+    loop = _make_loop(host, _DIRECTIVE, llm_caller=scripted)
 
-    with patch("reyn.chat.router_loop.call_llm_tools", scripted):
-        await loop.run("test", [])
+    await loop.run("test", [])
 
     emitted = [e["type"] for e in host._events.emitted]
     assert "router_empty_response_detected" in emitted

@@ -1068,6 +1068,7 @@ class RouterLoop:
         memo_provider: Any = None,  # SubLoopMemoProvider | None (ADR-0025)
         skill_search_config: "SkillSearchConfig | None" = None,  # FP-0024-A BM25 pre-filter
         empty_stop_retry_directive: str | None = None,  # B42-NF-W6-1 opt-in retry
+        llm_caller: "Any | None" = None,  # Tier 2 test seam: real-fake injection
     ):
         self.host = host
         self.chain_id = chain_id
@@ -1115,6 +1116,12 @@ class RouterLoop:
         # process — the directive plumbing lands in the codebase but no
         # default runtime behaviour change.
         self._empty_stop_retry_directive = empty_stop_retry_directive
+        # Tier 2 test seam: when set, ``run()`` calls this callable instead of
+        # the module-level ``call_llm_tools``. Allows real-fake injection
+        # (= scripted async callable) without ``unittest.mock.patch`` — per
+        # testing.ja.md hard rule that forbids ``MagicMock / AsyncMock /
+        # patch``. Production callers leave this as ``None``.
+        self._llm_caller = llm_caller
         self._catalog: dict[str, dict] = {}  # populated per run()
         self._tool_names: frozenset[str] = frozenset()  # kept for backward compat
         self._total_usage: TokenUsage = TokenUsage()
@@ -1459,7 +1466,12 @@ class RouterLoop:
                     )
                     result = memo
             if result is None:
-                result = await call_llm_tools(
+                # Tier 2 testability: tests inject a real-fake callable via
+                # ``_llm_caller`` (= no unittest.mock.patch needed). None
+                # falls through to the module-level ``call_llm_tools`` so
+                # production callers don't have to know about the seam.
+                _llm = self._llm_caller or call_llm_tools
+                result = await _llm(
                     model=resolved_model,
                     messages=messages,
                     tools=tools,
