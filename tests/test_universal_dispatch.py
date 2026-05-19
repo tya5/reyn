@@ -522,3 +522,136 @@ def test_agent_peer_translator_caller_supplies_request_directly() -> None:
     translated = resolved.target_args
     assert translated["to"] == "analyst"
     assert translated["request"] == "Run the numbers."
+
+
+# ── 6. Schema-cross-reference contract pin (regression guard) ────────────
+#
+# The mcp.tool routing regression (PR #246) escaped because the resolver
+# emitted ``tool`` while the target handler read ``mcp_tool_name``, and
+# the existing test happened to PIN the buggy shape. The fix added a
+# point-in-time assertion that the resolver's output keys cover
+# call_mcp_tool's required schema. This section generalises that
+# contract across EVERY routing entry — for each route, we verify:
+#
+#   (a) the target tool exists in get_default_registry() (catches
+#       rename / removal of the target without a routing-table update),
+#   (b) with a representative caller-args payload, the resolver's
+#       output keys cover the target's required schema (catches a
+#       key-name mismatch like the PR #246 regression at test time).
+#
+# The samples below mirror the canonical LLM invocation shape per
+# category (= what the universal-catalog wrappers instruct the LLM to
+# supply). Adding a new routing entry without a sample here will fail
+# the inventory-coverage test below, forcing the author to declare an
+# explicit contract for the new route.
+
+# Representative ``(qualified_name, caller_args)`` per routing entry.
+# Keys reflect what the LLM would emit for that action; the resolver
+# is responsible for shaping them to the target's required schema.
+_ROUTE_CONTRACT_SAMPLES: list[tuple[str, dict[str, Any]]] = [
+    # Resource categories (= _RESOURCE_RULES)
+    ("skill__code_review", {"input": {"type": "x", "data": {}}}),
+    ("agent.peer__planner", {"message": "hi", "request": "hi"}),
+    ("mcp.server__brave", {}),
+    ("mcp.tool__brave.search", {"q": "reyn"}),
+    ("memory.entry__pref_dates", {}),
+    ("rag.corpus__notes", {"query": "what"}),
+    # Operation categories (= _OPERATION_RULES) — passthrough transformers,
+    # so the caller args must already include the target's required keys.
+    ("file__read",   {"path": "a.txt"}),
+    ("file__write",  {"path": "a.txt", "content": "x"}),
+    ("file__delete", {"path": "a.txt"}),
+    ("file__list",   {"path": "."}),
+    ("file__grep",   {"pattern": "x"}),
+    ("file__glob",   {"pattern": "*.py"}),
+    ("file__edit",   {"path": "a", "old_string": "b", "new_string": "c"}),
+    ("web__search",  {"query": "x"}),
+    ("web__fetch",   {"url": "https://x"}),
+    ("memory.operation__remember_shared",
+     {"slug": "s", "name": "n", "description": "d", "type": "user", "body": "b"}),
+    ("memory.operation__remember_agent",
+     {"slug": "s", "name": "n", "description": "d", "type": "user", "body": "b"}),
+    ("memory.operation__forget", {"layer": "shared", "slug": "s"}),
+    ("reyn.source__read", {"path": "a"}),
+    ("reyn.source__list", {"path": "."}),
+    ("reyn.source__glob", {"pattern": "*.py"}),
+    ("reyn.source__grep", {"pattern": "x"}),
+    ("rag.operation__recall",      {"query": "q", "sources": ["s"]}),
+    ("rag.operation__drop_source", {"source": "s"}),
+    ("mcp.operation__drop_server", {"server": "x"}),
+    ("exec__sandboxed_exec",       {"argv": ["echo", "hi"]}),
+]
+
+
+@pytest.mark.parametrize("qualified_name,caller_args", _ROUTE_CONTRACT_SAMPLES)
+def test_resolver_target_exists_and_args_cover_required_schema(
+    qualified_name: str, caller_args: dict[str, Any],
+) -> None:
+    """Tier 2: every routing entry produces args satisfying the target's required schema.
+
+    Regression guard for the FP-0032 / FP-0034 class of drift (= the PR
+    #246 mcp.tool key mismatch). For each route, the resolver must:
+
+      (a) point at a target_tool_name that exists in the unified
+          registry (= catches rename / removal of the target),
+      (b) given a representative LLM-style caller_args payload, emit
+          a target_args dict whose keys cover the target's required
+          schema (= catches a name mismatch like ``tool`` vs
+          ``mcp_tool_name`` BEFORE it surfaces as a raw KeyError stack
+          trace in production).
+
+    Sample inputs reflect what the universal-catalog wrappers instruct
+    the LLM to supply per category. They are NOT exhaustive coverage of
+    every arg shape the LLM might emit — they pin the canonical shape
+    so a drift on either side fails the test at the routing wire.
+    """
+    from reyn.tools import get_default_registry
+
+    result = resolve_invoke_action(qualified_name, caller_args)
+    registry = get_default_registry()
+    target = registry.lookup(result.target_tool_name)
+    assert target is not None, (
+        f"routing entry for {qualified_name!r} targets "
+        f"{result.target_tool_name!r}, which is not in the registry"
+    )
+    required = set(target.parameters.get("required", []))
+    produced = set(result.target_args.keys())
+    missing = required - produced
+    assert not missing, (
+        f"resolver for {qualified_name!r} produced keys {sorted(produced)} "
+        f"but target {result.target_tool_name!r} requires {sorted(required)}; "
+        f"missing: {sorted(missing)}"
+    )
+
+
+def test_route_contract_samples_cover_every_routing_entry() -> None:
+    """Tier 2: every entry in the routing tables has a contract sample.
+
+    Adding a new resource category or operation rule without a sample
+    in ``_ROUTE_CONTRACT_SAMPLES`` would silently bypass the contract
+    pin above. This test fails the moment a new route is introduced
+    without an explicit sample declaration.
+    """
+    from reyn.tools.universal_dispatch import (
+        _OPERATION_RULES,
+        _RESOURCE_RULES,
+    )
+
+    sample_names = {name for name, _ in _ROUTE_CONTRACT_SAMPLES}
+
+    # Operation rules: each key is a full qualified name.
+    operation_names = set(_OPERATION_RULES.keys())
+    missing_ops = operation_names - sample_names
+    assert not missing_ops, (
+        f"operation rules without a contract sample: {sorted(missing_ops)}"
+    )
+
+    # Resource rules: each key is a category. We require at least one
+    # sample qualified-name per category.
+    sample_categories = {name.split("__", 1)[0] for name in sample_names}
+    resource_categories = set(_RESOURCE_RULES.keys())
+    missing_resources = resource_categories - sample_categories
+    assert not missing_resources, (
+        f"resource categories without a contract sample: "
+        f"{sorted(missing_resources)}"
+    )
