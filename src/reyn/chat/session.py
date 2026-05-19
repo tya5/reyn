@@ -194,13 +194,22 @@ class RouterCapExceeded(Exception):
 
 
 class ChatInterventionBus:
-    """InterventionBus impl that routes through ChatSession's outbox/inbox.
+    """``UserChannel`` implementation that routes through ChatSession's
+    outbox/inbox to the attached TUI listener.
 
     One instance per skill spawn — captures `run_id` and a default `skill_name`
     so the chat session can drop pending interventions when the spawn is
     cancelled. Interventions emitted by ops carry their own `skill_name` from
     `OpContext`; this bus only fills in `run_id` (which the OS layer doesn't
     have, since chat tracks runs separately from `Agent.run_id`).
+
+    Phase 2 (issue #254): the canonical method is ``deliver`` (= the
+    Agent↔User contract).  ``request`` is retained as an alias so
+    callers typed against ``InterventionBus`` / ``RequestBus`` continue
+    to work unchanged.  Phase 3 will route OS-level requests through the
+    Agent layer, which will then call ``deliver`` on this channel — at
+    that point ``request`` becomes unused at top-level (= a candidate
+    for Phase 5 removal).
     """
 
     def __init__(self, session: "ChatSession", run_id: str | None, skill_name: str | None) -> None:
@@ -208,7 +217,10 @@ class ChatInterventionBus:
         self._run_id = run_id
         self._skill_name = skill_name
 
-    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+    async def deliver(self, iv: "UserIntervention") -> "InterventionAnswer":
+        """``UserChannel.deliver`` — route the prompt to ChatSession's
+        outbox/inbox so the attached TUI surfaces it to the user.
+        """
         if iv.run_id is None:
             iv.run_id = self._run_id
         if not iv.skill_name:
@@ -223,6 +235,15 @@ class ChatInterventionBus:
             if buffered is not None:
                 return buffered
         return await self._session._dispatch_intervention(iv)
+
+    async def request(self, iv: "UserIntervention") -> "InterventionAnswer":
+        """``RequestBus.request`` — Phase 2 backwards-compat alias.
+
+        Delegates to ``deliver``; preserved so existing call sites typed
+        against ``InterventionBus`` keep working until the Phase 3 Agent
+        migration moves them onto the Agent-mediated path.
+        """
+        return await self.deliver(iv)
 
     # Note: _dispatch_intervention on session.py is now a thin wrapper around
     # InterventionRegistry.dispatch (wave 2 of PR-refactor-session-1). Kept

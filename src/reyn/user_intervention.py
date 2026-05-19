@@ -1,13 +1,31 @@
 """UserIntervention — unified abstraction for skill→user prompts.
 
 Both `ask_user` Control IR ops (free-text questions) and PermissionResolver
-prompts (yes/no/always choice) flow through a single `InterventionBus`. The
-bus is wired by the call site:
+prompts (yes/no/always choice) flow through the intervention plumbing. The
+plumbing splits into two contracts (issue #254 Phase 2):
 
-  - chat session   → `ChatInterventionBus` routes via outbox/inbox + Future
-  - CLI / one-shot → `StdinInterventionBus` reads stdin synchronously
+  - ``RequestBus`` (= [A] OS↔upper-layer contract): callers in the OS
+    layer (limit_handler / permission gate / etc.) emit a request via
+    ``bus.request(iv)`` and await an answer.  They know NOTHING about
+    where the response comes from — that's the responsibility of the
+    subscriber on the other end of the bus (eventually Agent in Phase 3).
+  - ``UserChannel`` (= [B] Agent↔User contract): the physical delivery
+    path to a user surface (TUI / stdin / a2a webhook).  Implementations
+    expose ``channel.deliver(iv)``; this is what the Agent calls
+    internally when it decides to forward an intervention to the user
+    (vs self-answering or delegating to a parent agent).
 
-PR6 migrates `ask_user`. PR7 layers permission prompts onto the same bus.
+In Phase 2 the existing ``ChatInterventionBus`` / ``StdinInterventionBus``
+/ ``A2AInterventionBus`` satisfy BOTH protocols simultaneously
+(``request == deliver``), so the runtime behaviour is unchanged.  The
+type-level split is the foundation for Phase 3 (= Agent becomes the
+``RequestBus`` subscriber and routes to a ``UserChannel`` internally).
+
+The legacy ``InterventionBus`` name is retained as an alias of
+``RequestBus`` so callers that import it keep working unchanged.
+
+PR6 migrated `ask_user`. PR7 layered permission prompts onto the same
+bus.  Phase 2 (issue #254) splits the bus into RequestBus / UserChannel.
 """
 from __future__ import annotations
 
@@ -131,11 +149,50 @@ class InterventionAnswer:
 
 
 @runtime_checkable
-class InterventionBus(Protocol):
-    """Producer interface. Skills emit interventions; consumers (chat REPL,
-    stdin, etc.) deliver them to the user and resolve the answer."""
+class RequestBus(Protocol):
+    """[A] OS↔upper-layer contract — emit an intervention request and
+    await a response.
+
+    Callers in the OS layer (= ``handle_limit_exceeded``, permission
+    gates, skill ``ask_user`` op) know only this interface; they do NOT
+    know whether the responder is a TUI listener, an A2A peer, or an
+    Agent making a self-decision.  The subscriber on the other end of
+    the bus decides routing (Phase 3 onward: Agent inspects context and
+    chooses to ``self_answer`` / forward to ``parent_agent`` / forward
+    to a ``UserChannel``).
+
+    issue #254 Phase 2.
+    """
 
     async def request(self, iv: UserIntervention) -> InterventionAnswer: ...
+
+
+@runtime_checkable
+class UserChannel(Protocol):
+    """[B] Agent↔User contract — physical delivery path to a user
+    surface (TUI, stdin, a2a webhook).
+
+    Only the Agent layer (and during Phase 2 backward-compat, the OS
+    layer that has not yet been migrated) calls ``deliver``.  Each
+    concrete UserChannel routes the prompt to one specific surface.
+    The semantics match ``RequestBus.request`` (= emit + await answer);
+    the type split is conceptual rather than behavioural — it pins
+    which layer is responsible for choosing a channel (Agent) versus
+    which layer is responsible for using the bus (OS).
+
+    issue #254 Phase 2.
+    """
+
+    async def deliver(self, iv: UserIntervention) -> InterventionAnswer: ...
+
+
+# issue #254 Phase 2: ``InterventionBus`` is retained as an alias of
+# ``RequestBus`` so existing callers / imports (= every site that types a
+# parameter as ``bus: InterventionBus`` today) keep working unchanged.
+# Phase 5 will eventually drop the alias once all callers have migrated
+# to the more precise ``RequestBus`` (or higher-level wrappers that hide
+# the bus entirely).
+InterventionBus = RequestBus
 
 
 def match_choice(text: str, choices: list[InterventionChoice]) -> InterventionChoice | None:
@@ -152,20 +209,40 @@ def match_choice(text: str, choices: list[InterventionChoice]) -> InterventionCh
 
 
 class StdinInterventionBus:
-    """Synchronous-stdin implementation for non-chat contexts (`reyn run`).
+    """``UserChannel`` implementation for non-chat contexts (`reyn run`,
+    cron, scripted invocations with a terminal attached).
 
     Reads via prompt_toolkit when a TTY is available; falls back to blocking
     `input()` in a worker thread. Both paths cooperate with the surrounding
     asyncio loop (no concurrent reader competes for stdin in the CLI).
+
+    Phase 2 (issue #254): also satisfies ``RequestBus`` via ``request``,
+    which today is an alias for ``deliver`` so existing callers that
+    receive this class typed as ``InterventionBus`` (= ``RequestBus``)
+    keep working.  In Phase 3 the Agent becomes the ``RequestBus``
+    subscriber and only invokes ``deliver`` on this class.
     """
 
-    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+    async def deliver(self, iv: UserIntervention) -> InterventionAnswer:
+        """``UserChannel.deliver`` — route the prompt to stdin."""
         text = self._render_prompt(iv)
         raw = await self._read_line(text)
         if iv.choices:
             choice = match_choice(raw, iv.choices)
             return InterventionAnswer(text=raw, choice_id=choice.id if choice else None)
         return InterventionAnswer(text=raw)
+
+    async def request(self, iv: UserIntervention) -> InterventionAnswer:
+        """``RequestBus.request`` — backwards-compat entry point.
+
+        In Phase 2 we deliberately keep this as an alias of ``deliver``
+        so callers that were typed against ``InterventionBus`` continue
+        to work without changes.  Phase 3 will route OS-level requests
+        through the Agent, which will then call ``deliver`` on this
+        channel — at that point this method becomes unused for top-level
+        OS callers (= a candidate for Phase 5 removal).
+        """
+        return await self.deliver(iv)
 
     @staticmethod
     def _render_prompt(iv: UserIntervention) -> str:
@@ -202,7 +279,9 @@ __all__ = [
     "InterventionAnswer",
     "InterventionBus",
     "InterventionChoice",
+    "RequestBus",
     "StdinInterventionBus",
+    "UserChannel",
     "UserIntervention",
     "match_choice",
 ]
