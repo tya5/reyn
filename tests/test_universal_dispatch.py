@@ -85,16 +85,44 @@ def test_resolve_invoke_action_mcp_server_routes_to_list_tools() -> None:
 
 
 def test_resolve_invoke_action_mcp_tool_splits_server_dot_tool() -> None:
-    """Tier 2: mcp.tool__<server>.<tool> → call_mcp_tool(server, tool, args)."""
+    """Tier 2: mcp.tool__<server>.<tool> → call_mcp_tool(server, mcp_tool_name, args).
+
+    The output key MUST be ``mcp_tool_name`` (not ``tool``) to match the
+    ``call_mcp_tool`` handler's parameter schema. Returning ``tool`` here
+    raised ``KeyError: mcp_tool_name`` inside ``_handle_call_mcp_tool``
+    when invoke_action dispatched to it (= production-observed regression).
+    """
     result = resolve_invoke_action(
         "mcp.tool__brave.search", {"q": "reyn"},
     )
     assert result.target_tool_name == "call_mcp_tool"
     assert result.target_args == {
         "server": "brave",
-        "tool": "search",
+        "mcp_tool_name": "search",
         "args": {"q": "reyn"},
     }
+
+
+def test_resolve_invoke_action_mcp_tool_keys_match_call_mcp_tool_schema() -> None:
+    """Tier 2: resolved arg keys are a subset of call_mcp_tool's required schema.
+
+    Regression guard: this pins the contract that universal_dispatch's
+    output keys for ``mcp.tool__*`` match what ``call_mcp_tool``'s
+    parameter schema declares required. If either side drifts (= the
+    handler renames ``mcp_tool_name`` or the dispatcher reverts to
+    ``tool``), this test fails BEFORE the mismatch reaches production
+    as a KeyError stack trace.
+    """
+    from reyn.tools.mcp import CALL_MCP_TOOL
+
+    result = resolve_invoke_action(
+        "mcp.tool__brave.search", {"q": "reyn"},
+    )
+    required = set(CALL_MCP_TOOL.parameters.get("required", []))
+    assert required.issubset(result.target_args.keys()), (
+        f"resolver produced keys {sorted(result.target_args.keys())} "
+        f"but call_mcp_tool requires {sorted(required)}"
+    )
 
 
 def test_resolve_invoke_action_mcp_tool_missing_dot_raises() -> None:
