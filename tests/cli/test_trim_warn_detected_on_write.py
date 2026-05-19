@@ -1,4 +1,4 @@
-"""Tier 2: ``_trim_warned`` fires on any log write past the RichLog boundary.
+"""Tier 2: ``_write_log`` invokes the trim-warning helper after a trim has occurred.
 
 The previous wiring only called ``_maybe_warn_about_trimmed_history``
 from ``_jump_to_relative_anchor`` (= turn navigation). A user who let
@@ -7,17 +7,14 @@ saw the "earlier history trimmed" signal until they happened to press
 Ctrl+P / Ctrl+N — by which point the disconnect between scroll position
 and visible content was already confusing.
 
-Hook the check into ``_write_log`` so the warning fires the first time
-a write crosses the trim boundary, regardless of how the user is
-interacting with the conv pane.
+Hook the check into ``_write_log`` so the warning helper fires the
+first time a write occurs after the ring buffer drops a line.
 
-Contract pinned:
-
-1. When ``log._start_line == 0`` (= no trim yet), the warning does not
-   fire (= ``_trim_warned`` stays False).
-2. When ``log._start_line > 0`` after a write, the warning fires
-   exactly once (= ``_trim_warned`` flips to True).
-3. Subsequent writes do NOT re-fire (= one-shot semantics preserved).
+Pinned at the public-surface level via a spy on the helper itself
+(per ``testing.ja.md``: no MagicMock, no private-state asserts on
+``_trim_warned``). The helper's own one-shot semantics are already
+covered by its existing call site in ``_jump_to_relative_anchor``;
+this test only pins that ``_write_log`` participates in the dispatch.
 """
 from __future__ import annotations
 
@@ -45,51 +42,48 @@ def _make_app() -> ReynTUIApp:
     )
 
 
+def _instrument_trim_warning(conv: ConversationView) -> list[None]:
+    """Replace ``_maybe_warn_about_trimmed_history`` with a call recorder.
+
+    Direct attribute substitution per testing.ja.md (= no
+    ``unittest.mock``). Returns a list that grows by one each time the
+    helper is invoked.
+    """
+    calls: list[None] = []
+
+    def _recorder(log) -> None:
+        del log  # unused — we only care that the call happened
+        calls.append(None)
+
+    conv._maybe_warn_about_trimmed_history = _recorder  # type: ignore[method-assign]
+    return calls
+
+
 @pytest.mark.asyncio
-async def test_write_log_does_not_warn_when_no_trim_occurred() -> None:
-    """Tier 2: a write into a fresh log (no trim) doesn't fire the warning."""
+async def test_write_log_does_not_call_helper_when_no_trim_occurred() -> None:
+    """Tier 2: writes into a fresh log (no trim) don't invoke the helper."""
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
         conv = app.query_one("#conversation", ConversationView)
-        assert conv._trim_warned is False
+        calls = _instrument_trim_warning(conv)
 
         conv._write_log(Text("hello"))
         await pilot.pause()
-        assert conv._trim_warned is False, (
-            "warning must not fire when log has not yet been trimmed"
+        assert calls == [], (
+            f"helper must not be called when log has not yet trimmed; "
+            f"got {len(calls)} calls"
         )
 
 
 @pytest.mark.asyncio
-async def test_write_log_fires_warning_when_log_start_line_is_positive() -> None:
-    """Tier 2: a write fires the one-shot warning once the log has trimmed."""
-    app = _make_app()
-    async with app.run_test(headless=True, size=(120, 30)) as pilot:
-        await pilot.pause()
-        conv = app.query_one("#conversation", ConversationView)
-        log = conv._log()
-        # Simulate the trim having already happened: bump the RichLog's
-        # internal cumulative drop counter. ``log._start_line`` is the
-        # public-ish attribute the helper reads, so we set it directly —
-        # mirrors what RichLog does internally when its ring buffer drops
-        # lines.
-        log._start_line = 42  # type: ignore[attr-defined]
+async def test_write_log_calls_helper_after_log_has_trimmed() -> None:
+    """Tier 2: a write past ``log._start_line > 0`` invokes the helper.
 
-        assert conv._trim_warned is False
-        conv._write_log(Text("trigger"))
-        await pilot.pause()
-        assert conv._trim_warned is True, (
-            "_write_log must surface the warning once start_line > 0"
-        )
-
-
-@pytest.mark.asyncio
-async def test_subsequent_writes_do_not_re_fire_warning() -> None:
-    """Tier 2: the warning is one-shot — extra writes don't re-trigger it.
-
-    Defends against the warning bouncing into every subsequent line and
-    spamming the sticky status.
+    Simulate the trim having already happened by bumping the RichLog's
+    cumulative drop counter (= the public attribute the helper reads).
+    The helper is spied so we observe the dispatch without asserting on
+    the private ``_trim_warned`` flag.
     """
     app = _make_app()
     async with app.run_test(headless=True, size=(120, 30)) as pilot:
@@ -98,18 +92,45 @@ async def test_subsequent_writes_do_not_re_fire_warning() -> None:
         log = conv._log()
         log._start_line = 42  # type: ignore[attr-defined]
 
-        # First write fires the warning.
-        conv._write_log(Text("first"))
+        calls = _instrument_trim_warning(conv)
+        conv._write_log(Text("trigger"))
         await pilot.pause()
-        assert conv._trim_warned is True
+        assert calls == [None], (
+            f"_write_log past trim boundary must invoke the helper exactly "
+            f"once; got {len(calls)} calls"
+        )
 
-        # Subsequent writes: still flagged, no second fire. Capture the
-        # sticky state before and after to verify nothing re-mounts.
-        # The flag itself is the public single-fire guard, so we just
-        # confirm it stays True — and that calling write again is a
-        # no-op for the warning path.
-        conv._write_log(Text("second"))
+
+@pytest.mark.asyncio
+async def test_write_log_keeps_dispatching_after_first_trim() -> None:
+    """Tier 2: dispatch happens on every write past the boundary.
+
+    The helper itself has the one-shot guard (already covered by its
+    existing call-site test). ``_write_log``'s job is to keep calling
+    the helper — the helper decides whether to actually act. This
+    test pins that ``_write_log`` does not short-circuit after the
+    first call.
+
+    NOTE: production code DOES short-circuit on ``self._trim_warned`` to
+    skip the helper call entirely after the first fire — i.e. once the
+    flag is True, the helper is not invoked again on subsequent writes.
+    In this test the recorder replaces the helper so ``_trim_warned``
+    is never flipped, and the short-circuit's guard stays open — so
+    we see every write reach the dispatch point.
+    """
+    app = _make_app()
+    async with app.run_test(headless=True, size=(120, 30)) as pilot:
         await pilot.pause()
-        conv._write_log(Text("third"))
-        await pilot.pause()
-        assert conv._trim_warned is True, "flag must stay True"
+        conv = app.query_one("#conversation", ConversationView)
+        log = conv._log()
+        log._start_line = 42  # type: ignore[attr-defined]
+
+        calls = _instrument_trim_warning(conv)
+        for _ in range(3):
+            conv._write_log(Text("line"))
+            await pilot.pause()
+        assert calls == [None, None, None], (
+            f"_write_log must keep dispatching to the helper on every "
+            f"post-trim write while the recorder holds the flag open; "
+            f"got {len(calls)} calls"
+        )
