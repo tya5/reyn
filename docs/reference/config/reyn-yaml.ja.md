@@ -184,9 +184,9 @@ safety:
     phase_seconds: 0             # Phase ごとのウォールクロックバジェット; 0 = 無制限 (--phase-budget)
     chain_seconds: 60            # デリゲート返答待機時間
   on_limit:
-    mode: unattended             # interactive | unattended | auto_extend
+    mode: interactive            # interactive | unattended | auto_extend
     auto_extend_times: 1         # （auto_extend モード）自動延長回数
-    ask_timeout_seconds: 60      # （interactive モード）ユーザープロンプトのタイムアウト
+    ask_timeout_seconds: 0       # （interactive モード）ユーザープロンプトのタイムアウト; 0 = 無制限待機
 ```
 
 ### `safety.loop` フィールド
@@ -211,9 +211,9 @@ safety:
 
 | パス | 型 | デフォルト | 説明 |
 |------|------|---------|-------------|
-| `safety.on_limit.mode` | 文字列 | `unattended` | ループ/タイムアウト上限発動時の動作。`interactive` — `ask_user` でユーザーに延長許可を確認。`unattended` — 即時中止（`reyn run` / CI のデフォルト）。`auto_extend` — `auto_extend_times` 回自動延長後に中止。 |
-| `safety.on_limit.auto_extend_times` | int | `1` | `unattended` フォールスルーまでの自動延長回数。`mode: auto_extend` 時のみ使用。 |
-| `safety.on_limit.ask_timeout_seconds` | float（秒） | `60` | `interactive` モードでユーザー返答を待機する時間。タイムアウト時は拒否として扱われ、partial data で中止。 |
+| `safety.on_limit.mode` | 文字列 | `interactive` | ループ/タイムアウト上限発動時の動作。`interactive`（デフォルト） — `ask_user` でユーザーに延長許可を確認。ヘッドレス（bus=None / 非 TTY）は自動的に abort へ短絡。`unattended` — 即時中止（CI / cron / スクリプト実行向けのオプトイン）。`auto_extend` — `auto_extend_times` 回自動延長後に中止。 |
+| `safety.on_limit.auto_extend_times` | int | `1` | abort フォールスルーまでの自動延長回数。`mode: auto_extend` 時のみ使用。 |
+| `safety.on_limit.ask_timeout_seconds` | float（秒） | `0` | `interactive` モードでユーザー返答を待機する時間。`0`（デフォルト） = 無制限待機、正の値 = ウィンドウ経過で partial data として abort。 |
 
 ## `plan` ブロック
 

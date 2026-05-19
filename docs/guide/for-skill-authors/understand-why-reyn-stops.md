@@ -132,10 +132,14 @@ approval extends the cap further.
 
 ## What happens on a limit hit (`safety.on_limit`)
 
-By default, a limit hit aborts the run. Reyn returns a `RunResult` with
-`status` set to one of `loop_limit_exceeded` / `phase_budget_exceeded` /
-`budget_exceeded`, and `partial_data` populated with the last completed
-phase artifact — *"here's what we have so far"*.
+By default, a limit hit prompts the user via `ask_user` to extend the
+limit (= `mode: interactive`, `ask_timeout_seconds: 0` — wait forever).
+Refusal / timeout / no intervention surface aborts the run with a
+`RunResult` whose `status` is one of `loop_limit_exceeded` /
+`phase_budget_exceeded` / `budget_exceeded`, and `partial_data`
+populated with the last completed phase artifact — *"here's what we
+have so far"*. Headless paths (`bus=None`, non-TTY stdin) short-circuit
+to that abort path cleanly — `interactive` is safe everywhere.
 
 You can change this with `safety.on_limit.mode`:
 
@@ -143,17 +147,17 @@ You can change this with `safety.on_limit.mode`:
 # reyn.local.yaml
 safety:
   on_limit:
-    mode: unattended       # default — abort on hit (legacy behaviour)
-    # mode: interactive    # prompt the user via ask_user; on approval extend the limit
+    mode: interactive      # default — prompt the user via ask_user; on approval extend the limit
+    # mode: unattended     # abort on hit (= opt-in for CI / cron / scripted runs that cannot pause)
     # mode: auto_extend    # auto-extend N times, then abort
     auto_extend_times: 1   # only consulted when mode == auto_extend
-    ask_timeout_seconds: 60  # only consulted when mode == interactive
+    ask_timeout_seconds: 0  # only consulted when mode == interactive; 0 = wait forever
 ```
 
 | Mode | Use case |
 |---|---|
-| `unattended` (default) | `reyn run`, CI, scripted invocations — no human to ask, fail fast |
-| `interactive` | `reyn chat`, TUI sessions — the user is sitting at the prompt and can decide |
+| `interactive` (default) | `reyn chat`, TUI / a2a sessions — the user is reachable and can decide whether to extend |
+| `unattended` | CI / cron / scripted invocations that genuinely cannot pause for a human; opt-in to skip the prompt and fail fast |
 | `auto_extend` | Trusted long-running tasks where the operator knows up front that N extensions are acceptable |
 
 **Where each mode is wired (FP-0005 Phase 2 — fully landed):**
