@@ -670,6 +670,7 @@ mcp:
 | `env` | map[string,string] | stdio (optional) | Extra environment variables for the spawned process. Values support `${VAR}` expansion. |
 | `url` | string | http, sse | Endpoint URL. |
 | `headers` | map[string,string] | http, sse (optional) | Static request headers. Values support `${VAR}` expansion. |
+| `call_timeout_seconds` | float | all (optional) | Per-call request timeout passed to the MCP SDK's `read_timeout_seconds`. Unset → SDK default applies (= no Reyn-level override; the SDK's transport-specific timeout governs). Set when a specific server is known to be slow or known to be quick + you want `fail-fast`. Independent of `timeout` (which is the HTTP transport's connect timeout for `type: http`). |
 
 `${VAR}` in any string value is expanded from `os.environ` at startup (after `~/.reyn/secrets.env` is loaded). Missing variables expand to `""` and emit a runtime warning. Use `reyn secret set` to store values in `~/.reyn/secrets.env` — never paste tokens into `reyn.yaml` directly.
 

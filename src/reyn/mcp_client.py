@@ -144,14 +144,38 @@ class MCPClient:
         self._session = session
         self._initialized = True
 
-    async def call_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    async def call_tool(
+        self,
+        name: str,
+        args: dict[str, Any],
+        *,
+        progress_callback: Any = None,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, Any]:
         """Call ``name`` on the server with ``args``. Returns a dict
         shaped to match what ``op_runtime/mcp.py`` consumes:
         ``{"content": [...], "isError": bool, "structuredContent": ... | None}``.
+
+        Optional kwargs (issue #264 — wire SDK long-running support):
+
+          - ``progress_callback``: async ``(progress: float, total: float | None,
+            message: str | None) -> None`` that the MCP SDK invokes when the
+            server emits a ``notifications/progress`` for this call. Default
+            ``None`` matches pre-#264 behaviour (= no progress visibility).
+          - ``timeout_seconds``: float; if set, converts to ``timedelta`` and
+            passes as ``read_timeout_seconds`` to the SDK so the call fails
+            fast on a stuck server. Default ``None`` keeps the SDK's own
+            transport-level default.
         """
         await self.initialize()
+        kwargs: dict[str, Any] = {}
+        if progress_callback is not None:
+            kwargs["progress_callback"] = progress_callback
+        if timeout_seconds is not None:
+            from datetime import timedelta
+            kwargs["read_timeout_seconds"] = timedelta(seconds=timeout_seconds)
         try:
-            result = await self._session.call_tool(name, args or {})
+            result = await self._session.call_tool(name, args or {}, **kwargs)
         except Exception as exc:
             raise MCPError(f"MCP tools/call error: {exc}") from exc
         return _result_to_dict(result)

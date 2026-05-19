@@ -117,6 +117,97 @@ class ChatEventForwarder:
         """
         self._enqueue("detail: ", source_run_id=data.get("run_id"))
 
+    def on_mcp_progress(self, data: dict) -> None:
+        """MCP tool emitted a progress notification — surface in sticky status.
+
+        issue #264: MCP servers can stream ``notifications/progress`` while
+        a tool call is in flight. Pre-#264 these were silently dropped
+        because the Reyn client didn't pass a ``progress_callback`` to the
+        SDK. Now the op handler wires the callback, emits ``mcp_progress``
+        events, and this forwarder converts each event into a
+        ``OutboxMessage(kind="status")`` with ``meta.source="mcp"`` so the
+        TUI sticky bar shows "what is the MCP server doing right now".
+
+        Per the issue #264 owner decision (lead-coder + tui-coder alignment):
+        ``kind="status"`` is the canonical surface for "long-running external
+        operation visibility"; the ``meta.source`` discriminator lets future
+        per-source styling decisions land without changing the kind.
+
+        The β fallback path (= route through ``set_detail`` via
+        ``kind="trace"``) remains a future option if dogfood observes
+        sticky overwrite issues between MCP progress and LLM "thinking"
+        — empirical fallback path documented on issue #264.
+        """
+        server = data.get("server") or "?"
+        tool = data.get("tool") or "?"
+        progress = data.get("progress")
+        total = data.get("total")
+        message = data.get("message")
+
+        text = self._format_mcp_progress(server, tool, progress, total, message)
+
+        meta: dict = {
+            "source": "mcp",
+            "server": server,
+            "tool": tool,
+        }
+        if progress is not None:
+            meta["progress"] = progress
+        if total is not None:
+            meta["total"] = total
+        if message:
+            meta["progress_text"] = message
+        source_run_id = data.get("run_id")
+        if source_run_id:
+            meta["run_id"] = source_run_id
+            meta["run_id_short"] = source_run_id[-4:]
+
+        try:
+            self.outbox.put_nowait(
+                OutboxMessage(kind="status", text=text, meta=meta),
+            )
+        except asyncio.QueueFull:
+            pass
+
+    @staticmethod
+    def _format_mcp_progress(
+        server: str,
+        tool: str,
+        progress: object,
+        total: object,
+        message: object,
+    ) -> str:
+        """Build the human-readable sticky-status text for an MCP progress event.
+
+        Branches:
+          - progress + total both numeric and total > 0 → percentage
+          - progress numeric, total absent / zero → raw progress value
+          - neither → bare ``[mcp/<server>] <tool>`` indicator
+          - message present → appended as ``· <message>``
+
+        Pure formatter so tests can pin the rendering without mounting a forwarder.
+        """
+        head = f"[mcp/{server}] {tool}"
+        body = ""
+        try:
+            prog_f = float(progress) if progress is not None else None
+        except (TypeError, ValueError):
+            prog_f = None
+        try:
+            tot_f = float(total) if total is not None else None
+        except (TypeError, ValueError):
+            tot_f = None
+        if prog_f is not None and tot_f is not None and tot_f > 0:
+            pct = (prog_f / tot_f) * 100
+            body = f" · {pct:.0f}%"
+        elif prog_f is not None:
+            # Indeterminate total — show raw progress value as-is.
+            body = f" · progress={prog_f:g}"
+        text = head + body
+        if message:
+            text += f" · {message}"
+        return text
+
     def on_act_executed(self, data: dict) -> None:
         """Control IR ops just ran — show a short summary as detail.
 

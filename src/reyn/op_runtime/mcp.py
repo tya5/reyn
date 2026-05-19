@@ -46,9 +46,48 @@ async def _execute(op: MCPIROp, ctx: OpContext) -> dict:
                     "tool": op.tool, "error": str(exc)}
     client = ctx.mcp_clients[op.server]
 
+    # issue #264 — wire MCP SDK progress + per-call timeout:
+    #
+    #   progress: forward server-emitted notifications/progress as
+    #   ``mcp_progress`` events so the ChatEventForwarder can surface
+    #   them in the TUI sticky status (= long-running MCP call
+    #   visibility, the A2A PR #253 analogue for the client side).
+    #
+    #   timeout: per-server ``call_timeout_seconds`` from the raw config
+    #   dict; absent → SDK default applies (= no behaviour change for
+    #   existing configs that omit the key).
+    server_name = op.server
+    tool_name = op.tool
+
+    async def _on_progress(
+        progress: float, total: float | None, message: str | None,
+    ) -> None:
+        ctx.events.emit(
+            "mcp_progress",
+            server=server_name,
+            tool=tool_name,
+            progress=progress,
+            total=total,
+            message=message,
+        )
+
+    call_timeout = None
+    try:
+        ct = expanded.get("call_timeout_seconds")
+        if ct is not None:
+            call_timeout = float(ct)
+            if call_timeout <= 0:
+                call_timeout = None
+    except (TypeError, ValueError):
+        call_timeout = None
+
     ctx.events.emit("mcp_called", server=op.server, tool=op.tool, args=op.args)
     try:
-        result = await client.call_tool(op.tool, op.args)
+        result = await client.call_tool(
+            op.tool, op.args,
+            progress_callback=_on_progress,
+            timeout_seconds=call_timeout,
+        )
     except MCPError as exc:
         ctx.events.emit("mcp_failed", server=op.server, tool=op.tool, error=str(exc))
         return {"kind": "mcp", "status": "error", "server": op.server,
