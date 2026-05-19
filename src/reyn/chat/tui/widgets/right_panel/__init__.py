@@ -336,6 +336,11 @@ class RightPanel(Widget):
         """Rotate through event filter groups; only meaningful on events tab."""
         self._event_filter_idx = (self._event_filter_idx + 1) % len(_FILTER_GROUPS)
         self._invalidate()
+        # Re-anchor the cursor in the viewport — the new filter usually
+        # changes the list length and clamps the cursor to a different
+        # row, so without this the cursor was clipped out of view until
+        # the user pressed j/k.
+        self._scroll_events_into_view()
 
     def cycle_event_tail(self) -> None:
         """Rotate through tail-N values; only meaningful on events tab."""
