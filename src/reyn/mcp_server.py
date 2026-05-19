@@ -362,6 +362,24 @@ def build_server(
                 return [TextContent(type="text", text="error: agent_name is required")]
             if not message:
                 return [TextContent(type="text", text="error: message is required")]
+
+            # issue #271 M1: progress emit bridge — if the client provided
+            # a progressToken in this request's metadata, subscribe a
+            # bridge to the agent's chat_events EventLog that translates
+            # lifecycle events into ``notifications/progress`` messages
+            # so the peer (= Reyn-as-MCP-client) can render "what is the
+            # server doing right now" instead of waiting silently.
+            #
+            # M1-b lifecycle event scope per owner decision: phase
+            # transitions + LLM round + act batch completion. Skipping
+            # high-volume / low-info events keeps the channel useful.
+            #
+            # Cleanup: ``finally`` removes the subscriber regardless of
+            # how the handler exits (= normal return / ValueError /
+            # CancelledError from issue #271 M2 client-side cancel).
+            bridge = await _make_mcp_progress_bridge(
+                registry, agent_name, server,
+            )
             try:
                 result = await send_to_agent_impl(
                     registry,
@@ -371,12 +389,179 @@ def build_server(
                 )
             except ValueError as e:
                 return [TextContent(type="text", text=f"error: {e}")]
+            except asyncio.CancelledError:
+                # issue #271 M2: client sent CancelledNotification; the
+                # SDK has already cancelled the responder. Re-raise so
+                # the SDK's cancellation suppression kicks in (= no
+                # duplicate error response). The bridge teardown in
+                # finally still runs.
+                raise
+            finally:
+                if bridge is not None:
+                    bridge.detach()
             import json
             return [TextContent(type="text", text=json.dumps(result))]
 
         return [TextContent(type="text", text=f"error: unknown tool {name!r}")]
 
     return server
+
+
+async def _make_mcp_progress_bridge(
+    registry: "AgentRegistry",
+    agent_name: str,
+    server: "object",
+) -> "_MCPProgressBridge | None":
+    """Build a progress-forwarding bridge for the duration of one
+    ``send_to_agent`` call (issue #271 M1).
+
+    Returns ``None`` when:
+      - the client didn't set ``_meta.progressToken`` on this request
+        (= peer doesn't care about progress, save the work)
+      - the agent ``agent_name`` doesn't exist (= the caller's
+        existence check in ``_call_tool`` will produce the standard
+        error path; we silently no-op here)
+      - the request context is unavailable for any reason (= defensive)
+
+    The returned bridge has subscribed itself to the agent's chat
+    events; callers MUST call ``bridge.detach()`` in a ``finally`` to
+    avoid the subscriber leaking across calls.
+    """
+    try:
+        ctx = server.request_context  # type: ignore[attr-defined]
+    except (LookupError, AttributeError):
+        return None
+    if ctx.meta is None or ctx.meta.progressToken is None:
+        return None
+    if not registry.exists(agent_name):
+        return None
+    try:
+        session = await _get_session(registry, agent_name)
+    except Exception:  # noqa: BLE001 — defensive, never block the main call
+        return None
+    bridge = _MCPProgressBridge(
+        session=session,
+        mcp_session=ctx.session,
+        progress_token=ctx.meta.progressToken,
+        related_request_id=ctx.request_id,
+    )
+    bridge.attach()
+    return bridge
+
+
+class _MCPProgressBridge:
+    """Forwards selected agent chat-events to MCP progress notifications.
+
+    issue #271 M1 (= M1-b lifecycle event scope per owner decision):
+
+      - ``phase_started`` → progress = next ordinal, message = "phase: <name>"
+      - ``llm_called`` → progress = ordinal, message = "llm: <model>"
+      - ``act_executed`` → progress = ordinal, message = "act: <N> op(s)"
+
+    ``progress`` is monotonic (= ordinal counter) since we don't have a
+    meaningful total. The MCP spec accepts ``total=None`` for
+    indeterminate progress; clients render as raw value or spinner.
+
+    The subscriber runs synchronously in the EventLog dispatcher; it
+    schedules the actual ``send_progress_notification`` as an asyncio
+    task so we don't block the event emitter on the MCP transport. Any
+    transport / cancellation error in the background task is swallowed
+    (= progress is best-effort; the main call must never fail because
+    notification delivery failed).
+    """
+
+    _TRACKED_EVENTS = frozenset({
+        "phase_started",
+        "llm_called",
+        "act_executed",
+    })
+
+    def __init__(
+        self,
+        *,
+        session: "object",
+        mcp_session: "object",
+        progress_token: "str | int",
+        related_request_id: "str | None",
+    ) -> None:
+        self._session = session
+        self._mcp_session = mcp_session
+        self._progress_token = progress_token
+        self._related_request_id = related_request_id
+        self._ordinal = 0
+        self._detached = False
+        self._tasks: list[asyncio.Task[None]] = []
+
+    def attach(self) -> None:
+        events = getattr(self._session, "_chat_events", None)
+        if events is not None:
+            events.add_subscriber(self._on_event)
+
+    def detach(self) -> None:
+        if self._detached:
+            return
+        self._detached = True
+        events = getattr(self._session, "_chat_events", None)
+        if events is not None:
+            events.remove_subscriber(self._on_event)
+        # Best-effort: cancel in-flight notification tasks so they don't
+        # outlive the request.
+        for task in self._tasks:
+            if not task.done():
+                task.cancel()
+
+    def _on_event(self, event: "object") -> None:
+        # Sync callback from EventLog dispatcher. Filter by type, build
+        # the message, schedule async send.
+        if self._detached:
+            return
+        event_type = getattr(event, "type", None)
+        if event_type not in self._TRACKED_EVENTS:
+            return
+        data = getattr(event, "data", {}) or {}
+        message = self._format_message(event_type, data)
+        self._ordinal += 1
+        ordinal = float(self._ordinal)
+        try:
+            task = asyncio.ensure_future(self._send(ordinal, message))
+        except RuntimeError:
+            # No running loop (= EventLog dispatched outside async context).
+            # Skip — caller will see this event later if/when an async
+            # context picks up the next event.
+            return
+        self._tasks.append(task)
+
+    @staticmethod
+    def _format_message(event_type: str, data: dict) -> str:
+        if event_type == "phase_started":
+            phase = data.get("phase") or "?"
+            return f"phase: {phase}"
+        if event_type == "llm_called":
+            model = data.get("model") or "?"
+            return f"llm: {model}"
+        if event_type == "act_executed":
+            op_count = data.get("op_count") or 0
+            suffix = "" if op_count == 1 else "s"
+            return f"act: {op_count} op{suffix}"
+        return event_type
+
+    async def _send(self, ordinal: float, message: str) -> None:
+        send_fn = getattr(self._mcp_session, "send_progress_notification", None)
+        if send_fn is None:
+            return
+        try:
+            await send_fn(
+                progress_token=self._progress_token,
+                progress=ordinal,
+                total=None,
+                message=message,
+                related_request_id=self._related_request_id,
+            )
+        except Exception:  # noqa: BLE001 — progress is best-effort
+            # Any transport failure / cancellation: silently drop.
+            # The main send_to_agent call must not fail because we
+            # couldn't push a progress notification.
+            return
 
 
 async def serve_stdio(
