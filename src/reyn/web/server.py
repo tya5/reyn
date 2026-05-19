@@ -81,9 +81,19 @@ def _make_cron_runner():
 async def _lifespan(app: FastAPI):
     # ── Startup ──
 
-    # FP-0001: RunRegistry singleton — process-wide task lifecycle tracking.
+    # FP-0001 + issue #267 Gap 5: RunRegistry singleton — process-wide
+    # task lifecycle tracking with snapshot persistence so a process
+    # restart preserves A2A async-task state (= the structural gap that
+    # left A2A peer routing half-restored against the ChatSession-side
+    # outstanding_interventions persistence wired by PR-intervention-link
+    # L2-L6). Snapshot path follows the convention established by
+    # ChatSession's per-agent snapshot.json: server-level state lives at
+    # ``.reyn/state/run_registry.json``.
+    from pathlib import Path  # noqa: PLC0415
+
     from reyn.web.run_registry import RunRegistry
-    app.state.run_registry = RunRegistry()
+    persist_path = Path(".reyn") / "state" / "run_registry.json"
+    app.state.run_registry = RunRegistry(persist_path=persist_path)
 
     # FP-0009 B: cron scheduler — start only if reyn.yaml has any enabled
     # cron jobs.  Failures are caught so a misconfigured cron block does

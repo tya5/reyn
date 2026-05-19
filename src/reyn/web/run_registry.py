@@ -1,4 +1,4 @@
-"""A2A task lifecycle registry (FP-0001).
+"""A2A task lifecycle registry (FP-0001 + issue #267 Gap 5 persistence).
 
 Tracks asyncio.Task instances spawned by POST /a2a/agents/<name> async-mode
 calls. Each entry carries status, any pending ask_user intervention,
@@ -6,14 +6,45 @@ a webhook URL for push notifications, and a buffered event history
 for SSE replay. Concurrent access by FastAPI request handlers is
 serialised by ``RunRegistry`` internally; do NOT call from outside
 the asyncio event loop.
+
+Persistence (issue #267 Gap 5):
+
+When ``RunRegistry`` is constructed with a ``persist_path``, every
+mutation rewrites the file atomically (= tmp file + ``Path.replace()``)
+so a server-process restart can reload the registry from disk. This
+closes the 「ChatSession side outstanding_interventions is persisted by
+PR-intervention-link L2-L6 but RunRegistry side is in-memory only」
+gap that left A2A peer routing half-restored on restart.
+
+What persists:
+  - run_id, agent_name, chain_id, status, question, result, error
+  - webhook_url, history_events, created_at, updated_at
+  - pending_intervention (= via UserIntervention.to_dict, future excluded)
+
+What does NOT persist (= volatile, restored as ``None`` / dropped):
+  - asyncio.Task reference (= bound to the process that died)
+  - UserIntervention.future (= fresh future allocated on from_dict)
+
+Restore semantics (= what the rebuilt ``RunEntry`` looks like after a
+process restart):
+  - All public state fields restored from JSON
+  - ``task`` is ``None`` (= caller can re-spawn if applicable, but the
+    original skill execution is gone with the prior process)
+  - ``pending_intervention``: if present, restored ``UserIntervention``
+    with a fresh future. The full rebind to the ChatSession side iv
+    (= so peer answers reach the ChatSession's restored
+    InterventionRegistry queue) is a Gap 5 Phase 2 follow-up; this
+    PR ships the persistence infrastructure alone.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -54,18 +85,169 @@ class RunEntry:
             "updated_at": self.updated_at.isoformat(),
         }
 
+    def to_persist_dict(self) -> dict:
+        """Persistence-safe shape (issue #267 Gap 5).
+
+        Includes more fields than ``to_public_dict`` because the
+        registry's own restore path needs them: webhook_url for
+        post-restart peer notifications, history_events for SSE
+        replay continuity, pending_intervention (via
+        ``UserIntervention.to_dict``) so the peer-binding can be
+        re-established by a Gap 5 Phase 2 follow-up.
+
+        Excludes volatile fields:
+          - ``task``: asyncio.Task is bound to the dead process
+          - ``pending_intervention.future``: re-allocated on from_dict
+        """
+        out: dict = {
+            "run_id": self.run_id,
+            "agent_name": self.agent_name,
+            "chain_id": self.chain_id,
+            "status": self.status,
+            "question": self.question,
+            "result": self.result,
+            "error": self.error,
+            "webhook_url": self.webhook_url,
+            "history_events": list(self.history_events),
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
+        }
+        if self.pending_intervention is not None:
+            out["pending_intervention"] = self.pending_intervention.to_dict()
+        return out
+
+    @classmethod
+    def from_persist_dict(cls, data: dict) -> "RunEntry":
+        """Inverse of ``to_persist_dict`` (issue #267 Gap 5).
+
+        Rebuilds a ``RunEntry`` from the persistence snapshot:
+          - ``task`` set to ``None`` (= cannot resurrect dead asyncio.Task)
+          - ``pending_intervention``: if present in data, re-create
+            ``UserIntervention`` via ``from_dict`` (= fresh future)
+          - timestamps parsed from ISO strings; tolerate missing or
+            malformed fields by falling back to ``now()`` so a
+            corrupt snapshot doesn't poison the restore loop
+        """
+        # Lazy import to avoid circular dependency.
+        from reyn.user_intervention import UserIntervention
+
+        iv = None
+        iv_data = data.get("pending_intervention")
+        if iv_data:
+            iv = UserIntervention.from_dict(iv_data)
+
+        def _parse_ts(value: object) -> datetime:
+            if isinstance(value, str):
+                try:
+                    return datetime.fromisoformat(value)
+                except ValueError:
+                    pass
+            return datetime.now(timezone.utc)
+
+        return cls(
+            run_id=str(data.get("run_id", "")),
+            agent_name=str(data.get("agent_name", "")),
+            chain_id=str(data.get("chain_id", "")),
+            status=str(data.get("status", "running")),
+            question=data.get("question"),
+            pending_intervention=iv,
+            result=data.get("result"),
+            error=data.get("error"),
+            webhook_url=data.get("webhook_url"),
+            task=None,
+            history_events=list(data.get("history_events") or []),
+            created_at=_parse_ts(data.get("created_at")),
+            updated_at=_parse_ts(data.get("updated_at")),
+        )
+
 
 class RunRegistry:
     """In-memory ``run_id`` → ``RunEntry`` map for A2A async tasks.
 
     Single instance per Reyn server (attached to ``app.state.run_registry``
-    by ``reyn.web.server``). Lifetime = process lifetime; the registry is
-    intentionally not persisted (= crash-recovery for A2A async tasks is a
-    follow-up FP).
+    by ``reyn.web.server``).
+
+    Persistence (issue #267 Gap 5): when constructed with a non-None
+    ``persist_path``, every mutation atomically rewrites the file so a
+    server-process restart can reload via ``__init__`` (which calls
+    ``_restore_from`` if the file exists). Default ``None`` preserves
+    pre-#267 in-memory-only behaviour for tests and direct callers
+    that don't need persistence.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, persist_path: Path | None = None) -> None:
         self._runs: dict[str, RunEntry] = {}
+        self._persist_path: Path | None = (
+            Path(persist_path) if persist_path is not None else None
+        )
+        if self._persist_path is not None and self._persist_path.exists():
+            self._restore_from(self._persist_path)
+
+    # ── persistence (issue #267 Gap 5) ─────────────────────────────────────
+
+    def _persist(self) -> None:
+        """Atomically rewrite the snapshot file after a mutation.
+
+        Snapshot shape: ``{run_id: entry.to_persist_dict(), ...}``. The
+        atomic-rename pattern (= tmp file + ``Path.replace()``) avoids
+        a half-written file being read by a concurrent restore.
+        Persistence failures are logged but never re-raised — the
+        registry stays usable even if the disk is full / read-only;
+        restart will see whatever the last successful snapshot was.
+        """
+        if self._persist_path is None:
+            return
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                run_id: entry.to_persist_dict()
+                for run_id, entry in self._runs.items()
+            }
+            tmp = self._persist_path.with_suffix(self._persist_path.suffix + ".tmp")
+            tmp.write_text(json.dumps(payload), encoding="utf-8")
+            tmp.replace(self._persist_path)
+        except OSError as exc:  # noqa: BLE001 — persistence is best-effort
+            logger.warning(
+                "RunRegistry persist failed: path=%s exc=%s",
+                self._persist_path, exc,
+            )
+
+    def _restore_from(self, path: Path) -> None:
+        """Repopulate ``self._runs`` from the snapshot file.
+
+        Tolerates a corrupt or partial file by logging a warning and
+        leaving the registry empty rather than crashing — a fresh
+        server can still accept new tasks; only resurrection fails.
+        """
+        try:
+            raw = path.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "RunRegistry restore failed (= empty registry will be used): "
+                "path=%s exc=%s", path, exc,
+            )
+            return
+        if not isinstance(data, dict):
+            logger.warning(
+                "RunRegistry snapshot is not a dict (= empty registry will "
+                "be used): path=%s type=%s", path, type(data).__name__,
+            )
+            return
+        for run_id, entry_data in data.items():
+            if not isinstance(entry_data, dict):
+                continue
+            try:
+                entry = RunEntry.from_persist_dict(entry_data)
+            except Exception as exc:  # noqa: BLE001 — skip corrupt entries
+                logger.warning(
+                    "RunRegistry skipping corrupt entry run_id=%s exc=%s",
+                    run_id, exc,
+                )
+                continue
+            self._runs[str(run_id)] = entry
+
+    # ── core CRUD (= mutations call _persist on success) ───────────────────
 
     def create(
         self,
@@ -83,6 +265,7 @@ class RunRegistry:
             webhook_url=webhook_url,
         )
         self._runs[run_id] = entry
+        self._persist()
         return entry
 
     def get(self, run_id: str) -> RunEntry | None:
@@ -119,11 +302,13 @@ class RunRegistry:
         if error is not None:
             entry.error = error
         entry.updated_at = datetime.now(timezone.utc)
+        self._persist()
         return entry
 
     def attach_task(self, run_id: str, task: asyncio.Task) -> None:
         if entry := self._runs.get(run_id):
             entry.task = task
+        # NB: task is volatile (= not persisted), no _persist() call.
 
     def answer_intervention(self, run_id: str, answer: "InterventionAnswer") -> bool:
         """Deliver ``answer`` to the run's pending intervention.
@@ -144,6 +329,7 @@ class RunRegistry:
         entry.question = None
         entry.status = "running"
         entry.updated_at = datetime.now(timezone.utc)
+        self._persist()
         return True
 
     def cancel(self, run_id: str) -> bool:
@@ -156,6 +342,7 @@ class RunRegistry:
             entry.task.cancel()
         entry.status = "cancelled"
         entry.updated_at = datetime.now(timezone.utc)
+        self._persist()
         return True
 
     def append_event(self, run_id: str, event: dict) -> None:
@@ -163,9 +350,11 @@ class RunRegistry:
         entry = self._runs.get(run_id)
         if entry is not None:
             entry.history_events.append(event)
+            self._persist()
 
     def remove(self, run_id: str) -> None:
-        self._runs.pop(run_id, None)
+        if self._runs.pop(run_id, None) is not None:
+            self._persist()
 
 
 __all__ = ["RunEntry", "RunRegistry"]
