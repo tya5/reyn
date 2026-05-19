@@ -729,8 +729,17 @@ async def device_grant_flow(
                         error_code=error_code or None,
                     )
 
+        # ``asyncio.timeout()`` instead of ``asyncio.wait_for`` because the
+        # latter can wrap the awaited coroutine in a new asyncio.Task and
+        # ``_poll_loop`` issues HTTP requests via ``httpx.AsyncClient``,
+        # which opens anyio cancel scopes internally. On timeout
+        # cancellation, the cleanup would run in a different task than
+        # the entry → ``RuntimeError: Attempted to exit cancel scope in
+        # a different task...``. ``asyncio.timeout()`` is a task-local
+        # deadline (= no task wrap) and httpx unwinds cleanly.
         try:
-            token = await asyncio.wait_for(_poll_loop(), timeout=deadline_seconds)
+            async with asyncio.timeout(deadline_seconds):
+                token = await _poll_loop()
         except asyncio.TimeoutError:
             raise DeviceGrantError(
                 f"Device grant for {provider.name!r} timed out after "
