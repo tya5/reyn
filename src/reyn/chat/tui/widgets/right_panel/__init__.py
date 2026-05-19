@@ -281,12 +281,21 @@ class RightPanel(Widget):
         if self._panel_width == 0:
             self._panel_width = self.size.width or 40
         max_width = max(40, int((self.app.size.width or 120) * 0.66))
-        new_width = max(24, min(max_width, self._panel_width + delta))
+        # Min width is sized so the full 6-tab bar
+        # (Keys/Events/Agents/Memory/Cost/Docs ≈ 36 cells incl. margins)
+        # always fits. Below this the Textual Tabs widget silently scrolls
+        # the right-most tabs out of view with no overflow marker, leaving
+        # the user no way to tell which tabs exist by glancing at the
+        # bar — Ctrl+W still cycles them but the visible set was a
+        # misleading subset. Bumped from 24 → 36 to guarantee the bar
+        # acts as a complete navigation surface at every width.
+        _MIN_WIDTH = 36
+        new_width = max(_MIN_WIDTH, min(max_width, self._panel_width + delta))
         # Flash the new width in the conv sticky bar so the user sees
         # something changed (and learns the bounds via the at-min /
         # at-max suffix). Skip the flash on no-op clamps to avoid the
         # impression that the keystroke was lost when nothing moved.
-        at_min = new_width == 24
+        at_min = new_width == _MIN_WIDTH
         at_max = new_width == max_width
         clamp_hint = (
             " (min)" if at_min and delta < 0
