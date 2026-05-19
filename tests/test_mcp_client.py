@@ -84,13 +84,19 @@ class _FakeSession:
 
 
 @asynccontextmanager
-async def _fake_stdio_client(params):
-    """Stand-in for ``mcp.client.stdio.stdio_client``."""
+async def _fake_stdio_client(params, errlog=None):
+    """Stand-in for ``mcp.client.stdio.stdio_client``.
+
+    ``errlog`` is accepted to match the SDK signature (= MCPClient
+    passes a tempfile when configured for stderr capture); the stand-in
+    doesn't write to it.
+    """
     _FakeSession.last_init_args = {
         "transport": "stdio",
         "command": params.command,
         "args": list(params.args),
         "env": dict(params.env) if params.env else None,
+        "errlog_provided": errlog is not None,
     }
     yield ("read_stream_obj", "write_stream_obj")
 
