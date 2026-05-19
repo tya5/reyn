@@ -680,6 +680,15 @@ class ConversationView(Widget):
     def _write_log(self, text: Text) -> None:
         log = self._log()
         log.write(text)
+        # Surface the trim warning the first time it's earned, even when
+        # the user hasn't pressed Ctrl+P/N yet. The previous wiring only
+        # called this from ``_jump_to_relative_anchor`` — turn navigation
+        # — so a user who let the session auto-scroll past the
+        # ``_RICHLOG_MAX_LINES`` boundary never saw the "earlier history
+        # trimmed" signal until they happened to hit Ctrl+P. The
+        # ``_trim_warned`` flag keeps it strictly one-shot per session.
+        if not self._trim_warned and getattr(log, "_start_line", 0) > 0:
+            self._maybe_warn_about_trimmed_history(log)
 
     def _write_body(self, renderable: RenderableType) -> None:
         """Append a body renderable at the hanging-indent column.
