@@ -332,3 +332,69 @@ async def test_get_mcp_servers_includes_tools_post_probe(tmp_path):
     await adapter.ensure_mcp_tools_cached()
     result = adapter.get_mcp_servers()
     assert result[0]["tools"] == [{"name": "foo_tool", "description": "x"}]
+
+
+# ── 8. Task-identity safety on timeout (= user-observed anyio error fix) ───
+#
+# When a probe coroutine opens an AsyncExitStack (= what
+# ``MCPClient.initialize()`` does under the hood; the stack wraps the
+# stdio_client / streamablehttp_client transport and the mcp SDK's
+# ClientSession), the cleanup runs on cancellation. Pre-fix this used
+# ``asyncio.wait_for`` which wraps the awaited coroutine in a new asyncio
+# task in some scenarios. The anyio cancel scopes inside the mcp SDK
+# checked current_task() at __aexit__ and raised
+# ``RuntimeError: Attempted to exit cancel scope in a different task
+# than it was entered in``. ``asyncio.timeout()`` is a task-local
+# deadline — cancellation is raised at the awaiter in the SAME task —
+# so the AsyncExitStack unwinds cleanly.
+
+
+@pytest.mark.asyncio
+async def test_timeout_does_not_leak_cancel_scope_error_on_async_exit_stack(tmp_path):
+    """Tier 2: a probe holding an AsyncExitStack across a timeout
+    survives cancellation without raising a ``RuntimeError: Attempted
+    to exit cancel scope in a different task...``.
+
+    Simulates the production path where ``MCPClient.initialize()``
+    opens an ``AsyncExitStack`` (and the mcp SDK opens anyio cancel
+    scopes inside it). With ``asyncio.wait_for`` (pre-fix), the
+    cleanup ran in a different task and the RuntimeError leaked. With
+    ``asyncio.timeout()`` (post-fix), cleanup runs in the same task
+    and the stack closes cleanly — the timeout path just caches ``[]``.
+    """
+    from contextlib import AsyncExitStack
+
+    entered_tasks: list[object] = []
+    exited_tasks: list[object] = []
+
+    async def _slow_probe(server: str) -> list[dict]:
+        stack = AsyncExitStack()
+        await stack.__aenter__()
+        entered_tasks.append(asyncio.current_task())
+        try:
+            # Sleep past the per-server timeout to force cancellation
+            # mid-AsyncExitStack hold.
+            await asyncio.sleep(2.0)
+        finally:
+            exited_tasks.append(asyncio.current_task())
+            await stack.aclose()
+        return []
+
+    adapter = _make_adapter_with_mcp(
+        tmp_path=tmp_path,
+        mcp_servers={"slow": {}},
+        mcp_list_tools_cb=_slow_probe,
+    )
+    # If asyncio.wait_for were still in use, this call would either
+    # raise or log a RuntimeError when the stack cleanup ran in a
+    # different task than the entry. asyncio.timeout() keeps the entry
+    # and exit on the same task.
+    await adapter.ensure_mcp_tools_cached(per_server_timeout=0.05)
+    assert entered_tasks == exited_tasks, (
+        "AsyncExitStack must enter and exit in the SAME asyncio.Task; "
+        f"entered={entered_tasks!r} exited={exited_tasks!r}"
+    )
+    listing = {s["name"]: s for s in adapter.get_mcp_servers()}
+    assert listing["slow"]["tools"] == [], (
+        "slow server must be cached as [] after timeout"
+    )

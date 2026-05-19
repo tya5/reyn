@@ -879,11 +879,21 @@ class RouterHostAdapter:
             return
 
         async def _probe_one(server_name: str) -> tuple[str, list[dict]]:
+            # ``asyncio.timeout()`` (Python 3.11+) instead of
+            # ``asyncio.wait_for`` because the latter wraps the awaited
+            # coroutine in a new asyncio.Task in some scenarios. When that
+            # inner task is cancelled mid-``MCPClient.initialize`` (= the
+            # underlying mcp SDK opens anyio cancel scopes inside an
+            # AsyncExitStack), the cleanup ends up running in a different
+            # task than the one that entered the scope, producing
+            # ``RuntimeError: Attempted to exit cancel scope in a different
+            # task than it was entered in``. ``asyncio.timeout()`` is a
+            # task-local deadline (= no task wrap) and cancellation is
+            # raised at the awaiter in the SAME task, so the AsyncExitStack
+            # unwinds correctly.
             try:
-                tools = await asyncio.wait_for(
-                    self._mcp_list_tools_cb(server_name),
-                    timeout=per_server_timeout,
-                )
+                async with asyncio.timeout(per_server_timeout):
+                    tools = await self._mcp_list_tools_cb(server_name)
             except (TimeoutError, asyncio.TimeoutError):
                 return server_name, []
             except Exception:  # noqa: BLE001 — adapter must never raise
