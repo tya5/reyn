@@ -601,18 +601,39 @@ async def _handle_answer_injection(
 
     Extracts text from ``params.message.parts`` (same as normal send),
     then calls ``run_registry.answer_intervention``.
+
+    issue #267 Gap 4: also extracts ``choice_id`` for closed-set prompts
+    (= permission.* / safety.limit.*). Resolution order, top → bottom:
+
+      1. ``params.choice_id`` — top-level convenience (= simplest peer impl).
+      2. ``params.message.metadata.choice_id`` — A2A-spec-conforming
+         structured-metadata channel.
+
+    Free-text ``ask_user`` answers omit ``choice_id`` and travel unchanged.
     """
     from reyn.user_intervention import InterventionAnswer  # noqa: PLC0415
 
     # Extract answer text from message parts (if provided).
     message = params.get("message")
     answer_text = ""
+    choice_id: str | None = None
     if isinstance(message, dict):
         parts = message.get("parts") or []
         if isinstance(parts, list):
             answer_text = _extract_text_from_parts(parts)
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict):
+            md_choice = metadata.get("choice_id")
+            if isinstance(md_choice, str) and md_choice:
+                choice_id = md_choice
 
-    answer = InterventionAnswer(text=answer_text)
+    # Top-level params.choice_id wins over message.metadata.choice_id when
+    # both are present (= explicit top-level wins by convention).
+    top_choice = params.get("choice_id")
+    if isinstance(top_choice, str) and top_choice:
+        choice_id = top_choice
+
+    answer = InterventionAnswer(text=answer_text, choice_id=choice_id)
     delivered = run_registry.answer_intervention(task_id, answer)
 
     if delivered:

@@ -92,18 +92,29 @@ class A2AInterventionBus:
         )
 
         # Optional webhook notification (fire-and-forget; failures logged).
+        # issue #267 Gap 4: surface iv ``kind`` + ``choices`` in the payload
+        # so peer can render structured affordance (= permission yes/no/always
+        # hotkeys) instead of guessing from prompt text. Free-text ``ask_user``
+        # still works unchanged (= ``choices`` is an empty list). ``detail``
+        # is included when present so the peer has the same context the
+        # in-process TUI surfaces below the prompt.
         if entry.webhook_url:
             from reyn.web.notifications import post_webhook
 
-            await post_webhook(
-                entry.webhook_url,
-                {
-                    "run_id": self._run_id,
-                    "status": "input-required",
-                    "question": iv.prompt,
-                    "agent_name": entry.agent_name,
-                },
-            )
+            payload: dict = {
+                "run_id": self._run_id,
+                "status": "input-required",
+                "question": iv.prompt,
+                "agent_name": entry.agent_name,
+                "kind": iv.kind,
+                "choices": [
+                    {"id": c.id, "label": c.label, "hotkey": c.hotkey}
+                    for c in iv.choices
+                ],
+            }
+            if iv.detail:
+                payload["detail"] = iv.detail
+            await post_webhook(entry.webhook_url, payload)
 
         # Block until the peer POSTs an answer (= registry.answer_intervention
         # resolves iv.future).
