@@ -2123,6 +2123,16 @@ class RouterLoop:
             sandbox_backend=(
                 getattr(self.host, "get_sandbox_backend", lambda: None)()
             ),
+            # FP-0032 follow-up: mcp_servers must be populated so the
+            # universal_catalog ``mcp.server`` / ``mcp.tool`` category
+            # enumerations surface the actually-configured servers.
+            # Without this the enumeration sees ``rs.mcp_servers is None``
+            # and returns [], leaving ``list_actions(category="mcp.server")``
+            # silently empty even when ``reyn mcp list`` shows servers.
+            # Shape: list[Mapping[name, description, tools?]] from host.
+            mcp_servers=self.host.get_mcp_servers() if hasattr(
+                self.host, "get_mcp_servers"
+            ) else None,
         )
 
     async def _invoke_via_registry(self, name: str, args: dict) -> Any:
