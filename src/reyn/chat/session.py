@@ -2121,11 +2121,18 @@ class ChatSession:
                     msg_id, exc,
                 )
             remaining = max(0.1, deadline_monotonic - _time.monotonic())
+            # ``asyncio.timeout()`` (Python 3.11+) instead of
+            # ``asyncio.wait_for`` because ``_handle_skill_completed``
+            # drives a router LLM turn (= litellm → httpx async →
+            # internal anyio cancel scopes). If wait_for wraps the
+            # coroutine in a new task and the timeout fires mid-LLM
+            # call, the httpx cleanup runs in a different task than
+            # the entry → ``RuntimeError: Attempted to exit cancel
+            # scope in a different task...``. ``asyncio.timeout()``
+            # is a task-local deadline so the cleanup stays in-task.
             try:
-                await asyncio.wait_for(
-                    self._handle_skill_completed(payload),
-                    timeout=remaining,
-                )
+                async with asyncio.timeout(remaining):
+                    await self._handle_skill_completed(payload)
             except asyncio.TimeoutError:
                 drained_ok = False
                 break
