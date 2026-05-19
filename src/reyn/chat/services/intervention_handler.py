@@ -17,6 +17,7 @@ Design constraints (same pattern as other Wave 1/1b services):
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
@@ -33,6 +34,31 @@ if TYPE_CHECKING:
     from reyn.events.events import EventLog
 
 logger = logging.getLogger(__name__)
+
+
+# Issue #261 / #254 Phase 4 follow-up — source-agent threading.
+#
+# When ``ChatSession.handle_intervention`` takes the ``parent_delegate``
+# branch, it sets this var to the name of the agent that decided to
+# delegate (= the *upstream* / source agent, i.e. the recipient who
+# couldn't answer locally and forwarded to its parent). The downstream
+# ``user_channel.deliver`` path then reads the var inside ``_iv_meta``
+# and stamps ``meta["source_agent"]`` on the outbox message.
+#
+# Multi-hop chains (A → B → C): each ``parent_delegate`` overwrites the
+# var with the immediate delegator, so when C eventually reaches
+# ``user_channel``, ``meta["source_agent"]`` reflects B (= the direct
+# parent of C in the chain). This matches the "immediate parent only"
+# semantics noted in issue #261's "Out of scope" — multi-hop
+# breadcrumbs would be a separate feature.
+#
+# Default value is ``None`` (= no delegation chain). When ``None``, the
+# meta builder omits the ``source_agent`` key entirely, preserving the
+# Phase 2 outbox-meta-shape commitment for non-delegated paths
+# (``test_outbox_intervention_meta_shape_is_stable`` still passes).
+source_agent_var: ContextVar[str | None] = ContextVar(
+    "source_agent", default=None,
+)
 
 
 def _now_iso() -> str:
@@ -71,6 +97,13 @@ def _iv_meta(iv: UserIntervention) -> dict:
         ]
     if iv.suggestions:
         out["suggestions"] = list(iv.suggestions)
+    # Issue #261 — source_agent stamping for the parent_delegate branch.
+    # See ``source_agent_var`` module docstring above for the chain
+    # semantics. Omitted when the var is at its default (``None``) so
+    # the meta shape stays identical to the non-delegated path.
+    src = source_agent_var.get()
+    if src:
+        out["source_agent"] = src
     return out
 
 
