@@ -18,6 +18,7 @@ Environment variable expansion:
 """
 from __future__ import annotations
 
+import tempfile
 from contextlib import AsyncExitStack
 from typing import Any
 
@@ -78,6 +79,16 @@ class MCPClient:
         self._stack: AsyncExitStack | None = None
         self._session: Any = None  # mcp.ClientSession when initialized
         self._initialized = False
+        # Captures subprocess stderr for stdio transport so initialize
+        # failures (e.g. self-made MCP server exits immediately, writes
+        # a traceback to stderr before the MCP handshake completes) can
+        # surface the actual error text rather than the opaque "Connection
+        # close" wording the SDK produces. mcp SDK's ``stdio_client``
+        # passes errlog directly to ``anyio.open_process(stderr=...)``,
+        # which needs a real fileno — ``io.StringIO`` doesn't work, but
+        # ``tempfile.TemporaryFile`` does. Lazily created in
+        # ``_open_stdio``; closed in ``close``.
+        self._stderr_capture: Any = None  # tempfile.TemporaryFile | None
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -116,9 +127,17 @@ class MCPClient:
             await session.initialize()
         except MCPError:
             await stack.aclose()
+            self._close_stderr_capture()
             raise
         except Exception as exc:
             await stack.aclose()
+            tail = self._read_stderr_tail()
+            self._close_stderr_capture()
+            if tail:
+                raise MCPError(
+                    f"MCP initialize failed: {exc}\n"
+                    f"--- subprocess stderr (tail) ---\n{tail}"
+                ) from exc
             raise MCPError(f"MCP initialize failed: {exc}") from exc
 
         self._stack = stack
@@ -149,6 +168,7 @@ class MCPClient:
     async def close(self) -> None:
         """Tear down the transport and session. Safe to call repeatedly."""
         if self._stack is None:
+            self._close_stderr_capture()
             return
         stack = self._stack
         self._stack = None
@@ -158,6 +178,57 @@ class MCPClient:
             await stack.aclose()
         except Exception:
             # Best-effort cleanup; transport may already be down.
+            pass
+        self._close_stderr_capture()
+
+    # ── stderr capture (stdio only) ─────────────────────────────────────────
+
+    _STDERR_TAIL_BYTES = 2048
+
+    def _read_stderr_tail(self) -> str:
+        """Return the tail of the subprocess stderr capture, or ''.
+
+        Reads up to ``_STDERR_TAIL_BYTES`` from the end of the temp
+        file. Returns empty string when no capture is configured (= http
+        transport, or stdio capture failed to open) or read raises.
+        Failures here are advisory: never propagate beyond the helper
+        so the caller's MCPError carries the original exception even
+        if the tail can't be retrieved.
+        """
+        capture = self._stderr_capture
+        if capture is None:
+            return ""
+        try:
+            capture.flush()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            capture.seek(0)
+            data = capture.read()
+        except Exception:  # noqa: BLE001
+            return ""
+        if not data:
+            return ""
+        if isinstance(data, bytes):
+            try:
+                text = data.decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                return ""
+        else:
+            text = data
+        if len(text) > self._STDERR_TAIL_BYTES:
+            return "...(truncated)\n" + text[-self._STDERR_TAIL_BYTES :]
+        return text
+
+    def _close_stderr_capture(self) -> None:
+        """Close + delete the stderr temp file, if any. Idempotent."""
+        capture = self._stderr_capture
+        if capture is None:
+            return
+        self._stderr_capture = None
+        try:
+            capture.close()
+        except Exception:  # noqa: BLE001
             pass
 
     # ── transport dispatch ──────────────────────────────────────────────────
@@ -186,7 +257,22 @@ class MCPClient:
             env=dict(env) if env else None,
             cwd=self._config.get("cwd"),
         )
-        return stdio_client(params)
+        # Subprocess stderr capture for diagnostic readback on init
+        # failure. ``stdio_client`` passes errlog to
+        # ``anyio.open_process(stderr=...)`` which requires a real
+        # fileno — ``io.StringIO`` doesn't work. ``tempfile.TemporaryFile``
+        # auto-deletes on close. Text-mode + utf-8 matches the SDK's
+        # default (= sys.stderr). On failure to open the temp file we
+        # fall through to no capture (= behavior degrades gracefully
+        # to the pre-fix opaque error wording, never blocks the call).
+        try:
+            self._stderr_capture = tempfile.TemporaryFile(
+                mode="w+t", encoding="utf-8",
+            )
+        except Exception:  # noqa: BLE001 — temp-file failure is non-fatal
+            self._stderr_capture = None
+            return stdio_client(params)
+        return stdio_client(params, errlog=self._stderr_capture)
 
     def _open_http(self):
         """Open the Streamable HTTP transport.
